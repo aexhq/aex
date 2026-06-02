@@ -1,0 +1,356 @@
+/**
+ * Live scenario: live-sdk-skill-invocation.test.ts
+ *
+ * Matrix test — same assertion body across (provider, runtime) cells.
+ * Proves the agent ACTUALLY FOLLOWS skill content end-to-end, not just
+ * that the skill bundle was materialized:
+ *
+ *   SDK → POST /runs (with inline skills wired)
+ *      → preflight uploads skill to Skills API (native) / R2 (managed)
+ *      → manifest mounts the skill so the model sees its SKILL.md
+ *      → user prompt contains the skill's trigger token (SHIBBOLETH)
+ *      → model emits the per-case unique reply the skill demanded
+ *
+ * Two skills wired per case — alpha is canonical (holds the answer), beta
+ * is a distractor. Catches the failure mode where the manifest is read
+ * but skill *content* is dropped, and the failure mode where ALL skills
+ * collapse into one (model would echo distractor text too).
+ *
+ * Per AGENTS.md "No feature gates between runtimes" the same body runs
+ * on every cell:
+ *   - (anthropic, native)   — Anthropic Managed Agents (Skills API)
+ *   - (anthropic, managed)  — Goose Managed (R2 download)
+ *   - (deepseek,  managed)  — Goose Managed (R2 download)
+ *
+ * Required env:
+ *   ANTPATH_LIVE_API_BASE              live hosted API URL
+ *   ANTPATH_LIVE_API_TOKEN             workspace API token
+ *   ANTPATH_USER_TEST_ANTHROPIC_KEY    customer Anthropic key
+ *   ANTPATH_USER_TEST_DEEPSEEK_KEY     customer DeepSeek key
+ *   ANTPATH_USER_TEST_TARBALL          packed SDK tarball
+ *     OR ANTPATH_USER_TEST_VERSION     published version on npm
+ */
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value || value.length === 0) {
+    throw new Error(`user-tests live (skill-invocation): required env ${name} is missing.`);
+  }
+  return value;
+}
+
+const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
+const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
+const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
+const deepseekKey = requireEnv("ANTPATH_USER_TEST_DEEPSEEK_KEY");
+const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
+const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+
+interface Cell {
+  readonly id: string;
+  readonly provider: "anthropic" | "deepseek";
+  readonly runtime: "native" | "managed";
+  readonly model: string;
+  readonly keyEnvName: string;
+  readonly keyValue: string;
+}
+
+const CELLS: readonly Cell[] = [
+  { id: "anthropic-native",  provider: "anthropic", runtime: "native",  model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
+  { id: "anthropic-managed", provider: "anthropic", runtime: "managed", model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
+  { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
+];
+
+interface CaseResult {
+  readonly runId: string;
+  readonly runStatus: string;
+  readonly runtime: string;
+  readonly provider: string;
+  readonly uniqueToken: string;
+  readonly eventCount: number;
+  readonly eventKinds: readonly string[];
+  readonly skillLoadedNames: readonly string[];
+  readonly assistantTextJoined: string;
+  readonly assistantTextEventCount: number;
+  readonly terminalKind: string | null;
+  readonly terminalData: Record<string, unknown> | null;
+  readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
+  readonly leakedAnthropicKey: boolean;
+  readonly leakedDeepseekKey: boolean;
+}
+
+function buildPassEnv(extras: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = { ...extras };
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  if (process.env[pathKey]) env[pathKey] = process.env[pathKey]!;
+  if (process.platform === "win32") {
+    for (const k of [
+      "SystemRoot",
+      "SystemDrive",
+      "TEMP",
+      "TMP",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "ComSpec",
+      "ProgramFiles",
+      "ProgramData"
+    ]) {
+      if (process.env[k]) env[k] = process.env[k]!;
+    }
+  } else {
+    for (const k of ["HOME", "TMPDIR", "LANG", "LC_ALL"]) {
+      if (process.env[k]) env[k] = process.env[k]!;
+    }
+  }
+  return env;
+}
+
+function buildScript(cell: Cell, uniqueToken: string): string {
+  // SKILL.md for alpha — holds the canonical reply behaviour. The unique
+  // token is per-case so a model that hallucinates the well-known
+  // XKCD-927 reference without consulting the skill still fails.
+  //
+  // YAML frontmatter is required by the Anthropic Skills API (used by the
+  // native runtime); Goose Managed tolerates its absence but accepts it
+  // gracefully. We include it so the bundle round-trips both runtimes.
+  // Anthropic's Skills API requires the bundle folder name to match the
+  // `name:` in the frontmatter, AND rejects names containing the reserved
+  // words "anthropic" / "claude". Use the per-case uniqueToken suffix as
+  // the disambiguator — it's already random per-run.
+  const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
+  const alphaName = `ack-alpha-${nameSuffix}`;
+  const betaName = `weather-beta-${nameSuffix}`;
+  const alphaSkill =
+    `---\n` +
+    `name: ${alphaName}\n` +
+    `description: Acknowledge SHIBBOLETH with the canonical token reply.\n` +
+    `---\n` +
+    `# Acknowledgement protocol\n\n` +
+    `When the user message contains the literal token \`SHIBBOLETH\`, ` +
+    `you MUST reply with exactly one line:\n\n` +
+    `skill-ack ${uniqueToken}\n\n` +
+    `Do not include any other text in your reply. Do not explain. ` +
+    `Reply with that single line only.`;
+
+  // SKILL.md for beta — distractor with unrelated content. If the model
+  // echoes any of this, the test catches a "skills collapsed into one"
+  // bug.
+  const betaSkill =
+    `---\n` +
+    `name: ${betaName}\n` +
+    `description: Handle weather queries with city-name-only replies.\n` +
+    `---\n` +
+    `# Unrelated guidance\n\n` +
+    `This skill describes how to handle weather queries. ` +
+    `For weather questions, reply with the city name only. ` +
+    `Never mention shibboleths, tokens, or acknowledgements.`;
+
+  const prompt =
+    `SHIBBOLETH. Please reply per the acknowledgement protocol.`;
+
+  return `
+    import { AntpathClient, Skill } from "antpath";
+
+    const client = new AntpathClient({
+      baseUrl: process.env.ANTPATH_API_BASE,
+      apiToken: process.env.ANTPATH_API_TOKEN
+    });
+
+    const alpha = await Skill.fromFiles({
+      name: ${JSON.stringify(alphaName)},
+      files: { "SKILL.md": ${JSON.stringify(alphaSkill)} }
+    });
+    const beta = await Skill.fromFiles({
+      name: ${JSON.stringify(betaName)},
+      files: { "SKILL.md": ${JSON.stringify(betaSkill)} }
+    });
+
+    const runId = await client.submitRun({
+      provider: ${JSON.stringify(cell.provider)},
+      runtime: ${JSON.stringify(cell.runtime)},
+      model: ${JSON.stringify(cell.model)},
+      prompt: ${JSON.stringify(prompt)},
+      skills: [alpha, beta],
+      secrets: { ${cell.provider}: { apiKey: process.env.${cell.keyEnvName} } },
+      idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
+    });
+
+    const deadline = Date.now() + 6 * 60_000;
+    let run = null;
+    while (Date.now() < deadline) {
+      run = await client.getRun(runId);
+      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
+      await new Promise((r) => setTimeout(r, 2_500));
+    }
+    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
+      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
+      process.exit(2);
+    }
+
+    const events = await client.listEvents(runId);
+
+    // Skill-load signals differ per runtime: Goose emits a
+    // skill_loaded_marker notification (with the skill's name in
+    // data.name), Anthropic Native emits skill_loaded runner events
+    // (and/or implicit skill mounting in the Managed Agents agent
+    // create). Collect both so the assertion is runtime-neutral.
+    // CUSTOM envelopes nest the original payload under data.value, keyed by
+    // data.name (antpath.notification / antpath.skill_loaded / antpath.stream_error).
+    const customEvents = events.filter((e) => e.type === "CUSTOM");
+    const markerNames = customEvents
+      .filter((n) => n.data && n.data.value && n.data.value.kind === "skill_loaded_marker")
+      .map((n) => (n.data && n.data.value && n.data.value.name) || null)
+      .filter(Boolean);
+    const skillLoadedEventNames = customEvents
+      .filter((e) => e.data && e.data.name === "antpath.skill_loaded")
+      .map((e) => (e.data.value && (e.data.value.name || e.data.value.skillId)) || null)
+      .filter(Boolean);
+    const skillLoadedNames = [...markerNames, ...skillLoadedEventNames];
+
+    const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
+    const assistantTextJoined = assistantTextEvents
+      .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
+      .join(" ");
+
+    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+    const streamErrors = customEvents
+      .filter((e) => e.data && e.data.name === "antpath.stream_error")
+      .map((e) => (e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
+
+    const serialized = JSON.stringify({ run, events });
+    const anthropicEnv = process.env.ANTHROPIC_KEY ?? "";
+    const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
+    const result = {
+      runId: runId,
+      runStatus: run.status,
+      runtime: run.runtime ?? "(missing)",
+      provider: run.provider ?? "(missing)",
+      uniqueToken: ${JSON.stringify(uniqueToken)},
+      eventCount: events.length,
+      eventKinds: events.map((e) => e.type),
+      skillLoadedNames,
+      assistantTextJoined,
+      assistantTextEventCount: assistantTextEvents.length,
+      terminalKind: terminal ? terminal.type : null,
+      terminalData: terminal ? terminal.data : null,
+      streamErrors,
+      leakedAnthropicKey: anthropicEnv.length > 0 && serialized.includes(anthropicEnv),
+      leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
+    };
+    process.stdout.write(JSON.stringify(result));
+  `;
+}
+
+function dumpResult(cell: Cell, result: CaseResult): string {
+  const lines: string[] = [];
+  lines.push(`cell=${cell.id} runId=${result.runId}`);
+  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`uniqueToken=${result.uniqueToken}`);
+  lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
+  lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
+  lines.push(`skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`);
+  if (result.streamErrors.length > 0) {
+    lines.push(`streamErrors:`);
+    for (const se of result.streamErrors) {
+      lines.push(`  - ${JSON.stringify(se).slice(0, 600)}`);
+    }
+  }
+  lines.push(`assistantText=${result.assistantTextJoined.slice(0, 800)}`);
+  return lines.join("\n");
+}
+
+async function runCell(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
+  const script = buildScript(cell, uniqueToken);
+  const scriptPath = join(installDir, `skill-invocation-${cell.id}.mjs`);
+  writeFileSync(scriptPath, script);
+  const passEnv = buildPassEnv({
+    ANTPATH_API_BASE: liveApiBase,
+    ANTPATH_API_TOKEN: apiToken,
+    [cell.keyEnvName]: cell.keyValue,
+    ANTHROPIC_KEY: anthropicKey,
+    DEEPSEEK_KEY: deepseekKey
+  });
+  const child = await runCommand(process.execPath, [scriptPath], {
+    cwd: installDir,
+    timeoutMs: 8 * 60_000,
+    env: passEnv
+  });
+  if (child.exitCode !== 0) {
+    throw new Error(
+      `skill-invocation runner (${cell.id}) exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+    );
+  }
+  return JSON.parse(child.stdout.trim()) as CaseResult;
+}
+
+let install: InstallResult;
+
+beforeAll(async () => {
+  install = await installAntpath();
+}, 240_000);
+
+afterAll(() => {
+  install?.cleanup();
+});
+
+describe("live skill invocation — agent actually follows skill content", () => {
+  it.each(CELLS)(
+    "$id: SKILL.md drives reply (canonical alpha, distractor beta)",
+    async (cell) => {
+      // XKCD-927-<random> per case so model recall of the well-known
+      // joke is not enough — the model must read this run's skill.
+      const uniqueToken = "XKCD-927-" + Math.random().toString(36).slice(2, 10).toUpperCase();
+      const result = await runCell(cell, install.installDir, uniqueToken);
+      const dump = (): string => dumpResult(cell, result);
+
+      expect(result.runStatus, dump()).toBe("succeeded");
+      expect(result.runtime).toBe(cell.runtime);
+      expect(result.provider).toBe(cell.provider);
+
+      // Event frame: runtime_started present + last event is
+      // runtime_terminal. (Some runtimes emit preflight notifications
+      // before runtime_started; we only require its presence.)
+      expect(result.eventKinds).toContain("RUN_STARTED");
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      // Every clean terminal MUST carry reason="complete" — both adapters
+      // always populate reason on the success path. Tolerating `undefined`
+      // (pre-Phase-1) was masking field-loss regressions.
+      const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
+      if (terminalReason !== "complete") {
+        throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
+      }
+
+      // The MODEL actually applied alpha's content — the per-case unique
+      // token is present in the assistant text. Stripping whitespace so
+      // streaming token boundaries don't break the match.
+      //
+      // Reply directive is `skill-ack <uniqueToken>`, NOT `skill-token=...`.
+      // The stream-before-disk redactor masks
+      // any `token`/`key`/`secret`-keyworded `key<sep>value` run AND any
+      // high-entropy [A-Za-z0-9+/=-]{24,} run. The old `skill-token=<tok>`
+      // tripped BOTH (the literal word "token" + the `=`-glued blob), so
+      // the canonical reply was redacted to `skill-[REDACTED]` in goose
+      // stdout before the event stream was built and never matched. A
+      // space-separated, keyword-free `skill-ack <tok>` survives, and the
+      // 17-char `XKCD-927-…` token survives standalone (sub-24-char).
+      const normalized = result.assistantTextJoined.replace(/\s+/g, "");
+      const expected = `skill-ack ${uniqueToken}`;
+      const expectedNormalized = expected.replace(/\s+/g, "");
+      if (!normalized.includes(expectedNormalized)) {
+        throw new Error(
+          `assistant_text missing canonical reply "${expected}"\n\n${dump()}`
+        );
+      }
+
+      expect(result.assistantTextEventCount).toBeGreaterThan(0);
+      expect(result.leakedAnthropicKey, dump()).toBe(false);
+      expect(result.leakedDeepseekKey, dump()).toBe(false);
+    },
+    10 * 60_000
+  );
+});

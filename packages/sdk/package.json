@@ -1,0 +1,52 @@
+{
+  "name": "antpath",
+  "version": "0.13.3",
+  "description": "TypeScript SDK for running autonomous agent sessions across providers (Anthropic, OpenAI, DeepSeek, Gemini, Mistral) behind one interface.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/weilueluo/antpath.git"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "antpath": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs",
+    "examples"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/cli run build && tsc -p tsconfig.build.json && node ./scripts/bundle-cli.mjs && node ./scripts/inline-contracts.mjs",
+    "lint": "tsc --noEmit",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run test/unit",
+    "test:security": "vitest run test/security",
+    "test:unit:recorded": "vitest run test/unit/recorded",
+    "test:load:replay": "vitest run test/unit/recorded/anthropic-replay-resilience.test.ts",
+    "test:property": "vitest run --passWithNoTests property",
+    "test:coverage": "vitest run --coverage test/unit",
+    "fixtures:record:anthropic": "tsx scripts/record-api-fixtures.ts",
+    "fixtures:sanitize": "tsx scripts/sanitize-api-fixtures.ts",
+    "prepack": "pnpm run build",
+    "publish:dry-run": "pnpm publish --dry-run --no-git-checks"
+  },
+  "devDependencies": {
+    "@antpath/contracts": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  }
+}

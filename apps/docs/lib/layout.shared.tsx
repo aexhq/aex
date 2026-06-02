@@ -1,0 +1,25 @@
+import { PackageOpen } from "lucide-react";
+import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
+
+export function baseOptions(): BaseLayoutProps {
+  return {
+    githubUrl: "https://github.com/weilueluo/antpath",
+    nav: {
+      title: (
+        <span className="ant-nav-title">
+          <span className="ant-logo-mark">ap</span>
+          <span>antpath</span>
+        </span>
+      )
+    },
+    links: [
+      {
+        icon: <PackageOpen />,
+        text: "npm",
+        url: "https://www.npmjs.com/package/antpath",
+        active: "none",
+        secondary: true
+      }
+    ]
+  };
+}

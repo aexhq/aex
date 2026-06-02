@@ -1,0 +1,8 @@
+{
+  "name": "eslint-plugin-antpath",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs"
+}

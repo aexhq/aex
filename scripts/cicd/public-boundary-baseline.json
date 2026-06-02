@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "publicDocs": [
+    "README.md",
+    "packages/sdk/README.md",
+    "packages/sdk/docs"
+  ],
+  "publicSourceRoots": [
+    "packages/contracts/src",
+    "packages/sdk/src",
+    "packages/cli/src",
+    "packages/conformance/src"
+  ],
+  "temporaryAllowedPublicImports": [
+    "@antpath/contracts"
+  ],
+  "forbiddenInternalImports": [
+    "@antpath/internal",
+    "@antpath/internal",
+    "@antpath/internal",
+    "@antpath/internal",
+    "@antpath/internal",
+    "@antpath/user-tests"
+  ],
+  "sdkPackage": {
+    "dir": "packages/sdk",
+    "name": "antpath",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "bin": {
+      "antpath": "./dist/cli.mjs"
+    },
+    "allowedRuntimeDependencies": [
+      "fflate"
+    ],
+    "allowedPackedPathPrefixes": [
+      "package.json",
+      "README.md",
+      "docs/",
+      "examples/",
+      "dist/"
+    ],
+    "forbiddenPackedPathPatterns": [
+      "(^|/)\\.env(?:\\.|$)",
+      "^(?:\\.github|apps|eval|references|scripts|tools)(?:/|$)",
+      "^(?:packages/(?:cli|db|runtime-bridge|shared|conformance))(?:/|$)",
+      "(^|/)wrangler\\.toml$",
+      "(^|/)vercel\\.json$"
+    ]
+  },
+  "contractsInline": {
+    "sourcePackage": "@antpath/contracts",
+    "sdkPackedPrefix": "dist/_contracts/",
+    "allowedModuleFiles": [
+      "./blueprint.js",
+      "./connection-ticket.js",
+      "./event-envelope.js",
+      "./event-stream-client.js",
+      "./http.js",
+      "./index.js",
+      "./known-events.js",
+      "./machine-sizes.js",
+      "./managed-key.js",
+      "./operations.js",
+      "./provider-capability.js",
+      "./provider-support.js",
+      "./proxy-protocol.js",
+      "./proxy-validation.js",
+      "./run-artifacts.js",
+      "./run-cost.js",
+      "./run-custody.js",
+      "./run-record.js",
+      "./run-retention.js",
+      "./run-unit.js",
+      "./runner-event.js",
+      "./runtime-manifest.js",
+      "./runtime-security-profile.js",
+      "./runtime-types.js",
+      "./sdk-errors.js",
+      "./sdk-secrets.js",
+      "./side-effect-audit.js",
+      "./sse.js",
+      "./stable.js",
+      "./status.js",
+      "./submission.js"
+    ],
+    "contractsBarrelExportSpecifiers": [
+      "./proxy-protocol.js",
+      "./provider-support.js",
+      "./status.js",
+      "./submission.js",
+      "./machine-sizes.js",
+      "./runner-event.js",
+      "./event-envelope.js",
+      "./connection-ticket.js",
+      "./event-stream-client.js",
+      "./run-unit.js",
+      "./runtime-manifest.js",
+      "./runtime-security-profile.js",
+      "./run-cost.js",
+      "./run-custody.js",
+      "./run-record.js",
+      "./run-retention.js",
+      "./managed-key.js",
+      "./stable.js",
+      "./sdk-secrets.js",
+      "./sdk-errors.js",
+      "./side-effect-audit.js",
+      "./blueprint.js",
+      "./runtime-types.js",
+      "./known-events.js",
+      "./http.js",
+      "./run-artifacts.js",
+      "./operations.js",
+      "./proxy-validation.js",
+      "./sse.js"
+    ]
+  }
+}

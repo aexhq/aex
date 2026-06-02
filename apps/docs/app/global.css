@@ -1,0 +1,233 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root {
+  --fd-primary: 184 76% 40%;
+  --fd-ring: 184 76% 40%;
+}
+
+.dark {
+  --fd-primary: 178 70% 58%;
+  --fd-ring: 178 70% 58%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+.ant-nav-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-weight: 700;
+}
+
+.ant-logo-mark {
+  display: inline-grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, hsl(var(--fd-primary)) 52%, transparent);
+  border-radius: 7px;
+  background: color-mix(in oklab, hsl(var(--fd-primary)) 16%, transparent);
+  color: hsl(var(--fd-primary));
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.ant-home {
+  margin: -0.5rem auto 0;
+  max-width: 72rem;
+  color: hsl(var(--fd-foreground));
+}
+
+.ant-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+  gap: 1.25rem;
+  align-items: stretch;
+  padding: 1rem 0 1.75rem;
+}
+
+.ant-hero-copy {
+  padding: 1.5rem 0.25rem;
+}
+
+.ant-kicker {
+  margin: 0 0 0.875rem;
+  color: hsl(var(--fd-primary));
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ant-hero h1 {
+  margin: 0;
+  max-width: 48rem;
+  font-size: 3.2rem;
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+
+.ant-hero-lede {
+  margin: 1.1rem 0 0;
+  max-width: 42rem;
+  color: hsl(var(--fd-muted-foreground));
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+.ant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.ant-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0 0.95rem;
+  border: 1px solid hsl(var(--fd-border));
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.ant-button-primary {
+  border-color: hsl(var(--fd-primary));
+  background: hsl(var(--fd-primary));
+  color: hsl(var(--fd-primary-foreground));
+}
+
+.ant-button-secondary {
+  background: hsl(var(--fd-muted) / 0.42);
+  color: hsl(var(--fd-foreground));
+}
+
+.ant-command-panel {
+  align-self: center;
+  overflow: hidden;
+  border: 1px solid hsl(var(--fd-border));
+  border-radius: 8px;
+  background: hsl(var(--fd-card));
+  box-shadow: 0 18px 60px rgb(0 0 0 / 0.18);
+}
+
+.ant-command-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid hsl(var(--fd-border));
+  color: hsl(var(--fd-muted-foreground));
+  font-size: 0.78rem;
+}
+
+.ant-command-panel pre {
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+  background: transparent;
+  color: hsl(var(--fd-foreground));
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.prose .ant-command-panel code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: none;
+}
+
+.ant-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.875rem;
+  margin: 1.25rem 0 1.75rem;
+}
+
+.ant-card {
+  min-height: 11rem;
+  padding: 1rem;
+  border: 1px solid hsl(var(--fd-border));
+  border-radius: 8px;
+  background: color-mix(in oklab, hsl(var(--fd-card)) 92%, hsl(var(--fd-primary)) 8%);
+  color: inherit;
+  text-decoration: none;
+}
+
+.ant-card h2,
+.ant-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0;
+  text-decoration: none;
+}
+
+.ant-card p {
+  margin: 0.65rem 0 0;
+  color: hsl(var(--fd-muted-foreground));
+  font-size: 0.92rem;
+  line-height: 1.55;
+  text-decoration: none;
+}
+
+.prose .ant-button,
+.prose .ant-button:hover,
+.prose .ant-card,
+.prose .ant-card:hover,
+.prose .ant-card * {
+  text-decoration: none !important;
+  text-decoration-line: none !important;
+}
+
+.ant-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.1rem 0 0;
+}
+
+.ant-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.85rem;
+  padding: 0 0.62rem;
+  border: 1px solid hsl(var(--fd-border));
+  border-radius: 999px;
+  background: hsl(var(--fd-muted) / 0.42);
+  color: hsl(var(--fd-muted-foreground));
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 860px) {
+  .ant-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .ant-hero h1 {
+    font-size: 2.3rem;
+  }
+
+  .ant-grid {
+    grid-template-columns: 1fr;
+  }
+}

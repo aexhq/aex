@@ -1,0 +1,35 @@
+{
+  "name": "@antpath/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/cli.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    }
+  },
+  "bin": {
+    "antpath": "./dist/cli.mjs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node ./scripts/finalize-bundle.mjs",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "pretest": "pnpm run build",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@antpath/contracts": "workspace:*",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

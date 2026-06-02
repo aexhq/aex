@@ -1,0 +1,31 @@
+{
+  "name": "@antpath/conformance",
+  "version": "0.13.3",
+  "private": false,
+  "license": "Apache-2.0",
+  "description": "Public conformance matchers for antpath-compatible event streams and structured errors.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "pretest": "pnpm run build",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "typescript": "5.8.3",
+    "vitest": "3.1.2"
+  }
+}

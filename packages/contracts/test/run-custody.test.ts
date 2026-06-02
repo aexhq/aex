@@ -1,0 +1,265 @@
+import { describe, expect, it } from "vitest";
+import {
+  CUSTODY_MANIFEST_SCHEMA_VERSION,
+  CUSTODY_TOMBSTONE_SCHEMA_VERSION,
+  CustodyManifestRedactionError,
+  FakeCustodyManifestObjectStore,
+  buildCustodyManifest,
+  buildCustodyTombstoneFromManifest,
+  createCustodyManifestWriter,
+  custodyManifestObjectKey,
+  scanCustodyPayloadForSensitiveValues
+} from "../src/index.js";
+
+const baseRun = {
+  runId: "run-11111111",
+  workspaceId: "workspace-11111111",
+  provider: "anthropic",
+  runtime: "native",
+  terminalStatus: "succeeded",
+  credentialMode: "byok",
+  createdAt: "2026-06-02T10:00:00.000Z",
+  terminalAt: "2026-06-02T10:05:00.000Z"
+} as const;
+
+describe("run custody manifest contract", () => {
+  it("builds a metadata-only terminal custody manifest", () => {
+    const manifest = buildCustodyManifest({
+      generatedAt: "2026-06-02T10:05:01.000Z",
+      finalizedAt: "2026-06-02T10:05:02.000Z",
+      run: baseRun,
+      secrets: [
+        {
+          class: "provider_api_key",
+          present: true,
+          count: 1,
+          exposures: [
+            {
+              surface: "antpath_vault",
+              access: "stored",
+              status: "revoked",
+              firstExposedAt: "2026-06-02T10:00:00.000Z",
+              revokedAt: "2026-06-02T10:05:01.000Z"
+            },
+            {
+              surface: "provider_session",
+              access: "replicated",
+              status: "revoked",
+              firstExposedAt: "2026-06-02T10:00:10.000Z",
+              revokedAt: "2026-06-02T10:05:01.000Z"
+            }
+          ],
+          disposition: {
+            status: "destroyed",
+            decidedAt: "2026-06-02T10:05:01.000Z"
+          },
+          evidence: [
+            {
+              source: "cleanup_step",
+              status: "confirmed",
+              observedAt: "2026-06-02T10:05:01.000Z",
+              count: 1
+            }
+          ]
+        },
+        {
+          class: "runner_bearer",
+          present: true,
+          exposures: [{ surface: "antpath_kv", access: "stored", status: "revoked" }],
+          disposition: { status: "revoked", decidedAt: "2026-06-02T10:05:01.000Z" }
+        }
+      ],
+      resources: [
+        {
+          class: "native_provider_session",
+          count: 1,
+          exposures: [{ surface: "provider_session", access: "replicated", status: "revoked" }],
+          disposition: {
+            status: "provider_delete_confirmed",
+            decidedAt: "2026-06-02T10:05:02.000Z"
+          },
+          evidence: [{ source: "provider_cleanup_summary", status: "confirmed", count: 1 }]
+        },
+        {
+          class: "run_output",
+          count: 2,
+          exposures: [{ surface: "run_artifact_store", access: "stored", status: "retained" }],
+          disposition: {
+            status: "retained_by_policy",
+            reason: "run_retained_until_user_delete",
+            decidedAt: "2026-06-02T10:05:02.000Z"
+          }
+        }
+      ],
+      cleanup: {
+        status: "partial",
+        startedAt: "2026-06-02T10:05:00.000Z",
+        finishedAt: "2026-06-02T10:05:02.000Z"
+      }
+    });
+
+    expect(manifest.schemaVersion).toBe(CUSTODY_MANIFEST_SCHEMA_VERSION);
+    expect(manifest.run).toMatchObject({
+      runId: "run-11111111",
+      workspaceId: "workspace-11111111",
+      provider: "anthropic",
+      runtime: "native",
+      terminalStatus: "succeeded"
+    });
+    expect(manifest.summary).toMatchObject({
+      secretClassCount: 2,
+      secretInstanceCount: 2,
+      resourceClassCount: 2,
+      resourceInstanceCount: 3,
+      exposureCount: 5,
+      revokedExposureCount: 4,
+      retainedCount: 1
+    });
+    expect(manifest.redaction.excludes).toEqual([
+      "raw_secret_values",
+      "bearer_hashes",
+      "provider_response_bodies",
+      "signed_urls",
+      "r2_object_keys",
+      "vault_ids",
+      "private_resource_handles"
+    ]);
+    expect(scanCustodyPayloadForSensitiveValues(manifest)).toEqual([]);
+    expect(JSON.parse(JSON.stringify(manifest))).toEqual(manifest);
+  });
+
+  it("rejects secret values, private handles, signed URLs, R2 keys, Vault ids, and forbidden fields", () => {
+    const cases: readonly [string, unknown, string][] = [
+      ["provider key", "sk-ant-test-1234567890", "provider_key"],
+      ["bearer", "Bearer runner-token-1234567890", "bearer_token"],
+      ["signed URL", "https://r2.example.test/file?X-Amz-Signature=abc", "signed_url"],
+      ["R2 key", "runs/run-11111111/metadata/custody.json", "r2_object_key"],
+      ["Vault id", "vault_secret_1234567890", "vault_id"],
+      ["resource handle", "session_1234567890", "private_resource_handle"],
+      ["forbidden field", { vaultId: "redacted" }, "forbidden_field_name"]
+    ];
+
+    for (const [name, payload, reason] of cases) {
+      const findings = scanCustodyPayloadForSensitiveValues(payload);
+      expect(findings, name).toEqual([
+        expect.objectContaining({ reason })
+      ]);
+    }
+
+    expect(() =>
+      buildCustodyManifest({
+        generatedAt: "2026-06-02T10:05:01.000Z",
+        run: baseRun,
+        secrets: [
+          {
+            class: "provider_api_key",
+            present: true,
+            exposures: [],
+            disposition: {
+              status: "cleanup_failed",
+              errorClass: "sk-ant-test-1234567890"
+            }
+          }
+        ]
+      })
+    ).toThrow(CustodyManifestRedactionError);
+  });
+
+  it("writes through the public writer interface without embedding object keys in the manifest", async () => {
+    const store = new FakeCustodyManifestObjectStore();
+    const writer = createCustodyManifestWriter(store);
+
+    const result = await writer.writeCustodyManifest({
+      generatedAt: "2026-06-02T10:05:01.000Z",
+      run: baseRun,
+      secrets: [
+        {
+          class: "mcp_credential",
+          present: false,
+          exposures: [],
+          disposition: { status: "not_applicable" }
+        }
+      ],
+      cleanup: { status: "succeeded", finishedAt: "2026-06-02T10:05:01.000Z" }
+    });
+
+    expect(result).toMatchObject({
+      status: "written",
+      runId: "run-11111111",
+      workspaceId: "workspace-11111111",
+      key: custodyManifestObjectKey("run-11111111")
+    });
+    expect(store.listKeys()).toEqual([custodyManifestObjectKey("run-11111111")]);
+
+    const stored = store.getByRunId("run-11111111");
+    expect(stored?.summary.secretInstanceCount).toBe(0);
+    expect(JSON.stringify(stored)).not.toContain("runs/run-11111111/");
+    expect(scanCustodyPayloadForSensitiveValues(stored)).toEqual([]);
+  });
+
+  it("builds an indefinite-retention tombstone with only identity, counts, statuses, and timestamps", () => {
+    const manifest = buildCustodyManifest({
+      generatedAt: "2026-06-02T10:05:01.000Z",
+      finalizedAt: "2026-06-02T10:05:02.000Z",
+      run: baseRun,
+      secrets: [
+        {
+          class: "provider_api_key",
+          present: true,
+          exposures: [{ surface: "antpath_vault", access: "stored", status: "revoked" }],
+          disposition: { status: "destroyed", decidedAt: "2026-06-02T10:05:01.000Z" }
+        }
+      ],
+      resources: [
+        {
+          class: "run_output",
+          count: 2,
+          exposures: [{ surface: "run_artifact_store", access: "stored", status: "retained" }],
+          disposition: { status: "retained_by_policy", decidedAt: "2026-06-02T10:05:02.000Z" }
+        }
+      ]
+    });
+
+    const tombstone = buildCustodyTombstoneFromManifest(manifest, {
+      manifestStatus: "purged",
+      tombstonedAt: "2026-06-02T10:06:00.000Z",
+      deletion: {
+        status: "deleted",
+        pendingAt: "2026-06-02T10:05:30.000Z",
+        deletedAt: "2026-06-02T10:06:00.000Z"
+      }
+    });
+
+    expect(tombstone.schemaVersion).toBe(CUSTODY_TOMBSTONE_SCHEMA_VERSION);
+    expect(tombstone).toMatchObject({
+      run: {
+        runId: "run-11111111",
+        workspaceId: "workspace-11111111",
+        terminalStatus: "succeeded",
+        terminalAt: "2026-06-02T10:05:00.000Z"
+      },
+      manifest: {
+        schemaVersion: CUSTODY_MANIFEST_SCHEMA_VERSION,
+        status: "purged",
+        tombstonedAt: "2026-06-02T10:06:00.000Z"
+      },
+      retention: {
+        defaultPolicy: "retain_indefinitely",
+        userAction: "purge_or_anonymize_later"
+      }
+    });
+    expect(tombstone.summary).toMatchObject({
+      secretClassCount: 1,
+      resourceClassCount: 1,
+      exposureCount: 2,
+      retainedCount: 1
+    });
+
+    const serialized = JSON.stringify(tombstone);
+    expect(serialized).not.toContain("anthropic");
+    expect(serialized).not.toContain("native");
+    expect(serialized).not.toContain("provider_api_key");
+    expect(serialized).not.toContain("run_artifact_store");
+    expect(scanCustodyPayloadForSensitiveValues(tombstone)).toEqual([]);
+  });
+});

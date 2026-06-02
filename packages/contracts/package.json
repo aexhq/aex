@@ -1,0 +1,27 @@
+{
+  "name": "@antpath/contracts",
+  "version": "0.13.3",
+  "description": "Public antpath wire contracts, SDK transport helpers, and conformance-facing schemas.",
+  "license": "Apache-2.0",
+  "private": false,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run",
+    "test:property": "vitest run property",
+    "test:coverage": "vitest run --coverage"
+  }
+}

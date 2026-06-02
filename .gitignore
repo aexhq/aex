@@ -1,0 +1,24 @@
+.env
+.env.*
+# Whitelist committed scaffolds; real secrets stay gitignored.
+!.env.example
+!.env.prod.example
+node_modules/
+dist/
+coverage/
+.turbo/
+.vite/
+.next/
+*.log
+*.tsbuildinfo
+# npm pack / publish artifacts
+*.tgz
+**/test/fixtures/api-recordings/**/*.raw.json
+**/test/fixtures/api-recordings/**/*.secret.json
+.claude/
+
+.vercel
+.wrangler/
+
+# Local SDK playground (inlined keys — never commit)
+scripts/antpath-sample.ts

@@ -1,0 +1,12 @@
+{
+  "title": "Reference",
+  "icon": "Braces",
+  "defaultOpen": true,
+  "pages": [
+    "index",
+    "sdk",
+    "cli",
+    "events",
+    "provider-runtime-capabilities"
+  ]
+}
