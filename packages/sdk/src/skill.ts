@@ -1,43 +1,37 @@
 import {
   SKILL_NAME_PATTERN,
-  type ProviderSkillRef,
+  type AssetRef,
+  type FetchLike,
   type SkillRef
 } from "@antpath/contracts";
 import { bundleSkillFiles, hashSkillBundle, type SkillFiles } from "./bundle.js";
+import { fetchSkillArchive } from "./fetch-archive.js";
 import { readDirectoryAsFiles } from "./node-fs.js";
 
 /**
- * One `Skill` class, two usage modes:
+ * One `Skill` class for skill bytes. `client.submitRun` materializes the bytes
+ * as an uploaded asset before the run lands; the wire ref becomes
+ * `kind:"asset"`.
  *
- *   - **Provider built-in** — references a provider-side skill (e.g.
- *     Anthropic's `pdf` / `xlsx` / `docx` / `pptx` prebuilt Agent
- *     Skills). Not uploaded.
- *     ```ts
- *     const pdf = Skill.provider({ vendor: "anthropic", skillId: "pdf" });
- *     ```
+ * Build from an inline files map (`Skill.fromFiles`), a local directory
+ * (`Skill.fromPath`), or a remote zip archive over a signed URL
+ * (`Skill.fromUrl`). All three converge on the same canonical bundle, so
+ * identical content dedups across sources.
  *
- *   - **Local bytes** — built from local files. `client.submitRun`
- *     materializes the bytes to R2 (content-addressable, workspace-
- *     scoped) before the run lands; the wire ref becomes `kind:"r2"`.
- *     ```ts
- *     const rules = await Skill.fromFiles({ name: "rules", files: {...} });
- *     await client.submitRun({ skills: [rules], ... });
- *     ```
- *
- * The workspace pre-upload concept is gone — R2's content-addressable
- * dedup at submit time makes the same bytes a no-op upload on subsequent
- * runs. There is no `Skill.fromId(...)` and no `.upload(client)`.
+ * Asset deduplication makes the same bytes a no-op upload on subsequent runs.
+ * There is no `Skill.fromId(...)` and no `.upload(client)` — a URL is an
+ * ingestion source, not a persistent reference.
  */
 export class Skill {
-  readonly #ref: SkillRef | DraftSkillRef;
+  readonly #ref: AssetRef | DraftSkillRef;
   readonly #inlineBytes: Uint8Array | undefined;
   #consumed = false;
 
   /**
-   * Internal constructor. Use `Skill.provider`, `Skill.fromFiles`, or
-   * `Skill.fromPath` to create instances.
+   * Internal constructor. Use `Skill.fromFiles` or `Skill.fromPath` to create
+   * instances.
    */
-  constructor(ref: SkillRef | DraftSkillRef, inlineBytes?: Uint8Array) {
+  private constructor(ref: AssetRef | DraftSkillRef, inlineBytes?: Uint8Array) {
     this.#ref = ref;
     this.#inlineBytes = inlineBytes;
   }
@@ -45,10 +39,10 @@ export class Skill {
   /**
    * The wire-level reference. Returns the SDK-private draft shape for
    * un-materialized skills (kind:"draft", with name + contentHash).
-   * `client.submitRun` walks these and uploads to R2 before the run
+   * `client.submitRun` walks these and uploads them before the run
    * lands.
    */
-  get ref(): SkillRef | DraftSkillRef {
+  get ref(): AssetRef | DraftSkillRef {
     return this.#ref;
   }
 
@@ -62,34 +56,11 @@ export class Skill {
   }
 
   /**
-   * Reference a provider built-in skill (e.g. Anthropic Skills).
-   */
-  static provider(args: {
-    readonly vendor: ProviderSkillRef["vendor"];
-    readonly skillId: string;
-    readonly version?: string;
-  }): Skill {
-    if (!args || typeof args !== "object") {
-      throw new Error("Skill.provider: args is required");
-    }
-    if (typeof args.vendor !== "string" || !args.vendor) {
-      throw new Error("Skill.provider: vendor is required");
-    }
-    if (typeof args.skillId !== "string" || !args.skillId) {
-      throw new Error("Skill.provider: skillId is required");
-    }
-    const ref: ProviderSkillRef = args.version
-      ? { kind: "provider", vendor: args.vendor, skillId: args.skillId, version: args.version }
-      : { kind: "provider", vendor: args.vendor, skillId: args.skillId };
-    return new Skill(ref);
-  }
-
-  /**
    * Build a draft Skill from an inline files map. The SDK validates
    * basic safety (no path traversal, size caps, has `SKILL.md`),
    * deterministically zips the bundle, and computes the
    * `sha256:<hex>` content hash. `client.submitRun` materializes
-   * these to R2 before the run lands.
+   * these before the run lands.
    */
   static async fromFiles(args: { readonly name: string; readonly files: SkillFiles }): Promise<Skill> {
     if (!args || typeof args !== "object") {
@@ -118,14 +89,51 @@ export class Skill {
   }
 
   /**
+   * Fetch a zip-archived skill from a URL and build a draft Skill. The archive
+   * is downloaded in the SDK process, so the URL is caller-controlled — host
+   * the skill yourself and pass a temporary signed URL (e.g. an S3 presigned
+   * URL). Its bytes are optionally integrity-checked against `sha256`, unzipped,
+   * and reduced to the same files map as `Skill.fromFiles` — so a URL-sourced
+   * skill and the identical local skill produce the same canonical asset and
+   * dedup against each other.
+   *
+   * The archive must contain `SKILL.md` at its root, or inside a single
+   * top-level folder (which is stripped). The signed URL only needs to be valid
+   * for this call; `client.submitRun` snapshots the bytes into the run.
+   *
+   * Universal (Node 18+ / browser): requires a global `fetch`, or pass one.
+   */
+  static async fromUrl(
+    url: string,
+    args: {
+      readonly name: string;
+      readonly sha256?: string;
+      readonly timeoutMs?: number;
+      readonly fetch?: FetchLike;
+    }
+  ): Promise<Skill> {
+    if (!args || typeof args !== "object") {
+      throw new Error("Skill.fromUrl: args is required");
+    }
+    if (typeof args.name !== "string" || !SKILL_NAME_PATTERN.test(args.name)) {
+      throw new Error(`Skill.fromUrl: name must match ${SKILL_NAME_PATTERN.source}`);
+    }
+    const files = await fetchSkillArchive(url, {
+      ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
+      ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+      ...(args.fetch !== undefined ? { fetch: args.fetch } : {})
+    });
+    return Skill.fromFiles({ name: args.name, files });
+  }
+
+  /**
    * Internal: yield the draft's bytes + metadata so `client.submitRun`
-   * can upload to R2. After this returns, the Skill is marked consumed
+   * can upload the asset. After this returns, the Skill is marked consumed
    * so a second submitRun call against the same instance throws
    * (avoid silently re-uploading; explicit re-construction is the
    * supported retry pattern).
    *
-   * Returns undefined for non-draft (provider / already-materialized)
-   * Skills.
+   * Returns undefined for already-materialized Skills.
    */
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
     if (this.#consumed) {
@@ -149,7 +157,7 @@ export class Skill {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "Skill: draft Skills cannot be JSON-serialised — they only become wire refs when " +
-          "client.submitRun uploads the bytes to R2."
+        "client.submitRun uploads the bytes as an asset."
       );
     }
     return this.#ref;
@@ -159,7 +167,7 @@ export class Skill {
 /**
  * SDK-internal draft skill marker. Never reaches the wire; the
  * materialize step inside `client.submitRun` converts these to
- * `kind:"r2"` refs.
+ * `kind:"asset"` refs.
  */
 export interface DraftSkillRef {
   readonly kind: "draft";

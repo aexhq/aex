@@ -94,3 +94,46 @@ when the caller tries to fetch the bytes of a deleted skill.
 
 New `submitRun` calls referencing a soft-deleted `skl_*` id are
 rejected before insertion.
+
+## Fetch from a signed URL (`Skill.fromUrl`)
+
+When your app runs in the cloud with limited storage, you may not want to
+bundle skill bytes with it. Host the skill yourself as a **zip archive**
+(with `SKILL.md` at the archive root) and hand the SDK a temporary signed
+URL — e.g. an S3 presigned URL:
+
+```ts
+import { AntpathClient, Skill } from "antpath";
+
+const client = new AntpathClient({ apiToken });
+
+await client.submitRun({
+  model, prompt,
+  skills: [
+    await Skill.fromUrl(signedUrl, { name: "rules", sha256: "sha256:<hex>" })
+  ],
+  secrets: { anthropic: { apiKey } }
+});
+```
+
+`Skill.fromUrl` fetches the archive **in the SDK process** — the URL is
+caller-controlled, so there is no server-side fetch — optionally verifies the
+download against `sha256`, unzips it, and reduces it to the same files map as
+`Skill.fromFiles`. A URL-sourced skill and the identical local skill therefore
+produce the **same canonical asset** and dedup against each other.
+
+- The archive must contain `SKILL.md` at its root, or inside a single
+  top-level folder, which is stripped automatically. Anything else is
+  rejected with an error listing the archive's actual top-level entries.
+- The signed URL only needs to be valid **for this call**. `client.submitRun`
+  snapshots the bytes into the run immediately, so the URL can expire
+  afterwards with no effect on the run.
+- `sha256` is an optional source-integrity check on the downloaded archive
+  (distinct from the canonical bundle hash); a mismatch fails fast before the
+  unzip. Signed-URL query strings are never echoed in error messages.
+- The same upload caps apply (10 MB compressed / 50 MB decompressed /
+  1000 files); `Skill.fromUrl` materialises the whole bundle, it is not a
+  streaming mount.
+
+`Skill.fromUrl` is universal (Node 18+ / browser): it uses the global `fetch`,
+or pass one via `{ fetch }`.
