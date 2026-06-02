@@ -6,7 +6,7 @@ title: Credentials
 
 antpath does not store provider keys or MCP credential values across runs.
 
-The caller passes a workspace-scoped SDK token and exactly one matching provider key inline on every `submitRun` call. antpath holds the bundle in run-scoped custody for the run lifecycle and runs terminal cleanup/revocation for the antpath-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
+The caller passes a workspace-scoped SDK token and exactly one matching provider key inline on every `submitRun` call. antpath holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the antpath-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
 
 Provider keys are coupled to the submitted `provider`:
 
@@ -31,7 +31,7 @@ Unsupported:
 - OAuth refresh;
 - persisted antpath vault.
 
-For native provider runtimes, antpath creates per-run provider vault credentials and tracks provider IDs for cleanup. For Goose Managed runs, antpath injects the matching BYOK provider key at the hosted provider-proxy. Provider-side sessions and data remain subject to the selected provider account's retention and deletion policies.
+For native provider runtimes, antpath creates per-run provider vault credentials and tracks provider IDs for cleanup attempts. For Goose Managed runs, antpath injects the matching BYOK provider key at the hosted provider-proxy. Provider-side sessions and data remain subject to the selected provider account's retention and deletion policies.
 
 ## Proxy endpoints (per-run custom HTTP credentials)
 

@@ -15,13 +15,13 @@ import {
 // existing `@antpath/contracts` consumers of `PROXY_ENDPOINT_DEFAULTS` are
 // unaffected by the move.
 export { PROXY_ENDPOINT_DEFAULTS };
-import { parseMcpServerRef, parseR2RefFields, parseSkillRef } from "./blueprint.js";
+import { parseMcpServerRef, parseR2RefFields, parseSkillRef } from "./run-config.js";
 import type {
   AgentsMdRef,
   FileRef,
   McpServerRef,
   SkillRef
-} from "./blueprint.js";
+} from "./run-config.js";
 import { parseMachineSize, parseRunTimeout, type MachineSize } from "./machine-sizes.js";
 import {
   NATIVE_RUNTIME_PROVIDERS,

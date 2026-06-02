@@ -13,6 +13,7 @@ checkSdkPackageManifest();
 checkContractsInlineBaseline();
 checkPublicImportDirection();
 checkPublicDeploymentClaims();
+checkPublicSurfaceLanguage();
 checkSdkPackDryRun();
 
 if (failures.length > 0) {
@@ -25,7 +26,7 @@ if (failures.length > 0) {
 
 console.log(
   "public-boundary: checked SDK exports/deps, SDK pack dry-run, public import direction, " +
-    "and public deployment claims."
+    "public surface language, and public deployment claims."
 );
 console.log("public-boundary: contracts inline baseline contains only curated public contract modules.");
 
@@ -101,16 +102,7 @@ function checkPublicImportDirection() {
 }
 
 function checkPublicDeploymentClaims() {
-  const docs = [];
-  for (const entry of baseline.publicDocs) {
-    const abs = resolve(repoRoot, entry);
-    const stat = statSync(abs);
-    if (stat.isDirectory()) {
-      docs.push(...walk(abs, (file) => file.endsWith(".md")));
-    } else {
-      docs.push(abs);
-    }
-  }
+  const docs = publicDocFiles();
 
   const patterns = [
     { name: "self-host", pattern: /\bself[-\s]?host(?:ed|ing)?\b/i },
@@ -144,6 +136,8 @@ function isUnsupportedDeploymentContext(lines, index) {
     "not as a supported",
     "not a supported",
     "not supported",
+    "does not provide",
+    "properties of the selected provider",
     "not a custom",
     "unsupported",
     "non-goal",
@@ -154,6 +148,53 @@ function isUnsupportedDeploymentContext(lines, index) {
     "not a self-host promise",
     "not a supported self-host deployment claim"
   ].some((needle) => window.includes(needle));
+}
+
+function checkPublicSurfaceLanguage() {
+  const textFiles = new Map();
+  for (const file of publicDocFiles()) {
+    textFiles.set(file, "public docs");
+  }
+  for (const root of baseline.publicSourceRoots) {
+    for (const file of walk(resolve(repoRoot, root), isSourceFile)) {
+      textFiles.set(file, "public source");
+    }
+  }
+
+  const forbiddenSurfaceTerms = [
+    { name: "Blueprint", pattern: /\bBlueprint\b/ },
+    { name: "defineRun", pattern: /\bdefineRun\b/ },
+    { name: "compileTemplate", pattern: /\bcompileTemplate\b/ },
+    { name: "Template", pattern: /\b[Tt]emplate(?:Definition|ValidationError)?\b|\bTEMPLATE_INVALID\b|\btemplate(?:Name|Hash)\b/ }
+  ];
+  const riskyClaimTerms = [
+    { name: "unqualified cleanup destruction claim", pattern: /\b(?:destroyed|purged)\s+at\s+cleanup\b/i },
+    { name: "priority guarantee", pattern: /\bhighest[-\s]?priority\b/i },
+    { name: "zero-retention guarantee", pattern: /\bzero[-\s]?retention\b/i }
+  ];
+
+  const offenders = [];
+  for (const [file, scope] of textFiles) {
+    const text = readFileSync(file, "utf8");
+    const lines = text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      for (const { name, pattern } of forbiddenSurfaceTerms) {
+        if (pattern.test(line)) {
+          offenders.push(`${rel(file)}:${index + 1} (${scope}) contains removed public surface term "${name}"`);
+        }
+      }
+      for (const { name, pattern } of riskyClaimTerms) {
+        if (pattern.test(line) && !isUnsupportedDeploymentContext(lines, index)) {
+          offenders.push(`${rel(file)}:${index + 1} (${scope}) contains risky public claim "${name}"`);
+        }
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    failures.push(`public surface language violations:\n${offenders.map((o) => `  ${o}`).join("\n")}`);
+  }
 }
 
 function checkSdkPackDryRun() {
@@ -225,6 +266,7 @@ function checkSdkPackDryRun() {
   );
 
   const secretOffenders = [];
+  const surfaceOffenders = [];
   for (const file of files) {
     if (!isTextPackFile(file)) continue;
     const abs = resolve(pkgDir, file);
@@ -237,10 +279,30 @@ function checkSdkPackDryRun() {
     for (const { name, pattern } of secretPatterns()) {
       if (pattern.test(text)) secretOffenders.push(`${file} contains ${name}`);
     }
+    for (const { name, pattern } of packedSurfacePatterns()) {
+      if (pattern.test(text)) surfaceOffenders.push(`${file} contains removed public surface term ${name}`);
+    }
   }
   if (secretOffenders.length > 0) {
     failures.push(`SDK packed file secret-shaped content:\n${secretOffenders.map((o) => `  ${o}`).join("\n")}`);
   }
+  if (surfaceOffenders.length > 0) {
+    failures.push(`SDK packed file public-surface leak(s):\n${surfaceOffenders.map((o) => `  ${o}`).join("\n")}`);
+  }
+}
+
+function publicDocFiles() {
+  const docs = [];
+  for (const entry of baseline.publicDocs) {
+    const abs = resolve(repoRoot, entry);
+    const stat = statSync(abs);
+    if (stat.isDirectory()) {
+      docs.push(...walk(abs, (file) => file.endsWith(".md")));
+    } else {
+      docs.push(abs);
+    }
+  }
+  return docs;
 }
 
 function importSpecifiers(text) {
@@ -291,6 +353,15 @@ function secretPatterns() {
     { name: "OpenAI API key", pattern: /sk-[A-Za-z0-9_-]{32,}/ },
     { name: "GitHub token", pattern: /gh[pousr]_[A-Za-z0-9_]{20,}/ },
     { name: "private key block", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }
+  ];
+}
+
+function packedSurfacePatterns() {
+  return [
+    { name: "Blueprint", pattern: /\bBlueprint\b/ },
+    { name: "defineRun", pattern: /\bdefineRun\b/ },
+    { name: "compileTemplate", pattern: /\bcompileTemplate\b/ },
+    { name: "Template", pattern: /\b[Tt]emplate(?:Definition|ValidationError)?\b|\bTEMPLATE_INVALID\b|\btemplate(?:Name|Hash)\b/ }
   ];
 }
 

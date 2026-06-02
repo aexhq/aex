@@ -1,5 +1,5 @@
 /**
- * The flat agent-first composition surface that replaces `Template`.
+ * Run-request config and composition refs for the public SDK/CLI surface.
  *
  * Public composition concepts:
  *
@@ -11,7 +11,7 @@
  *     terminal). The three shapes are discriminated by `kind` so
  *     consumers branch mechanically and providers can never accidentally
  *     be looked up in `skill_bundles`. Transient refs do NOT round-trip
- *     through JSON (bytes can't be serialised back); `parseBlueprint`
+ *     through JSON (bytes can't be serialised back); `parseRunRequestConfig`
  *     therefore rejects them while the BFF multipart submission parser
  *     accepts them.
  *
@@ -21,14 +21,11 @@
  *     `name`, and never enter the hashed submission payload or the
  *     run snapshot.
  *
- *   - `Blueprint` is what the user authors. It excludes
- *     `secrets`/`idempotencyKey`/`signal` so it can be safely persisted
- *     to disk (e.g. `antpath run --config run.json`), shared between
- *     teams, or curried via `defineRun` without leaking credentials.
- *     Strings inside a Blueprint are **already resolved** — there are
- *     no `{{variable}}` placeholders, no template language, no late
- *     binding. The whole point of `defineRun` is to make the resolution
- *     happen at the TS call site where the IDE can type-check it.
+ *   - `RunRequestConfig` is the credential-free set of run parameters that
+ *     can be persisted to disk (e.g. `antpath run --config run.json`) or
+ *     returned from ordinary application helper functions. It excludes
+ *     `secrets`/`idempotencyKey`/`signal`; strings are already resolved at
+ *     the call site before submission.
  *
  *   - Skill bundle validation lives here so the SDK (zipping locally),
  *     hosted API (server-side unzip + manifest extraction) and runtime
@@ -496,7 +493,7 @@ export function hasSkillMdAtRoot(manifest: SkillBundleManifest): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// McpServerRef (non-secret) + BlueprintMcpServer (with optional headers)
+// McpServerRef (non-secret) + RunConfigMcpServer (with optional headers)
 // ---------------------------------------------------------------------------
 
 /**
@@ -545,12 +542,11 @@ export interface McpServerRef {
 export const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,62}$/;
 
 /**
- * A Blueprint-level MCP entry. The user is free to supply headers
- * inline; the SDK splits the call site cleanly at submission time so
- * the Authorization (or other auth-bearing) header never enters the
- * non-secret wire payload.
+ * A run-config MCP entry. The user is free to supply headers inline; the SDK
+ * splits the call site cleanly at submission time so the Authorization (or
+ * other auth-bearing) header never enters the non-secret wire payload.
  */
-export interface BlueprintMcpServer extends McpServerRef {
+export interface RunConfigMcpServer extends McpServerRef {
   readonly headers?: Readonly<Record<string, string>>;
 }
 
@@ -560,13 +556,13 @@ export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
   }
   const record = input as Record<string, unknown>;
   rejectStdioMcpShape(record);
-  // Headers belong on `BlueprintMcpServer`, not the non-secret wire ref;
+  // Headers belong on `RunConfigMcpServer`, not the non-secret wire ref;
   // and the wire `submission.mcpServers` must NEVER contain headers. So
   // reject any field other than {name,url,transport} explicitly to make a
   // caller accidentally inlining `headers` into the non-secret half fail
   // loudly instead of silently dropping the field.
-  // `parseBlueprintMcpServer` handles the headers case separately for
-  // Blueprint-level entries.
+  // `parseRunConfigMcpServerRef` handles the headers case separately for
+  // run-config entries.
   for (const key of Object.keys(record)) {
     if (key !== "name" && key !== "url" && key !== "transport") {
       throw new Error(
@@ -697,12 +693,11 @@ function parseRemoteMcpTransport(input: unknown, field: string): RemoteMcpTransp
 }
 
 /**
- * Strict parser for Blueprint-level MCP server entries. Allows only the
- * `{name, url, headers?}` shape — used by `parseBlueprintMcpServers` so
- * a Blueprint that came from `--config run.json` cannot smuggle
- * unrelated fields past the parser.
+ * Strict parser for run-config MCP server entries. Allows only the
+ * `{name, url, headers?}` shape so config loaded from `--config run.json`
+ * cannot smuggle unrelated fields past the parser.
  */
-function parseBlueprintMcpServerRef(input: unknown, path: string): BlueprintMcpServer {
+function parseRunConfigMcpServerRef(input: unknown, path: string): RunConfigMcpServer {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new Error(`${path} must be an object`);
   }
@@ -711,7 +706,7 @@ function parseBlueprintMcpServerRef(input: unknown, path: string): BlueprintMcpS
   for (const key of Object.keys(record)) {
     if (key !== "name" && key !== "url" && key !== "headers" && key !== "transport") {
       throw new Error(
-        `${path}.${key} is not an allowed field for BlueprintMcpServer; permitted: name, url, transport, headers`
+        `${path}.${key} is not an allowed field for RunConfigMcpServer; permitted: name, url, transport, headers`
       );
     }
   }
@@ -750,7 +745,7 @@ export interface RunRequestConfig {
   readonly system?: string;
   readonly prompt: string | readonly string[];
   readonly skills?: readonly SkillRef[];
-  readonly mcpServers?: readonly BlueprintMcpServer[];
+  readonly mcpServers?: readonly RunConfigMcpServer[];
   readonly environment?: PlatformEnvironment;
   readonly cleanup?: PlatformCleanupPolicy;
   /** Goose Fly-machine size preset (see {@link MachineSize}). */
@@ -759,40 +754,6 @@ export interface RunRequestConfig {
   readonly timeout?: string;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
-}
-
-/** @deprecated Internal migration alias. Public SDK callers submit ordinary run parameters. */
-export type Blueprint = RunRequestConfig;
-
-/**
- * @deprecated Internal migration alias. Public SDK callers should use ordinary
- * functions returning run parameters and pass those parameters to `submitRun`.
- *
- * ```ts
- * const investigate = defineRun((p: { repo: string; issue: number }) => ({
- *   model: "claude-sonnet-4-5-20250929",
- *   system: `You work on ${p.repo}.`,
- *   prompt: `Investigate issue #${p.issue}.`,
- *   skills: [rules],
- * }));
- * await client.submitRun({
- *   ...investigate({ repo: "antpath", issue: 123 }),
- *   secrets: { anthropic: { apiKey } },
- * });
- * ```
- *
- * The returned function is referentially transparent — it just calls
- * the provided producer. The wrapper exists for two reasons: (a) a
- * single named entry point makes IDEs surface the type of the inner run config
- * at the call site, and (b) it pins the "no late binding" contract — strings
- * inside the config are resolved by the TS call site, not by a server-side
- * template engine.
- */
-export function defineRun<TParams>(producer: (params: TParams) => RunRequestConfig): (params: TParams) => RunRequestConfig {
-  if (typeof producer !== "function") {
-    throw new TypeError("defineRun expects a function");
-  }
-  return (params: TParams): RunRequestConfig => producer(params);
 }
 
 // ---------------------------------------------------------------------------
@@ -870,9 +831,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
   };
 }
 
-/** @deprecated Internal migration alias. Use `parseRunRequestConfig`. */
-export const parseBlueprint = parseRunRequestConfig;
-
 function parseRunRequestConfigPrompt(value: unknown): string | readonly string[] {
   if (typeof value === "string") {
     if (value.length === 0) {
@@ -909,7 +867,7 @@ function parseRunRequestConfigSkills(value: unknown): readonly SkillRef[] | unde
   );
 }
 
-function parseRunRequestConfigMcpServers(value: unknown): readonly BlueprintMcpServer[] | undefined {
+function parseRunRequestConfigMcpServers(value: unknown): readonly RunConfigMcpServer[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -918,7 +876,7 @@ function parseRunRequestConfigMcpServers(value: unknown): readonly BlueprintMcpS
   }
   const seen = new Set<string>();
   return value.map((item, index) => {
-    const entry = parseBlueprintMcpServerRef(item, `run request config mcpServers[${index}]`);
+    const entry = parseRunConfigMcpServerRef(item, `run request config mcpServers[${index}]`);
     if (seen.has(entry.name)) {
       throw new Error(`run request config mcpServers duplicate name: ${entry.name}`);
     }
@@ -928,20 +886,20 @@ function parseRunRequestConfigMcpServers(value: unknown): readonly BlueprintMcpS
 }
 
 // ---------------------------------------------------------------------------
-// Normalisation: Blueprint -> wire-ready submission + secrets split
+// Normalisation: run config -> wire-ready submission + secrets split
 // ---------------------------------------------------------------------------
 
 /**
- * Result of splitting a `Blueprint` into the non-secret submission and
- * the secret MCP-headers bundle. The SDK calls this just before posting
- * to /api/runs: the `submission` half is what the BFF hashes for
- * idempotency, the `mcpServerSecrets` half is what enters the Vault.
+ * Result of splitting a run config into the non-secret submission and the
+ * secret MCP-headers bundle. The SDK calls this just before posting to
+ * /api/runs: the `submission` half is what the BFF hashes for idempotency, the
+ * `mcpServerSecrets` half is what enters run-scoped custody.
  *
  * `prompt` is normalised to `readonly string[]` (single-string callers
  * get wrapped in a length-1 array) so the wire payload, the worker, and
  * the audit log don't have to re-handle two shapes.
  */
-export interface NormalisedBlueprint {
+export interface NormalisedRunRequestConfig {
   readonly model: string;
   readonly system?: string;
   readonly prompt: readonly string[];
@@ -952,8 +910,8 @@ export interface NormalisedBlueprint {
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
   /**
-   * MCP servers whose Blueprint entry carried `headers`. Keyed by the
-   * `name` that appears in `mcpServers` so the BFF can pair them up.
+   * MCP servers whose run-config entry carried `headers`. Keyed by the `name`
+   * that appears in `mcpServers` so the BFF can pair them up.
    */
   readonly mcpServerSecrets: ReadonlyArray<{
     readonly name: string;
@@ -962,28 +920,28 @@ export interface NormalisedBlueprint {
   }>;
 }
 
-export function normaliseBlueprint(blueprint: Blueprint): NormalisedBlueprint {
+export function normaliseRunRequestConfig(config: RunRequestConfig): NormalisedRunRequestConfig {
   const prompt: readonly string[] =
-    typeof blueprint.prompt === "string" ? [blueprint.prompt] : blueprint.prompt;
-  const skills: readonly SkillRef[] = blueprint.skills ?? [];
+    typeof config.prompt === "string" ? [config.prompt] : config.prompt;
+  const skills: readonly SkillRef[] = config.skills ?? [];
   const mcpServers: McpServerRef[] = [];
-  const mcpServerSecrets: NormalisedBlueprint["mcpServerSecrets"][number][] = [];
-  for (const entry of blueprint.mcpServers ?? []) {
+  const mcpServerSecrets: NormalisedRunRequestConfig["mcpServerSecrets"][number][] = [];
+  for (const entry of config.mcpServers ?? []) {
     mcpServers.push({ name: entry.name, url: entry.url });
     if (entry.headers !== undefined) {
       mcpServerSecrets.push({ name: entry.name, url: entry.url, headers: entry.headers });
     }
   }
   return {
-    model: blueprint.model,
-    ...(blueprint.system !== undefined ? { system: blueprint.system } : {}),
+    model: config.model,
+    ...(config.system !== undefined ? { system: config.system } : {}),
     prompt,
     skills,
     mcpServers,
-    ...(blueprint.environment !== undefined ? { environment: blueprint.environment } : {}),
-    ...(blueprint.cleanup !== undefined ? { cleanup: blueprint.cleanup } : {}),
-    ...(blueprint.proxyEndpoints !== undefined ? { proxyEndpoints: blueprint.proxyEndpoints } : {}),
-    ...(blueprint.metadata !== undefined ? { metadata: blueprint.metadata } : {}),
+    ...(config.environment !== undefined ? { environment: config.environment } : {}),
+    ...(config.cleanup !== undefined ? { cleanup: config.cleanup } : {}),
+    ...(config.proxyEndpoints !== undefined ? { proxyEndpoints: config.proxyEndpoints } : {}),
+    ...(config.metadata !== undefined ? { metadata: config.metadata } : {}),
     mcpServerSecrets
   };
 }

@@ -13,8 +13,6 @@ export interface Run {
   readonly id: string;
   readonly status: string;
   readonly workspaceId?: string;
-  readonly templateName?: string;
-  readonly templateHash?: string;
   readonly createdAt?: string;
   readonly updatedAt?: string;
   readonly terminalAt?: string | null;

@@ -1,7 +1,7 @@
 import { redactSecrets } from "./sdk-secrets.js";
 
 export type AntpathErrorCode =
-  | "TEMPLATE_INVALID"
+  | "RUN_CONFIG_INVALID"
   | "CREDENTIAL_INVALID"
   | "PROVIDER_ERROR"
   | "RUN_STATE_ERROR"
@@ -21,9 +21,9 @@ export class AntpathError extends Error {
   }
 }
 
-export class TemplateValidationError extends AntpathError {
+export class RunConfigValidationError extends AntpathError {
   constructor(message: string, details?: unknown) {
-    super("TEMPLATE_INVALID", message, details);
+    super("RUN_CONFIG_INVALID", message, details);
   }
 }
 
