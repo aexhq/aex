@@ -20,11 +20,11 @@
  * detail response stays bounded). The archive zip carries the bytes.
  */
 
-import type { McpServerRef, SkillRef } from "./blueprint.js";
+import type { McpServerRef, SkillRef } from "./run-config.js";
 import {
   parseMcpServerRef,
   parseSkillRef
-} from "./blueprint.js";
+} from "./run-config.js";
 import type { CleanupStatus } from "./status.js";
 import type {
   JsonValue,
@@ -43,7 +43,7 @@ import { PLATFORM_PACKAGE_ECOSYSTEMS } from "./submission.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed view of `runs.template_snapshot` jsonb. Stored shape is
+ * Parsed view of the legacy run snapshot jsonb. Stored shape is
  * `{kind:"submission", submission, cleanup?}` written by the hosted API's
  * server-side run creation for all runs.
  */
@@ -230,7 +230,7 @@ export interface RunUnit {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a `runs.template_snapshot` jsonb payload into the typed flat
+ * Parse a legacy run snapshot jsonb payload into the typed flat
  * submission. Never throws on minor unknown keys so we can
  * forward-compat with worker-side enrichment.
  *

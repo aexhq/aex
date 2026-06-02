@@ -34,10 +34,12 @@ Out of scope:
 ## BYOK and secret handling
 
 `antpath` is bring-your-own-key. Provider keys and MCP credentials
-travel inline with each run, are held in Vault for the lifetime of
-that run, and are destroyed at cleanup. Reports related to secret
-leakage, persistence beyond a run, or cross-tenant secret exposure
-are highest-priority.
+travel inline with each run and are held in run-scoped custody for the
+run lifecycle. antpath attempts terminal cleanup/revocation for
+antpath-controlled references; provider-side credentials, sessions, and data
+remain subject to the selected provider account's policies. Reports related to
+secret leakage, persistence beyond a run, or cross-tenant secret exposure are
+high-priority.
 
 Security-sensitive implementation design is documented separately. Public
 credential handling behavior is documented in `packages/sdk/docs/credentials.md`

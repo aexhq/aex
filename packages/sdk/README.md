@@ -126,7 +126,7 @@ antpath run \
   --follow
 ```
 
-`--config` accepts a plain run-request JSON file: `{ model, system?, prompt, skills?, mcpServers?, environment?, cleanup?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site.
+`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, cleanup?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site.
 
 ## Test commands
 

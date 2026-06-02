@@ -19,7 +19,7 @@ export * from "./managed-key.js";
 export * from "./stable.js";
 export * from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
-export * from "./blueprint.js";
+export * from "./run-config.js";
 export * from "./runtime-types.js";
 export * from "./known-events.js";
 export * from "./http.js";

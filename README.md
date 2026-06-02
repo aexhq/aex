@@ -9,8 +9,8 @@
 `antpath` is the serverless control plane for autonomous agent sessions.
 Declare the agent's environment - model, prompt, skills, MCP servers,
 files, output dirs - submit it, and get back a typed event stream plus
-captured outputs. **BYOK** for provider keys; antpath runs cleanup for
-tracked run resources at terminal while provider and infrastructure
+captured outputs. **BYOK** for provider keys; antpath attempts cleanup
+for tracked run resources at terminal while provider and infrastructure
 retention stay under their own policies.
 
 ## Install
@@ -49,9 +49,9 @@ await client.wait(runId);
 await client.download(runId, { to: "./run.zip" });
 ```
 
-Same shape from the CLI: `antpath run --config run.json` accepts
-the same `{ model, prompt, skills, mcpServers, ... }`
-fields; `antpath events <run-id> --follow` streams, and
+Same run request from the CLI: `antpath run --config run.json` accepts
+the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
+`antpath events <run-id> --follow` streams, and
 `antpath wait <run-id> [--timeout 8m]` blocks until the run finishes.
 
 ## Composition
@@ -62,8 +62,8 @@ fields; `antpath events <run-id> --follow` streams, and
   content-addressable, workspace-scoped R2 storage before the run lands,
   so the same bytes are a no-op upload on subsequent runs. MCP servers
   can be remote or workspace-registered.
-- **Outputs are captured, tracked resources are cleaned up.** Files
-  written under `outputDirs` go to private storage; antpath cleans up
+- **Outputs are captured, tracked resource cleanup is attempted.** Files
+  written under `outputDirs` go to private storage; antpath attempts cleanup of
   tracked runtime resources at terminal. Opt into provider-session
   retention with `cleanup.session: "retain"`.
 

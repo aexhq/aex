@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  defineRun,
   isProviderSkillRef,
   isR2SkillRef,
   MCP_SERVER_NAME_PATTERN,
-  normaliseBlueprint,
   normaliseSkillBundlePath,
-  parseBlueprint,
+  normaliseRunRequestConfig,
+  parseRunRequestConfig,
   parseRunSubmissionRequest,
   parseMcpServerRef,
   parseSkillRef,
@@ -17,7 +16,7 @@ import {
   INLINE_CONTENT_HASH_PATTERN,
   validateSkillBundleEntry,
   validateSkillBundleManifest,
-  type Blueprint,
+  type RunRequestConfig,
   type SkillRef
 } from "../src/index.js";
 
@@ -51,7 +50,7 @@ const baseSubmission = {
   }
 } as const;
 
-describe("blueprint — id and name patterns", () => {
+describe("run-config — id and name patterns", () => {
   it("accepts the canonical skl_ id format", () => {
     expect(SKILL_ID_PATTERN.test(goodSkillId)).toBe(true);
   });
@@ -74,7 +73,7 @@ describe("blueprint — id and name patterns", () => {
   });
 });
 
-describe("blueprint — parseSkillRef", () => {
+describe("run-config — parseSkillRef", () => {
   it("parses a provider ref round-trip", () => {
     const parsed = parseSkillRef(goodProviderRef, "ref");
     expect(parsed).toEqual(goodProviderRef);
@@ -113,7 +112,7 @@ describe("blueprint — parseSkillRef", () => {
   });
 });
 
-describe("blueprint — parseMcpServerRef", () => {
+describe("run-config — parseMcpServerRef", () => {
   it("accepts http and https urls", () => {
     expect(parseMcpServerRef({ name: "x", url: "http://example.com" }, "r").url).toBe(
       "http://example.com"
@@ -133,12 +132,12 @@ describe("blueprint — parseMcpServerRef", () => {
     ).toThrow(/name/i);
   });
 
-  it("strips headers from the non-secret ref (headers live on BlueprintMcpServer)", () => {
+  it("strips headers from the non-secret ref (headers live on RunConfigMcpServer)", () => {
     // CRITICAL: McpServerRef is the non-secret wire half. Accepting and
     // dropping `headers` would let a caller inline credentials into the
     // submission.mcpServers payload that the secret-bearing-field scan
     // never sees. Reject loudly so the call site has to use
-    // `BlueprintMcpServer` + `normaliseBlueprint` instead.
+    // `RunConfigMcpServer` + `normaliseRunRequestConfig` instead.
     expect(() =>
       parseMcpServerRef(
         { name: "x", url: "https://x", headers: { Authorization: "Bearer y" } },
@@ -166,7 +165,7 @@ describe("blueprint — parseMcpServerRef", () => {
   });
 });
 
-describe("blueprint — normaliseSkillBundlePath", () => {
+describe("run-config — normaliseSkillBundlePath", () => {
   it("rejects path traversal", () => {
     expect(() => normaliseSkillBundlePath("foo/../bar")).toThrow(SkillBundleValidationError);
   });
@@ -202,7 +201,7 @@ describe("blueprint — normaliseSkillBundlePath", () => {
   });
 });
 
-describe("blueprint — validateSkillBundleEntry", () => {
+describe("run-config — validateSkillBundleEntry", () => {
   it("sanitises mode to 0o644 for files", () => {
     const entry = validateSkillBundleEntry({ path: "scripts/x.py", size: 1, mode: 0o777 });
     expect(entry.mode).toBe(0o644);
@@ -218,7 +217,7 @@ describe("blueprint — validateSkillBundleEntry", () => {
   });
 });
 
-describe("blueprint — validateSkillBundleManifest", () => {
+describe("run-config — validateSkillBundleManifest", () => {
   // SKILL.md is restored as a strict precondition for skill bundles.
   // Per the May-2026 decision log in agent-context-uploads.md, a
   // bundle without SKILL.md is not a skill — it goes through the
@@ -277,36 +276,36 @@ describe("blueprint — validateSkillBundleManifest", () => {
   });
 });
 
-describe("blueprint — parseBlueprint", () => {
+describe("run-config — parseRunRequestConfig", () => {
   it("preserves a string prompt verbatim (normalisation happens at submission time)", () => {
-    const bp = parseBlueprint({
+    const config = parseRunRequestConfig({
       model: "claude-sonnet-4-5",
       prompt: "do it",
       skills: [],
       mcpServers: []
     });
-    expect(bp.prompt).toBe("do it");
+    expect(config.prompt).toBe("do it");
   });
 
   it("preserves a multi-part prompt array", () => {
-    const bp = parseBlueprint({
+    const config = parseRunRequestConfig({
       model: "claude-sonnet-4-5",
       prompt: ["first turn", "follow up"],
       skills: [],
       mcpServers: []
     });
-    expect(bp.prompt).toEqual(["first turn", "follow up"]);
+    expect(config.prompt).toEqual(["first turn", "follow up"]);
   });
 
-  it("rejects an empty string prompt at the Blueprint boundary", () => {
+  it("rejects an empty string prompt at the run-config boundary", () => {
     expect(() =>
-      parseBlueprint({ model: "claude-sonnet-4-5", prompt: "", skills: [], mcpServers: [] })
+      parseRunRequestConfig({ model: "claude-sonnet-4-5", prompt: "", skills: [], mcpServers: [] })
     ).toThrow(/prompt/i);
   });
 
   it("rejects an empty string in a prompt array", () => {
     expect(() =>
-      parseBlueprint({
+      parseRunRequestConfig({
         model: "claude-sonnet-4-5",
         prompt: ["first", ""],
         skills: [],
@@ -317,7 +316,7 @@ describe("blueprint — parseBlueprint", () => {
 
   it("rejects extra top-level fields", () => {
     expect(() =>
-      parseBlueprint({
+      parseRunRequestConfig({
         model: "claude-sonnet-4-5",
         prompt: "x",
         skills: [],
@@ -340,7 +339,7 @@ describe("blueprint — parseBlueprint", () => {
       }
     ];
     const metadata = { ticket: "ANT-1" };
-    const bp = parseBlueprint({
+    const config = parseRunRequestConfig({
       model: "claude-sonnet-4-5",
       prompt: "x",
       skills: [],
@@ -350,15 +349,15 @@ describe("blueprint — parseBlueprint", () => {
       proxyEndpoints,
       metadata
     });
-    expect(bp.environment).toEqual(env);
-    expect(bp.cleanup).toEqual(cleanup);
-    expect(bp.proxyEndpoints).toEqual(proxyEndpoints);
-    expect(bp.metadata).toEqual(metadata);
+    expect(config.environment).toEqual(env);
+    expect(config.cleanup).toEqual(cleanup);
+    expect(config.proxyEndpoints).toEqual(proxyEndpoints);
+    expect(config.metadata).toEqual(metadata);
   });
 
-  it("rejects duplicate mcpServer names at the Blueprint boundary", () => {
+  it("rejects duplicate mcpServer names at the run-config boundary", () => {
     expect(() =>
-      parseBlueprint({
+      parseRunRequestConfig({
         model: "claude-sonnet-4-5",
         prompt: "x",
         skills: [],
@@ -371,38 +370,22 @@ describe("blueprint — parseBlueprint", () => {
   });
 
   it("accepts an r2 skill and provider skill side by side", () => {
-    const bp = parseBlueprint({
+    const config = parseRunRequestConfig({
       model: "claude-sonnet-4-5",
       prompt: "x",
       skills: [goodR2Ref, goodProviderRef],
       mcpServers: []
     });
-    expect(bp.skills).toHaveLength(2);
-    const skills = bp.skills ?? [];
+    expect(config.skills).toHaveLength(2);
+    const skills = config.skills ?? [];
     expect(isR2SkillRef(skills[0]!)).toBe(true);
     expect(isProviderSkillRef(skills[1]!)).toBe(true);
   });
 });
 
-describe("blueprint — defineRun", () => {
-  it("returns a function that produces a blueprint deterministically", () => {
-    const investigate = defineRun((p: { repo: string; issue: number }): Blueprint => ({
-      model: "claude-sonnet-4-5-20250929",
-      system: `You work on ${p.repo}.`,
-      prompt: [`Investigate issue #${p.issue}.`],
-      skills: [goodR2Ref],
-      mcpServers: []
-    }));
-    const a = investigate({ repo: "antpath", issue: 1 });
-    const b = investigate({ repo: "antpath", issue: 1 });
-    expect(a).toEqual(b);
-    expect(a.prompt).toEqual(["Investigate issue #1."]);
-  });
-});
-
-describe("blueprint — normaliseBlueprint", () => {
+describe("run-config — normaliseRunRequestConfig", () => {
   it("splits MCP headers out of the public field into the secret bundle", () => {
-    const bp: Blueprint = {
+    const config: RunRequestConfig = {
       model: "claude-sonnet-4-5",
       prompt: ["x"],
       skills: [],
@@ -410,7 +393,7 @@ describe("blueprint — normaliseBlueprint", () => {
         { name: "gh", url: "https://x", headers: { Authorization: "Bearer y" } }
       ]
     };
-    const norm = normaliseBlueprint(bp);
+    const norm = normaliseRunRequestConfig(config);
     expect(norm.mcpServers).toEqual([{ name: "gh", url: "https://x" }]);
     expect(norm.mcpServerSecrets).toEqual([
       { name: "gh", url: "https://x", headers: { Authorization: "Bearer y" } }
@@ -418,19 +401,19 @@ describe("blueprint — normaliseBlueprint", () => {
   });
 
   it("returns an empty mcpServerSecrets array when no headers were provided", () => {
-    const bp: Blueprint = {
+    const config: RunRequestConfig = {
       model: "claude-sonnet-4-5",
       prompt: "x",
       skills: [],
       mcpServers: [{ name: "noauth", url: "https://x" }]
     };
-    const norm = normaliseBlueprint(bp);
+    const norm = normaliseRunRequestConfig(config);
     expect(norm.mcpServers).toEqual([{ name: "noauth", url: "https://x" }]);
     expect(norm.mcpServerSecrets).toEqual([]);
   });
 
-  it("includes only entries whose Blueprint had headers in mcpServerSecrets", () => {
-    const bp: Blueprint = {
+  it("includes only entries whose run-config entry had headers in mcpServerSecrets", () => {
+    const config: RunRequestConfig = {
       model: "claude-sonnet-4-5",
       prompt: "x",
       skills: [],
@@ -439,7 +422,7 @@ describe("blueprint — normaliseBlueprint", () => {
         { name: "gh", url: "https://y", headers: { Authorization: "Bearer z" } }
       ]
     };
-    const norm = normaliseBlueprint(bp);
+    const norm = normaliseRunRequestConfig(config);
     expect(norm.mcpServers).toEqual([
       { name: "noauth", url: "https://x" },
       { name: "gh", url: "https://y" }
@@ -448,7 +431,7 @@ describe("blueprint — normaliseBlueprint", () => {
   });
 });
 
-describe("blueprint — parseRunSubmissionRequest", () => {
+describe("run-config — parseRunSubmissionRequest", () => {
   it("accepts the canonical happy path", () => {
     const parsed = parseRunSubmissionRequest(baseSubmission);
     expect(parsed.workspaceId).toBe("workspace-1");

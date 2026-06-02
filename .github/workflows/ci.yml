@@ -1,0 +1,36 @@
+name: Public CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  public:
+    name: Install, lint, test, pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Pack SDK
+        run: pnpm run pack:sdk
