@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   checkRuntimeSupported,
   RUN_PROVIDERS,
+  RUNTIME_KINDS,
   selectRuntime,
   type PlatformRunSubmissionRequest,
   type RunProvider,
   type RuntimeKind
 } from "../../packages/contracts/src/submission.js";
-import { PROVIDER_CAPABILITY } from "../../packages/contracts/src/provider-capability.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
   PROVIDER_SUPPORT_STATUSES,
@@ -20,7 +20,6 @@ import {
   CAPABILITY_MATRIX_PATH,
   buildCapabilityMatrixRows,
   checkCapabilityMatrix,
-  type NativeFeatureSupportStatus,
   type RuntimeSupportStatus,
   renderProviderRuntimeCapabilityMarkdown
 } from "../generate-capability-matrix.js";
@@ -52,17 +51,9 @@ function expectedRuntimeStatus(provider: RunProvider, runtime: RuntimeKind): Run
   return PROVIDER_PUBLIC_SUPPORT[provider].status === "supported" ? "supported" : "live-unverified";
 }
 
-function expectedFeatureStatus(
-  provider: RunProvider,
-  feature: "inlineSkills" | "files" | "mcpServers"
-): NativeFeatureSupportStatus {
-  const nativeAgent = PROVIDER_CAPABILITY[provider].nativeAgent;
-  if (!nativeAgent) return "n/a";
-  return nativeAgent.serves[feature] ? "supported" : "rejected";
-}
-
 describe("provider/runtime capability matrix generation", () => {
-  it("renders one deterministic row for every provider with public status metadata", () => {
+  it("renders one deterministic managed-runtime row for every provider", () => {
+    const rendered = renderProviderRuntimeCapabilityMarkdown();
     expect(buildCapabilityMatrixRows().map((row) => row.provider)).toEqual([
       "anthropic",
       "deepseek",
@@ -70,18 +61,17 @@ describe("provider/runtime capability matrix generation", () => {
       "gemini",
       "mistral"
     ]);
-    expect(renderProviderRuntimeCapabilityMarkdown()).toContain(
+    expect(rendered).toContain(
       "| [Anthropic](#anthropic) | `anthropic` | supported | [Credentials](credentials.md); [Events](events.md) |"
     );
-    expect(renderProviderRuntimeCapabilityMarkdown()).toContain(
-      "| `anthropic` | yes | `native` | [supported](#anthropic); provider-inherited | [supported](#anthropic) | `anthropic-managed` |"
+    expect(rendered).toContain(
+      "| `anthropic` | yes | `managed` | [supported](#anthropic) |"
     );
-    expect(renderProviderRuntimeCapabilityMarkdown()).toContain(
-      "| `anthropic` | supported | supported | supported |"
+    expect(rendered).toContain(
+      "| `openai` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch |"
     );
-    expect(renderProviderRuntimeCapabilityMarkdown()).toContain(
-      "| `openai` | `managed` | live-unverified | live-unverified | submission parser + Goose Managed dispatch |"
-    );
+    expect(rendered).not.toContain("Native feature parity");
+    expect(rendered).not.toContain("anthropic-managed");
   });
 
   it("keeps public support facts complete and anchor-safe", () => {
@@ -97,15 +87,14 @@ describe("provider/runtime capability matrix generation", () => {
     }
   });
 
-  it("keeps every provider/runtime cell documented with status, anchor, enforcement, and evidence", () => {
+  it("keeps every managed runtime cell documented with status, anchor, enforcement, and evidence", () => {
     for (const row of buildCapabilityMatrixRows()) {
-      for (const cell of [row.nativeRuntime, row.managedRuntime]) {
-        expect(PROVIDER_SUPPORT_STATUSES).toContain(cell.status);
-        expect(PROVIDER_SUPPORT_STATUSES).toContain(cell.ownership);
-        expect(cell.docsAnchor).toBe(row.docsAnchor);
-        expect(cell.enforcement.length).toBeGreaterThan(0);
-        expect(cell.evidence.length).toBeGreaterThan(0);
-      }
+      const cell = row.managedRuntime;
+      expect(PROVIDER_SUPPORT_STATUSES).toContain(cell.status);
+      expect(PROVIDER_SUPPORT_STATUSES).toContain(cell.ownership);
+      expect(cell.docsAnchor).toBe(row.docsAnchor);
+      expect(cell.enforcement.length).toBeGreaterThan(0);
+      expect(cell.evidence.length).toBeGreaterThan(0);
     }
   });
 
@@ -118,18 +107,11 @@ describe("provider/runtime capability matrix generation", () => {
   });
 
   it("derives routing cells from checkRuntimeSupported and selectRuntime", () => {
+    expect([...RUNTIME_KINDS]).toEqual(["managed"]);
     for (const row of buildCapabilityMatrixRows()) {
-      expect(row.nativeRuntime.status).toBe(expectedRuntimeStatus(row.provider, "native"));
       expect(row.managedRuntime.status).toBe(expectedRuntimeStatus(row.provider, "managed"));
       expect(row.autoRoute).toBe(selectRuntime(dispatcherProbe(row.provider)));
-    }
-  });
-
-  it("derives native feature cells from PROVIDER_CAPABILITY", () => {
-    for (const row of buildCapabilityMatrixRows()) {
-      expect(row.inlineSkills).toBe(expectedFeatureStatus(row.provider, "inlineSkills"));
-      expect(row.files).toBe(expectedFeatureStatus(row.provider, "files"));
-      expect(row.mcpServers).toBe(expectedFeatureStatus(row.provider, "mcpServers"));
+      expect(row.autoRoute).toBe("managed");
     }
   });
 

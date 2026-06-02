@@ -20,8 +20,7 @@ export function HomePage() {
           <h1>Run autonomous agents across providers with one SDK.</h1>
           <p className="ant-hero-lede">
             antpath is the serverless control plane for autonomous agent sessions: submit the task,
-            stream a unified event log, capture outputs, and archive the run record across provider-native
-            and Goose Managed runtimes.
+            stream a unified event log, capture outputs, and archive the run record through Goose Managed.
           </p>
           <div className="ant-actions">
             <a className="ant-button ant-button-primary" href="/docs/guides/quickstart/">
@@ -62,7 +61,7 @@ export function HomePage() {
         <a className="ant-card" href="/docs/concepts/providers-and-runtimes/">
           <h2>Providers & runtimes</h2>
           <p>
-            How provider selection maps to native execution or Goose Managed without changing the user-facing surface.
+            How provider selection maps to Goose Managed without changing the user-facing surface.
           </p>
         </a>
         <a className="ant-card" href="/docs/concepts/secrets-byok/">

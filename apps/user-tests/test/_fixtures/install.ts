@@ -20,7 +20,8 @@
  * install would leak state.
  */
 import { spawn, type SpawnOptions } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,6 +76,10 @@ export interface ResolveInstallSpecOptions {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
+const packLockDir = join(
+  tmpdir(),
+  `antpath-user-test-sdk-pack-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`
+);
 let localSdkPackPromise: Promise<string> | null = null;
 
 /**
@@ -199,27 +204,58 @@ function packCurrentSdkOnce(): Promise<string> {
 }
 
 async function packCurrentSdk(): Promise<string> {
-  const packDir = mkdtempSync(join(tmpdir(), "antpath-user-test-sdk-pack-"));
-  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  try {
-    await runCommand(pnpm, ["--filter", "antpath", "pack", "--pack-destination", packDir], {
-      cwd: repoRoot,
-      timeoutMs: 180_000
-    }).then((result) => {
-      if (result.exitCode !== 0) {
-        throw new Error(
-          `pnpm --filter antpath pack exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
-        );
+  return await withPackLock(async () => {
+    const packDir = mkdtempSync(join(tmpdir(), "antpath-user-test-sdk-pack-"));
+    const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    try {
+      await runCommand(pnpm, ["--filter", "antpath", "pack", "--pack-destination", packDir], {
+        cwd: repoRoot,
+        timeoutMs: 180_000
+      }).then((result) => {
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `pnpm --filter antpath pack exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
+          );
+        }
+      });
+      const tarballs = readdirSync(packDir).filter((name) => /^antpath-.*\.tgz$/.test(name));
+      if (tarballs.length !== 1) {
+        throw new Error(`user-tests: expected one packed antpath tarball in ${packDir}, found ${tarballs.length}`);
       }
-    });
-    const tarballs = readdirSync(packDir).filter((name) => /^antpath-.*\.tgz$/.test(name));
-    if (tarballs.length !== 1) {
-      throw new Error(`user-tests: expected one packed antpath tarball in ${packDir}, found ${tarballs.length}`);
+      return join(packDir, tarballs[0]!);
+    } catch (error) {
+      rmSync(packDir, { recursive: true, force: true });
+      throw error;
     }
-    return join(packDir, tarballs[0]!);
-  } catch (error) {
-    rmSync(packDir, { recursive: true, force: true });
-    throw error;
+  });
+}
+
+async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      mkdirSync(packLockDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(packLockDir).mtimeMs > 10 * 60_000) {
+          rmSync(packLockDir, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // Race with lock release; retry below.
+      }
+      if (Date.now() - startedAt > 4 * 60_000) {
+        throw new Error(`user-tests: timed out waiting for local SDK pack lock at ${packLockDir}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    rmSync(packLockDir, { recursive: true, force: true });
   }
 }
 

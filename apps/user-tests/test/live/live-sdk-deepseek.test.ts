@@ -71,7 +71,7 @@ interface LiveResult {
   readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
   // Diagnostic filenames in the `logs` namespace (GET /api/runs/:id/logs,
   // via SDK `getRunDebugLogs`). The runner always emits the three
-  // `goose-logs/{stdout.log,stderr.log,args.json}` artifacts here.
+  // `runtime/{stdout.log,stderr.log,args.json}` artifacts here.
   readonly debugLogNames: readonly string[];
   readonly leakedDeepseekKey: boolean;
 }
@@ -138,7 +138,7 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
 
         const events = await client.listEvents(runId);
         const outputs = await client.listOutputs(runId);
-        // Diagnostics (.goose-logs/*) now live in the physically-separate
+        // Diagnostics (.runtime/*) now live in the physically-separate
         // logs namespace — fetch them via the same SDK API the
         // download-namespaces reference test uses.
         const debug = await client.getRunDebugLogs(runId);
@@ -253,7 +253,7 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
 
       // Run-artifact namespace split: customer deliverables live in the
       // `outputs` namespace; the runner's always-on diagnostics
-      // (.goose-logs/{stdout.log,stderr.log,args.json}) live in the
+      // (.runtime/{stdout.log,stderr.log,args.json}) live in the
       // physically-separate `logs` namespace. This scenario supplies no
       // user outputDirs, so `outputs` is empty and the diagnostic-coverage
       // check (>= the 3 the runner always emits) moves to the logs
@@ -265,7 +265,7 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
       const ctx =
         `outputs=${JSON.stringify(result.outputs)} ` +
         `debugLogNames=${JSON.stringify(result.debugLogNames)}`;
-      expect(result.debugLogNames.filter((n) => n.startsWith("goose-logs/")).length, ctx).toBeGreaterThanOrEqual(3);
+      expect(result.debugLogNames.filter((n) => n.startsWith("runtime/")).length, ctx).toBeGreaterThanOrEqual(3);
 
       // The customer's DeepSeek key MUST NOT appear anywhere in the
       // SDK-visible response surface.

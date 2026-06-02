@@ -69,20 +69,10 @@ export interface RuntimeManifest {
 }
 
 /**
- * Anthropic Managed Agents container paths. Kept here so the BFF and
- * the hosted API render identical values; runtime bootstrap constants are
+ * Managed-runner container paths. Kept here so the BFF, worker, and
+ * in-container bridge render identical values; runtime bootstrap constants are
  * validated against these by a regression test
  * (`packages/contracts/test/runtime-manifest.test.ts`).
- *
- * Path facts (each verified at least once by a live session, locked
- * in live-provider probes):
- *   - Session resources mount under `/mnt/session/uploads/` (rebase).
- *   - Skills API places bundles under `/workspace/skills/<name>/`
- *     — a SEPARATE root from session-resource mounts.
- *   - Files API mounts file_ids at the requested mount_path, also
- *     rebased — antpath threads them under `<filesRoot>/<f_id>/<rel>`.
- *   - Only `/mnt/session/outputs` files are auto-registered with the
- *     Files API for terminal-time capture.
  */
 const ANTHROPIC_PATHS = Object.freeze({
   skillsRoot: "/workspace/skills",

@@ -1,7 +1,7 @@
 /**
  * Scenario 5: runtime-and-providers.test.ts
  *
- * Locks the dual-runtime + widened-provider surface as it appears
+ * Locks the managed-runtime + widened-provider surface as it appears
  * inside a clean `npm install antpath` tempdir — the same way a real
  * user / AI agent sees the package. Catches regressions where:
  *   - SDK drops the `runtime?` option from SubmitRunOptions
@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
 
-describe("dual-runtime + widened providers (published surface)", () => {
+describe("managed runtime + widened providers (published surface)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -43,7 +43,7 @@ describe("dual-runtime + widened providers (published surface)", () => {
         runtimes: mod.RUNTIME_KINDS,
         defaultProvider: mod.DEFAULT_RUN_PROVIDER,
         hasSelectRuntime: typeof mod.selectRuntime === "function",
-        hasCollect: typeof mod.collectNativeOnlyFeatures === "function",
+        hasCollect: typeof mod.collectManagedUnsupportedFeatures === "function",
         hasError: typeof mod.RuntimeValidationError === "function",
         validationCodes: mod.RUNTIME_VALIDATION_CODES
       };
@@ -61,18 +61,15 @@ describe("dual-runtime + widened providers (published surface)", () => {
       validationCodes: string[];
     };
     expect(out.providers).toEqual(["anthropic", "deepseek", "openai", "gemini", "mistral"]);
-    expect(out.runtimes).toEqual(["native", "managed"]);
+    expect(out.runtimes).toEqual(["managed"]);
     expect(out.defaultProvider).toBe("anthropic");
     expect(out.hasSelectRuntime).toBe(true);
     expect(out.hasCollect).toBe(true);
     expect(out.hasError).toBe(true);
-    expect(out.validationCodes).toEqual([
-      "runtime_native_unsupported",
-      "feature_runtime_mismatch"
-    ]);
+    expect(out.validationCodes).toEqual(["feature_runtime_mismatch"]);
   });
 
-  it("selectRuntime auto-routes anthropic→native and deepseek→managed", async () => {
+  it("selectRuntime resolves every provider to managed", async () => {
     const script = `
       const { selectRuntime } = await import("antpath");
       const base = {
@@ -89,26 +86,31 @@ describe("dual-runtime + widened providers (published surface)", () => {
     `;
     const { exitCode, stdout } = await runChild(script, "select-runtime.mjs");
     expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout.trim())).toEqual({ anthropic: "native", deepseek: "managed" });
+    expect(JSON.parse(stdout.trim())).toEqual({ anthropic: "managed", deepseek: "managed" });
   });
 
-  it("selectRuntime throws runtime_native_unsupported for non-anthropic + native", async () => {
+  it("AntpathClient.submitRun rejects runtime:'native' without an HTTP call", async () => {
     const script = `
-      const { selectRuntime, RuntimeValidationError } = await import("antpath");
-      const req = {
-        workspaceId: "ws", idempotencyKey: "id", provider: "openai", runtime: "native",
-        submission: { model: "gpt-4o-mini", prompt: ["hi"], skills: [], agentsMd: [], files: [], mcpServers: [] },
-        secrets: { openai: { apiKey: "sk-o-test" } }
-      };
+      const { AntpathClient, AntpathError } = await import("antpath");
+      const calls = [];
+      const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
+      const client = new AntpathClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       try {
-        selectRuntime(req);
+        await client.submitRun({
+          provider: "anthropic",
+          runtime: "native",
+          model: "claude-haiku-4-5",
+          prompt: "hi",
+          secrets: { anthropic: { apiKey: "sk-ant-test" } }
+        });
         console.log(JSON.stringify({ caught: false }));
       } catch (err) {
         console.log(JSON.stringify({
           caught: true,
-          isClass: err instanceof RuntimeValidationError,
+          isClass: err instanceof AntpathError,
           code: err.code,
-          messageHasProvider: typeof err.message === "string" && err.message.includes("provider")
+          messageHasRuntime: typeof err.message === "string" && err.message.includes("runtime"),
+          fetchCalls: calls.length
         }));
       }
     `;
@@ -118,8 +120,9 @@ describe("dual-runtime + widened providers (published surface)", () => {
     expect(out).toEqual({
       caught: true,
       isClass: true,
-      code: "runtime_native_unsupported",
-      messageHasProvider: true
+      code: "RUNTIME_UNSUPPORTED",
+      messageHasRuntime: true,
+      fetchCalls: 0
     });
   });
 
@@ -153,7 +156,7 @@ describe("dual-runtime + widened providers (published surface)", () => {
       caught: true,
       code: "feature_runtime_mismatch",
       mentionsPdf: true,
-      mentionsNative: true
+      mentionsNative: false
     });
   });
 

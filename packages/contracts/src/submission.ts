@@ -15,30 +15,14 @@ import {
 // existing `@antpath/contracts` consumers of `PROXY_ENDPOINT_DEFAULTS` are
 // unaffected by the move.
 export { PROXY_ENDPOINT_DEFAULTS };
-import { parseMcpServerRef, parseR2RefFields, parseSkillRef } from "./run-config.js";
+import { parseAssetRefFields, parseMcpServerRef, parseSkillRef } from "./run-config.js";
 import type {
   AgentsMdRef,
   FileRef,
   McpServerRef,
   SkillRef
 } from "./run-config.js";
-import { parseMachineSize, parseRunTimeout, type MachineSize } from "./machine-sizes.js";
-import {
-  NATIVE_RUNTIME_PROVIDERS,
-  PROVIDER_CAPABILITY,
-  providerHasNativeAgent
-} from "./provider-capability.js";
-export {
-  NATIVE_RUNTIME_PROVIDERS,
-  PROVIDER_CAPABILITY,
-  providerHasNativeAgent
-} from "./provider-capability.js";
-export type {
-  NativeAgentCapability,
-  NativeExecutorId,
-  NativeRuntimeProvider,
-  ProviderCapability
-} from "./provider-capability.js";
+import { parseRunTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import {
   parseRuntimeSecurityProfile,
   type RuntimeSecurityProfileName
@@ -60,13 +44,11 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
  * concurrent runs.
  *
  * `envVars` is the customer-controlled key/value bag delivered into the
- * container via the mounted `RUNTIME.env` / `RUNTIME.json` files (the
- * Anthropic session API does NOT expose a process env-vars knob today
- * — verified by reading the `/v1/environments` config shape). The same
- * keys become `__KEY__` substitution targets in agent-facing markdown
- * inside skill / agentsmd / file bundles. Antpath-set runtime keys use
- * the reserved `ANTPATH_*` prefix; customer keys MUST NOT collide with
- * that prefix.
+ * managed container process and mirrored in the mounted `RUNTIME.env` /
+ * `RUNTIME.json` files. The same keys become `__KEY__` substitution targets
+ * in agent-facing markdown inside skill / agentsmd / file bundles. Antpath-set
+ * runtime keys use the reserved `ANTPATH_*` prefix; customer keys MUST NOT
+ * collide with that prefix.
  */
 export interface PlatformEnvironment {
   readonly networking?: PlatformNetworking;
@@ -113,9 +95,8 @@ export interface PlatformNetworking {
 }
 
 /**
- * Package-manager ecosystems the Anthropic Managed Agents
- * `POST /v1/environments` `config.packages` map accepts (one list per
- * manager). The customer encodes the target manager as a `name` prefix
+ * Package-manager ecosystems accepted by the public submission schema.
+ * The customer encodes the target manager as a `name` prefix
  * `"<eco>:<pkg>"` (e.g. "pip:pandas", "npm:express", "apt:ffmpeg"); an
  * UNPREFIXED name defaults to `apt`. After parsing, `PlatformPackage.name`
  * is the bare package and `PlatformPackage.ecosystem` is the resolved
@@ -132,16 +113,15 @@ export interface PlatformPackage {
 
 /**
  * Render a parsed {@link PlatformPackage} as the version-embedded install
- * string the Anthropic `config.packages` map expects for its ecosystem.
- * The join differs per manager (verified against the live beta API):
+ * string used by runtime materialization. The join differs per manager:
  *   - pip  → `name==version`
  *   - npm / cargo / go → `name@version`
  *   - gem  → `name:version`
  *   - apt  → `name=version`
- * With no `version`, just the bare `name`. Pure; shared by the native
- * materializer (grouped map) and the Goose runner (per-package install arg).
+ * With no `version`, just the bare `name`. Pure; used by the managed runner
+ * package installer.
  */
-export function nativePackageString(pkg: PlatformPackage): string {
+export function packageInstallString(pkg: PlatformPackage): string {
   if (pkg.version === undefined) {
     return pkg.name;
   }
@@ -192,17 +172,9 @@ export interface PlatformMistralSecrets {
 
 /**
  * Run-time provider selector. Antpath exposes one customer interface
- * for every provider; the runtime that backs each provider is decided
- * by {@link selectRuntime}.
- *
- *   - `anthropic` — defaults to the Anthropic Native runtime (Anthropic
- *                   Managed Agents API). Customers can opt into the
- *                   Goose Managed runtime via `runtime: "managed"`.
- *   - `deepseek` | `openai` | `gemini` | `mistral` — only the Goose
- *                   Managed runtime is supported (the upstream model is
- *                   reached via the hosted BYOK provider-proxy).
- *
- * Runtime routing is derived by {@link selectRuntime}.
+ * for every provider. All new submissions execute through the managed
+ * runtime; provider selection only decides which upstream model route
+ * the managed provider-proxy uses.
  */
 export const RUN_PROVIDERS = [
   "anthropic",
@@ -215,60 +187,30 @@ export type RunProvider = (typeof RUN_PROVIDERS)[number];
 export const DEFAULT_RUN_PROVIDER: RunProvider = "anthropic";
 
 /**
- * Customer-facing runtime selector. Optional on the wire — absent means
- * "let the dispatcher route based on provider" ({@link selectRuntime}).
- *
- *   - `native`  — Anthropic Native runtime. Only valid for
- *                 `provider: "anthropic"`. Routes through Anthropic's
- *                 Managed Agents API.
- *   - `managed` — Goose Managed runtime. The only option for
- *                 non-Anthropic providers; also available as an opt-out
- *                 for `provider: "anthropic"` when the customer wants
- *                 cross-provider parity.
- *
- * Stored verbatim in `runs.runtime`; runtime dispatch remains explicit and
- * fail-closed.
+ * Customer-facing runtime selector. Optional on the wire; absent resolves
+ * to the same managed runtime as `"managed"`. `"native"` is no longer an
+ * accepted submission value and fails schema validation.
  */
-export const RUNTIME_KINDS = ["native", "managed"] as const;
+export const RUNTIME_KINDS = ["managed"] as const;
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
 
 /** Outcome of the centralized runtime-support check. */
 export interface RuntimeSupportCheck {
   readonly ok: boolean;
-  readonly code?: "runtime_native_unsupported";
   readonly message?: string;
 }
 
 /**
- * Centralized runtime-support validator (single source of truth for the
- * native-first strategy). The provider-capability registry declares which
- * providers have a native agent runtime; this is the one place that checks a
- * requested runtime against it. Pure + result-typed so BOTH planes enforce
- * the same rule:
- *
- *   - The SDK calls it client-side and fails EARLY (throws before the HTTP
- *     request) when the caller explicitly asked for `runtime: "native"` on a
- *     provider with no native runtime.
- *   - The server (the submission parser + {@link selectRuntime}) calls it and
- *     raises a `RuntimeValidationError`.
- *
- * An ABSENT runtime is always ok: the dispatcher auto-routes native-first and
- * falls back to managed. Feature-level native gaps are validated separately,
- * server-side, against the resolved submission.
+ * Centralized runtime-support validator. Native is removed from the public
+ * runtime enum, so an absent runtime and `"managed"` are the only supported
+ * inputs. Schema parsing rejects other runtime strings before this helper is
+ * reached, but the result type remains for SDK preflight checks.
  */
 export function checkRuntimeSupported(
   provider: RunProvider,
   runtime: RuntimeKind | undefined
 ): RuntimeSupportCheck {
-  if (runtime === "native" && !isNativeRuntimeProvider(provider)) {
-    return {
-      ok: false,
-      code: "runtime_native_unsupported",
-      message: `runtime: "native" is only supported for provider: ${formatProviderList(
-        NATIVE_RUNTIME_PROVIDERS
-      )} (got provider: "${provider}")`
-    };
-  }
+  void provider;
   return { ok: true };
 }
 
@@ -1234,9 +1176,7 @@ export interface PlatformSubmission {
    *   - Max 16 entries.
    *   - Deduplicated.
    *
-   * Anthropic Native runs ignore this field (they don't spawn Goose);
-   * the dispatcher accepts and persists it for snapshot fidelity but
-   * the Anthropic Native adapter never reads it.
+   * The dispatcher accepts and persists it for snapshot fidelity.
    */
   readonly builtins?: readonly string[];
   /**
@@ -1248,7 +1188,7 @@ export interface PlatformSubmission {
    * field (or `systemPrompt: "default"`) keeps the injection on.
    *
    * The default-output-directory behaviour is NOT governed by this flag —
-   * an omitted `outputDirs` still falls back to the runtime's native
+   * an omitted `outputDirs` still falls back to the managed runtime's
    * default capture directory regardless.
    */
   readonly platform?: PlatformInjectionConfig;
@@ -1271,17 +1211,14 @@ export interface PlatformRunSubmissionRequest {
   readonly credentialMode: CredentialMode;
   /**
    * Provider selector. Always populated after parsing — absent on the
-   * wire means {@link DEFAULT_RUN_PROVIDER}. The runtime selector
-   * ({@link selectRuntime}) decides which runtime the run is dispatched
-   * to.
+   * wire means {@link DEFAULT_RUN_PROVIDER}. All providers are dispatched
+   * through the managed runtime.
    */
   readonly provider: RunProvider;
   /**
-   * Customer's explicit runtime choice. `undefined` (the default) lets
-   * {@link selectRuntime} auto-route based on `provider`. When set,
-   * `parseRunSubmissionRequest` already verified that the choice is
-   * compatible with `provider`; the dispatcher still re-validates
-   * feature compatibility before enqueueing.
+   * Customer's explicit runtime choice. `undefined` and `"managed"` both
+   * resolve to the managed runtime. Other runtime values are rejected by
+   * `parseRunSubmissionRequest`.
    */
   readonly runtime?: RuntimeKind;
   readonly submission: PlatformSubmission;
@@ -1289,18 +1226,15 @@ export interface PlatformRunSubmissionRequest {
   readonly secrets: PlatformInlineSecrets;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   /**
-   * Goose Fly-machine size. One of the closed {@link MachineSize} preset
-   * tokens or absent (⇒ {@link DEFAULT_MACHINE_SIZE}). Native (Anthropic
-   * Managed Agents) runs have no Fly machine and ignore this field; the
-   * dispatcher still accepts + persists it for snapshot fidelity.
+   * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens
+   * or absent (downstream applies the default).
    */
-  readonly machine?: MachineSize;
+  readonly runtimeSize?: RuntimeSize;
   /**
    * Run deadline in milliseconds, normalised by the parser from the wire
    * `timeout` duration string (bounded to [1m, 6h]). Absent ⇒
-   * {@link DEFAULT_RUN_TIMEOUT_MS} (1h). Applies to BOTH runtimes — Goose's
-   * `waitForEvent` window + the runner self-kill, and the native poll
-   * deadline.
+   * {@link DEFAULT_RUN_TIMEOUT_MS} (1h). Applies to the managed runner's
+   * terminal wait window and self-kill deadline.
    */
   readonly timeoutMs?: number;
 }
@@ -1326,10 +1260,9 @@ export type PlatformRunSubmissionInput = Omit<
   readonly credentialMode?: CredentialMode;
   readonly provider?: RunProvider;
   /**
-   * Optional runtime opt-out. Set `"managed"` to force the Goose
-   * Managed runtime (rejects features that only work natively).
-   * `"native"` is only valid when `provider === "anthropic"`.
-   * Absent = auto-route. See {@link selectRuntime}.
+   * Optional runtime selector. Set `"managed"` explicitly or omit the
+   * field; both resolve to the managed runtime. `"native"` is no longer
+   * accepted.
    */
   readonly runtime?: RuntimeKind;
   /**
@@ -1349,6 +1282,24 @@ export function parseRunSubmissionRequest(
   options: ParseRunSubmissionOptions = {}
 ): PlatformRunSubmissionRequest {
   const value = requireRecord(input, "submission");
+  const allowedTopLevelFields = new Set([
+    "workspaceId",
+    "idempotencyKey",
+    "credentialMode",
+    "provider",
+    "runtime",
+    "submission",
+    "cleanup",
+    "runtimeSize",
+    "timeout",
+    "proxyEndpoints",
+    SECRETS_KEY
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowedTopLevelFields.has(key)) {
+      throw new Error(`submission.${key} is not an allowed field; permitted: ${[...allowedTopLevelFields].join(", ")}`);
+    }
+  }
   // Defence in depth: scan every non-secrets field for credential-named
   // keys. The `secrets` key is
   // the only allow-listed home for credential material.
@@ -1370,10 +1321,10 @@ export function parseRunSubmissionRequest(
   // Cross-field validation via the centralized runtime-support validator.
   const runtimeSupport = checkRuntimeSupported(provider, runtime);
   if (!runtimeSupport.ok) {
-    throw new RuntimeValidationError(runtimeSupport.code!, runtimeSupport.message!);
+    throw new Error(runtimeSupport.message ?? "unsupported runtime");
   }
   const cleanup = parseCleanupPolicy(value.cleanup);
-  const machine = parseMachineSize(value.machine);
+  const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
@@ -1406,31 +1357,22 @@ export function parseRunSubmissionRequest(
     }
   }
 
-  // Cross-field feature/runtime validation. When the caller explicitly
-  // opted into runtime: "managed", they must not also request any
-  // native-only feature (provider built-in skills, etc.). Done HERE in
-  // the parser so every entry-point (Worker, dashboard BFF, SDK) gets
-  // the same fail-closed behaviour. Previously this lived only in the
-  // separately-invokable selectRuntime() — and the dashboard BFF
-  // forgot to invoke it, letting incoherent runs land in the DB.
-  if (runtime === "managed") {
-    const candidate: PlatformRunSubmissionRequest = {
-      workspaceId: "",
-      idempotencyKey: "",
-      credentialMode,
-      provider,
-      runtime,
-      submission,
-      secrets
-    };
-    const nativeOnly = collectNativeOnlyFeatures(candidate);
-    if (nativeOnly.length > 0) {
-      throw new RuntimeValidationError(
-        "feature_runtime_mismatch",
-        `runtime: "managed" rejects the following features: ${nativeOnly.join(", ")}. ` +
-          `Remove them or switch to runtime: "native".`
-      );
-    }
+  const candidate: PlatformRunSubmissionRequest = {
+    workspaceId: "",
+    idempotencyKey: "",
+    credentialMode,
+    provider,
+    ...(runtime ? { runtime } : {}),
+    submission,
+    secrets
+  };
+  const unsupportedManagedFeatures = collectManagedUnsupportedFeatures(candidate);
+  if (unsupportedManagedFeatures.length > 0) {
+    throw new RuntimeValidationError(
+      "feature_runtime_mismatch",
+      `The managed runtime does not support these submission features: ` +
+        `${unsupportedManagedFeatures.join(", ")}. Remove them or use inline antpath skills.`
+    );
   }
 
   return {
@@ -1441,7 +1383,7 @@ export function parseRunSubmissionRequest(
     ...(runtime ? { runtime } : {}),
     submission,
     ...(cleanup ? { cleanup } : {}),
-    ...(machine ? { machine } : {}),
+    ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
     secrets
@@ -1458,17 +1400,6 @@ function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
     );
   }
   return input as RuntimeKind;
-}
-
-function isNativeRuntimeProvider(provider: RunProvider): boolean {
-  // Capability registry is the source of truth (native-first dispatch);
-  // NATIVE_RUNTIME_PROVIDERS is the error-string mirror, asserted equal
-  // by a unit test so the two cannot drift.
-  return providerHasNativeAgent(provider);
-}
-
-function formatProviderList(providers: readonly RunProvider[]): string {
-  return providers.map((p) => `"${p}"`).join(", ");
 }
 
 function parseRunProvider(input: unknown): RunProvider {
@@ -1744,7 +1675,7 @@ function parseSkills(input: unknown): readonly SkillRef[] {
     throw new Error("submission.skills must be an array of SkillRef objects");
   }
   const seenProvider = new Set<string>();
-  const seenR2Path = new Set<string>();
+  const seenAssetId = new Set<string>();
   return input.map((item, index) => {
     const ref = parseSkillRef(item, `submission.skills[${index}]`);
     if (ref.kind === "provider") {
@@ -1755,11 +1686,11 @@ function parseSkills(input: unknown): readonly SkillRef[] {
         );
       }
       seenProvider.add(key);
-    } else if (ref.kind === "r2") {
-      if (seenR2Path.has(ref.path)) {
-        throw new Error(`submission.skills duplicate r2 path: ${ref.path}`);
+    } else if (ref.kind === "asset") {
+      if (seenAssetId.has(ref.assetId)) {
+        throw new Error(`submission.skills duplicate assetId: ${ref.assetId}`);
       }
-      seenR2Path.add(ref.path);
+      seenAssetId.add(ref.assetId);
     }
     return ref;
   });
@@ -1770,22 +1701,22 @@ function parseAgentsMd(input: unknown): readonly AgentsMdRef[] {
   if (!Array.isArray(input)) {
     throw new Error("submission.agentsMd must be an array of AgentsMdRef objects");
   }
-  const seenR2Path = new Set<string>();
+  const seenAssetId = new Set<string>();
   return input.map((item, index): AgentsMdRef => {
     const path = `submission.agentsMd[${index}]`;
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new Error(`${path} must be an AgentsMdRef object`);
     }
     const raw = item as Record<string, unknown>;
-    if (raw.kind !== "r2") {
-      throw new Error(`${path}.kind must be 'r2' (got ${JSON.stringify(raw.kind)})`);
+    if (raw.kind !== "asset") {
+      throw new Error(`${path}.kind must be 'asset' (got ${JSON.stringify(raw.kind)})`);
     }
-    const fields = parseR2RefFields(raw, path);
-    if (seenR2Path.has(fields.path)) {
-      throw new Error(`submission.agentsMd duplicate r2 path: ${fields.path}`);
+    const fields = parseAssetRefFields(raw, path);
+    if (seenAssetId.has(fields.assetId)) {
+      throw new Error(`submission.agentsMd duplicate assetId: ${fields.assetId}`);
     }
-    seenR2Path.add(fields.path);
-    return { kind: "r2", path: fields.path, hash: fields.hash, sizeBytes: fields.sizeBytes, name: fields.name };
+    seenAssetId.add(fields.assetId);
+    return { kind: "asset", assetId: fields.assetId, name: fields.name };
   });
 }
 
@@ -1794,27 +1725,27 @@ function parseFiles(input: unknown): readonly FileRef[] {
   if (!Array.isArray(input)) {
     throw new Error("submission.files must be an array of FileRef objects");
   }
-  const seenR2Path = new Set<string>();
+  const seenAssetId = new Set<string>();
   return input.map((item, index): FileRef => {
     const path = `submission.files[${index}]`;
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new Error(`${path} must be a FileRef object`);
     }
     const raw = item as Record<string, unknown>;
-    if (raw.kind !== "r2") {
-      throw new Error(`${path}.kind must be 'r2' (got ${JSON.stringify(raw.kind)})`);
+    if (raw.kind !== "asset") {
+      throw new Error(`${path}.kind must be 'asset' (got ${JSON.stringify(raw.kind)})`);
     }
-    const fields = parseR2RefFields(raw, path);
-    if (seenR2Path.has(fields.path)) {
-      throw new Error(`submission.files duplicate r2 path: ${fields.path}`);
+    const fields = parseAssetRefFields(raw, path);
+    if (seenAssetId.has(fields.assetId)) {
+      throw new Error(`submission.files duplicate assetId: ${fields.assetId}`);
     }
-    seenR2Path.add(fields.path);
+    seenAssetId.add(fields.assetId);
     if (fields.mountPath !== undefined && !fields.mountPath.startsWith("/")) {
       throw new Error(`${path}.mountPath must start with '/' if provided`);
     }
     return fields.mountPath !== undefined
-      ? { kind: "r2", path: fields.path, hash: fields.hash, sizeBytes: fields.sizeBytes, name: fields.name, mountPath: fields.mountPath }
-      : { kind: "r2", path: fields.path, hash: fields.hash, sizeBytes: fields.sizeBytes, name: fields.name };
+      ? { kind: "asset", assetId: fields.assetId, name: fields.name, mountPath: fields.mountPath }
+      : { kind: "asset", assetId: fields.assetId, name: fields.name };
   });
 }
 
@@ -1841,22 +1772,19 @@ function parseMcpServers(input: unknown): readonly McpServerRef[] {
 // ===========================================================================
 
 /**
- * Codes the dispatcher emits when a submission can't be served by the
- * selected runtime. Surfaced both at parse time (cross-field shape
- * mismatch) and at dispatch time (feature mismatch). Code values are
- * stable so dashboard / SDK error rendering can branch on them.
+ * Codes emitted when a submission contains features the active runtime cannot
+ * serve. Code values are stable so dashboard / SDK error rendering can branch
+ * on them.
  */
 export const RUNTIME_VALIDATION_CODES = [
-  "runtime_native_unsupported",
   "feature_runtime_mismatch"
 ] as const;
 export type RuntimeValidationCode = (typeof RUNTIME_VALIDATION_CODES)[number];
 
 /**
- * Thrown by `parseRunSubmissionRequest` (wire-shape mismatch) and by
- * `selectRuntime` (feature mismatch) when the submitted run cannot be
- * served by the chosen runtime. The `code` field is part of the public
- * contract — keep it stable when phrasings change.
+ * Thrown by `parseRunSubmissionRequest` and `selectRuntime` when the submitted
+ * run cannot be served by the active managed runtime. The `code` field is part
+ * of the public contract; keep it stable when phrasing changes.
  */
 export class RuntimeValidationError extends Error {
   readonly code: RuntimeValidationCode;
@@ -1868,18 +1796,11 @@ export class RuntimeValidationError extends Error {
 }
 
 /**
- * Walk the parsed submission and collect every feature that **only**
- * works on the Anthropic Native runtime. Today the only such feature
- * is a provider built-in skill ref (`Skill.provider(...)` — the
- * Anthropic Skills API is the resolver). Adding a new native-only
- * feature means extending this function AND the matching error string
- * in {@link selectRuntime}.
- *
- * Exported because Phase 5's runtime dispatcher route handler reuses
- * it to format the API error body and the dashboard reuses it to point
- * the user at the offending submission field.
+ * Walk the parsed submission and collect features that the active managed
+ * runtime cannot serve. Provider-hosted skill refs (`Skill.provider(...)`) are
+ * rejected now that new submissions only dispatch through managed runs.
  */
-export function collectNativeOnlyFeatures(req: PlatformRunSubmissionRequest): string[] {
+export function collectManagedUnsupportedFeatures(req: PlatformRunSubmissionRequest): string[] {
   const features: string[] = [];
   for (const skill of req.submission.skills) {
     if (skill.kind === "provider") {
@@ -1891,121 +1812,19 @@ export function collectNativeOnlyFeatures(req: PlatformRunSubmissionRequest): st
 }
 
 /**
- * Walk the parsed submission and collect every feature the selected native
- * runtime does not serve according to {@link PROVIDER_CAPABILITY}. Anthropic's
- * native executor currently serves inline skills, files, and MCP servers, so
- * this returns an empty list for those public fields. Provider built-in skills
- * (`Skill.provider(...)`) are native-only and are gated in the managed path
- * by {@link collectNativeOnlyFeatures}.
- *
- * The customer-surface invariant is "every customer-facing field works in both runtimes OR is rejected
- * at submission time — no silent re-routing." This function is the
- * source of truth for the native half of that gate; {@link selectRuntime}
- * throws `feature_runtime_mismatch` when it returns a non-empty list, so
- * a run that would otherwise silently drop these features is refused with
- * an explicit pointer to `runtime: "managed"`.
- *
- * If a future native provider or deliberate capability change cannot serve a
- * field, update the registry; this function will fail closed from that fact.
+ * Backward-incompatible replacement for the old dual-runtime dispatcher. It is
+ * kept as a pure helper so SDK, CLI, and tests can resolve the runtime without
+ * I/O.
  */
-export function collectNativeUnsupportedFeatures(req: PlatformRunSubmissionRequest): string[] {
-  // Capability-driven: only flag a feature when the provider's native runtime
-  // does not serve it (`PROVIDER_CAPABILITY[...].serves`).
-  const cap = PROVIDER_CAPABILITY[req.provider].nativeAgent;
-  // No native runtime ⇒ the run never resolves to native, so there is
-  // nothing for the native gate to reject.
-  if (!cap) return [];
-  const features: string[] = [];
-  if (!cap.serves.inlineSkills) {
-    req.submission.skills.forEach((skill, i) => {
-      if (skill.kind !== "provider") {
-        const name = "name" in skill && skill.name ? ` "${skill.name}"` : "";
-        features.push(`skills[${i}] (inline skill${name})`);
-      }
-    });
-  }
-  if (!cap.serves.files) {
-    req.submission.files.forEach((file, i) => {
-      const name = "name" in file && file.name ? ` "${file.name}"` : "";
-      features.push(`files[${i}]${name}`);
-    });
-  }
-  if (!cap.serves.mcpServers) {
-    req.submission.mcpServers.forEach((mcp, i) => {
-      const name = "name" in mcp && mcp.name ? ` "${mcp.name}"` : "";
-      features.push(`mcpServers[${i}]${name}`);
-    });
-  }
-  return features;
-}
-
-/**
- * Throw `feature_runtime_mismatch` when a run resolved to native carries
- * features that runtime cannot serve. Used for both the explicit
- * `runtime: "native"` path and the auto-routed native path so neither silently
- * drops submitted fields.
- */
-function assertNativeCanServe(req: PlatformRunSubmissionRequest): void {
-  const unsupported = collectNativeUnsupportedFeatures(req);
+export function selectRuntime(req: PlatformRunSubmissionRequest): RuntimeKind {
+  const unsupported = collectManagedUnsupportedFeatures(req);
   if (unsupported.length > 0) {
     throw new RuntimeValidationError(
       "feature_runtime_mismatch",
-      `The selected native runtime does not support these submission features: ` +
-        `${unsupported.join(", ")}. Submit with runtime: "managed" to run them on the ` +
-        `Goose runtime, or remove them.`
+      `The managed runtime does not support these submission features: ` +
+        `${unsupported.join(", ")}. Remove them or use inline antpath skills.`
     );
   }
-}
-
-/**
- * The runtime dispatcher. Pure function with no I/O — call it after
- * `parseRunSubmissionRequest` to decide which runtime serves the run.
- *
- * Native-first, driven by {@link PROVIDER_CAPABILITY}:
- *   1. Explicit `runtime` wins, validated against provider + feature set.
- *      `"native"` on a provider with no native agent runtime is rejected;
- *      `"managed"` (opt-out to Goose) rejects native-only features. No
- *      silent re-routing.
- *   2. Auto-route: a provider WITH a native agent runtime goes native
- *      (provider-hosted is the preferred path); a provider WITHOUT one
- *      falls back to Goose Managed (the universal fallback). Feature-level
- *      gaps within a native-capable provider stay fail-closed (the run is
- *      rejected, not silently re-routed) — that gate dissolves as the
- *      native `serves` flags flip.
- *
- * Returns {@link RuntimeKind} (`"native" | "managed"`); the concrete
- * native executor is resolved downstream from the provider.
- */
-export function selectRuntime(req: PlatformRunSubmissionRequest): RuntimeKind {
-  if (req.runtime === "native") {
-    const support = checkRuntimeSupported(req.provider, "native");
-    if (!support.ok) {
-      throw new RuntimeValidationError(support.code!, support.message!);
-    }
-    assertNativeCanServe(req);
-    return "native";
-  }
-  if (req.runtime === "managed") {
-    const features = collectNativeOnlyFeatures(req);
-    if (features.length > 0) {
-      throw new RuntimeValidationError(
-        "feature_runtime_mismatch",
-        `runtime: "managed" rejects the following features: ${features.join(", ")}. ` +
-          `Remove them or switch to runtime: "native".`
-      );
-    }
-    return "managed";
-  }
-  // Auto-routing — no explicit `runtime`. Native-first: a provider with
-  // a native agent runtime ({@link PROVIDER_CAPABILITY}) goes native;
-  // everything else falls back to Goose Managed. The provider-level
-  // fallback is automatic (no native runtime exists), but we do NOT
-  // silently re-route a native-capable provider's run with
-  // native-unsupported features to managed — that would violate the
-  // no-auto-switching invariant — so the same fail-closed gate applies.
-  if (isNativeRuntimeProvider(req.provider)) {
-    assertNativeCanServe(req);
-    return "native";
-  }
+  void req;
   return "managed";
 }

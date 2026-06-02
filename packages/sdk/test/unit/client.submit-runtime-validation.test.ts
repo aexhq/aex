@@ -1,7 +1,7 @@
 /**
- * The SDK fails early (native-first strategy) when the caller explicitly asks
- * for a runtime the provider can't serve — a typed AntpathError thrown
- * CLIENT-SIDE, before any HTTP request, via the centralized validator.
+ * The SDK fails early when the caller explicitly asks for a runtime selector
+ * outside the public enum — a typed AntpathError thrown CLIENT-SIDE, before
+ * any HTTP request.
  */
 import { describe, expect, it } from "vitest";
 import { AntpathClient } from "../../src/index.js";
@@ -32,7 +32,7 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
     expect(rec.calls).toHaveLength(0);
   });
 
-  it("throws AntpathError(RUNTIME_UNSUPPORTED) for native on a non-native provider, WITHOUT any HTTP call", async () => {
+  it("throws AntpathError(RUNTIME_UNSUPPORTED) for native, WITHOUT any HTTP call", async () => {
     const rec = recordingFetch();
     const client = new AntpathClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
@@ -43,7 +43,7 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
         model: "deepseek-chat",
         prompt: "hi",
         secrets: { deepseek: { apiKey: "sk-x" } }
-      })
+      } as Parameters<AntpathClient["submitRun"]>[0])
     ).rejects.toMatchObject({ name: "AntpathError", code: "RUNTIME_UNSUPPORTED" });
 
     // The rejection happened before the network: no request was made.
@@ -61,7 +61,7 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
         model: "deepseek-chat",
         prompt: "hi",
         secrets: { deepseek: { apiKey: "sk-x" } }
-      });
+      } as Parameters<AntpathClient["submitRun"]>[0]);
     } catch (e) {
       caught = e;
     }

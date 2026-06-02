@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  isAssetRef,
   isProviderSkillRef,
-  isR2SkillRef,
   MCP_SERVER_NAME_PATTERN,
   normaliseSkillBundlePath,
   normaliseRunRequestConfig,
@@ -28,12 +28,9 @@ const goodProviderRef = {
   version: "v1"
 } as const;
 const goodInlineHash = `sha256:${"a".repeat(64)}`;
-const goodWorkspaceUuid = "11111111-1111-4111-8111-111111111111";
-const goodR2Ref = {
-  kind: "r2",
-  path: `assets/${goodWorkspaceUuid}/${"a".repeat(64)}`,
-  hash: goodInlineHash,
-  sizeBytes: 100,
+const goodAssetRef = {
+  kind: "asset",
+  assetId: `asset_${"a".repeat(64)}`,
   name: "rules"
 } as const;
 const goodMcpRef = { name: "github", url: "https://github.example.com/mcp" } as const;
@@ -80,10 +77,10 @@ describe("run-config — parseSkillRef", () => {
     expect(isProviderSkillRef(parsed)).toBe(true);
   });
 
-  it("parses an r2 ref round-trip", () => {
-    const parsed = parseSkillRef(goodR2Ref, "ref");
-    expect(parsed).toEqual(goodR2Ref);
-    expect(isR2SkillRef(parsed)).toBe(true);
+  it("parses an asset ref round-trip", () => {
+    const parsed = parseSkillRef(goodAssetRef, "ref");
+    expect(parsed).toEqual(goodAssetRef);
+    expect(isAssetRef(parsed)).toBe(true);
   });
 
   it("rejects an unknown kind", () => {
@@ -97,13 +94,19 @@ describe("run-config — parseSkillRef", () => {
     ).toThrow(/vendor/i);
   });
 
-  it("rejects an r2 ref whose path/hash disagree", () => {
-    const bad = { ...goodR2Ref, hash: `sha256:${"b".repeat(64)}` };
-    expect(() => parseSkillRef(bad, "ref")).toThrow(/hash segment/);
+  it("rejects a storage-specific ref", () => {
+    const bad = {
+      kind: "r2",
+      path: `assets/11111111-1111-4111-8111-111111111111/${"a".repeat(64)}`,
+      hash: goodInlineHash,
+      sizeBytes: 100,
+      name: "rules"
+    };
+    expect(() => parseSkillRef(bad, "ref")).toThrow(/provider' or 'asset/);
   });
 
-  it("rejects an r2 ref with extra fields", () => {
-    expect(() => parseSkillRef({ ...goodR2Ref, extra: 1 } as unknown, "ref")).toThrow(/unexpected/i);
+  it("rejects an asset ref with extra fields", () => {
+    expect(() => parseSkillRef({ ...goodAssetRef, extra: 1 } as unknown, "ref")).toThrow(/unexpected/i);
   });
 
   it("INLINE_CONTENT_HASH_PATTERN is exported + matches sha256:<64-hex>", () => {
@@ -369,16 +372,16 @@ describe("run-config — parseRunRequestConfig", () => {
     ).toThrow(/duplicate/i);
   });
 
-  it("accepts an r2 skill and provider skill side by side", () => {
+  it("accepts an asset skill and provider skill side by side", () => {
     const config = parseRunRequestConfig({
       model: "claude-sonnet-4-5",
       prompt: "x",
-      skills: [goodR2Ref, goodProviderRef],
+      skills: [goodAssetRef, goodProviderRef],
       mcpServers: []
     });
     expect(config.skills).toHaveLength(2);
     const skills = config.skills ?? [];
-    expect(isR2SkillRef(skills[0]!)).toBe(true);
+    expect(isAssetRef(skills[0]!)).toBe(true);
     expect(isProviderSkillRef(skills[1]!)).toBe(true);
   });
 });
@@ -540,18 +543,16 @@ describe("run-config — parseRunSubmissionRequest", () => {
     ).toThrow(/duplicate/i);
   });
 
-  it("accepts a workspace skill plus a provider skill in the submission", () => {
-    const parsed = parseRunSubmissionRequest({
-      ...baseSubmission,
-      submission: {
-        ...baseSubmission.submission,
-        skills: [goodR2Ref, goodProviderRef]
-      }
-    });
-    const skills = parsed.submission.skills as readonly SkillRef[];
-    expect(skills).toHaveLength(2);
-    expect(skills[0]).toEqual(goodR2Ref);
-    expect(skills[1]).toEqual(goodProviderRef);
+  it("rejects provider-hosted skills in the submission", () => {
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...baseSubmission,
+        submission: {
+          ...baseSubmission.submission,
+          skills: [goodAssetRef, goodProviderRef]
+        }
+      })
+    ).toThrow(/managed runtime does not support/i);
   });
 
   it("rejects an empty string prompt", () => {
@@ -566,13 +567,13 @@ describe("run-config — parseRunSubmissionRequest", () => {
     ).toThrow(/prompt/i);
   });
 
-  it("rejects duplicate r2 skill paths", () => {
+  it("rejects duplicate asset skill ids", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          skills: [goodR2Ref, goodR2Ref]
+          skills: [goodAssetRef, goodAssetRef]
         }
       })
     ).toThrow(/duplicate/i);

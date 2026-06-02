@@ -7,8 +7,7 @@
  *   1. `--config <path>` — plain run-request JSON:
  *      `{ model, system?, prompt, skills?, mcpServers?, environment?,
  *         cleanup?, proxyEndpoints?, metadata? }`. Skill entries use the
- *      discriminated wire shape (`{ kind: "workspace", id }` or
- *      `{ kind: "provider", vendor, skillId, version? }`). MCP entries
+ *      workspace wire shape (`{ kind: "workspace", id }`). MCP entries
  *      may include `headers` — the CLI splits them into the
  *      `secrets.mcpServers` bag before posting.
  *
@@ -16,7 +15,6 @@
  *      --model <id>                          REQUIRED in flag mode
  *      --system @file | --system "literal"   optional system message
  *      --prompt @file | --prompt "literal"   REQUIRED in flag mode (repeatable)
- *      --provider-skill vendor:skillId[:version]   provider built-in (repeatable)
  *      --mcp name=url                        MCP server (repeatable)
  *      --mcp-auth name=Header:Value          adds a header on the matching --mcp (repeatable)
  *      --metadata key=value                  string metadata entry (repeatable)
@@ -27,7 +25,7 @@
  *
  * Optional (both modes):
  *   --cleanup retain|delete        session cleanup policy
- *   --machine <size>               Goose Fly-machine preset (e.g. shared-2x-2gb); default shared-1x-512mb
+ *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-2gb); default shared-1x-512mb
  *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
  *   --idempotency-key <key>        defaults to a fresh UUID
  *   --proxy-endpoint '<json>'      PlatformProxyEndpoint JSON (repeatable)
@@ -39,14 +37,13 @@ import {
   ANTPATH_DEFAULT_BASE_URL,
   DEFAULT_RUN_PROVIDER,
   operations,
-  MACHINE_SIZES,
   parseRunRequestConfig,
+  RUNTIME_SIZES,
   RUN_PROVIDERS,
   RUNTIME_KINDS,
   TERMINAL_RUN_STATUSES,
   validateProxyAuth,
   type RunRequestConfig,
-  type MachineSize,
   type McpServerRef,
   type PlatformRunSubmissionInput,
   type PlatformSubmission,
@@ -55,8 +52,8 @@ import {
   type PlatformProxyAuthValue,
   type PlatformProxyEndpoint,
   type PlatformProxyEndpointAuth,
-  type ProviderSkillRef,
   type RunProvider,
+  type RuntimeSize,
   type RuntimeKind,
   type SkillRef
 } from "@antpath/contracts";
@@ -134,10 +131,9 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     }
   }
 
-  // Optional runtime opt-out. Validate the value against the wire enum
-  // here so the user gets an early error from the CLI; the shared
-  // parser re-runs the check (and the cross-field check vs provider)
-  // when the request lands at the API plane.
+  // Optional runtime selector. Validate the value against the wire enum
+  // here so the user gets an early error from the CLI; the shared parser
+  // re-runs the check when the request lands at the API plane.
   const runtimeFlag = takeFlagValue(rest, "--runtime");
   if (runtimeFlag.error) { io.stderr(`${runtimeFlag.error}\n`); return USAGE_ERR; }
   rest = runtimeFlag.remaining;
@@ -148,10 +144,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       return USAGE_ERR;
     }
     runtime = runtimeFlag.value as RuntimeKind;
-    if (runtime === "native" && provider !== "anthropic") {
-      io.stderr(`--runtime native is only supported for --provider anthropic (got: ${provider})\n`);
-      return USAGE_ERR;
-    }
   }
 
   const idempotency = takeFlagValue(rest, "--idempotency-key");
@@ -166,14 +158,12 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     return USAGE_ERR;
   }
 
-  // `--machine` selects the Goose Fly-machine size from the closed preset set.
-  // Validated against the same token list the server accepts so a typo fails
-  // here with the full menu rather than as a 400.
-  const machineFlag = takeFlagValue(rest, "--machine");
-  if (machineFlag.error) { io.stderr(`${machineFlag.error}\n`); return USAGE_ERR; }
-  rest = machineFlag.remaining;
-  if (machineFlag.value && !(MACHINE_SIZES as readonly string[]).includes(machineFlag.value)) {
-    io.stderr(`--machine must be one of: ${MACHINE_SIZES.join(", ")}\n`);
+  // `--runtime-size` selects a managed runtime size from the closed preset set.
+  const runtimeSizeFlag = takeFlagValue(rest, "--runtime-size");
+  if (runtimeSizeFlag.error) { io.stderr(`${runtimeSizeFlag.error}\n`); return USAGE_ERR; }
+  rest = runtimeSizeFlag.remaining;
+  if (runtimeSizeFlag.value && !(RUNTIME_SIZES as readonly string[]).includes(runtimeSizeFlag.value)) {
+    io.stderr(`--runtime-size must be one of: ${RUNTIME_SIZES.join(", ")}\n`);
     return USAGE_ERR;
   }
 
@@ -222,10 +212,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   if (promptFlags.error) { io.stderr(`${promptFlags.error}\n`); return USAGE_ERR; }
   rest = promptFlags.remaining;
 
-  const providerSkillFlags = collectRepeated(rest, "--provider-skill");
-  if (providerSkillFlags.error) { io.stderr(`${providerSkillFlags.error}\n`); return USAGE_ERR; }
-  rest = providerSkillFlags.remaining;
-
   const mcpFlags = collectRepeatedKv(rest, "--mcp");
   if (mcpFlags.error) { io.stderr(`${mcpFlags.error}\n`); return USAGE_ERR; }
   rest = mcpFlags.remaining;
@@ -261,8 +247,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   let runConfig: RunRequestConfig;
   let mcpHeadersFromConfig: Map<string, Record<string, string>> = new Map();
   if (config.value) {
-    if (modelFlag.value || systemFlag.value || promptFlags.values.length || providerSkillFlags.values.length || Object.keys(mcpFlags.entries).length || Object.keys(metadataFlags.entries).length) {
-      io.stderr("--config cannot be combined with --model/--system/--prompt/--provider-skill/--mcp/--metadata\n");
+    if (modelFlag.value || systemFlag.value || promptFlags.values.length || Object.keys(mcpFlags.entries).length || Object.keys(metadataFlags.entries).length) {
+      io.stderr("--config cannot be combined with --model/--system/--prompt/--mcp/--metadata\n");
       return USAGE_ERR;
     }
     try {
@@ -302,14 +288,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       }
     }
 
-    let providerSkills: ProviderSkillRef[];
-    try {
-      providerSkills = providerSkillFlags.values.map((v, i) => parseProviderSkillFlag(v, i));
-    } catch (err) {
-      io.stderr(`${(err as Error).message}\n`);
-      return USAGE_ERR;
-    }
-
     const mcpRefs: McpServerRef[] = [];
     for (const [name, url] of Object.entries(mcpFlags.entries)) {
       mcpRefs.push({ name, url });
@@ -319,9 +297,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       model: modelFlag.value,
       ...(resolvedSystem ? { system: resolvedSystem } : {}),
       prompt: resolvedPrompt,
-      ...(providerSkills.length > 0
-        ? { skills: providerSkills }
-        : {}),
       ...(mcpRefs.length > 0 ? { mcpServers: mcpRefs } : {}),
       ...(Object.keys(metadataFlags.entries).length > 0
         ? { metadata: { ...metadataFlags.entries } }
@@ -433,10 +408,10 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     secrets,
     ...(cleanup.value ? { cleanup: { session: cleanup.value as "retain" | "delete" } } : {}),
     ...(runConfig.cleanup && !cleanup.value ? { cleanup: runConfig.cleanup } : {}),
-    ...(machineFlag.value
-      ? { machine: machineFlag.value as MachineSize }
-      : runConfig.machine
-        ? { machine: runConfig.machine }
+    ...(runtimeSizeFlag.value
+      ? { runtimeSize: runtimeSizeFlag.value as RuntimeSize }
+      : runConfig.runtimeSize
+        ? { runtimeSize: runConfig.runtimeSize }
         : {}),
     ...(runTimeoutFlag.value
       ? { timeout: runTimeoutFlag.value }
@@ -535,25 +510,6 @@ function parseJsonOrThrow<T>(raw: string, label: string): T {
   } catch (err) {
     throw new Error(`${label} is not valid JSON: ${(err as Error).message}`);
   }
-}
-
-function parseProviderSkillFlag(raw: string, idx: number): ProviderSkillRef {
-  const parts = raw.split(":");
-  if (parts.length < 2 || parts.length > 3) {
-    throw new Error(`--provider-skill[${idx}] must be 'vendor:skillId[:version]' (got: ${raw})`);
-  }
-  const vendor = parts[0]!;
-  const skillId = parts[1]!;
-  const version = parts[2];
-  if (vendor !== "anthropic" && vendor !== "custom") {
-    throw new Error(`--provider-skill[${idx}] vendor must be 'anthropic' or 'custom' (got: ${vendor})`);
-  }
-  if (!skillId) {
-    throw new Error(`--provider-skill[${idx}] skillId is required`);
-  }
-  return version
-    ? { kind: "provider", vendor, skillId, version }
-    : { kind: "provider", vendor, skillId };
 }
 
 /**

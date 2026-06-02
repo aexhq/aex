@@ -1,12 +1,12 @@
 /**
  * Live scenario: live-sdk-skill-invocation.test.ts
  *
- * Matrix test — same assertion body across (provider, runtime) cells.
+ * Matrix test — same assertion body across managed provider cells.
  * Proves the agent ACTUALLY FOLLOWS skill content end-to-end, not just
  * that the skill bundle was materialized:
  *
  *   SDK → POST /runs (with inline skills wired)
- *      → preflight uploads skill to Skills API (native) / R2 (managed)
+ *      → preflight uploads skill to R2
  *      → manifest mounts the skill so the model sees its SKILL.md
  *      → user prompt contains the skill's trigger token (SHIBBOLETH)
  *      → model emits the per-case unique reply the skill demanded
@@ -16,16 +16,14 @@
  * but skill *content* is dropped, and the failure mode where ALL skills
  * collapse into one (model would echo distractor text too).
  *
- * Per AGENTS.md "No feature gates between runtimes" the same body runs
- * on every cell:
- *   - (anthropic, native)   — Anthropic Managed Agents (Skills API)
- *   - (anthropic, managed)  — Goose Managed (R2 download)
+ * The same body runs on every managed provider cell:
+ *   - (deepseek, managed)  — Goose Managed (R2 download)
  *   - (deepseek,  managed)  — Goose Managed (R2 download)
  *
  * Required env:
  *   ANTPATH_API_URL              live hosted API URL
  *   ANTPATH_API_TOKEN             workspace API token
- *   ANTHROPIC_API_KEY    customer Anthropic key
+ *   DEEPSEEK_API_KEY    customer DeepSeek key
  *   DEEPSEEK_API_KEY     customer DeepSeek key
  *   ANTPATH_USER_TEST_TARBALL          packed SDK tarball
  *     OR ANTPATH_USER_TEST_VERSION     published version on npm
@@ -45,23 +43,19 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface Cell {
   readonly id: string;
-  readonly provider: "anthropic" | "deepseek";
-  readonly runtime: "native" | "managed";
+  readonly provider: "deepseek";
+  readonly runtime: "managed";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "anthropic-native",  provider: "anthropic", runtime: "native",  model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
-  { id: "anthropic-managed", provider: "anthropic", runtime: "managed", model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
   { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
 ];
 
@@ -79,7 +73,7 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedAnthropicKey: boolean;
+  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
 }
 
@@ -115,13 +109,9 @@ function buildScript(cell: Cell, uniqueToken: string): string {
   // token is per-case so a model that hallucinates the well-known
   // XKCD-927 reference without consulting the skill still fails.
   //
-  // YAML frontmatter is required by the Anthropic Skills API (used by the
-  // native runtime); Goose Managed tolerates its absence but accepts it
-  // gracefully. We include it so the bundle round-trips both runtimes.
-  // Anthropic's Skills API requires the bundle folder name to match the
-  // `name:` in the frontmatter, AND rejects names containing the reserved
-  // words "anthropic" / "claude". Use the per-case uniqueToken suffix as
-  // the disambiguator — it's already random per-run.
+  // YAML frontmatter is accepted by Goose Managed and keeps the skill bundle
+  // self-describing. Use the per-case uniqueToken suffix as the disambiguator;
+  // it is already random per-run.
   const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
   const alphaName = `ack-alpha-${nameSuffix}`;
   const betaName = `weather-beta-${nameSuffix}`;
@@ -194,11 +184,9 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 
     const events = await client.listEvents(runId);
 
-    // Skill-load signals differ per runtime: Goose emits a
-    // skill_loaded_marker notification (with the skill's name in
-    // data.name), Anthropic Native emits skill_loaded runner events
-    // (and/or implicit skill mounting in the Managed Agents agent
-    // create). Collect both so the assertion is runtime-neutral.
+    // Goose emits a skill_loaded_marker notification (with the skill's name in
+    // data.name). Also collect antpath.skill_loaded for compatibility with
+    // older event payloads.
     // CUSTOM envelopes nest the original payload under data.value, keyed by
     // data.name (antpath.notification / antpath.skill_loaded / antpath.stream_error).
     const customEvents = events.filter((e) => e.type === "CUSTOM");
@@ -223,7 +211,6 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       .map((e) => (e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
-    const anthropicEnv = process.env.ANTHROPIC_KEY ?? "";
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       runId: runId,
@@ -239,7 +226,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       terminalKind: terminal ? terminal.type : null,
       terminalData: terminal ? terminal.data : null,
       streamErrors,
-      leakedAnthropicKey: anthropicEnv.length > 0 && serialized.includes(anthropicEnv),
+      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
@@ -272,7 +259,6 @@ async function runCell(cell: Cell, installDir: string, uniqueToken: string): Pro
     ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue,
-    ANTHROPIC_KEY: anthropicKey,
     DEEPSEEK_KEY: deepseekKey
   });
   const child = await runCommand(process.execPath, [scriptPath], {
@@ -348,7 +334,7 @@ describe("live skill invocation — agent actually follows skill content", () =>
       }
 
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.leakedAnthropicKey, dump()).toBe(false);
+      expect(result.leakedProviderKey, dump()).toBe(false);
       expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     10 * 60_000

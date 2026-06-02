@@ -6,7 +6,7 @@ title: Outputs
 
 Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. File capture is always attempted against a runtime-specific default directory; the submission's `outputDirs` field overrides that default when you want to capture additional or different paths. `client.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
 
-> Inside the runtime, the primary output path is exposed as `$ANTPATH_OUTPUTS` (sourceable from `RUNTIME.env`) and as `runtimeManifest.envVars.ANTPATH_OUTPUTS` on the `Run` returned by `client.get(runId)`. Goose Managed defaults to `/workspace/outputs`; Anthropic Native defaults to `/mnt/session/outputs`.
+> Inside the runtime, the primary output path is exposed as `$ANTPATH_OUTPUTS` (sourceable from `RUNTIME.env`) and as `runtimeManifest.envVars.ANTPATH_OUTPUTS` on the `Run` returned by `client.get(runId)`. Goose Managed defaults to `/workspace/outputs`.
 
 ## Quickstart
 
@@ -110,14 +110,14 @@ Validation:
 Runtime notes:
 
 - Goose Managed captures files by walking the configured directories in the runner container.
-- Anthropic Native captures files through the provider Files API. In practice, paths must map into `/mnt/session/outputs`; files written under `/workspace/...` or `/tmp/...` are not downloadable from that runtime.
+- Goose Managed captures by walking managed runtime directories directly.
 
 Mechanism (no platform-magical paths — this is honest):
 
 1. The hosted platform submits the run, sends the user prompt, streams events.
 2. At session-idle (the agent's primary task is done), the platform sends one synthetic `user.message` to the agent:
    *"Run `node /mnt/session/uploads/antpath/antpath outputs sync <dirs>` once."*
-3. On Anthropic Native runs, the agent runs that command via its bash tool. The in-container runtime bridge walks the listed dirs, prints a JSON line per file, and the agent's tool output triggers provider file registration. Goose Managed captures by walking managed runtime directories directly.
+3. Goose Managed captures by walking managed runtime directories directly.
 4. The platform walks the Files API, copies bytes into durable output storage, and tears down the session.
 
 Cost: one extra agent turn (~hundreds of tokens, observable in `span.model_request_*` events). Document this against your token budget if you submit very high-volume runs.

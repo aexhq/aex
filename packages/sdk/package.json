@@ -31,12 +31,8 @@
     "test": "pnpm test:unit",
     "test:unit": "vitest run test/unit",
     "test:security": "vitest run test/security",
-    "test:unit:recorded": "vitest run test/unit/recorded",
-    "test:load:replay": "vitest run test/unit/recorded/anthropic-replay-resilience.test.ts",
     "test:property": "vitest run --passWithNoTests property",
     "test:coverage": "vitest run --coverage test/unit",
-    "fixtures:record:anthropic": "tsx scripts/record-api-fixtures.ts",
-    "fixtures:sanitize": "tsx scripts/sanitize-api-fixtures.ts",
     "prepack": "pnpm run build",
     "publish:dry-run": "pnpm publish --dry-run --no-git-checks"
   },

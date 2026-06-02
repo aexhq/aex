@@ -51,4 +51,4 @@ antpath run --config ./run.json \
   --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 
-...or as explicit flags (`--model`, `--system`, `--prompt`, `--provider-skill`, `--mcp`, `--mcp-auth`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`, `--cleanup`). The two modes are mutually exclusive.
+...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`, `--cleanup`). The two modes are mutually exclusive.

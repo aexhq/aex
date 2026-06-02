@@ -65,10 +65,9 @@ export interface RunEvent {
 }
 
 /**
- * Provider-emitted event payload, kept structurally identical to the
- * upstream Claude Managed Agents event so type guards work uniformly
- * whether the event came from the worker (live) or the dashboard
- * (replayed).
+ * Provider-emitted event payload. Provider-specific fields are passed through
+ * structurally so historical events and managed-runner events can be displayed
+ * and downloaded without each client needing provider-specific schemas.
  */
 export interface ProviderEvent {
   readonly type: string;
@@ -139,9 +138,8 @@ export interface WhoAmI {
     /**
      * Wall-clock ceiling on a single run before forced termination.
      * `null` means no antpath-imposed cap, but this is **not unlimited
-     * overall**: the upstream provider (e.g. Anthropic Managed Agents)
-     * still enforces its own session-lifetime ceiling, and a run that
-     * exceeds it terminates regardless.
+     * overall**: the managed runner, infrastructure, or upstream provider may
+     * still impose a ceiling, and a run that exceeds it terminates regardless.
      */
     readonly maxRunDurationMs?: number | null;
   };

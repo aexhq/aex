@@ -1,10 +1,10 @@
 /**
  * Live scenario: live-sdk-mcp-invocation.test.ts
  *
- * Matrix test — same assertion body across (provider, runtime) cells.
+ * Matrix test — same assertion body across managed provider cells.
  * Proves the agent ACTUALLY CALLS a remote MCP tool end-to-end:
  *   SDK → POST /runs (with mcpServers wired)
- *      → dispatcher routes (native vs managed)
+ *      → dispatcher routes to the managed runtime
  *      → runtime materializes the MCP into the agent manifest
  *      → model picks the MCP tool and the runtime emits a tool_request
  *      → runtime receives the upstream MCP response → tool_response
@@ -16,22 +16,14 @@
  * model can't reach the MCP, when the proxy mishandles auth, or when the
  * adapter drops the tool_request translation.
  *
- * Per AGENTS.md's "No feature gates between runtimes" rule, this file
- * runs the SAME body on every cell:
- *   - (anthropic, native)   — Anthropic Managed Agents
- *   - (anthropic, managed)  — Goose Managed + Anthropic via provider-proxy
+ * This file runs the same body on every managed provider cell:
+ *   - (deepseek, managed)  — Goose Managed + Anthropic via provider-proxy
  *   - (deepseek,  managed)  — Goose Managed + DeepSeek via provider-proxy
- *
- * If a cell fails, the failure points at the work item that closes the
- * gap (e.g. native-MCP needs vault translation per
- * platform.claude.com/docs/en/managed-agents/mcp-connector). The test
- * never short-circuits or skips: a missing translation is a bug, not a
- * configuration toggle.
  *
  * Required env:
  *   ANTPATH_API_URL              live hosted API URL
  *   ANTPATH_API_TOKEN             workspace API token
- *   ANTHROPIC_API_KEY    customer Anthropic key
+ *   DEEPSEEK_API_KEY    customer DeepSeek key
  *   DEEPSEEK_API_KEY     customer DeepSeek key
  *   ANTPATH_USER_TEST_TARBALL          packed SDK tarball
  *     OR ANTPATH_USER_TEST_VERSION     published version on npm
@@ -51,9 +43,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // DeepWiki — public, unauthenticated MCP exposing GitHub repo Q&A tools.
@@ -63,30 +53,14 @@ const MCP_URL = "https://mcp.deepwiki.com/mcp";
 
 interface Cell {
   readonly id: string;
-  readonly provider: "anthropic" | "deepseek";
-  readonly runtime: "native" | "managed";
+  readonly provider: "deepseek";
+  readonly runtime: "managed";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  {
-    id: "anthropic-native",
-    provider: "anthropic",
-    runtime: "native",
-    model: anthropicModel,
-    keyEnvName: "ANTHROPIC_KEY_SUBMIT",
-    keyValue: anthropicKey
-  },
-  {
-    id: "anthropic-managed",
-    provider: "anthropic",
-    runtime: "managed",
-    model: anthropicModel,
-    keyEnvName: "ANTHROPIC_KEY_SUBMIT",
-    keyValue: anthropicKey
-  },
   {
     id: "deepseek-managed",
     provider: "deepseek",
@@ -111,7 +85,7 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedAnthropicKey: boolean;
+  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
 }
 
@@ -217,7 +191,6 @@ function buildScript(cell: Cell): string {
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
-    const anthropicEnv = process.env.ANTHROPIC_KEY ?? "";
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       runId: runId,
@@ -233,7 +206,7 @@ function buildScript(cell: Cell): string {
       terminalKind: terminal ? terminal.type : null,
       terminalData: terminal ? terminal.data : null,
       streamErrors,
-      leakedAnthropicKey: anthropicEnv.length > 0 && serialized.includes(anthropicEnv),
+      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
@@ -268,7 +241,6 @@ async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
     ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue,
-    ANTHROPIC_KEY: anthropicKey,
     DEEPSEEK_KEY: deepseekKey
   });
   const child = await runCommand(process.execPath, [scriptPath], {
@@ -319,12 +291,10 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
 
-      // The agent actually selected the MCP tool. Goose adapter emits
+      // The agent actually selected the MCP tool. Goose/AG-UI often emits
       // tool_request.data.name = "<serverName>__<toolName>" with
-      // data.extension = "<serverName>" (goose-adapter.mjs:113-133).
-      // Native (Anthropic) adapter emits bare tool names — adapter.ts:203-222
-      // — so we accept either: name starts with the MCP name, OR
-      // extension equals the MCP name.
+      // data.extension = "<serverName>". Some payloads carry bare tool names,
+      // so accept either: name starts with the MCP name, OR extension equals it.
       const mcpRequests = result.toolRequests.filter(
         (r) =>
           (r.name && r.name.startsWith(MCP_NAME)) ||
@@ -354,7 +324,7 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
 
       // No secret leakage.
-      expect(result.leakedAnthropicKey, dump()).toBe(false);
+      expect(result.leakedProviderKey, dump()).toBe(false);
       expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     10 * 60_000

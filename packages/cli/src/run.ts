@@ -143,7 +143,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("antpath — unified CLI for the antpath platform (mirrors the SDK 1:1)\n\n");
   io.stdout("Usage:\n");
   io.stdout("  antpath run --config <run.json> --<provider>-api-key K --api-token T [flags]\n");
-  io.stdout("  antpath run --model M --prompt P [--system S] [--provider-skill v:s ...] [--mcp name=url ...] --<provider>-api-key K --api-token T [flags]\n");
+  io.stdout("  antpath run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-token T [flags]\n");
   io.stdout("  antpath skills upload --name N --from-path <dir> --api-token T\n");
   io.stdout("  antpath skills upload --name N --file <path> [--file <path> ...] --api-token T\n");
   io.stdout("  antpath skills list --api-token T\n");
@@ -156,7 +156,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  antpath download <run-id> [--out path] --api-token T\n");
   io.stdout("  antpath cancel <run-id> --api-token T\n");
   io.stdout("  antpath delete <run-id> --api-token T\n");
-  io.stdout("  antpath delete-asset <hash> --api-token T\n");
+  io.stdout("  antpath delete-asset <assetId|hash> --api-token T\n");
   io.stdout("  antpath whoami --api-token T\n");
   io.stdout("  antpath --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
@@ -165,7 +165,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --debug                     Optional; print a redacted per-request trace to stderr (uploads nothing)\n\n");
   io.stdout("antpath run flags:\n");
   io.stdout(`  --provider <name>           Optional; one of: ${RUN_PROVIDERS.join(", ")} (default anthropic)\n`);
-  io.stdout("  --runtime native|managed    Optional runtime override; native is only valid for anthropic\n");
+  io.stdout("  --runtime managed           Optional runtime selector; omitted also uses managed\n");
   for (const provider of RUN_PROVIDERS) {
     io.stdout(`  --${provider}-api-key <key>${" ".repeat(Math.max(1, 13 - provider.length))}REQUIRED when --provider ${provider}; never stored\n`);
   }
@@ -173,14 +173,13 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --model <model-id>          Provider model id (required in flat mode)\n");
   io.stdout("  --system @file | <text>     System message; @-prefix reads from file\n");
   io.stdout("  --prompt @file | <text>     User message; @-prefix reads from file (repeatable)\n");
-  io.stdout("  --provider-skill v:s[:ver]  Provider built-in skill (vendor:skillId[:version], repeatable)\n");
   io.stdout("  --mcp name=url              MCP server entry (repeatable)\n");
   io.stdout("  --mcp-auth name=Hdr:Val     Auth header on the matching --mcp; routed into vaulted secrets (repeatable)\n");
   io.stdout("  --metadata key=value        Submission metadata entry (repeatable)\n");
   io.stdout("  --proxy-endpoint '<json>'   PlatformProxyEndpoint JSON (repeatable)\n");
   io.stdout("  --proxy-auth name=<spec>    bearer:tok | basic:u:p | header:v | query:v (repeatable)\n");
   io.stdout("  --cleanup retain|delete     Session cleanup policy\n");
-  io.stdout("  --machine <size>            Goose Fly-machine preset for managed runs\n");
+  io.stdout("  --runtime-size <size>       managed runtime preset\n");
   io.stdout("  --run-timeout <dur>         Server-side run deadline (e.g. 1h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");
   io.stdout("  --follow                    Poll events to stdout until the run terminates\n");

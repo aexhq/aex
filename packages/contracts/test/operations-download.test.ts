@@ -9,8 +9,8 @@
  *   - `downloadEvents`   → events.jsonl
  *   - `downloadMetadata` → run.json
  *
- * These tests pin the zip layouts, the outputs-vs-logs split (by the
- * `anthropic-debug/` / `goose-logs/` / `fly-logs/` prefixes), and the
+ * These tests pin the zip layouts, the outputs-vs-logs split, canonical log
+ * namespace normalization, and the
  * best-effort contract: a per-output byte fetch that fails is recorded in
  * `manifest.errors[]` rather than aborting the whole archive (surfaced,
  * never silent).
@@ -38,8 +38,7 @@ const json = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
 // A run with one deliverable (report.txt, served from the `outputs`
-// namespace) and one diagnostic (anthropic-debug/files-list.json, served
-// from the physically-separate `logs` namespace).
+// namespace) and one legacy-named diagnostic served from the `logs` namespace.
 function runWithOutputAndLog() {
   return clientFor({
     "/api/runs/run-1": () => json({ id: "run-1", status: "succeeded" }),
@@ -59,7 +58,7 @@ describe("operations.download (everything)", () => {
 
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
-      "logs/anthropic-debug/files-list.json",
+      "logs/provider-proxy/files-list.json",
       "manifest.json",
       "metadata/run.json",
       "outputs/report.txt"
@@ -266,10 +265,10 @@ describe("operations.downloadOutput (single deliverable)", () => {
 });
 
 describe("operations.downloadLogs (diagnostics only)", () => {
-  it("zips only the anthropic-debug / goose-logs / fly-logs artifacts", async () => {
+  it("zips only canonical log artifacts", async () => {
     const entries = unzipSync(await operations.downloadLogs(runWithOutputAndLog(), "run-1"));
 
-    expect(Object.keys(entries).sort()).toEqual(["anthropic-debug/files-list.json", "manifest.json"]);
+    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "provider-proxy/files-list.json"]);
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
     expect(manifest.namespace).toBe("logs");
     expect(manifest.logs.map((o: { id: string }) => o.id)).toEqual(["o2"]);

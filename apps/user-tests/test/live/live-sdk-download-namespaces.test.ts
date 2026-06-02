@@ -5,12 +5,12 @@
  * run on the live API:
  *
  *   - A run's deliverables live in the `outputs` namespace; platform
- *     diagnostics (goose-logs/, fly-logs/, anthropic-debug/) live in the
+ *     diagnostics (runtime/, host/) live in the
  *     physically-separate `logs` namespace.
  *   - `listOutputs` returns ONLY deliverables (no diagnostic-prefixed
  *     entries leak in).
  *   - `getRunDebugLogs` returns ONLY diagnostics, dot-stripped
- *     (`goose-logs/...`, not `.goose-logs/...`).
+ *     (`runtime/...`, not `.runtime/...`).
  *   - The four download verbs (`download`, `downloadOutputs`,
  *     `downloadLogs`, `downloadEvents` via the everything zip) each
  *     produce a valid (PK-magic) zip against the real server.
@@ -22,7 +22,7 @@
  *
  * Required env: same as the other live-sdk-* files
  * (ANTPATH_API_URL, ANTPATH_API_TOKEN,
- * ANTHROPIC_API_KEY, + ANTPATH_USER_TEST_TARBALL/VERSION).
+ * DEEPSEEK_API_KEY, + ANTPATH_USER_TEST_TARBALL/VERSION).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,25 +39,23 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
+const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface Cell {
   readonly id: string;
-  readonly runtime: "native" | "managed";
+  readonly runtime: "managed";
   /** The diagnostic prefix this runtime is guaranteed to emit under logs/. */
   readonly expectedLogPrefix: string;
 }
 
-// One cell per runtime so both diagnostic sources are covered:
-//   native  → anthropic-debug/files-list.json (always written)
-//   managed → goose-logs/{stdout,stderr,args} (always uploaded)
+// One managed Anthropic cell pins the diagnostic namespace:
+//   managed → runtime/{stdout,stderr,args} (always uploaded)
 const CELLS: readonly Cell[] = [
-  { id: "anthropic-native", runtime: "native", expectedLogPrefix: "anthropic-debug/" },
-  { id: "anthropic-managed", runtime: "managed", expectedLogPrefix: "goose-logs/" }
+  { id: "deepseek-managed-a", runtime: "managed", expectedLogPrefix: "runtime/" }
 ];
 
-const DIAGNOSTIC_PREFIXES = ["goose-logs/", "fly-logs/", "anthropic-debug/"];
+const DIAGNOSTIC_PREFIXES = ["runtime/", "host/"];
 const isDiagnostic = (name: string | null): boolean =>
   !!name && DIAGNOSTIC_PREFIXES.some((p) => name.startsWith(p));
 
@@ -115,13 +113,13 @@ function buildScript(cell: Cell, marker: string): string {
     });
 
     const runId = await client.submitRun({
-      provider: "anthropic",
+      provider: "deepseek",
       runtime: ${JSON.stringify(cell.runtime)},
-      model: ${JSON.stringify(anthropicModel)},
+      model: ${JSON.stringify(deepseekModel)},
       prompt: ${JSON.stringify(prompt)},
       builtins: ["developer"],
       outputDirs: ["/workspace/outputs/report-folder"],
-      secrets: { anthropic: { apiKey: process.env.ANTHROPIC_KEY_SUBMIT } },
+      secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT } },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     });
 
@@ -193,7 +191,7 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
         env: buildPassEnv({
           ANTPATH_API_URL: apiUrl,
           ANTPATH_API_TOKEN: apiToken,
-          ANTHROPIC_KEY_SUBMIT: anthropicKey
+          DEEPSEEK_KEY_SUBMIT: deepseekKey
         })
       });
       if (child.exitCode !== 0) {
@@ -210,7 +208,7 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
       expect(leaked, `diagnostics leaked into outputs listing${ctx}`).toEqual([]);
 
       // 2. The `logs` namespace (via getRunDebugLogs) is ALL diagnostics,
-      //    and dot-stripped (e.g. "goose-logs/…", not ".goose-logs/…").
+      //    and dot-stripped (e.g. "runtime/…", not ".runtime/…").
       expect(r.debugLogs.length, `expected at least one diagnostic${ctx}`).toBeGreaterThan(0);
       for (const l of r.debugLogs) {
         expect(isDiagnostic(l.filename), `non-diagnostic in logs namespace: ${l.filename}${ctx}`).toBe(true);

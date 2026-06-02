@@ -13,12 +13,9 @@ import {
   type RuntimeKind
 } from "../packages/contracts/src/submission.js";
 import {
-  PROVIDER_CAPABILITY,
-  type NativeAgentCapability
-} from "../packages/contracts/src/provider-capability.js";
-import {
   PROVIDER_SUPPORT_STATUSES,
   PROVIDER_PUBLIC_SUPPORT,
+  RUNTIME_VALIDATION_SUPPORT,
   type ProviderPublicSupport,
   type ProviderSupportStatus,
   type SupportPointer
@@ -27,7 +24,6 @@ import {
 export const CAPABILITY_MATRIX_PATH = "packages/sdk/docs/provider-runtime-capabilities.md";
 
 export type RuntimeSupportStatus = ProviderSupportStatus;
-export type NativeFeatureSupportStatus = ProviderSupportStatus | "n/a";
 
 export interface RuntimeCapabilityCell {
   readonly status: RuntimeSupportStatus;
@@ -46,12 +42,7 @@ export interface CapabilityMatrixRow {
   readonly evidence: readonly SupportPointer[];
   readonly defaultProvider: boolean;
   readonly autoRoute: RuntimeKind;
-  readonly nativeRuntime: RuntimeCapabilityCell;
   readonly managedRuntime: RuntimeCapabilityCell;
-  readonly nativeExecutor: string;
-  readonly inlineSkills: NativeFeatureSupportStatus;
-  readonly files: NativeFeatureSupportStatus;
-  readonly mcpServers: NativeFeatureSupportStatus;
 }
 
 function runtimeCell(provider: RunProvider, runtime: RuntimeKind, support: ProviderPublicSupport): RuntimeCapabilityCell {
@@ -60,29 +51,20 @@ function runtimeCell(provider: RunProvider, runtime: RuntimeKind, support: Provi
     return {
       status: "rejected",
       ownership: "rejected",
-      enforcement: "checkRuntimeSupported runtime_native_unsupported",
+      enforcement: "checkRuntimeSupported",
       docsAnchor: support.docsAnchor,
       evidence: support.evidence
     };
   }
 
-  const evidence = support.runtimeEvidence[runtime] ?? support.evidence;
   const status = support.status === "supported" ? "supported" : "live-unverified";
   return {
     status,
-    ownership: runtime === "native" ? "provider-inherited" : status,
-    enforcement: runtime === "managed" ? "submission parser + Goose Managed dispatch" : "submission parser + provider-native dispatch",
+    ownership: status,
+    enforcement: "submission parser + managed dispatch",
     docsAnchor: support.docsAnchor,
-    evidence
+    evidence: support.runtimeEvidence[runtime] ?? support.evidence
   };
-}
-
-function nativeFeatureStatus(
-  nativeAgent: NativeAgentCapability | null,
-  feature: keyof NativeAgentCapability["serves"]
-): NativeFeatureSupportStatus {
-  if (!nativeAgent) return "n/a";
-  return nativeAgent.serves[feature] ? "supported" : "rejected";
 }
 
 function buildDispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
@@ -112,7 +94,6 @@ function supportFor(provider: RunProvider): ProviderPublicSupport {
 export function buildCapabilityMatrixRows(): CapabilityMatrixRow[] {
   return RUN_PROVIDERS.map((provider) => {
     const publicSupport = supportFor(provider);
-    const nativeAgent = PROVIDER_CAPABILITY[provider].nativeAgent;
     return {
       provider,
       displayName: publicSupport.displayName,
@@ -122,12 +103,7 @@ export function buildCapabilityMatrixRows(): CapabilityMatrixRow[] {
       evidence: publicSupport.evidence,
       defaultProvider: provider === DEFAULT_RUN_PROVIDER,
       autoRoute: selectRuntime(buildDispatcherProbe(provider)),
-      nativeRuntime: runtimeCell(provider, "native", publicSupport),
-      managedRuntime: runtimeCell(provider, "managed", publicSupport),
-      nativeExecutor: nativeAgent?.executor ?? "n/a",
-      inlineSkills: nativeFeatureStatus(nativeAgent, "inlineSkills"),
-      files: nativeFeatureStatus(nativeAgent, "files"),
-      mcpServers: nativeFeatureStatus(nativeAgent, "mcpServers")
+      managedRuntime: runtimeCell(provider, "managed", publicSupport)
     };
   });
 }
@@ -140,13 +116,8 @@ function renderProviderLink(row: CapabilityMatrixRow): string {
   return `[${row.displayName}](#${row.docsAnchor})`;
 }
 
-function renderCodeOrText(value: string): string {
-  return value === "n/a" ? value : `\`${value}\``;
-}
-
 function renderRuntimeCell(cell: RuntimeCapabilityCell): string {
-  const status = `[${cell.status}](#${cell.docsAnchor})`;
-  return cell.ownership === cell.status ? status : `${status}; ${cell.ownership}`;
+  return `[${cell.status}](#${cell.docsAnchor})`;
 }
 
 export function renderProviderRuntimeCapabilityMarkdown(
@@ -163,13 +134,13 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "# Provider runtime capabilities",
     "",
-    "Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/provider-capability.ts`; runtime cells are derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.",
+    "Generated from `packages/contracts/src/provider-support.ts`; runtime cells are derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.",
     "",
     "Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.",
     "",
     `Providers: ${providerList}. Runtime selectors: ${runtimeList}.`,
     "",
-    "Public support facts are listed separately from runtime routing facts. Goose Managed is the universal managed runtime. A provider-native runtime is used only when the shared capability registry declares one.",
+    "All new submissions run on the managed runtime. Public support facts are listed separately from runtime dispatch facts.",
     "",
     `Status vocabulary: ${PROVIDER_SUPPORT_STATUSES.map((status) => `\`${status}\``).join(", ")}.`,
     "",
@@ -195,8 +166,8 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "## Runtime routing",
     "",
-    "| Provider | Default provider | Auto route | `runtime: \"native\"` | `runtime: \"managed\"` | Native executor |",
-    "| --- | --- | --- | --- | --- | --- |"
+    "| Provider | Default provider | Auto route | `runtime: \"managed\"` |",
+    "| --- | --- | --- | --- |"
   );
 
   for (const row of rows) {
@@ -205,9 +176,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
         `| \`${row.provider}\``,
         row.defaultProvider ? "yes" : "no",
         `\`${row.autoRoute}\``,
-        renderRuntimeCell(row.nativeRuntime),
-        renderRuntimeCell(row.managedRuntime),
-        `${renderCodeOrText(row.nativeExecutor)} |`
+        `${renderRuntimeCell(row.managedRuntime)} |`
       ].join(" | ")
     );
   }
@@ -222,7 +191,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
 
   for (const row of rows) {
     for (const runtime of RUNTIME_KINDS) {
-      const cell = runtime === "native" ? row.nativeRuntime : row.managedRuntime;
+      const cell = row.managedRuntime;
       lines.push(
         [
           `| \`${row.provider}\``,
@@ -238,32 +207,34 @@ export function renderProviderRuntimeCapabilityMarkdown(
 
   lines.push(
     "",
-    "## Native feature parity",
+    "## Validation errors",
     "",
-    "| Provider | Native inline skills | Native files | Native MCP servers |",
+    "| Code | Docs anchor | Enforcement path | Evidence |",
     "| --- | --- | --- | --- |"
   );
 
-  for (const row of rows) {
+  for (const [code, support] of Object.entries(RUNTIME_VALIDATION_SUPPORT)) {
     lines.push(
       [
-        `| \`${row.provider}\``,
-        row.inlineSkills,
-        row.files,
-        `${row.mcpServers} |`
+        `| \`${code}\``,
+        `[${support.docsAnchor}](#${support.docsAnchor})`,
+        support.enforcement,
+        `${renderPointerLinks(support.evidence)} |`
       ].join(" | ")
     );
   }
 
   lines.push(
     "",
+    "### Managed unsupported features",
+    "",
+    "Provider-hosted skill refs such as `Skill.provider(...)` are rejected because new runs dispatch to Goose Managed. Use inline antpath skills or remove the provider-hosted ref.",
+    "",
     "Notes:",
     "",
     "- Public status describes provider availability on the SDK surface. Runtime routing describes how a validated submission is dispatched.",
-    "- `rejected` for `runtime: \"native\"` means the submission parser returns `runtime_native_unsupported` for that provider.",
+    "- `runtime: \"native\"` is not a runtime selector; the submission parser rejects it as an invalid enum value.",
     "- `live-unverified` means the shape is accepted by code but lacks equal live user evidence in this repository.",
-    "- `provider-inherited` means antpath passes a capability through while the provider or customer-controlled service owns final behavior.",
-    "- Native feature parity cells come from `PROVIDER_CAPABILITY[provider].nativeAgent.serves`; `n/a` means the provider has no native agent runtime.",
     "",
     "## Provider anchors",
     ""

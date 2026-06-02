@@ -19,10 +19,8 @@ import type {
 /**
  * Manifest file path inside the run container (always present).
  *
- * Anthropic Managed Agents rebases every session-resource mount under
- * `/mnt/session/uploads/<requested-mount_path>`. The worker uploads the
- * manifest with `mount_path: "/antpath/index.json"`, so the agent and
- * the CLI both find it at `/mnt/session/uploads/antpath/index.json`.
+ * The runner writes the manifest to this fixed path before invoking
+ * in-container `antpath` commands.
  */
 export const ANTPATH_INDEX_PATH = "/mnt/session/uploads/antpath/index.json";
 

@@ -7,7 +7,7 @@
  * package (tarball or registry version) from a child process so
  * workspace symlinks cannot leak in.
  *
- * For each `(provider, runtime)` cell the test submits one run with:
+ * For each managed provider cell the test submits one run with:
  *   - 2 inline Skills (proves multi-skill manifest + materialization)
  *   - 2 remote MCP servers (proves multi-MCP recipe.yaml `extensions:`
  *     block reaches Goose with Authorization headers; the CLI flag
@@ -34,21 +34,13 @@
  *   - No secret value (provider key, runner bearer) appears anywhere
  *     in the SDK-visible payload (run + events + outputs).
  *
- * Anthropic Native runtime path doesn't spawn Goose — it drives
- * Anthropic /v1/messages directly from the hosted API. v1 native serves the
- * system + AGENTS.md + prompt channels; it does not yet upload inline
- * skills or dial MCP (the dispatcher fail-closes on those). That cell
- * asserts the hosted adapter contract for what native serves
- * (started, real assistant_text via Anthropic, the three probe channels,
- * terminal) — skills/MCP coverage lives in the two managed cells.
- *
  * No env-var flags gate scope. The five `test:*` commands are the
  * only knobs. See surface invariants.
  *
  * Required env:
  *   ANTPATH_API_URL                live hosted API URL (local or prod)
  *   ANTPATH_API_TOKEN               workspace API token
- *   ANTHROPIC_API_KEY      customer Anthropic API key
+ *   DEEPSEEK_API_KEY      customer DeepSeek API key
  *   DEEPSEEK_API_KEY       customer DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL            packed SDK tarball
  *     OR ANTPATH_USER_TEST_VERSION       published version on npm
@@ -68,9 +60,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
@@ -93,7 +83,7 @@ interface CaseResult {
   readonly terminalData: Record<string, unknown> | null;
   readonly outputCount: number;
   readonly outputs: readonly { filename: string; sizeBytes: number; sample: string | null }[];
-  readonly leakedAnthropicKey: boolean;
+  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
   // Full payload of every stream_error event the runner emitted —
   // captures the actual exception message + phase when materialize or
@@ -131,8 +121,8 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 interface CaseSpec {
   readonly scriptName: string;
-  readonly runtime: "native" | "managed";
-  readonly provider: "anthropic" | "deepseek";
+  readonly runtime: "managed";
+  readonly provider: "deepseek";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
@@ -219,19 +209,9 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       secrets: { ${spec.provider}: { apiKey: process.env.${spec.keyEnvName} } },
       idempotencyKey: "comprehensive-${spec.runtime}-${spec.provider}-" + Date.now()
     };
-    ${
-      spec.runtime === "managed"
-        ? // Goose Managed serves inline skills + MCP; exercise the full surface.
-          'submitOpts.runtime = "managed";\n' +
-          "    submitOpts.skills = [skillAlpha, skillBeta];\n" +
-          "    submitOpts.mcpServers = [mcpPrimary, mcpSecondary];"
-        : // Anthropic Native (v1 /v1/messages) does not yet serve inline skills
-          // or MCP — the dispatcher fail-closes on them (see
-          // collectNativeUnsupportedFeatures). Native exercises the
-          // system + AGENTS.md + prompt channels only; skills/MCP coverage
-          // lives in the two managed cases above. void the unused builders.
-          "void skillAlpha; void skillBeta; void mcpPrimary; void mcpSecondary;"
-    }
+    submitOpts.runtime = "managed";
+    submitOpts.skills = [skillAlpha, skillBeta];
+    submitOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
     const runId = await client.submitRun(submitOpts);
 
@@ -284,7 +264,6 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     }
 
     const serialized = JSON.stringify({ run, events, outputs });
-    const anthropicEnv = process.env.ANTHROPIC_KEY ?? "";
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       runId: runId,
@@ -302,7 +281,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       terminalData: terminal ? terminal.data : null,
       outputCount: outputs.length,
       outputs: outputsCollected,
-      leakedAnthropicKey: anthropicEnv.length > 0 && serialized.includes(anthropicEnv),
+      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       streamErrors
     };
@@ -325,8 +304,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // the probe never survives into the goose stdout the event stream is
   // built from. A dot is OUTSIDE that char class, so it splits the run
   // into sub-24-char segments that survive regardless of how the model
-  // punctuates the reply. (Native runtime assistant text isn't redacted,
-  // which is why only the two managed cells tripped this.)
+  // punctuates the reply.
   const probes = {
     system: "REF.verify." + Math.random().toString(36).slice(2, 10),
     agentsMd: "REF.verify." + Math.random().toString(36).slice(2, 10),
@@ -340,7 +318,6 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
     ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [spec.keyEnvName]: spec.keyValue,
-    ANTHROPIC_KEY: anthropicKey,
     DEEPSEEK_KEY: deepseekKey
   });
 
@@ -385,7 +362,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
     }
     lines.push(`outputs=${result.outputs.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
     for (const o of result.outputs) {
-      if (o.filename && o.filename.startsWith(".goose-logs/")) {
+      if (o.filename && o.filename.startsWith(".runtime/")) {
         lines.push(`--- ${o.filename} (sample, first 256 bytes) ---`);
         lines.push(o.sample ?? "(empty)");
         lines.push(`--- end ${o.filename} ---`);
@@ -429,7 +406,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(normalized).toContain(result.probes.prompt);
 
   // No secret leakage anywhere in the SDK-visible payload.
-  expect(result.leakedAnthropicKey).toBe(false);
+  expect(result.leakedProviderKey).toBe(false);
   expect(result.leakedDeepseekKey).toBe(false);
 
   // Outputs: any file Goose wrote under the custom outputDirs path was
@@ -481,74 +458,4 @@ describe("live hosted API — comprehensive end-to-end via installed SDK", () =>
     11 * 60_000
   );
 
-  it(
-    "managed anthropic: real Goose + skills + MCP + AGENTS.md + system + outputDirs",
-    async () => {
-      const result = await runCase(
-        {
-          scriptName: "comprehensive-managed-anthropic.mjs",
-          runtime: "managed",
-          provider: "anthropic",
-          model: anthropicModel,
-          keyEnvName: "ANTHROPIC_KEY_SUBMIT",
-          keyValue: anthropicKey,
-          customOutputDir: "/data/exports/custom",
-          pollDeadlineMs: 8 * 60_000,
-          pollIntervalMs: 3_000,
-          timeoutMs: 10 * 60_000
-        },
-        install.installDir
-      );
-      assertManagedShape(result, ["compose-alpha-managed-anthropic", "compose-beta-managed-anthropic"]);
-      expect(result.runtime).toBe("managed");
-      expect(result.provider).toBe("anthropic");
-    },
-    11 * 60_000
-  );
-
-  it(
-    "native anthropic: Anthropic /v1/messages (no Goose) + AGENTS.md + system",
-    async () => {
-      // Anthropic Native doesn't spawn Goose — the hosted API drives
-      // /v1/messages directly. The v1 native path serves system +
-      // AGENTS.md + prompt; it does NOT yet upload inline skills or dial
-      // MCP (the dispatcher fail-closes on those — see
-      // collectNativeUnsupportedFeatures). Skills/MCP comprehensive
-      // coverage lives in the two managed cases. When the full Managed
-      // Agents path lands, add skills/MCP back here.
-      const result = await runCase(
-        {
-          scriptName: "comprehensive-native-anthropic.mjs",
-          runtime: "native",
-          provider: "anthropic",
-          model: anthropicModel,
-          keyEnvName: "ANTHROPIC_KEY_SUBMIT",
-          keyValue: anthropicKey,
-          customOutputDir: "/data/exports/custom",
-          pollDeadlineMs: 6 * 60_000,
-          pollIntervalMs: 2_000,
-          timeoutMs: 8 * 60_000
-        },
-        install.installDir
-      );
-      expect(result.runStatus).toBe("succeeded");
-      expect(result.runtime).toBe("native");
-      expect(result.provider).toBe("anthropic");
-
-      expect(result.eventKinds[0]).toBe("RUN_STARTED");
-      expect(result.terminalKind).toBe("RUN_FINISHED");
-      expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.assistantTextJoined.length).toBeGreaterThan(0);
-      // Strip whitespace before matching — streaming responses
-      // fragment content blocks per token.
-      const nativeNormalized = result.assistantTextJoined.replace(/\s+/g, "");
-      expect(nativeNormalized).toContain(result.probes.system);
-      expect(nativeNormalized).toContain(result.probes.agentsMd);
-      expect(nativeNormalized).toContain(result.probes.prompt);
-
-      expect(result.leakedAnthropicKey).toBe(false);
-      expect(result.leakedDeepseekKey).toBe(false);
-    },
-    9 * 60_000
-  );
 });

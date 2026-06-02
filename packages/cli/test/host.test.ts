@@ -402,7 +402,7 @@ describe("antpath cancel + delete", () => {
     expect(JSON.parse(cap.stdout)).toEqual({ runId: "run-x", deleted: true });
   });
 
-  it("delete-asset DELETEs a normalized workspace asset hash and prints the result", async () => {
+  it("delete-asset DELETEs a normalized workspace asset id and prints the result", async () => {
     const hex = "a".repeat(64);
     const cap = makeHostIo({
       argv: ["delete-asset", `sha256:${hex}`, ...COMMON],
@@ -411,7 +411,7 @@ describe("antpath cancel + delete", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
-    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/${hex}`);
+    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
     expect(cap.calls[0]!.init.method).toBe("DELETE");
     expect(JSON.parse(cap.stdout.trim())).toEqual({ hash: `sha256:${hex}`, deleted: true });
   });
@@ -438,7 +438,7 @@ describe("antpath cancel + delete", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(1);
-    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/${hex}`);
+    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
     const err = JSON.parse(cap.stderr.trim()) as { error: string; message: string; hash: string };
     expect(err).toEqual({ error: "delete_asset_failed", message: "asset_not_found", hash: hex });
   });
@@ -447,8 +447,8 @@ describe("antpath cancel + delete", () => {
 describe("antpath download", () => {
   // Route the reads the download verbs fan out to: getRun + listEvents +
   // listOutputs + listLogs + per-artifact /download. The run has one
-  // deliverable (report.txt in the outputs namespace) and one diagnostic
-  // (goose-logs/stderr.log in the logs namespace).
+  // deliverable (report.txt in the outputs namespace) and one legacy-named
+  // diagnostic in the logs namespace.
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const wholeRunHandler =
@@ -488,7 +488,7 @@ describe("antpath download", () => {
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
-      "logs/goose-logs/stderr.log",
+      "logs/runtime/stderr.log",
       "manifest.json",
       "metadata/run.json",
       "outputs/report.txt"
@@ -542,7 +542,7 @@ describe("antpath download", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const entries = unzipSync(writes.get([...writes.keys()][0]!)!);
-    expect(Object.keys(entries).sort()).toEqual(["goose-logs/stderr.log", "manifest.json"]);
+    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "runtime/stderr.log"]);
   });
 
   it("--only metadata reads only the run record", async () => {
@@ -635,7 +635,7 @@ describe("antpath run", () => {
     expect(printed).toMatchObject({ id: "run-new", status: "queued" });
   });
 
-  it("submits a run request built from --model/--prompt/--provider-skill/--mcp/--mcp-auth flags", async () => {
+  it("submits a run request built from --model/--prompt/--mcp/--mcp-auth flags", async () => {
     const cap = makeHostIo({
       argv: [
         "run",
@@ -643,8 +643,6 @@ describe("antpath run", () => {
         "claude-sonnet-test",
         "--prompt",
         "hello",
-        "--provider-skill",
-        "anthropic:pdf:v1",
         "--mcp",
         "github=https://example.com/mcp",
         "--mcp-auth",
@@ -665,9 +663,7 @@ describe("antpath run", () => {
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
-    expect(submission.skills).toEqual([
-      { kind: "provider", vendor: "anthropic", skillId: "pdf", version: "v1" }
-    ]);
+    expect(submission.skills).toEqual([]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);

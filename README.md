@@ -95,9 +95,8 @@ documentation sources are open in this repo.
 **Which providers are supported?**
 Anthropic, DeepSeek, OpenAI, Gemini, and Mistral today — **more
 coming.** Anthropic is the default provider; set `provider` for the
-others. Anthropic auto-routes to the native runtime unless you opt into
-`runtime: "managed"`; the other providers use Goose Managed. Either way
-you get the same `submitRun` shape and the same `RunnerEvent` stream.
+others. Omit `runtime` or pass `runtime: "managed"`; every provider uses
+Goose Managed and the same `submitRun` shape / `RunnerEvent` stream.
 See the [generated capability matrix](packages/sdk/docs/provider-runtime-capabilities.md).
 
 **How do provider keys work?**

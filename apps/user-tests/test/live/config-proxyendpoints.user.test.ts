@@ -10,13 +10,9 @@
  * httpbin.org) so no secret is involved; `responseMode: "full"` so the JSON
  * body surfaces to the agent.
  *
- * The runtime bridge is shipped into the container by:
- *   - Native: anthropic-native/preflight.ts uploads the pinned runtime bridge
- *     artifact to the Files API; the materializer mounts it at
- *     /antpath/antpath (PROXY_CLI_MOUNT_PATH).
- *   - Goose: the runner downloads the same pinned runtime bridge artifact by
- *     digest, verifies sha256, writes /mnt/session/uploads/antpath/antpath, and
- *     the entrypoint drops an `antpath` PATH wrapper.
+ * The runner downloads the pinned runtime bridge artifact by digest, verifies
+ * sha256, writes /mnt/session/uploads/antpath/antpath, and the entrypoint drops
+ * an `antpath` PATH wrapper.
  *
  * Only passes once the worker is deployed with ANTPATH_RUNTIME_BRIDGE_MANIFEST and
  * the dashboard ANTPATH_PROXY_PUBLIC_BASE_URL is set (the index.json's

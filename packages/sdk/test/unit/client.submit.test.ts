@@ -40,7 +40,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
       }
     }
     calls.push({ url, method, headers, body });
-    if (url.endsWith("/assets/upload")) {
+    if (url.endsWith("/assets")) {
       const lc: Record<string, string> = {};
       for (const [k, v] of Object.entries(headers)) lc[k.toLowerCase()] = v;
       const hash = lc["x-asset-hash"] ?? `sha256:${"a".repeat(64)}`;
@@ -49,8 +49,8 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
         JSON.stringify({
           ok: true,
           exists: false,
-          path: `assets/11111111-1111-4111-8111-111111111111/${hex}`,
-          hash,
+          assetId: `asset_${hex}`,
+          contentHash: hash,
           sizeBytes: Number(lc["content-length"] ?? "0")
         }),
         { status: 201, headers: { "content-type": "application/json" } }
@@ -77,9 +77,6 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
       model: "claude-sonnet-4-5-20250929",
       system: "You are tidy.",
       prompt: "do work",
-      skills: [
-        Skill.provider({ vendor: "anthropic", skillId: "pdf", version: "v1" })
-      ],
       mcpServers: [
         McpServer.remote({
           name: "github",
@@ -108,9 +105,7 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     expect(submission.model).toBe("claude-sonnet-4-5-20250929");
     expect(submission.system).toBe("You are tidy.");
     expect(submission.prompt).toEqual(["do work"]);
-    expect(submission.skills).toEqual([
-      { kind: "provider", vendor: "anthropic", skillId: "pdf", version: "v1" }
-    ]);
+    expect(submission.skills).toEqual([]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://mcp.example/github" },
       { name: "noauth", url: "https://mcp.example/noauth" }
@@ -226,9 +221,7 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     ).rejects.toThrow(/skills\[0\] must be a Skill instance/);
   });
 
-  it("uploads an inline AgentsMd to /assets/upload then submits a JSON body with a kind:'r2' ref", async () => {
-    // Phase B: inline AgentsMd is materialized to R2 before submit.
-    // The run body is JSON; the agentsMd entry becomes a r2 ref.
+  it("uploads an inline AgentsMd to /assets then submits a JSON body with a kind:'asset' ref", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
@@ -237,18 +230,18 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
       prompt: "p",
       agentsMd: [draft],
       secrets: { anthropic: { apiKey: "k" } },
-      idempotencyKey: "idem-r2-agentsmd"
+      idempotencyKey: "idem-asset-agentsmd"
     });
-    const uploadCalls = calls.filter((c) => c.url.endsWith("/assets/upload"));
+    const uploadCalls = calls.filter((c) => c.url.endsWith("/assets"));
     const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
     expect(uploadCalls).toHaveLength(1);
     expect(runCalls).toHaveLength(1);
     const submission = (runCalls[0]!.body as { submission: { agentsMd: ReadonlyArray<{ kind: string; name?: string }> } })
       .submission;
-    expect(submission.agentsMd[0]).toMatchObject({ kind: "r2", name: "rules" });
+    expect(submission.agentsMd[0]).toMatchObject({ kind: "asset", name: "rules" });
   });
 
-  it("materializes draft Skill, AgentsMd, and File refs to /assets/upload before submitting", async () => {
+  it("materializes draft Skill, AgentsMd, and File refs to /assets before submitting", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const skill = await Skill.fromFiles({
@@ -278,9 +271,9 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     });
 
     expect(calls.map((c) => c.url)).toEqual([
-      "https://x/assets/upload",
-      "https://x/assets/upload",
-      "https://x/assets/upload",
+      "https://x/assets",
+      "https://x/assets",
+      "https://x/assets",
       "https://x/api/runs"
     ]);
     const uploadCalls = calls.slice(0, 3);
@@ -297,21 +290,18 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     }
 
     const submission = (calls[3]!.body as { submission: Record<string, unknown> }).submission;
-    const r2Ref = (name: string, hash: string, call: CapturedRequest, extra: Record<string, string> = {}) => {
-      const bytes = call.body as Uint8Array;
+    const assetRef = (name: string, hash: string, extra: Record<string, string> = {}) => {
       return {
-        kind: "r2",
-        path: `assets/11111111-1111-4111-8111-111111111111/${hash.slice("sha256:".length)}`,
-        hash,
-        sizeBytes: bytes.byteLength,
+        kind: "asset",
+        assetId: `asset_${hash.slice("sha256:".length)}`,
         name,
         ...extra
       };
     };
-    expect(submission.skills).toEqual([r2Ref("rules", skillHash, uploadCalls[0]!)]);
-    expect(submission.agentsMd).toEqual([r2Ref("session-rules", agentsMdHash, uploadCalls[1]!)]);
+    expect(submission.skills).toEqual([assetRef("rules", skillHash)]);
+    expect(submission.agentsMd).toEqual([assetRef("session-rules", agentsMdHash)]);
     expect(submission.files).toEqual([
-      r2Ref("dataset", fileHash, uploadCalls[2]!, { mountPath: "/workspace/input/dataset.csv" })
+      assetRef("dataset", fileHash, { mountPath: "/workspace/input/dataset.csv" })
     ]);
   });
 
@@ -330,7 +320,7 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
 });
 
 describe("AntpathClient.deleteWorkspaceAsset", () => {
-  it("DELETEs /assets/:hash and normalizes sha256-prefixed hashes", async () => {
+  it("DELETEs /assets/:assetId and normalizes sha256-prefixed hashes", async () => {
     const calls: CapturedRequest[] = [];
     const stub: typeof fetch = vi.fn(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -349,11 +339,11 @@ describe("AntpathClient.deleteWorkspaceAsset", () => {
     const hex = "b".repeat(64);
 
     await client.deleteWorkspaceAsset(`sha256:${hex}`);
-    await client.deleteWorkspaceAsset(hex);
+    await client.deleteWorkspaceAsset(`asset_${hex}`);
 
     expect(calls.map((c) => c.url)).toEqual([
-      `https://x/assets/${hex}`,
-      `https://x/assets/${hex}`
+      `https://x/assets/asset_${hex}`,
+      `https://x/assets/asset_${hex}`
     ]);
     expect(calls.map((c) => c.method)).toEqual(["DELETE", "DELETE"]);
     expect(calls.map((c) => c.headers.authorization)).toEqual(["Bearer tkn", "Bearer tkn"]);

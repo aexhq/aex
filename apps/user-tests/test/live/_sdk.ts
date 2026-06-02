@@ -12,7 +12,7 @@
  * They validate the FIXED behaviour and so only pass once the fixes are
  * DEPLOYED to the remote hosted API. Env mirrors the other user-tests:
  *   ANTPATH_API_URL, ANTPATH_API_TOKEN,
- *   ANTHROPIC_API_KEY / DEEPSEEK_API_KEY,
+ *   DEEPSEEK_API_KEY,
  *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION (the SDK to install).
  */
 import { writeFileSync } from "node:fs";
@@ -22,9 +22,7 @@ import { runCommand, type InstallResult } from "../_fixtures/install.js";
 export interface UserEnv {
   readonly apiBase: string;
   readonly apiToken: string;
-  readonly anthropicKey?: string;
   readonly deepseekKey?: string;
-  readonly anthropicModel: string;
   readonly deepseekModel: string;
 }
 
@@ -38,16 +36,14 @@ function req(name: string): string {
   return v;
 }
 
-export function requireUserEnv(opts: { anthropic?: boolean; deepseek?: boolean } = {}): UserEnv {
+export function requireUserEnv(opts: { deepseek?: boolean } = {}): UserEnv {
   const env: UserEnv = {
     apiBase: req("ANTPATH_API_URL").replace(/\/$/, ""),
     apiToken: req("ANTPATH_API_TOKEN"),
-    anthropicModel: process.env.ANTPATH_USER_TEST_ANTHROPIC_MODEL ?? "claude-haiku-4-5",
     deepseekModel: process.env.ANTPATH_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-chat"
   };
   return {
     ...env,
-    ...(opts.anthropic ? { anthropicKey: req("ANTHROPIC_API_KEY") } : {}),
     ...(opts.deepseek ? { deepseekKey: req("DEEPSEEK_API_KEY") } : {})
   };
 }
@@ -69,15 +65,13 @@ export interface SdkRunResult {
 
 /**
  * Script preamble: imports the SDK + builds the client from env. Available
- * in-script: `client`, `ANTHROPIC_KEY`, `DEEPSEEK_KEY`, `MODEL_ANTHROPIC`,
- * `MODEL_DEEPSEEK`, and the classes `AgentsMd` / `ProxyEndpoint`.
+ * in-script: `client`, `DEEPSEEK_KEY`, `MODEL_DEEPSEEK`, and the classes
+ * `AgentsMd` / `ProxyEndpoint`.
  */
 const PREAMBLE = `
 import { AntpathClient, AgentsMd, ProxyEndpoint } from "antpath";
 const client = new AntpathClient({ baseUrl: process.env.ANTPATH_API_URL, apiToken: process.env.ANTPATH_API_TOKEN });
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
-const MODEL_ANTHROPIC = process.env.MODEL_ANTHROPIC;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
 
@@ -131,10 +125,8 @@ export async function runSdkScript(
   const passEnv: Record<string, string> = {
     ANTPATH_API_URL: env.apiBase,
     ANTPATH_API_TOKEN: env.apiToken,
-    MODEL_ANTHROPIC: env.anthropicModel,
     MODEL_DEEPSEEK: env.deepseekModel,
     WAIT_MS: String(opts.waitMs ?? 240_000),
-    ...(env.anthropicKey ? { ANTHROPIC_KEY: env.anthropicKey } : {}),
     ...(env.deepseekKey ? { DEEPSEEK_KEY: env.deepseekKey } : {})
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";

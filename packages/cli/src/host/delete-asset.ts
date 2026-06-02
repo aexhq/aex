@@ -1,5 +1,5 @@
 /**
- * `antpath delete-asset <hash>` — DELETE /assets/{hash}.
+ * `antpath delete-asset <assetId|hash>` — DELETE /assets/{assetId}.
  *
  * Removes a workspace asset blob from the shared content-addressed store.
  * Runs that already snapshotted the asset into their own prefix are

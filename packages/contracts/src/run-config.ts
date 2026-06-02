@@ -43,7 +43,7 @@ import type {
   PlatformProxyEndpoint,
   PlatformEnvironment
 } from "./submission.js";
-import type { MachineSize } from "./machine-sizes.js";
+import type { RuntimeSize } from "./runtime-sizes.js";
 
 // ---------------------------------------------------------------------------
 // Skill ID + name format
@@ -96,23 +96,17 @@ export const SKILL_BUNDLE_LIMITS = {
 // SkillRef (discriminated)
 // ---------------------------------------------------------------------------
 
-export type SkillRef = ProviderSkillRef | R2SkillRef;
+export type SkillRef = ProviderSkillRef | AssetRef;
 
 /**
- * R2-anchored skill ref. Every non-provider skill goes through R2:
- * the SDK uploads to `assets/<workspaceId>/<sha256-hex>` BEFORE
- * submitting the run, so the Worker only ever sees content-addressable
- * references. Validation: R2.head(path), size + workspace-prefix check.
- *
- * `path` is the full R2 key. `hash` is `sha256:<64-hex>`. `name` is
- * the workspace-visible label the agent sees on disk.
+ * Storage-neutral uploaded asset reference. Runtime materialization resolves
+ * `assetId` privately; public callers never name object-store paths.
  */
-export interface R2SkillRef {
-  readonly kind: "r2";
-  readonly path: string;
-  readonly hash: string;
-  readonly sizeBytes: number;
+export interface AssetRef {
+  readonly kind: "asset";
+  readonly assetId: string;
   readonly name: string;
+  readonly mountPath?: string;
 }
 
 export interface ProviderSkillRef {
@@ -129,19 +123,15 @@ export function isProviderSkillRef(ref: SkillRef): ref is ProviderSkillRef {
   return ref.kind === "provider";
 }
 
-export function isR2SkillRef(ref: SkillRef): ref is R2SkillRef {
-  return ref.kind === "r2";
+export function isAssetRef(ref: SkillRef | AgentsMdRef | FileRef): ref is AssetRef {
+  return ref.kind === "asset";
 }
 
 /**
- * R2 asset path pattern. The Worker validates inbound paths against
- * this so a hostile body can't reach into a foreign workspace or
- * outside the `assets/` prefix.
- *   workspaceId is a UUID v4
- *   hash is 64 lowercase hex chars (the sha256 digest)
+ * Asset ids are storage-neutral product ids. Current uploads derive the id from
+ * the content digest (`asset_<sha256hex>`), but callers must treat it as opaque.
  */
-export const R2_ASSET_PATH_PATTERN =
-  /^assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{64}$/;
+export const ASSET_ID_PATTERN = /^asset_[A-Za-z0-9_-]{8,128}$/;
 
 // ---------------------------------------------------------------------------
 // AgentsMd refs — the second of the three SDK concepts.
@@ -151,52 +141,28 @@ export const R2_ASSET_PATH_PATTERN =
 // AgentsMd is prepended as run-scoped instruction context.
 // ---------------------------------------------------------------------------
 
-export type AgentsMdRef = R2AgentsMdRef;
+export type AgentsMdRef = AssetRef;
 
-/** R2-anchored AgentsMd ref. Same materialization model as
- * {@link R2SkillRef}: SDK uploads to `assets/<wsId>/<hash>` before
- * submit; Worker validates + persists the path on the run. */
-export interface R2AgentsMdRef {
-  readonly kind: "r2";
-  readonly path: string;
-  readonly hash: string;
-  readonly sizeBytes: number;
-  readonly name: string;
-}
-
-export function isR2AgentsMdRef(ref: AgentsMdRef): ref is R2AgentsMdRef {
-  return ref.kind === "r2";
+export function isAgentsMdAssetRef(ref: AgentsMdRef): ref is AssetRef {
+  return ref.kind === "asset";
 }
 
 // ---------------------------------------------------------------------------
-// File refs — third SDK concept. Single R2 ref kind; the agent sees
-// the file at `/mnt/session/uploads/<mountPath>` once Anthropic
-// Managed Agents rebases the mount (default: `antpath/files/<r2-key>`).
+// File refs — third SDK concept. Uploaded assets can carry a requested mount
+// path for the managed runtime.
 // ---------------------------------------------------------------------------
 
-export type FileRef = R2FileRef;
+export type FileRef = AssetRef;
 
-/** R2-anchored File ref. Same model as {@link R2SkillRef}; carries
- * `mountPath` for the Anthropic Files mount remap. */
-export interface R2FileRef {
-  readonly kind: "r2";
-  readonly path: string;
-  readonly hash: string;
-  readonly sizeBytes: number;
-  readonly name: string;
-  readonly mountPath?: string;
-}
-
-export function isR2FileRef(ref: FileRef): ref is R2FileRef {
-  return ref.kind === "r2";
+export function isFileAssetRef(ref: FileRef): ref is AssetRef {
+  return ref.kind === "asset";
 }
 
 /**
  * Parse a `SkillRef` from untrusted input. Used by the BFF run parser
  * and by the operations module when deserialising API responses. Only
- * `kind: "r2"` and `kind: "provider"` are valid; all other historical
- * wire shapes (workspace, inline, transient) were retired when the
- * content-addressed asset store became canonical.
+ * `kind: "asset"` and `kind: "provider"` are valid; all other historical
+ * wire shapes (including storage-specific refs) are rejected.
  */
 export function parseSkillRef(input: unknown, path: string): SkillRef {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -229,52 +195,32 @@ export function parseSkillRef(input: unknown, path: string): SkillRef {
       ...(version !== undefined ? { version } : {})
     };
   }
-  if (kind === "r2") {
-    return parseR2RefFields(record, path) as R2SkillRef;
+  if (kind === "asset") {
+    return parseAssetRefFields(record, path);
   }
-  throw new Error(`${path}.kind must be 'provider' or 'r2'`);
+  throw new Error(`${path}.kind must be 'provider' or 'asset'`);
 }
 
 /**
- * Common parser for any `kind: "r2"` ref (skill / agentsMd / file).
- * Skills and agentsMd ignore the optional `mountPath` field; file refs
- * use it for the Anthropic Files mount remap.
+ * Common parser for any `kind: "asset"` ref (skill / agentsMd / file).
  */
-export function parseR2RefFields(
+export function parseAssetRefFields(
   record: Record<string, unknown>,
   path: string
-): { kind: "r2"; path: string; hash: string; sizeBytes: number; name: string; mountPath?: string } {
+): AssetRef {
   for (const key of Object.keys(record)) {
     if (
       key !== "kind" &&
-      key !== "path" &&
-      key !== "hash" &&
-      key !== "sizeBytes" &&
+      key !== "assetId" &&
       key !== "name" &&
       key !== "mountPath"
     ) {
-      throw new Error(`${path} contains unexpected field for r2 ref: ${key}`);
+      throw new Error(`${path} contains unexpected field for asset ref: ${key}`);
     }
   }
-  const r2Path = record.path;
-  if (typeof r2Path !== "string" || !R2_ASSET_PATH_PATTERN.test(r2Path)) {
-    throw new Error(`${path}.path must match ${R2_ASSET_PATH_PATTERN.source}`);
-  }
-  const hash = record.hash;
-  if (typeof hash !== "string" || !INLINE_CONTENT_HASH_PATTERN.test(hash)) {
-    throw new Error(`${path}.hash must match ${INLINE_CONTENT_HASH_PATTERN.source}`);
-  }
-  // Cross-field check: the trailing 64-hex segment of `path` MUST be
-  // the lowercase digest from `hash` so a hostile body cannot point
-  // `path` at another tenant's blob and claim a different hash.
-  const pathHash = r2Path.slice(r2Path.length - 64);
-  const hashHex = hash.slice("sha256:".length);
-  if (pathHash !== hashHex) {
-    throw new Error(`${path}.path hash segment does not match ${path}.hash`);
-  }
-  const sizeBytes = record.sizeBytes;
-  if (typeof sizeBytes !== "number" || !Number.isInteger(sizeBytes) || sizeBytes <= 0) {
-    throw new Error(`${path}.sizeBytes must be a positive integer`);
+  const assetId = record.assetId;
+  if (typeof assetId !== "string" || !ASSET_ID_PATTERN.test(assetId)) {
+    throw new Error(`${path}.assetId must match ${ASSET_ID_PATTERN.source}`);
   }
   const name = record.name;
   if (typeof name !== "string" || name.length === 0 || name.length > 128) {
@@ -285,10 +231,8 @@ export function parseR2RefFields(
     throw new Error(`${path}.mountPath, when provided, must be a non-empty string`);
   }
   return {
-    kind: "r2",
-    path: r2Path,
-    hash,
-    sizeBytes,
+    kind: "asset",
+    assetId,
     name,
     ...(mountPath !== undefined ? { mountPath } : {})
   };
@@ -748,8 +692,8 @@ export interface RunRequestConfig {
   readonly mcpServers?: readonly RunConfigMcpServer[];
   readonly environment?: PlatformEnvironment;
   readonly cleanup?: PlatformCleanupPolicy;
-  /** Goose Fly-machine size preset (see {@link MachineSize}). */
-  readonly machine?: MachineSize;
+  /** Managed runtime size preset (see {@link RuntimeSize}). */
+  readonly runtimeSize?: RuntimeSize;
   /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
   readonly timeout?: string;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
@@ -779,7 +723,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "mcpServers",
     "environment",
     "cleanup",
-    "machine",
+    "runtimeSize",
     "timeout",
     "proxyEndpoints",
     "metadata"
@@ -816,8 +760,8 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     ...(record.cleanup !== undefined
       ? { cleanup: record.cleanup as NonNullable<RunRequestConfig["cleanup"]> }
       : {}),
-    ...(record.machine !== undefined
-      ? { machine: record.machine as NonNullable<RunRequestConfig["machine"]> }
+    ...(record.runtimeSize !== undefined
+      ? { runtimeSize: record.runtimeSize as NonNullable<RunRequestConfig["runtimeSize"]> }
       : {}),
     ...(record.timeout !== undefined
       ? { timeout: record.timeout as NonNullable<RunRequestConfig["timeout"]> }

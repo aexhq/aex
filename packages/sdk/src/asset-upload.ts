@@ -2,11 +2,11 @@
  * Asset materialization for the SDK submit path.
  *
  * Every inline `Skill` / `AgentsMd` / `File` draft is materialized to the
- * hosted API's content-addressable asset endpoint BEFORE the
- * submit round-trip, so the wire submission carries only `kind:"r2"` refs.
- * Uploads are a single content-length-bounded POST to `/assets/upload`;
- * the hosted API scopes the key under the calling workspace and dedupes by
- * sha256, so re-uploading identical bytes is a cheap no-op.
+ * hosted API's content-addressable asset endpoint before the submit
+ * round-trip, so the wire submission carries only storage-neutral
+ * `kind:"asset"` refs. Uploads are a single content-length-bounded POST to
+ * `/assets`; the hosted API scopes storage under the calling workspace and
+ * dedupes by sha256.
  */
 
 /**
@@ -22,7 +22,7 @@ export interface AssetsHttpClient {
   ): Promise<T>;
 }
 
-export interface UploadAssetToR2Args {
+export interface UploadAssetArgs {
   readonly http: AssetsHttpClient;
   readonly bytes: Uint8Array;
   /** `sha256:<hex>` — the canonical content hash declared on the wire. */
@@ -30,41 +30,40 @@ export interface UploadAssetToR2Args {
   readonly contentType?: string;
 }
 
-export interface UploadedR2Asset {
-  readonly path: string;
-  readonly hash: string;
+export interface UploadedAsset {
+  readonly assetId: string;
+  readonly contentHash: string;
   readonly sizeBytes: number;
-  /** true if R2 already had identical bytes under this hash (dedup hit). */
+  /** true if identical bytes were already present (dedup hit). */
   readonly exists: boolean;
 }
 
 /**
- * Upload `bytes` to the hosted API's content-addressable asset endpoint. The
- * hosted API scopes the key under the calling workspace (derived from the
- * API token) so the returned `path` is `assets/<wsId>/<hash>` — safe
- * to embed in a kind:"r2" submission ref.
+ * Upload `bytes` to the hosted API's content-addressable asset endpoint.
  *
  * Verifies the advisory hash matches the bytes BEFORE sending so a
  * mismatch fails fast on the client. The hosted API re-verifies on
  * receipt; a mismatch there is a 400 with code "hash_mismatch" that
  * surfaces as an `AntpathApiError`.
  */
-export async function uploadAssetToR2(args: UploadAssetToR2Args): Promise<UploadedR2Asset> {
+export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset> {
   const expected = args.hash.startsWith("sha256:") ? args.hash.slice("sha256:".length) : args.hash;
   const actual = await computeSha256Hex(args.bytes);
   if (actual !== expected) {
     throw new Error(
-      `uploadAssetToR2: client-side hash mismatch — computed sha256:${actual} ` +
+      `uploadAsset: client-side hash mismatch: computed sha256:${actual} ` +
         `but caller declared ${args.hash}. Aborting to avoid uploading corrupted data.`
     );
   }
   const body = await args.http.request<{
     ok: boolean;
+    assetId?: string;
     exists: boolean;
-    path: string;
-    hash: string;
+    path?: string;
+    hash?: string;
+    contentHash?: string;
     sizeBytes: number;
-  }>("/assets/upload", {
+  }>("/assets", {
     method: "POST",
     headers: {
       "content-type": args.contentType ?? "application/zip",
@@ -73,9 +72,10 @@ export async function uploadAssetToR2(args: UploadAssetToR2Args): Promise<Upload
     },
     body: args.bytes
   });
+  const contentHash = body.contentHash ?? body.hash ?? `sha256:${actual}`;
   return {
-    path: body.path,
-    hash: body.hash,
+    assetId: body.assetId ?? assetIdFromContentHash(contentHash),
+    contentHash,
     sizeBytes: body.sizeBytes,
     exists: body.exists
   };
@@ -94,7 +94,7 @@ async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
   if (!subtle) {
     throw new Error(
-      "uploadAssetToR2: globalThis.crypto.subtle is not available; " +
+      "uploadAsset: globalThis.crypto.subtle is not available; " +
         "Node 18+ or a Web-Crypto-capable runtime is required"
     );
   }
@@ -102,6 +102,11 @@ async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
   copy.set(bytes);
   const digest = await subtle.digest("SHA-256", copy.buffer);
   return bufferToHex(digest);
+}
+
+function assetIdFromContentHash(contentHash: string): string {
+  const hex = contentHash.startsWith("sha256:") ? contentHash.slice("sha256:".length) : contentHash;
+  return `asset_${hex}`;
 }
 
 function bufferToHex(buffer: ArrayBuffer): string {

@@ -4,7 +4,7 @@
  * Exercises the unified event coordinator end-to-end through the installed
  * SDK, the way a user listening to a run would:
  *
- *   1. submitRun (Anthropic Native)
+ *   1. submitRun (DeepSeek Managed)
  *   2. LISTEN live over the coordinator WebSocket via `client.streamEnvelopes(runId)`
  *      (ticket broker → coordinator WS, exactly-once cursor resume).
  *   3. SNAPSHOT the same log via `client.listEvents()`.
@@ -19,7 +19,7 @@
  * Required env:
  *   ANTPATH_API_URL              live hosted API URL (local or prod)
  *   ANTPATH_API_TOKEN             workspace API token
- *   ANTHROPIC_API_KEY    customer Anthropic API key
+ *   DEEPSEEK_API_KEY    customer DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -37,8 +37,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
+const model = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface StreamResult {
   readonly runStatus: string;
@@ -70,16 +70,16 @@ describe("live api.antpath.ai — event coordinator: listen (WS) + snapshot + do
 
         const baseUrl = process.env.ANTPATH_API_URL;
         const apiToken = process.env.ANTPATH_API_TOKEN;
-        const anthropicKey = process.env.ANTHROPIC_KEY;
+        const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
 
         const client = new AntpathClient({ baseUrl, apiToken });
         const runId = await client.submitRun({
-          provider: "anthropic",
+          provider: "deepseek",
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-event-stream-" + Date.now(),
-          secrets: { anthropic: { apiKey: anthropicKey } }
+          secrets: { deepseek: { apiKey: deepseekKey } }
         });
 
         // 1. Listen live over the coordinator WebSocket (exactly-once,
@@ -161,7 +161,7 @@ describe("live api.antpath.ai — event coordinator: listen (WS) + snapshot + do
           snapshotTypes: [...new Set(snapshot.map((e) => e.type))],
           manifestEventCount: manifest ? (manifest.eventCount ?? -1) : -1,
           manifestChunks: manifest && Array.isArray(manifest.chunks) ? manifest.chunks.length : -1,
-          leakedKey: serialized.includes(anthropicKey)
+          leakedKey: serialized.includes(deepseekKey)
         }));
         // Force exit: an abandoned WS phase may leave an open socket that
         // would otherwise keep Node alive until the outer SIGKILL. We have
@@ -174,7 +174,7 @@ describe("live api.antpath.ai — event coordinator: listen (WS) + snapshot + do
       const passEnv: Record<string, string> = {
         ANTPATH_API_URL: apiUrl,
         ANTPATH_API_TOKEN: apiToken,
-        ANTHROPIC_KEY: anthropicKey,
+        DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";

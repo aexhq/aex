@@ -4,11 +4,8 @@
  * Validates the FIX end-to-end through the installed SDK: when a run sets a
  * customer `baseUrl`, the platform actually routes upstream there. Proof is
  * negative-by-design: an UNREACHABLE baseUrl breaks the upstream call. The
- * two runtimes surface that differently (both LIVE-CONFIRMED):
- *   - native: the customer baseUrl drives the Managed Agents CONTROL-PLANE
- *     calls (createEnvironment/agent/session) → provisioning hard-fails →
- *     the run status is NOT "succeeded".
- *   - managed (goose BYOK): the baseUrl is the upstream MODEL origin. With
+ * managed Goose BYOK surface:
+ *   - the baseUrl is the upstream MODEL origin. With
  *     it unreachable the proxy returns a 530 and goose reports the upstream
  *     error as a normal turn, then EXITS 0 — so status stays "succeeded",
  *     but the model never actually answered. We assert the agent did NOT get
@@ -22,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAntpath, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
-const env = requireUserEnv({ anthropic: true, deepseek: true });
+const env = requireUserEnv({ deepseek: true });
 
 const BAD_BASE_URL = "https://baseurl-canary.invalid.example";
 
@@ -34,30 +31,29 @@ describe("user/SDK: secrets.{provider}.baseUrl is honored (unreachable baseUrl f
   afterAll(() => install?.cleanup());
 
   it(
-    "native: an unreachable anthropic baseUrl fails the run",
+    "managed BYOK: an unreachable deepseek baseUrl prevents the requested reply",
     async () => {
       const script = sdkRunnerScript({
         submit: `{
-          provider: "anthropic",
-          runtime: "native",
-          model: MODEL_ANTHROPIC,
+          provider: "deepseek",
+          runtime: "managed",
+          model: MODEL_DEEPSEEK,
           prompt: ["Reply with READY."],
-          secrets: { anthropic: { apiKey: ANTHROPIC_KEY, baseUrl: ${JSON.stringify(BAD_BASE_URL)} } },
-          idempotencyKey: "user-baseurl-native-" + Date.now()
+          secrets: { deepseek: { apiKey: DEEPSEEK_KEY, baseUrl: ${JSON.stringify(BAD_BASE_URL)} } },
+          idempotencyKey: "user-baseurl-deepseek-managed-a-" + Date.now()
         }`
       });
       const result = await runSdkScript(install, env, script, {
-        scriptName: "user-baseurl-native.mjs",
-        waitMs: 4 * 60_000,
-        timeoutMs: 5 * 60_000
+        scriptName: "user-baseurl-deepseek-managed-a.mjs",
+        waitMs: 8 * 60_000,
+        timeoutMs: 9 * 60_000
       });
 
-      // baseUrl honored => upstream call goes to the unreachable origin => fails.
-      // Pre-fix the baseUrl was ignored and the run succeeded.
-      expect(result.runtime).toBe("native");
-      expect(result.status).not.toBe("succeeded");
+      expect(result.runtime).toBe("managed");
+      expect(result.assistantText.length).toBeGreaterThan(0);
+      expect(dense(result.assistantText)).not.toContain("READY");
     },
-    6 * 60_000
+    10 * 60_000
   );
 
   it(

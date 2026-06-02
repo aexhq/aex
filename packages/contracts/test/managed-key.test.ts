@@ -21,7 +21,7 @@ const availablePolicy = {
   serviceAvailable: true,
   billingRequired: true,
   providers: ["anthropic"],
-  runtimes: ["native"],
+  runtimes: ["managed"],
   models: ["claude-haiku-4-5"],
   features: {
     ...BLOCKED_MANAGED_KEY_FEATURE_POLICY_V1,
@@ -82,7 +82,7 @@ describe("managed-key public contract", () => {
         workspaceId: "workspace-1",
         runId: "run-1",
         provider: "anthropic",
-        runtime: "native",
+        runtime: "managed",
         model: "claude-haiku-4-5",
         policy: BLOCKED_MANAGED_KEY_POLICY_V1
       })
@@ -95,7 +95,7 @@ describe("managed-key public contract", () => {
       workspaceId: "workspace-1",
       runId: "run-1",
       provider: "anthropic",
-      runtime: "native",
+      runtime: "managed",
       model: "claude-haiku-4-5",
       policy: availablePolicy
     });
@@ -117,7 +117,7 @@ describe("managed-key public contract", () => {
       workspaceId: "workspace-1",
       runId: "run-1",
       provider: "anthropic" as const,
-      runtime: "native" as const,
+      runtime: "managed" as const,
       model: "claude-haiku-4-5",
       policy: availablePolicy
     };
@@ -126,7 +126,7 @@ describe("managed-key public contract", () => {
       resolver.resolveManagedCredential({ ...base, provider: "deepseek" })
     ).resolves.toMatchObject({ ok: false, code: "provider_not_allowed" });
     await expect(
-      resolver.resolveManagedCredential({ ...base, runtime: "managed" })
+      resolver.resolveManagedCredential({ ...base, policy: { ...availablePolicy, runtimes: [] } })
     ).resolves.toMatchObject({ ok: false, code: "runtime_not_allowed" });
     await expect(
       resolver.resolveManagedCredential({ ...base, model: "other-model" })

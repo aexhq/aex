@@ -6,18 +6,16 @@ import { zipSync } from "fflate";
 
 /**
  * File — arbitrary bytes (single file or zipped folder) delivered to
- * the agent as a mounted runtime resource. Native providers receive the
- * file through their file/session-resource API; Goose Managed receives
- * the snapshotted bytes during workspace materialization.
+ * the agent as a mounted runtime resource. The managed runtime receives the
+ * snapshotted bytes during workspace materialization.
  *
  *   const settings = await File.fromPath("./settings.json");
  *   const dataset = await File.fromPath("./data/");
  *   await client.submitRun({ files: [settings, dataset], ... });
  *
- * `client.submitRun` materializes the bytes to R2 (content-addressable,
- * workspace-scoped) before the run lands; the wire ref becomes
- * `kind:"r2"`. No workspace pre-upload concept — R2 dedup makes
- * repeat uploads of the same bytes a no-op.
+ * `client.submitRun` materializes the bytes to the hosted asset store before
+ * the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
+ * same bytes are deduped.
  */
 export class File {
   readonly #ref: FileRef | DraftFileRef;
@@ -108,7 +106,7 @@ export class File {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.submitRun` can upload to R2.
+   * `client.submitRun` can upload it as an asset.
    */
   _takeDraftBundle(): {
     name: string;
@@ -138,7 +136,7 @@ export class File {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "File: draft Files cannot be JSON-serialised — they only become wire refs when " +
-          "client.submitRun uploads the bytes to R2."
+        "client.submitRun uploads the bytes as an asset."
       );
     }
     return this.#ref;

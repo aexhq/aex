@@ -4,7 +4,7 @@ title: Events
 
 # Events
 
-antpath runs agent sessions on provider-native runtimes where available and on Goose Managed everywhere else. Runs are **non-blocking**: the selected runtime advances the agent while antpath observes lifecycle state, maps native runtime output into one event shape, and persists every captured event. The SDK and CLI observe the durable event timeline from antpath — there is no in-process tool-approval hook.
+antpath runs agent sessions on Goose Managed. Runs are **non-blocking**: the managed runtime advances the agent while antpath observes lifecycle state, maps runtime output into one event shape, and persists every captured event. The SDK and CLI observe the durable event timeline from antpath — there is no in-process tool-approval hook.
 
 ## Two ways to consume events
 
@@ -56,29 +56,21 @@ Events are typed as the discriminated `RunEvent` union for compatibility and as 
 
 ## Typed helpers
 
-The package exports conservative type guards that narrow events to documented Claude event types:
+The package exports conservative type guards that narrow normalized antpath event envelopes:
 
 ```ts
 import {
-  isAgentMessage,
-  isAgentToolUse,
-  isAgentToolResult,
-  isAgentMcpToolUse,
-  isAgentMcpToolResult,
-  isAgentCustomToolUse,
-  isAgentThinking,
-  isUserMessage,
-  isSessionStatusRunning,
-  isSessionStatusIdle,
-  isSessionStatusTerminated,
-  isSessionError,
-  isAgentEvent,
-  isUserEvent,
-  isSessionEvent,
-  isSpanEvent
+  isRunStarted,
+  isRunFinished,
+  isRunError,
+  isRunTerminal,
+  isTextMessage,
+  isToolCallStart,
+  isToolCallResult,
+  isCustom,
+  isLog,
+  isEventChannel
 } from "antpath";
 ```
 
-They narrow only the discriminant — payload field shapes stay `unknown` until callers parse them.
-
-The official list of event types is maintained at [`platform.claude.com/docs/en/managed-agents/events-and-streaming`](https://platform.claude.com/docs/en/managed-agents/events-and-streaming).
+They narrow only the discriminant. Payload field shapes stay `unknown` until callers parse them, and provider-specific payloads remain behind the normalized envelope.

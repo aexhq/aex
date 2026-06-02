@@ -4,9 +4,9 @@ title: Cleanup
 
 # Cleanup
 
-antpath schedules cleanup after a run reaches a terminal status. There is no opt-out for antpath-owned cleanup attempts: tracked runtime resources such as Fly machines, scratch state, cached files, and run-scoped secret references are reclaimed when possible or surfaced through `cleanupStatus` when cleanup cannot complete. The `cleanup.session` flag only controls the **provider-side** session deletion request (the Anthropic Managed Agents session, etc.).
+antpath schedules cleanup after a run reaches a terminal status. There is no opt-out for antpath-owned cleanup attempts: tracked runtime resources such as Fly machines, scratch state, cached files, and run-scoped secret references are reclaimed when possible or surfaced through `cleanupStatus` when cleanup cannot complete. The `cleanup.session` flag controls whether the managed runtime session is retained for post-run inspection.
 
-By default antpath asks the provider/runtime to delete the provider session at terminal time. Opt into retention when you need it available for post-run inspection:
+By default antpath asks the runtime to delete the session at terminal time. Opt into retention when you need it available for post-run inspection:
 
 ```ts
 const runId = await client.submitRun({
@@ -19,7 +19,7 @@ const runId = await client.submitRun({
 
 The corresponding CLI flag is `--cleanup retain` (default `delete`).
 
-A retained session remains visible on the provider until that provider's retention policy reclaims it. Antpath-owned cleanup attempts still run normally.
+A retained session remains visible to operators until cleanup policy reclaims it. Antpath-owned cleanup attempts still run normally.
 
 ## Detecting retain mode
 
@@ -28,7 +28,7 @@ A retained session remains visible on the provider until that provider's retenti
 ```ts
 const run = await client.get(runId);
 if (run.submission.cleanup?.session === "retain") {
-  // provider session was retained
+  // runtime session was retained
 }
 ```
 

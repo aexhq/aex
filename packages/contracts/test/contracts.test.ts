@@ -3,7 +3,7 @@ import {
   getRunStatusKind,
   parseRunSubmissionRequest,
   isTerminalRunStatus,
-  nativePackageString,
+  packageInstallString,
   RUN_TERMINAL_OUTCOMES,
   TERMINAL_RUN_STATUSES
 } from "../src/index.js";
@@ -296,20 +296,20 @@ describe("environment.packages ecosystem parsing", () => {
   });
 });
 
-describe("nativePackageString", () => {
+describe("packageInstallString", () => {
   it("emits the ecosystem-correct version join", () => {
-    expect(nativePackageString({ name: "pandas", version: "2.2.0", ecosystem: "pip" })).toBe("pandas==2.2.0");
-    expect(nativePackageString({ name: "express", version: "4.18.0", ecosystem: "npm" })).toBe("express@4.18.0");
-    expect(nativePackageString({ name: "serde", version: "1.0", ecosystem: "cargo" })).toBe("serde@1.0");
-    expect(nativePackageString({ name: "golang.org/x/tools", version: "v0.1.0", ecosystem: "go" })).toBe(
+    expect(packageInstallString({ name: "pandas", version: "2.2.0", ecosystem: "pip" })).toBe("pandas==2.2.0");
+    expect(packageInstallString({ name: "express", version: "4.18.0", ecosystem: "npm" })).toBe("express@4.18.0");
+    expect(packageInstallString({ name: "serde", version: "1.0", ecosystem: "cargo" })).toBe("serde@1.0");
+    expect(packageInstallString({ name: "golang.org/x/tools", version: "v0.1.0", ecosystem: "go" })).toBe(
       "golang.org/x/tools@v0.1.0"
     );
-    expect(nativePackageString({ name: "rails", version: "7.0", ecosystem: "gem" })).toBe("rails:7.0");
-    expect(nativePackageString({ name: "ffmpeg", version: "7:6.1", ecosystem: "apt" })).toBe("ffmpeg=7:6.1");
+    expect(packageInstallString({ name: "rails", version: "7.0", ecosystem: "gem" })).toBe("rails:7.0");
+    expect(packageInstallString({ name: "ffmpeg", version: "7:6.1", ecosystem: "apt" })).toBe("ffmpeg=7:6.1");
   });
 
   it("emits the bare name when no version is given", () => {
-    expect(nativePackageString({ name: "ffmpeg", ecosystem: "apt" })).toBe("ffmpeg");
+    expect(packageInstallString({ name: "ffmpeg", ecosystem: "apt" })).toBe("ffmpeg");
   });
 });
 

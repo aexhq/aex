@@ -4,16 +4,16 @@ title: Product capabilities and boundaries
 
 # Product capabilities and boundaries
 
-antpath is the serverless control plane for autonomous agent sessions. It accepts a complete run request, dispatches it to a provider-native runtime or Goose Managed, records ordered events and logs, captures outputs, and exposes auth-gated reads and downloads.
+antpath is the serverless control plane for autonomous agent sessions. It accepts a complete run request, dispatches it to Goose Managed, records ordered events and logs, captures outputs, and exposes auth-gated reads and downloads.
 
 antpath is not a custom agent loop, a general-purpose sandbox, an interactive approval system, or a provider compliance layer. True self-host and customer-cloud deployment modes are not supported today.
 
-Start with the generated [provider/runtime capability matrix](provider-runtime-capabilities.md) for supported providers, runtime routing, native feature parity, and evidence pointers.
+Start with the generated [provider/runtime capability matrix](provider-runtime-capabilities.md) for supported providers, runtime routing, and evidence pointers.
 
 ## Owned by antpath today
 
 - Run submission, idempotency, status, cancellation, reads, downloads, and workspace auth.
-- Runtime dispatch across Anthropic Native and Goose Managed, with unsupported runtime/provider combinations rejected at submission.
+- Runtime dispatch through Goose Managed, with unsupported runtime selectors rejected at submission.
 - Ordered event/log capture through the per-run coordinator and durable archive.
 - Output capture into the run record, subject to runtime behavior and storage limits.
 - BYOK provider-key custody for a single run, using the top-level `secrets` carrier and terminal cleanup/revocation attempts for antpath-controlled references.
@@ -25,7 +25,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 | Area | antpath-owned behavior | Inherited or customer-owned behavior |
 | --- | --- | --- |
 | Provider and model policy | antpath validates the selected provider, injects the run-scoped BYOK credential, and records public-safe runtime events. | Provider retention, training exclusion, zero-retention, HIPAA/BAA, data residency, abuse policy, and pricing are properties of the selected provider account, endpoint, and contract. |
-| Runtime isolation | Goose Managed runs in an isolated managed runtime. Anthropic Native runs in Anthropic's hosted runtime. antpath tracks resources and runs cleanup attempts. | Runtime isolation guarantees belong to the managed runtime provider for Goose and to the provider for native runtimes. antpath does not turn every runtime into the same sandbox. |
+| Runtime isolation | Goose Managed runs in an isolated managed runtime. antpath tracks resources and runs cleanup attempts. | Runtime isolation guarantees belong to the managed runtime provider. |
 | Secrets | Provider keys, MCP credentials, and proxy auth values are supplied inline per run, held in run-scoped custody, excluded from idempotency, and targeted for cleanup/revocation at terminal where antpath controls the reference. | Customers choose and rotate their provider keys and MCP/proxy credentials. Provider-side credentials, sessions, and data may have their own retention rules. |
 | MCP servers | antpath accepts remote HTTP/SSE MCP servers, validates their declaration, attaches run-scoped credentials, and records access metadata on the antpath-controlled edge. | MCP servers are customer-trusted remote systems. antpath does not sandbox their downstream behavior or make an untrusted MCP server safe. |
 | Proxy endpoints | The named endpoint proxy enforces declared host/path/method/auth policy and response caps for calls routed through it. | The upstream service's own auth, data handling, side effects, and compliance posture remain with the upstream service and customer. |
@@ -39,7 +39,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 
 Use these links as starting points for the policy areas antpath does not own:
 
-- Anthropic API data retention and Managed Agents policy: <https://platform.claude.com/docs/en/manage-claude/api-and-data-retention>
+- Anthropic API data retention policy: <https://platform.claude.com/docs/en/manage-claude/api-and-data-retention>
 - OpenAI API data controls: <https://platform.openai.com/docs/guides/your-data>
 - Mistral privacy and API data handling: <https://docs.mistral.ai/admin/security-access/privacy>
 - Gemini API data handling: <https://ai.google.dev/gemini-api/docs/logs-policy>

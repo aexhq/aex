@@ -83,34 +83,31 @@ describe("typescript consumer", () => {
         AntpathError,
         CleanupError,
         CredentialValidationError,
-        DEFAULT_MACHINE_SIZE,
+        DEFAULT_RUNTIME_SIZE,
         DEFAULT_RUN_PROVIDER,
         File,
-        MACHINE_SIZES,
-        MachineSizes,
         McpServer,
         ProviderError,
         ProxyEndpoint,
         RUN_PROVIDERS,
         RUNTIME_KINDS,
+        RUNTIME_SIZES,
+        RuntimeSizes,
         RuntimeValidationError,
         SecretString,
         Skill,
         buildPlatformAllowedHosts,
         bundleSkillFiles,
-        collectNativeOnlyFeatures,
-        collectNativeUnsupportedFeatures,
+        collectManagedUnsupportedFeatures,
         hashSkillBundle,
-        isAgentEvent,
-        isUserMessage,
+        isRunStarted,
+        isTextMessage,
         redactSecrets,
         selectRuntime,
         validateProxyAuth,
         type AgentsMdRef,
         type AnthropicSecrets,
         type CleanupPolicy,
-        type MachineResources,
-        type MachineSize,
         type McpServerSecret,
         type Output,
         type OutputFileSelector,
@@ -125,6 +122,8 @@ describe("typescript consumer", () => {
         type RunDebugLogs,
         type RunEvent,
         type RunProvider,
+        type RuntimeResources,
+        type RuntimeSize,
         type RuntimeKind,
         type RuntimeValidationCode,
         type SkillBundleManifest,
@@ -136,13 +135,13 @@ describe("typescript consumer", () => {
 
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
-      const machine: MachineSize = MachineSizes.SHARED_2X_2GB;
-      const defaultMachine: MachineSize = DEFAULT_MACHINE_SIZE;
+      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_2GB;
+      const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
       const method: ProxyMethod = "GET";
       const responseMode: ProxyResponseMode = "headers_only";
       const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
       const authValue: ProxyAuthValue = { type: "header", value: "proxy-test-value" };
-      const resources: MachineResources = { cpus: 2, memoryMb: 2048 };
+      const resources: RuntimeResources = { cpus: 2, memoryMb: 2048 };
       const cleanup: CleanupPolicy = { session: "delete" };
       const anthropicSecrets: AnthropicSecrets = { apiKey: "sk-ant-type-surface" };
       const mcpSecret: McpServerSecret = {
@@ -173,7 +172,6 @@ describe("typescript consumer", () => {
         headers: { authorization: "Bearer test" }
       });
       const workspaceMcp = McpServer.fromId("mcp_abcdefgh12345678");
-      const providerSkill = Skill.provider({ vendor: "anthropic", skillId: "pdf" });
       const skillFiles = {
         "SKILL.md": "# Surface skill\\nUse the typed SDK surface."
       } satisfies SkillFiles;
@@ -187,13 +185,13 @@ describe("typescript consumer", () => {
         mountPath: "/mnt/session/surface.txt"
       });
 
-      const nativeOptions = {
+      const anthropicOptions = {
         provider: "anthropic",
-        runtime: "native",
+        runtime: "managed",
         model: "claude-haiku-4-5",
         system: "Be precise.",
         prompt: ["Read the attached file.", "Reply with a short acknowledgement."],
-        skills: [providerSkill, inlineSkill],
+        skills: [inlineSkill],
         agentsMd: [agentsMd],
         files: [file],
         mcpServers: [mcp, workspaceMcp],
@@ -205,16 +203,16 @@ describe("typescript consumer", () => {
           packages: [{ ecosystem: "apt", name: "jq" }],
           envVars: { USER_SURFACE_TEST: "1" }
         },
-        metadata: { suite: "typescript-consumer", runtime: "native" },
+        metadata: { suite: "typescript-consumer", runtime: "managed" },
         cleanup,
-        machine,
+        runtimeSize,
         timeout: "15m",
         secrets: {
           anthropic: anthropicSecrets,
           mcpServers: [mcpSecret],
           proxyEndpointAuth: [{ name: "metadata", value: authValue }]
         },
-        idempotencyKey: "type-surface-native"
+        idempotencyKey: "type-surface-anthropic-managed"
       } satisfies SubmitRunOptions;
 
       const managedOptions = {
@@ -222,7 +220,7 @@ describe("typescript consumer", () => {
         runtime: "managed",
         model: "deepseek-chat",
         prompt: "Say hello.",
-        machine: defaultMachine,
+        runtimeSize: defaultRuntimeSize,
         builtins: [],
         secrets: { deepseek: { apiKey: "sk-deepseek-type-surface" } },
         idempotencyKey: "type-surface-managed"
@@ -250,16 +248,15 @@ describe("typescript consumer", () => {
         cleanup,
         secrets: { anthropic: anthropicSecrets },
         proxyEndpoints: [proxy.declaration],
-        machine,
+        runtimeSize,
         timeoutMs: 15 * 60_000
       } satisfies PlatformRunSubmissionRequest;
 
       const selectedRuntime: RuntimeKind = selectRuntime(wireRequest);
-      const nativeOnlyFeatures: string[] = collectNativeOnlyFeatures(wireRequest);
-      const nativeUnsupportedFeatures: string[] = collectNativeUnsupportedFeatures(wireRequest);
+      const managedUnsupportedFeatures: string[] = collectManagedUnsupportedFeatures(wireRequest);
       const validationCode: RuntimeValidationCode = "feature_runtime_mismatch";
       const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
-      const skillRef: SkillRef = providerSkill.ref as SkillRef;
+      const skillRef: SkillRef = inlineSkill.ref as SkillRef;
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
       const outputSelector: OutputFileSelector = { path: "report.txt", match: "suffix" };
@@ -271,7 +268,7 @@ describe("typescript consumer", () => {
           workspaceId: "ws_type_surface",
           status: "queued",
           provider: "anthropic",
-          runtime: "native",
+          runtime: "managed",
           createdAt: new Date(0).toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
       const client = new AntpathClient({
@@ -279,7 +276,7 @@ describe("typescript consumer", () => {
         baseUrl: "https://example.invalid",
         fetch: fetchFake
       });
-      const runIdPromise: Promise<string> = client.submitRun(nativeOptions);
+      const runIdPromise: Promise<string> = client.submitRun(anthropicOptions);
       const runPromise: Promise<Run> = client.getRun("run_type_surface");
       const eventsPromise: Promise<readonly RunEvent[]> = client.listEvents("run_type_surface");
       const outputsPromise: Promise<readonly Output[]> = client.outputs("run_type_surface");
@@ -299,21 +296,21 @@ describe("typescript consumer", () => {
       const exportedFns = [
         buildPlatformAllowedHosts,
         validateProxyAuth,
-        isAgentEvent,
-        isUserMessage
+        isRunStarted,
+        isTextMessage
       ];
 
       void RUN_PROVIDERS;
-      void MACHINE_SIZES;
+      void RUNTIME_SIZES;
       void resources;
       void selectedRuntime;
-      void nativeOnlyFeatures;
-      void nativeUnsupportedFeatures;
+      void managedUnsupportedFeatures;
       void validationCode;
       void platformEndpoint;
       void skillRef;
       void agentsRef;
       void manifest;
+      void anthropicOptions;
       void managedOptions;
       void skillHash;
       void runIdPromise;
@@ -368,21 +365,19 @@ describe("typescript consumer", () => {
     const consumer = `
       import {
         AntpathClient,
-        MachineSizes,
+        RuntimeSizes,
         ProxyEndpoint,
         RUN_PROVIDERS,
         RUNTIME_KINDS,
-        Skill,
-        type MachineSize,
         type RunProvider,
         type RuntimeKind,
+        type RuntimeSize,
         type SubmitRunOptions
       } from "antpath";
 
       const provider: RunProvider = RUN_PROVIDERS[0];
-      const runtime: RuntimeKind = RUNTIME_KINDS[1];
-      const machine: MachineSize = MachineSizes.SHARED_1X_512MB;
-      const pdf = Skill.provider({ vendor: "anthropic", skillId: "pdf" });
+      const runtime: RuntimeKind = RUNTIME_KINDS[0];
+      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_1X_512MB;
       const proxy = ProxyEndpoint.bearer({
         name: "catalog",
         baseUrl: "https://example.test",
@@ -397,9 +392,8 @@ describe("typescript consumer", () => {
         runtime,
         model: "claude-haiku-4-5",
         prompt: "hello",
-        skills: [pdf],
         proxyEndpoints: [proxy],
-        machine,
+        runtimeSize,
         secrets: { anthropic: { apiKey: "sk-ant-bundler" } }
       } satisfies SubmitRunOptions;
 

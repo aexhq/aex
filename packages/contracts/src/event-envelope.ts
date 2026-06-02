@@ -2,11 +2,9 @@
  * The unified antpath event envelope.
  *
  * One versioned, self-describing record that every subscriber sees, derived
- * from the unified {@link RunnerEvent} both runtimes already converge on — so
- * Goose and Anthropic Native emit byte-identical envelopes for the same
- * logical event *by construction* (one pure mapping function, no per-runtime
- * branch). This is the shape the coordinator (Phase 2) appends, broadcasts,
- * and archives.
+ * from the unified {@link RunnerEvent}. Managed runtime adapters emit
+ * byte-identical envelopes for the same logical event by construction. This is
+ * the shape the coordinator (Phase 2) appends, broadcasts, and archives.
  *
  * Design (see event envelope invariants — the principles source of truth):
  *
@@ -339,8 +337,7 @@ function custom(
 }
 
 // --- Honest guards over the emitted vocabulary --------------------------------
-// Unlike the raw-provider `is*Event` guards in known-events.ts, these match the
-// vocabulary a consumer of the unified stream actually receives.
+// These match the vocabulary a consumer of the unified stream actually receives.
 
 export function isRunStarted(e: AntpathEvent): boolean {
   return e.type === "RUN_STARTED";

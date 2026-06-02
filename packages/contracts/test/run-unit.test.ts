@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseRunUnitSubmission } from "../src/run-unit.js";
 
-const WS_UUID = "11111111-1111-4111-8111-111111111111";
 const HASH_HEX = "a".repeat(64);
-const R2_SKILL = {
-  kind: "r2",
-  path: `assets/${WS_UUID}/${HASH_HEX}`,
-  hash: `sha256:${HASH_HEX}`,
-  sizeBytes: 100,
+const ASSET_SKILL = {
+  kind: "asset",
+  assetId: `asset_${HASH_HEX}`,
   name: "rules"
 } as const;
 
@@ -19,7 +16,7 @@ describe("parseRunUnitSubmission", () => {
         model: "claude-haiku-4-5",
         system: "You are a helpful assistant.",
         prompt: ["build a thing"],
-        skills: [R2_SKILL],
+        skills: [ASSET_SKILL],
         mcpServers: [{ name: "context7", url: "https://example.test/mcp" }],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
@@ -37,7 +34,7 @@ describe("parseRunUnitSubmission", () => {
     expect(parsed.submission.model).toBe("claude-haiku-4-5");
     expect(parsed.submission.system).toBe("You are a helpful assistant.");
     expect(parsed.submission.prompt).toEqual(["build a thing"]);
-    expect(parsed.submission.skills).toEqual([R2_SKILL]);
+    expect(parsed.submission.skills).toEqual([ASSET_SKILL]);
     expect(parsed.submission.mcpServers).toEqual([
       { name: "context7", url: "https://example.test/mcp" }
     ]);
@@ -66,7 +63,7 @@ describe("parseRunUnitSubmission", () => {
       submission: {
         model: "claude-haiku-4-5",
         prompt: ["hello"],
-        skills: [R2_SKILL, { kind: "nonsense" }, "not-an-object"],
+        skills: [ASSET_SKILL, { kind: "nonsense" }, "not-an-object"],
         mcpServers: [
           { name: "ok", url: "https://example.test/mcp" },
           { url: "missing-name" }

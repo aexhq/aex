@@ -1,25 +1,19 @@
 /**
  * Live scenario: live-sdk-builtin-tools.test.ts
  *
- * Matrix test — same assertion body across (provider, runtime) cells, with
+ * Matrix test — same assertion body across managed provider cells, with
  * a positive sub-run (builtins enabled) AND a negative sub-run
  * (builtins:[] disarmed). Proves:
  *
  *   - The agent ACTUALLY USES a built-in shell/edit tool when one is
  *     available (positive). Goose surfaces this as
  *     tool_request.data.name = "shell" (goose-adapter.mjs:113-133).
- *     Anthropic Native exposes "bash" via the fixed
- *     agent_toolset_20260401.
  *   - When builtins:[] is requested, ZERO shell-family tool_requests fire
  *     (negative). This is the only proof the empty allowlist actually
  *     disarms tooling; the default ["developer"] would otherwise let the
  *     model reach for the shell anyway.
  *
- * Per AGENTS.md "No feature gates between runtimes" both sub-runs run on
- * every cell. If a cell can't honour builtins:[] today (e.g. Anthropic
- * Native uses a fixed toolset), the negative sub-run fails — and that
- * failure is the work item (translate builtins:[] to default_config:
- * {enabled:false} on agent_toolset_20260401 per the Anthropic docs).
+ * Both sub-runs run on every managed provider cell.
  *
  * Required env: same as other live-sdk-* files.
  */
@@ -38,27 +32,23 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // Tool names that the agent might call to satisfy "use your shell tool".
-// Goose: "shell" (developer builtin). Anthropic: "bash" (agent_toolset_20260401).
+// Goose: "shell" (developer builtin). Older event payloads may use "bash".
 const SHELL_FAMILY = new Set(["shell", "bash"]);
 
 interface Cell {
   readonly id: string;
-  readonly provider: "anthropic" | "deepseek";
-  readonly runtime: "native" | "managed";
+  readonly provider: "deepseek";
+  readonly runtime: "managed";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "anthropic-native",  provider: "anthropic", runtime: "native",  model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
-  { id: "anthropic-managed", provider: "anthropic", runtime: "managed", model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
   { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
 ];
 
@@ -77,7 +67,7 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedAnthropicKey: boolean;
+  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
 }
 
@@ -164,7 +154,6 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
-    const anthropicEnv = process.env.ANTHROPIC_KEY ?? "";
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       runId: runId,
@@ -181,7 +170,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       terminalKind: terminal ? terminal.type : null,
       terminalData: terminal ? terminal.data : null,
       streamErrors,
-      leakedAnthropicKey: anthropicEnv.length > 0 && serialized.includes(anthropicEnv),
+      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
@@ -215,7 +204,6 @@ async function runCell(cell: Cell, mode: "positive" | "negative", installDir: st
     ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue,
-    ANTHROPIC_KEY: anthropicKey,
     DEEPSEEK_KEY: deepseekKey
   });
   const child = await runCommand(process.execPath, [scriptPath], {
@@ -253,7 +241,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
-      // (Goose + Anthropic Managed) always populate reason on the success
+      // (Goose + DeepSeek Managed) always populate reason on the success
       // path. Tolerating `undefined` (the pre-Phase-1 pattern) was masking
       // a regression where the field could go missing entirely.
       const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
@@ -261,8 +249,8 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
 
-      // The agent reached for the shell. Goose surfaces "shell", native
-      // surfaces "bash" — accept either.
+      // The agent reached for the shell. Goose surfaces "shell"; older event
+      // payloads may surface "bash". Accept either.
       const shellCalls = result.toolRequestNames.filter((n) => SHELL_FAMILY.has(n));
       if (shellCalls.length === 0) {
         throw new Error(
@@ -277,7 +265,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
         throw new Error(`assistant_text missing marker "${result.marker}"\n\n${dump()}`);
       }
 
-      expect(result.leakedAnthropicKey, dump()).toBe(false);
+      expect(result.leakedProviderKey, dump()).toBe(false);
       expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     9 * 60_000
@@ -295,7 +283,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
-      // (Goose + Anthropic Managed) always populate reason on the success
+      // (Goose + DeepSeek Managed) always populate reason on the success
       // path. Tolerating `undefined` (the pre-Phase-1 pattern) was masking
       // a regression where the field could go missing entirely.
       const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
@@ -314,7 +302,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       // Sanity: the agent still produced some text (graceful "no tool"
       // reply rather than nothing).
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.leakedAnthropicKey, dump()).toBe(false);
+      expect(result.leakedProviderKey, dump()).toBe(false);
       expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     9 * 60_000

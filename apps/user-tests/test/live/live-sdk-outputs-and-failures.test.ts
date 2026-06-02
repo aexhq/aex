@@ -7,7 +7,7 @@
  *   listOutputs + downloadOutput. Catches:
  *     - upload silently truncates
  *     - opaque-output-id ↔ filename collisions
- *     - native-runtime output-capture not wired (today's gap)
+ *     - managed runtime output-capture not wired
  *
  * Block B — failure surfacing (single cell)
  *   Three sub-cases exercise the SDK's error contract:
@@ -16,9 +16,7 @@
  *     b2: invalid model     → same accept-both shape
  *     b3: stdio MCP         → 4xx with REMOTE_MCP_STDIO_REJECTED_MESSAGE
  *
- *   Per AGENTS.md "No feature gates between runtimes" there's no
- *   capability-gate test — the no-gates rule means a native cell that
- *   silently fails MCP is already caught by live-sdk-mcp-invocation.
+ *   The MCP invocation scenario covers tool-routing regressions.
  *
  * Required env: same as other live-sdk-* files.
  */
@@ -38,23 +36,19 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface Cell {
   readonly id: string;
-  readonly provider: "anthropic" | "deepseek";
-  readonly runtime: "native" | "managed";
+  readonly provider: "deepseek";
+  readonly runtime: "managed";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "anthropic-native",  provider: "anthropic", runtime: "native",  model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
-  { id: "anthropic-managed", provider: "anthropic", runtime: "managed", model: anthropicModel, keyEnvName: "ANTHROPIC_KEY_SUBMIT", keyValue: anthropicKey },
   { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
 ];
 
@@ -103,13 +97,8 @@ interface OutputCaseResult {
 }
 
 function buildOutputScript(cell: Cell, marker: string): string {
-  // Each runtime captures from a different path: Goose walks the
-  // customer's outputDirs verbatim (after the workspaceRoot rerooting),
-  // while Anthropic native only auto-registers writes under
-  // /mnt/session/outputs/. Naming the path explicitly in the prompt is
-  // the most reliable way to reach both — Goose handles
-  // /workspace/outputs/<rel> directly, native's synthetic-first-message
-  // remaps it to /mnt/session/outputs/<rel> via the materializer.
+  // The managed runtime captures /workspace/outputs by default. Naming the
+  // path explicitly in the prompt avoids model variance around env var reads.
   const prompt =
     `Use your filesystem tools to create a file called \`report.txt\` ` +
     `inside the output directory at \`/workspace/outputs/report-folder/\`. ` +
@@ -287,7 +276,7 @@ function buildCorruptedSkillScript(): string {
     let eventKinds = [];
     let streamErrors = [];
 
-    // Stage the corrupted bytes directly via the raw /assets/upload
+    // Stage the corrupted bytes directly via the raw /assets
     // endpoint so we can submit a run that references a malformed
     // bundle — Skill.fromFiles() would build a VALID zip we can't
     // corrupt at the SDK layer.
@@ -295,7 +284,7 @@ function buildCorruptedSkillScript(): string {
     try {
       const hashBuf = await crypto.subtle.digest("SHA-256", corruptedZip);
       const hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      const res = await fetch(process.env.ANTPATH_API_URL + "/assets/upload", {
+      const res = await fetch(process.env.ANTPATH_API_URL + "/assets", {
         method: "POST",
         headers: {
           "content-type": "application/octet-stream",
@@ -307,7 +296,7 @@ function buildCorruptedSkillScript(): string {
       });
       if (res.status === 200 || res.status === 201) {
         const body = await res.json();
-        skillRef = { kind: "r2", path: body.path, hash: body.hash, sizeBytes: body.sizeBytes, name: "corrupt-skill" };
+        skillRef = { kind: "asset", assetId: body.assetId, name: "corrupt-skill" };
       } else {
         // Upload rejected — that's also a structured failure path. Record it.
         submitStatus = res.status;
@@ -324,12 +313,12 @@ function buildCorruptedSkillScript(): string {
     if (skillRef) {
       try {
         runId = await client.submitRun({
-          provider: "anthropic",
+          provider: "deepseek",
           runtime: "managed",
-          model: ${JSON.stringify(anthropicModel)},
+          model: ${JSON.stringify(deepseekModel)},
           prompt: "Hello.",
           skills: [skillRef],
-          secrets: { anthropic: { apiKey: process.env.ANTHROPIC_KEY_SUBMIT } },
+          secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT } },
           idempotencyKey: "fail-corrupt-skill-" + Date.now()
         });
         submitOk = true;
@@ -379,15 +368,9 @@ function buildCorruptedSkillScript(): string {
 }
 
 function buildIncompatibleRuntimeScript(): string {
-  // Probe: provider="deepseek" + runtime="native". The hosted API MUST reject
-  // at submit because no native runtime exists for deepseek (the parser
-  // enforces this — selectRuntime + runtime_native_unsupported in
-  // packages/contracts/src/submission.ts). This is a deterministic 4xx that
-  // exercises the SDK's error-shape contract without depending on any
-  // provider's tolerance for garbage model strings (the original b2 used
-  // an invalid model string, which Anthropic silently accepted — a different
-  // class of bug worth its own ticket, but unsuitable as an SDK
-  // error-contract probe).
+  // Probe: runtime="native" is no longer a public selector. The installed SDK
+  // must reject it before any HTTP call, giving a deterministic error-shape
+  // check without depending on provider behavior.
   return `
     import { AntpathClient } from "antpath";
 
@@ -466,17 +449,17 @@ function buildStdioMcpScript(): string {
         body: JSON.stringify({
           workspaceId: "ws-test",
           idempotencyKey: "fail-stdio-mcp-" + Date.now(),
-          provider: "anthropic",
+          provider: "deepseek",
           runtime: "managed",
           submission: {
-            model: ${JSON.stringify(anthropicModel)},
+            model: ${JSON.stringify(deepseekModel)},
             prompt: ["Hello."],
             skills: [],
             agentsMd: [],
             files: [],
             mcpServers: [{ name: "bad-stdio", url: "stdio:///dev/null", transport: "stdio" }]
           },
-          secrets: { anthropic: { apiKey: process.env.ANTHROPIC_KEY_SUBMIT } }
+          secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT } }
         })
       });
       submitStatus = res.status;
@@ -519,7 +502,7 @@ async function runFailureCase(
   const passEnv = buildPassEnv({
     ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
-    ANTHROPIC_KEY_SUBMIT: anthropicKey
+    DEEPSEEK_KEY_SUBMIT: deepseekKey
   });
   const child = await runCommand(process.execPath, [scriptPath], {
     cwd: installDir,
@@ -676,14 +659,12 @@ describe("live failure surfacing — SDK error contract", () => {
   );
 
   it(
-    "b2 incompatible provider/runtime: rejected at submit with structured error class",
+    "b2 invalid runtime selector: rejected at submit with structured error class",
     async () => {
-      // The ORIGINAL b2 used an invalid model string and was removed
-      // because Anthropic silently accepted placeholder models — a
-      // separate product gap, not an SDK error-contract bug. The
-      // reinstated b2 probes a deterministic 4xx that NO provider can
-      // mask: provider="deepseek" + runtime="native" is rejected by the
-      // submission parser itself (runtime_native_unsupported).
+      // The ORIGINAL b2 used an invalid model string and was removed because
+      // Anthropic silently accepted placeholder models. This replacement probes
+      // a deterministic SDK-side rejection: runtime="native" is outside the
+      // public runtime enum.
       const result = await runFailureCase(
         buildIncompatibleRuntimeScript,
         "fail-incompat-runtime.mjs",
@@ -691,12 +672,10 @@ describe("live failure surfacing — SDK error contract", () => {
       );
       const dump = (): string => dumpFailureResult(result);
 
-      // Hosted API MUST reject at submit.
+      // The installed SDK MUST reject before submit.
       expect(result.submitOk, dump()).toBe(false);
       // SDK MUST surface a structured error class containing a
-      // "runtime"/"native" hint so the customer can self-diagnose. The
-      // canonical class is AntpathError; the canonical code is
-      // runtime_native_unsupported (packages/contracts/src/submission.ts).
+      // "runtime"/"native" hint so the customer can self-diagnose.
       // The shared matcher pins both — a regression that drops the class
       // (errorClass=null) or the substring would have to weaken the
       // helper, which is visible across every consumer in code review.
@@ -710,8 +689,7 @@ describe("live failure surfacing — SDK error contract", () => {
           { messageIncludes: "runtime", context: "b2 incompatible-runtime" }
         );
       } catch (e) {
-        // Try the alternate hint word ("native") before giving up — the
-        // SDK message is one of two canonical phrasings.
+        // Try the alternate hint word ("native") before giving up.
         expectStructuredError(
           {
             errorClass: result.errorClass,

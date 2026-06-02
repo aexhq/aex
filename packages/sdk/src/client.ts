@@ -1,9 +1,9 @@
 import {
   AntpathError,
-  checkRuntimeSupported,
   DEFAULT_CREDENTIAL_MODE,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
+  RUNTIME_KINDS,
   RunStateError,
   operations,
   parseCredentialMode,
@@ -16,7 +16,6 @@ import {
   type FetchLike,
   type FileRecord,
   type FileRef,
-  type MachineSize,
   type McpServerRef,
   type Output,
   type PlatformRunSubmissionInput,
@@ -29,6 +28,7 @@ import {
   type RunEvent,
   type RunProvider,
   type RunUnit,
+  type RuntimeSize,
   type RuntimeKind,
   type SignedOutputLink,
   type Skill as SkillRecord,
@@ -36,7 +36,7 @@ import {
   type WhoAmI,
   TERMINAL_RUN_STATUSES
 } from "@antpath/contracts";
-import { uploadAssetToR2 } from "./asset-upload.js";
+import { uploadAsset } from "./asset-upload.js";
 import { AgentsMd } from "./agents-md.js";
 import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
@@ -69,10 +69,9 @@ export interface AntpathClientOptions {
  * spelled out at the call site:
  *
  *   - `model` / `system` / `prompt` — the agent's brief.
- *   - `skills` — array of `Skill` instances. Each instance is either a
- *     provider ref (`Skill.provider`) or local bytes
- *     (`Skill.fromFiles` / `Skill.fromPath`). Local skills are
- *     materialized to the content-addressed R2 store before the run lands.
+ *   - `skills` — array of local `Skill` instances
+ *     (`Skill.fromFiles` / `Skill.fromPath`). Local skills are materialized
+ *     to the hosted asset store before the run lands.
  *   - `mcpServers` — array of `McpServer` instances (headers split into
  *     `secrets.mcpServers` server-side; the public submission only
  *     carries `{ name, url }`).
@@ -102,13 +101,9 @@ export interface SubmitRunOptions {
    */
   readonly provider?: RunProvider;
   /**
-   * Optional runtime opt-out. `"managed"` forces the Goose Managed
-   * runtime (the upstream model is reached via the hosted BYOK
-   * provider-proxy); `"native"` is only valid when
-   * `provider === "anthropic"` and routes through Anthropic's Managed
-   * Agents API. Omit to let the platform auto-route based on provider.
-   * The platform rejects features the chosen runtime cannot serve —
-   * see {@link selectRuntime}.
+   * Optional runtime selector. Omit it or pass `"managed"`; both run on
+   * the managed runtime through the hosted BYOK provider-proxy. `"native"`
+   * is no longer accepted.
    */
   readonly runtime?: RuntimeKind;
   readonly model: string;
@@ -122,15 +117,11 @@ export interface SubmitRunOptions {
   readonly metadata?: PlatformSubmission["metadata"];
   readonly cleanup?: PlatformRunSubmissionInput["cleanup"];
   /**
-   * Goose Fly-machine size. One of the closed {@link MachineSize} preset
-   * tokens — prefer the {@link MachineSizes} symbol const (e.g.
-   * `MachineSizes.SHARED_2X_2GB`) so a typo is a compile error. Omit for the
-   * default (`SHARED_1X_512MB`: 1 shared CPU / 512MB).
-   *
-   * Anthropic Native runs have no Fly machine and ignore this field; the
-   * dispatcher persists it on the run snapshot for fidelity only.
+   * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
+   * Prefer the {@link RuntimeSizes} symbol const, e.g.
+   * `RuntimeSizes.SHARED_2X_2GB`.
    */
-  readonly machine?: MachineSize;
+  readonly runtimeSize?: RuntimeSize;
   /**
    * Run deadline as a duration string (`"1h"`, `"90m"`, `"30s"`). Bounded to
    * [1m, 6h]; omit for the 1h default. Applies to both runtimes.
@@ -140,9 +131,8 @@ export interface SubmitRunOptions {
   /**
    * Container paths to capture as output objects at session terminal.
    *
-   * - Omitted: the runtime default output directory is captured
-   *   (`/workspace/outputs` for Goose Managed, `/mnt/session/outputs` for
-   *   Anthropic Native).
+   * - Omitted: the managed runtime default output directory is captured
+   *   (`/workspace/outputs`).
    * - Present: the listed paths override the runtime default. Captured bytes
    *   land in private storage and can be retrieved via `client.outputs(runId)` /
    *   `client.download(runId)`.
@@ -153,9 +143,7 @@ export interface SubmitRunOptions {
    */
   readonly outputDirs?: readonly string[];
   /**
-   * Override the Goose builtin extensions enabled inside the runner
-   * container. Each entry is a Goose builtin name passed to
-   * `goose run --with-builtin <NAME>`.
+   * Override the managed runtime builtin extensions enabled inside the runner.
    *
    * - Omitted (default): the runner enables `["developer"]` which gives
    *   the agent `shell`, `write`, `edit`, and `tree` tools (bash, grep
@@ -165,10 +153,6 @@ export interface SubmitRunOptions {
    *   submitted `mcpServers` entry.
    * - Custom list: e.g. `["developer", "computercontroller"]` to add
    *   web search alongside the default shell/edit toolkit.
-   *
-   * Anthropic Native runs ignore this field (no Goose); the dispatcher
-   * persists it on the run snapshot for fidelity but the Anthropic
-   * Native adapter never reads it.
    *
    * Validation: each entry matches `/^[a-z][a-z0-9_-]{0,63}$/`, max 16
    * entries, deduplicated server-side.
@@ -218,7 +202,7 @@ export interface OutputDownloadOptions {
  * One captured debug artifact returned by {@link AntpathClient.getRunDebugLogs}.
  *
  *   - `filename` is the path under `runs/{runId}/logs/` — leading
- *     `goose-logs/` for runner logs, `fly-logs/` for machine logs.
+ *     `runtime/` for runtime logs and `host/` for host logs.
  *   - `text` is populated when the content type looks textual
  *     (`text/*`, `application/json`); decoded as UTF-8.
  *   - `bytesBase64` is always present so a caller that wants raw bytes
@@ -250,7 +234,7 @@ export interface RunDebugLogs {
  *
  * New run submissions usually use `Skill.fromFiles(...)` or
  * `Skill.fromPath(...)` directly inside `submitRun`; the SDK materializes
- * those bytes to R2 before the run lands. This namespace is the read/delete
+ * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
  * surface for workspace skill records and the internal transport used by the
  * legacy CLI upload command.
  */
@@ -319,7 +303,7 @@ export class SkillsClient {
  *
  * New run submissions usually use `AgentsMd.fromContent(...)` or
  * `AgentsMd.fromPath(...)` directly inside `submitRun`; the SDK
- * materializes those bytes to R2 before the run lands. This namespace is
+ * materializes those bytes to the hosted asset store before the run lands. This namespace is
  * the read/delete surface for persisted AgentsMd records plus an internal
  * upload transport retained for legacy callers.
  */
@@ -359,7 +343,7 @@ export class AgentsMdClient {
  *
  * New run submissions usually use `File.fromPath(...)` or
  * `File.fromBytes(...)` directly inside `submitRun`; the SDK materializes
- * those bytes to R2 before the run lands. This namespace is the read/delete
+ * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
  * surface for persisted file records plus an internal upload transport
  * retained for legacy callers.
  */
@@ -435,7 +419,7 @@ export class AntpathClient {
    * NOTE (tech-debt): this is part of the legacy workspace-skill upload
    * surface (`SkillsClient` + `operations.createSkillBundle` + the TUS
    * chunked path in asset-upload.ts). The live submit path materializes
-   * inline skills to R2 via `uploadAssetToR2` instead; `Skill` no longer
+   * inline skills via `uploadAsset` instead; `Skill` no longer
    * exposes `.upload()`/`.fromId()`. This surface is retained pending a
    * deliberate deprecation pass (it still threads into the CLI host
    * commands), tracked in the remediation plan as item 4a.
@@ -536,12 +520,11 @@ export class AntpathClient {
       options.secrets.proxyEndpointAuth ?? []
     );
 
-    // Phase B + D: walk Skill / AgentsMd / File instances, materialize
-    // every draft (local bytes) to R2 BEFORE the submit round-trip.
-    // The wire shape carries only kind:"r2" / kind:"provider" refs.
-    const r2Skills = await materializeSkills(this.#http, options.skills ?? []);
-    const r2AgentsMd = await materializeAgentsMd(this.#http, options.agentsMd ?? []);
-    const r2Files = await materializeFiles(this.#http, options.files ?? []);
+    // Walk Skill / AgentsMd / File instances and materialize every draft before
+    // the submit round-trip. The wire shape carries only kind:"asset" refs.
+    const assetSkills = await materializeSkills(this.#http, options.skills ?? []);
+    const assetAgentsMd = await materializeAgentsMd(this.#http, options.agentsMd ?? []);
+    const assetFiles = await materializeFiles(this.#http, options.files ?? []);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
       options.secrets.mcpServers ?? []
@@ -551,9 +534,9 @@ export class AntpathClient {
       model: options.model,
       ...(options.system ? { system: options.system } : {}),
       prompt,
-      skills: r2Skills,
-      agentsMd: r2AgentsMd,
-      files: r2Files,
+      skills: assetSkills,
+      agentsMd: assetAgentsMd,
+      files: assetFiles,
       // submissionMcpServers may contain workspace refs of the shape
       // {kind:"workspace", id:"mcp_..."}. The BFF runs
       // `resolveWorkspaceMcpRefsInSubmission` BEFORE the shared parser
@@ -593,7 +576,7 @@ export class AntpathClient {
       ...(options.runtime ? { runtime: options.runtime } : {}),
       submission,
       ...(options.cleanup ? { cleanup: options.cleanup } : {}),
-      ...(options.machine ? { machine: options.machine } : {}),
+      ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       secrets,
       ...(proxyEndpointDeclarations.length > 0
@@ -601,18 +584,18 @@ export class AntpathClient {
         : {})
     };
 
-    // Fail early (native-first strategy): if the caller explicitly asked for
-    // a runtime the provider can't serve (e.g. `runtime: "native"` on a
-    // provider with no native agent runtime), reject CLIENT-SIDE via the
-    // centralized validator — before any HTTP request — so the customer gets
-    // a typed, self-diagnosable error instead of a generic API failure. The
-    // server enforces the same spec as defence-in-depth.
-    const runtimeSupport = checkRuntimeSupported(provider, options.runtime);
-    if (!runtimeSupport.ok) {
-      throw new AntpathError("RUNTIME_UNSUPPORTED", runtimeSupport.message ?? "unsupported runtime");
+    if (
+      options.runtime !== undefined &&
+      !(RUNTIME_KINDS as readonly string[]).includes(options.runtime)
+    ) {
+      throw new AntpathError(
+        "RUNTIME_UNSUPPORTED",
+        `AntpathClient.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
+          `(got ${JSON.stringify(options.runtime)})`
+      );
     }
 
-    // All inline refs were materialized to R2 above, so submitRun is
+    // All inline refs were materialized above, so submitRun is
     // always a plain JSON post. The multipart code path is gone.
     const run = await operations.submitRun(this.#http, request);
     return run.id;
@@ -787,22 +770,8 @@ export class AntpathClient {
   /**
    * Bundle the per-run debug artifacts antpath captures automatically:
    *
-   *   - `goose-logs/{stdout,stderr,args}.log` — what the Goose runner
-   *     printed and the argv it was invoked with. Only present on
-   *     Goose Managed runs.
-   *   - managed host logs when the platform includes them. Only present
-   *     on Goose Managed runs.
-   *   - `anthropic-debug/files-list.json` — what the Anthropic Files
-   *     API returned at session terminal. Captures the raw scope_id
-   *     query, count, and sampled filenames so a "session wrote files
-   *     but listOutputs is empty" failure is debuggable post-hoc.
-   *     Only present on Anthropic-native runs.
-   *   - `anthropic-debug/mcp-access-*.log` — one NDJSON line per
-   *     inbound MCP-proxy call, recording method/path/upstream-host/
-   *     status. Present on any run whose proxy was dialed (typically
-   *     Anthropic-native MCP, since the dial originates from
-   *     Anthropic's session loop).
-   *
+   *   - `runtime/{stdout,stderr,args}.log` — runtime process diagnostics.
+   *   - `host/...` — managed host logs when the platform includes them.
    * These all live in the run's `logs` namespace (`runs/<id>/logs/`).
    * Each is downloaded through the gated `/logs/:id/download` endpoint,
    * decoded as UTF-8 text when the content type looks textual, and
@@ -888,7 +857,7 @@ export class AntpathClient {
    * from the public read endpoints (`getRun` + `listEvents` +
    * `listOutputs` + per-output `/download`). Organised into the four
    * namespace folders: `metadata/`, `events/`, `outputs/` (deliverables),
-   * `logs/` (the `anthropic-debug/` / `goose-logs/` / `fly-logs/`
+   * `logs/` (`runtime/`, `host/`, `provider-proxy/`, `control-plane/`
    * diagnostics), plus a `manifest.json`. Pass `to` to also write the
    * bytes to a file path while still returning the bytes.
    */
@@ -1065,8 +1034,8 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
  * `submitRun` call) so that mistake is loud, not silent.
  */
 /**
- * Walk the user-provided Skill[], materialize every draft to R2,
- * return the wire-shape refs. Provider skills pass through.
+ * Walk the user-provided Skill[], materialize every draft to assets, and return
+ * the wire-shape refs.
  */
 async function materializeSkills(
   http: import("./asset-upload.js").AssetsHttpClient,
@@ -1087,27 +1056,25 @@ async function materializeSkills(
       if (!bundle) {
         throw new Error(`AntpathClient.submitRun: skills[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAssetToR2({
+      const uploaded = await uploadAsset({
         http,
         bytes: bundle.bytes,
         hash: bundle.contentHash
       });
       out.push({
-        kind: "r2",
-        path: uploaded.path,
-        hash: uploaded.hash,
-        sizeBytes: uploaded.sizeBytes,
+        kind: "asset",
+        assetId: uploaded.assetId,
         name: bundle.name
       });
       continue;
     }
-    // Provider or r2 (re-used from a previous materialization).
+    // Already-materialized asset ref.
     out.push(ref);
   }
   return out;
 }
 
-/** Materialize draft AgentsMd[] to R2; pass-through any already-r2. */
+/** Materialize draft AgentsMd[] to assets; pass-through any already-materialized refs. */
 async function materializeAgentsMd(
   http: import("./asset-upload.js").AssetsHttpClient,
   agentsMds: readonly AgentsMd[]
@@ -1127,12 +1094,10 @@ async function materializeAgentsMd(
       if (!bundle) {
         throw new Error(`AntpathClient.submitRun: agentsMd[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAssetToR2({ http, bytes: bundle.bytes, hash: bundle.contentHash });
+      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash });
       out.push({
-        kind: "r2",
-        path: uploaded.path,
-        hash: uploaded.hash,
-        sizeBytes: uploaded.sizeBytes,
+        kind: "asset",
+        assetId: uploaded.assetId,
         name: bundle.name
       });
       continue;
@@ -1142,7 +1107,7 @@ async function materializeAgentsMd(
   return out;
 }
 
-/** Materialize draft File[] to R2; pass-through any already-r2. */
+/** Materialize draft File[] to assets; pass-through any already-materialized refs. */
 async function materializeFiles(
   http: import("./asset-upload.js").AssetsHttpClient,
   files: readonly File[]
@@ -1162,22 +1127,18 @@ async function materializeFiles(
       if (!bundle) {
         throw new Error(`AntpathClient.submitRun: files[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAssetToR2({ http, bytes: bundle.bytes, hash: bundle.contentHash });
+      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash });
       out.push(
         bundle.mountPath !== undefined
           ? {
-              kind: "r2",
-              path: uploaded.path,
-              hash: uploaded.hash,
-              sizeBytes: uploaded.sizeBytes,
+              kind: "asset",
+              assetId: uploaded.assetId,
               name: bundle.name,
               mountPath: bundle.mountPath
             }
           : {
-              kind: "r2",
-              path: uploaded.path,
-              hash: uploaded.hash,
-              sizeBytes: uploaded.sizeBytes,
+              kind: "asset",
+              assetId: uploaded.assetId,
               name: bundle.name
             }
       );

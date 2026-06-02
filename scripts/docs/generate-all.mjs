@@ -119,18 +119,16 @@ async function generateCliReference() {
 
 async function generateEventReference() {
   const envelope = await readFile(resolve(repoRoot, "packages", "contracts", "src", "event-envelope.ts"), "utf8");
-  const known = await readFile(resolve(repoRoot, "packages", "contracts", "src", "known-events.ts"), "utf8");
 
   const eventTypes = readConstArray(envelope, "ANTPATH_EVENT_TYPES");
   const sources = readConstArray(envelope, "ANTPATH_EVENT_SOURCES");
   const channels = readConstArray(envelope, "ANTPATH_EVENT_CHANNELS");
   const levels = readConstArray(envelope, "ANTPATH_LOG_LEVELS");
-  const providerTypes = [...known.matchAll(/type:\s*"([^"]+)"/g)].map((m) => m[1]);
 
   const body = [
     "# Events",
     "",
-    "Generated from `packages/contracts/src/event-envelope.ts` and `packages/contracts/src/known-events.ts`.",
+    "Generated from `packages/contracts/src/event-envelope.ts`.",
     "",
     "## Coordinator Envelope Types",
     "",
@@ -147,10 +145,6 @@ async function generateEventReference() {
     "## Log Levels",
     "",
     markdownList(levels),
-    "",
-    "## Provider Event Guards",
-    "",
-    markdownList([...new Set(providerTypes)]),
     ""
   ].join("\n");
 
@@ -211,7 +205,7 @@ async function generateLlmsFiles() {
     "",
     "> TypeScript SDK and CLI for durable autonomous agent runs across Anthropic, DeepSeek, OpenAI, Gemini, and Mistral.",
     "",
-    "antpath accepts one run submission shape, routes it to either a provider-native runtime or Goose Managed, emits one event stream, and returns captured outputs and logs.",
+    "antpath accepts one run submission shape, routes every provider through Goose Managed, emits one event stream, and returns captured outputs and logs.",
     "",
     "## Start",
     "",

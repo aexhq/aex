@@ -11,8 +11,8 @@ This workspace deliberately has **no `workspace:*` dependencies on
 artifact under test. Inside that child, `import "antpath"` resolves
 through the install, never through the monorepo symlink.
 
-See `surface invariants` for the layer's role in the
-broader testing taxonomy.
+See [the public testing policy](../docs/testing.md) for the layer's
+role in the broader testing taxonomy and the blackbox-first authorship rule.
 
 ## Running
 
@@ -72,11 +72,10 @@ deployed `api.antpath.ai` hosted API. They require:
 
 ## Live SDK siblings (2026 rebuild)
 
-`test/live/live-sdk-deepseek.test.ts`,
-`test/live/live-sdk-anthropic-managed.test.ts`, and
-`test/live/live-sdk-anthropic-native.test.ts` exercise the published
+`test/live/live-sdk-deepseek.test.ts` and
+`test/live/live-sdk-anthropic-managed.test.ts` exercise the published
 tarball end-to-end against the deployed `api.antpath.ai` hosted API —
-one file per dispatch cell of the 2026 dual-runtime architecture.
+one file per managed provider dispatch cell.
 
 Each test installs the packed tarball into a tempdir, spawns
 `AntpathClient.submitRun({ provider, ... })`, polls `getRun`,
@@ -89,7 +88,7 @@ Required env (all three):
 - `ANTPATH_API_TOKEN`
 - `ANTPATH_USER_TEST_TARBALL` *or* `ANTPATH_USER_TEST_VERSION`
 - `DEEPSEEK_API_KEY` (deepseek file)
-  / `ANTHROPIC_API_KEY` (both anthropic files)
+  / `ANTHROPIC_API_KEY` (anthropic file)
 
 Local `.env.local` files may still use the legacy names
 `ANTPATH_LIVE_API_BASE`, `ANTPATH_LIVE_API_TOKEN`,
@@ -97,8 +96,8 @@ Local `.env.local` files may still use the legacy names
 the test loader aliases them to the canonical variables above.
 
 CI lives in `.github/workflows/rebuild-live.yml` (`sdk-live` job).
-See `surface invariants` → "2026 rebuild additions" for
-the full taxonomy.
+See [the public testing policy](../docs/testing.md) for the full
+taxonomy.
 
 `test/live/config-proxyendpoints.user.test.ts` requires a real
 `PROXY_OK` round-trip. The test uses a public no-auth upstream and must not be
@@ -121,8 +120,8 @@ exercised — that feature was dropped in the MVP.) Its purpose is to
 prove the **app** behaves as expected under a
 maximal submission, not to test model capability.
 
-Scope: Anthropic + DeepSeek, one model each. Three cells —
-`managed/deepseek`, `managed/anthropic`, `native/anthropic`.
+Scope: Anthropic + DeepSeek, one model each. Two managed cells —
+`managed/deepseek`, `managed/anthropic`.
 
 It is **excluded** from the default `test:user` sweep (see
 `vitest.config.ts`) and runs only via its own entrypoint + config:

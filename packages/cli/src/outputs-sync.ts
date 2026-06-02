@@ -10,11 +10,8 @@
  * The agent runs this via its bash tool. The CLI walks each directory
  * and emits a structured JSON line per file to stdout, so the worker
  * (observing the agent's `agent.tool_result` event) has a deterministic
- * record of what files exist. The bash output also acts as a hint to
- * Anthropic Managed Agents' built-in file-registration so the bytes
- * become listable via the Files API at terminal. Only directories under
- * `/mnt/session/...` are auto-registered by Anthropic, so the worker's
- * synthetic message should keep `outputDirs` inside that tree.
+ * record of what files exist. The structured output is the platform's
+ * deterministic capture receipt.
  *
  * The subcommand:
  *  - REFUSES to run outside a managed run (no ANTPATH_INDEX_PATH file).

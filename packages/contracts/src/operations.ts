@@ -24,6 +24,7 @@ import type {
   WhoAmI
 } from "./runtime-types.js";
 import type { PlatformCleanupPolicy, PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
+import { runArtifactRel } from "./run-artifacts.js";
 
 /**
  * The single source of truth for SDK<->BFF transport. The SDK class
@@ -110,15 +111,16 @@ export async function listOutputs(
 }
 
 /**
- * List the run's platform diagnostics (the `logs` namespace) — the
- * `anthropic-debug/`, `goose-logs/`, `fly-logs/` artifacts. Same
- * shape as {@link listOutputs}, served from `runs/<runId>/logs/`.
+ * List the run's platform diagnostics (the `logs` namespace). Legacy stored
+ * filenames are normalized to canonical public namespaces.
  */
 export async function listLogs(http: HttpClient, runId: string): Promise<readonly Output[]> {
   const result = await http.request<{ readonly logs: readonly Output[] }>(
     `/api/runs/${encodeURIComponent(runId)}/logs`
   );
-  return result.logs;
+  return result.logs.map((log) =>
+    typeof log.filename === "string" ? { ...log, filename: runArtifactRel(log.filename) } : log
+  );
 }
 
 export async function createOutputLink(
@@ -197,14 +199,16 @@ export async function deleteRun(http: HttpClient, runId: string): Promise<void> 
 }
 
 /**
- * Delete a workspace asset blob from the shared content-addressed store
- * (`assets/<workspaceId>/<hash>`). Accepts `sha256:<hex>` or a bare 64-hex
- * digest. Workspace is derived server-side from the token; idempotent.
+ * Delete a workspace asset cache entry. Accepts an `asset_<id>` value,
+ * `sha256:<hex>`, or a bare 64-hex digest. Workspace is derived server-side
+ * from the token; idempotent.
  * Does NOT affect runs that already snapshotted the asset.
  */
 export async function deleteWorkspaceAsset(http: HttpClient, hash: string): Promise<void> {
-  const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
-  await http.request<unknown>(`/assets/${encodeURIComponent(hex)}`, { method: "DELETE" });
+  const assetId = hash.startsWith("asset_")
+    ? hash
+    : `asset_${hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash}`;
+  await http.request<unknown>(`/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
 }
 
 export async function whoami(http: HttpClient): Promise<WhoAmI> {

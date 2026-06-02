@@ -4,21 +4,21 @@ title: Provider runtime capabilities
 
 # Provider runtime capabilities
 
-Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/provider-capability.ts`; runtime cells are derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.
+Generated from `packages/contracts/src/provider-support.ts`; runtime cells are derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.
 
 Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.
 
-Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`). Runtime selectors: `native`, `managed`.
+Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`). Runtime selectors: `managed`.
 
-Public support facts are listed separately from runtime routing facts. Goose Managed is the universal managed runtime. A provider-native runtime is used only when the shared capability registry declares one.
+All new submissions run on the managed runtime. Public support facts are listed separately from runtime dispatch facts.
 
-Status vocabulary: `supported`, `live-unverified`, `provider-inherited`, `rejected`.
+Status vocabulary: `supported`, `live-unverified`, `rejected`.
 
 ## Public support
 
 | Provider | Wire value | Status | Docs | Evidence |
 | --- | --- | --- | --- | --- |
-| [Anthropic](#anthropic) | `anthropic` | supported | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts); [Native feature parity gate](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/native-feature-gate.test.ts) |
+| [Anthropic](#anthropic) | `anthropic` | supported | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
 | [DeepSeek](#deepseek) | `deepseek` | supported | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
 | [OpenAI](#openai) | `openai` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
 | [Gemini](#gemini) | `gemini` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
@@ -26,46 +26,39 @@ Status vocabulary: `supported`, `live-unverified`, `provider-inherited`, `reject
 
 ## Runtime routing
 
-| Provider | Default provider | Auto route | `runtime: "native"` | `runtime: "managed"` | Native executor |
-| --- | --- | --- | --- | --- | --- |
-| `anthropic` | yes | `native` | [supported](#anthropic); provider-inherited | [supported](#anthropic) | `anthropic-managed` |
-| `deepseek` | no | `managed` | [rejected](#deepseek) | [supported](#deepseek) | n/a |
-| `openai` | no | `managed` | [rejected](#openai) | [live-unverified](#openai) | n/a |
-| `gemini` | no | `managed` | [rejected](#gemini) | [live-unverified](#gemini) | n/a |
-| `mistral` | no | `managed` | [rejected](#mistral) | [live-unverified](#mistral) | n/a |
+| Provider | Default provider | Auto route | `runtime: "managed"` |
+| --- | --- | --- | --- |
+| `anthropic` | yes | `managed` | [supported](#anthropic) |
+| `deepseek` | no | `managed` | [supported](#deepseek) |
+| `openai` | no | `managed` | [live-unverified](#openai) |
+| `gemini` | no | `managed` | [live-unverified](#gemini) |
+| `mistral` | no | `managed` | [live-unverified](#mistral) |
 
 ## Runtime cell evidence
 
 | Provider | Runtime | Status | Ownership | Enforcement path | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `anthropic` | `native` | supported | provider-inherited | submission parser + provider-native dispatch | [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Native feature parity gate](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/native-feature-gate.test.ts) |
-| `anthropic` | `managed` | supported | supported | submission parser + Goose Managed dispatch | [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
-| `deepseek` | `native` | rejected | rejected | checkRuntimeSupported runtime_native_unsupported | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
-| `deepseek` | `managed` | supported | supported | submission parser + Goose Managed dispatch | [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
-| `openai` | `native` | rejected | rejected | checkRuntimeSupported runtime_native_unsupported | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `openai` | `managed` | live-unverified | live-unverified | submission parser + Goose Managed dispatch | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `gemini` | `native` | rejected | rejected | checkRuntimeSupported runtime_native_unsupported | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `gemini` | `managed` | live-unverified | live-unverified | submission parser + Goose Managed dispatch | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `mistral` | `native` | rejected | rejected | checkRuntimeSupported runtime_native_unsupported | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `mistral` | `managed` | live-unverified | live-unverified | submission parser + Goose Managed dispatch | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
+| `anthropic` | `managed` | supported | supported | submission parser + managed dispatch | [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
+| `deepseek` | `managed` | supported | supported | submission parser + managed dispatch | [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts) |
+| `openai` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
+| `gemini` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
+| `mistral` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts) |
 
-## Native feature parity
+## Validation errors
 
-| Provider | Native inline skills | Native files | Native MCP servers |
+| Code | Docs anchor | Enforcement path | Evidence |
 | --- | --- | --- | --- |
-| `anthropic` | supported | supported | supported |
-| `deepseek` | n/a | n/a | n/a |
-| `openai` | n/a | n/a | n/a |
-| `gemini` | n/a | n/a | n/a |
-| `mistral` | n/a | n/a | n/a |
+| `feature_runtime_mismatch` | [managed-unsupported-features](#managed-unsupported-features) | collectManagedUnsupportedFeatures + selectRuntime | [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts) |
+
+### Managed unsupported features
+
+Provider-hosted skill refs such as `Skill.provider(...)` are rejected because new runs dispatch to Goose Managed. Use inline antpath skills or remove the provider-hosted ref.
 
 Notes:
 
 - Public status describes provider availability on the SDK surface. Runtime routing describes how a validated submission is dispatched.
-- `rejected` for `runtime: "native"` means the submission parser returns `runtime_native_unsupported` for that provider.
+- `runtime: "native"` is not a runtime selector; the submission parser rejects it as an invalid enum value.
 - `live-unverified` means the shape is accepted by code but lacks equal live user evidence in this repository.
-- `provider-inherited` means antpath passes a capability through while the provider or customer-controlled service owns final behavior.
-- Native feature parity cells come from `PROVIDER_CAPABILITY[provider].nativeAgent.serves`; `n/a` means the provider has no native agent runtime.
 
 ## Provider anchors
 
@@ -73,9 +66,9 @@ Notes:
 
 - Wire provider: `anthropic`
 - Public status: supported
-- Auto route: `native`
+- Auto route: `managed`
 - Docs: [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts); [Native feature parity gate](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/native-feature-gate.test.ts)
+- Evidence: [Submission parser and routing parity](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/weilueluo/antpath/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK live user matrix](https://github.com/weilueluo/antpath/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts); [Runtime support validator](https://github.com/weilueluo/antpath/blob/main/packages/contracts/test/runtime-support.test.ts)
 
 ### DeepSeek
 

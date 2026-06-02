@@ -38,7 +38,7 @@
  * cleanly when these are absent — they run in CI against the deployed plane):
  *   ANTPATH_API_URL              live hosted API URL (local or prod)
  *   ANTPATH_API_TOKEN             workspace API token
- *   ANTHROPIC_API_KEY    customer Anthropic API key
+ *   DEEPSEEK_API_KEY    customer DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -62,8 +62,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("ANTPATH_API_URL");
 const apiToken = requireEnv("ANTPATH_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
+const model = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface LogRecord {
   readonly source: string;
@@ -111,17 +111,17 @@ describe("live api.antpath.ai — unified stream: logs from platform services ar
 
         const baseUrl = process.env.ANTPATH_API_URL;
         const apiToken = process.env.ANTPATH_API_TOKEN;
-        const anthropicKey = process.env.ANTHROPIC_KEY;
+        const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
 
         const client = new AntpathClient({ baseUrl, apiToken });
         const runId = await client.submitRun({
-          provider: "anthropic",
+          provider: "deepseek",
           runtime: "managed",
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-logs-" + Date.now(),
-          secrets: { anthropic: { apiKey: anthropicKey } }
+          secrets: { deepseek: { apiKey: deepseekKey } }
         });
 
         // Wait for terminal — the Workflow trace flushes on exit, so the
@@ -219,7 +219,7 @@ describe("live api.antpath.ai — unified stream: logs from platform services ar
           listEventsLogRecords,
           defaultLogCount,
           defaultEventCount,
-          leakedKey: serialized.includes(anthropicKey)
+          leakedKey: serialized.includes(deepseekKey)
         }));
         process.exit(0);
       `;
@@ -229,7 +229,7 @@ describe("live api.antpath.ai — unified stream: logs from platform services ar
       const passEnv: Record<string, string> = {
         ANTPATH_API_URL: apiUrl,
         ANTPATH_API_TOKEN: apiToken,
-        ANTHROPIC_KEY: anthropicKey,
+        DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";

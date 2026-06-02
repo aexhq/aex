@@ -1,19 +1,14 @@
 /**
- * Unified runner event schema. Both runtimes feed the same shape into
+ * Unified runner event schema. The managed runtime feeds one shape into
  * the hosted antpath event pipeline:
  *
- *   - **Anthropic Native** — the native run-lifecycle poll loop
- *     reads Anthropic's session events and uses the Anthropic
- *     adapter to translate each into one or more `RunnerEvent`s, pushing
- *     them into the KV live tail.
  *   - **Goose Managed** — the per-run managed runtime POSTs batches of
  *     NDJSON events to `/runs/{id}/runner/events`; the Goose adapter
  *     translates each event into one or more `RunnerEvent`s.
  *
  * The downstream subscribers (dashboard, SDK `streamEvents`, observable
- * spans) never see the runtime-specific wire shapes — they only see
- * `RunnerEvent`s. This is the cutover boundary that makes the dual
- * runtime invisible to customers.
+ * spans) never see runtime-specific wire shapes — they only see
+ * `RunnerEvent`s.
  *
  * This is the public event contract consumed by SDK and CLI clients.
  */

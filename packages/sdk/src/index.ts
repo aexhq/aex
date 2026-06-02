@@ -61,13 +61,10 @@ export {
   validateProxyAuth
 } from "@antpath/contracts";
 export type {
+  AssetRef,
   AgentsMdRef,
   FileRef,
   McpServerRef,
-  ProviderSkillRef,
-  R2AgentsMdRef,
-  R2FileRef,
-  R2SkillRef,
   SkillBundleEntry,
   SkillBundleManifest,
   SkillRef
@@ -121,19 +118,19 @@ export type {
   ProxyResponseMode
 } from "@antpath/contracts";
 
-// Machine sizing — the closed set of valid Goose Fly-machine presets.
-// Prefer the `MachineSizes` symbol const (e.g. `MachineSizes.SHARED_2X_2GB`)
-// so an invalid `cpu × memory` combo is a compile error, not a runtime 400.
+// Runtime sizing — the closed set of valid managed runtime presets.
+// Prefer the `RuntimeSizes` symbol const (e.g. `RuntimeSizes.SHARED_2X_2GB`)
+// so an invalid token is a compile error, not a runtime 400.
 export {
   CUSTODY_MANIFEST_SCHEMA_VERSION,
   RUN_RECORD_MANIFEST_SCHEMA_VERSION,
   RUN_RECORD_SCHEMA_VERSION,
-  DEFAULT_MACHINE_SIZE,
-  MACHINE_PRESETS,
-  MACHINE_SIZES,
-  MachineSizes
+  DEFAULT_RUNTIME_SIZE,
+  RUNTIME_SIZE_PRESETS,
+  RUNTIME_SIZES,
+  RuntimeSizes
 } from "@antpath/contracts";
-export type { MachineResources, MachineSize } from "@antpath/contracts";
+export type { RuntimeResources, RuntimeSize } from "@antpath/contracts";
 
 // Provider + runtime dispatch surface. Agents and SDK consumers
 // inspect these to know which (provider, runtime) combos are valid
@@ -141,10 +138,8 @@ export type { MachineResources, MachineSize } from "@antpath/contracts";
 export {
   CREDENTIAL_MODES,
   DEFAULT_CREDENTIAL_MODE,
-  collectNativeOnlyFeatures,
-  collectNativeUnsupportedFeatures,
+  collectManagedUnsupportedFeatures,
   DEFAULT_RUN_PROVIDER,
-  NATIVE_RUNTIME_PROVIDERS,
   RUN_PROVIDERS,
   RUNTIME_KINDS,
   RUNTIME_VALIDATION_CODES,
@@ -158,25 +153,19 @@ export type {
   RuntimeValidationCode
 } from "@antpath/contracts";
 
-// Event type guards
+// Normalized coordinator event guards
 export {
-  isAgentCustomToolUse,
-  isAgentEvent,
-  isAgentMcpToolResult,
-  isAgentMcpToolUse,
-  isAgentMessage,
-  isAgentThinking,
-  isAgentToolResult,
-  isAgentToolUse,
-  isSessionError,
-  isSessionEvent,
-  isSessionStatusIdle,
-  isSessionStatusRescheduled,
-  isSessionStatusRunning,
-  isSessionStatusTerminated,
-  isSpanEvent,
-  isUserEvent,
-  isUserMessage
+  isCustom,
+  isEventChannel,
+  isFromSource,
+  isLog,
+  isRunError,
+  isRunFinished,
+  isRunStarted,
+  isRunTerminal,
+  isTextMessage,
+  isToolCallResult,
+  isToolCallStart
 } from "@antpath/contracts";
 
 // Secret utilities

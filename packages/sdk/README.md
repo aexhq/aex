@@ -32,17 +32,17 @@ antpath whoami                       --api-token …
 antpath skills  <upload|list|get|delete> [flags] --api-token …
 ```
 
-The SDK class and the CLI are backed by the same public `@antpath/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `antpath` CLI as its `bin` entry; the worker mounts that CLI inside every run at `/mnt/session/uploads/antpath/antpath` (Anthropic Managed Agents rebases every session-resource mount under `/mnt/session/uploads/`, and mounted files have no execute permission so they are invoked through `node`), so skills can call `node /mnt/session/uploads/antpath/antpath proxy …` against the per-run manifest. See [Agent-first surface design](../docs/engineering.md).
+The SDK class and the CLI are backed by the same public `@antpath/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `antpath` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `antpath proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
 
 The antpath URL defaults to `https://api.antpath.ai`. Set `--antpath-url` on the CLI or `baseUrl` on `AntpathClient` for local, staging, private, or hosted antpath API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
 
 ## Product boundaries
 
-- Multi-provider via the dual-runtime architecture. The published surface is the same regardless of provider:
-  - `provider: "anthropic"` — defaults to the Anthropic Native runtime
-    unless you opt into Goose Managed with `runtime: "managed"`.
-  - `provider: "deepseek" | "openai" | "gemini" | "mistral"` — Goose
-    Managed runtime.
+- Multi-provider via Goose Managed. The published surface is the same
+  regardless of provider:
+  - omit `runtime` or pass `runtime: "managed"`; every provider uses the
+    managed runtime and BYOK provider-proxy.
+  - `provider: "anthropic" | "deepseek" | "openai" | "gemini" | "mistral"`.
   - See [provider/runtime capabilities](docs/provider-runtime-capabilities.md)
     for the generated matrix.
 - BYO provider key + MCP credentials + skill references — passed inline on every submission and held in run-scoped custody, with cleanup/revocation attempted at terminal. Cross-provider keys are rejected loudly at submission time.

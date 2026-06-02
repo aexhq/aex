@@ -52,7 +52,7 @@ describe("CLI bundle: no env-var-driven code paths", () => {
     // rebase. Asserting their presence in the bundle catches any
     // refactor that accidentally relativizes them or reverts to the
     // pre-mount-fix `/antpath/...` paths (which the Anthropic
-    // managed-agents runtime silently ignores — see proxy-bootstrap.ts
+    // managed runner environment forwarding ignores these — see proxy-bootstrap.ts
     // for the gory details).
     const text = readFileSync(bundlePath, "utf8");
     expect(text.includes("/mnt/session/uploads/antpath/index.json")).toBe(true);

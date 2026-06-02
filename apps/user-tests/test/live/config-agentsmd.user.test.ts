@@ -7,9 +7,7 @@
  * question needs both facts, so a correct answer proves both refs landed.
  *
  * Framing note: we use benign "project facts" rather than "echo these
- * tokens", because native delivers AGENTS.md as a USER message and Claude
- * refuses to echo tokens from user-supplied context as a prompt-injection
- * defence. A natural project-doc question is answered normally.
+ * tokens". A natural project-doc question is answered normally.
  *
  * Model-cooperation-dependent: if tokenA is ALSO absent the run was
  * inconclusive and that assert fails loudly rather than passing silently.
@@ -21,7 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAntpath, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
-const env = requireUserEnv({ anthropic: true, deepseek: true });
+const env = requireUserEnv({ deepseek: true });
 
 function rand(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -39,7 +37,7 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
   afterAll(() => install?.cleanup());
 
   it(
-    "native delivers both agentsMd refs",
+    "managed deepseek delivers both agentsMd refs",
     async () => {
       const tokenA = rand("ALPHA");
       const tokenB = rand("BRAVO");
@@ -49,22 +47,22 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
           const b = await AgentsMd.fromContent("# Project notes B\\n\\nThe internal codename for the database is ${tokenB}.", { name: "rules-b" });
         `,
         submit: `{
-          provider: "anthropic",
-          runtime: "native",
-          model: MODEL_ANTHROPIC,
+          provider: "deepseek",
+          runtime: "managed",
+          model: MODEL_DEEPSEEK,
           prompt: ${JSON.stringify([PROMPT])},
           agentsMd: [a, b],
-          secrets: { anthropic: { apiKey: ANTHROPIC_KEY } },
-          idempotencyKey: "user-agentsmd-native-" + Date.now()
+          secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
+          idempotencyKey: "user-agentsmd-deepseek-managed-a-" + Date.now()
         }`
       });
       const result = await runSdkScript(install, env, script, {
-        scriptName: "user-agentsmd-native.mjs",
-        waitMs: 4 * 60_000,
-        timeoutMs: 5 * 60_000
+        scriptName: "user-agentsmd-deepseek-managed-a.mjs",
+        waitMs: 8 * 60_000,
+        timeoutMs: 9 * 60_000
       });
 
-      expect(result.runtime).toBe("native");
+      expect(result.runtime).toBe("managed");
       expect(result.status).toBe("succeeded");
 
       const text = dense(result.assistantText);
@@ -73,7 +71,7 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
       // THE FIX: ...and the second ref reaches the agent too.
       expect(text).toContain(tokenB);
     },
-    6 * 60_000
+    10 * 60_000
   );
 
   it(

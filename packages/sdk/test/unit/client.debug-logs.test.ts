@@ -2,11 +2,10 @@
  * Unit tests for `AntpathClient.getRunDebugLogs` / `AntpathClient.debugLogs`.
  *
  * The helper bundles the per-run debug artifacts antpath captures
- * automatically (`goose-logs/*` from the runner, `fly-logs/*` from the
- * Fly machine, `anthropic-debug/*` from the native runtime). These all
- * live in the run's `logs` namespace, so the helper lists `/logs` and
+ * automatically. These all live in the run's `logs` namespace, so the
+ * helper lists `/logs` and
  * downloads each via the gated `/logs/:id/download` proxy (not anonymous
- * R2 links), decodes textual content as UTF-8, and surfaces partial
+ * storage links), decodes textual content as UTF-8, and surfaces partial
  * failures via `errors` without abandoning the rest.
  */
 
@@ -14,41 +13,41 @@ import { describe, expect, it } from "vitest";
 import { AntpathClient } from "../../src/index.js";
 
 const RUN_ID = "run_debug_logs";
-const STDERR_TEXT = "boot ok\ngoose spawn\nMCP loaded\n";
-const FLY_TEXT = "fly machine started\nrunner exited\n";
-const ARGS_JSON = '{"command":"goose","args":["run","--recipe","/workspace/recipe.yaml"]}';
+const STDERR_TEXT = "boot ok\nruntime spawn\nMCP loaded\n";
+const HOST_TEXT = "host started\nrunner exited\n";
+const ARGS_JSON = '{"command":"runtime","args":["run","--recipe","/workspace/recipe.yaml"]}';
 
-const NATIVE_DEBUG_JSON = '{"sessionId":"s_1","scopedCount":0,"scopedFilenames":[]}';
+const PROXY_DEBUG_JSON = '{"mcpName":"docs","status":200,"upstreamHost":"mcp.example.test"}';
 
 // The `logs` namespace lists ONLY diagnostics — customer deliverables
 // (outputs/report.md) live in the separate `outputs` namespace.
 const LIST_BODY = {
   logs: [
     {
-      id: "out_goose_stderr",
+      id: "out_runtime_stderr",
       filename: "goose-logs/stderr.log",
       sizeBytes: STDERR_TEXT.length,
       contentType: "text/plain; charset=utf-8",
       createdAt: "2026-05-28T00:00:00.000Z"
     },
     {
-      id: "out_goose_args",
+      id: "out_runtime_args",
       filename: "goose-logs/args.json",
       sizeBytes: ARGS_JSON.length,
       contentType: "application/json",
       createdAt: "2026-05-28T00:00:00.001Z"
     },
     {
-      id: "out_fly_machine",
+      id: "out_host_machine",
       filename: "fly-logs/machine.log",
-      sizeBytes: FLY_TEXT.length,
+      sizeBytes: HOST_TEXT.length,
       contentType: "text/plain; charset=utf-8",
       createdAt: "2026-05-28T00:00:00.002Z"
     },
     {
-      id: "out_native_debug",
-      filename: "anthropic-debug/files-list.json",
-      sizeBytes: NATIVE_DEBUG_JSON.length,
+      id: "out_proxy_debug",
+      filename: "anthropic-debug/mcp-access-1.log",
+      sizeBytes: PROXY_DEBUG_JSON.length,
       contentType: "application/json",
       createdAt: "2026-05-28T00:00:00.004Z"
     }
@@ -64,17 +63,17 @@ describe("AntpathClient.getRunDebugLogs", () => {
       if (url.endsWith(`/api/runs/${RUN_ID}/logs`)) {
         return new Response(JSON.stringify(LIST_BODY), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (url.endsWith("/logs/out_goose_stderr/download")) {
+      if (url.endsWith("/logs/out_runtime_stderr/download")) {
         return new Response(STDERR_TEXT, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
       }
-      if (url.endsWith("/logs/out_goose_args/download")) {
+      if (url.endsWith("/logs/out_runtime_args/download")) {
         return new Response(ARGS_JSON, { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (url.endsWith("/logs/out_fly_machine/download")) {
-        return new Response(FLY_TEXT, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
+      if (url.endsWith("/logs/out_host_machine/download")) {
+        return new Response(HOST_TEXT, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
       }
-      if (url.endsWith("/logs/out_native_debug/download")) {
-        return new Response(NATIVE_DEBUG_JSON, { status: 200, headers: { "content-type": "application/json" } });
+      if (url.endsWith("/logs/out_proxy_debug/download")) {
+        return new Response(PROXY_DEBUG_JSON, { status: 200, headers: { "content-type": "application/json" } });
       }
       return new Response("no handler", { status: 500 });
     };
@@ -85,12 +84,12 @@ describe("AntpathClient.getRunDebugLogs", () => {
     expect(bundle.errors).toHaveLength(0);
     const names = bundle.logs.map((l) => l.filename).sort();
     expect(names).toEqual([
-      "anthropic-debug/files-list.json",
-      "fly-logs/machine.log",
-      "goose-logs/args.json",
-      "goose-logs/stderr.log"
+      "host/machine.log",
+      "provider-proxy/mcp-access-1.log",
+      "runtime/args.json",
+      "runtime/stderr.log"
     ]);
-    const stderrLog = bundle.logs.find((l) => l.filename === "goose-logs/stderr.log")!;
+    const stderrLog = bundle.logs.find((l) => l.filename === "runtime/stderr.log")!;
     expect(stderrLog.text).toBe(STDERR_TEXT);
     expect(stderrLog.bytesBase64.length).toBeGreaterThan(0);
     // Hits the gated /logs/:id/download endpoint (NOT a signed URL or list-link round-trip).
@@ -104,18 +103,18 @@ describe("AntpathClient.getRunDebugLogs", () => {
       if (url.endsWith(`/api/runs/${RUN_ID}/logs`)) {
         return new Response(JSON.stringify(LIST_BODY), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (url.endsWith("/logs/out_goose_args/download")) {
-        // Broken JSON download — pretend R2 is down for this one key.
+      if (url.endsWith("/logs/out_runtime_args/download")) {
+        // Broken JSON download for this one key.
         return new Response(JSON.stringify({ error: "internal" }), { status: 500, headers: { "content-type": "application/json" } });
       }
-      if (url.endsWith("/logs/out_goose_stderr/download")) {
+      if (url.endsWith("/logs/out_runtime_stderr/download")) {
         return new Response(STDERR_TEXT, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
       }
-      if (url.endsWith("/logs/out_fly_machine/download")) {
-        return new Response(FLY_TEXT, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
+      if (url.endsWith("/logs/out_host_machine/download")) {
+        return new Response(HOST_TEXT, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
       }
-      if (url.endsWith("/logs/out_native_debug/download")) {
-        return new Response(NATIVE_DEBUG_JSON, { status: 200, headers: { "content-type": "application/json" } });
+      if (url.endsWith("/logs/out_proxy_debug/download")) {
+        return new Response(PROXY_DEBUG_JSON, { status: 200, headers: { "content-type": "application/json" } });
       }
       return new Response("no handler", { status: 500 });
     };
@@ -123,7 +122,7 @@ describe("AntpathClient.getRunDebugLogs", () => {
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.logs).toHaveLength(3);
     expect(bundle.errors).toHaveLength(1);
-    expect(bundle.errors[0]?.filename).toBe("goose-logs/args.json");
+    expect(bundle.errors[0]?.filename).toBe("runtime/args.json");
   });
 
   it("returns an empty bundle when the logs namespace is empty", async () => {
