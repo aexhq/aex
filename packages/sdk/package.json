@@ -26,7 +26,7 @@
     "examples"
   ],
   "scripts": {
-    "build": "pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/cli run build && tsc -p tsconfig.build.json && node ./scripts/bundle-cli.mjs && node ./scripts/inline-contracts.mjs",
+    "build": "node ./scripts/clean-dist.mjs && pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/cli run build && tsc -p tsconfig.build.json && node ./scripts/bundle-cli.mjs && node ./scripts/inline-contracts.mjs",
     "lint": "tsc --noEmit",
     "test": "pnpm test:unit",
     "test:unit": "vitest run test/unit",

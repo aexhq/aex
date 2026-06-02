@@ -17,7 +17,7 @@
     "fflate": "0.8.2"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit -p tsconfig.json",
     "test": "pnpm test:unit",
     "test:unit": "vitest run",
