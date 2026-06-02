@@ -36,10 +36,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
-const deepseekKey = requireEnv("ANTPATH_USER_TEST_DEEPSEEK_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
@@ -120,7 +120,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
     import { AntpathClient } from "antpath";
 
     const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_BASE,
+      baseUrl: process.env.ANTPATH_API_URL,
       apiToken: process.env.ANTPATH_API_TOKEN
     });
 
@@ -212,7 +212,7 @@ async function runCell(cell: Cell, mode: "positive" | "negative", installDir: st
   const scriptPath = join(installDir, `builtins-${cell.id}-${mode}.mjs`);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_BASE: liveApiBase,
+    ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue,
     ANTHROPIC_KEY: anthropicKey,

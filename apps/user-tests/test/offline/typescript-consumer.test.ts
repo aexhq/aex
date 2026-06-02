@@ -3,14 +3,14 @@
  *
  * Catches broken .d.ts / export metadata. A real consumer project (and
  * any AI agent doing `tsc --noEmit`) must be able to import the SDK's
- * single canonical class under `moduleResolution: "NodeNext"` and have
+ * public root surface under real consumer module resolution and have
  * it type-check.
  *
  * Strategy:
  *   1. Install antpath into the shared fixture tempdir.
  *   2. Add TypeScript as a devDependency in the same tempdir.
- *   3. Write a minimal tsconfig + consumer.ts that imports + uses
- *      `AntpathClient` (the single user-facing class).
+ *   3. Write consumer tsconfigs + sources that import values and types
+ *      only from the root `antpath` entry.
  *   4. Spawn `tsc --noEmit` from the install's local typescript.
  *   5. Assert exit 0 with no diagnostics.
  */
@@ -26,11 +26,13 @@ describe("typescript consumer", () => {
 
   beforeAll(async () => {
     install = await installAntpath();
-    // Add typescript to the same install tempdir.
+    // Add TypeScript + Node declarations to the same install tempdir.
+    // The SDK is a Node package and its public declarations reference
+    // node:* modules, so strict consumers need the matching type package.
     const npm = IS_WINDOWS ? "npm.cmd" : "npm";
     const result = await runCommand(
       npm,
-      ["install", "typescript@5.8.3", "--no-audit", "--no-fund", "--ignore-scripts"],
+      ["install", "typescript@5.8.3", "@types/node@20", "--no-audit", "--no-fund", "--ignore-scripts"],
       { cwd: install.installDir, timeoutMs: 120_000 }
     );
     if (result.exitCode !== 0) {
@@ -42,39 +44,373 @@ describe("typescript consumer", () => {
     install?.cleanup();
   });
 
-  it("AntpathClient type-checks from a clean NodeNext consumer", async () => {
+  async function runTsc(projectFile: string): Promise<void> {
+    const tscBin = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "tsc.cmd" : "tsc");
+    const result = await runCommand(tscBin, ["--noEmit", "-p", projectFile], {
+      cwd: install.installDir,
+      timeoutMs: 120_000
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `tsc --noEmit -p ${projectFile} failed (exit ${result.exitCode}):\n` +
+          `--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
+      );
+    }
+    expect(result.exitCode).toBe(0);
+  }
+
+  it("public root SDK surface type-checks from a clean NodeNext consumer", async () => {
     const tsconfig = {
       compilerOptions: {
         target: "ES2022",
         module: "NodeNext",
         moduleResolution: "NodeNext",
         strict: true,
+        exactOptionalPropertyTypes: true,
+        noUncheckedIndexedAccess: true,
         noEmit: true,
-        skipLibCheck: true,
-        types: []
+        skipLibCheck: false,
+        lib: ["ES2022", "DOM", "DOM.Iterable"],
+        types: ["node"]
       },
-      include: ["consumer.ts"]
+      include: ["consumer.ts", "legacy-negative.ts"]
     };
     const consumer = `
-      import { AntpathClient } from "antpath";
-      // Type-only check; we don't actually run the constructor here.
-      type C = InstanceType<typeof AntpathClient>;
-      declare const _c: C;
-      void _c;
+      import {
+        AgentsMd,
+        AntpathApiError,
+        AntpathClient,
+        AntpathError,
+        CleanupError,
+        CredentialValidationError,
+        DEFAULT_MACHINE_SIZE,
+        DEFAULT_RUN_PROVIDER,
+        File,
+        MACHINE_SIZES,
+        MachineSizes,
+        McpServer,
+        ProviderError,
+        ProxyEndpoint,
+        RUN_PROVIDERS,
+        RUNTIME_KINDS,
+        RuntimeValidationError,
+        SecretString,
+        Skill,
+        buildPlatformAllowedHosts,
+        bundleSkillFiles,
+        collectNativeOnlyFeatures,
+        collectNativeUnsupportedFeatures,
+        hashSkillBundle,
+        isAgentEvent,
+        isUserMessage,
+        redactSecrets,
+        selectRuntime,
+        validateProxyAuth,
+        type AgentsMdRef,
+        type AnthropicSecrets,
+        type CleanupPolicy,
+        type MachineResources,
+        type MachineSize,
+        type McpServerSecret,
+        type Output,
+        type OutputFileSelector,
+        type PlatformProxyEndpoint,
+        type PlatformRunSubmissionRequest,
+        type ProxyAuthShape,
+        type ProxyAuthValue,
+        type ProxyEndpointCommonOptions,
+        type ProxyMethod,
+        type ProxyResponseMode,
+        type Run,
+        type RunDebugLogs,
+        type RunEvent,
+        type RunProvider,
+        type RuntimeKind,
+        type RuntimeValidationCode,
+        type SkillBundleManifest,
+        type SkillFiles,
+        type SkillRef,
+        type SubmitRunOptions,
+        type WaitForRunOptions
+      } from "antpath";
+
+      const provider: RunProvider = DEFAULT_RUN_PROVIDER;
+      const runtime: RuntimeKind = RUNTIME_KINDS[0];
+      const machine: MachineSize = MachineSizes.SHARED_2X_2GB;
+      const defaultMachine: MachineSize = DEFAULT_MACHINE_SIZE;
+      const method: ProxyMethod = "GET";
+      const responseMode: ProxyResponseMode = "headers_only";
+      const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
+      const authValue: ProxyAuthValue = { type: "header", value: "proxy-test-value" };
+      const resources: MachineResources = { cpus: 2, memoryMb: 2048 };
+      const cleanup: CleanupPolicy = { session: "delete" };
+      const anthropicSecrets: AnthropicSecrets = { apiKey: "sk-ant-type-surface" };
+      const mcpSecret: McpServerSecret = {
+        name: "docs",
+        url: "https://mcp.example.test/sse",
+        headers: { authorization: "Bearer test" }
+      };
+
+      const commonProxy: ProxyEndpointCommonOptions = {
+        name: "metadata",
+        baseUrl: "https://example.test",
+        allowMethods: [method],
+        allowPathPrefixes: ["/v1"],
+        allowHeaders: ["accept"],
+        responseMode
+      };
+      const proxy = ProxyEndpoint.header({ ...commonProxy, header: "x-api-key", value: "secret" });
+      const publicProxy = ProxyEndpoint.none({
+        name: "public",
+        baseUrl: "https://public.example.test",
+        allowMethods: ["GET"],
+        allowPathPrefixes: ["/"]
+      });
+      const mcp = McpServer.remote({
+        name: "docs",
+        url: "https://mcp.example.test/sse",
+        transport: "sse",
+        headers: { authorization: "Bearer test" }
+      });
+      const workspaceMcp = McpServer.fromId("mcp_abcdefgh12345678");
+      const providerSkill = Skill.provider({ vendor: "anthropic", skillId: "pdf" });
+      const skillFiles = {
+        "SKILL.md": "# Surface skill\\nUse the typed SDK surface."
+      } satisfies SkillFiles;
+      const skillBundle = bundleSkillFiles(skillFiles);
+      const skillHash: Promise<string> = hashSkillBundle(skillBundle.zip);
+      const inlineSkill = await Skill.fromFiles({ name: "surface-skill", files: skillFiles });
+      const agentsMd = await AgentsMd.fromContent("# Rules\\nKeep outputs concise.", { name: "surface-rules" });
+      const file = await File.fromBytes({
+        name: "surface-file",
+        bytes: new TextEncoder().encode("hello"),
+        mountPath: "/mnt/session/surface.txt"
+      });
+
+      const nativeOptions = {
+        provider: "anthropic",
+        runtime: "native",
+        model: "claude-haiku-4-5",
+        system: "Be precise.",
+        prompt: ["Read the attached file.", "Reply with a short acknowledgement."],
+        skills: [providerSkill, inlineSkill],
+        agentsMd: [agentsMd],
+        files: [file],
+        mcpServers: [mcp, workspaceMcp],
+        proxyEndpoints: [proxy, publicProxy],
+        outputDirs: ["/workspace/outputs"],
+        builtins: ["developer"],
+        environment: {
+          networking: { mode: "limited", allowedHosts: ["example.test"] },
+          packages: [{ ecosystem: "apt", name: "jq" }],
+          envVars: { USER_SURFACE_TEST: "1" }
+        },
+        metadata: { suite: "typescript-consumer", runtime: "native" },
+        cleanup,
+        machine,
+        timeout: "15m",
+        secrets: {
+          anthropic: anthropicSecrets,
+          mcpServers: [mcpSecret],
+          proxyEndpointAuth: [{ name: "metadata", value: authValue }]
+        },
+        idempotencyKey: "type-surface-native"
+      } satisfies SubmitRunOptions;
+
+      const managedOptions = {
+        provider: "deepseek",
+        runtime: "managed",
+        model: "deepseek-chat",
+        prompt: "Say hello.",
+        machine: defaultMachine,
+        builtins: [],
+        secrets: { deepseek: { apiKey: "sk-deepseek-type-surface" } },
+        idempotencyKey: "type-surface-managed"
+      } satisfies SubmitRunOptions;
+
+      const wireRequest = {
+        workspaceId: "ws_type_surface",
+        idempotencyKey: "wire-type-surface",
+        credentialMode: "byok",
+        provider,
+        runtime,
+        submission: {
+          model: "claude-haiku-4-5",
+          system: "Be precise.",
+          prompt: ["hello"],
+          skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" }],
+          agentsMd: [],
+          files: [],
+          mcpServers: [],
+          environment: { envVars: { USER_SURFACE_TEST: "1" } },
+          metadata: { surface: "root" },
+          outputDirs: ["/workspace/outputs"],
+          builtins: ["developer"]
+        },
+        cleanup,
+        secrets: { anthropic: anthropicSecrets },
+        proxyEndpoints: [proxy.declaration],
+        machine,
+        timeoutMs: 15 * 60_000
+      } satisfies PlatformRunSubmissionRequest;
+
+      const selectedRuntime: RuntimeKind = selectRuntime(wireRequest);
+      const nativeOnlyFeatures: string[] = collectNativeOnlyFeatures(wireRequest);
+      const nativeUnsupportedFeatures: string[] = collectNativeUnsupportedFeatures(wireRequest);
+      const validationCode: RuntimeValidationCode = "feature_runtime_mismatch";
+      const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
+      const skillRef: SkillRef = providerSkill.ref as SkillRef;
+      const agentsRef = agentsMd.ref as AgentsMdRef;
+      const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
+      const outputSelector: OutputFileSelector = { path: "report.txt", match: "suffix" };
+      const waitOpts: WaitForRunOptions = { intervalMs: 100, timeoutMs: 1_000 };
+
+      const fetchFake = async () =>
+        new Response(JSON.stringify({
+          id: "run_type_surface",
+          workspaceId: "ws_type_surface",
+          status: "queued",
+          provider: "anthropic",
+          runtime: "native",
+          createdAt: new Date(0).toISOString()
+        }), { status: 202, headers: { "content-type": "application/json" } });
+      const client = new AntpathClient({
+        apiToken: "ant_type_surface",
+        baseUrl: "https://example.invalid",
+        fetch: fetchFake
+      });
+      const runIdPromise: Promise<string> = client.submitRun(nativeOptions);
+      const runPromise: Promise<Run> = client.getRun("run_type_surface");
+      const eventsPromise: Promise<readonly RunEvent[]> = client.listEvents("run_type_surface");
+      const outputsPromise: Promise<readonly Output[]> = client.outputs("run_type_surface");
+      const debugPromise: Promise<RunDebugLogs> = client.debugLogs("run_type_surface");
+      const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
+
+      const errors = [
+        AntpathError,
+        AntpathApiError,
+        CleanupError,
+        CredentialValidationError,
+        ProviderError,
+        RuntimeValidationError
+      ];
+      const secret = new SecretString("sk-ant-type-surface", "anthropic api key");
+      const redacted = redactSecrets({ secret: String(secret), nested: ["sk-ant-type-surface"] });
+      const exportedFns = [
+        buildPlatformAllowedHosts,
+        validateProxyAuth,
+        isAgentEvent,
+        isUserMessage
+      ];
+
+      void RUN_PROVIDERS;
+      void MACHINE_SIZES;
+      void resources;
+      void selectedRuntime;
+      void nativeOnlyFeatures;
+      void nativeUnsupportedFeatures;
+      void validationCode;
+      void platformEndpoint;
+      void skillRef;
+      void agentsRef;
+      void manifest;
+      void managedOptions;
+      void skillHash;
+      void runIdPromise;
+      void runPromise;
+      void eventsPromise;
+      void outputsPromise;
+      void debugPromise;
+      void downloadPromise;
+      void errors;
+      void redacted;
+      void exportedFns;
+    `;
+    const legacyNegative = `
+      // @ts-expect-error legacy platform class must stay absent from the root surface
+      import { AntpathPlatformClient } from "antpath";
+      // @ts-expect-error legacy template class must stay absent from the root surface
+      import { Template } from "antpath";
+      // @ts-expect-error legacy template type must stay absent from the root surface
+      import type { TemplateDefinition } from "antpath";
+      // @ts-expect-error legacy blueprint type must stay absent from the root surface
+      import type { Blueprint } from "antpath";
+      // @ts-expect-error legacy compile helper must stay absent from the root surface
+      import { compileTemplate } from "antpath";
+      // @ts-expect-error legacy run reference must stay absent from the root surface
+      import type { RunRef } from "antpath";
+      export {};
     `;
     writeFileSync(join(install.installDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     writeFileSync(join(install.installDir, "consumer.ts"), consumer);
+    writeFileSync(join(install.installDir, "legacy-negative.ts"), legacyNegative);
 
-    const tscBin = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "tsc.cmd" : "tsc");
-    const result = await runCommand(tscBin, ["--noEmit", "-p", "tsconfig.json"], {
-      cwd: install.installDir,
-      timeoutMs: 120_000
-    });
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `tsc --noEmit failed (exit ${result.exitCode}):\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
-      );
-    }
-    expect(result.exitCode).toBe(0);
+    await runTsc("tsconfig.json");
+  });
+
+  it("public root SDK surface type-checks from a clean Bundler consumer", async () => {
+    const tsconfig = {
+      compilerOptions: {
+        target: "ES2022",
+        module: "ESNext",
+        moduleResolution: "Bundler",
+        strict: true,
+        exactOptionalPropertyTypes: true,
+        noUncheckedIndexedAccess: true,
+        noEmit: true,
+        skipLibCheck: false,
+        verbatimModuleSyntax: true,
+        lib: ["ES2022", "DOM", "DOM.Iterable"],
+        types: ["node"]
+      },
+      include: ["bundler-consumer.ts"]
+    };
+    const consumer = `
+      import {
+        AntpathClient,
+        MachineSizes,
+        ProxyEndpoint,
+        RUN_PROVIDERS,
+        RUNTIME_KINDS,
+        Skill,
+        type MachineSize,
+        type RunProvider,
+        type RuntimeKind,
+        type SubmitRunOptions
+      } from "antpath";
+
+      const provider: RunProvider = RUN_PROVIDERS[0];
+      const runtime: RuntimeKind = RUNTIME_KINDS[1];
+      const machine: MachineSize = MachineSizes.SHARED_1X_512MB;
+      const pdf = Skill.provider({ vendor: "anthropic", skillId: "pdf" });
+      const proxy = ProxyEndpoint.bearer({
+        name: "catalog",
+        baseUrl: "https://example.test",
+        token: "proxy-token",
+        allowMethods: ["GET"],
+        allowPathPrefixes: ["/v1"],
+        responseMode: "status_only"
+      });
+
+      const options = {
+        provider,
+        runtime,
+        model: "claude-haiku-4-5",
+        prompt: "hello",
+        skills: [pdf],
+        proxyEndpoints: [proxy],
+        machine,
+        secrets: { anthropic: { apiKey: "sk-ant-bundler" } }
+      } satisfies SubmitRunOptions;
+
+      const client = new AntpathClient({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
+      void client;
+      void options;
+    `;
+
+    writeFileSync(join(install.installDir, "tsconfig.bundler.json"), JSON.stringify(tsconfig, null, 2));
+    writeFileSync(join(install.installDir, "bundler-consumer.ts"), consumer);
+
+    await runTsc("tsconfig.bundler.json");
   });
 });

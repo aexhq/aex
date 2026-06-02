@@ -11,8 +11,8 @@
  *
  * They validate the FIXED behaviour and so only pass once the fixes are
  * DEPLOYED to the remote hosted API. Env mirrors the other user-tests:
- *   ANTPATH_LIVE_API_BASE, ANTPATH_LIVE_API_TOKEN,
- *   ANTPATH_USER_TEST_ANTHROPIC_KEY / ANTPATH_USER_TEST_DEEPSEEK_KEY,
+ *   ANTPATH_API_URL, ANTPATH_API_TOKEN,
+ *   ANTHROPIC_API_KEY / DEEPSEEK_API_KEY,
  *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION (the SDK to install).
  */
 import { writeFileSync } from "node:fs";
@@ -40,15 +40,15 @@ function req(name: string): string {
 
 export function requireUserEnv(opts: { anthropic?: boolean; deepseek?: boolean } = {}): UserEnv {
   const env: UserEnv = {
-    apiBase: req("ANTPATH_LIVE_API_BASE").replace(/\/$/, ""),
-    apiToken: req("ANTPATH_LIVE_API_TOKEN"),
+    apiBase: req("ANTPATH_API_URL").replace(/\/$/, ""),
+    apiToken: req("ANTPATH_API_TOKEN"),
     anthropicModel: process.env.ANTPATH_USER_TEST_ANTHROPIC_MODEL ?? "claude-haiku-4-5",
     deepseekModel: process.env.ANTPATH_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-chat"
   };
   return {
     ...env,
-    ...(opts.anthropic ? { anthropicKey: req("ANTPATH_USER_TEST_ANTHROPIC_KEY") } : {}),
-    ...(opts.deepseek ? { deepseekKey: req("ANTPATH_USER_TEST_DEEPSEEK_KEY") } : {})
+    ...(opts.anthropic ? { anthropicKey: req("ANTHROPIC_API_KEY") } : {}),
+    ...(opts.deepseek ? { deepseekKey: req("DEEPSEEK_API_KEY") } : {})
   };
 }
 
@@ -74,7 +74,7 @@ export interface SdkRunResult {
  */
 const PREAMBLE = `
 import { AntpathClient, AgentsMd, ProxyEndpoint } from "antpath";
-const client = new AntpathClient({ baseUrl: process.env.API_BASE, apiToken: process.env.API_TOKEN });
+const client = new AntpathClient({ baseUrl: process.env.ANTPATH_API_URL, apiToken: process.env.ANTPATH_API_TOKEN });
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_ANTHROPIC = process.env.MODEL_ANTHROPIC;
@@ -129,8 +129,8 @@ export async function runSdkScript(
   writeFileSync(scriptPath, script);
 
   const passEnv: Record<string, string> = {
-    API_BASE: env.apiBase,
-    API_TOKEN: env.apiToken,
+    ANTPATH_API_URL: env.apiBase,
+    ANTPATH_API_TOKEN: env.apiToken,
     MODEL_ANTHROPIC: env.anthropicModel,
     MODEL_DEEPSEEK: env.deepseekModel,
     WAIT_MS: String(opts.waitMs ?? 240_000),

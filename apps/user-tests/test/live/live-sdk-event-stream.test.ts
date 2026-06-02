@@ -17,9 +17,9 @@
  * and the snapshot — and that the archive manifest records them.
  *
  * Required env:
- *   ANTPATH_LIVE_API_BASE              live hosted API URL (local or prod)
- *   ANTPATH_LIVE_API_TOKEN             workspace API token
- *   ANTPATH_USER_TEST_ANTHROPIC_KEY    customer Anthropic API key
+ *   ANTPATH_API_URL              live hosted API URL (local or prod)
+ *   ANTPATH_API_TOKEN             workspace API token
+ *   ANTHROPIC_API_KEY    customer Anthropic API key
  *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -35,9 +35,9 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const model = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 
 interface StreamResult {
@@ -68,7 +68,7 @@ describe("live api.antpath.ai — event coordinator: listen (WS) + snapshot + do
       const script = `
         import { AntpathClient } from "antpath";
 
-        const baseUrl = process.env.ANTPATH_API_BASE;
+        const baseUrl = process.env.ANTPATH_API_URL;
         const apiToken = process.env.ANTPATH_API_TOKEN;
         const anthropicKey = process.env.ANTHROPIC_KEY;
         const model = process.env.MODEL;
@@ -172,7 +172,7 @@ describe("live api.antpath.ai — event coordinator: listen (WS) + snapshot + do
       writeFileSync(scriptPath, script);
 
       const passEnv: Record<string, string> = {
-        ANTPATH_API_BASE: liveApiBase,
+        ANTPATH_API_URL: apiUrl,
         ANTPATH_API_TOKEN: apiToken,
         ANTHROPIC_KEY: anthropicKey,
         MODEL: model

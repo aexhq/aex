@@ -1,4 +1,7 @@
 import { defineConfig } from "vitest/config";
+import { loadLocalEnv } from "./test/env-local";
+
+loadLocalEnv();
 
 export default defineConfig({
   test: {

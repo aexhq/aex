@@ -21,8 +21,8 @@
  * against a live run, without unzipping in the child.
  *
  * Required env: same as the other live-sdk-* files
- * (ANTPATH_LIVE_API_BASE, ANTPATH_LIVE_API_TOKEN,
- * ANTPATH_USER_TEST_ANTHROPIC_KEY, + ANTPATH_USER_TEST_TARBALL/VERSION).
+ * (ANTPATH_API_URL, ANTPATH_API_TOKEN,
+ * ANTHROPIC_API_KEY, + ANTPATH_USER_TEST_TARBALL/VERSION).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,9 +37,9 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 
 interface Cell {
@@ -110,7 +110,7 @@ function buildScript(cell: Cell, marker: string): string {
     import { AntpathClient } from "antpath";
 
     const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_BASE,
+      baseUrl: process.env.ANTPATH_API_URL,
       apiToken: process.env.ANTPATH_API_TOKEN
     });
 
@@ -191,7 +191,7 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
         cwd: install.installDir,
         timeoutMs: 8 * 60_000,
         env: buildPassEnv({
-          ANTPATH_API_BASE: liveApiBase,
+          ANTPATH_API_URL: apiUrl,
           ANTPATH_API_TOKEN: apiToken,
           ANTHROPIC_KEY_SUBMIT: anthropicKey
         })

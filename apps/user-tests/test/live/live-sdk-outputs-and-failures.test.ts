@@ -36,10 +36,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
-const deepseekKey = requireEnv("ANTPATH_USER_TEST_DEEPSEEK_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
@@ -119,7 +119,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
     import { AntpathClient } from "antpath";
 
     const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_BASE,
+      baseUrl: process.env.ANTPATH_API_URL,
       apiToken: process.env.ANTPATH_API_TOKEN
     });
 
@@ -224,7 +224,7 @@ async function runOutputCell(cell: Cell, installDir: string): Promise<OutputCase
   const scriptPath = join(installDir, `outputs-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_BASE: liveApiBase,
+    ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue
   });
@@ -267,7 +267,7 @@ function buildCorruptedSkillScript(): string {
     import { AntpathClient } from "antpath";
 
     const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_BASE,
+      baseUrl: process.env.ANTPATH_API_URL,
       apiToken: process.env.ANTPATH_API_TOKEN
     });
 
@@ -295,7 +295,7 @@ function buildCorruptedSkillScript(): string {
     try {
       const hashBuf = await crypto.subtle.digest("SHA-256", corruptedZip);
       const hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      const res = await fetch(process.env.ANTPATH_API_BASE + "/assets/upload", {
+      const res = await fetch(process.env.ANTPATH_API_URL + "/assets/upload", {
         method: "POST",
         headers: {
           "content-type": "application/octet-stream",
@@ -392,7 +392,7 @@ function buildIncompatibleRuntimeScript(): string {
     import { AntpathClient } from "antpath";
 
     const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_BASE,
+      baseUrl: process.env.ANTPATH_API_URL,
       apiToken: process.env.ANTPATH_API_TOKEN
     });
 
@@ -457,7 +457,7 @@ function buildStdioMcpScript(): string {
     let errorMessage = null;
 
     try {
-      const res = await fetch(process.env.ANTPATH_API_BASE + "/runs", {
+      const res = await fetch(process.env.ANTPATH_API_URL + "/runs", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -517,7 +517,7 @@ async function runFailureCase(
   const scriptPath = join(installDir, scriptName);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_BASE: liveApiBase,
+    ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     ANTHROPIC_KEY_SUBMIT: anthropicKey
   });

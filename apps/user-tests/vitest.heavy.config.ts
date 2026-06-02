@@ -1,4 +1,7 @@
 import { defineConfig } from "vitest/config";
+import { loadLocalEnv } from "./test/env-local";
+
+loadLocalEnv();
 
 /**
  * Dedicated config for the "heavy" full-feature long-session gate

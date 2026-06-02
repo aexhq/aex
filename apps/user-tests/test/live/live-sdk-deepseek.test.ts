@@ -13,8 +13,8 @@
  * for the same (provider, runtime) cell.
  *
  * Required env:
- *   ANTPATH_LIVE_API_BASE              live api.antpath.ai URL
- *   ANTPATH_USER_TEST_DEEPSEEK_KEY     customer's DeepSeek API key
+ *   ANTPATH_API_URL              live api.antpath.ai URL
+ *   DEEPSEEK_API_KEY     customer's DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL          path to a packed antpath tgz
  *     OR ANTPATH_USER_TEST_VERSION     published version on npm
  *
@@ -47,8 +47,8 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const deepseekKey = requireEnv("ANTPATH_USER_TEST_DEEPSEEK_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const model = process.env["ANTPATH_USER_TEST_MODEL"] ?? "deepseek-chat";
 
 interface LiveResult {
@@ -97,7 +97,7 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
       const script = `
         import { AntpathClient } from "antpath";
 
-        const apiBase = process.env.ANTPATH_API_BASE;
+        const apiBase = process.env.ANTPATH_API_URL;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const apiToken = process.env.ANTPATH_API_TOKEN;
@@ -173,9 +173,9 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
       // Sanitize the child env — pass only what the SDK consumer needs,
       // so a regression that depends on a CI-only secret can't pass
       // silently.
-      const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
+      const apiToken = requireEnv("ANTPATH_API_TOKEN");
       const passEnv: Record<string, string> = {
-        ANTPATH_API_BASE: liveApiBase,
+        ANTPATH_API_URL: apiUrl,
         ANTPATH_API_TOKEN: apiToken,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model

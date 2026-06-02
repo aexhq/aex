@@ -24,8 +24,8 @@
  * Skills/Files API.
  *
  * Required env:
- *   ANTPATH_LIVE_API_BASE              live api.antpath.ai URL
- *   ANTPATH_USER_TEST_ANTHROPIC_KEY    customer's Anthropic API key
+ *   ANTPATH_API_URL              live api.antpath.ai URL
+ *   ANTHROPIC_API_KEY    customer's Anthropic API key
  *   ANTPATH_USER_TEST_TARBALL          path to packed antpath tgz
  *     OR ANTPATH_USER_TEST_VERSION     published version on npm
  */
@@ -44,8 +44,8 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const model = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 
 interface LiveResult {
@@ -93,7 +93,7 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Goos
       const script = `
         import { AntpathClient } from "antpath";
 
-        const apiBase = process.env.ANTPATH_API_BASE;
+        const apiBase = process.env.ANTPATH_API_URL;
         const anthropicKey = process.env.ANTHROPIC_KEY;
         const model = process.env.MODEL;
         const apiToken = process.env.ANTPATH_API_TOKEN;
@@ -162,9 +162,9 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Goos
       const scriptPath = join(install.installDir, "live-anthropic-managed-runner.mjs");
       writeFileSync(scriptPath, script);
 
-      const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
+      const apiToken = requireEnv("ANTPATH_API_TOKEN");
       const passEnv: Record<string, string> = {
-        ANTPATH_API_BASE: liveApiBase,
+        ANTPATH_API_URL: apiUrl,
         ANTPATH_API_TOKEN: apiToken,
         ANTHROPIC_KEY: anthropicKey,
         MODEL: model

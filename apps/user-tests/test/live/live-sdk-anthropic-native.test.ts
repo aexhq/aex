@@ -24,8 +24,8 @@
  * (not the sub-10s of the old single /v1/messages implementation).
  *
  * Required env:
- *   ANTPATH_LIVE_API_BASE              live api.antpath.ai URL
- *   ANTPATH_USER_TEST_ANTHROPIC_KEY    customer's Anthropic API key
+ *   ANTPATH_API_URL              live api.antpath.ai URL
+ *   ANTHROPIC_API_KEY    customer's Anthropic API key
  *   ANTPATH_USER_TEST_TARBALL          path to packed antpath tgz
  *     OR ANTPATH_USER_TEST_VERSION     published version on npm
  */
@@ -44,8 +44,8 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const model = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 
 interface LiveResult {
@@ -59,7 +59,10 @@ interface LiveResult {
   readonly assistantTextJoined: string;
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
+  readonly terminalData: Record<string, unknown> | null;
   readonly outputCount: number;
+  readonly debugLogNames: readonly string[];
+  readonly debugLogErrors: readonly { readonly filename: string; readonly message: string }[];
   readonly leakedAnthropicKey: boolean;
 }
 
@@ -81,7 +84,7 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Anth
       const script = `
         import { AntpathClient } from "antpath";
 
-        const apiBase = process.env.ANTPATH_API_BASE;
+        const apiBase = process.env.ANTPATH_API_URL;
         const anthropicKey = process.env.ANTHROPIC_KEY;
         const model = process.env.MODEL;
         const apiToken = process.env.ANTPATH_API_TOKEN;
@@ -104,24 +107,20 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Anth
         // The native runtime is the full Anthropic Managed Agents API
         // (createEnvironment + createAgent + createSession + event poll):
         // it provisions for ~15-20s before the agent responds and settles
-        // in ~30-65s — NOT the old single /v1/messages call. Budget 120s,
-        // kept under the runner + outer timeouts below.
-        const deadline = Date.now() + 120 * 1000;
+        // in ~30-65s — NOT the old single /v1/messages call. Use the SDK's
+        // terminal waiter so timed_out is treated as terminal too.
         let run = null;
-        while (Date.now() < deadline) {
-          run = await client.getRun(runId);
-          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 1_500));
-        }
-        if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-          process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
+        try {
+          run = await client.wait(runId, { timeoutMs: 120 * 1000, intervalMs: 1_500 });
+        } catch (err) {
+          const last = await client.getRun(runId).catch(() => null);
+          process.stderr.write(JSON.stringify({ kind: "timeout", error: err && err.message, run: last }, null, 2));
           process.exit(2);
         }
 
         const events = await client.listEvents(runId);
         const outputs = await client.listOutputs(runId);
+        const debug = await client.getRunDebugLogs(runId);
 
         // \`listOutputs\` returns every R2 object under the run prefix,
         // including the internal diagnostic namespaces the native runtime
@@ -153,6 +152,9 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Anth
           assistantTextEventCount: assistantTextEvents.length,
           outputCount: customerOutputs.length,
           terminalKind: terminal ? terminal.type : null,
+          terminalData: terminal ? terminal.data : null,
+          debugLogNames: debug.logs.map((l) => l.filename),
+          debugLogErrors: debug.errors.map((e) => ({ filename: e.filename, message: e.message })),
           leakedAnthropicKey: serialized.includes(anthropicKey)
         };
         process.stdout.write(JSON.stringify(result));
@@ -160,9 +162,9 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Anth
       const scriptPath = join(install.installDir, "live-anthropic-native-runner.mjs");
       writeFileSync(scriptPath, script);
 
-      const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
+      const apiToken = requireEnv("ANTPATH_API_TOKEN");
       const passEnv: Record<string, string> = {
-        ANTPATH_API_BASE: liveApiBase,
+        ANTPATH_API_URL: apiUrl,
         ANTPATH_API_TOKEN: apiToken,
         ANTHROPIC_KEY: anthropicKey,
         MODEL: model
@@ -215,6 +217,8 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Anth
       expect(result.eventKinds[0]).toBe("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       expect(result.eventKinds[result.eventKinds.length - 1]).toBe("RUN_FINISHED");
+      expect(result.eventKinds).not.toContain("RUN_ERROR");
+      expect((result.terminalData ?? {})["reason"]).toBe("complete");
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length).toBeGreaterThan(0);
       // The Anthropic call saw the user's prompt — proves SDK → /runs →
@@ -224,6 +228,18 @@ describe("live api.antpath.ai via installed SDK — Anthropic round-trip on Anth
       expect(result.assistantTextJoined.replace(/\s+/g, "")).toContain(result.probe);
 
       expect(result.outputCount).toBe(0);
+      const debugCtx =
+        `debugLogNames=${JSON.stringify(result.debugLogNames)} ` +
+        `debugLogErrors=${JSON.stringify(result.debugLogErrors)}`;
+      expect(result.debugLogErrors, debugCtx).toEqual([]);
+      expect(
+        result.debugLogNames.some((name) => name.startsWith("anthropic-debug/")),
+        debugCtx
+      ).toBe(true);
+      expect(
+        result.debugLogNames.some((name) => name.startsWith("goose-logs/") || name.startsWith("fly-logs/")),
+        debugCtx
+      ).toBe(false);
       expect(result.leakedAnthropicKey).toBe(false);
     },
     4 * 60 * 1000

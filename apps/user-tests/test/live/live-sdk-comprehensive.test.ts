@@ -3,7 +3,7 @@
  *
  * End-to-end user-perspective coverage of the full SDK + hosted API +
  * managed runtime surface against the deployed hosted API
- * (`ANTPATH_LIVE_API_BASE`). Drives the freshly-installed `antpath`
+ * (`ANTPATH_API_URL`). Drives the freshly-installed `antpath`
  * package (tarball or registry version) from a child process so
  * workspace symlinks cannot leak in.
  *
@@ -46,10 +46,10 @@
  * only knobs. See surface invariants.
  *
  * Required env:
- *   ANTPATH_LIVE_API_BASE                live hosted API URL (local or prod)
- *   ANTPATH_LIVE_API_TOKEN               workspace API token
- *   ANTPATH_USER_TEST_ANTHROPIC_KEY      customer Anthropic API key
- *   ANTPATH_USER_TEST_DEEPSEEK_KEY       customer DeepSeek API key
+ *   ANTPATH_API_URL                live hosted API URL (local or prod)
+ *   ANTPATH_API_TOKEN               workspace API token
+ *   ANTHROPIC_API_KEY      customer Anthropic API key
+ *   DEEPSEEK_API_KEY       customer DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL            packed SDK tarball
  *     OR ANTPATH_USER_TEST_VERSION       published version on npm
  */
@@ -66,10 +66,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const liveApiBase = requireEnv("ANTPATH_LIVE_API_BASE");
-const apiToken = requireEnv("ANTPATH_LIVE_API_TOKEN");
-const anthropicKey = requireEnv("ANTPATH_USER_TEST_ANTHROPIC_KEY");
-const deepseekKey = requireEnv("ANTPATH_USER_TEST_DEEPSEEK_KEY");
+const apiUrl = requireEnv("ANTPATH_API_URL");
+const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const anthropicModel = process.env["ANTPATH_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
@@ -182,7 +182,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     import { AntpathClient, Skill, McpServer, AgentsMd } from "antpath";
 
     const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_BASE,
+      baseUrl: process.env.ANTPATH_API_URL,
       apiToken: process.env.ANTPATH_API_TOKEN
     });
 
@@ -337,7 +337,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   writeFileSync(scriptPath, script);
 
   const passEnv = buildPassEnv({
-    ANTPATH_API_BASE: liveApiBase,
+    ANTPATH_API_URL: apiUrl,
     ANTPATH_API_TOKEN: apiToken,
     [spec.keyEnvName]: spec.keyValue,
     ANTHROPIC_KEY: anthropicKey,

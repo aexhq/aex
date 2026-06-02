@@ -85,10 +85,16 @@ string round-trips through a real upstream LLM call.
 
 Required env (all three):
 
-- `ANTPATH_LIVE_API_BASE`
+- `ANTPATH_API_URL`
+- `ANTPATH_API_TOKEN`
 - `ANTPATH_USER_TEST_TARBALL` *or* `ANTPATH_USER_TEST_VERSION`
-- `ANTPATH_USER_TEST_DEEPSEEK_KEY` (deepseek file)
-  / `ANTPATH_USER_TEST_ANTHROPIC_KEY` (both anthropic files)
+- `DEEPSEEK_API_KEY` (deepseek file)
+  / `ANTHROPIC_API_KEY` (both anthropic files)
+
+Local `.env.local` files may still use the legacy names
+`ANTPATH_LIVE_API_BASE`, `ANTPATH_LIVE_API_TOKEN`,
+`ANTPATH_USER_TEST_DEEPSEEK_KEY`, and `ANTPATH_USER_TEST_ANTHROPIC_KEY`;
+the test loader aliases them to the canonical variables above.
 
 CI lives in `.github/workflows/rebuild-live.yml` (`sdk-live` job).
 See `surface invariants` → "2026 rebuild additions" for
@@ -126,9 +132,9 @@ pnpm --filter @antpath/user-tests run test:user:heavy   # or: pnpm test:user:hea
 ```
 
 Required env is identical to the comprehensive scenario
-(`ANTPATH_LIVE_API_BASE`, `ANTPATH_LIVE_API_TOKEN`,
-`ANTPATH_USER_TEST_TARBALL` or `_VERSION`, and the two
-`ANTPATH_USER_TEST_{ANTHROPIC,DEEPSEEK}_KEY` keys); model overrides are
+(`ANTPATH_API_URL`, `ANTPATH_API_TOKEN`, `ANTPATH_USER_TEST_TARBALL` or
+`ANTPATH_USER_TEST_VERSION`, and the two `ANTHROPIC_API_KEY` /
+`DEEPSEEK_API_KEY` provider keys); model overrides are
 `ANTPATH_USER_TEST_{ANTHROPIC,DEEPSEEK}_MODEL`.
 
 CI: it runs as a **hard gate** in manual release gates — in `rebuild-live.yml`'s

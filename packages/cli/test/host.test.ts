@@ -401,6 +401,47 @@ describe("antpath cancel + delete", () => {
     expect(cap.calls[0]!.init.method).toBe("DELETE");
     expect(JSON.parse(cap.stdout)).toEqual({ runId: "run-x", deleted: true });
   });
+
+  it("delete-asset DELETEs a normalized workspace asset hash and prints the result", async () => {
+    const hex = "a".repeat(64);
+    const cap = makeHostIo({
+      argv: ["delete-asset", `sha256:${hex}`, ...COMMON],
+      fetchHandler: () => new Response(null, { status: 204 })
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(cap.calls).toHaveLength(1);
+    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/${hex}`);
+    expect(cap.calls[0]!.init.method).toBe("DELETE");
+    expect(JSON.parse(cap.stdout.trim())).toEqual({ hash: `sha256:${hex}`, deleted: true });
+  });
+
+  it("delete-asset rejects missing hashes without calling the API", async () => {
+    const cap = makeHostIo({
+      argv: ["delete-asset", ...COMMON]
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("usage: antpath delete-asset");
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("delete-asset emits a structured error with the requested hash on API failure", async () => {
+    const hex = "c".repeat(64);
+    const cap = makeHostIo({
+      argv: ["delete-asset", hex, ...COMMON],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ error: "asset_not_found", message: "asset not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(1);
+    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/${hex}`);
+    const err = JSON.parse(cap.stderr.trim()) as { error: string; message: string; hash: string };
+    expect(err).toEqual({ error: "delete_asset_failed", message: "asset_not_found", hash: hex });
+  });
 });
 
 describe("antpath download", () => {
