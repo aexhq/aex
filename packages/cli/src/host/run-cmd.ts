@@ -6,7 +6,7 @@
  *
  *   1. `--config <path>` — plain run-request JSON:
  *      `{ model, system?, prompt, skills?, mcpServers?, environment?,
- *         cleanup?, proxyEndpoints?, metadata? }`. Skill entries use the
+ *         proxyEndpoints?, metadata? }`. Skill entries use the
  *      workspace wire shape (`{ kind: "workspace", id }`). MCP entries
  *      may include `headers` — the CLI splits them into the
  *      `secrets.mcpServers` bag before posting.
@@ -24,7 +24,6 @@
  *   --api-token <token>            see `parseCommonHostFlags`
  *
  * Optional (both modes):
- *   --cleanup retain|delete        session cleanup policy
  *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-2gb); default shared-1x-512mb
  *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
  *   --idempotency-key <key>        defaults to a fresh UUID
@@ -149,14 +148,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   const idempotency = takeFlagValue(rest, "--idempotency-key");
   if (idempotency.error) { io.stderr(`${idempotency.error}\n`); return USAGE_ERR; }
   rest = idempotency.remaining;
-
-  const cleanup = takeFlagValue(rest, "--cleanup");
-  if (cleanup.error) { io.stderr(`${cleanup.error}\n`); return USAGE_ERR; }
-  rest = cleanup.remaining;
-  if (cleanup.value && cleanup.value !== "retain" && cleanup.value !== "delete") {
-    io.stderr("--cleanup must be one of: retain, delete\n");
-    return USAGE_ERR;
-  }
 
   // `--runtime-size` selects a managed runtime size from the closed preset set.
   const runtimeSizeFlag = takeFlagValue(rest, "--runtime-size");
@@ -406,8 +397,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     ...(runtime ? { runtime } : {}),
     submission,
     secrets,
-    ...(cleanup.value ? { cleanup: { session: cleanup.value as "retain" | "delete" } } : {}),
-    ...(runConfig.cleanup && !cleanup.value ? { cleanup: runConfig.cleanup } : {}),
     ...(runtimeSizeFlag.value
       ? { runtimeSize: runtimeSizeFlag.value as RuntimeSize }
       : runConfig.runtimeSize

@@ -107,7 +107,6 @@ describe("typescript consumer", () => {
         validateProxyAuth,
         type AgentsMdRef,
         type AnthropicSecrets,
-        type CleanupPolicy,
         type McpServerSecret,
         type Output,
         type OutputFileSelector,
@@ -142,7 +141,6 @@ describe("typescript consumer", () => {
       const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
       const authValue: ProxyAuthValue = { type: "header", value: "proxy-test-value" };
       const resources: RuntimeResources = { cpus: 2, memoryMb: 2048 };
-      const cleanup: CleanupPolicy = { session: "delete" };
       const anthropicSecrets: AnthropicSecrets = { apiKey: "sk-ant-type-surface" };
       const mcpSecret: McpServerSecret = {
         name: "docs",
@@ -204,7 +202,6 @@ describe("typescript consumer", () => {
           envVars: { USER_SURFACE_TEST: "1" }
         },
         metadata: { suite: "typescript-consumer", runtime: "managed" },
-        cleanup,
         runtimeSize,
         timeout: "15m",
         secrets: {
@@ -245,7 +242,6 @@ describe("typescript consumer", () => {
           outputDirs: ["/workspace/outputs"],
           builtins: ["developer"]
         },
-        cleanup,
         secrets: { anthropic: anthropicSecrets },
         proxyEndpoints: [proxy.declaration],
         runtimeSize,

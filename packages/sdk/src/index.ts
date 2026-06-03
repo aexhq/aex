@@ -105,7 +105,6 @@ export type {
 // mistakes agents hit when authoring the wire shape by hand.
 export type {
   PlatformAnthropicSecrets as AnthropicSecrets,
-  PlatformCleanupPolicy as CleanupPolicy,
   PlatformInlineSecrets as InlineSecrets,
   PlatformMcpServerSecret as McpServerSecret,
   PlatformProxyEndpoint,

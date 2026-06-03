@@ -28,7 +28,6 @@ import {
 import type { CleanupStatus } from "./status.js";
 import type {
   JsonValue,
-  PlatformCleanupPolicy,
   PlatformPackage,
   PlatformPackageEcosystem,
   PlatformSubmission,
@@ -44,7 +43,7 @@ import { PLATFORM_PACKAGE_ECOSYSTEMS } from "./submission.js";
 
 /**
  * Parsed view of the legacy run snapshot jsonb. Stored shape is
- * `{kind:"submission", submission, cleanup?}` written by the hosted API's
+ * `{kind:"submission", submission}` written by the hosted API's
  * server-side run creation for all runs.
  */
 export type RunUnitSubmission = RunUnitFlatSubmission;
@@ -52,7 +51,6 @@ export type RunUnitSubmission = RunUnitFlatSubmission;
 export interface RunUnitFlatSubmission {
   readonly kind: "submission";
   readonly submission: PlatformSubmission;
-  readonly cleanup?: PlatformCleanupPolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,8 +252,6 @@ export function parseRunUnitSubmission(input: unknown): RunUnitSubmission {
 
 function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmission {
   const submissionRaw = isRecord(value.submission) ? value.submission : {};
-  const cleanup = parseCleanup(value.cleanup);
-
   const submission: PlatformSubmission = {
     model: typeof submissionRaw.model === "string" ? submissionRaw.model : "",
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
@@ -278,8 +274,7 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
 
   return {
     kind: "submission",
-    submission,
-    ...(cleanup ? { cleanup } : {})
+    submission
   };
 }
 
@@ -423,13 +418,3 @@ function parseEnvironment(value: unknown): PlatformEnvironment | undefined {
     : undefined;
 }
 
-function parseCleanup(value: unknown): PlatformCleanupPolicy | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const session = (value as Record<string, unknown>).session;
-  if (session === "retain" || session === "delete") {
-    return { session };
-  }
-  return undefined;
-}

@@ -68,8 +68,7 @@ describe("runtime security profiles", () => {
     expect(
       evaluateRuntimeSecurityProfile("strict", {
         networkingMode: "open",
-        packageCount: 1,
-        cleanupSession: "retain"
+        packageCount: 1
       })
     ).toEqual([
       {
@@ -80,10 +79,6 @@ describe("runtime security profiles", () => {
         field: "environment.packages",
         reason: "strict does not allow runtime package installs"
       },
-      {
-        field: "cleanup.session",
-        reason: "strict requires provider sessions to be cleaned up"
-      }
     ]);
 
     expect(
@@ -92,8 +87,7 @@ describe("runtime security profiles", () => {
         packageCount: 1,
         customerEnvVarCount: 1,
         proxyEndpointCount: 1,
-        mcpServerCount: 1,
-        cleanupSession: "retain"
+        mcpServerCount: 1
       })
     ).toEqual([]);
   });

@@ -39,7 +39,6 @@
 
 import type {
   JsonValue,
-  PlatformCleanupPolicy,
   PlatformProxyEndpoint,
   PlatformEnvironment
 } from "./submission.js";
@@ -691,7 +690,6 @@ export interface RunRequestConfig {
   readonly skills?: readonly SkillRef[];
   readonly mcpServers?: readonly RunConfigMcpServer[];
   readonly environment?: PlatformEnvironment;
-  readonly cleanup?: PlatformCleanupPolicy;
   /** Managed runtime size preset (see {@link RuntimeSize}). */
   readonly runtimeSize?: RuntimeSize;
   /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
@@ -722,7 +720,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "skills",
     "mcpServers",
     "environment",
-    "cleanup",
     "runtimeSize",
     "timeout",
     "proxyEndpoints",
@@ -750,15 +747,12 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     prompt,
     ...(skills !== undefined ? { skills } : {}),
     ...(mcpServers !== undefined ? { mcpServers } : {}),
-    // environment / cleanup / proxyEndpoints / metadata: passed through
+    // environment / proxyEndpoints / metadata: passed through
     // as-is — the BFF revalidates them via `parseRunSubmissionRequest`,
     // so duplicating the heavyweight parsers here would mean two sources
     // of truth. The CLI surfaces structural errors at submission time.
     ...(record.environment !== undefined
       ? { environment: record.environment as NonNullable<RunRequestConfig["environment"]> }
-      : {}),
-    ...(record.cleanup !== undefined
-      ? { cleanup: record.cleanup as NonNullable<RunRequestConfig["cleanup"]> }
       : {}),
     ...(record.runtimeSize !== undefined
       ? { runtimeSize: record.runtimeSize as NonNullable<RunRequestConfig["runtimeSize"]> }
@@ -850,7 +844,6 @@ export interface NormalisedRunRequestConfig {
   readonly skills: readonly SkillRef[];
   readonly mcpServers: readonly McpServerRef[];
   readonly environment?: PlatformEnvironment;
-  readonly cleanup?: PlatformCleanupPolicy;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
   /**
@@ -883,7 +876,6 @@ export function normaliseRunRequestConfig(config: RunRequestConfig): NormalisedR
     skills,
     mcpServers,
     ...(config.environment !== undefined ? { environment: config.environment } : {}),
-    ...(config.cleanup !== undefined ? { cleanup: config.cleanup } : {}),
     ...(config.proxyEndpoints !== undefined ? { proxyEndpoints: config.proxyEndpoints } : {}),
     ...(config.metadata !== undefined ? { metadata: config.metadata } : {}),
     mcpServerSecrets

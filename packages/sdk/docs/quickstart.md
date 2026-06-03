@@ -54,7 +54,7 @@ antpath run \
   --follow
 ```
 
-For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, cleanup?, proxyEndpoints?, metadata? }`). Both surfaces hit the same antpath backend and operate on the same durable run records — pick whichever is most convenient.
+For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, proxyEndpoints?, metadata? }`). Both surfaces hit the same antpath backend and operate on the same durable run records — pick whichever is most convenient.
 
 ## Where things go: customer → primitive mapping
 

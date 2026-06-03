@@ -52,13 +52,11 @@ describe("platform run submission schema", () => {
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: { ...baseSubmission, metadata: { topic: "platform" } },
-      cleanup: { session: "delete" },
       secrets: baseSecrets
     });
 
     expect(parsed.provider).toBe("anthropic");
     expect(parsed.submission.prompt).toEqual(["say hello"]);
-    expect(parsed.cleanup?.session).toBe("delete");
     expect(parsed.submission.metadata?.topic).toBe("platform");
     expect(parsed.secrets.anthropic?.apiKey).toBe("sk-ant-test");
   });
@@ -98,7 +96,7 @@ describe("platform run submission schema", () => {
     })).toThrow(/secrets\.deepseek.*not allowed.*provider is anthropic/);
   });
 
-  it("treats cleanup as undefined when omitted and validates cleanup policy overrides", () => {
+  it("rejects the removed cleanup policy field", () => {
     const base = {
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
@@ -106,11 +104,8 @@ describe("platform run submission schema", () => {
       secrets: baseSecrets
     };
 
-    expect(parseRunSubmissionRequest(base).cleanup).toBeUndefined();
-    expect(parseRunSubmissionRequest({ ...base, cleanup: { session: "retain" } }).cleanup).toEqual({
-      session: "retain"
-    });
-    expect(() => parseRunSubmissionRequest({ ...base, cleanup: { session: "archive" } })).toThrow(/cleanup\.session/);
+    expect(parseRunSubmissionRequest(base).submission.prompt).toEqual(["say hello"]);
+    expect(() => parseRunSubmissionRequest({ ...base, cleanup: { session: "delete" } })).toThrow(/cleanup/);
   });
 
   it("parses the platform.systemPrompt opt-out and rejects bad shapes", () => {

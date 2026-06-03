@@ -48,7 +48,7 @@ The antpath URL defaults to `https://api.antpath.ai`. Set `--antpath-url` on the
 - BYO provider key + MCP credentials + skill references — passed inline on every submission and held in run-scoped custody, with cleanup/revocation attempted at terminal. Cross-provider keys are rejected loudly at submission time.
 - Workspace is the tenant boundary. Workspace identity is derived server-side from the API token (1:1 binding); the SDK / CLI never name it.
 - No SDK-side storage of provider keys, MCP credentials, or output file contents.
-- Cleanup runs by default; opt into retention with `cleanup.session: "retain"`.
+- Cleanup runs by default for tracked runtime resources.
 - Product boundaries are explicit: see [product capabilities and boundaries](docs/product-boundaries.md) for what antpath owns, inherits, and does not support.
 
 ## Quickstart (SDK)
@@ -126,7 +126,7 @@ antpath run \
   --follow
 ```
 
-`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, cleanup?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site.
+`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site.
 
 ## Test commands
 

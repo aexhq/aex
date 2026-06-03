@@ -64,8 +64,7 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
   can be remote or workspace-registered.
 - **Outputs are captured, tracked resource cleanup is attempted.** Files
   written under `outputDirs` go to private storage; antpath attempts cleanup of
-  tracked runtime resources at terminal. Opt into provider-session
-  retention with `cleanup.session: "retain"`.
+  tracked runtime resources at terminal.
 
 ## Guides
 
@@ -78,7 +77,7 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
 - [Provider/runtime capabilities](packages/sdk/docs/provider-runtime-capabilities.md) — supported providers and runtime routing
 - [Outputs](packages/sdk/docs/outputs.md) — capture rules, retention, download
 - [Events](packages/sdk/docs/events.md) — typed event guards, streaming
-- [Cleanup](packages/sdk/docs/cleanup.md) — retain vs delete, runtime-resource lifecycle
+- [Cleanup](packages/sdk/docs/cleanup.md) — runtime-resource lifecycle
 - [Release notes](packages/sdk/docs/release.md)
 
 ## Contribute
@@ -112,9 +111,8 @@ provider account's policies.
 **Managed key — planned.** Until then it's BYOK only.
 
 **Can I self-host or run antpath in my cloud?**
-Not as a supported product mode today. Source is public, but the supported
-product boundary is the hosted antpath control plane. See the
-[product boundary page](packages/sdk/docs/product-boundaries.md).
+No. The supported product boundary is the hosted antpath control plane. See
+the [product boundary page](packages/sdk/docs/product-boundaries.md).
 
 ## License
 

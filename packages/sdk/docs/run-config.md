@@ -15,7 +15,6 @@ Allowed fields:
 - `mcpServers` - array of `McpServerRef`; headers are split into `secrets.mcpServers` server-side.
 - `proxyEndpoints` - array of `PlatformProxyEndpoint`.
 - `environment` - `{ networking?, packages?, envVars? }`. `envVars` are merged into the in-container `RUNTIME.env` / `RUNTIME.json` mounts.
-- `cleanup` - `{ session: "retain" | "delete" }`.
 - `metadata` - non-secret structured metadata.
 
 `agentsMd`, `files`, and `outputDirs` are top-level `submitRun` options, not run-config fields. They carry bytes or capture behavior that belongs on a concrete run submission.
@@ -51,4 +50,4 @@ antpath run --config ./run.json \
   --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 
-...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`, `--cleanup`). The two modes are mutually exclusive.
+...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`). The two modes are mutually exclusive.

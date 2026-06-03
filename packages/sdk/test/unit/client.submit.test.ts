@@ -85,7 +85,6 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
         }),
         McpServer.remote({ name: "noauth", url: "https://mcp.example/noauth" })
       ],
-      cleanup: { session: "delete" },
       secrets: { anthropic: { apiKey: "sk-test" } },
       idempotencyKey: "idem_unit"
     });
@@ -99,7 +98,7 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
 
     const body = call.body as Record<string, unknown>;
     expect(body.idempotencyKey).toBe("idem_unit");
-    expect(body.cleanup).toEqual({ session: "delete" });
+    expect("cleanup" in body).toBe(false);
 
     const submission = body.submission as Record<string, unknown>;
     expect(submission.model).toBe("claude-sonnet-4-5-20250929");
@@ -303,6 +302,34 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     expect(submission.files).toEqual([
       assetRef("dataset", fileHash, { mountPath: "/workspace/input/dataset.csv" })
     ]);
+  });
+
+  it("does not submit the run when draft skill upload fails", async () => {
+    const calls: CapturedRequest[] = [];
+    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+      return new Response(JSON.stringify({ ok: false, code: "asset_upload_failed" }), {
+        status: 500,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const skill = await Skill.fromFiles({
+      name: "rules",
+      files: { "SKILL.md": "# rules\n" }
+    });
+
+    await expect(
+      client.submitRun({
+        model: "m",
+        prompt: "p",
+        skills: [skill],
+        secrets: { anthropic: { apiKey: "k" } }
+      })
+    ).rejects.toThrow();
+
+    expect(calls.map((c) => c.url)).toEqual(["https://x/assets"]);
   });
 
   it("rejects non-AgentsMd entries in the agentsMd array with index in the message", async () => {

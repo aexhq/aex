@@ -24,8 +24,7 @@ describe("parseRunUnitSubmission", () => {
         },
         metadata: { team: "platform" },
         outputDirs: ["/workspace/out"]
-      },
-      cleanup: { session: "delete" }
+      }
     };
 
     const parsed = parseRunUnitSubmission(snapshot);
@@ -42,7 +41,7 @@ describe("parseRunUnitSubmission", () => {
     expect(parsed.submission.environment?.packages?.[0]?.name).toBe("node");
     expect(parsed.submission.metadata).toEqual({ team: "platform" });
     expect(parsed.submission.outputDirs).toEqual(["/workspace/out"]);
-    expect(parsed.cleanup).toEqual({ session: "delete" });
+    expect("cleanup" in parsed).toBe(false);
   });
 
   it("falls back to an empty flat submission for null/garbage snapshots", () => {

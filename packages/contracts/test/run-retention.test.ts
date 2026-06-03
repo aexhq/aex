@@ -7,7 +7,6 @@ import {
   assertRunDeletionOrder,
   buildRunDeletionJob,
   buildRunDeletionManifest,
-  buildRunDeletionTombstoneFromManifest,
   buildRunRetentionPolicy,
   createRunDeletionManifestWriter,
   evaluateRunDeletionCandidate,
@@ -166,7 +165,7 @@ describe("run retention and deletion contract", () => {
     ).toEqual([{ code: "non_terminal", observedAt: "2026-06-02T10:00:00.000Z" }]);
   });
 
-  it("builds a public-safe manifest and tombstone with counts, statuses, and timestamps only", () => {
+  it("builds a public-safe manifest with counts, statuses, and timestamps only", () => {
     const manifest = buildRunDeletionManifest({
       generatedAt: "2026-06-02T10:00:00.000Z",
       mode: "final",
@@ -221,38 +220,8 @@ describe("run retention and deletion contract", () => {
     });
     expect(scanRunRetentionPayloadForSensitiveValues(manifest)).toEqual([]);
 
-    const tombstone = buildRunDeletionTombstoneFromManifest(manifest, {
-      tombstonedAt: "2026-06-02T10:00:06.000Z",
-      deletion: {
-        status: "deleted",
-        pendingAt: "2026-06-02T09:58:00.000Z",
-        deletedAt: "2026-06-02T10:00:05.000Z"
-      }
-    });
-
-    expect(tombstone).toMatchObject({
-      run: {
-        runId: "run-11111111",
-        workspaceId: "workspace-11111111",
-        terminalStatus: "succeeded",
-        terminalAt: "2026-06-01T10:05:00.000Z"
-      },
-      manifest: {
-        status: "written",
-        mode: "final",
-        generatedAt: "2026-06-02T10:00:00.000Z"
-      },
-      retention: {
-        defaultPolicy: "retain_indefinitely",
-        userAction: "purge_or_anonymize_later"
-      }
-    });
-
-    const serialized = JSON.stringify(tombstone);
+    const serialized = JSON.stringify(manifest);
     expect(serialized).not.toContain("runs/run-11111111");
-    expect(serialized).not.toContain("provider");
-    expect(serialized).not.toContain("vault");
-    expect(scanRunRetentionPayloadForSensitiveValues(tombstone)).toEqual([]);
   });
 
   it("rejects paths, object keys, filenames, sizes, hashes, provider ids, Vault ids, handles, and signed URLs", () => {
@@ -307,36 +276,25 @@ describe("run retention and deletion contract", () => {
     expect(JSON.stringify(store.getByRunId("run-11111111"))).not.toContain("runs/run-11111111/");
   });
 
-  it("makes deletion ordering explicit: manifest proof before purge, tombstone after purge", () => {
+  it("makes deletion ordering explicit: final manifest proof before purge", () => {
     expect(() =>
       assertRunDeletionOrder({
         manifest: { status: "not_written" },
-        purge: { status: "running", startedAt: "2026-06-02T10:00:00.000Z" },
-        tombstone: { status: "not_written" }
+        purge: { status: "running", startedAt: "2026-06-02T10:00:00.000Z" }
       })
     ).toThrow(/manifest is written/);
 
     expect(() =>
       assertRunDeletionOrder({
         manifest: { status: "written", mode: "dry_run", writtenAt: "2026-06-02T10:00:00.000Z" },
-        purge: { status: "running", startedAt: "2026-06-02T10:00:01.000Z" },
-        tombstone: { status: "not_written" }
+        purge: { status: "running", startedAt: "2026-06-02T10:00:01.000Z" }
       })
     ).toThrow(/dry-run/);
 
     expect(() =>
       assertRunDeletionOrder({
         manifest: finalManifest,
-        purge: { status: "running", startedAt: "2026-06-02T10:00:01.000Z" },
-        tombstone: { status: "written", writtenAt: "2026-06-02T10:00:02.000Z" }
-      })
-    ).toThrow(/after asset deletion completes/);
-
-    expect(() =>
-      assertRunDeletionOrder({
-        manifest: finalManifest,
-        purge: completedPurge,
-        tombstone: { status: "written", writtenAt: "2026-06-02T10:00:06.000Z" }
+        purge: completedPurge
       })
     ).not.toThrow();
   });
@@ -354,8 +312,7 @@ describe("run retention and deletion contract", () => {
         updatedAt: "2026-06-02T10:00:06.000Z",
         order: {
           manifest: finalManifest,
-          purge: completedPurge,
-          tombstone: { status: "written", writtenAt: "2026-06-02T10:00:06.000Z" }
+          purge: completedPurge
         }
       })
     ).toMatchObject({
@@ -376,10 +333,9 @@ describe("run retention and deletion contract", () => {
         createdAt: "2026-06-02T09:58:00.000Z",
         order: {
           manifest: finalManifest,
-          purge: { status: "not_started" },
-          tombstone: { status: "written", writtenAt: "2026-06-02T10:00:06.000Z" }
+          purge: { status: "not_started" }
         }
       })
-    ).toThrow(RunRetentionValidationError);
+    ).not.toThrow();
   });
 });

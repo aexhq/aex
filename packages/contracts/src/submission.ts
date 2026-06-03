@@ -139,12 +139,6 @@ export function packageInstallString(pkg: PlatformPackage): string {
   }
 }
 
-export type PlatformSessionCleanup = "retain" | "delete";
-
-export interface PlatformCleanupPolicy {
-  readonly session?: PlatformSessionCleanup;
-}
-
 export interface PlatformAnthropicSecrets {
   readonly apiKey: string;
   readonly baseUrl?: string;
@@ -774,18 +768,6 @@ function crossValidateProxyEndpointsAndAuth(
   }
 }
 
-function parseCleanupPolicy(input: unknown): PlatformCleanupPolicy | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  const value = requireRecord(input, "cleanup");
-  const session = optionalEnum(value.session, "cleanup.session", ["retain", "delete"]);
-  if (session === undefined) {
-    return undefined;
-  }
-  return { session };
-}
-
 const PROVIDER_SECRET_KEYS = ["anthropic", "deepseek", "openai", "gemini", "mistral"] as const;
 
 function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
@@ -1221,7 +1203,6 @@ export interface PlatformRunSubmissionRequest {
    */
   readonly runtime?: RuntimeKind;
   readonly submission: PlatformSubmission;
-  readonly cleanup?: PlatformCleanupPolicy;
   readonly secrets: PlatformInlineSecrets;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   /**
@@ -1288,7 +1269,6 @@ export function parseRunSubmissionRequest(
     "provider",
     "runtime",
     "submission",
-    "cleanup",
     "runtimeSize",
     "timeout",
     "proxyEndpoints",
@@ -1322,7 +1302,6 @@ export function parseRunSubmissionRequest(
   if (!runtimeSupport.ok) {
     throw new Error(runtimeSupport.message ?? "unsupported runtime");
   }
-  const cleanup = parseCleanupPolicy(value.cleanup);
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
@@ -1381,7 +1360,6 @@ export function parseRunSubmissionRequest(
     provider,
     ...(runtime ? { runtime } : {}),
     submission,
-    ...(cleanup ? { cleanup } : {}),
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),

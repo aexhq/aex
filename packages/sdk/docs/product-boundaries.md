@@ -18,7 +18,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 - Output capture into the run record, subject to runtime behavior and storage limits.
 - BYOK provider-key custody for a single run, using the top-level `secrets` carrier and terminal cleanup/revocation attempts for antpath-controlled references.
 - Named proxy endpoint policy, auth injection, redaction, call budgets, and audit metadata on the antpath-owned proxy path.
-- Default cleanup attempts for tracked antpath/provider session resources, with provider retention respected when `cleanup.session: "retain"` is requested.
+- Default cleanup attempts for tracked antpath runtime resources.
 
 ## Boundary matrix
 

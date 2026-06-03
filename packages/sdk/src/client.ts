@@ -49,9 +49,7 @@ export interface AntpathClientOptions {
   /**
    * API plane root, e.g. `https://antpath.example.com`. Optional —
    * defaults to the canonical hosted URL (`https://api.antpath.ai`).
-   * Self-hosted deployments override; the default lives in source so
-   * the agent reading the SDK call site can see exactly where the call
-   * goes.
+   * Override for local, staging, or other hosted antpath API planes.
    */
   readonly baseUrl?: string;
   /** Optional `fetch` override for testing. */
@@ -115,7 +113,6 @@ export interface SubmitRunOptions {
   readonly mcpServers?: readonly McpServer[];
   readonly environment?: PlatformSubmission["environment"];
   readonly metadata?: PlatformSubmission["metadata"];
-  readonly cleanup?: PlatformRunSubmissionInput["cleanup"];
   /**
    * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
    * Prefer the {@link RuntimeSizes} symbol const, e.g.
@@ -575,7 +572,6 @@ export class AntpathClient {
       // a specific runtime so the wire shape stays minimal.
       ...(options.runtime ? { runtime: options.runtime } : {}),
       submission,
-      ...(options.cleanup ? { cleanup: options.cleanup } : {}),
       ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       secrets,

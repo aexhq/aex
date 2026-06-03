@@ -59,9 +59,6 @@ const submission = fc.record({
     mcpServers: fc.constant([] as never[]),
     metadata: fc.option(jsonRecord, { nil: undefined })
   }),
-  cleanup: fc.option(fc.record({
-    session: fc.option(fc.constantFrom("retain" as const, "delete" as const), { nil: undefined })
-  }), { nil: undefined }),
   secrets: fc.record({
     anthropic: fc.record({ apiKey: nonEmptyString })
   })

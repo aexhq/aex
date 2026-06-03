@@ -5,7 +5,7 @@ import {
   type CustodyRedactionFinding
 } from "./run-custody.js";
 import type { Run, RunEvent, Output } from "./runtime-types.js";
-import type { PlatformCleanupPolicy, PlatformSubmission } from "./submission.js";
+import type { PlatformSubmission } from "./submission.js";
 
 export const RUN_RECORD_SCHEMA_VERSION = "antpath.run-record.v1" as const;
 export const RUN_RECORD_MANIFEST_SCHEMA_VERSION = "antpath.run-record.manifest.v1" as const;
@@ -34,7 +34,6 @@ export type RunRecordArchiveFileRoleV1 =
 
 export interface RunRecordSubmissionSnapshotV1 {
   readonly submission: PlatformSubmission;
-  readonly cleanup?: PlatformCleanupPolicy;
 }
 
 export interface RunRecordCostV1 {

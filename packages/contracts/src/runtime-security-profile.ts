@@ -9,7 +9,6 @@ export interface RuntimeSecurityProfile {
   readonly allowCustomerEnvVars: boolean;
   readonly allowProxyEndpoints: boolean;
   readonly allowMcpServers: boolean;
-  readonly allowRetainedSessions: boolean;
 }
 
 export interface RuntimeSecurityProfileEvaluationInput {
@@ -18,7 +17,6 @@ export interface RuntimeSecurityProfileEvaluationInput {
   readonly customerEnvVarCount?: number;
   readonly proxyEndpointCount?: number;
   readonly mcpServerCount?: number;
-  readonly cleanupSession?: "retain" | "delete";
 }
 
 export interface RuntimeSecurityProfileViolation {
@@ -35,8 +33,7 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
       allowRuntimePackages: false,
       allowCustomerEnvVars: true,
       allowProxyEndpoints: true,
-      allowMcpServers: true,
-      allowRetainedSessions: false
+      allowMcpServers: true
     }),
     standard: Object.freeze({
       name: "standard",
@@ -45,8 +42,7 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
       allowRuntimePackages: true,
       allowCustomerEnvVars: true,
       allowProxyEndpoints: true,
-      allowMcpServers: true,
-      allowRetainedSessions: false
+      allowMcpServers: true
     }),
     developer: Object.freeze({
       name: "developer",
@@ -55,8 +51,7 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
       allowRuntimePackages: true,
       allowCustomerEnvVars: true,
       allowProxyEndpoints: true,
-      allowMcpServers: true,
-      allowRetainedSessions: true
+      allowMcpServers: true
     })
   });
 
@@ -117,12 +112,6 @@ export function evaluateRuntimeSecurityProfile(
     violations.push({
       field: "submission.mcpServers",
       reason: `${profile.name} does not allow MCP servers`
-    });
-  }
-  if (input.cleanupSession === "retain" && !profile.allowRetainedSessions) {
-    violations.push({
-      field: "cleanup.session",
-      reason: `${profile.name} requires provider sessions to be cleaned up`
     });
   }
   return Object.freeze(violations);

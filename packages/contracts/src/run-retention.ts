@@ -3,7 +3,6 @@ import { isTerminalRunStatus } from "./status.js";
 
 export const RUN_RETENTION_SCHEMA_VERSION = 1;
 export const RUN_DELETION_MANIFEST_KIND = "antpath.run_deletion_manifest.v1";
-export const RUN_DELETION_TOMBSTONE_KIND = "antpath.run_deletion_tombstone.v1";
 export const RUN_DELETION_JOB_KIND = "antpath.run_deletion_job.v1";
 export const RUN_DELETION_MANIFEST_CONTENT_TYPE = "application/json; charset=utf-8";
 export const RUN_RETENTION_REDACTION_SCANNER_VERSION = 1;
@@ -54,7 +53,6 @@ export const RUN_DELETION_JOB_STATUSES = [
   "manifest_written",
   "deleting",
   "delete_failed",
-  "tombstone_written",
   "completed",
   "failed"
 ] as const;
@@ -70,14 +68,6 @@ export type RunDeletionProofStatus = (typeof RUN_DELETION_PROOF_STATUSES)[number
 
 export const RUN_DELETION_WRITE_STATUSES = ["not_written", "written", "write_failed"] as const;
 export type RunDeletionWriteStatus = (typeof RUN_DELETION_WRITE_STATUSES)[number];
-
-export const RUN_DELETION_TOMBSTONE_STATUSES = [
-  "pending_delete",
-  "deleted",
-  "delete_failed",
-  "partially_deleted"
-] as const;
-export type RunDeletionTombstoneStatus = (typeof RUN_DELETION_TOMBSTONE_STATUSES)[number];
 
 export const RUN_RETENTION_EXCLUDED_VALUE_CLASSES = [
   "raw_paths",
@@ -199,50 +189,6 @@ export interface RunDeletionManifestInput {
   readonly counts?: readonly RunDeletionCountV1[];
 }
 
-export interface RunDeletionTombstoneRunV1 {
-  readonly runId: string;
-  readonly workspaceId: string;
-  readonly terminalStatus: RunStatus | string;
-  readonly terminalAt?: string;
-}
-
-export interface RunDeletionTombstoneDeletionV1 {
-  readonly status: RunDeletionTombstoneStatus;
-  readonly pendingAt?: string;
-  readonly deletedAt?: string;
-  readonly failedAt?: string;
-}
-
-export interface RunDeletionTombstoneManifestV1 {
-  readonly status: RunDeletionWriteStatus;
-  readonly generatedAt?: string;
-  readonly mode?: RunDeletionManifestMode;
-}
-
-export interface RunDeletionTombstoneRetentionV1 {
-  readonly defaultPolicy: "retain_indefinitely";
-  readonly userAction: "purge_or_anonymize_later";
-}
-
-export interface RunDeletionTombstoneV1 {
-  readonly schemaVersion: typeof RUN_RETENTION_SCHEMA_VERSION;
-  readonly kind: typeof RUN_DELETION_TOMBSTONE_KIND;
-  readonly tombstonedAt: string;
-  readonly run: RunDeletionTombstoneRunV1;
-  readonly deletion: RunDeletionTombstoneDeletionV1;
-  readonly manifest: RunDeletionTombstoneManifestV1;
-  readonly summary: RunDeletionManifestSummaryV1;
-  readonly retention: RunDeletionTombstoneRetentionV1;
-}
-
-export interface RunDeletionTombstoneInput {
-  readonly tombstonedAt: string;
-  readonly run: RunDeletionTombstoneRunV1;
-  readonly deletion: RunDeletionTombstoneDeletionV1;
-  readonly manifest: RunDeletionTombstoneManifestV1;
-  readonly summary: RunDeletionManifestSummaryV1;
-}
-
 export interface RunDeletionManifestProofV1 {
   readonly status: RunDeletionWriteStatus;
   readonly mode?: RunDeletionManifestMode;
@@ -256,15 +202,9 @@ export interface RunDeletionPurgeProofV1 {
   readonly deletedObjectCount?: number;
 }
 
-export interface RunDeletionTombstoneProofV1 {
-  readonly status: RunDeletionWriteStatus;
-  readonly writtenAt?: string;
-}
-
 export interface RunDeletionOrderProofV1 {
   readonly manifest: RunDeletionManifestProofV1;
   readonly purge: RunDeletionPurgeProofV1;
-  readonly tombstone: RunDeletionTombstoneProofV1;
 }
 
 export interface RunDeletionJobV1 {
@@ -500,50 +440,9 @@ export function buildRunDeletionManifest(input: RunDeletionManifestInput): RunDe
   return manifest;
 }
 
-export function buildRunDeletionTombstone(input: RunDeletionTombstoneInput): RunDeletionTombstoneV1 {
-  const tombstone = Object.freeze({
-    schemaVersion: RUN_RETENTION_SCHEMA_VERSION,
-    kind: RUN_DELETION_TOMBSTONE_KIND,
-    tombstonedAt: assertTimestamp(input.tombstonedAt, "tombstone.tombstonedAt"),
-    run: normalizeTombstoneRun(input.run),
-    deletion: normalizeTombstoneDeletion(input.deletion),
-    manifest: normalizeTombstoneManifest(input.manifest),
-    summary: normalizeSummary(input.summary),
-    retention: Object.freeze({
-      defaultPolicy: "retain_indefinitely" as const,
-      userAction: "purge_or_anonymize_later" as const
-    })
-  }) satisfies RunDeletionTombstoneV1;
-  assertPublicSafeRunRetentionPayload(tombstone);
-  return tombstone;
-}
-
-export function buildRunDeletionTombstoneFromManifest(
-  manifest: RunDeletionManifestV1,
-  input: Omit<RunDeletionTombstoneInput, "run" | "manifest" | "summary">
-): RunDeletionTombstoneV1 {
-  return buildRunDeletionTombstone({
-    tombstonedAt: input.tombstonedAt,
-    run: {
-      runId: manifest.run.runId,
-      workspaceId: manifest.run.workspaceId,
-      terminalStatus: manifest.run.status,
-      ...(manifest.run.terminalAt ? { terminalAt: manifest.run.terminalAt } : {})
-    },
-    deletion: input.deletion,
-    manifest: {
-      status: "written",
-      generatedAt: manifest.generatedAt,
-      mode: manifest.mode
-    },
-    summary: manifest.summary
-  });
-}
-
 export function assertRunDeletionOrder(proof: RunDeletionOrderProofV1): void {
   const manifest = normalizeManifestProof(proof.manifest);
   const purge = normalizePurgeProof(proof.purge);
-  const tombstone = normalizeTombstoneProof(proof.tombstone);
   const purgeStarted = purge.status === "running" || purge.status === "completed" || purge.status === "failed";
 
   if (purgeStarted && manifest.status !== "written") {
@@ -551,9 +450,6 @@ export function assertRunDeletionOrder(proof: RunDeletionOrderProofV1): void {
   }
   if (purgeStarted && manifest.mode !== "final") {
     throw new RunRetentionValidationError("run deletion cannot purge assets from a dry-run deletion manifest");
-  }
-  if (tombstone.status === "written" && purge.status !== "completed") {
-    throw new RunRetentionValidationError("run deletion tombstone must be written after asset deletion completes");
   }
 }
 
@@ -710,37 +606,10 @@ function normalizeSummary(input: RunDeletionManifestSummaryV1): RunDeletionManif
   });
 }
 
-function normalizeTombstoneRun(input: RunDeletionTombstoneRunV1): RunDeletionTombstoneRunV1 {
-  return Object.freeze({
-    runId: assertSafeIdentifier(input.runId, "tombstone.run.runId"),
-    workspaceId: assertSafeIdentifier(input.workspaceId, "tombstone.run.workspaceId"),
-    terminalStatus: assertSafeMetadataString(input.terminalStatus, "tombstone.run.terminalStatus"),
-    ...(input.terminalAt ? { terminalAt: assertTimestamp(input.terminalAt, "tombstone.run.terminalAt") } : {})
-  });
-}
-
-function normalizeTombstoneDeletion(input: RunDeletionTombstoneDeletionV1): RunDeletionTombstoneDeletionV1 {
-  return Object.freeze({
-    status: input.status,
-    ...(input.pendingAt ? { pendingAt: assertTimestamp(input.pendingAt, "tombstone.deletion.pendingAt") } : {}),
-    ...(input.deletedAt ? { deletedAt: assertTimestamp(input.deletedAt, "tombstone.deletion.deletedAt") } : {}),
-    ...(input.failedAt ? { failedAt: assertTimestamp(input.failedAt, "tombstone.deletion.failedAt") } : {})
-  });
-}
-
-function normalizeTombstoneManifest(input: RunDeletionTombstoneManifestV1): RunDeletionTombstoneManifestV1 {
-  return Object.freeze({
-    status: input.status,
-    ...(input.generatedAt ? { generatedAt: assertTimestamp(input.generatedAt, "tombstone.manifest.generatedAt") } : {}),
-    ...(input.mode ? { mode: input.mode } : {})
-  });
-}
-
 function normalizeOrderProof(input: RunDeletionOrderProofV1): RunDeletionOrderProofV1 {
   return Object.freeze({
     manifest: normalizeManifestProof(input.manifest),
-    purge: normalizePurgeProof(input.purge),
-    tombstone: normalizeTombstoneProof(input.tombstone)
+    purge: normalizePurgeProof(input.purge)
   });
 }
 
@@ -760,13 +629,6 @@ function normalizePurgeProof(input: RunDeletionPurgeProofV1): RunDeletionPurgePr
     ...(input.deletedObjectCount !== undefined
       ? { deletedObjectCount: nonNegativeInteger(input.deletedObjectCount, "proof.purge.deletedObjectCount") }
       : {})
-  });
-}
-
-function normalizeTombstoneProof(input: RunDeletionTombstoneProofV1): RunDeletionTombstoneProofV1 {
-  return Object.freeze({
-    status: input.status,
-    ...(input.writtenAt ? { writtenAt: assertTimestamp(input.writtenAt, "proof.tombstone.writtenAt") } : {})
   });
 }
 

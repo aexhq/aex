@@ -23,7 +23,7 @@ import type {
   Skill,
   WhoAmI
 } from "./runtime-types.js";
-import type { PlatformCleanupPolicy, PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
+import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
 import { runArtifactRel } from "./run-artifacts.js";
 
 /**
@@ -466,14 +466,13 @@ function jsonlEntry(path: string, events: readonly RunEvent[]): ZipEntry {
   };
 }
 
-function extractSubmissionSnapshot(run: Run): { readonly submission: PlatformSubmission; readonly cleanup?: PlatformCleanupPolicy } | undefined {
+function extractSubmissionSnapshot(run: Run): { readonly submission: PlatformSubmission } | undefined {
   const raw = (run as { readonly submission?: unknown }).submission;
   if (!isRecord(raw) || raw.kind !== "submission" || !isRecord(raw.submission)) {
     return undefined;
   }
   return {
-    submission: raw.submission as unknown as PlatformSubmission,
-    ...(isRecord(raw.cleanup) ? { cleanup: raw.cleanup as PlatformCleanupPolicy } : {})
+    submission: raw.submission as unknown as PlatformSubmission
   };
 }
 

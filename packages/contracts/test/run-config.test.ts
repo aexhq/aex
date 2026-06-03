@@ -329,9 +329,8 @@ describe("run-config — parseRunRequestConfig", () => {
     ).toThrow(/extra/i);
   });
 
-  it("preserves environment, cleanup, proxyEndpoints, and metadata pass-through fields", () => {
+  it("preserves environment, proxyEndpoints, and metadata pass-through fields", () => {
     const env = { networking: { mode: "limited" as const, allowedHosts: ["api.x.com"] } };
-    const cleanup = { session: "delete" as const };
     const proxyEndpoints = [
       {
         name: "stripe",
@@ -348,14 +347,22 @@ describe("run-config — parseRunRequestConfig", () => {
       skills: [],
       mcpServers: [],
       environment: env,
-      cleanup,
       proxyEndpoints,
       metadata
     });
     expect(config.environment).toEqual(env);
-    expect(config.cleanup).toEqual(cleanup);
     expect(config.proxyEndpoints).toEqual(proxyEndpoints);
     expect(config.metadata).toEqual(metadata);
+  });
+
+  it("rejects removed cleanup config", () => {
+    expect(() =>
+      parseRunRequestConfig({
+        model: "claude-sonnet-4-5",
+        prompt: "x",
+        cleanup: { session: "delete" }
+      })
+    ).toThrow(/cleanup/);
   });
 
   it("rejects duplicate mcpServer names at the run-config boundary", () => {
