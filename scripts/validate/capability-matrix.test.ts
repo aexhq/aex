@@ -115,7 +115,7 @@ describe("provider/runtime capability matrix generation", () => {
     }
   });
 
-  it("keeps private/deploy/economic caveats out of the public generated matrix", () => {
+  it("keeps deploy and economic caveats out of the generated matrix", () => {
     const rendered = renderProviderRuntimeCapabilityMarkdown();
     expect(rendered).not.toMatch(/\b(Fly|billing|bills|cost|costs|margin|margins|topology)\b/i);
   });

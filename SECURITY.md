@@ -19,8 +19,7 @@ In scope:
 
 - The published `antpath` npm package (SDK + bundled CLI).
 - Public `@antpath/contracts` and `@antpath/conformance` packages.
-- Hosted antpath control-plane vulnerabilities that affect public SDK/CLI
-  users, even though hosted service source is documented separately.
+- Hosted antpath control-plane vulnerabilities that affect SDK/CLI users.
 
 Out of scope:
 
@@ -41,6 +40,5 @@ remain subject to the selected provider account's policies. Reports related to
 secret leakage, persistence beyond a run, or cross-tenant secret exposure are
 high-priority.
 
-Security-sensitive implementation design is documented separately. Public
-credential handling behavior is documented in `packages/sdk/docs/credentials.md`
+Credential handling behavior is documented in `packages/sdk/docs/credentials.md`
 and `packages/sdk/docs/product-boundaries.md`.

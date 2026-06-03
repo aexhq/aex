@@ -53,7 +53,7 @@ describe("managed-key public contract", () => {
     );
   });
 
-  it("does not mark GA available without the service implementation flag", () => {
+  it("does not mark GA available when the managed-key service is unavailable", () => {
     const policy = {
       ...availablePolicy,
       serviceAvailable: false

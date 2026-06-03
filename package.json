@@ -1,5 +1,5 @@
 {
-  "name": "@antpath/public-workspace",
+  "name": "@antpath/repository",
   "version": "0.13.3",
   "private": true,
   "description": "Repository for the antpath SDK, CLI, contracts, conformance helpers, user tests, and docs.",

@@ -12,10 +12,8 @@ export function loadLocalEnv(): void {
   const testRoot = dirname(fileURLToPath(import.meta.url));
   const appRoot = resolve(testRoot, "..");
   const repoRoot = resolve(appRoot, "..", "..");
-  const workspaceRoot = resolve(repoRoot, "..");
-  const platformRepoRoot = resolve(workspaceRoot, "platform");
 
-  for (const dir of uniqueDirs([appRoot, repoRoot, platformRepoRoot, workspaceRoot])) {
+  for (const dir of uniqueDirs([appRoot, repoRoot])) {
     const path = resolve(dir, ".env.local");
     if (existsSync(path)) {
       loadDotenv({ path, override: false });

@@ -11,8 +11,8 @@ This workspace deliberately has **no `workspace:*` dependencies on
 artifact under test. Inside that child, `import "antpath"` resolves
 through the install, never through the monorepo symlink.
 
-See [the public testing policy](../docs/testing.md) for the layer's
-role in the broader testing taxonomy and the blackbox-first authorship rule.
+These tests are the blackbox layer for install, CLI, SDK, package, and
+published-artifact behavior.
 
 ## Running
 
@@ -96,8 +96,6 @@ Local `.env.local` files may still use the legacy names
 the test loader aliases them to the canonical variables above.
 
 CI lives in `.github/workflows/rebuild-live.yml` (`sdk-live` job).
-See [the public testing policy](../docs/testing.md) for the full
-taxonomy.
 
 `test/live/config-proxyendpoints.user.test.ts` requires a real
 `PROXY_OK` round-trip. The test uses a public no-auth upstream and must not be
@@ -136,7 +134,5 @@ Required env is identical to the comprehensive scenario
 `DEEPSEEK_API_KEY` provider keys); model overrides are
 `ANTPATH_USER_TEST_{ANTHROPIC,DEEPSEEK}_MODEL`.
 
-CI: it runs as a **hard gate** in manual release gates — in `rebuild-live.yml`'s
-`local-e2e` (antpath-local) and `prod-smoke` (api.antpath.ai) jobs, after
-the existing `test:user` step passes — and in manual
-`rebuild-live.yml` canary runs (`sdk-live` job).
+CI: it runs as a **hard gate** in manual `rebuild-live.yml` canary runs
+(`sdk-live` job).

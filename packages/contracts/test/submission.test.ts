@@ -87,7 +87,7 @@ describe("submission parser - providers and secrets", () => {
     expect(JSON.parse(JSON.stringify(parsed))).toHaveProperty("credentialMode", "byok");
   });
 
-  it("rejects managed-key credential mode until the service implementation exists", () => {
+  it("rejects managed-key credential mode until the service is available", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseRequest(),

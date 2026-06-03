@@ -19,9 +19,7 @@ function readJson(path: string): PackageJson {
  * Lock the agent-first invariant for the `antpath` package surface:
  * exactly one user-visible import path. Subpath exports (`antpath/proxy`,
  * `antpath/core`, etc.) would create multiple places an agent has to
- * track when reading or editing a submission, which violates the
- * agent-first principle. See
- * `surface invariants` (Agent-first surface design).
+ * track when reading or editing a submission.
  */
 describe("antpath package: agent-first export surface", () => {
   it("declares exactly one entry in package.json#exports", () => {

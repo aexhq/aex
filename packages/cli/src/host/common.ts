@@ -43,8 +43,7 @@ export type ParseCommonResult =
  * (`https://api.antpath.ai`) so SaaS users never need to supply it.
  *
  * There is no `--workspace` flag: workspace identity is derived
- * server-side from the API token. See `surface invariants`
- * (Agent-first surface design, Concrete rule 3).
+ * server-side from the API token.
  */
 export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
   let apiToken: string | null = null;

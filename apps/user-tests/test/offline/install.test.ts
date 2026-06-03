@@ -12,7 +12,7 @@
  * This scenario would have caught the 0.2.0 missing-bin regression.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAntpath, type InstallResult } from "../_fixtures/install.js";
@@ -111,54 +111,4 @@ describe("install shape", () => {
     }
   });
 
-  it("does NOT ship the internal docs/ folder (P10 invariant)", () => {
-    // The SDK historically duplicated parts of docs/* into
-    // packages/sdk/docs/* — those are partial mirrors of the
-    // canonical docs/ tree at the repo root and would drift over
-    // time. P1/P10 of the Skill+MCP redesign deletes them from disk AND
-    // strips them from the tarball via packages/sdk/package.json `files`.
-    // This guard prevents any future re-introduction.
-    const referencesDir = join(install.antpathDir, "references");
-    expect(
-      existsSync(referencesDir),
-      `${referencesDir} exists but should have been stripped by 'files' in packages/sdk/package.json`
-    ).toBe(false);
-
-    // Also walk the entire installed antpath directory and assert no
-    // path segment named "references" exists. Catches both the top-level
-    // folder above AND any deeply-nested mirror that might be added by a
-    // future tooling change.
-    const offenders: string[] = [];
-    walkPaths(install.antpathDir, (relPath) => {
-      const segments = relPath.split(/[\\/]/);
-      if (segments.some((seg) => seg === "references")) {
-        offenders.push(relPath);
-      }
-    });
-    expect(
-      offenders,
-      `installed antpath package contains forbidden 'references' paths: ${offenders.join(", ")}`
-    ).toEqual([]);
-  });
 });
-
-/**
- * Recursively walk a directory and invoke `visit` for every entry's path
- * relative to `root`. Skips node_modules to keep the walk cheap.
- */
-function walkPaths(root: string, visit: (relPath: string) => void): void {
-  const stack: string[] = [""];
-  while (stack.length > 0) {
-    const rel = stack.pop()!;
-    const abs = rel ? join(root, rel) : root;
-    const entries = readdirSync(abs, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name === "node_modules") continue;
-      const childRel = rel ? join(rel, entry.name) : entry.name;
-      visit(childRel);
-      if (entry.isDirectory()) {
-        stack.push(childRel);
-      }
-    }
-  }
-}

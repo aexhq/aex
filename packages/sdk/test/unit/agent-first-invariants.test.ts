@@ -63,8 +63,7 @@ function relPosix(abs: string): string {
 }
 
 /**
- * Mechanical enforcement of the agent-first surface invariants. See
- * `surface invariants` (Agent-first surface design).
+ * Mechanical enforcement of the agent-first surface invariants.
  *
  * Goodwill is not enforcement. If an invariant matters, a test asserts
  * it; an agent making a future change either keeps the test green or

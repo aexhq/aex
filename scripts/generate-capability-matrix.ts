@@ -234,7 +234,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "- Public status describes provider availability on the SDK surface. Runtime routing describes how a validated submission is dispatched.",
     "- `runtime: \"native\"` is not a runtime selector; the submission parser rejects it as an invalid enum value.",
-    "- `live-unverified` means the shape is accepted by code but lacks equal live user evidence in this repository.",
+    "- `live-unverified` means the shape is accepted by code but does not yet have equal live user-test evidence.",
     "",
     "## Provider anchors",
     ""

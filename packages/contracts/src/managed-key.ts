@@ -61,7 +61,7 @@ export const BLOCKED_MANAGED_KEY_POLICY_V1: ManagedKeyPolicyV1 = Object.freeze({
 export class ManagedKeyUnavailableError extends Error {
   readonly code = "managed_key_unavailable";
 
-  constructor(message = "credentialMode: \"managed\" is not available while managed-key mode is unavailable") {
+  constructor(message = "credentialMode: \"managed\" is not available") {
     super(message);
     this.name = "ManagedKeyUnavailableError";
   }

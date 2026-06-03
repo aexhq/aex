@@ -34,7 +34,7 @@ antpath skills  <upload|list|get|delete> [flags] --api-token …
 
 The SDK class and the CLI are backed by the same public `@antpath/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `antpath` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `antpath proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
 
-The antpath URL defaults to `https://api.antpath.ai`. Set `--antpath-url` on the CLI or `baseUrl` on `AntpathClient` for local, staging, private, or hosted antpath API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
+The antpath URL defaults to `https://api.antpath.ai`. Set `--antpath-url` on the CLI or `baseUrl` on `AntpathClient` for local, staging, or hosted antpath API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
 
 ## Product boundaries
 

@@ -6,8 +6,6 @@
  * IO. Tests import this module directly and inject fakes — there are
  * NO `process.env.ANTPATH_*` reads in the production code paths
  * (mechanical test in Phase 9 enforces this against the built bundle).
- *
- * See design notes "CLI design — Configuration (no user-facing env overrides)".
  */
 import type {
   ProxyIndexFile,

@@ -35,7 +35,7 @@
  *     in the SDK-visible payload (run + events + outputs).
  *
  * No env-var flags gate scope. The five `test:*` commands are the
- * only knobs. See surface invariants.
+ * only knobs.
  *
  * Required env:
  *   ANTPATH_API_URL                live hosted API URL (local or prod)

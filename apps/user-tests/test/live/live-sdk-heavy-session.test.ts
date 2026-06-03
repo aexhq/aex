@@ -12,9 +12,8 @@
  *
  * Runs as an explicit gate AFTER the rest of the live user-tests pass
  * (own pnpm script `test:user:heavy` + own vitest config), so it is
- * never swept into the default `test:user` run. Wired into rebuild-live.yml's
- * local-e2e (antpath-local) and prod-smoke (api.antpath.ai) as a hard
- * gate, and into rebuild-live.yml as the manual canary.
+ * never swept into the default `test:user` run. Wired into
+ * rebuild-live.yml as the manual canary.
  *
  * Scope: Anthropic + DeepSeek, one model each (no other provider keys
  * are provisioned in CI). Two managed cells:

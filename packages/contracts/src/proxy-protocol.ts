@@ -7,10 +7,6 @@
 // response shape, the error-code enum, and the protocol version header.
 // CLI and BFF both import from here; drift becomes a build-time type error.
 //
-// References:
-//   - design notes sections "Proxy route" and "CLI design"
-//   - surface invariants (Agent-first surface design)
-
 /**
  * Wire-protocol version. Bumped on any breaking change to the request or
  * response shape. The CLI sends this in the `X-Antpath-Proxy-Protocol`
@@ -19,7 +15,7 @@
  *
  * Bumps are coordinated: CLI and BFF release together, the worker
  * bundles the matching CLI artifact, and the e2e suite runs both with
- * the new version. See design notes "CLI design".
+ * the new version.
  */
 export const PROXY_PROTOCOL_VERSION = "1" as const;
 

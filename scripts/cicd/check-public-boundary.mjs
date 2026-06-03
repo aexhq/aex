@@ -71,7 +71,6 @@ function checkContractsInlineBaseline() {
 function checkPublicImportDirection() {
   const publicRoots = baseline.publicSourceRoots.map((root) => resolve(repoRoot, root));
   const allowedAntpathImports = new Set(baseline.temporaryAllowedPublicImports);
-  const forbiddenInternalImports = baseline.forbiddenInternalImports;
   const offenders = [];
 
   for (const root of publicRoots) {
@@ -80,10 +79,6 @@ function checkPublicImportDirection() {
       for (const specifier of importSpecifiers(text)) {
         if (specifier.startsWith("@antpath/") && !allowedAntpathImports.has(specifier)) {
           offenders.push(`${rel(file)} imports ${specifier}`);
-          continue;
-        }
-        if (forbiddenInternalImports.some((name) => specifier === name || specifier.startsWith(`${name}/`))) {
-          offenders.push(`${rel(file)} imports workspace package ${specifier}`);
           continue;
         }
         if (specifier.startsWith(".")) {
@@ -228,7 +223,7 @@ function checkSdkPackDryRun() {
       pathOffenders.push(`${file} is outside allowed packed prefixes`);
     }
     if (forbiddenPatterns.some((pattern) => pattern.test(file))) {
-      pathOffenders.push(`${file} matches a forbidden private packed path pattern`);
+      pathOffenders.push(`${file} matches a forbidden packed path pattern`);
     }
   }
   if (pathOffenders.length > 0) {

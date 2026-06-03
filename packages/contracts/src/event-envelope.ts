@@ -6,8 +6,6 @@
  * byte-identical envelopes for the same logical event by construction. This is
  * the shape the coordinator (Phase 2) appends, broadcasts, and archives.
  *
- * Design (see event envelope invariants — the principles source of truth):
- *
  *   - **CloudEvents-shaped** self-describing envelope: a stable `id`, the
  *     coarse `source`, the AG-UI-aligned `type`, the `subject` (run), a
  *     `time`, the `sequence` cursor, and the typed `data`.
@@ -19,7 +17,7 @@
  *
  * Unified observability spine:
  * the envelope additionally carries four ordering attributes so BOTH the typed
- * event stream and the high-volume hosted service log stream ride one per-run
+ * event stream and the high-volume hosted runtime log stream ride one per-run
  * coordinator:
  *   - `channel`   — "event" (the typed AG-UI stream) or "log" (a verbose log
  *                   line). The single axis a consumer splits the unified stream

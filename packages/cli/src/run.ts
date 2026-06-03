@@ -22,8 +22,7 @@
  * Every host subcommand requires `--api-token`. `--antpath-url` is
  * optional and defaults to `https://api.antpath.ai`. There is no
  * `--workspace` flag — the workspace is derived server-side from the
- * API token (1:1 binding); see `surface invariants`
- * (Agent-first surface design, Concrete rule 3).
+ * API token.
  */
 import { RUN_PROVIDERS, type ProxyErrorBody } from "@antpath/contracts";
 import type { CliIO } from "./internal.js";

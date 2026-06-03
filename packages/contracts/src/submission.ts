@@ -1204,9 +1204,8 @@ export interface PlatformRunSubmissionRequest {
   /**
    * Credential source for upstream provider access. Omitted means
    * `"byok"` for compatibility with the current production path.
-   * `"managed"` is a public contract value but remains fail-closed in this
-   * repository until a managed-key service supplies credential
-   * resolution and billing admission.
+   * `"managed"` is a public contract value but remains fail-closed until
+   * credential resolution and billing admission are available.
    */
   readonly credentialMode: CredentialMode;
   /**

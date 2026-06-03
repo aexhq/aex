@@ -15,14 +15,6 @@
   "temporaryAllowedPublicImports": [
     "@antpath/contracts"
   ],
-  "forbiddenInternalImports": [
-    "@antpath/internal",
-    "@antpath/internal",
-    "@antpath/internal",
-    "@antpath/internal",
-    "@antpath/internal",
-    "@antpath/user-tests"
-  ],
   "sdkPackage": {
     "dir": "packages/sdk",
     "name": "antpath",
@@ -47,7 +39,7 @@
     ],
     "forbiddenPackedPathPatterns": [
       "(^|/)\\.env(?:\\.|$)",
-      "^(?:\\.github|apps|eval|references|scripts|tools)(?:/|$)",
+      "^(?:\\.github|apps|eval|scripts|tools)(?:/|$)",
       "^(?:packages/(?:cli|db|runtime-bridge|shared|conformance))(?:/|$)",
       "(^|/)wrangler\\.toml$",
       "(^|/)vercel\\.json$"

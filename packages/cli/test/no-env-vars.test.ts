@@ -9,9 +9,7 @@ const bundlePath = resolve(cliRoot, "dist", "cli.mjs");
 const digestPath = resolve(cliRoot, "dist", "cli.mjs.sha256");
 
 /**
- * Mechanical lockdown of the shipped CLI bundle. See
- * `surface invariants` (Agent-first surface design)
- * and design notes "CLI design — Configuration".
+ * Mechanical lockdown of the shipped CLI bundle.
  *
  * The CLI MUST NOT read any `process.env.ANTPATH_*` value at runtime.
  * Earlier drafts proposed test-only overrides like

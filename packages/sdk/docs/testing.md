@@ -7,8 +7,7 @@ title: Testing
 antpath uses test-first development.
 For repository changes, default the first meaningful test to blackbox behavior
 from requirements, public contracts, docs, logs, or user-visible evidence before
-reading or changing implementation. See the repository testing policy at
-`../../docs/testing.md`.
+reading or changing implementation.
 
 Workspace-wide commands:
 

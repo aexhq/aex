@@ -90,7 +90,7 @@ export interface SubmitRunOptions {
    * Credential source for upstream provider access. Omitted defaults to
    * `"byok"`, which requires `secrets.<provider>.apiKey` as today.
    * `"managed"` is reserved for paid managed-key mode and currently fails
-   * closed until the managed-key service is wired.
+   * closed until the service is available.
    */
   readonly credentialMode?: CredentialMode;
   /**
@@ -487,7 +487,7 @@ export class AntpathClient {
     if (credentialMode === "managed") {
       throw new AntpathError(
         "CREDENTIAL_INVALID",
-        "AntpathClient.submitRun: credentialMode \"managed\" is not available while managed-key mode is unavailable"
+        "AntpathClient.submitRun: credentialMode \"managed\" is not available"
       );
     }
     if (!options.secrets) {

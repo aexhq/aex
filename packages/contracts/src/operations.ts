@@ -35,9 +35,7 @@ import { runArtifactRel } from "./run-artifacts.js";
  * injection) and returns parsed responses.
  *
  * Workspace identity is derived server-side from the API token on
- * every request — callers do not pass `workspaceId`. See
- * `surface invariants` (Agent-first surface design,
- * Concrete rule 3).
+ * every request; callers do not pass `workspaceId`.
  */
 
 export async function getRun(http: HttpClient, runId: string): Promise<Run> {

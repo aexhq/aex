@@ -39,9 +39,8 @@ pack checks.
 - Conventional-commits prefixes (`feat:`, `fix:`, `chore:`,
   `refactor:`, `docs:`, `test:`, `ci:`) are encouraged but not
   enforced.
-- **No AI-attribution trailers** — no `Generated with ...`, no
-  `Co-Authored-By: <AI tool>`. See
-  [`CONTRIBUTING.md`](CONTRIBUTING.md#identity).
+- **No AI-attribution trailers** — no `Generated with ...` and no
+  `Co-Authored-By: <AI tool>`.
 
 ## What CI checks
 
