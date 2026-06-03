@@ -133,7 +133,7 @@ describe("live api.antpath.ai — event coordinator: listen (WS) + snapshot + do
         const snapshot = await client.listEvents(runId);
 
         // 3. Download the durable archive: ticket → coordinator manifest. The
-        //    manifest is written by a later Inngest step (complete-coordinator)
+        //    manifest is written by a later workflow step (complete-coordinator)
         //    after terminal, so retry briefly until it's populated.
         let manifest = null;
         for (let attempt = 0; attempt < 5 && !manifest; attempt++) {

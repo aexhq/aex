@@ -43,7 +43,7 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
         model: "deepseek-chat",
         prompt: "hi",
         secrets: { deepseek: { apiKey: "sk-x" } }
-      } as Parameters<AntpathClient["submitRun"]>[0])
+      } as unknown as Parameters<AntpathClient["submitRun"]>[0])
     ).rejects.toMatchObject({ name: "AntpathError", code: "RUNTIME_UNSUPPORTED" });
 
     // The rejection happened before the network: no request was made.
@@ -61,7 +61,7 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
         model: "deepseek-chat",
         prompt: "hi",
         secrets: { deepseek: { apiKey: "sk-x" } }
-      } as Parameters<AntpathClient["submitRun"]>[0]);
+      } as unknown as Parameters<AntpathClient["submitRun"]>[0]);
     } catch (e) {
       caught = e;
     }

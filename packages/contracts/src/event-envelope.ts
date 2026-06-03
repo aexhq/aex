@@ -62,7 +62,7 @@ export const ANTPATH_EVENT_MAP_VERSION = 1 as const;
  *                 lifecycle, diagnostics, non-fatal stream errors.
  *   - `mcp`     — an MCP server (a tool call/result routed through MCP).
  *   - `antpath` — the platform: skills, files, and other antpath-native events.
- *   - `workflow`— the orchestration layer (the Inngest run-lifecycle / trace).
+ *   - `workflow`— the orchestration layer (Cloudflare Workflows trace).
  *   - `machine` — the managed host the runtime executes on (machine-level host
  *                 logs). A forthcoming source; `runtime` stays the
  *                 Goose-container / Anthropic-session source, distinct from the

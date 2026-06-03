@@ -3,7 +3,7 @@
  *
  * Drives the **published `antpath` SDK** against the live
  * api.antpath.ai hosted API with a real DeepSeek round-trip on the
- * Goose Managed runtime: SDK → /runs → Inngest run-lifecycle → Fly
+ * Goose Managed runtime: SDK → /runs → Cloudflare Workflow → Fly
  * Machine → real goose subprocess → BYOK provider-proxy → api.deepseek.com →
  * stream-json events → terminal. No smoke shortcut.
  *

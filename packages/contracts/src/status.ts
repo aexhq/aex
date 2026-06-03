@@ -45,7 +45,7 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
  * STRICT SUBSET of {@link TERMINAL_RUN_STATUSES}: the read-terminal set also
  * includes the post-terminal housekeeping states (`cleanup_failed`,
  * `pending_delete`, `deleted`) which the funnel never writes as an outcome.
- * The worker's `TerminalRunStatus` and the Inngest `TerminalOutcome` both
+ * The worker's `TerminalRunStatus` and the workflow `TerminalOutcome` both
  * derive from this so the four call sites can't drift.
  */
 export const RUN_TERMINAL_OUTCOMES = [
