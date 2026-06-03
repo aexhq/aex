@@ -65,9 +65,6 @@ jobs:
       - name: Docs build
         run: pnpm run docs:build
 
-      - name: Build
-        run: pnpm build
-
       - name: Pack SDK tarball
         id: pack
         run: |

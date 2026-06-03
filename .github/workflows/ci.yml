@@ -6,6 +6,13 @@ on:
     branches:
       - main
 
+# Cancel superseded in-flight runs for the same PR; main-push runs are never
+# cancelled (github.head_ref is empty on push, so each push gets its own
+# run_id group and runs to completion).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   public:
     name: Install, lint, test, pack

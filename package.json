@@ -7,10 +7,10 @@
   "packageManager": "pnpm@10.23.0",
   "scripts": {
     "build": "pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/conformance run build && pnpm --filter @antpath/cli run build && pnpm --filter antpath run build",
-    "lint": "pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/conformance run build && pnpm --filter antpath run build && tsc --noEmit -p tsconfig.scripts.json && pnpm -r --workspace-concurrency=1 --if-present run lint && pnpm run lint:tests",
+    "lint": "pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/conformance run build && pnpm --filter antpath run build && tsc --noEmit -p tsconfig.scripts.json && pnpm -r --workspace-concurrency=4 --if-present run lint && pnpm run lint:tests",
     "lint:tests": "eslint --max-warnings=0",
     "test": "pnpm test:unit",
-    "test:unit": "pnpm -r --workspace-concurrency=1 --if-present run test:unit && pnpm exec vitest run --root scripts/validate capability-matrix.test.ts",
+    "test:unit": "pnpm -r --workspace-concurrency=2 --if-present run test:unit && pnpm exec vitest run --root scripts/validate capability-matrix.test.ts",
     "test:user": "pnpm --filter @antpath/user-tests run test:user",
     "test:user:offline": "pnpm --filter @antpath/user-tests run test:user:offline",
     "test:user:heavy": "pnpm --filter @antpath/user-tests run test:user:heavy",
