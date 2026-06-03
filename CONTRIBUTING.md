@@ -26,11 +26,12 @@ pack checks.
 1. Fork and create a topic branch off `main`. Branch naming is
    informal — `fix/x`, `feat/x`, `docs/x` is fine.
 2. Keep commits focused. Don't bundle unrelated changes into one PR.
-3. Before pushing, the `pre-push` hook runs `pnpm lint`, `pnpm test`,
-   `pnpm build`, `pnpm pack:sdk`, and a version-drift check. If you
-   bypass the hook locally, CI will run the same checks.
-4. Open a PR against `main`. [`Checks`](.github/workflows/ci.yml)
-   runs the zero-cost static/type/build/unit gates automatically.
+3. Before pushing, run the relevant public-safe gates locally: `pnpm lint`,
+   `pnpm test`, `pnpm run test:user:offline`, `pnpm run docs:build`, and
+   `pnpm run pack:sdk`.
+4. Open a PR against `main`. [`CI`](.github/workflows/ci.yml)
+   runs the static/type/unit/offline user-test/docs/package gates
+   automatically.
 5. Don't force-push `main`. Force-pushing your topic branch is fine.
 
 ## Commit messages
@@ -44,17 +45,15 @@ pack checks.
 
 ## What CI checks
 
-| Workflow                | Scope                                                  |
-| ----------------------- | ------------------------------------------------------ |
-| `Checks`                | automatic zero-cost lint/type/build/unit gates         |
-| `CLI` / `SDK`           | CLI validation and SDK package publish path            |
-| `Docs`                  | documentation source generation and type checks        |
+| Workflow | Scope |
+| --- | --- |
+| [`CI`](.github/workflows/ci.yml) | automatic lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
+| [`Release`](.github/workflows/release.yml) | manual protected npm publish plus post-publish offline user tests |
+| [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 
 Releases are manual. SDK releases are driven by bumping
-`packages/sdk/package.json#version`, then running the
-[`SDK`](.github/workflows/sdk.yml) workflow; the
-[`Publish package`](.github/workflows/publish.yml) workflow publishes to npm and
-cuts a GitHub Release only when called by the SDK release path.
+`packages/sdk/package.json#version` and `packages/sdk/src/version.ts`, then
+running the [`Release`](.github/workflows/release.yml) workflow from `main`.
 
 ## What reviewers look for
 

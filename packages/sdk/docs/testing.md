@@ -12,10 +12,18 @@ reading or changing implementation.
 Workspace-wide commands:
 
 ```text
-pnpm test                                       # unit, all packages, deterministic
-pnpm test:integration                           # live external systems — no skip flags
-pnpm test:e2e                                   # full top-to-bottom flows against live services
-pnpm test:user                                  # published antpath package (offline + live)
+pnpm lint                                      # typecheck/build prerequisites + lint
+pnpm test                                      # unit, all packages, deterministic
+pnpm test:user:offline                         # clean install of packed/published SDK, no live API
+pnpm test:user                                 # live hosted API user tests
+pnpm test:user:heavy                           # explicit heavy live canary
+pnpm run docs:build                            # generated docs + Next build
+pnpm run pack:sdk                              # SDK publish dry-run + public boundary check
 ```
 
-Unit tests are deterministic and may use fakes. Integration tests run live external systems without any skip flag; if credentials are missing they fail loudly. Live e2e and user-live tests require `.env.local` (or runner-provided env) to include `ANTHROPIC_API_KEY` and any other live target vars.
+Unit tests are deterministic and may use fakes. Offline user tests install the
+packed or published SDK into clean temp projects and do not need provider
+credentials. Live user tests run against a hosted antpath API and fail loudly
+when required env is missing: `ANTPATH_API_URL`, `ANTPATH_API_TOKEN`,
+`DEEPSEEK_API_KEY`, and exactly one of `ANTPATH_USER_TEST_TARBALL` or
+`ANTPATH_USER_TEST_VERSION`.

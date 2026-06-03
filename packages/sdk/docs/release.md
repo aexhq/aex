@@ -4,64 +4,96 @@ title: Release
 
 # Release
 
-Releasing is **atomic** and **driven by `packages/sdk/package.json#version`**: bump the SDK version on `main` and the publish pipeline carries that exact version through npm → git tag → GitHub Release in one job. Any push to `main` that does not bump the version is a publish no-op.
+Releases are manually dispatched from `.github/workflows/release.yml` after the
+target version is already on `main`. The npm package version is the release
+source of truth. The workflow publishes to npm and runs post-publish install
+checks, but it does not create git tags or GitHub Releases, keeping the remote
+repository on a clean `main` branch unless tags are added deliberately later.
 
 ## How to ship a release
 
-1. On a branch, bump `packages/sdk/package.json#version` to the next semver. Land any companion code/doc changes in the same PR.
-2. Merge into `main` (or push directly if you have the right). The pre-push hook (see [Local guard rails](#local-guard-rails)) refuses the push if the local version still matches what's on npm or has already been git-tagged.
-3. CI (`.github/workflows/ci-fast.yml`) runs the `version-gate` job on every PR and direct push to `main`. It diffs against the base ref using [`scripts/check-version-drift.mjs --strict`](../../../scripts/check-version-drift.mjs) and fails fast if anything under `packages/{sdk,cli,shared}/src/` or the listed exact paths changed without a fresh version. **`--strict` treats unreachable npm as a hard failure** so we never publish on top of an existing version.
-4. After merge, the `Publish package` workflow (`.github/workflows/publish.yml`) is triggered automatically on push to `main` and decides whether to ship.
+1. Bump both `packages/sdk/package.json#version` and
+   `packages/sdk/src/version.ts` to the next semver.
+2. Land the change on `main` with any companion code or docs.
+3. Confirm CI is green.
+4. Run the **Release** workflow from `main` and choose the npm dist-tag
+   (`latest` or `next`).
 
-You don't tag locally and you don't open a GitHub Release manually — the workflow does both. If the workflow ends red after a successful `npm publish`, the npm version is the source of truth and a human can tag/release retroactively.
+If `antpath@<version>` already exists on npm, the release workflow fails before
+publishing. A failed release is fixed by bumping to a higher version and running
+the workflow again.
 
-## Publish pipeline
+## Release pipeline
 
-The workflow has three jobs, in this order:
+The workflow has two jobs:
 
-1. **`decide`** — compares the local `packages/sdk/package.json#version` with `npm view antpath@latest version`.
-   - If they match → output `proceed=false` and the rest of the pipeline no-ops. Documentation-only commits, refactors that ride along with a previous version, and any other non-publishable change pass through cleanly.
-   - If they differ → `proceed=true`, with the local version flowing forward as the canonical `v<version>` for tagging and release notes.
-2. **`publish`** (gated on `proceed=true`) — single linear job:
-   - `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm test`, `pnpm build`.
-   - `pnpm --filter antpath pack` into `$RUNNER_TEMP`.
-   - **Pre-publish user-tests gate**: runs `apps/user-tests` `test:user:offline` against the packed tarball. A broken artifact (missing `bin`, broken shebang, leaked workspace dep, ESM-only contract violation, …) never reaches npm.
-   - **Final freshness check**: `npm view antpath@${VERSION} version` — guards the rare race where someone else publishes the same version between `decide` and here.
-   - `pnpm publish --provenance --no-git-checks` from `packages/sdk`. Auth is GitHub OIDC via `id-token: write` plus npm Trusted Publishers — there is no `NPM_TOKEN` secret.
-   - `git tag -a v${VERSION}` signed as the canonical commit identity, then `git push origin v${VERSION}`.
-   - `gh release create v${VERSION} --generate-notes`.
-3. **`user-tests-post-publish`** (matrix `ubuntu-latest, windows-latest`) — waits for registry visibility with `scripts/wait-for-npm.mjs antpath <version>` (catches the "metadata says yes but CDN tarball 404s" case), then runs `test:user:offline` against the published version on both runners.
+1. **`publish`** runs on Ubuntu in the protected `npm-release` environment:
+   - `pnpm install --frozen-lockfile`
+   - npm version availability check for `packages/sdk/package.json#version`
+   - `pnpm lint`
+   - `pnpm test`
+   - `pnpm run docs:build`
+   - `pnpm build`
+   - `pnpm --filter antpath pack`
+   - `pnpm run test:user:offline` against the packed tarball
+   - a final npm version availability check
+   - `pnpm publish --provenance --no-git-checks --access public`
+2. **`post-publish-user-tests`** waits for npm registry visibility, then runs
+   `pnpm run test:user:offline` against the published version on Ubuntu and
+   Windows.
 
-Atomicity boundary: **publish + tag + GitHub Release happen in the same job**. Until that job goes green, the release is not done — even if `npm publish` already succeeded. Post-publish user-tests are a follow-on signal, not part of the atomic act.
+The pre-publish user-test gate catches broken package shape, missing CLI bin,
+workspace dependency leaks, and TypeScript/ESM install regressions before npm
+publish. The post-publish matrix confirms the published registry artifact is
+installable from clean user projects on both Linux and Windows.
 
 ## What ships in the tarball
 
-The published tarball is **self-contained**. It declares **zero `@antpath/*` runtime dependencies** and is installable from a clean `npm install antpath` with no workspace access:
+The published tarball is **self-contained**. It declares **zero `@antpath/*`
+runtime dependencies** and is installable from a clean `npm install antpath`
+with no workspace access:
 
-- `@antpath/contracts` lives in `packages/sdk/package.json#devDependencies` only. At build time, [`packages/sdk/scripts/inline-contracts.mjs`](../scripts/inline-contracts.mjs) copies `packages/contracts/dist/**` into `packages/sdk/dist/_contracts/` and rewrites `from "@antpath/contracts"` to `from "./_contracts/index.js"` across the SDK dist tree. A sanity check at the end of that script refuses to finish if any bare `@antpath/contracts` specifier survives.
-- `@antpath/cli` is bundled at build time by [`packages/sdk/scripts/bundle-cli.mjs`](../scripts/bundle-cli.mjs) into a single `dist/cli.mjs`, which is the `bin: antpath` entry in `packages/sdk/package.json`.
-- This invariant is mechanically enforced by `apps/user-tests/test/offline/install.test.ts` ("declares no @antpath/* runtime dependencies") — the pre-publish gate fails before npm if any workspace dep leaks back into `dependencies`/`peerDependencies`/`optionalDependencies`.
+- `@antpath/contracts` lives in `packages/sdk/package.json#devDependencies`
+  only. At build time, [`packages/sdk/scripts/inline-contracts.mjs`](../scripts/inline-contracts.mjs)
+  copies `packages/contracts/dist/**` into `packages/sdk/dist/_contracts/` and
+  rewrites `from "@antpath/contracts"` to `from "./_contracts/index.js"` across
+  the SDK dist tree. A sanity check at the end of that script refuses to finish
+  if any bare `@antpath/contracts` specifier survives.
+- `@antpath/cli` is bundled at build time by
+  [`packages/sdk/scripts/bundle-cli.mjs`](../scripts/bundle-cli.mjs) into a
+  single `dist/cli.mjs`, which is the `bin: antpath` entry in
+  `packages/sdk/package.json`.
+- This invariant is mechanically enforced by
+  `apps/user-tests/test/offline/install.test.ts` ("declares no @antpath/*
+  runtime dependencies") before publish.
 
-## Local guard rails
+## Repository setup
 
-Every contributor who pushes is expected to install the tracked pre-push hook from the repo root once:
+Configure npm Trusted Publishing for this repository:
+
+- **Organization or user**: `weilueluo`
+- **Repository**: `antpath`
+- **Workflow filename**: `release.yml`
+- **Environment name**: `npm-release`
+
+Protect the GitHub `npm-release` environment with the reviewers or deployment
+rules you want before enabling real publishes. No `NPM_TOKEN` secret is
+required when Trusted Publishing is configured.
+
+## Local checklist
+
+Before dispatching a release, the same public-safe checks can be run locally:
 
 ```text
-pnpm hooks:install
+pnpm lint
+pnpm test
+pnpm run test:user:offline
+pnpm run docs:build
+pnpm run pack:sdk
 ```
-
-The hook runs lint, tests, build, an SDK pack dry-run, and `check-version-drift.mjs` (advisory mode — unreachable npm is a warning so offline development still works). It catches "I bumped a runtime file but forgot to bump the version" or "the new version is already on npm" before the push leaves the laptop.
-
-## Repository setup (one-time)
-
-1. Reserve `antpath` on npm.
-2. Add a Trusted Publisher for this repository (`npmjs.com` → *Settings* → *Publishing access*):
-   - **Organization or user**: `weilueluo`
-   - **Repository**: `antpath`
-   - **Workflow filename**: `publish.yml`
-   - **Environment name**: leave empty.
-3. No `NPM_TOKEN` secret is required — OIDC handles auth.
 
 ## Rollback
 
-There is no "unpublish" path: npm prevents reuse of a published version, and a bad release is fixed by publishing a higher version. If the atomic publish job dies between `npm publish` and `gh release create`, retag manually (`git tag -a v<version>`, push, `gh release create`); npm is already truthful.
+There is no reliable "unpublish and reuse the version" path. npm version numbers
+are effectively immutable for release purposes, so a bad release is fixed by
+publishing a higher version.

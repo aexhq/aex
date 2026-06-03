@@ -132,11 +132,15 @@ antpath run \
 
 ```text
 pnpm test                # unit (deterministic; uses fakes/snapshots)
-pnpm test:e2e            # full top-to-bottom against a real antpath stack + Anthropic
-pnpm test:user           # exercises the published package via npm install (offline + live)
+pnpm test:user:offline   # clean install of packed/published SDK, no live API
+pnpm test:user           # live hosted API user tests
+pnpm test:user:heavy     # explicit heavy live canary
 ```
 
-`pnpm test:user` auto-packs the current SDK when no artifact env is set. CI can pin a specific artifact with exactly one of `ANTPATH_USER_TEST_TARBALL` or `ANTPATH_USER_TEST_VERSION` (+ live target vars for the live siblings).
+User tests auto-pack the current SDK when no artifact env is set. CI can pin a
+specific artifact with exactly one of `ANTPATH_USER_TEST_TARBALL` or
+`ANTPATH_USER_TEST_VERSION`; live runs also need `ANTPATH_API_URL`,
+`ANTPATH_API_TOKEN`, and `DEEPSEEK_API_KEY`.
 
 ## Guides
 

@@ -7,7 +7,7 @@
  * package (tarball or registry version) from a child process so
  * workspace symlinks cannot leak in.
  *
- * For each managed provider cell the test submits one run with:
+ * The DeepSeek-managed cell submits one run with:
  *   - 2 inline Skills (proves multi-skill manifest + materialization)
  *   - 2 remote MCP servers (proves multi-MCP recipe.yaml `extensions:`
  *     block reaches Goose with Authorization headers; the CLI flag
@@ -40,8 +40,7 @@
  * Required env:
  *   ANTPATH_API_URL                live hosted API URL (local or prod)
  *   ANTPATH_API_TOKEN               workspace API token
- *   DEEPSEEK_API_KEY      customer DeepSeek API key
- *   DEEPSEEK_API_KEY       customer DeepSeek API key
+ *   DEEPSEEK_API_KEY                customer DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL            packed SDK tarball
  *     OR ANTPATH_USER_TEST_VERSION       published version on npm
  */

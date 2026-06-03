@@ -1,4 +1,4 @@
-name: Public CI
+name: CI
 
 on:
   pull_request:
@@ -31,6 +31,12 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Offline user tests
+        run: pnpm run test:user:offline
+
+      - name: Docs build
+        run: pnpm run docs:build
 
       - name: Pack SDK
         run: pnpm run pack:sdk

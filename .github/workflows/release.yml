@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      npm_dist_tag:
+        description: npm dist-tag to publish under.
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
+
+concurrency:
+  group: release-antpath
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish antpath
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Read SDK version
+        id: version
+        run: |
+          version="$(node -p "require('./packages/sdk/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing antpath@$version"
+
+      - name: Ensure npm version is available
+        run: node scripts/cicd/assert-npm-version-available.mjs antpath "${{ steps.version.outputs.version }}"
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Docs build
+        run: pnpm run docs:build
+
+      - name: Build
+        run: pnpm build
+
+      - name: Pack SDK tarball
+        id: pack
+        run: |
+          pack_dir="$RUNNER_TEMP/antpath-pack"
+          mkdir -p "$pack_dir"
+          pnpm --filter antpath pack --pack-destination "$pack_dir"
+          tarball="$(find "$pack_dir" -maxdepth 1 -name 'antpath-*.tgz' -print -quit)"
+          if [ -z "$tarball" ]; then
+            echo "No antpath tarball was produced." >&2
+            exit 1
+          fi
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Offline user tests against tarball
+        env:
+          ANTPATH_USER_TEST_TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: pnpm run test:user:offline
+
+      - name: Final npm version check
+        run: node scripts/cicd/assert-npm-version-available.mjs antpath "${{ steps.version.outputs.version }}"
+
+      - name: Publish to npm
+        working-directory: packages/sdk
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+        run: pnpm publish --provenance --no-git-checks --access public --tag "$NPM_DIST_TAG"
+
+  post-publish-user-tests:
+    name: Post-publish offline user tests (${{ matrix.os }})
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for npm registry
+        run: node scripts/cicd/wait-for-npm.mjs antpath "${{ needs.publish.outputs.version }}"
+
+      - name: Offline user tests against published package
+        env:
+          ANTPATH_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
+        run: pnpm run test:user:offline

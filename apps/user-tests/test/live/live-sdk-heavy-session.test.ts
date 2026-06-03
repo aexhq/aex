@@ -13,12 +13,10 @@
  * Runs as an explicit gate AFTER the rest of the live user-tests pass
  * (own pnpm script `test:user:heavy` + own vitest config), so it is
  * never swept into the default `test:user` run. Wired into
- * rebuild-live.yml as the manual canary.
+ * live-user-tests.yml as the manual canary.
  *
- * Scope: Anthropic + DeepSeek, one model each (no other provider keys
- * are provisioned in CI). Two managed cells:
- *   - managed / deepseek   full Goose surface
- *   - managed / deepseek  full Goose surface
+ * Scope: one DeepSeek-managed cell. No other provider keys are provisioned in
+ * CI for this public live canary.
  *
  * Each cell submits ONE run carrying the full surface together:
  *   - 3 inline Skills          multi-skill manifest + materialization
@@ -61,13 +59,11 @@
  * Required env:
  *   ANTPATH_API_URL                live hosted API URL (local or prod)
  *   ANTPATH_API_TOKEN               workspace API token
- *   DEEPSEEK_API_KEY      customer DeepSeek API key
- *   DEEPSEEK_API_KEY       customer DeepSeek API key
+ *   DEEPSEEK_API_KEY                customer DeepSeek API key
  *   ANTPATH_USER_TEST_TARBALL            packed SDK tarball
  *     OR ANTPATH_USER_TEST_VERSION       published version on npm
  * Optional:
  *   ANTPATH_USER_TEST_DEEPSEEK_MODEL    default "deepseek-chat"
- *   ANTPATH_USER_TEST_DEEPSEEK_MODEL     default "deepseek-chat"
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

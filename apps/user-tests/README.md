@@ -1,9 +1,10 @@
 # @antpath/user-tests
 
 Layer-4 test workspace. Exercises a clean install of the current **packed
-tarball** (local/offline default and pre-publish gate inside `publish.yml`) or
-the **published artifact** (post-publish matrix and `workflow_dispatch`) the
-way a real user or AI agent would on day one of `npm install antpath`.
+tarball** (local/offline default, CI, and the release pre-publish gate)
+or the **published artifact** (release post-publish checks and manual live
+workflow runs) the way a real user or AI agent would on day one of
+`npm install antpath`.
 
 This workspace deliberately has **no `workspace:*` dependencies on
 `antpath` or `@antpath/*`**. Every scenario spawns a child process whose
@@ -46,7 +47,8 @@ script; because these are named `test:user*`, that gate never runs them
 by default. That matters: they fail loudly when the artifact-under-test
 env is unset (by design), so pulling them into the default gate would
 break it for everyone. They run only via explicit invocation here and
-from `publish.yml` / `rebuild-live.yml`.
+from `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and
+`.github/workflows/live-user-tests.yml`.
 
 Explicit artifact inputs are strict: setting both variables, an invalid version,
 or a missing tarball path is a **hard error**, never a silent skip. The
@@ -55,27 +57,27 @@ post-publish gate stays pinned to the exact published version through
 
 ## CI prerequisites
 
-The pre-publish gate inside `publish.yml` and the post-publish matrix
-job run the offline scenarios only — neither needs an Anthropic key.
+CI runs the offline scenarios after the unit gate. The release workflow
+runs the same offline scenarios against the packed tarball before publish and
+against the published npm version after publish. Neither path needs a provider
+key.
 
-Live scenarios are driven from `publish.yml` post-publish, against the
-deployed `api.antpath.ai` hosted API. They require:
+Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
+the configured hosted API. They require:
 
-- **Secret `USER_TEST_ANTHROPIC_KEY`** — a real Anthropic API key, so
-  the submitted run can drive Claude end-to-end.
-- **Secret `USER_TEST_API_TOKEN`** + variable `USER_TEST_ANTPATH_URL`
-  — a workspace API token whose scope set covers `runs:read,write`,
-  `outputs:read`, and `skills:read,write,delete`. The live scenarios
-  probe the token's scopes on `beforeAll` and skip-with-warning when
-  required scopes are absent, so an incomplete secret doesn't fail
-  the deploy chain.
+- **Variable `ANTPATH_API_URL`** — hosted API URL. Legacy
+  `USER_TEST_ANTPATH_URL` is still accepted by the workflow.
+- **Secret `ANTPATH_API_TOKEN`** — workspace API token for the selected API URL.
+  Legacy `USER_TEST_API_TOKEN` is still accepted by the workflow.
+- **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key for the managed live
+  scenarios. Legacy `USER_TEST_DEEPSEEK_KEY` is still accepted by the workflow.
 
 ## Live SDK siblings (2026 rebuild)
 
-`test/live/live-sdk-deepseek.test.ts` and
-`test/live/live-sdk-anthropic-managed.test.ts` exercise the published
-tarball end-to-end against the deployed `api.antpath.ai` hosted API —
-one file per managed provider dispatch cell.
+The `test/live/live-sdk-*.test.ts` files exercise the published tarball
+end-to-end against the configured hosted API. Current CI coverage is
+DeepSeek-managed because that is the provider key provisioned for the public
+live workflow.
 
 Each test installs the packed tarball into a tempdir, spawns
 `AntpathClient.submitRun({ provider, ... })`, polls `getRun`,
@@ -87,15 +89,14 @@ Required env (all three):
 - `ANTPATH_API_URL`
 - `ANTPATH_API_TOKEN`
 - `ANTPATH_USER_TEST_TARBALL` *or* `ANTPATH_USER_TEST_VERSION`
-- `DEEPSEEK_API_KEY` (deepseek file)
-  / `ANTHROPIC_API_KEY` (anthropic file)
+- `DEEPSEEK_API_KEY`
 
 Local `.env.local` files may still use the legacy names
 `ANTPATH_LIVE_API_BASE`, `ANTPATH_LIVE_API_TOKEN`,
-`ANTPATH_USER_TEST_DEEPSEEK_KEY`, and `ANTPATH_USER_TEST_ANTHROPIC_KEY`;
-the test loader aliases them to the canonical variables above.
+and `ANTPATH_USER_TEST_DEEPSEEK_KEY`; the test loader aliases them to the
+canonical variables above.
 
-CI lives in `.github/workflows/rebuild-live.yml` (`sdk-live` job).
+CI lives in `.github/workflows/live-user-tests.yml`.
 
 `test/live/config-proxyendpoints.user.test.ts` requires a real
 `PROXY_OK` round-trip. The test uses a public no-auth upstream and must not be
@@ -118,8 +119,8 @@ exercised — that feature was dropped in the MVP.) Its purpose is to
 prove the **app** behaves as expected under a
 maximal submission, not to test model capability.
 
-Scope: Anthropic + DeepSeek, one model each. Two managed cells —
-`managed/deepseek`, `managed/anthropic`.
+Scope: one DeepSeek-managed cell using the configured
+`ANTPATH_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-chat`.
 
 It is **excluded** from the default `test:user` sweep (see
 `vitest.config.ts`) and runs only via its own entrypoint + config:
@@ -130,9 +131,9 @@ pnpm --filter @antpath/user-tests run test:user:heavy   # or: pnpm test:user:hea
 
 Required env is identical to the comprehensive scenario
 (`ANTPATH_API_URL`, `ANTPATH_API_TOKEN`, `ANTPATH_USER_TEST_TARBALL` or
-`ANTPATH_USER_TEST_VERSION`, and the two `ANTHROPIC_API_KEY` /
-`DEEPSEEK_API_KEY` provider keys); model overrides are
-`ANTPATH_USER_TEST_{ANTHROPIC,DEEPSEEK}_MODEL`.
+`ANTPATH_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
+`ANTPATH_USER_TEST_DEEPSEEK_MODEL`.
 
-CI: it runs as a **hard gate** in manual `rebuild-live.yml` canary runs
-(`sdk-live` job).
+CI: it runs as a **hard gate** when the manual
+`.github/workflows/live-user-tests.yml` workflow is dispatched with
+`run_heavy=true`.
