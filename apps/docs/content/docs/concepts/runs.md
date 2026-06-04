@@ -10,7 +10,7 @@ A run is an immutable request to execute an agent task. The call site supplies t
 const runId = await client.submitRun({
   provider: "anthropic",
   model: "claude-haiku-4-5",
-  prompt: "Write the report and save it under $AEX_OUTPUTS.",
+  prompt: "Write the report and save it as a file.",
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
 });
 

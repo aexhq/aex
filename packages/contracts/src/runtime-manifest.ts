@@ -46,8 +46,6 @@ export interface RuntimeManifest {
   readonly filesRoot: string;
   /** Parent dir of non-SKILL.md asset mounts: `<assetsRoot>/<skl_id>/<rel-path>`. */
   readonly assetsRoot: string;
-  /** Absolute path the agent writes output files into for capture. */
-  readonly outputsRoot: string;
   /** Absolute path of the in-container aex runtime bridge (invoke via `node`). */
   readonly aexCli: string;
   /** Absolute path of the per-run proxy-endpoints manifest. */
@@ -78,7 +76,6 @@ const ANTHROPIC_PATHS = Object.freeze({
   skillsRoot: "/workspace/skills",
   filesRoot: "/mnt/session/uploads/aex/files",
   assetsRoot: "/mnt/session/uploads/aex/assets",
-  outputsRoot: "/mnt/session/outputs",
   aexCli: "/mnt/session/uploads/aex/aex",
   indexJson: "/mnt/session/uploads/aex/index.json",
   readme: "/mnt/session/uploads/aex/SKILLS.md",
@@ -129,7 +126,6 @@ export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeM
   const aexEnvVars: Record<string, string> = {
     AEX_PROVIDER: input.provider,
     AEX_CLI: paths.aexCli,
-    AEX_OUTPUTS: paths.outputsRoot,
     AEX_SKILLS_ROOT: paths.skillsRoot,
     AEX_FILES_ROOT: paths.filesRoot,
     AEX_ASSETS_ROOT: paths.assetsRoot,
@@ -154,7 +150,6 @@ export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeM
     skillsRoot: paths.skillsRoot,
     filesRoot: paths.filesRoot,
     assetsRoot: paths.assetsRoot,
-    outputsRoot: paths.outputsRoot,
     aexCli: paths.aexCli,
     indexJson: paths.indexJson,
     readme: paths.readme,

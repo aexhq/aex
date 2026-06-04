@@ -31,16 +31,16 @@ describe("submission.environment.envVars — additive surface", () => {
     const parsed = submit({
       envVars: {
         BROLL_STORE: "/mnt/session/broll/store",
-        BROLL_OUTPUTS: "/mnt/session/outputs"
+        BROLL_CACHE: "/mnt/session/broll/cache"
       }
     });
     expect(parsed.submission.environment?.envVars).toEqual({
       BROLL_STORE: "/mnt/session/broll/store",
-      BROLL_OUTPUTS: "/mnt/session/outputs"
+      BROLL_CACHE: "/mnt/session/broll/cache"
     });
     expect(Object.keys(parsed.submission.environment!.envVars!)).toEqual([
       "BROLL_STORE",
-      "BROLL_OUTPUTS"
+      "BROLL_CACHE"
     ]);
   });
 
@@ -73,7 +73,7 @@ describe("submission.environment.envVars — additive surface", () => {
   });
 
   it("rejects keys using the reserved AEX_ prefix", () => {
-    expect(() => submit({ envVars: { AEX_OUTPUTS: "/elsewhere" } })).toThrow(
+    expect(() => submit({ envVars: { AEX_CLI: "/elsewhere" } })).toThrow(
       /uses reserved prefix "AEX_"/
     );
   });

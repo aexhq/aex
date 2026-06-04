@@ -87,9 +87,9 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
     case "events":
       return runEventsCmd(io, rest);
     case "outputs":
-      // `outputs sync <dirs>` is the in-container internal subcommand
-      // the platform worker invokes via a synthetic agent turn. The
-      // bare `outputs <run-id>` form is the host-side list verb. We
+      // `outputs sync <dirs>` is the legacy in-container internal
+      // capture walker. The bare `outputs <run-id>` form is the
+      // host-side list verb. We
       // distinguish on the first sub-arg rather than on
       // manifest-presence so a misconfigured host invocation
       // (e.g. `aex outputs sync ...` on a developer machine)

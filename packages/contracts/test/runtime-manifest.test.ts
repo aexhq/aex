@@ -8,7 +8,6 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     expect(m.skillsRoot).toBe("/workspace/skills");
     expect(m.filesRoot).toBe("/mnt/session/uploads/aex/files");
     expect(m.assetsRoot).toBe("/mnt/session/uploads/aex/assets");
-    expect(m.outputsRoot).toBe("/mnt/session/outputs");
     expect(m.aexCli).toBe("/mnt/session/uploads/aex/aex");
     expect(m.indexJson).toBe("/mnt/session/uploads/aex/index.json");
     expect(m.readme).toBe("/mnt/session/uploads/aex/SKILLS.md");
@@ -20,7 +19,6 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     const m = buildRuntimeManifest({ provider: "anthropic" });
     expect(m.envVars.AEX_PROVIDER).toBe("anthropic");
     expect(m.envVars.AEX_CLI).toBe(m.aexCli);
-    expect(m.envVars.AEX_OUTPUTS).toBe(m.outputsRoot);
     expect(m.envVars.AEX_SKILLS_ROOT).toBe(m.skillsRoot);
     expect(m.envVars.AEX_FILES_ROOT).toBe(m.filesRoot);
     expect(m.envVars.AEX_ASSETS_ROOT).toBe(m.assetsRoot);
@@ -35,13 +33,13 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
       provider: "anthropic",
       customerEnvVars: {
         BROLL_STORE: "/mnt/session/broll/store",
-        BROLL_OUTPUTS: "/mnt/session/outputs"
+        BROLL_CACHE: "/mnt/session/broll/cache"
       }
     });
     const keys = Object.keys(m.envVars);
     expect(keys[0]).toBe("AEX_PROVIDER");
     expect(keys.includes("BROLL_STORE")).toBe(true);
-    expect(keys.includes("BROLL_OUTPUTS")).toBe(true);
+    expect(keys.includes("BROLL_CACHE")).toBe(true);
     // aex keys come first, customer keys afterwards
     const brollIndex = keys.indexOf("BROLL_STORE");
     const lastAexIndex = Math.max(...keys.map((k, i) => (k.startsWith("AEX_") ? i : -1)));
@@ -55,9 +53,9 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     // values inside the container.
     const m = buildRuntimeManifest({
       provider: "anthropic",
-      customerEnvVars: { AEX_OUTPUTS: "/elsewhere", BROLL_STORE: "/x" } as Record<string, string>
+      customerEnvVars: { AEX_CLI: "/elsewhere", BROLL_STORE: "/x" } as Record<string, string>
     });
-    expect(m.envVars.AEX_OUTPUTS).toBe("/mnt/session/outputs");
+    expect(m.envVars.AEX_CLI).toBe("/mnt/session/uploads/aex/aex");
     expect(m.envVars.BROLL_STORE).toBe("/x");
   });
 

@@ -25,7 +25,6 @@ describe("Run.runtimeManifest — read from the run record", () => {
       skillsRoot: "/workspace/skills",
       filesRoot: "/mnt/session/uploads/aex/files",
       assetsRoot: "/mnt/session/uploads/aex/assets",
-      outputsRoot: "/mnt/session/outputs",
       aexCli: "/mnt/session/uploads/aex/aex",
       indexJson: "/mnt/session/uploads/aex/index.json",
       readme: "/mnt/session/uploads/aex/SKILLS.md",

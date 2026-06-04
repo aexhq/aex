@@ -1,23 +1,17 @@
 /**
  * aex outputs sync — IN-CONTAINER ONLY internal subcommand.
  *
- * This is NOT a user-facing verb. The platform worker drives a
- * synthetic agent turn at session terminal that tells the in-
- * container agent to run:
- *
- *   node /mnt/session/uploads/aex/aex outputs sync /mnt/session/outputs
- *
- * The agent runs this via its bash tool. The CLI walks each directory
- * and emits a structured JSON line per file to stdout, so the worker
- * (observing the agent's `agent.tool_result` event) has a deterministic
- * record of what files exist. The structured output is the platform's
- * deterministic capture receipt.
+ * This is NOT a user-facing verb. It is a legacy/internal directory walker:
+ * callers pass explicit absolute directories, and the command emits a
+ * structured JSON line per file to stdout. Managed runs now capture output by
+ * filesystem baseline/delta; there is no default output directory and no
+ * synthetic terminal agent turn.
  *
  * The subcommand:
  *  - REFUSES to run outside a managed run (no AEX_INDEX_PATH file).
  *  - Walks each provided directory recursively.
  *  - Emits one JSON line per file to stdout:
- *      {"dir":"/mnt/session/outputs","path":"/mnt/session/outputs/x.txt","sizeBytes":42}
+ *      {"dir":"/workspace/reports","path":"/workspace/reports/x.txt","sizeBytes":42}
  *  - Reports missing dirs via stderr (non-fatal). Exits 0 if at least
  *    one dir contained at least one file; 0 also when ALL dirs were
  *    empty (best-effort semantics — the worker still records the
