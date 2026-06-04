@@ -1,0 +1,62 @@
+name: Promote
+
+# Promote a dark release to a public dist-tag (default: latest).
+#
+# Dispatched manually OR cross-repo by antpath-platform's deploy.yml after the
+# platform's production plane is green against the dark release (automatic
+# promote). npm `dist-tag add` does NOT support OIDC trusted publishing
+# (OIDC is publish-only), so this step authenticates with a granular npm
+# token (NPM_TOKEN) scoped to the four packages — the one place a token is
+# still required. The dark publish itself stays tokenless (release.yml/OIDC).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to promote (e.g. 0.13.6).
+        required: true
+        type: string
+      to_tag:
+        description: Target dist-tag.
+        required: true
+        default: latest
+        type: string
+
+concurrency:
+  group: promote-antpath
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote antpath@${{ inputs.version }} -> ${{ inputs.to_tag }}
+    runs-on: ubuntu-latest
+    environment: npm-release
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Promote dist-tags
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          TO_TAG: ${{ inputs.to_tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN not set in the npm-release environment. dist-tag promotion needs a granular npm token (npm dist-tag does not support OIDC)."
+            exit 1
+          fi
+          for pkg in antpath @antpath/cli @antpath/contracts @antpath/conformance; do
+            echo "promoting ${pkg}@${VERSION} -> ${TO_TAG}"
+            npm dist-tag add "${pkg}@${VERSION}" "${TO_TAG}"
+          done
+          echo "=== resulting dist-tags ==="
+          for pkg in antpath @antpath/cli @antpath/contracts @antpath/conformance; do
+            npm view "$pkg" dist-tags --json || true
+          done

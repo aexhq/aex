@@ -11,6 +11,7 @@ on:
         options:
           - latest
           - next
+          - dark
 
 concurrency:
   group: release-antpath
@@ -43,6 +44,10 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      - name: Upgrade npm for trusted publishing (>=11.5.1)
+        # OIDC trusted publishing requires npm CLI >=11.5.1; Node 22 ships npm 10.x.
+        run: npm install -g npm@latest && npm --version
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
@@ -53,8 +58,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Releasing antpath@$version"
 
-      - name: Ensure npm version is available
-        run: node scripts/cicd/assert-npm-version-available.mjs antpath "${{ steps.version.outputs.version }}"
+      - name: Ensure npm versions are available
+        run: |
+          set -euo pipefail
+          for pkg in antpath @antpath/cli @antpath/contracts @antpath/conformance; do
+            node scripts/cicd/assert-npm-version-available.mjs "$pkg" "${{ steps.version.outputs.version }}"
+          done
 
       - name: Lint
         run: pnpm lint
@@ -86,12 +95,34 @@ jobs:
       - name: Final npm version check
         run: node scripts/cicd/assert-npm-version-available.mjs antpath "${{ steps.version.outputs.version }}"
 
-      - name: Publish to npm
-        working-directory: packages/sdk
+      - name: Publish to npm (trusted publishing / OIDC)
         env:
           NPM_CONFIG_PROVENANCE: "true"
           NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
-        run: pnpm publish --provenance --no-git-checks --access public --tag "$NPM_DIST_TAG"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Pack with pnpm so each tarball's `workspace:*` deps are rewritten to
+          # concrete versions, then publish each tarball with the npm CLI so the
+          # OIDC trusted-publishing exchange runs (pnpm publish does NOT perform
+          # the OIDC exchange; `npm publish` does not rewrite workspace: deps —
+          # pack-then-publish-tarball gives us both). Dependency order so a
+          # consumer resolving a just-published package finds its deps. All four
+          # packages share VERSION, so the tarball filename is exact (no glob).
+          pack_dir="$RUNNER_TEMP/antpath-publish"
+          mkdir -p "$pack_dir"
+          # pkg:tarball-basename pairs (scoped @antpath/x packs as antpath-x-<ver>.tgz)
+          for spec in "@antpath/contracts:antpath-contracts" "@antpath/conformance:antpath-conformance" "@antpath/cli:antpath-cli" "antpath:antpath"; do
+            pkg="${spec%%:*}"
+            pnpm --filter "$pkg" pack --pack-destination "$pack_dir"
+          done
+          for spec in "@antpath/contracts:antpath-contracts" "@antpath/conformance:antpath-conformance" "@antpath/cli:antpath-cli" "antpath:antpath"; do
+            pkg="${spec%%:*}"; base="${spec##*:}"
+            tgz="$pack_dir/${base}-${VERSION}.tgz"
+            [ -f "$tgz" ] || { echo "::error::missing tarball $tgz for $pkg"; ls -la "$pack_dir"; exit 1; }
+            echo "publishing $pkg from $tgz under tag $NPM_DIST_TAG"
+            npm publish "$tgz" --provenance --access public --tag "$NPM_DIST_TAG"
+          done
 
   post-publish-user-tests:
     name: Post-publish offline user tests (${{ matrix.os }})
