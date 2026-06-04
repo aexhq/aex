@@ -1,6 +1,6 @@
 {
   "name": "@antpath/contracts",
-  "version": "0.13.3",
+  "version": "0.13.6",
   "description": "Public antpath wire contracts, SDK transport helpers, and conformance-facing schemas.",
   "license": "Apache-2.0",
   "private": false,

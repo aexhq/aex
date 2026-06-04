@@ -176,3 +176,25 @@ describe("Skill.fromUrl — integrity, transport, and input guards", () => {
     expect(called).toBe(false);
   });
 });
+
+describe("Skill.fromCatalog — reference an uploaded catalog skill", () => {
+  const HASH = "a".repeat(64);
+
+  it("builds a non-draft asset ref from a ready catalog record", () => {
+    const skill = Skill.fromCatalog({ name: "my-tool", hash: `sha256:${HASH}` });
+    expect(skill.isDraft).toBe(false);
+    expect(skill.toJSON()).toEqual({ kind: "asset", assetId: `asset_${HASH}`, name: "my-tool" });
+  });
+
+  it("accepts a bare hex hash too", () => {
+    expect(Skill.fromCatalog({ name: "t", hash: HASH }).toJSON()).toMatchObject({ assetId: `asset_${HASH}` });
+  });
+
+  it("rejects a pending record with no content hash", () => {
+    expect(() => Skill.fromCatalog({ name: "t", hash: null })).toThrow(/sha256|ready/);
+  });
+
+  it("rejects an invalid name", () => {
+    expect(() => Skill.fromCatalog({ name: "Bad Name!", hash: `sha256:${HASH}` })).toThrow(/name must match/);
+  });
+})

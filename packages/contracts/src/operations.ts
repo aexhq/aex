@@ -218,9 +218,10 @@ export async function whoami(http: HttpClient): Promise<WhoAmI> {
  * with a matching `download*` verb:
  *
  *   - `outputs`  — the run's real deliverables (`runs/<id>/outputs/`).
- *   - `logs`     — platform diagnostics (`runs/<id>/logs/`: the
- *                  `anthropic-debug/`, `goose-logs/`, `fly-logs/`
- *                  artifacts), stored under their own R2 prefix.
+ *   - `logs`     — platform diagnostics (`runs/<id>/logs/`: canonical
+ *                  `runtime/`, `host/`, `provider-proxy/`, and
+ *                  `control-plane/` namespaces), stored separately from
+ *                  deliverables.
  *   - `events`   — typed events (`events.jsonl`) plus optional
  *                  log/full-stream JSONL files when the deployed event API
  *                  serves `channel=log` / `channel=all`.
@@ -400,8 +401,7 @@ export async function downloadOutputs(http: HttpClient, runId: string): Promise<
 }
 
 /**
- * Download only the platform diagnostics (the `logs` namespace) — the
- * `anthropic-debug/`, `goose-logs/`, `fly-logs/` artifacts. Zip
+ * Download only the platform diagnostics (the `logs` namespace). Zip
  * layout: `<rel>` per file plus a `manifest.json`
  * (`{ runId, namespace: "logs", logs[], errors[] }`).
  */
@@ -619,6 +619,78 @@ export async function createSkillBundle(
   return unwrapSkill(result);
 }
 
+/**
+ * Upload a workspace skill bundle DIRECTLY to object storage via the presign
+ * flow, so the bytes never transit the hosted API (bundle size bounded by the
+ * object store, not API memory). Falls back to the buffered multipart
+ * `createSkillBundle` when the hosted API has no object-store upload
+ * credentials (503 `presign_unconfigured`).
+ *
+ *   1. POST /api/skills/presign     { name, hash, sizeBytes } → { uploadUrl, requiredHeaders, skillId }
+ *   2. PUT bytes → uploadUrl        (signed checksum; the store rejects a mismatch)
+ *   3. POST /api/skills/:id/finalize { manifest } → finalized Skill
+ *
+ * `manifest` is the client-computed bundle manifest (the caller already
+ * validated the zip shape before hashing); the Worker records it on finalize
+ * without re-buffering the object.
+ */
+export async function createSkillBundleDirect(
+  http: HttpClient,
+  fetchImpl: (input: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
+  args: {
+    readonly name: string;
+    readonly body: Uint8Array;
+    readonly contentHash: string; // `sha256:<hex>`
+    readonly manifest: ReadonlyArray<{ readonly path: string; readonly size: number; readonly mode?: number }>;
+    readonly contentType?: string;
+  }
+): Promise<Skill> {
+  let presign: {
+    ok: boolean;
+    skillId: string;
+    uploadUrl: string;
+    requiredHeaders?: Record<string, string>;
+  };
+  try {
+    presign = await http.request<typeof presign>("/api/skills/presign", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: args.name, hash: args.contentHash, sizeBytes: args.body.byteLength })
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    const code = ((err as { details?: { code?: string } }).details ?? {}).code;
+    if (status === 503 && code === "presign_unconfigured") {
+      return createSkillBundle(http, {
+        name: args.name,
+        body: args.body,
+        ...(args.contentType ? { contentType: args.contentType } : {})
+      });
+    }
+    throw err;
+  }
+
+  const putRes = await fetchImpl(presign.uploadUrl, {
+    method: "PUT",
+    headers: { "content-type": args.contentType ?? "application/zip", ...(presign.requiredHeaders ?? {}) },
+    body: args.body as unknown as BodyInit
+  });
+  if (!putRes.ok) {
+    const detail = await putRes.text().catch(() => "");
+    throw new Error(`createSkillBundleDirect: direct upload PUT failed (status ${putRes.status})${detail ? `: ${detail.slice(0, 500)}` : ""}`);
+  }
+
+  const result = await http.request<{ readonly skill: Skill } | Skill>(
+    `/api/skills/${encodeURIComponent(presign.skillId)}/finalize`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ manifest: args.manifest })
+    }
+  );
+  return unwrapSkill(result);
+}
+
 export async function listSkills(http: HttpClient): Promise<readonly Skill[]> {
   const result = await http.request<{ readonly skills: readonly Skill[] } | readonly Skill[]>(
     "/api/skills"
@@ -821,66 +893,37 @@ function hasRun(value: Run | { readonly run: Run }): value is { readonly run: Ru
 }
 
 // ===========================================================================
-// Chunked asset upload (Phase C)
+// Workspace asset upload
 // ===========================================================================
 
-/** Payload returned by the BFF's upload-init endpoint. */
-export interface AssetUploadInitResult {
+export interface AssetUploadResult {
   readonly assetId: string;
-  readonly storagePath: string;
-  readonly tusUrl: string;
-  readonly tusToken: string;
-  readonly expiresAt: string;
-  readonly uploadHeaders: Readonly<Record<string, string>>;
+  readonly contentHash: string;
+  readonly sizeBytes: number;
+  readonly exists: boolean;
 }
 
 /**
- * Initialise a chunked asset upload session. Calls the hosted API's
- * `POST /api/assets/upload-init` endpoint, which:
- *
- *   1. Inserts a `state='pending'` row in the appropriate table.
- *   2. Returns a TUS URL + short-lived token the SDK will use to drive
- *      `tus-js-client` directly against object storage.
- *
- * The caller holds the `assetId` and `storagePath` for the subsequent
- * finalize call.
+ * Upload bytes to the hosted API's content-addressable asset endpoint.
+ * Returns a storage-neutral asset id suitable for `kind:"asset"` refs in a
+ * later run submission.
  */
-export async function initAssetUpload(
+export async function uploadWorkspaceAsset(
   http: HttpClient,
   input: {
-    readonly kind: "skill" | "file";
-    readonly name: string;
-    readonly sizeBytes: number;
-    readonly hash: string;
+    readonly bytes: Uint8Array;
+    /** Optional `sha256:<hex>` advisory hash; the server verifies it. */
+    readonly contentHash?: string;
+    readonly contentType?: string;
   }
-): Promise<AssetUploadInitResult> {
-  return http.request<AssetUploadInitResult>("/api/assets/upload-init", {
+): Promise<AssetUploadResult> {
+  return http.request<AssetUploadResult>("/assets", {
     method: "POST",
-    body: JSON.stringify(input)
-  });
-}
-
-/**
- * Finalise a chunked asset upload session. Calls the hosted API's
- * `POST /api/assets/finalize` endpoint, which:
- *
- *   1. Downloads the assembled bytes from object storage.
- *   2. Verifies `sha256(bytes) === hash`.
- *   3. Transitions the row `pending → ready`.
- *
- * Throws if the server returns a non-OK response (e.g. `hash_mismatch`).
- */
-export async function finalizeAssetUpload(
-  http: HttpClient,
-  input: {
-    readonly assetId: string;
-    readonly kind: "skill" | "file";
-    readonly hash: string;
-    readonly storagePath: string;
-  }
-): Promise<void> {
-  await http.request<unknown>("/api/assets/finalize", {
-    method: "POST",
-    body: JSON.stringify(input)
+    headers: {
+      "content-type": input.contentType ?? "application/octet-stream",
+      "content-length": String(input.bytes.byteLength),
+      ...(input.contentHash ? { "x-asset-hash": input.contentHash } : {})
+    },
+    body: input.bytes
   });
 }

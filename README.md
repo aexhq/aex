@@ -111,7 +111,8 @@ provider account's policies.
 **Managed key — planned.** Until then it's BYOK only.
 
 **Can I self-host or run antpath in my cloud?**
-No. The supported product boundary is the hosted antpath control plane. See
+No — self-hosting (running antpath in your own cloud) is not supported. The
+supported product boundary is the hosted antpath control plane. See
 the [product boundary page](packages/sdk/docs/product-boundaries.md).
 
 ## License

@@ -1004,13 +1004,10 @@ describe("antpath skills", () => {
     expect(cap.stderr).toContain("unknown flag: --typo");
   });
 
-  it("upload --file: POSTs multipart and prints the returned skill record", async () => {
-    // Customer regression coverage (Bug 1): exercise the happy-path
-    // upload of a single-file bundle through the host CLI. Without
-    // this, the CLI test suite would never have detected that the
-    // server side was erroring with the bare HTTP-400 message — the
-    // existing tests only covered argument validation, not the
-    // wire-level interaction.
+  it("upload --file: runs the direct-to-storage flow (presign → object storage PUT → finalize) and prints the skill record", async () => {
+    // The CLI catalog upload now goes direct-to-storage: the bytes never transit
+    // the worker. Assert the three-step wire shape (presign → PUT → finalize)
+    // and that the signed checksum header rides the object storage PUT.
     const tmp = makeSkillsTmpDir(
       "---\nname: rules-cli\ndescription: cli upload skill\n---\n# rules-cli\n"
     );
@@ -1025,38 +1022,72 @@ describe("antpath skills", () => {
         ...COMMON
       ],
       fetchHandler: (call) => {
-        // The shared transport sends a FormData body for POST /api/skills.
-        // We assert the wire shape without binding to multipart parsing
-        // internals (Node's undici handles boundary generation).
+        if (call.url.endsWith("/api/skills/presign")) {
+          const reqBody = JSON.parse(call.init.body as string) as { name: string; hash: string; sizeBytes: number };
+          if (reqBody.name !== "rules-cli" || !/^sha256:[0-9a-f]{64}$/.test(reqBody.hash)) {
+            return new Response(JSON.stringify({ error: { message: "bad presign body" } }), { status: 400, headers: { "content-type": "application/json" } });
+          }
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              skillId: "skl_cli_42",
+              uploadUrl: "https://acct.r2.cloudflarestorage.com/bucket/assets/ws/hash?X-Amz-Signature=sig",
+              requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" },
+              expiresInSeconds: 300
+            }),
+            { status: 201, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (call.url.includes("r2.cloudflarestorage.com")) {
+          return new Response("", { status: 200 }); // object storage accepts the direct PUT
+        }
+        if (call.url.endsWith("/api/skills/skl_cli_42/finalize")) {
+          return new Response(
+            JSON.stringify({
+              skill: { id: "skl_cli_42", name: "rules-cli", state: "ready", hash: "sha256:" + "a".repeat(64), fileCount: 1 }
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        return new Response(JSON.stringify({ error: { message: `unexpected url ${call.url}` } }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+    });
+    try {
+      await runCli(cap.io);
+      expect(cap.stderr).toBe("");
+      expect(cap.exitCode).toBe(0);
+      const urls = cap.calls.map((c) => c.url);
+      expect(urls).toContain("https://dash.example/api/skills/presign");
+      expect(urls.some((u) => u.includes("r2.cloudflarestorage.com"))).toBe(true);
+      expect(urls).toContain("https://dash.example/api/skills/skl_cli_42/finalize");
+      const r2Put = cap.calls.find((c) => c.url.includes("r2.cloudflarestorage.com"))!;
+      expect(r2Put.init.method).toBe("PUT");
+      expect((r2Put.init.headers as Record<string, string>)["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
+      const printed = JSON.parse(cap.stdout.trim()) as { id: string; name: string };
+      expect(printed.id).toBe("skl_cli_42");
+      expect(printed.name).toBe("rules-cli");
+    } finally {
+      tmp.cleanup();
+    }
+  });
+
+  it("upload: falls back to the buffered multipart POST /api/skills when presign is unconfigured (503)", async () => {
+    const tmp = makeSkillsTmpDir(
+      "---\nname: rules-fallback\ndescription: cli upload skill\n---\n# rules-fallback\n"
+    );
+    const cap = makeHostIo({
+      argv: ["skills", "upload", "--name", "rules-fallback", "--file", join(tmp.dir, "SKILL.md"), ...COMMON],
+      fetchHandler: (call) => {
+        if (call.url.endsWith("/api/skills/presign")) {
+          return new Response(JSON.stringify({ ok: false, code: "presign_unconfigured", message: "object storage S3 creds not configured" }), { status: 503, headers: { "content-type": "application/json" } });
+        }
+        // Fallback path: buffered multipart upload to /api/skills.
         const body = call.init.body;
-        if (!(body instanceof FormData)) {
-          return new Response(
-            JSON.stringify({ error: { message: "expected FormData body" } }),
-            { status: 400, headers: { "content-type": "application/json" } }
-          );
-        }
-        if (body.get("name") !== "rules-cli") {
-          return new Response(
-            JSON.stringify({ error: { message: "missing `name` part" } }),
-            { status: 400, headers: { "content-type": "application/json" } }
-          );
-        }
-        if (!(body.get("bundle") instanceof Blob)) {
-          return new Response(
-            JSON.stringify({ error: { message: "missing `bundle` part" } }),
-            { status: 400, headers: { "content-type": "application/json" } }
-          );
+        if (!(body instanceof FormData) || body.get("name") !== "rules-fallback" || !(body.get("bundle") instanceof Blob)) {
+          return new Response(JSON.stringify({ error: { message: "expected multipart FormData" } }), { status: 400, headers: { "content-type": "application/json" } });
         }
         return new Response(
-          JSON.stringify({
-            skill: {
-              id: "skl_cli_42",
-              name: "rules-cli",
-              state: "ready",
-              hash: "sha256:fake-hash",
-              fileCount: 1
-            }
-          }),
+          JSON.stringify({ skill: { id: "skl_fb", name: "rules-fallback", state: "ready", hash: "sha256:" + "b".repeat(64), fileCount: 1 } }),
           { status: 201, headers: { "content-type": "application/json" } }
         );
       }
@@ -1065,12 +1096,12 @@ describe("antpath skills", () => {
       await runCli(cap.io);
       expect(cap.stderr).toBe("");
       expect(cap.exitCode).toBe(0);
-      expect(cap.calls).toHaveLength(1);
-      expect(cap.calls[0]!.url).toBe("https://dash.example/api/skills");
-      expect(cap.calls[0]!.init.method).toBe("POST");
-      const printed = JSON.parse(cap.stdout.trim()) as { id: string; name: string };
-      expect(printed.id).toBe("skl_cli_42");
-      expect(printed.name).toBe("rules-cli");
+      const urls = cap.calls.map((c) => c.url);
+      expect(urls).toContain("https://dash.example/api/skills/presign");
+      expect(urls).toContain("https://dash.example/api/skills");
+      expect(urls.some((u) => u.includes("r2.cloudflarestorage.com"))).toBe(false);
+      const printed = JSON.parse(cap.stdout.trim()) as { id: string };
+      expect(printed.id).toBe("skl_fb");
     } finally {
       tmp.cleanup();
     }

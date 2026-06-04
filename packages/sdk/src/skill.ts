@@ -127,6 +127,39 @@ export class Skill {
   }
 
   /**
+   * Reference a skill already uploaded to the workspace catalog
+   * (`antpath skills upload` / `operations.createSkillBundle`) in a run.
+   *
+   * A catalog skill's bytes are a content-addressed asset, so referencing it
+   * is just an `{ kind:"asset" }` ref — once a run snapshots the bytes, it is
+   * the identical normalized flow as an inline or file-sourced skill. Pass the
+   * `Skill` record returned by `client.skills.list()` / `.get()`:
+   *
+   *   const [s] = await client.skills.list();
+   *   await client.submitRun({ ..., skills: [Skill.fromCatalog(s)] });
+   *
+   * The record must be `ready` (it has a content hash). Unlike the draft
+   * builders this performs no upload — the bytes already live in the catalog.
+   */
+  static fromCatalog(record: { readonly name: string; readonly hash?: string | null }): Skill {
+    if (!record || typeof record !== "object") {
+      throw new Error("Skill.fromCatalog: a catalog skill record is required");
+    }
+    if (typeof record.name !== "string" || !SKILL_NAME_PATTERN.test(record.name)) {
+      throw new Error(`Skill.fromCatalog: record.name must match ${SKILL_NAME_PATTERN.source}`);
+    }
+    const rawHash = typeof record.hash === "string" ? record.hash : "";
+    const hashHex = rawHash.startsWith("sha256:") ? rawHash.slice("sha256:".length) : rawHash;
+    if (!/^[0-9a-f]{64}$/.test(hashHex)) {
+      throw new Error(
+        "Skill.fromCatalog: record.hash must be a sha256 digest — only `ready` catalog skills are referenceable"
+      );
+    }
+    const ref: AssetRef = { kind: "asset", assetId: `asset_${hashHex}`, name: record.name };
+    return new Skill(ref);
+  }
+
+  /**
    * Internal: yield the draft's bytes + metadata so `client.submitRun`
    * can upload the asset. After this returns, the Skill is marked consumed
    * so a second submitRun call against the same instance throws

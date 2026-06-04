@@ -98,7 +98,7 @@ describe("agent-first invariants (workspace-wide)", () => {
   });
 
   it("does not read process.env.ANTPATH_* from any user-facing parser surface", () => {
-    // Platform-operator env vars (`ANTPATH_PROXY_TOKEN_PEPPER`,
+    // Platform-operator env vars (`ANTPATH_TOKEN_PEPPER`,
     // `ANTPATH_CLI_BUNDLE_PATH`, etc.) live in BFF / worker code
     // ONLY. The user-facing parser surfaces (the SDK client and the
     // public contracts parser) must NEVER read process.env directly:

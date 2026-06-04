@@ -1,7 +1,10 @@
 {
   "name": "@antpath/cli",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.13.6",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/cli.mjs",
   "types": "./dist/index.d.ts",

@@ -84,31 +84,53 @@ async function runSkillsUpload(io: CliIO, argv: readonly string[]): Promise<CliE
     return USAGE_ERR;
   }
 
-  let zip: Uint8Array;
+  let built: SkillBundleBuild;
   try {
     if (fromPath.value) {
-      zip = await zipDirectory(resolvePath(io.cwd(), fromPath.value));
+      built = await zipDirectory(resolvePath(io.cwd(), fromPath.value));
     } else {
-      zip = await zipFiles(io.cwd(), fileFlags.values);
+      built = await zipFiles(io.cwd(), fileFlags.values);
     }
   } catch (err) {
     io.stderr(`failed to build skill bundle: ${(err as Error).message}\n`);
     return USAGE_ERR;
   }
 
+  const contentHash = `sha256:${await sha256Hex(built.zip)}`;
   const http = makeHttpClient(io, common.flags);
   try {
-    const skill = await operations.createSkillBundle(http, {
+    // Direct-to-storage upload (bytes bypass the hosted API); falls back to the
+    // buffered multipart path when object-store presign creds are unconfigured.
+    const skill = await operations.createSkillBundleDirect(http, io.fetchImpl as DirectPutFetch, {
       name: nameFlag.value,
-      body: zip,
-      contentType: "application/zip",
-      filename: `${nameFlag.value}.zip`
+      body: built.zip,
+      contentHash,
+      manifest: built.manifest,
+      contentType: "application/zip"
     });
     io.stdout(JSON.stringify(skill) + "\n");
     return SUCCESS;
   } catch (err) {
     return emitJsonError(io, "skill_upload_failed", (err as Error).message ?? "upload failed");
   }
+}
+
+/** Raw fetch shape the direct-to-storage PUT needs (a structural subset of fetch). */
+type DirectPutFetch = (input: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+
+/** A built skill bundle: the zip bytes plus the client-computed manifest. */
+interface SkillBundleBuild {
+  readonly zip: Uint8Array;
+  readonly manifest: ReadonlyArray<{ readonly path: string; readonly size: number }>;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
+  if (!subtle) throw new Error("antpath skills upload: globalThis.crypto.subtle is required (Node 18+)");
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const digest = await subtle.digest("SHA-256", copy.buffer);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function runSkillsList(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
@@ -194,7 +216,7 @@ function zipEntryFor(bytes: Uint8Array): [Uint8Array, { mtime: Date }] {
   return [bytes, { mtime: ZIP_EPOCH }];
 }
 
-async function zipDirectory(rootDir: string): Promise<Uint8Array> {
+async function zipDirectory(rootDir: string): Promise<SkillBundleBuild> {
   const rootStat = await stat(rootDir);
   if (!rootStat.isDirectory()) {
     throw new Error(`${rootDir} is not a directory`);
@@ -235,10 +257,10 @@ async function zipDirectory(rootDir: string): Promise<Uint8Array> {
   if (out.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
     throw new Error(`skill bundle exceeds compressed cap of ${SKILL_BUNDLE_LIMITS.maxCompressedBytes} bytes (got ${out.byteLength})`);
   }
-  return out;
+  return { zip: out, manifest: sorted.map(([path, bytes]) => ({ path, size: bytes.byteLength })) };
 }
 
-async function zipFiles(cwd: string, paths: readonly string[]): Promise<Uint8Array> {
+async function zipFiles(cwd: string, paths: readonly string[]): Promise<SkillBundleBuild> {
   if (paths.length > SKILL_BUNDLE_LIMITS.maxFiles) {
     throw new Error(`skill bundle exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit`);
   }
@@ -270,7 +292,7 @@ async function zipFiles(cwd: string, paths: readonly string[]): Promise<Uint8Arr
   if (out.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
     throw new Error(`skill bundle exceeds compressed cap of ${SKILL_BUNDLE_LIMITS.maxCompressedBytes} bytes`);
   }
-  return out;
+  return { zip: out, manifest: sorted.map(([path, bytes]) => ({ path, size: bytes.byteLength })) };
 }
 
 async function walk(

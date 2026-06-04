@@ -88,7 +88,7 @@ export interface SubmitRunOptions {
    * Credential source for upstream provider access. Omitted defaults to
    * `"byok"`, which requires `secrets.<provider>.apiKey` as today.
    * `"managed"` is reserved for paid managed-key mode and currently fails
-   * closed until the service is available.
+   * closed until the hosted private implementation is wired.
    */
   readonly credentialMode?: CredentialMode;
   /**
@@ -385,6 +385,12 @@ export class FilesClient {
  */
 export class AntpathClient {
   readonly #http: HttpClient;
+  /**
+   * The same fetch the HttpClient uses, kept so the asset materializer can
+   * PUT bytes DIRECTLY to the presigned upload URL (a non-antpath origin) with the
+   * caller's fetch (tests inject one; prod uses the global).
+   */
+  readonly #fetch: import("./asset-upload.js").AssetFetch | undefined;
   readonly skills: SkillsClient;
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
@@ -404,6 +410,7 @@ export class AntpathClient {
         ? { debug: typeof options.debug === "function" ? options.debug : (line: string) => console.error(line) }
         : {})
     });
+    this.#fetch = options.fetch as import("./asset-upload.js").AssetFetch | undefined;
     this.skills = new SkillsClient(this.#http);
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
@@ -484,7 +491,7 @@ export class AntpathClient {
     if (credentialMode === "managed") {
       throw new AntpathError(
         "CREDENTIAL_INVALID",
-        "AntpathClient.submitRun: credentialMode \"managed\" is not available"
+        "AntpathClient.submitRun: credentialMode \"managed\" is not available without a private managed-key implementation"
       );
     }
     if (!options.secrets) {
@@ -519,9 +526,9 @@ export class AntpathClient {
 
     // Walk Skill / AgentsMd / File instances and materialize every draft before
     // the submit round-trip. The wire shape carries only kind:"asset" refs.
-    const assetSkills = await materializeSkills(this.#http, options.skills ?? []);
-    const assetAgentsMd = await materializeAgentsMd(this.#http, options.agentsMd ?? []);
-    const assetFiles = await materializeFiles(this.#http, options.files ?? []);
+    const assetSkills = await materializeSkills(this.#http, options.skills ?? [], this.#fetch);
+    const assetAgentsMd = await materializeAgentsMd(this.#http, options.agentsMd ?? [], this.#fetch);
+    const assetFiles = await materializeFiles(this.#http, options.files ?? [], this.#fetch);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
       options.secrets.mcpServers ?? []
@@ -979,7 +986,7 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 /**
  * Encode a byte array as base64. Uses Node's `Buffer` when available
  * (the SDK ships as a Node tarball; this is the hot path), and falls
- * back to `btoa` for browser/Workers runtimes that pull the SDK in
+ * back to `btoa` for browser or edge runtimes that pull the SDK in
  * without Buffer.
  */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -1035,7 +1042,8 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
  */
 async function materializeSkills(
   http: import("./asset-upload.js").AssetsHttpClient,
-  skills: readonly Skill[]
+  skills: readonly Skill[],
+  fetch?: import("./asset-upload.js").AssetFetch
 ): Promise<readonly SkillRef[]> {
   const out: SkillRef[] = [];
   for (let i = 0; i < skills.length; i++) {
@@ -1055,7 +1063,8 @@ async function materializeSkills(
       const uploaded = await uploadAsset({
         http,
         bytes: bundle.bytes,
-        hash: bundle.contentHash
+        hash: bundle.contentHash,
+        ...(fetch ? { fetch } : {})
       });
       out.push({
         kind: "asset",
@@ -1073,7 +1082,8 @@ async function materializeSkills(
 /** Materialize draft AgentsMd[] to assets; pass-through any already-materialized refs. */
 async function materializeAgentsMd(
   http: import("./asset-upload.js").AssetsHttpClient,
-  agentsMds: readonly AgentsMd[]
+  agentsMds: readonly AgentsMd[],
+  fetch?: import("./asset-upload.js").AssetFetch
 ): Promise<readonly AgentsMdRef[]> {
   const out: AgentsMdRef[] = [];
   for (let i = 0; i < agentsMds.length; i++) {
@@ -1090,7 +1100,7 @@ async function materializeAgentsMd(
       if (!bundle) {
         throw new Error(`AntpathClient.submitRun: agentsMd[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash });
+      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash, ...(fetch ? { fetch } : {}) });
       out.push({
         kind: "asset",
         assetId: uploaded.assetId,
@@ -1106,7 +1116,8 @@ async function materializeAgentsMd(
 /** Materialize draft File[] to assets; pass-through any already-materialized refs. */
 async function materializeFiles(
   http: import("./asset-upload.js").AssetsHttpClient,
-  files: readonly File[]
+  files: readonly File[],
+  fetch?: import("./asset-upload.js").AssetFetch
 ): Promise<readonly FileRef[]> {
   const out: FileRef[] = [];
   for (let i = 0; i < files.length; i++) {
@@ -1123,7 +1134,7 @@ async function materializeFiles(
       if (!bundle) {
         throw new Error(`AntpathClient.submitRun: files[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash });
+      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash, ...(fetch ? { fetch } : {}) });
       out.push(
         bundle.mountPath !== undefined
           ? {

@@ -40,6 +40,36 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
       }
     }
     calls.push({ url, method, headers, body });
+    // Direct-to-storage upload flow: presign → PUT (object storage) → finalize.
+    if (url.endsWith("/assets/presign")) {
+      const reqBody = (body ?? {}) as { hash?: string; sizeBytes?: number };
+      const hash = reqBody.hash ?? `sha256:${"a".repeat(64)}`;
+      const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          exists: false,
+          assetId: `asset_${hex}`,
+          contentHash: hash,
+          uploadUrl: `https://acct.r2.cloudflarestorage.com/bucket/assets/ws/${hex}?X-Amz-Signature=sig`,
+          requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" },
+          expiresInSeconds: 300
+        }),
+        { status: 201, headers: { "content-type": "application/json" } }
+      );
+    }
+    if (url.includes("r2.cloudflarestorage.com")) {
+      return new Response("", { status: 200 }); // object storage accepts the direct PUT
+    }
+    if (url.endsWith("/assets/finalize")) {
+      const reqBody = (body ?? {}) as { hash?: string; sizeBytes?: number };
+      const hash = reqBody.hash ?? `sha256:${"a".repeat(64)}`;
+      const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
+      return new Response(
+        JSON.stringify({ ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, sizeBytes: reqBody.sizeBytes ?? 0 }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
     if (url.endsWith("/assets")) {
       const lc: Record<string, string> = {};
       for (const [k, v] of Object.entries(headers)) lc[k.toLowerCase()] = v;
@@ -220,7 +250,7 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     ).rejects.toThrow(/skills\[0\] must be a Skill instance/);
   });
 
-  it("uploads an inline AgentsMd to /assets then submits a JSON body with a kind:'asset' ref", async () => {
+  it("uploads an inline AgentsMd via presign→object storage PUT→finalize then submits a kind:'asset' ref", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
@@ -231,16 +261,18 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
       secrets: { anthropic: { apiKey: "k" } },
       idempotencyKey: "idem-asset-agentsmd"
     });
-    const uploadCalls = calls.filter((c) => c.url.endsWith("/assets"));
+    // Direct-to-storage flow: presign (control plane) → PUT (object storage, no worker bytes) → finalize.
+    expect(calls.filter((c) => c.url.endsWith("/assets/presign"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.includes("r2.cloudflarestorage.com"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith("/assets/finalize"))).toHaveLength(1);
     const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
-    expect(uploadCalls).toHaveLength(1);
     expect(runCalls).toHaveLength(1);
     const submission = (runCalls[0]!.body as { submission: { agentsMd: ReadonlyArray<{ kind: string; name?: string }> } })
       .submission;
     expect(submission.agentsMd[0]).toMatchObject({ kind: "asset", name: "rules" });
   });
 
-  it("materializes draft Skill, AgentsMd, and File refs to /assets before submitting", async () => {
+  it("materializes draft Skill, AgentsMd, and File refs via presign→object storage PUT→finalize before submitting", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const skill = await Skill.fromFiles({
@@ -269,26 +301,33 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
       idempotencyKey: "idem-assets"
     });
 
-    expect(calls.map((c) => c.url)).toEqual([
-      "https://x/assets",
-      "https://x/assets",
-      "https://x/assets",
-      "https://x/api/runs"
-    ]);
-    const uploadCalls = calls.slice(0, 3);
+    // Three uploads, each presign → object storage PUT → finalize, then the run submit.
+    const presignCalls = calls.filter((c) => c.url.endsWith("/assets/presign"));
+    const r2PutCalls = calls.filter((c) => c.url.includes("r2.cloudflarestorage.com"));
+    const finalizeCalls = calls.filter((c) => c.url.endsWith("/assets/finalize"));
+    const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
+    expect(presignCalls).toHaveLength(3);
+    expect(r2PutCalls).toHaveLength(3);
+    expect(finalizeCalls).toHaveLength(3);
+    expect(runCalls).toHaveLength(1);
+
+    // presign declares the content hash + size; the worker never sees bytes.
     const expectedHashes = [skillHash, agentsMdHash, fileHash];
-    for (let i = 0; i < uploadCalls.length; i++) {
-      const call = uploadCalls[i]!;
-      const bytes = call.body as Uint8Array;
+    for (let i = 0; i < presignCalls.length; i++) {
+      const call = presignCalls[i]!;
       expect(call.method).toBe("POST");
-      expect(bytes).toBeInstanceOf(Uint8Array);
-      expect(call.headers["content-type"]).toBe("application/zip");
-      expect(call.headers["content-length"]).toBe(String(bytes.byteLength));
-      expect(call.headers["x-asset-hash"]).toBe(expectedHashes[i]);
       expect(call.headers.authorization).toBe("Bearer tkn");
+      expect((call.body as { hash: string }).hash).toBe(expectedHashes[i]);
+    }
+    // The object storage PUT carries the bytes + the signed checksum header (no Bearer).
+    for (const put of r2PutCalls) {
+      expect(put.method).toBe("PUT");
+      expect(put.body).toBeInstanceOf(Uint8Array);
+      expect(put.headers["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
+      expect(put.headers.authorization).toBeUndefined();
     }
 
-    const submission = (calls[3]!.body as { submission: Record<string, unknown> }).submission;
+    const submission = (runCalls[0]!.body as { submission: Record<string, unknown> }).submission;
     const assetRef = (name: string, hash: string, extra: Record<string, string> = {}) => {
       return {
         kind: "asset",
@@ -304,12 +343,31 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
     ]);
   });
 
-  it("does not submit the run when draft skill upload fails", async () => {
+  it("does not submit the run when draft skill finalization fails", async () => {
     const calls: CapturedRequest[] = [];
     const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
-      return new Response(JSON.stringify({ ok: false, code: "asset_upload_failed" }), {
+      if (url.endsWith("/assets/presign")) {
+        const body = (init?.body ? JSON.parse(String(init.body)) : {}) as { hash?: string };
+        const hash = body.hash ?? `sha256:${"a".repeat(64)}`;
+        const hex = hash.slice("sha256:".length);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            exists: false,
+            assetId: `asset_${hex}`,
+            contentHash: hash,
+            uploadUrl: `https://acct.r2.cloudflarestorage.com/bucket/assets/ws/${hex}?X-Amz-Signature=sig`,
+            requiredHeaders: {}
+          }),
+          { status: 201, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.includes("r2.cloudflarestorage.com")) {
+        return new Response("", { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: false, code: "asset_finalize_failed" }), {
         status: 500,
         headers: { "content-type": "application/json" }
       });
@@ -329,7 +387,11 @@ describe("AntpathClient.submitRun (flat surface, wire shape)", () => {
       })
     ).rejects.toThrow();
 
-    expect(calls.map((c) => c.url)).toEqual(["https://x/assets"]);
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://x/assets/presign",
+      expect.stringContaining("r2.cloudflarestorage.com"),
+      "https://x/assets/finalize"
+    ]);
   });
 
   it("rejects non-AgentsMd entries in the agentsMd array with index in the message", async () => {
