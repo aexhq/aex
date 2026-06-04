@@ -14,10 +14,15 @@
  *
  * Cleanup is the test's responsibility (typically in afterAll).
  *
- * Why a fixture file instead of vitest globalSetup: each scenario
- * needs its own clean install to avoid cross-test mutation (e.g. the
- * TS consumer scenario adds devDependencies). Sharing a single
- * install would leak state.
+ * Install reuse: `installAex()` returns a per-worker SHARED install by
+ * default. The tree is read-only after npm install — every read-only
+ * scenario only drops UNIQUELY-named sibling scripts and reads
+ * node_modules — so all such scenarios in a worker reuse ONE install
+ * instead of each paying a redundant `npm install`. Scenarios that
+ * MUTATE the tree (install extra packages, write fixed-name sources —
+ * e.g. the TS consumer scenario) must pass `{ isolated: true }` to get
+ * their own clean tree. The shared tree is removed once at process exit;
+ * isolated trees are the caller's responsibility (typically afterAll).
  */
 import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -63,6 +68,13 @@ export interface InstallOptions {
   readonly registryUrl?: string;
   /** Override the install timeout (ms). Default 120s. */
   readonly timeoutMs?: number;
+  /**
+   * Force a fresh, isolated install tree instead of the per-worker
+   * shared one. Required for scenarios that MUTATE the tree (install
+   * extra packages, write fixed-name sources), e.g. the typescript
+   * consumer test. Read-only scenarios should omit this and share.
+   */
+  readonly isolated?: boolean;
 }
 
 export interface ResolveInstallSpecOptions {
@@ -119,10 +131,57 @@ export async function resolveInstallSpec(
 }
 
 /**
+ * Install the resolved aex artifact. Returns a per-worker SHARED install
+ * by default (memoized for the worker process — see file header); pass
+ * `{ isolated: true }` for scenarios that mutate the tree.
+ */
+export async function installAex(options: InstallOptions = {}): Promise<InstallResult> {
+  if (options.isolated) {
+    return await installAexIsolated(options);
+  }
+  return await getSharedInstall(options);
+}
+
+let sharedInstallPromise: Promise<InstallResult> | null = null;
+const deferredSharedCleanups: Array<() => void> = [];
+let sharedExitHookRegistered = false;
+
+/**
+ * Memoized per worker PROCESS. vitest distributes test files across worker
+ * processes, so each worker memoizes its OWN shared dir — no cross-process
+ * FS race. The wrapped cleanup() is a no-op because per-file afterAll hooks
+ * must NOT delete a tree later files in the same worker still reuse; the
+ * real dir is removed once at process exit. Options after the first call
+ * are ignored (the first caller wins).
+ */
+function getSharedInstall(options: InstallOptions): Promise<InstallResult> {
+  sharedInstallPromise ??= installAexIsolated(options).then((result) => {
+    registerSharedExitCleanup();
+    deferredSharedCleanups.push(result.cleanup);
+    return { ...result, cleanup: () => {} };
+  });
+  return sharedInstallPromise;
+}
+
+function registerSharedExitCleanup(): void {
+  if (sharedExitHookRegistered) return;
+  sharedExitHookRegistered = true;
+  process.once("exit", () => {
+    for (const cleanup of deferredSharedCleanups) {
+      try {
+        cleanup();
+      } catch {
+        // Best effort at process exit.
+      }
+    }
+  });
+}
+
+/**
  * Install the resolved aex artifact into a fresh tempdir.
  * Throws if npm exits non-zero or installs the wrong version.
  */
-export async function installAex(options: InstallOptions = {}): Promise<InstallResult> {
+async function installAexIsolated(options: InstallOptions = {}): Promise<InstallResult> {
   const { spec, source } = await resolveInstallSpec();
   const installDir = mkdtempSync(join(tmpdir(), "aex-user-test-"));
   // Minimal host package.json so npm install doesn't complain.

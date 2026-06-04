@@ -25,7 +25,10 @@ describe("typescript consumer", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAex();
+    // Isolated: this scenario mutates the tree (npm-installs typescript +
+    // @types/node and writes fixed-name consumer sources), so it must not
+    // share the read-only per-worker install.
+    install = await installAex({ isolated: true });
     // Add TypeScript + Node declarations to the same install tempdir.
     // The SDK is a Node package and its public declarations reference
     // node:* modules, so strict consumers need the matching type package.
