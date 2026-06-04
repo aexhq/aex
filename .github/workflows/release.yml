@@ -44,10 +44,6 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for trusted publishing (>=11.5.1)
-        # OIDC trusted publishing requires npm CLI >=11.5.1; Node 22 ships npm 10.x.
-        run: npm install -g npm@latest && npm --version
-
       - name: Install
         run: pnpm install --frozen-lockfile
 
@@ -95,33 +91,30 @@ jobs:
       - name: Final npm version check
         run: node scripts/cicd/assert-npm-version-available.mjs antpath "${{ steps.version.outputs.version }}"
 
-      - name: Publish to npm (trusted publishing / OIDC)
+      - name: Publish to npm (token + provenance)
+        # Auth uses NPM_TOKEN (granular, publish rights for the four packages).
+        # Trusted publishing (tokenless OIDC) can't be used for the first release
+        # because @antpath/cli, @antpath/contracts, and @antpath/conformance do
+        # not yet exist on npm and a trusted publisher can only be configured for
+        # an existing package. `--provenance` is independent of trusted publishing
+        # and still produces a signed attestation (this repo is public + has
+        # id-token: write). pnpm publish rewrites each package's `workspace:*`
+        # deps to concrete versions. Dependency order so a consumer resolving a
+        # just-published package finds its deps. Migrate to tokenless trusted
+        # publishing once all four packages exist on npm.
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
           NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          # Pack with pnpm so each tarball's `workspace:*` deps are rewritten to
-          # concrete versions, then publish each tarball with the npm CLI so the
-          # OIDC trusted-publishing exchange runs (pnpm publish does NOT perform
-          # the OIDC exchange; `npm publish` does not rewrite workspace: deps —
-          # pack-then-publish-tarball gives us both). Dependency order so a
-          # consumer resolving a just-published package finds its deps. All four
-          # packages share VERSION, so the tarball filename is exact (no glob).
-          pack_dir="$RUNNER_TEMP/antpath-publish"
-          mkdir -p "$pack_dir"
-          # pkg:tarball-basename pairs (scoped @antpath/x packs as antpath-x-<ver>.tgz)
-          for spec in "@antpath/contracts:antpath-contracts" "@antpath/conformance:antpath-conformance" "@antpath/cli:antpath-cli" "antpath:antpath"; do
-            pkg="${spec%%:*}"
-            pnpm --filter "$pkg" pack --pack-destination "$pack_dir"
-          done
-          for spec in "@antpath/contracts:antpath-contracts" "@antpath/conformance:antpath-conformance" "@antpath/cli:antpath-cli" "antpath:antpath"; do
-            pkg="${spec%%:*}"; base="${spec##*:}"
-            tgz="$pack_dir/${base}-${VERSION}.tgz"
-            [ -f "$tgz" ] || { echo "::error::missing tarball $tgz for $pkg"; ls -la "$pack_dir"; exit 1; }
-            echo "publishing $pkg from $tgz under tag $NPM_DIST_TAG"
-            npm publish "$tgz" --provenance --access public --tag "$NPM_DIST_TAG"
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN not set in the npm-release environment — required to publish (3 of the 4 packages are new, so tokenless trusted publishing is not yet possible)."
+            exit 1
+          fi
+          for pkg in @antpath/contracts @antpath/conformance @antpath/cli antpath; do
+            echo "publishing $pkg under tag $NPM_DIST_TAG"
+            pnpm --filter "$pkg" publish --provenance --no-git-checks --access public --tag "$NPM_DIST_TAG"
           done
 
   post-publish-user-tests:
