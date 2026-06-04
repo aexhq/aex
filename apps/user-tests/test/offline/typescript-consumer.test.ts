@@ -197,7 +197,7 @@ describe("typescript consumer", () => {
         files: [file],
         mcpServers: [mcp, workspaceMcp],
         proxyEndpoints: [proxy, publicProxy],
-        outputDirs: ["/workspace/outputs"],
+        outputs: { allowedDirs: ["/workspace/outputs"] },
         builtins: ["developer"],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
@@ -242,7 +242,7 @@ describe("typescript consumer", () => {
           mcpServers: [],
           environment: { envVars: { USER_SURFACE_TEST: "1" } },
           metadata: { surface: "root" },
-          outputDirs: ["/workspace/outputs"],
+          outputs: { allowedDirs: ["/workspace/outputs"] },
           builtins: ["developer"]
         },
         secrets: { anthropic: anthropicSecrets },

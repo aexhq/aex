@@ -62,9 +62,10 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
   content-addressable, workspace-scoped R2 storage before the run lands,
   so the same bytes are a no-op upload on subsequent runs. MCP servers
   can be remote or workspace-registered.
-- **Outputs are captured, tracked resource cleanup is attempted.** Files
-  written under `outputDirs` go to private storage; aex attempts cleanup of
-  tracked runtime resources at terminal.
+- **Outputs are captured, tracked resource cleanup is attempted.** Managed
+  runs capture files created or modified by the agent; `outputs.allowedDirs`
+  can narrow that capture to specific roots. aex attempts cleanup of tracked runtime
+  resources at terminal.
 
 ## Guides
 

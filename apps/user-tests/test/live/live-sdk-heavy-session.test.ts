@@ -25,7 +25,7 @@
  *   - a multi-step `prompt` array (forces shell + multiple file WRITES +
  *                                  multiple file READS, then a probe ack)
  *   - 1 AGENTS.md               (probe-tagged project guidance)
- *   - a custom `outputDirs` path (proves re-rooting under workspaceRoot)
+ *   - a custom `outputs.allowedDirs` path (proves re-rooting under workspaceRoot)
  *   - `builtins: ["developer"]`, `environment.envVars`, `metadata`
  *   - `secrets` carrying the customer provider key
  *
@@ -87,9 +87,9 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-c
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
 const MCP_SERVER_NAME = "deepwiki";
 
-// Custom (non-default) outputs path. Must be BOTH agent-writable and
-// captured by outputDirs: the runner's resolveInsideWorkspace re-roots
-// outputDirs under workspaceRoot (/workspace) and dedupes a leading
+// Custom explicit outputs path. Must be BOTH agent-writable and
+// captured by outputs.allowedDirs: the runner's resolveInsideWorkspace re-roots
+// allowed dirs under workspaceRoot (/workspace) and dedupes a leading
 // `workspace/` segment, so "/workspace/outputs/heavy" captures exactly
 // the path the agent writes to. (An arbitrary path like /data/... gets
 // captured at <root>/data/... but the agent can't write to literal
@@ -278,7 +278,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       skills: [skillAlpha, skillBeta, skillGamma],
       mcpServers: [mcpPrimary, mcpSecondary],
       agentsMd: [rules],
-      outputDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}],
+      outputs: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
       builtins: ["developer"],
       environment: { envVars: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.runtime}-${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.runtime}-${spec.provider}" },

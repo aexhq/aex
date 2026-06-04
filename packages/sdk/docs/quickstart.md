@@ -66,7 +66,7 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 | Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; aex proxy injects them on outbound calls. The key never enters the container. |
 | MCP server credentials | `secrets.mcpServers` | Anthropic Vault, attached per session |
 | Provider API key | `secrets.<provider>.apiKey` | Required on every `submitRun`; per-run vault entry matching `provider` |
-| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Mounted under `/mnt/session/uploads/aex/files/<f_id>/<rel>` and listed in the synthetic first user message |
+| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Materialized under `/workspace/files/<f_id>/<name>` by default and described in the agent-facing instructions |
 | Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Registered with Anthropic's Skills API; auto-discovered by the agent |
 | Agent instructions file | `AgentsMd.fromPath('./AGENTS.md')` | Prepended as the first user turn |
 
@@ -78,12 +78,12 @@ Every `submitRun` call carries an `idempotencyKey`. When omitted the SDK auto-ge
 
 | Submit shape | Server response |
 | --- | --- |
-| New `idempotencyKey` | HTTP 201 — new run created. |
-| Same key + identical request body hash | HTTP 200 — returns the original run. The SDK call resolves with the existing run id. |
+| New `idempotencyKey` | HTTP 202 — returns the new run id. |
+| Same key + identical request body hash | HTTP 200 — returns the original run id. The SDK call resolves with that id. |
 | Same key + **different** request body hash | HTTP 409 — body `{ error: { message, code: "idempotency_conflict", details: { existingRunId } } }`. The SDK throws an `HttpError` carrying that body. Use `details.existingRunId` to adopt the pre-existing run, or pick a fresh key. |
 | Omitted `idempotencyKey` | A new UUID is generated on every call — repeat submissions create new runs. |
 
-The request hash is computed server-side over the canonical submission JSON (model, prompt, system, environment, skill refs, MCP server descriptors, proxy endpoints, `outputDirs`, etc.) so reordering JSON keys, adding whitespace, or rotating the inline secret bundle does **not** change the hash. Changing the prompt, model, system, or any other non-secret field does.
+The request hash is computed server-side over the canonical submission JSON (model, prompt, system, environment, skill refs, MCP server descriptors, proxy endpoints, `outputs`, etc.) so reordering JSON keys, adding whitespace, or rotating the inline secret bundle does **not** change the hash. Changing the prompt, model, system, or any other non-secret field does.
 
 Pattern for safe retries:
 
@@ -107,4 +107,4 @@ async function submitWithRetry() {
 }
 ```
 
-The same `idempotencyKey` reused with the same body will deterministically resolve to the same run id regardless of how many times the network drops between attempts.
+The same `idempotencyKey` reused with the same body will deterministically resolve to the same run id regardless of how many times the network drops between attempts. Query, stream, wait, or download the run by that id.

@@ -126,19 +126,21 @@ export interface SubmitRunOptions {
   readonly timeout?: string;
   readonly proxyEndpoints?: readonly ProxyEndpoint[];
   /**
-   * Container paths to capture as output objects at session terminal.
+   * Output capture policy for the run's output files.
    *
-   * - Omitted: the managed runtime default output directory is captured
-   *   (`/workspace/outputs`).
-   * - Present: the listed paths override the runtime default. Captured bytes
-   *   land in private storage and can be retrieved via `client.outputs(runId)` /
-   *   `client.download(runId)`.
+   * - `allowedDirs` omitted: every regular file the session creates or
+   *   modifies is captured.
+   * - `allowedDirs` present: the listed roots narrow capture to those paths.
+   * - `deniedDirs` subtracts noise from the allowed roots.
    *
-   * Paths are absolute UNIX paths (start with `/`), max 32 entries,
-   * max 512 bytes per entry, no `..` segments, no NUL bytes. See
+   * Captured bytes land in private storage and can be retrieved via
+   * `client.outputs(runId)` / `client.download(runId)`. See
    * `packages/sdk/docs/outputs.md` for the full contract.
    */
-  readonly outputDirs?: readonly string[];
+  readonly outputs?: {
+    readonly allowedDirs?: readonly string[];
+    readonly deniedDirs?: readonly string[];
+  };
   /**
    * Override the managed runtime builtin extensions enabled inside the runner.
    *
@@ -551,8 +553,9 @@ export class AexClient {
       mcpServers: submissionMcpServers as readonly McpServerRef[],
       ...(options.environment ? { environment: options.environment } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
-      ...(options.outputDirs && options.outputDirs.length > 0
-        ? { outputDirs: options.outputDirs }
+      ...(options.outputs &&
+      ((options.outputs.allowedDirs?.length ?? 0) > 0 || (options.outputs.deniedDirs?.length ?? 0) > 0)
+        ? { outputs: options.outputs }
         : {}),
       // Pass-through `builtins` verbatim — including an empty array,
       // which is the "disable all builtins" signal. Distinguish from

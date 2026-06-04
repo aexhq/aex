@@ -101,7 +101,7 @@ interface CaseResult {
 function buildScript(cell: Cell, marker: string): string {
   const prompt =
     `Use your filesystem tools to create a file called \`report.txt\` ` +
-    `inside the output directory at \`/workspace/outputs/report-folder/\`. ` +
+    `inside \`/workspace/outputs/report-folder/\`. ` +
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
@@ -118,7 +118,7 @@ function buildScript(cell: Cell, marker: string): string {
       model: ${JSON.stringify(deepseekModel)},
       prompt: ${JSON.stringify(prompt)},
       builtins: ["developer"],
-      outputDirs: ["/workspace/outputs/report-folder"],
+      outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
       secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT } },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     });

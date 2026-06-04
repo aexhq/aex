@@ -252,6 +252,9 @@ export function parseRunUnitSubmission(input: unknown): RunUnitSubmission {
 
 function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmission {
   const submissionRaw = isRecord(value.submission) ? value.submission : {};
+  const outputsRaw = isRecord(submissionRaw.outputs) ? submissionRaw.outputs : {};
+  const allowedDirs = toOptionalStringArray(outputsRaw.allowedDirs);
+  const deniedDirs = toOptionalStringArray(outputsRaw.deniedDirs);
   const submission: PlatformSubmission = {
     model: typeof submissionRaw.model === "string" ? submissionRaw.model : "",
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
@@ -267,8 +270,13 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
       ? { securityProfile: parseSecurityProfile(submissionRaw.securityProfile) as RuntimeSecurityProfileName }
       : {}),
     ...(isJsonRecord(submissionRaw.metadata) ? { metadata: submissionRaw.metadata as Record<string, JsonValue> } : {}),
-    ...(toOptionalStringArray(submissionRaw.outputDirs)
-      ? { outputDirs: toOptionalStringArray(submissionRaw.outputDirs) as readonly string[] }
+    ...(allowedDirs || deniedDirs
+      ? {
+          outputs: {
+            ...(allowedDirs ? { allowedDirs } : {}),
+            ...(deniedDirs ? { deniedDirs } : {})
+          }
+        }
       : {})
   };
 

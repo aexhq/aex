@@ -23,7 +23,7 @@ describe("parseRunUnitSubmission", () => {
           packages: [{ name: "node", version: "22" }]
         },
         metadata: { team: "platform" },
-        outputDirs: ["/workspace/out"]
+        outputs: { allowedDirs: ["/workspace/out"], deniedDirs: ["node_modules"] }
       }
     };
 
@@ -40,7 +40,8 @@ describe("parseRunUnitSubmission", () => {
     expect(parsed.submission.environment?.networking?.mode).toBe("limited");
     expect(parsed.submission.environment?.packages?.[0]?.name).toBe("node");
     expect(parsed.submission.metadata).toEqual({ team: "platform" });
-    expect(parsed.submission.outputDirs).toEqual(["/workspace/out"]);
+    expect(parsed.submission.outputs?.allowedDirs).toEqual(["/workspace/out"]);
+    expect(parsed.submission.outputs?.deniedDirs).toEqual(["node_modules"]);
     expect("cleanup" in parsed).toBe(false);
   });
 

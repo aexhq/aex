@@ -16,7 +16,7 @@
  *   - 1 AGENTS.md (probe-tagged so a model reply that omits it fails)
  *   - 1 `system` message (probe-tagged)
  *   - 1 prompt (probe-tagged)
- *   - 1 custom outputDirs entry (not /workspace/outputs — proves the
+ *   - 1 custom outputs.allowedDirs entry (not /workspace/outputs — proves the
  *     runner re-roots arbitrary absolute paths under workspaceRoot)
  *   - `secrets` carrying the customer's provider key
  *
@@ -204,7 +204,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       system: ${JSON.stringify(systemText)},
       prompt: ${JSON.stringify(promptText)},
       agentsMd: [rules],
-      outputDirs: [${JSON.stringify(spec.customOutputDir)}],
+      outputs: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
       secrets: { ${spec.provider}: { apiKey: process.env.${spec.keyEnvName} } },
       idempotencyKey: "comprehensive-${spec.runtime}-${spec.provider}-" + Date.now()
     };
@@ -341,7 +341,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   // events sit in between.
   // On terminal mismatch, dump everything we know so the failure
   // log is self-diagnosing. The comprehensive case touches many
-  // surfaces (skills, MCP, AGENTS.md, system, custom outputDirs)
+  // surfaces (skills, MCP, AGENTS.md, system, custom outputs.allowedDirs)
   // and a runner_error here means materialize() or the manifest
   // fetch tripped; the .goose-logs files (collected in
   // result.outputs) contain the actual stderr.
@@ -408,7 +408,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.leakedProviderKey).toBe(false);
   expect(result.leakedDeepseekKey).toBe(false);
 
-  // Outputs: any file Goose wrote under the custom outputDirs path was
+  // Outputs: any file Goose wrote under the custom outputs.allowedDirs path was
   // uploaded. Downloading each one returns content (a download error
   // would surface in `sample`). We don't require Goose to write files —
   // some upstreams + models do, some don't — but if it did, the bytes
@@ -433,7 +433,7 @@ afterAll(() => {
 
 describe("live hosted API — comprehensive end-to-end via installed SDK", () => {
   it(
-    "managed deepseek: real Goose + skills + MCP + AGENTS.md + system + outputDirs",
+    "managed deepseek: real Goose + skills + MCP + AGENTS.md + system + outputs.allowedDirs",
     async () => {
       const result = await runCase(
         {

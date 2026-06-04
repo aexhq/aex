@@ -33,9 +33,10 @@ pattern instead of MCP:
    with its bash tool.
 2. Route every upstream HTTPS call through a per-run `ProxyEndpoint`
    (audit, byte caps, budget enforcement).
-3. Have the CLI write the full payload under one of the directories you
-   passed to `outputDirs`. Return only a small handle (path, item count,
-   summary) to the model.
+3. Have the CLI write the full payload to the session filesystem. By default,
+   files it creates or modifies are captured automatically; pass
+   `outputs.allowedDirs` only when you want to narrow capture to specific roots.
+   Return only a small handle (path, item count, summary) to the model.
 
 The agent sees the handle in context; the bytes ride out through
 `download()` as a normal captured output.

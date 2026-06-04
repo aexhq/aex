@@ -17,7 +17,7 @@ Allowed fields:
 - `environment` - `{ networking?, packages?, envVars? }`. `envVars` are merged into the in-container `RUNTIME.env` / `RUNTIME.json` mounts.
 - `metadata` - non-secret structured metadata.
 
-`agentsMd`, `files`, and `outputDirs` are top-level `submitRun` options, not run-config fields. They carry bytes or capture behavior that belongs on a concrete run submission.
+`agentsMd`, `files`, and `outputs` are top-level `submitRun` options, not run-config fields. They carry bytes or capture behavior that belongs on a concrete run submission.
 
 Secrets never live in run config. Pass credentials through `submitRun({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI.
 

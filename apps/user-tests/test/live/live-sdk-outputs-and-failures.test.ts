@@ -97,11 +97,11 @@ interface OutputCaseResult {
 }
 
 function buildOutputScript(cell: Cell, marker: string): string {
-  // The managed runtime captures /workspace/outputs by default. Naming the
-  // path explicitly in the prompt avoids model variance around env var reads.
+  // This case narrows capture to an explicit outputs.allowedDirs root. Naming the
+  // path explicitly in the prompt avoids model variance around path choice.
   const prompt =
     `Use your filesystem tools to create a file called \`report.txt\` ` +
-    `inside the output directory at \`/workspace/outputs/report-folder/\`. ` +
+    `inside \`/workspace/outputs/report-folder/\`. ` +
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
@@ -118,7 +118,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
       builtins: ["developer"],
-      outputDirs: ["/workspace/outputs/report-folder"],
+      outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
       secrets: { ${cell.provider}: { apiKey: process.env.${cell.keyEnvName} } },
       idempotencyKey: "outputs-${cell.id}-" + Date.now()
     });
@@ -205,6 +205,27 @@ function dumpOutputResult(cell: Cell, result: OutputCaseResult): string {
   }
   lines.push(`assistantText=${result.assistantTextJoined.slice(0, 400)}`);
   return lines.join("\n");
+}
+
+function assertCleanOutputLifecycle(cell: Cell, result: OutputCaseResult): void {
+  const dump = (): string => dumpOutputResult(cell, result);
+  if (result.streamErrors.length > 0) {
+    throw new Error(`clean output run emitted stream errors\n\n${dump()}`);
+  }
+  const outputs = result.terminalData ? result.terminalData["outputs"] : undefined;
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
+    throw new Error(`terminal event missing outputs summary\n\n${dump()}`);
+  }
+  const summary = outputs as Record<string, unknown>;
+  for (const field of ["uploaded", "skipped", "failures", "droppedByCap", "totalBytes"] as const) {
+    const value = summary[field];
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`terminal outputs.${field} must be a finite number\n\n${dump()}`);
+    }
+  }
+  if ((summary["uploaded"] as number) < 1 || summary["failures"] !== 0 || summary["droppedByCap"] !== 0) {
+    throw new Error(`unexpected terminal outputs summary on clean run: ${JSON.stringify(summary)}\n\n${dump()}`);
+  }
 }
 
 async function runOutputCell(cell: Cell, installDir: string): Promise<OutputCaseResult> {
@@ -563,6 +584,7 @@ describe("live outputs — agent writes a known file, bytes round-trip", () => {
       if (terminalReason !== "complete") {
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
+      assertCleanOutputLifecycle(cell, result);
 
       // Find the report.txt the agent wrote. Filename is relative to
       // workspaceRoot (/workspace) so an agent writing to

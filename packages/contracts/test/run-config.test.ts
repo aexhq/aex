@@ -598,88 +598,123 @@ describe("run-config — parseRunSubmissionRequest", () => {
     ).toThrow(/duplicate/i);
   });
 
-  it("accepts a valid outputDirs list and normalises duplicates / trailing slashes", () => {
+  it("accepts valid outputs.allowedDirs and normalises duplicates / trailing slashes", () => {
     const parsed = parseRunSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
-        outputDirs: ["/workspace/outputs/", "/workspace/outputs", "/workspace/state"]
+        outputs: { allowedDirs: ["/workspace/outputs/", "/workspace/outputs", "/workspace/state"] }
       }
     });
-    expect(parsed.submission.outputDirs).toEqual([
+    expect(parsed.submission.outputs?.allowedDirs).toEqual([
       "/workspace/outputs",
       "/workspace/state"
     ]);
   });
 
-  it("omits outputDirs from the parsed submission when an empty array is supplied", () => {
+  it("omits outputs from the parsed submission when empty arrays are supplied", () => {
     const parsed = parseRunSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
-        outputDirs: []
+        outputs: { allowedDirs: [], deniedDirs: [] }
       }
     });
-    expect(parsed.submission.outputDirs).toBeUndefined();
+    expect(parsed.submission.outputs).toBeUndefined();
   });
 
-  it("rejects outputDirs entries that are not absolute paths", () => {
+  it("rejects outputs.allowedDirs entries that are not absolute paths", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputDirs: ["relative/path"]
+          outputs: { allowedDirs: ["relative/path"] }
         }
       })
     ).toThrow(/absolute UNIX path/);
   });
 
-  it("rejects outputDirs entries that contain '..'", () => {
+  it("rejects outputs.allowedDirs entries that contain '..'", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputDirs: ["/workspace/../escape"]
+          outputs: { allowedDirs: ["/workspace/../escape"] }
         }
       })
     ).toThrow(/'\.\.'/);
   });
 
-  it("rejects outputDirs entries with NUL bytes", () => {
+  it("accepts outputs.deniedDirs — absolute subtree, bare segment, *.ext", () => {
+    const parsed = parseRunSubmissionRequest({
+      ...baseSubmission,
+      submission: {
+        ...baseSubmission.submission,
+        outputs: { deniedDirs: ["/var/cache/", "node_modules", "*.tmp", "node_modules"] }
+      }
+    });
+    expect(parsed.submission.outputs?.deniedDirs).toEqual(["/var/cache", "node_modules", "*.tmp"]);
+  });
+
+  it("rejects outputs.deniedDirs entries that contain '..'", () => {
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...baseSubmission,
+        submission: { ...baseSubmission.submission, outputs: { deniedDirs: ["../escape"] } }
+      })
+    ).toThrow(/'\.\.'/);
+  });
+
+  it("rejects legacy top-level outputDirs/outputExcludes", () => {
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...baseSubmission,
+        submission: { ...baseSubmission.submission, outputDirs: ["/workspace/out"] }
+      })
+    ).toThrow(/not an allowed field/);
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...baseSubmission,
+        submission: { ...baseSubmission.submission, outputExcludes: ["node_modules"] }
+      })
+    ).toThrow(/not an allowed field/);
+  });
+
+  it("rejects outputs.allowedDirs entries with NUL bytes", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputDirs: ["/workspace/\0evil"]
+          outputs: { allowedDirs: ["/workspace/\0evil"] }
         }
       })
     ).toThrow(/NUL/);
   });
 
-  it("rejects outputDirs lists with more than 32 entries", () => {
+  it("rejects outputs.allowedDirs lists with more than 32 entries", () => {
     const tooMany = Array.from({ length: 33 }, (_, i) => `/workspace/out-${i}`);
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputDirs: tooMany
+          outputs: { allowedDirs: tooMany }
         }
       })
     ).toThrow(/max is 32/);
   });
 
-  it("rejects outputDirs entries longer than 512 bytes", () => {
+  it("rejects outputs.allowedDirs entries longer than 512 bytes", () => {
     const huge = "/" + "a".repeat(520);
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputDirs: [huge]
+          outputs: { allowedDirs: [huge] }
         }
       })
     ).toThrow(/exceeds 512 bytes/);

@@ -4,16 +4,14 @@ title: Outputs
 
 # Outputs
 
-Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. File capture is always attempted against a runtime-specific default directory; the submission's `outputDirs` field overrides that default when you want to capture additional or different paths. `client.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
-
-> Inside the runtime, the primary output path is exposed as `$AEX_OUTPUTS` (sourceable from `RUNTIME.env`) and as `runtimeManifest.envVars.AEX_OUTPUTS` on the `Run` returned by `client.get(runId)`. Goose Managed defaults to `/workspace/outputs`.
+Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the run creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `client.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
 
 ## Quickstart
 
 ```ts
 const runId = await client.submitRun({
   model: "claude-haiku-4-5",
-  prompt: "Produce a report and stash working files under $AEX_OUTPUTS",
+  prompt: "Produce a report and save it as a file.",
   secrets: { anthropic: { apiKey } }
 });
 
@@ -32,7 +30,7 @@ A run's downloadable content is organised into four logical namespaces, each wit
 | Namespace | What it holds | Verb | CLI |
 | --- | --- | --- | --- |
 | `outputs` | The run's real deliverables. | `downloadOutputs(runId)` | `download <id> --only outputs` |
-| `logs` | Platform diagnostics: `anthropic-debug/`, `goose-logs/`, `fly-logs/`. Stored under their own R2 prefix (`runs/<id>/logs/`), so `outputs` stays deliverables-only. | `downloadLogs(runId)` | `download <id> --only logs` |
+| `logs` | Platform diagnostics in canonical namespaces: `runtime/`, `host/`, `provider-proxy/`, and `control-plane/`. Stored separately from `outputs`, so deliverables stay deliverables-only. | `downloadLogs(runId)` | `download <id> --only logs` |
 | `events` | Typed events (`events.jsonl`) plus log/full-stream JSONL when the event channel opt-ins are available. | `downloadEvents(runId)` | `download <id> --only events` |
 | `metadata` | The run record (`run.json`). | `downloadMetadata(runId)` | `download <id> --only metadata` |
 
@@ -48,7 +46,7 @@ events/events.jsonl   # typed event-channel records, ordered
 events/logs.jsonl     # log-channel records, when available
 events/all.jsonl      # full unified stream, when available
 outputs/<name>        # one file per deliverable
-logs/<name>           # platform diagnostics (anthropic-debug/ …)
+logs/<name>           # platform diagnostics
 manifest.json         # RunRecordManifestV1
 ```
 
@@ -89,16 +87,18 @@ console.log(looseReport.byteLength);
 | `provider_running`, mid-session / `cleaning_up` | Whatever events + outputs have been captured so far. Call again after terminal for the complete set. |
 | `succeeded` / `failed` / `cancelled` / `terminated` | The complete typed event archive + all captured outputs; log/full-stream JSONL are included when the deployed event API serves those channel opt-ins. |
 
-## `outputDirs` — override capture roots
+## `outputs.allowedDirs` — override capture roots
 
 ```ts
 client.submitRun({
   /* ... */,
-  outputDirs: ["/mnt/session/outputs", "/mnt/session/state"]
+  outputs: {
+    allowedDirs: ["/workspace/reports", "/workspace/state"]
+  }
 });
 ```
 
-When omitted, aex captures the runtime default output directory. When supplied, `outputDirs` replaces that default with the listed paths.
+When omitted, aex captures the whole filesystem delta. When supplied, `outputs.allowedDirs` is a whitelist that replaces that default with the listed roots. In other words, explicit `outputs.allowedDirs` narrows capture; it does not add paths on top of `/`.
 
 Validation:
 
@@ -109,37 +109,45 @@ Validation:
 
 Runtime notes:
 
-- Goose Managed captures files by walking the configured directories in the runner container.
-- Goose Managed captures by walking managed runtime directories directly.
+- The managed runtime captures files by diffing the filesystem against a baseline snapshot taken just before the agent starts. Platform setup files, installed packages, and materialized inputs are already present before the baseline, so they are excluded by timing.
+- If you pass an explicit root that does not exist by terminal time, that root contributes no files.
+
+## `outputs.deniedDirs` — subtract noise
+
+```ts
+client.submitRun({
+  /* ... */,
+  outputs: {
+    deniedDirs: ["node_modules", "/var/cache", "*.tmp"]
+  }
+});
+```
+
+`outputs.deniedDirs` is subtracted from the capture roots. Entries may be an absolute subtree (`/var/cache`), a bare path segment (`node_modules`), or a `*.ext` extension match. Denied entries beat allowed roots. Platform-mandatory excludes, including pseudo-filesystems and secret/platform paths, always apply and cannot be re-included.
 
 Mechanism (no platform-magical paths — this is honest):
 
-1. The hosted platform submits the run, sends the user prompt, streams events.
-2. At session-idle (the agent's primary task is done), the platform sends one synthetic `user.message` to the agent:
-   *"Run `node /mnt/session/uploads/aex/aex outputs sync <dirs>` once."*
-3. Goose Managed captures by walking managed runtime directories directly.
-4. The platform walks the Files API, copies bytes into durable output storage, and tears down the session.
+1. The hosted platform materializes the workspace, opens runtime logs, and records a filesystem baseline across the capture roots.
+2. The agent runs normally. There is no extra model turn and no synthetic sync instruction.
+3. When the agent exits, the runner rescans the capture roots and finds files that are new or whose metadata changed.
+4. The runner uploads changed regular files to durable run artifact storage. Diagnostic log paths are routed to `logs`; other paths are routed to `outputs`.
 
-Cost: one extra agent turn (~hundreds of tokens, observable in `span.model_request_*` events). Document this against your token budget if you submit very high-volume runs.
+Cost: output capture does not add a model turn. The runner pays a filesystem scan and upload cost near the end of the run.
 
-Capture failure modes — when the platform could not capture a file's bytes at all, the reason is surfaced on the run unit (`getRunUnit(runId).outputCaptureFailures`), not in the download zip. The zip's `manifest.errors[]` only records per-output *byte fetches* that failed while assembling the archive.
+Capture notes:
 
-| `reason` | What happened |
-| --- | --- |
-| `agent_did_not_sync` | The agent refused or skipped the synthetic instruction. Run still succeeded, just no file bytes. |
-| `agent_reported_error` | The `node /mnt/session/uploads/aex/aex outputs sync` invocation returned non-zero (e.g. dir did not exist). |
-| `session_terminated_pre_sync` | Session was terminated (cancel / timeout) before the sync turn ran. |
-| `storage_cap_exceeded` | Workspace storage quota would have been breached. |
-| `download_failed` | Files API entry could not be fetched. |
-| `pending_session_terminal` | Mid-session download — file may show up on a later `download()` once the session reaches terminal. |
+- Files over a configured per-file size cap are skipped.
+- Once total file or byte caps are reached, remaining changed files are dropped from upload.
+- Files that vanish between scan and upload are skipped.
+- Upload failures are recorded in runner events/logs. The zip's `manifest.errors[]` only records byte fetches that failed while assembling the download archive.
 
-## Runs without explicit `outputDirs`
+## Runs without explicit `outputs.allowedDirs`
 
-Metadata still gets the full treatment. aex captures the runtime default output directory and returns whatever files exist there. A run that produces no files still returns a zip with `run.json`, `events.jsonl`, and an empty `outputs/` directory (manifest `outputs: []`).
+Metadata still gets the full treatment. aex captures every regular file the run created or modified outside mandatory platform excludes. A run that produces no files still returns a zip with `run.json`, `events.jsonl`, and an empty `outputs/` directory (manifest `outputs: []`).
 
 ## Mid-session download semantics
 
-Mid-session calls are **best-effort and side-effect-free**: the platform exposes whatever the agent has already registered with the Files API. A mid-session call does **not** trigger a synthetic sync — that would interfere with the running agent's plan. If you need the full output set, wait for the run to reach terminal status and call `download()` again.
+Mid-session calls are **best-effort and side-effect-free**: they expose whatever artifacts have already been uploaded. Files written by the agent are normally uploaded near terminal, after the filesystem diff. If you need the full output set, wait for the run to reach terminal status and call `download()` again.
 
 ## Safety
 

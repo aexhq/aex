@@ -59,7 +59,7 @@ interface LiveResult {
   readonly outputCount: number;
   // Per-file filenames + sizes returned by GET /api/runs/:id/outputs.
   // Captured for diagnostic dumps so a missing-deliverable failure is
-  // self-describing without a re-run. With no user outputDirs supplied
+  // self-describing without a re-run. With no user outputs.allowedDirs supplied
   // here, this list is expected to be empty — the runner's `.goose-logs`
   // diagnostics now live in the separate `logs` namespace (see below),
   // not in `outputs`.
@@ -234,7 +234,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Ma
       // Run-artifact namespace split: customer deliverables live in the
       // `outputs` namespace; the runner's always-on diagnostics
       // (.runtime/{stdout.log,stderr.log,args.json}) live in the
-      // physically-separate `logs` namespace. No user outputDirs are
+      // physically-separate `logs` namespace. No user outputs.allowedDirs are
       // supplied here, so `outputs` is empty and the diagnostic-coverage
       // check (>= the 3 the runner always emits) moves to the logs
       // namespace. Dump both listings on failure so a missing artifact is

@@ -57,8 +57,8 @@ export interface PlatformEnvironment {
 }
 
 /**
- * Reserved prefix for aex-set runtime env vars (`AEX_OUTPUTS`,
- * `AEX_CLI`, …). Customer `environment.envVars` keys carrying this
+ * Reserved prefix for aex-set runtime env vars (`AEX_CLI`,
+ * `AEX_RUNTIME_JSON`, …). Customer `environment.envVars` keys carrying this
  * prefix are rejected at submission parse time so platform-set values
  * cannot be silently overwritten.
  */
@@ -102,7 +102,7 @@ export interface PlatformNetworking {
  * is the bare package and `PlatformPackage.ecosystem` is the resolved
  * manager.
  */
-export const PLATFORM_PACKAGE_ECOSYSTEMS = ["apt", "cargo", "gem", "go", "npm", "pip"] as const;
+export const PLATFORM_PACKAGE_ECOSYSTEMS = ["apt", "npm", "pip"] as const;
 export type PlatformPackageEcosystem = (typeof PLATFORM_PACKAGE_ECOSYSTEMS)[number];
 
 export interface PlatformPackage {
@@ -115,8 +115,7 @@ export interface PlatformPackage {
  * Render a parsed {@link PlatformPackage} as the version-embedded install
  * string used by runtime materialization. The join differs per manager:
  *   - pip  → `name==version`
- *   - npm / cargo / go → `name@version`
- *   - gem  → `name:version`
+ *   - npm  → `name@version`
  *   - apt  → `name=version`
  * With no `version`, just the bare `name`. Pure; used by the managed runner
  * package installer.
@@ -129,11 +128,7 @@ export function packageInstallString(pkg: PlatformPackage): string {
     case "pip":
       return `${pkg.name}==${pkg.version}`;
     case "npm":
-    case "cargo":
-    case "go":
       return `${pkg.name}@${pkg.version}`;
-    case "gem":
-      return `${pkg.name}:${pkg.version}`;
     case "apt":
       return `${pkg.name}=${pkg.version}`;
   }
@@ -352,7 +347,7 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
  *     only — keeps RUNTIME.env readable, matches platform convention).
  *   - Keys MUST NOT start with the reserved `AEX_` prefix; that
  *     prefix is owned by platform-set runtime keys and a collision
- *     would silently mask `__AEX_OUTPUTS__` etc. substitution
+ *     would silently mask `__AEX_CLI__` etc. substitution
  *     targets.
  *   - Bounded: max ENV_VARS_MAX_ENTRIES entries, max
  *     ENV_VARS_MAX_VALUE_BYTES per value, max ENV_VARS_MAX_TOTAL_BYTES
@@ -1121,26 +1116,11 @@ export interface PlatformSubmission {
   readonly securityProfile?: RuntimeSecurityProfileName;
   readonly metadata?: Record<string, JsonValue>;
   /**
-   * Opt-in container paths to capture as `output_objects` at session
-   * terminal. When omitted, the worker still persists run metadata
-   * (status, events, snapshots, cleanup state) but does not capture
-   * any container file bytes. When present, the platform drives a
-   * synthetic agent turn at session terminal that instructs the agent
-   * to register every file under these paths via the Anthropic Files
-   * API, then walks the resulting list and copies bytes into private
-   * object storage.
-   *
-   * Validation:
-   *   - Absolute UNIX paths only (starts with `/`).
-   *   - No `..` segments, no NUL bytes, no embedded newlines.
-   *   - Max 32 entries.
-   *   - Max 512 bytes per entry.
-   *
-   * Entries are normalised (collapse `/+`, drop trailing `/` except
-   * for `/`) and deduplicated. The normalised list is what travels in
-   * the idempotency hash and the run snapshot.
+   * Output capture policy. Omit `outputs.allowedDirs` to capture the whole
+   * filesystem delta; provide it to narrow capture to the listed roots.
+   * `outputs.deniedDirs` subtracts denied roots/patterns from the allowed set.
    */
-  readonly outputDirs?: readonly string[];
+  readonly outputs?: PlatformOutputCaptureConfig;
   /**
    * Optional override for the Goose builtin extensions enabled inside
    * the runner container. Each entry is the bare name accepted by
@@ -1163,17 +1143,30 @@ export interface PlatformSubmission {
   readonly builtins?: readonly string[];
   /**
    * Platform-injection controls. The platform prepends a small system
-   * prompt (see `platformSystemPrompt`) ahead of `system` so a bare
-   * "save xx to the output dir" request works without the caller wiring
-   * anything. Set `systemPrompt: "off"` to suppress that injection and
-   * have the runtime see only the customer's own `system`. Omitting the
-   * field (or `systemPrompt: "default"`) keeps the injection on.
+   * prompt (see `platformSystemPrompt`) ahead of `system` to explain
+   * managed-run expectations such as durable file capture. Set
+   * `systemPrompt: "off"` to suppress that injection and have the runtime
+   * see only the customer's own `system`. Omitting the field (or
+   * `systemPrompt: "default"`) keeps the injection on.
    *
-   * The default-output-directory behaviour is NOT governed by this flag —
-   * an omitted `outputDirs` still falls back to the managed runtime's
-   * default capture directory regardless.
+   * This does not change output capture scope. Omitted
+   * `outputs.allowedDirs` means capture all created/modified files; explicit
+   * `outputs.allowedDirs` narrows it.
    */
   readonly platform?: PlatformInjectionConfig;
+}
+
+export interface PlatformOutputCaptureConfig {
+  /**
+   * Allowed capture roots. Omit or pass an empty list to use the default
+   * whole-filesystem delta capture. Entries are absolute UNIX paths.
+   */
+  readonly allowedDirs?: readonly string[];
+  /**
+   * Denied capture roots/patterns. These are subtracted from the allowed roots;
+   * platform-mandatory denies always apply and cannot be re-included.
+   */
+  readonly deniedDirs?: readonly string[];
 }
 
 export interface PlatformInjectionConfig {
@@ -1447,7 +1440,7 @@ function parseSubmission(input: unknown): PlatformSubmission {
     "environment",
     "securityProfile",
     "metadata",
-    "outputDirs",
+    "outputs",
     "builtins",
     "platform"
   ]);
@@ -1466,7 +1459,7 @@ function parseSubmission(input: unknown): PlatformSubmission {
   const environment = parseEnvironment(value.environment);
   const securityProfile = parseRuntimeSecurityProfile(value.securityProfile);
   const metadata = optionalJsonRecord(value.metadata, "submission.metadata");
-  const outputDirs = parseOutputDirs(value.outputDirs);
+  const outputs = parseOutputs(value.outputs);
   const builtins = parseBuiltins(value.builtins);
   const platform = parsePlatformConfig(value.platform);
 
@@ -1481,7 +1474,7 @@ function parseSubmission(input: unknown): PlatformSubmission {
     ...(environment ? { environment } : {}),
     ...(securityProfile ? { securityProfile } : {}),
     ...(metadata ? { metadata } : {}),
-    ...(outputDirs ? { outputDirs } : {}),
+    ...(outputs ? { outputs } : {}),
     ...(builtins !== undefined ? { builtins } : {}),
     ...(platform ? { platform } : {})
   };
@@ -1533,7 +1526,7 @@ function parseBuiltins(input: unknown): readonly string[] | undefined {
 }
 
 /**
- * Maximum number of `outputDirs` entries accepted per submission.
+ * Maximum number of output capture entries accepted per list.
  *
  * 32 is enough room for the typical "one or two capture roots" pattern
  * plus a generous margin for legitimate multi-root use cases (per-tool
@@ -1544,28 +1537,50 @@ function parseBuiltins(input: unknown): readonly string[] | undefined {
 const MAX_OUTPUT_DIRS = 32;
 
 /**
- * Maximum byte length of a single `outputDirs` entry (after UTF-8
+ * Maximum byte length of a single output capture entry (after UTF-8
  * encoding). 512 bytes comfortably covers `/very/long/nested/path`
  * style entries without letting a misuse smuggle large blobs through
  * the field.
  */
 const MAX_OUTPUT_DIR_BYTES = 512;
 
-function parseOutputDirs(input: unknown): readonly string[] | undefined {
+function parseOutputs(input: unknown): PlatformOutputCaptureConfig | undefined {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+  const value = requireRecord(input, "submission.outputs");
+  const allowed = new Set(["allowedDirs", "deniedDirs"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`submission.outputs.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
+    }
+  }
+  const allowedDirs = parseOutputAllowedDirs(value.allowedDirs);
+  const deniedDirs = parseOutputDeniedDirs(value.deniedDirs);
+  if (!allowedDirs && !deniedDirs) {
+    return undefined;
+  }
+  return {
+    ...(allowedDirs ? { allowedDirs } : {}),
+    ...(deniedDirs ? { deniedDirs } : {})
+  };
+}
+
+function parseOutputAllowedDirs(input: unknown): readonly string[] | undefined {
   if (input === undefined) {
     return undefined;
   }
   if (!Array.isArray(input)) {
-    throw new Error("submission.outputDirs must be an array of absolute UNIX paths");
+    throw new Error("submission.outputs.allowedDirs must be an array of absolute UNIX paths");
   }
   if (input.length === 0) {
     // Treat an empty array as omission so the idempotency hash matches
-    // the "no outputDirs" case.
+    // the "no allowedDirs" case.
     return undefined;
   }
   if (input.length > MAX_OUTPUT_DIRS) {
     throw new Error(
-      `submission.outputDirs has ${input.length} entries; max is ${MAX_OUTPUT_DIRS}`
+      `submission.outputs.allowedDirs has ${input.length} entries; max is ${MAX_OUTPUT_DIRS}`
     );
   }
   const seen = new Set<string>();
@@ -1573,31 +1588,31 @@ function parseOutputDirs(input: unknown): readonly string[] | undefined {
   for (let i = 0; i < input.length; i++) {
     const item = input[i];
     if (typeof item !== "string") {
-      throw new Error(`submission.outputDirs[${i}] must be a string`);
+      throw new Error(`submission.outputs.allowedDirs[${i}] must be a string`);
     }
     if (item.length === 0) {
-      throw new Error(`submission.outputDirs[${i}] must be a non-empty absolute UNIX path`);
+      throw new Error(`submission.outputs.allowedDirs[${i}] must be a non-empty absolute UNIX path`);
     }
     const bytes = new TextEncoder().encode(item).length;
     if (bytes > MAX_OUTPUT_DIR_BYTES) {
       throw new Error(
-        `submission.outputDirs[${i}] exceeds ${MAX_OUTPUT_DIR_BYTES} bytes (got ${bytes})`
+        `submission.outputs.allowedDirs[${i}] exceeds ${MAX_OUTPUT_DIR_BYTES} bytes (got ${bytes})`
       );
     }
     if (!item.startsWith("/")) {
       throw new Error(
-        `submission.outputDirs[${i}] must be an absolute UNIX path (start with '/')`
+        `submission.outputs.allowedDirs[${i}] must be an absolute UNIX path (start with '/')`
       );
     }
     if (item.includes("\0")) {
-      throw new Error(`submission.outputDirs[${i}] must not contain NUL bytes`);
+      throw new Error(`submission.outputs.allowedDirs[${i}] must not contain NUL bytes`);
     }
     if (item.includes("\n") || item.includes("\r")) {
-      throw new Error(`submission.outputDirs[${i}] must not contain newline characters`);
+      throw new Error(`submission.outputs.allowedDirs[${i}] must not contain newline characters`);
     }
     const segments = item.split("/");
     if (segments.includes("..")) {
-      throw new Error(`submission.outputDirs[${i}] must not contain '..' segments`);
+      throw new Error(`submission.outputs.allowedDirs[${i}] must not contain '..' segments`);
     }
     const collapsed = segments
       .filter((seg, idx) => seg.length > 0 || idx === 0)
@@ -1607,6 +1622,60 @@ function parseOutputDirs(input: unknown): readonly string[] | undefined {
         ? collapsed.slice(0, -1)
         : collapsed;
     const canonical = stripped.length === 0 ? "/" : stripped;
+    if (seen.has(canonical)) {
+      continue;
+    }
+    seen.add(canonical);
+    normalised.push(canonical);
+  }
+  return normalised;
+}
+
+function parseOutputDeniedDirs(input: unknown): readonly string[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(input)) {
+    throw new Error("submission.outputs.deniedDirs must be an array of strings");
+  }
+  if (input.length === 0) {
+    return undefined;
+  }
+  if (input.length > MAX_OUTPUT_DIRS) {
+    throw new Error(`submission.outputs.deniedDirs has ${input.length} entries; max is ${MAX_OUTPUT_DIRS}`);
+  }
+  const seen = new Set<string>();
+  const normalised: string[] = [];
+  for (let i = 0; i < input.length; i++) {
+    const item = input[i];
+    if (typeof item !== "string") {
+      throw new Error(`submission.outputs.deniedDirs[${i}] must be a string`);
+    }
+    if (item.length === 0) {
+      throw new Error(`submission.outputs.deniedDirs[${i}] must be a non-empty pattern`);
+    }
+    const bytes = new TextEncoder().encode(item).length;
+    if (bytes > MAX_OUTPUT_DIR_BYTES) {
+      throw new Error(`submission.outputs.deniedDirs[${i}] exceeds ${MAX_OUTPUT_DIR_BYTES} bytes (got ${bytes})`);
+    }
+    if (item.includes("\0")) {
+      throw new Error(`submission.outputs.deniedDirs[${i}] must not contain NUL bytes`);
+    }
+    if (item.includes("\n") || item.includes("\r")) {
+      throw new Error(`submission.outputs.deniedDirs[${i}] must not contain newline characters`);
+    }
+    if (item.split("/").includes("..")) {
+      throw new Error(`submission.outputs.deniedDirs[${i}] must not contain '..' segments`);
+    }
+    let canonical = item;
+    if (item.startsWith("/")) {
+      const collapsed = item
+        .split("/")
+        .filter((seg, idx) => seg.length > 0 || idx === 0)
+        .join("/");
+      canonical =
+        collapsed.length > 1 && collapsed.endsWith("/") ? collapsed.slice(0, -1) : collapsed;
+    }
     if (seen.has(canonical)) {
       continue;
     }
