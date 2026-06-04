@@ -4,7 +4,7 @@ title: Run configuration
 
 # Run configuration
 
-A run config is the credential-free subset of a `submitRun` request that you can keep in code or load from a JSON file. It is not a platform object, saved definition, DSL, trigger, or persistent agent profile. antpath only stores the immutable run record created when you submit.
+A run config is the credential-free subset of a `submitRun` request that you can keep in code or load from a JSON file. It is not a platform object, saved definition, DSL, trigger, or persistent agent profile. aex only stores the immutable run record created when you submit.
 
 Allowed fields:
 
@@ -23,7 +23,7 @@ Secrets never live in run config. Pass credentials through `submitRun({ ...confi
 
 ## Reuse in code
 
-Use an ordinary function when you want reusable typed parameters. antpath does not store or execute this function; it only receives the run parameters you submit.
+Use an ordinary function when you want reusable typed parameters. aex does not store or execute this function; it only receives the run parameters you submit.
 
 ```ts
 function summarise(topic: string) {
@@ -42,11 +42,11 @@ await client.submitRun({
 
 ## CLI
 
-The `antpath run` host subcommand accepts the same run config either as a JSON file:
+The `aex run` host subcommand accepts the same run config either as a JSON file:
 
 ```bash
-antpath run --config ./run.json \
-  --api-token "$ANTPATH_API_TOKEN" \
+aex run --config ./run.json \
+  --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 

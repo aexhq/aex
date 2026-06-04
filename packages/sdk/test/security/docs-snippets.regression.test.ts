@@ -38,10 +38,10 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import {
-  AntpathClient,
+  AexClient,
   Skill,
   AgentsMd,
-  File as AntpathFile
+  File as AexFile
 } from "../../src/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -119,15 +119,15 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       {
         doc: "skills.md",
         needle: /client\.skills\.findByHash\(/,
-        present: hasKey(AntpathClient.prototype, "skills"),
-        method: "AntpathClient.prototype.skills.findByHash"
+        present: hasKey(AexClient.prototype, "skills"),
+        method: "AexClient.prototype.skills.findByHash"
       },
       // client.skills.findByName
       {
         doc: "skills.md",
         needle: /client\.skills\.findByName\(/,
-        present: hasKey(AntpathClient.prototype, "skills"),
-        method: "AntpathClient.prototype.skills.findByName"
+        present: hasKey(AexClient.prototype, "skills"),
+        method: "AexClient.prototype.skills.findByName"
       },
       // 2-arg submitRun(config, opts)
       {
@@ -136,8 +136,8 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
         // The signature is `submitRun(options)`; a 2-arg shape would
         // accept run config as the first positional. We probe by calling
         // length on the function.
-        present: AntpathClient.prototype.submitRun.length >= 2,
-        method: "AntpathClient.prototype.submitRun(config, options)"
+        present: AexClient.prototype.submitRun.length >= 2,
+        method: "AexClient.prototype.submitRun(config, options)"
       }
     ];
 
@@ -170,7 +170,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const quickstart = readDoc("quickstart.md");
     const hasStatic = (cls: object, key: string): boolean =>
       typeof (cls as unknown as Record<string, unknown>)[key] === "function";
-    expect(hasStatic(AntpathFile, "fromPath")).toBe(true);
+    expect(hasStatic(AexFile, "fromPath")).toBe(true);
     expect(hasStatic(AgentsMd, "fromPath")).toBe(true);
     // Sanity: quickstart still references at least one of them (so this
     // file remains relevant). If the doc stops referencing fromPath

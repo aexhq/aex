@@ -99,7 +99,7 @@ describe("submission proxy endpoints — policy contract", () => {
   });
 
   it("rejects reserved endpoint names", () => {
-    for (const reserved of ["proxy", "antpath", "internal", "admin"]) {
+    for (const reserved of ["proxy", "aex", "internal", "admin"]) {
       expect(() =>
         parseRunSubmissionRequest({
           ...baseSubmission,
@@ -254,16 +254,16 @@ describe("submission proxy endpoints — policy contract", () => {
     ).toThrow(/at least 8 bytes/);
   });
 
-  it("rejects an inbound submission setting __antpath_ namespaced secrets", () => {
+  it("rejects an inbound submission setting __aex_ namespaced secrets", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseSubmission,
         secrets: {
           ...baseSubmission.secrets,
-          __antpath_proxy_token: "forged"
+          __aex_proxy_token: "forged"
         } as never
       })
-    ).toThrow(/__antpath_/);
+    ).toThrow(/__aex_/);
   });
 
   it("rejects unknown top-level secret keys", () => {

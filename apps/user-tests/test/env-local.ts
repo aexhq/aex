@@ -20,23 +20,8 @@ export function loadLocalEnv(): void {
     }
   }
 
-  aliasEnv("ANTPATH_API_URL", ["ANTPATH_LIVE_API_BASE", "ANTPATH_API_BASE"]);
-  aliasEnv("ANTPATH_API_TOKEN", ["ANTPATH_LIVE_API_TOKEN"]);
-  aliasEnv("ANTHROPIC_API_KEY", ["ANTPATH_USER_TEST_ANTHROPIC_KEY"]);
-  aliasEnv("DEEPSEEK_API_KEY", ["ANTPATH_USER_TEST_DEEPSEEK_KEY"]);
 }
 
 function uniqueDirs(dirs: readonly string[]): string[] {
   return Array.from(new Set(dirs));
-}
-
-function aliasEnv(target: string, sources: readonly string[]): void {
-  if (process.env[target] && process.env[target]!.length > 0) return;
-  for (const source of sources) {
-    const value = process.env[source];
-    if (value && value.length > 0) {
-      process.env[target] = value;
-      return;
-    }
-  }
 }

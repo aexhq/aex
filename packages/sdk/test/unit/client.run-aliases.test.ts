@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AntpathClient } from "../../src/index.js";
+import { AexClient } from "../../src/index.js";
 
 interface RecordedCall {
   readonly url: string;
@@ -13,7 +13,7 @@ function json(body: unknown): Response {
   });
 }
 
-function aliasClient(): { readonly client: AntpathClient; readonly calls: RecordedCall[] } {
+function aliasClient(): { readonly client: AexClient; readonly calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -25,12 +25,12 @@ function aliasClient(): { readonly client: AntpathClient; readonly calls: Record
     return json({ id: "run-1", status: "succeeded" });
   };
   return {
-    client: new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
+    client: new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
     calls
   };
 }
 
-describe("AntpathClient run-id aliases", () => {
+describe("AexClient run-id aliases", () => {
   it("delegate to the explicit run operations", async () => {
     const { client, calls } = aliasClient();
 

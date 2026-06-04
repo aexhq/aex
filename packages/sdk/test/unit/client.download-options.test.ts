@@ -2,9 +2,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AntpathClient } from "../../src/index.js";
+import { AexClient } from "../../src/index.js";
 
-function downloadClient(): AntpathClient {
+function downloadClient(): AexClient {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url.endsWith("/api/runs/run-1/outputs/abc/download")) {
@@ -36,12 +36,12 @@ function downloadClient(): AntpathClient {
     }
     throw new Error(`No fake responder for ${url}`);
   };
-  return new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+  return new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
 }
 
-describe("AntpathClient download { to } options", () => {
+describe("AexClient download { to } options", () => {
   it("download writes the zip to disk and still returns the bytes", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "antpath-sdk-download-"));
+    const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "run.zip");
       const client = downloadClient();
@@ -55,7 +55,7 @@ describe("AntpathClient download { to } options", () => {
   });
 
   it("downloadOutput writes raw output bytes to disk and still returns them", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "antpath-sdk-download-"));
+    const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "report.txt");
       const client = downloadClient();

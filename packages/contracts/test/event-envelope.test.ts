@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ANTPATH_EVENT_SPECVERSION,
+  AEX_EVENT_SPECVERSION,
   MAX_SQLITE_ROW_BYTES,
   channelOf,
   customName,
@@ -17,7 +17,7 @@ import {
   isToolCallResult,
   isToolCallStart,
   logToInbound,
-  runnerEventToAntpathEvent,
+  runnerEventToAexEvent,
   serializedEventBytes,
   toAGUI,
   type RunnerEvent
@@ -25,7 +25,7 @@ import {
 
 const ctx = { runId: "run_env", baseMs: 1_000_000 };
 
-const map = (evt: RunnerEvent) => runnerEventToAntpathEvent(evt, ctx);
+const map = (evt: RunnerEvent) => runnerEventToAexEvent(evt, ctx);
 const ev = (seq: number, kind: RunnerEvent["kind"], data: RunnerEvent["data"] = {}): RunnerEvent => ({
   seq,
   tMs: seq,
@@ -33,10 +33,10 @@ const ev = (seq: number, kind: RunnerEvent["kind"], data: RunnerEvent["data"] = 
   data
 });
 
-describe("runnerEventToAntpathEvent — CloudEvents framing", () => {
+describe("runnerEventToAexEvent — CloudEvents framing", () => {
   it("stamps stable identity, subject, sequence, and ISO time", () => {
     const out = map(ev(7, "assistant_text", { text: "hi" }));
-    expect(out.specversion).toBe(ANTPATH_EVENT_SPECVERSION);
+    expect(out.specversion).toBe(AEX_EVENT_SPECVERSION);
     expect(out.id).toBe("run_env:7");
     expect(out.subject).toBe("run_env");
     expect(out.sequence).toBe(7);
@@ -45,7 +45,7 @@ describe("runnerEventToAntpathEvent — CloudEvents framing", () => {
   });
 });
 
-describe("runnerEventToAntpathEvent — per-kind projection (type + source)", () => {
+describe("runnerEventToAexEvent — per-kind projection (type + source)", () => {
   it("runtime_started → RUN_STARTED / runtime", () => {
     const out = map(ev(0, "runtime_started", { source: "goose-managed" }));
     expect([out.type, out.source]).toEqual(["RUN_STARTED", "runtime"]);
@@ -76,25 +76,25 @@ describe("runnerEventToAntpathEvent — per-kind projection (type + source)", ()
     expect(isToolCallResult(out)).toBe(true);
   });
 
-  it("skill_loaded / file_uploaded → CUSTOM / antpath under an antpath.* name", () => {
+  it("skill_loaded / file_uploaded → CUSTOM / aex under an aex.* name", () => {
     const skill = map(ev(5, "skill_loaded", { name: "pdf" }));
-    expect([skill.type, skill.source]).toEqual(["CUSTOM", "antpath"]);
-    expect(customName(skill)).toBe("antpath.skill_loaded");
+    expect([skill.type, skill.source]).toEqual(["CUSTOM", "aex"]);
+    expect(customName(skill)).toBe("aex.skill_loaded");
     // The original payload is preserved verbatim under `value` (AG-UI custom carrier).
     expect(skill.data.value).toEqual({ name: "pdf" });
 
     const file = map(ev(6, "file_uploaded", { path: "out.txt" }));
-    expect(customName(file)).toBe("antpath.file_uploaded");
+    expect(customName(file)).toBe("aex.file_uploaded");
   });
 
   it("notification → CUSTOM / runtime; stream_error → CUSTOM / runtime (non-fatal, not RUN_ERROR)", () => {
     const note = map(ev(7, "notification", { source: "anthropic", reason: "model_request_end" }));
     expect([note.type, note.source]).toEqual(["CUSTOM", "runtime"]);
-    expect(customName(note)).toBe("antpath.notification");
+    expect(customName(note)).toBe("aex.notification");
 
     const err = map(ev(8, "stream_error", { source: "goose", message: "echo timed out" }));
     expect([err.type, err.source]).toEqual(["CUSTOM", "runtime"]);
-    expect(customName(err)).toBe("antpath.stream_error");
+    expect(customName(err)).toBe("aex.stream_error");
     // A non-fatal stream error must NOT masquerade as the terminal RUN_ERROR.
     expect(isRunError(err)).toBe(false);
     expect(isRunTerminal(err)).toBe(false);
@@ -153,7 +153,7 @@ describe("toAGUI — strict AG-UI projection", () => {
 
   it("CUSTOM round-trips name + value", () => {
     const out = toAGUI(map(ev(4, "skill_loaded", { name: "pdf", id: "sk1" })));
-    expect(out).toEqual({ type: "CUSTOM", timestamp: ctx.baseMs + 4, name: "antpath.skill_loaded", value: { name: "pdf", id: "sk1" } });
+    expect(out).toEqual({ type: "CUSTOM", timestamp: ctx.baseMs + 4, name: "aex.skill_loaded", value: { name: "pdf", id: "sk1" } });
   });
 });
 
@@ -235,17 +235,17 @@ describe("log channel — logToInbound + guards (unified stream)", () => {
     expect(channelOf(typed)).toBe("event");
     expect(isEventChannel(typed)).toBe(true);
     expect(isLog(typed)).toBe(false);
-    const log = { ...logToInbound("worker", line), specversion: ANTPATH_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
+    const log = { ...logToInbound("worker", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
     expect(channelOf(log)).toBe("log");
     expect(isLog(log)).toBe(true);
     expect(isEventChannel(log)).toBe(false);
   });
 
-  it("toAGUI carries a LOG under the reserved CUSTOM as antpath.log", () => {
-    const log = { ...logToInbound("worker", line), specversion: ANTPATH_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
+  it("toAGUI carries a LOG under the reserved CUSTOM as aex.log", () => {
+    const log = { ...logToInbound("worker", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
     const agui = toAGUI(log);
     expect(agui.type).toBe("CUSTOM");
-    expect(agui).toMatchObject({ name: "antpath.log" });
+    expect(agui).toMatchObject({ name: "aex.log" });
   });
 
   it("workflow is a recognized source", () => {

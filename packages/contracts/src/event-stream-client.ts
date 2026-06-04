@@ -3,7 +3,7 @@
  *
  * One mechanism for catch-up + resume + live: subscribe = read-from-cursor +
  * tail. The consumer opens a WS to the coordinator with a connection ticket,
- * replays from its cursor, and yields {@link AntpathEvent}s as they arrive.
+ * replays from its cursor, and yields {@link AexEvent}s as they arrive.
  * On a transport drop it reconnects with backoff and resumes from the last
  * sequence it saw — `from = lastSeq + 1` — so delivery is exactly-once across
  * reconnects (no gap, no duplicate). It stops on a terminal event, on abort,
@@ -17,7 +17,7 @@
  * (Node 22+ ships it; no dependency) and tests drive a fake.
  */
 
-import type { AntpathEvent } from "./event-envelope.js";
+import type { AexEvent } from "./event-envelope.js";
 
 /** The slice of the WHATWG WebSocket this client depends on. */
 export interface WebSocketLike {
@@ -46,7 +46,7 @@ const isTerminalType = (t: string): boolean => t === "RUN_FINISHED" || t === "RU
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
-): AsyncGenerator<AntpathEvent, void, void> {
+): AsyncGenerator<AexEvent, void, void> {
   const makeWs =
     opts.webSocketFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
   const reconnectDelayMs = opts.reconnectDelayMs ?? 500;
@@ -60,7 +60,7 @@ export async function* streamCoordinatorEvents(
     const url = `${opts.wsUrl}?ticket=${encodeURIComponent(ticket)}&from=${cursor + 1}`;
     const ws = makeWs(url);
 
-    const queue: AntpathEvent[] = [];
+    const queue: AexEvent[] = [];
     let closed = false;
     let disconnectReason = "";
     let resolveNext: (() => void) | null = null;
@@ -76,7 +76,7 @@ export async function* streamCoordinatorEvents(
       const data = typeof ev.data === "string" ? ev.data : "";
       if (!data) return;
       try {
-        const evt = JSON.parse(data) as AntpathEvent;
+        const evt = JSON.parse(data) as AexEvent;
         if (typeof evt.sequence === "number" && evt.sequence > cursor) {
           queue.push(evt);
           wake();
@@ -132,12 +132,12 @@ export async function* streamCoordinatorEvents(
     // otherwise). Reconnects are rare, so the warn volume is bounded.
     if (attempts > maxReconnects) {
       console.warn(
-        `[antpath] event stream gave up after ${maxReconnects} reconnect attempt(s) (last: ${disconnectReason || "unknown"}); ended before a terminal event at seq ${cursor + 1}`
+        `[aex] event stream gave up after ${maxReconnects} reconnect attempt(s) (last: ${disconnectReason || "unknown"}); ended before a terminal event at seq ${cursor + 1}`
       );
       return;
     }
     console.warn(
-      `[antpath] event stream disconnected (${disconnectReason || "unknown"}); reconnecting attempt ${attempts} from seq ${cursor + 1}`
+      `[aex] event stream disconnected (${disconnectReason || "unknown"}); reconnecting attempt ${attempts} from seq ${cursor + 1}`
     );
     await sleep(reconnectDelayMs, opts.signal);
   }

@@ -1,11 +1,11 @@
 /**
- * Shared helpers for every host-side antpath subcommand. Common flag
+ * Shared helpers for every host-side aex subcommand. Common flag
  * parsing, HttpClient construction, manifest detection so we can refuse
  * to run host commands inside a managed run container, and exit codes
  * shared with the in-container proxy command.
  */
-import { ANTPATH_DEFAULT_BASE_URL, HttpClient, type FetchLike } from "@antpath/contracts";
-import { ANTPATH_INDEX_PATH, type CliIO } from "../internal.js";
+import { AEX_DEFAULT_BASE_URL, HttpClient, type FetchLike } from "@aexhq/contracts";
+import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
 
 export interface CliExitCode {
   readonly code: number;
@@ -25,7 +25,7 @@ export const TIMEOUT_ERR: CliExitCode = { code: 3 };
 
 export interface CommonHostFlags {
   readonly apiToken: string;
-  readonly antpathUrl: string;
+  readonly aexUrl: string;
   /** `--debug`: print a redacted per-request trace to stderr. Uploads nothing. */
   readonly debug: boolean;
 }
@@ -38,16 +38,16 @@ export type ParseCommonResult =
  * Parse and remove the common flags every host-side subcommand needs,
  * leaving the rest for the caller.
  *
- * The CLI is `flags_only` — no `ANTPATH_*` env reads. `--api-token` is
- * required; `--antpath-url` defaults to `ANTPATH_DEFAULT_BASE_URL`
- * (`https://api.antpath.ai`) so SaaS users never need to supply it.
+ * The CLI is `flags_only` — no `AEX_*` env reads. `--api-token` is
+ * required; `--aex-url` defaults to `AEX_DEFAULT_BASE_URL`
+ * (`https://api.aex.dev`) so SaaS users never need to supply it.
  *
  * There is no `--workspace` flag: workspace identity is derived
  * server-side from the API token.
  */
 export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
   let apiToken: string | null = null;
-  let antpathUrl: string | null = null;
+  let aexUrl: string | null = null;
   let debug = false;
   const rest: string[] = [];
 
@@ -63,10 +63,10 @@ export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult
       apiToken = v;
       continue;
     }
-    if (arg === "--antpath-url") {
+    if (arg === "--aex-url") {
       const v = argv[++i];
-      if (v === undefined) return { ok: false, reason: "--antpath-url requires a value" };
-      antpathUrl = v;
+      if (v === undefined) return { ok: false, reason: "--aex-url requires a value" };
+      aexUrl = v;
       continue;
     }
     if (arg === "--workspace" || arg === "--workspace-id") {
@@ -85,14 +85,14 @@ export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult
   if (!apiToken) return { ok: false, reason: "--api-token is required" };
   return {
     ok: true,
-    flags: { apiToken, antpathUrl: antpathUrl ?? ANTPATH_DEFAULT_BASE_URL, debug },
+    flags: { apiToken, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug },
     rest
   };
 }
 
 export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
   return new HttpClient({
-    baseUrl: flags.antpathUrl,
+    baseUrl: flags.aexUrl,
     apiToken: flags.apiToken,
     fetch: io.fetchImpl as FetchLike,
     // `--debug`: route the transport's redacted per-request traces to stderr.
@@ -102,8 +102,8 @@ export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
 
 /**
  * Host subcommands refuse to run inside a managed run container. The
- * heuristic: presence of the per-run manifest at ANTPATH_INDEX_PATH
- * (`/mnt/session/uploads/antpath/index.json`) means we're inside a
+ * heuristic: presence of the per-run manifest at AEX_INDEX_PATH
+ * (`/mnt/session/uploads/aex/index.json`) means we're inside a
  * run and should expose `proxy`, not the platform-management verbs.
  *
  * Fails *closed* on read errors that are not "file not found": if the
@@ -113,10 +113,10 @@ export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
  */
 export async function refuseInsideManagedRun(io: CliIO, verb: string): Promise<boolean> {
   try {
-    await io.readFile(ANTPATH_INDEX_PATH);
+    await io.readFile(AEX_INDEX_PATH);
     io.stderr(
-      `\`antpath ${verb}\` is a host command and cannot run inside a managed run container.\n` +
-      "Use `antpath proxy ...` to call your declared upstream endpoints from inside the run.\n"
+      `\`aex ${verb}\` is a host command and cannot run inside a managed run container.\n` +
+      "Use `aex proxy ...` to call your declared upstream endpoints from inside the run.\n"
     );
     return true;
   } catch (err) {
@@ -126,8 +126,8 @@ export async function refuseInsideManagedRun(io: CliIO, verb: string): Promise<b
       return false;
     }
     io.stderr(
-      `\`antpath ${verb}\` could not determine whether it is running inside a managed run ` +
-      `container (error reading ${ANTPATH_INDEX_PATH}: ${(err as Error).message ?? "unknown"}). ` +
+      `\`aex ${verb}\` could not determine whether it is running inside a managed run ` +
+      `container (error reading ${AEX_INDEX_PATH}: ${(err as Error).message ?? "unknown"}). ` +
       `Refusing to proceed.\n`
     );
     return true;

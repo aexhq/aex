@@ -63,7 +63,7 @@ describe("redactString — value-agnostic shapes", () => {
       "the quick brown fox jumps over the lazy dog",
       "rejects dotted event-name segments",
       "compatibility_date = 2026-05-20",
-      "https://api.antpath.ai/v1/runs",
+      "https://api.aex.dev/v1/runs",
       "run-1234-terminal",
       "supabase status shows API URL http://127.0.0.1:56321",
       // Long digit-free mixed-case identifiers (stack-trace frames / API symbol

@@ -15,22 +15,22 @@ Skill inputs accepted by the platform:
 - existing custom provider skill IDs;
 - workspace skill bundles (persistent, referenced by `skl_*` id);
 - inline-supplied bundles passed directly at `submitRun` — these
-  persist on antpath as workspace skills with auto-suffixed names,
+  persist on aex as workspace skills with auto-suffixed names,
   one row per submission (see "Inline supply" below).
 
 **Routing at session create:** bundles that contain `SKILL.md` at the
 bundle root are registered with Anthropic's Skills API
 (`POST /v1/skills`) and surface to the agent as auto-discoverable
 skills. Bundles without `SKILL.md` mount under
-`/mnt/session/uploads/antpath/assets/<skl_id>/<rel-path>` in the agent
+`/mnt/session/uploads/aex/assets/<skl_id>/<rel-path>` in the agent
 container — the agent reads them by explicit path reference in the
 prompt.
 
-The platform also mounts the `antpath` CLI at
-`/mnt/session/uploads/antpath/antpath` and a per-run manifest at
-`/mnt/session/uploads/antpath/index.json` on **every** run. Skills
+The platform also mounts the `aex` CLI at
+`/mnt/session/uploads/aex/aex` and a per-run manifest at
+`/mnt/session/uploads/aex/index.json` on **every** run. Skills
 invoke the managed HTTP proxy via
-`node /mnt/session/uploads/antpath/antpath proxy …` — see
+`node /mnt/session/uploads/aex/aex proxy …` — see
 `credentials.md` for the policy/auth model.
 
 ## Inline supply at `submitRun`
@@ -40,9 +40,9 @@ build an **unstaged** `Skill`. The instance carries the canonicalised
 zip bytes and the `sha256:<hex>` content hash:
 
 ```ts
-import { AntpathClient, Skill } from "antpath";
+import { AexClient, Skill } from "@aexhq/sdk";
 
-const client = new AntpathClient({ apiToken });
+const client = new AexClient({ apiToken });
 
 await client.submitRun({
   model, prompt,
@@ -103,9 +103,9 @@ bundle skill bytes with it. Host the skill yourself as a **zip archive**
 URL — e.g. an S3 presigned URL:
 
 ```ts
-import { AntpathClient, Skill } from "antpath";
+import { AexClient, Skill } from "@aexhq/sdk";
 
-const client = new AntpathClient({ apiToken });
+const client = new AexClient({ apiToken });
 
 await client.submitRun({
   model, prompt,

@@ -68,8 +68,8 @@ describe("operations.download (everything)", () => {
     expect(decode(entries["outputs/report.txt"]!)).toBe("hello");
 
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
-    expect(manifest.schemaVersion).toBe("antpath.run-record.manifest.v1");
-    expect(manifest.runRecordSchemaVersion).toBe("antpath.run-record.v1");
+    expect(manifest.schemaVersion).toBe("aex.run-record.manifest.v1");
+    expect(manifest.runRecordSchemaVersion).toBe("aex.run-record.v1");
     expect(manifest.files).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ path: "metadata/run.json", status: "present" }),

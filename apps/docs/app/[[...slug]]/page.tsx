@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   if ((slug ?? []).length === 0) {
     return {
-      title: "antpath",
+      title: "aex",
       description: page.data.description
     };
   }

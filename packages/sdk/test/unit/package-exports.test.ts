@@ -16,16 +16,16 @@ function readJson(path: string): PackageJson {
 }
 
 /**
- * Lock the agent-first invariant for the `antpath` package surface:
- * exactly one user-visible import path. Subpath exports (`antpath/proxy`,
- * `antpath/core`, etc.) would create multiple places an agent has to
+ * Lock the agent-first invariant for the `aex` package surface:
+ * exactly one user-visible import path. Subpath exports (`aex/proxy`,
+ * `aex/core`, etc.) would create multiple places an agent has to
  * track when reading or editing a submission, which violates the
  * agent-first principle.
  */
-describe("antpath package: agent-first export surface", () => {
+describe("aex package: agent-first export surface", () => {
   it("declares exactly one entry in package.json#exports", () => {
     const pkg = readJson(resolve(sdkRoot, "package.json"));
-    expect(pkg.name).toBe("antpath");
+    expect(pkg.name).toBe("@aexhq/sdk");
     const exportsField = pkg.exports ?? {};
     const keys = Object.keys(exportsField);
     expect(keys).toEqual(["."]);

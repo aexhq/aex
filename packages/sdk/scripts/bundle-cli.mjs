@@ -1,15 +1,15 @@
-// Copy the @antpath/cli ESM bundle (and its sha256 sidecar) into the
-// SDK's dist directory so that the published `antpath` npm package's
-// `bin: antpath` entry resolves to a real artifact at install time.
+// Copy the @aexhq/cli ESM bundle (and its sha256 sidecar) into the
+// SDK's dist directory so that the published `@aexhq/sdk` npm package's
+// `bin: aex` entry resolves to a real artifact at install time.
 //
 // The CLI is built from `packages/cli` (a workspace package) so
 // the agent-first invariant — "one npm package, one CLI binary" — holds
-// mechanically: subscribers run `npm i antpath` and immediately get
-// both the SDK import and the `antpath` executable. The worker uses the
-// same bundle in-container at /antpath/antpath.
+// mechanically: subscribers run `npm i aex` and immediately get
+// both the SDK import and the `aex` executable. The worker uses the
+// same bundle in-container at /aex/aex.
 //
 // This script is invoked from the SDK's `build` script (which itself
-// runs `@antpath/cli`'s build first), so by the time we run here, the
+// runs `@aexhq/cli`'s build first), so by the time we run here, the
 // source bundle is guaranteed to exist. If it does not we throw with a
 // clear message so a misconfigured publish never silently ships an
 // empty `bin`.
@@ -39,8 +39,8 @@ async function fileExists(path) {
 if (!(await fileExists(sourceBundle))) {
   throw new Error(
     `Missing CLI bundle at ${sourceBundle}. ` +
-      `Build @antpath/cli before packing the SDK ` +
-      `(e.g. \`pnpm --filter @antpath/cli run build\`).`
+      `Build @aexhq/cli before packing the SDK ` +
+      `(e.g. \`pnpm --filter @aexhq/cli run build\`).`
   );
 }
 

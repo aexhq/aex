@@ -1,15 +1,15 @@
-# @antpath/user-tests
+# @aexhq/user-tests
 
 Layer-4 test workspace. Exercises a clean install of the current **packed
 tarball** (local/offline default, CI, and the release pre-publish gate)
 or the **published artifact** (release post-publish checks and manual live
 workflow runs) the way a real user or AI agent would on day one of
-`npm install antpath`.
+`npm install @aexhq/sdk`.
 
 This workspace deliberately has **no `workspace:*` dependencies on
-`antpath` or `@antpath/*`**. Every scenario spawns a child process whose
+`@aexhq/sdk` or other `@aexhq/*` packages**. Every scenario spawns a child process whose
 `cwd` is a freshly created tempdir containing a clean install of the
-artifact under test. Inside that child, `import "antpath"` resolves
+artifact under test. Inside that child, `import "@aexhq/sdk"` resolves
 through the install, never through the monorepo symlink.
 
 These tests are the blackbox layer for install, CLI, SDK, package, and
@@ -25,17 +25,17 @@ CI can still pin the artifact under test by providing **exactly one** of:
 
 | Env | Source under test |
 |---|---|
-| `ANTPATH_USER_TEST_TARBALL` | absolute path to a `pnpm pack` tarball (pre-publish) |
-| `ANTPATH_USER_TEST_VERSION` | published npm version, e.g. `0.12.3` (post-publish) |
+| `AEX_USER_TEST_TARBALL` | absolute path to a `pnpm pack` tarball (pre-publish) |
+| `AEX_USER_TEST_VERSION` | published npm version, e.g. `0.12.3` (post-publish) |
 
 Then:
 
 ```bash
 # Offline scenarios (install / cli-bin / sdk-imports / typescript-consumer)
-pnpm --filter @antpath/user-tests run test:user:offline
+pnpm --filter @aexhq/user-tests run test:user:offline
 
 # Full suite incl. the live siblings (requires the live target vars below)
-pnpm --filter @antpath/user-tests run test:user
+pnpm --filter @aexhq/user-tests run test:user
 # or from the repo root:
 pnpm test:user
 ```
@@ -53,7 +53,7 @@ from `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and
 Explicit artifact inputs are strict: setting both variables, an invalid version,
 or a missing tarball path is a **hard error**, never a silent skip. The
 post-publish gate stays pinned to the exact published version through
-`ANTPATH_USER_TEST_VERSION`.
+`AEX_USER_TEST_VERSION`.
 
 ## CI prerequisites
 
@@ -65,12 +65,10 @@ key.
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
 the configured hosted API. They require:
 
-- **Variable `ANTPATH_API_URL`** — hosted API URL. Legacy
-  `USER_TEST_ANTPATH_URL` is still accepted by the workflow.
-- **Secret `ANTPATH_API_TOKEN`** — workspace API token for the selected API URL.
-  Legacy `USER_TEST_API_TOKEN` is still accepted by the workflow.
+- **Variable `AEX_API_URL`** — hosted API URL.
+- **Secret `AEX_API_TOKEN`** — workspace API token for the selected API URL.
 - **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key for the managed live
-  scenarios. Legacy `USER_TEST_DEEPSEEK_KEY` is still accepted by the workflow.
+  scenarios.
 
 ## Live SDK siblings (2026 rebuild)
 
@@ -80,27 +78,25 @@ DeepSeek-managed because that is the provider key provisioned for the public
 live workflow.
 
 Each test installs the packed tarball into a tempdir, spawns
-`AntpathClient.submitRun({ provider, ... })`, polls `getRun`,
+`AexClient.submitRun({ provider, ... })`, polls `getRun`,
 `listEvents`, and `listOutputs`, and asserts the user's probe
 string round-trips through a real upstream LLM call.
 
 Required env (all three):
 
-- `ANTPATH_API_URL`
-- `ANTPATH_API_TOKEN`
-- `ANTPATH_USER_TEST_TARBALL` *or* `ANTPATH_USER_TEST_VERSION`
+- `AEX_API_URL`
+- `AEX_API_TOKEN`
+- `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION`
 - `DEEPSEEK_API_KEY`
 
-Local `.env.local` files may still use the legacy names
-`ANTPATH_LIVE_API_BASE`, `ANTPATH_LIVE_API_TOKEN`,
-and `ANTPATH_USER_TEST_DEEPSEEK_KEY`; the test loader aliases them to the
-canonical variables above.
+Local `.env.local` files must use the canonical variables above; the test
+loader does not provide compatibility aliases.
 
 CI lives in `.github/workflows/live-user-tests.yml`.
 
 `test/live/config-proxyendpoints.user.test.ts` requires a real
 `PROXY_OK` round-trip. The test uses a public no-auth upstream and must not be
-run against a plane whose `ANTPATH_PROXY_PUBLIC_BASE_URL` does not serve the
+run against a plane whose `AEX_PROXY_PUBLIC_BASE_URL` does not serve the
 dashboard-owned `/api/runs/:id/proxy/:name` route.
 
 ## Heavy full-feature long-session gate
@@ -120,19 +116,19 @@ prove the **app** behaves as expected under a
 maximal submission, not to test model capability.
 
 Scope: one DeepSeek-managed cell using the configured
-`ANTPATH_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-chat`.
+`AEX_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-chat`.
 
 It is **excluded** from the default `test:user` sweep (see
 `vitest.config.ts`) and runs only via its own entrypoint + config:
 
 ```bash
-pnpm --filter @antpath/user-tests run test:user:heavy   # or: pnpm test:user:heavy
+pnpm --filter @aexhq/user-tests run test:user:heavy   # or: pnpm test:user:heavy
 ```
 
 Required env is identical to the comprehensive scenario
-(`ANTPATH_API_URL`, `ANTPATH_API_TOKEN`, `ANTPATH_USER_TEST_TARBALL` or
-`ANTPATH_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
-`ANTPATH_USER_TEST_DEEPSEEK_MODEL`.
+(`AEX_API_URL`, `AEX_API_TOKEN`, `AEX_USER_TEST_TARBALL` or
+`AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
+`AEX_USER_TEST_DEEPSEEK_MODEL`.
 
 CI: it runs as a **hard gate** when the manual
 `.github/workflows/live-user-tests.yml` workflow is dispatched with

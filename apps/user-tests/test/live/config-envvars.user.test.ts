@@ -8,12 +8,12 @@
  * mounted as a file the agent reads. So each test asks the agent to `cat` the
  * runtime-appropriate path and echo back a random per-test canary.
  *
- * Only passes once the fixes are DEPLOYED to the remote antpath-local worker
+ * Only passes once the fixes are DEPLOYED to the remote aex-local worker
  * (the goose half also requires the runner image to be rebuilt, since the
  * file is written by the runtime materialization step).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, type InstallResult } from "../_fixtures/install.js";
+import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
@@ -21,7 +21,7 @@ const env = requireUserEnv({ deepseek: true });
 describe("user/SDK: environment.envVars reaches the agent on managed runs", () => {
   let install: InstallResult;
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
   afterAll(() => install?.cleanup());
 

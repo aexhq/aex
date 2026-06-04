@@ -1,11 +1,11 @@
 /**
- * antpath outputs sync — IN-CONTAINER ONLY internal subcommand.
+ * aex outputs sync — IN-CONTAINER ONLY internal subcommand.
  *
  * This is NOT a user-facing verb. The platform worker drives a
  * synthetic agent turn at session terminal that tells the in-
  * container agent to run:
  *
- *   node /mnt/session/uploads/antpath/antpath outputs sync /mnt/session/outputs
+ *   node /mnt/session/uploads/aex/aex outputs sync /mnt/session/outputs
  *
  * The agent runs this via its bash tool. The CLI walks each directory
  * and emits a structured JSON line per file to stdout, so the worker
@@ -14,7 +14,7 @@
  * deterministic capture receipt.
  *
  * The subcommand:
- *  - REFUSES to run outside a managed run (no ANTPATH_INDEX_PATH file).
+ *  - REFUSES to run outside a managed run (no AEX_INDEX_PATH file).
  *  - Walks each provided directory recursively.
  *  - Emits one JSON line per file to stdout:
  *      {"dir":"/mnt/session/outputs","path":"/mnt/session/outputs/x.txt","sizeBytes":42}
@@ -25,24 +25,24 @@
  *
  * No flags. Each positional argument is one directory to walk.
  */
-import { ANTPATH_INDEX_PATH, type CliIO } from "./internal.js";
+import { AEX_INDEX_PATH, type CliIO } from "./internal.js";
 import { RUNTIME_ERR, SUCCESS, USAGE_ERR, type CliExitCode } from "./host/common.js";
 
 export async function runOutputsSyncCmd(io: CliIO, dirs: readonly string[]): Promise<CliExitCode> {
   if (dirs.length === 0) {
-    io.stderr("usage: antpath outputs sync <dir> [<dir> ...]\n");
+    io.stderr("usage: aex outputs sync <dir> [<dir> ...]\n");
     return USAGE_ERR;
   }
   try {
-    await io.readFile(ANTPATH_INDEX_PATH);
+    await io.readFile(AEX_INDEX_PATH);
   } catch {
     io.stderr(
-      "`antpath outputs sync` is an in-container internal command and cannot run on the host.\n"
+      "`aex outputs sync` is an in-container internal command and cannot run on the host.\n"
     );
     return USAGE_ERR;
   }
   if (!io.walkDirectory) {
-    io.stderr("antpath outputs sync: walkDirectory IO is not available\n");
+    io.stderr("aex outputs sync: walkDirectory IO is not available\n");
     return RUNTIME_ERR;
   }
 

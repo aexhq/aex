@@ -12,7 +12,7 @@ import {
 
 // Re-exported from the protocol module (its canonical home, alongside the
 // index-file shape the builder fills). Kept on the submission surface so
-// existing `@antpath/contracts` consumers of `PROXY_ENDPOINT_DEFAULTS` are
+// existing `@aexhq/contracts` consumers of `PROXY_ENDPOINT_DEFAULTS` are
 // unaffected by the move.
 export { PROXY_ENDPOINT_DEFAULTS };
 import { parseAssetRefFields, parseMcpServerRef, parseSkillRef } from "./run-config.js";
@@ -46,8 +46,8 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
  * `envVars` is the customer-controlled key/value bag delivered into the
  * managed container process and mirrored in the mounted `RUNTIME.env` /
  * `RUNTIME.json` files. The same keys become `__KEY__` substitution targets
- * in agent-facing markdown inside skill / agentsmd / file bundles. Antpath-set
- * runtime keys use the reserved `ANTPATH_*` prefix; customer keys MUST NOT
+ * in agent-facing markdown inside skill / agentsmd / file bundles. Aex-set
+ * runtime keys use the reserved `AEX_*` prefix; customer keys MUST NOT
  * collide with that prefix.
  */
 export interface PlatformEnvironment {
@@ -57,12 +57,12 @@ export interface PlatformEnvironment {
 }
 
 /**
- * Reserved prefix for antpath-set runtime env vars (`ANTPATH_OUTPUTS`,
- * `ANTPATH_CLI`, …). Customer `environment.envVars` keys carrying this
+ * Reserved prefix for aex-set runtime env vars (`AEX_OUTPUTS`,
+ * `AEX_CLI`, …). Customer `environment.envVars` keys carrying this
  * prefix are rejected at submission parse time so platform-set values
  * cannot be silently overwritten.
  */
-export const ANTPATH_RESERVED_ENV_PREFIX = "ANTPATH_";
+export const AEX_RESERVED_ENV_PREFIX = "AEX_";
 
 /**
  * Maximum number of `environment.envVars` entries accepted per
@@ -165,7 +165,7 @@ export interface PlatformMistralSecrets {
 }
 
 /**
- * Run-time provider selector. Antpath exposes one customer interface
+ * Run-time provider selector. Aex exposes one customer interface
  * for every provider. All new submissions execute through the managed
  * runtime; provider selection only decides which upstream model route
  * the managed provider-proxy uses.
@@ -279,7 +279,7 @@ export interface PlatformProxyEndpoint {
 const SECRETS_KEY = "secrets";
 
 const PROXY_ENDPOINT_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,62}$/;
-const RESERVED_PROXY_ENDPOINT_NAMES = new Set(["proxy", "antpath", "internal", "admin"]);
+const RESERVED_PROXY_ENDPOINT_NAMES = new Set(["proxy", "aex", "internal", "admin"]);
 
 /**
  * Headers the proxy never lets through, regardless of policy. Lowercase.
@@ -350,9 +350,9 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
  *   - Must be a JSON object whose values are all strings.
  *   - Keys match `[A-Z_][A-Z0-9_]*` (POSIX-shell portable, uppercase
  *     only — keeps RUNTIME.env readable, matches platform convention).
- *   - Keys MUST NOT start with the reserved `ANTPATH_` prefix; that
+ *   - Keys MUST NOT start with the reserved `AEX_` prefix; that
  *     prefix is owned by platform-set runtime keys and a collision
- *     would silently mask `__ANTPATH_OUTPUTS__` etc. substitution
+ *     would silently mask `__AEX_OUTPUTS__` etc. substitution
  *     targets.
  *   - Bounded: max ENV_VARS_MAX_ENTRIES entries, max
  *     ENV_VARS_MAX_VALUE_BYTES per value, max ENV_VARS_MAX_TOTAL_BYTES
@@ -384,9 +384,9 @@ function parseEnvVars(input: unknown): Readonly<Record<string, string>> | undefi
         `submission.environment.envVars.${key} key must match /^[A-Z_][A-Z0-9_]*$/`
       );
     }
-    if (key.startsWith(ANTPATH_RESERVED_ENV_PREFIX)) {
+    if (key.startsWith(AEX_RESERVED_ENV_PREFIX)) {
       throw new Error(
-        `submission.environment.envVars.${key} uses reserved prefix "${ANTPATH_RESERVED_ENV_PREFIX}" (set by antpath runtime)`
+        `submission.environment.envVars.${key} uses reserved prefix "${AEX_RESERVED_ENV_PREFIX}" (set by aex runtime)`
       );
     }
     const raw = value[key];
@@ -778,13 +778,13 @@ function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
     "proxyEndpointAuth"
   ]);
   for (const key of Object.keys(value)) {
-    if (key.startsWith("__antpath_")) {
-      // Platform-internal namespace (e.g. __antpath_proxy_token). The BFF
+    if (key.startsWith("__aex_")) {
+      // Platform-internal namespace (e.g. __aex_proxy_token). The BFF
       // mutates the vaulted bundle to inject these; inbound submissions
       // are never allowed to set them, to prevent a malicious caller
       // from forging the bearer.
       throw new Error(
-        `secrets.${key} uses the platform-internal __antpath_ namespace and may not be set by callers`
+        `secrets.${key} uses the platform-internal __aex_ namespace and may not be set by callers`
       );
     }
     if (!allowedTopLevel.has(key)) {
@@ -1349,7 +1349,7 @@ export function parseRunSubmissionRequest(
     throw new RuntimeValidationError(
       "feature_runtime_mismatch",
       `The managed runtime does not support these submission features: ` +
-        `${unsupportedManagedFeatures.join(", ")}. Remove them or use inline antpath skills.`
+        `${unsupportedManagedFeatures.join(", ")}. Remove them or use inline aex skills.`
     );
   }
 
@@ -1799,7 +1799,7 @@ export function selectRuntime(req: PlatformRunSubmissionRequest): RuntimeKind {
     throw new RuntimeValidationError(
       "feature_runtime_mismatch",
       `The managed runtime does not support these submission features: ` +
-        `${unsupported.join(", ")}. Remove them or use inline antpath skills.`
+        `${unsupported.join(", ")}. Remove them or use inline aex skills.`
     );
   }
   void req;

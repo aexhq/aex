@@ -1,11 +1,11 @@
 /**
- * `antpath outputs <run-id>` — list captured outputs for a run.
+ * `aex outputs <run-id>` — list captured outputs for a run.
  * Prints one Output as JSON per line.
  *
- * `antpath download <run-id> <output-id> [--out path]` is in a
+ * `aex download <run-id> <output-id> [--out path]` is in a
  * separate file (download.ts) to keep concerns tight.
  */
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -27,7 +27,7 @@ export async function runOutputsCmd(io: CliIO, argv: readonly string[]): Promise
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath outputs <run-id> [common flags]\n");
+    io.stderr("usage: aex outputs <run-id> [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

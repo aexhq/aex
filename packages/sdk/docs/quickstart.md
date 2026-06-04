@@ -1,19 +1,19 @@
 ---
-title: antpath quickstart
+title: aex quickstart
 ---
 
 # Quickstart
 
-1. Get an antpath SDK API token (`ant_…`).
-2. Create `AntpathClient` — the workspace is derived server-side from the token.
+1. Get an aex SDK API token (`ant_…`).
+2. Create `AexClient` — the workspace is derived server-side from the token.
 3. Submit the run with the agent's brief plus an inline `secrets` bundle. Wait for terminal status. Fetch outputs.
 
 ```ts
-import { AntpathClient } from "antpath";
+import { AexClient } from "@aexhq/sdk";
 
-const client = new AntpathClient({
-  apiToken: process.env.ANTPATH_API_TOKEN!
-  // baseUrl defaults to https://api.antpath.ai - set it for local or staging planes.
+const client = new AexClient({
+  apiToken: process.env.AEX_API_TOKEN!
+  // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
 const runId = await client.submitRun({
@@ -46,15 +46,15 @@ const runId = await client.submitRun({
 Or from the shell:
 
 ```bash
-antpath run \
-  --api-token "$ANTPATH_API_TOKEN" \
+aex run \
+  --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --prompt "Write a short answer about agent-first SDK design." \
   --follow
 ```
 
-For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, proxyEndpoints?, metadata? }`). Both surfaces hit the same antpath backend and operate on the same durable run records — pick whichever is most convenient.
+For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, proxyEndpoints?, metadata? }`). Both surfaces hit the same aex backend and operate on the same durable run records — pick whichever is most convenient.
 
 ## Where things go: customer → primitive mapping
 
@@ -63,10 +63,10 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 | What you have | Primitive | What it does |
 |---|---|---|
 | Non-secret paths or config (`BROLL_STORE`, mode flags) | `environment.envVars` | Mounted as `RUNTIME.env` / `RUNTIME.json`; `__KEY__` substitution in agent-facing markdown; echoed back as `run.runtimeManifest.envVars` |
-| Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; antpath proxy injects them on outbound calls. The key never enters the container. |
+| Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; aex proxy injects them on outbound calls. The key never enters the container. |
 | MCP server credentials | `secrets.mcpServers` | Anthropic Vault, attached per session |
 | Provider API key | `secrets.<provider>.apiKey` | Required on every `submitRun`; per-run vault entry matching `provider` |
-| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Mounted under `/mnt/session/uploads/antpath/files/<f_id>/<rel>` and listed in the synthetic first user message |
+| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Mounted under `/mnt/session/uploads/aex/files/<f_id>/<rel>` and listed in the synthetic first user message |
 | Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Registered with Anthropic's Skills API; auto-discovered by the agent |
 | Agent instructions file | `AgentsMd.fromPath('./AGENTS.md')` | Prepended as the first user turn |
 

@@ -1,19 +1,19 @@
 /**
  * Shared scaffolding for the config-fix USER tests (SDK-driven, customer
  * perspective). These differ from raw Worker probes; THESE drive the
- * installed `antpath` SDK end-to-end
+ * installed `aex` SDK end-to-end
  * (SDK → /runs → runtime → events), the real customer surface.
  *
  * Each test installs the SDK (install fixture), then runs a small node script
  * IN the install dir that builds a submission via the SDK's classes
- * (AntpathClient/AgentsMd/ProxyEndpoint/…), submits, polls to terminal, and
+ * (AexClient/AgentsMd/ProxyEndpoint/…), submits, polls to terminal, and
  * prints a standard result JSON which the test asserts on.
  *
  * They validate the FIXED behaviour and so only pass once the fixes are
  * DEPLOYED to the remote hosted API. Env mirrors the other user-tests:
- *   ANTPATH_API_URL, ANTPATH_API_TOKEN,
+ *   AEX_API_URL, AEX_API_TOKEN,
  *   DEEPSEEK_API_KEY,
- *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION (the SDK to install).
+ *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION (the SDK to install).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,7 +30,7 @@ function req(name: string): string {
   const v = process.env[name];
   if (!v || v.length === 0) {
     throw new Error(
-      `user-tests: required env ${name} is missing. The SDK config-fix tests run against a real antpath-local deploy with a real provider key.`
+      `user-tests: required env ${name} is missing. The SDK config-fix tests run against a real aex-local deploy with a real provider key.`
     );
   }
   return v;
@@ -38,9 +38,9 @@ function req(name: string): string {
 
 export function requireUserEnv(opts: { deepseek?: boolean } = {}): UserEnv {
   const env: UserEnv = {
-    apiBase: req("ANTPATH_API_URL").replace(/\/$/, ""),
-    apiToken: req("ANTPATH_API_TOKEN"),
-    deepseekModel: process.env.ANTPATH_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-chat"
+    apiBase: req("AEX_API_URL").replace(/\/$/, ""),
+    apiToken: req("AEX_API_TOKEN"),
+    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-chat"
   };
   return {
     ...env,
@@ -69,8 +69,8 @@ export interface SdkRunResult {
  * `AgentsMd` / `ProxyEndpoint`.
  */
 const PREAMBLE = `
-import { AntpathClient, AgentsMd, ProxyEndpoint } from "antpath";
-const client = new AntpathClient({ baseUrl: process.env.ANTPATH_API_URL, apiToken: process.env.ANTPATH_API_TOKEN });
+import { AexClient, AgentsMd, ProxyEndpoint } from "@aexhq/sdk";
+const client = new AexClient({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
@@ -123,8 +123,8 @@ export async function runSdkScript(
   writeFileSync(scriptPath, script);
 
   const passEnv: Record<string, string> = {
-    ANTPATH_API_URL: env.apiBase,
-    ANTPATH_API_TOKEN: env.apiToken,
+    AEX_API_URL: env.apiBase,
+    AEX_API_TOKEN: env.apiToken,
     MODEL_DEEPSEEK: env.deepseekModel,
     WAIT_MS: String(opts.waitMs ?? 240_000),
     ...(env.deepseekKey ? { DEEPSEEK_KEY: env.deepseekKey } : {})

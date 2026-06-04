@@ -4,7 +4,7 @@ description: Per-run custody for provider keys, MCP credentials, and proxy endpo
 icon: KeyRound
 ---
 
-antpath is BYOK. Every run supplies exactly one provider key matching the selected `provider`, plus any MCP credentials or proxy endpoint auth values needed for that run. There is no default secret store in the SDK and no client-held provider-key state.
+aex is BYOK. Every run supplies exactly one provider key matching the selected `provider`, plus any MCP credentials or proxy endpoint auth values needed for that run. There is no default secret store in the SDK and no client-held provider-key state.
 
 ```ts
 await client.submitRun({

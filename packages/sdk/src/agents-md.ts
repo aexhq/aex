@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { AgentsMdRef } from "@antpath/contracts";
+import type { AgentsMdRef } from "@aexhq/contracts";
 import { hashSkillBundle } from "./bundle.js";
 import { strToU8, zipSync } from "fflate";
 

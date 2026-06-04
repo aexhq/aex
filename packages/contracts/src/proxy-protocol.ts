@@ -1,5 +1,5 @@
 // Wire format between the in-container runtime bridge (mounted at
-// `/mnt/session/uploads/antpath/antpath`, invoked through `node`) and
+// `/mnt/session/uploads/aex/aex`, invoked through `node`) and
 // the dashboard BFF proxy route
 // (`POST /api/runs/:runId/proxy/:endpointName`).
 //
@@ -9,7 +9,7 @@
 //
 /**
  * Wire-protocol version. Bumped on any breaking change to the request or
- * response shape. The CLI sends this in the `X-Antpath-Proxy-Protocol`
+ * response shape. The CLI sends this in the `X-Aex-Proxy-Protocol`
  * header on every request; the BFF rejects mismatches with HTTP 426
  * `unsupported_protocol`.
  *
@@ -19,7 +19,7 @@
  */
 export const PROXY_PROTOCOL_VERSION = "1" as const;
 
-export const PROXY_PROTOCOL_HEADER = "x-antpath-proxy-protocol";
+export const PROXY_PROTOCOL_HEADER = "x-aex-proxy-protocol";
 
 /**
  * Default `User-Agent` the proxy attaches to every outbound request when
@@ -35,13 +35,13 @@ export const PROXY_PROTOCOL_HEADER = "x-antpath-proxy-protocol";
  *
  * See <https://meta.wikimedia.org/wiki/User-Agent_policy>.
  */
-export const PROXY_DEFAULT_USER_AGENT = "antpath-proxy/1.0 (+https://antpath.ai/contact)";
+export const PROXY_DEFAULT_USER_AGENT = "aex-proxy/1.0 (+https://aex.dev/contact)";
 
-export const PROXY_METHOD_HEADER = "x-antpath-method";
-export const PROXY_PATH_HEADER = "x-antpath-path";
-export const PROXY_QUERY_HEADER = "x-antpath-query";
-export const PROXY_HEADERS_HEADER = "x-antpath-headers";
-export const PROXY_RESPONSE_MODE_HEADER = "x-antpath-response-mode";
+export const PROXY_METHOD_HEADER = "x-aex-method";
+export const PROXY_PATH_HEADER = "x-aex-path";
+export const PROXY_QUERY_HEADER = "x-aex-query";
+export const PROXY_HEADERS_HEADER = "x-aex-headers";
+export const PROXY_RESPONSE_MODE_HEADER = "x-aex-response-mode";
 
 export const PROXY_ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
 export type ProxyMethod = (typeof PROXY_ALLOWED_METHODS)[number];
@@ -92,11 +92,11 @@ export type ProxyErrorCode = (typeof PROXY_ERROR_CODES)[number];
 
 /**
  * Shape of the JSON written to the per-run manifest mounted inside
- * the container (`/mnt/session/uploads/antpath/index.json`).
+ * the container (`/mnt/session/uploads/aex/index.json`).
  *
  * Always present (every run), regardless of whether any proxy endpoints
  * were declared. With zero endpoints, `endpoints` is `[]` and
- * `proxyBaseUrl` is `null` — this keeps `antpath --help` working
+ * `proxyBaseUrl` is `null` — this keeps `aex --help` working
  * uniformly and makes the always-on surface observable in tests.
  *
  * Auth values NEVER appear in this file. The file is mounted into the
@@ -174,7 +174,7 @@ export interface BuildProxyIndexFileInput {
 
 /**
  * Build the per-run {@link ProxyIndexFile} mounted into the container at
- * `/mnt/session/uploads/antpath/index.json`. Pure: applies
+ * `/mnt/session/uploads/aex/index.json`. Pure: applies
  * {@link PROXY_ENDPOINT_DEFAULTS} so every optional cap is concrete, and
  * carries ONLY the non-secret endpoint policy — auth values never appear.
  *
@@ -266,11 +266,11 @@ export function authShapeQueryName(shape: ProxyAuthShape): string | undefined {
 }
 
 /**
- * Inbound request headers every Antpath proxy plane STRIPS before
+ * Inbound request headers every Aex proxy plane STRIPS before
  * forwarding a runtime/runner request upstream. Three categories:
  *
  *   - Credential carriers (`authorization`, `x-api-key`, `cookie`,
- *     `proxy-authorization`) — these belong to Antpath's own auth gate
+ *     `proxy-authorization`) — these belong to Aex's own auth gate
  *     (the per-run bearer) or to the caller, never the upstream. The
  *     legitimate upstream credential is injected server-side from the
  *     run's Vault bundle / endpoint auth shape AFTER this strip, so it is

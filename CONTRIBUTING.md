@@ -1,4 +1,4 @@
-# Contributing to antpath
+# Contributing to aex
 
 Thanks for wanting to help. This page is the contributor flow for the public
 SDK, CLI, contracts, conformance helpers, user-test harness, and docs source.

@@ -1,6 +1,6 @@
 import { redactSecrets } from "./sdk-secrets.js";
 
-export type AntpathErrorCode =
+export type AexErrorCode =
   | "RUN_CONFIG_INVALID"
   | "CREDENTIAL_INVALID"
   | "PROVIDER_ERROR"
@@ -9,11 +9,11 @@ export type AntpathErrorCode =
   | "RUNTIME_UNSUPPORTED"
   | "API_ERROR";
 
-export class AntpathError extends Error {
-  readonly code: AntpathErrorCode;
+export class AexError extends Error {
+  readonly code: AexErrorCode;
   readonly details?: unknown;
 
-  constructor(code: AntpathErrorCode, message: string, details?: unknown) {
+  constructor(code: AexErrorCode, message: string, details?: unknown) {
     super(redactSecrets(message));
     this.name = this.constructor.name;
     this.code = code;
@@ -21,19 +21,19 @@ export class AntpathError extends Error {
   }
 }
 
-export class RunConfigValidationError extends AntpathError {
+export class RunConfigValidationError extends AexError {
   constructor(message: string, details?: unknown) {
     super("RUN_CONFIG_INVALID", message, details);
   }
 }
 
-export class CredentialValidationError extends AntpathError {
+export class CredentialValidationError extends AexError {
   constructor(message: string, details?: unknown) {
     super("CREDENTIAL_INVALID", message, details);
   }
 }
 
-export class ProviderError extends AntpathError {
+export class ProviderError extends AexError {
   readonly status: number | undefined;
 
   constructor(message: string, options: { status?: number; details?: unknown } = {}) {
@@ -42,13 +42,13 @@ export class ProviderError extends AntpathError {
   }
 }
 
-export class RunStateError extends AntpathError {
+export class RunStateError extends AexError {
   constructor(message: string, details?: unknown) {
     super("RUN_STATE_ERROR", message, details);
   }
 }
 
-export class CleanupError extends AntpathError {
+export class CleanupError extends AexError {
   constructor(message: string, details?: unknown) {
     super("CLEANUP_ERROR", message, details);
   }
@@ -58,7 +58,7 @@ export class CleanupError extends AntpathError {
  * Thrown by SDK and CLI operations when the dashboard BFF returns a non-2xx
  * response. Carries the HTTP status and parsed body for the caller to inspect.
  */
-export class AntpathApiError extends AntpathError {
+export class AexApiError extends AexError {
   readonly status: number;
   readonly body: unknown;
 

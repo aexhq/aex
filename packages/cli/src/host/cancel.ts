@@ -1,7 +1,7 @@
 /**
- * `antpath cancel <run-id>` — POST /api/runs/{id}/cancel.
+ * `aex cancel <run-id>` — POST /api/runs/{id}/cancel.
  */
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -23,7 +23,7 @@ export async function runCancelCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath cancel <run-id> [common flags]\n");
+    io.stderr("usage: aex cancel <run-id> [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

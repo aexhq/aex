@@ -13,9 +13,9 @@ function makeIo(opts: {
 } {
   const state = { stdout: "", stderr: "" };
   const io: CliIO = {
-    argv: ["node", "/antpath/antpath", "outputs", "sync"],
+    argv: ["node", "/aex/aex", "outputs", "sync"],
     readFile: async (path) => {
-      if (path === "/mnt/session/uploads/antpath/index.json" && opts.inContainer) return "{}";
+      if (path === "/mnt/session/uploads/aex/index.json" && opts.inContainer) return "{}";
       const err = Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
       throw err;
     },
@@ -44,8 +44,8 @@ function makeIo(opts: {
   };
 }
 
-describe("antpath outputs sync (internal)", () => {
-  it("refuses to run on the host (no /antpath/index.json)", async () => {
+describe("aex outputs sync (internal)", () => {
+  it("refuses to run on the host (no /aex/index.json)", async () => {
     const cap = makeIo({ inContainer: false, walk: async () => [] });
     const exit = await runOutputsSyncCmd(cap.io, ["/workspace/outputs"]);
     expect(exit.code).not.toBe(0);

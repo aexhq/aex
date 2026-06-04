@@ -1,5 +1,5 @@
 import {
-  AntpathError,
+  AexError,
   DEFAULT_CREDENTIAL_MODE,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
@@ -8,7 +8,7 @@ import {
   operations,
   parseCredentialMode,
   streamCoordinatorEvents,
-  type AntpathEvent,
+  type AexEvent,
   type AgentsMdRecord,
   type CredentialMode,
   type AgentsMdRef,
@@ -35,7 +35,7 @@ import {
   type SkillRef,
   type WhoAmI,
   TERMINAL_RUN_STATUSES
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 import { uploadAsset } from "./asset-upload.js";
 import { AgentsMd } from "./agents-md.js";
 import { File } from "./file.js";
@@ -43,13 +43,13 @@ import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
 import { Skill } from "./skill.js";
 
-export interface AntpathClientOptions {
+export interface AexClientOptions {
   /** Workspace-scoped SDK API token. */
   readonly apiToken: string;
   /**
-   * API plane root, e.g. `https://antpath.example.com`. Optional —
-   * defaults to the canonical hosted URL (`https://api.antpath.ai`).
-   * Override for local, staging, or other hosted antpath API planes.
+   * API plane root, e.g. `https://aex.example.com`. Optional —
+   * defaults to the canonical hosted URL (`https://api.aex.dev`).
+   * Override for local, staging, or other hosted aex API planes.
    */
   readonly baseUrl?: string;
   /** Optional `fetch` override for testing. */
@@ -196,7 +196,7 @@ export interface OutputDownloadOptions {
 }
 
 /**
- * One captured debug artifact returned by {@link AntpathClient.getRunDebugLogs}.
+ * One captured debug artifact returned by {@link AexClient.getRunDebugLogs}.
  *
  *   - `filename` is the path under `runs/{runId}/logs/` — leading
  *     `runtime/` for runtime logs and `host/` for host logs.
@@ -373,9 +373,9 @@ export class FilesClient {
 }
 
 /**
- * Unified user-facing client for the antpath platform. The same class
- * powers the published `antpath` SDK and (under the hood) every host-side
- * subcommand of the in-container `antpath` CLI. All operations talk to
+ * Unified user-facing client for the aex platform. The same class
+ * powers the published `@aexhq/sdk` SDK and (under the hood) every host-side
+ * subcommand of the in-container `aex` CLI. All operations talk to
  * the dashboard BFF and operate on durable run records.
  *
  * The SDK never asks the caller for a workspace id — workspace identity
@@ -383,11 +383,11 @@ export class FilesClient {
  * `client.whoami()` if you want to introspect which workspace the
  * token resolves to.
  */
-export class AntpathClient {
+export class AexClient {
   readonly #http: HttpClient;
   /**
    * The same fetch the HttpClient uses, kept so the asset materializer can
-   * PUT bytes DIRECTLY to the presigned upload URL (a non-antpath origin) with the
+   * PUT bytes DIRECTLY to the presigned upload URL (a non-aex origin) with the
    * caller's fetch (tests inject one; prod uses the global).
    */
   readonly #fetch: import("./asset-upload.js").AssetFetch | undefined;
@@ -395,9 +395,9 @@ export class AntpathClient {
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
 
-  constructor(options: AntpathClientOptions) {
+  constructor(options: AexClientOptions) {
     if (!options.apiToken) {
-      throw new Error("AntpathClient: apiToken is required");
+      throw new Error("AexClient: apiToken is required");
     }
     this.#http = new HttpClient({
       ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
@@ -479,23 +479,23 @@ export class AntpathClient {
    * standard workspace-skill upload pipeline (dedup by content hash;
    * upload via the existing two-phase pending → ready flow) and
    * rewrites the run's `skills[]` to reference the resulting `skl_*`
-   * ids. The bytes persist on antpath; the user can browse and
+   * ids. The bytes persist on aex; the user can browse and
    * download the resulting workspace skill from the dashboard.
    */
   async submitRun(options: SubmitRunOptions): Promise<string> {
     if (!options || typeof options !== "object") {
-      throw new Error("AntpathClient.submitRun: options is required");
+      throw new Error("AexClient.submitRun: options is required");
     }
     const provider: RunProvider = options.provider ?? DEFAULT_RUN_PROVIDER;
     const credentialMode = parseCredentialMode(options.credentialMode);
     if (credentialMode === "managed") {
-      throw new AntpathError(
+      throw new AexError(
         "CREDENTIAL_INVALID",
-        "AntpathClient.submitRun: credentialMode \"managed\" is not available without a private managed-key implementation"
+        "AexClient.submitRun: credentialMode \"managed\" is not available without a private managed-key implementation"
       );
     }
     if (!options.secrets) {
-      throw new Error("AntpathClient.submitRun: secrets is required");
+      throw new Error("AexClient.submitRun: secrets is required");
     }
     // The matching provider's apiKey is required; every OTHER provider's
     // secret block must be absent. The shared parser re-runs this check
@@ -503,18 +503,18 @@ export class AntpathClient {
     // error before any network call.
     const providerSecret = (options.secrets as Record<string, { apiKey?: string } | undefined>)[provider];
     if (!providerSecret?.apiKey) {
-      throw new Error(`AntpathClient.submitRun: secrets.${provider}.apiKey is required`);
+      throw new Error(`AexClient.submitRun: secrets.${provider}.apiKey is required`);
     }
     for (const other of ["anthropic", "deepseek", "openai", "gemini", "mistral"] as const) {
       if (other === provider) continue;
       if ((options.secrets as Record<string, unknown>)[other] !== undefined) {
         throw new Error(
-          `AntpathClient.submitRun: secrets.${other} is not allowed when provider is ${provider}`
+          `AexClient.submitRun: secrets.${other} is not allowed when provider is ${provider}`
         );
       }
     }
     if (typeof options.model !== "string" || !options.model) {
-      throw new Error("AntpathClient.submitRun: model is required");
+      throw new Error("AexClient.submitRun: model is required");
     }
     const prompt = normalisePrompt(options.prompt);
     const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
@@ -591,9 +591,9 @@ export class AntpathClient {
       options.runtime !== undefined &&
       !(RUNTIME_KINDS as readonly string[]).includes(options.runtime)
     ) {
-      throw new AntpathError(
+      throw new AexError(
         "RUNTIME_UNSUPPORTED",
-        `AntpathClient.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
+        `AexClient.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
           `(got ${JSON.stringify(options.runtime)})`
       );
     }
@@ -660,13 +660,13 @@ export class AntpathClient {
   }
 
   /**
-   * Stream the unified {@link AntpathEvent} envelope live over the coordinator
+   * Stream the unified {@link AexEvent} envelope live over the coordinator
    * WebSocket. The Worker's ticket broker authorizes the connection (workspace
    * token → short-lived coordinator ticket); the shared client replays from
    * the cursor, tails live, and resumes exactly-once across reconnects. The
    * ticket is re-minted on each (re)connect so a long run never outlives it.
    */
-  async *streamEnvelopes(runId: string, options: StreamEnvelopesOptions = {}): AsyncIterable<AntpathEvent> {
+  async *streamEnvelopes(runId: string, options: StreamEnvelopesOptions = {}): AsyncIterable<AexEvent> {
     const first = await operations.getCoordinatorTicket(this.#http, runId);
     yield* streamCoordinatorEvents({
       wsUrl: first.wsUrl,
@@ -714,11 +714,11 @@ export class AntpathClient {
       const run = await this.getRun(runId);
       if (isTerminal(run.status)) return run;
       if (Date.now() >= deadline) {
-        throw new Error(`AntpathClient.waitForRun: timeout after ${timeoutMs}ms`);
+        throw new Error(`AexClient.waitForRun: timeout after ${timeoutMs}ms`);
       }
       await sleep(intervalMs, signal);
     }
-    throw new Error("AntpathClient.waitForRun: aborted");
+    throw new Error("AexClient.waitForRun: aborted");
   }
 
   /** Short alias for `waitForRun`. */
@@ -771,7 +771,7 @@ export class AntpathClient {
   }
 
   /**
-   * Bundle the per-run debug artifacts antpath captures automatically:
+   * Bundle the per-run debug artifacts aex captures automatically:
    *
    *   - `runtime/{stdout,stderr,args}.log` — runtime process diagnostics.
    *   - `host/...` — managed host logs when the platform includes them.
@@ -922,7 +922,7 @@ function resolveOutputFileSelector(
   if (isOutputPathSelector(selector)) {
     const target = normalizeOutputLookupPath(selector.path);
     if (!target) {
-      throw new RunStateError("AntpathClient.downloadOutput: output path must be non-empty", {
+      throw new RunStateError("AexClient.downloadOutput: output path must be non-empty", {
         runId,
         path: selector.path
       });
@@ -938,17 +938,17 @@ function resolveOutputFileSelector(
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new RunStateError(
-        `AntpathClient.downloadOutput: output path "${selector.path}" matched multiple files`,
+        `AexClient.downloadOutput: output path "${selector.path}" matched multiple files`,
         { runId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
       );
     }
-    throw new RunStateError(`AntpathClient.downloadOutput: output path "${selector.path}" was not found`, {
+    throw new RunStateError(`AexClient.downloadOutput: output path "${selector.path}" was not found`, {
       runId,
       path: selector.path
     });
   }
   if (typeof selector.id !== "string" || selector.id.length === 0) {
-    throw new RunStateError("AntpathClient.downloadOutput: selector must include an output id or path", { runId });
+    throw new RunStateError("AexClient.downloadOutput: selector must include an output id or path", { runId });
   }
   return { ...selector, id: selector.id };
 }
@@ -1010,16 +1010,16 @@ function generateIdempotencyKey(): string {
 function normalisePrompt(input: string | readonly string[]): readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new Error("AntpathClient.submitRun: prompt must be a non-empty string");
+      throw new Error("AexClient.submitRun: prompt must be a non-empty string");
     }
     return [input];
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new Error("AntpathClient.submitRun: prompt must be a non-empty string or string array");
+    throw new Error("AexClient.submitRun: prompt must be a non-empty string or string array");
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new Error("AntpathClient.submitRun: prompt segments must be non-empty strings");
+      throw new Error("AexClient.submitRun: prompt segments must be non-empty strings");
     }
   }
   return [...input];
@@ -1049,16 +1049,16 @@ async function materializeSkills(
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
-      throw new Error(`AntpathClient.submitRun: skills[${i}] must be a Skill instance`);
+      throw new Error(`AexClient.submitRun: skills[${i}] must be a Skill instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AntpathClient.submitRun: skills[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AexClient.submitRun: skills[${i}] was already consumed by a prior submitRun`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AntpathClient.submitRun: skills[${i}] is draft but has no bytes`);
+        throw new Error(`AexClient.submitRun: skills[${i}] is draft but has no bytes`);
       }
       const uploaded = await uploadAsset({
         http,
@@ -1089,16 +1089,16 @@ async function materializeAgentsMd(
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
-      throw new Error(`AntpathClient.submitRun: agentsMd[${i}] must be an AgentsMd instance`);
+      throw new Error(`AexClient.submitRun: agentsMd[${i}] must be an AgentsMd instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AntpathClient.submitRun: agentsMd[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AexClient.submitRun: agentsMd[${i}] was already consumed by a prior submitRun`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AntpathClient.submitRun: agentsMd[${i}] is draft but has no bytes`);
+        throw new Error(`AexClient.submitRun: agentsMd[${i}] is draft but has no bytes`);
       }
       const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash, ...(fetch ? { fetch } : {}) });
       out.push({
@@ -1123,16 +1123,16 @@ async function materializeFiles(
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
-      throw new Error(`AntpathClient.submitRun: files[${i}] must be a File instance`);
+      throw new Error(`AexClient.submitRun: files[${i}] must be a File instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AntpathClient.submitRun: files[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AexClient.submitRun: files[${i}] was already consumed by a prior submitRun`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AntpathClient.submitRun: files[${i}] is draft but has no bytes`);
+        throw new Error(`AexClient.submitRun: files[${i}] is draft but has no bytes`);
       }
       const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash, ...(fetch ? { fetch } : {}) });
       out.push(
@@ -1172,7 +1172,7 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new Error(`AntpathClient.submitRun: mcpServers[${i}] must be an McpServer instance`);
+      throw new Error(`AexClient.submitRun: mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
@@ -1180,7 +1180,7 @@ function mergeMcpServers(
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
         throw new Error(
-          `AntpathClient.submitRun: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
+          `AexClient.submitRun: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
         );
       }
       secretByName.set(secret.name, secret);
@@ -1213,7 +1213,7 @@ function mergeProxyEndpointAuth(
     const existing = byName.get(entry.name);
     if (existing && existing.value.type !== entry.value.type) {
       throw new Error(
-        `AntpathClient.submitRun: proxyEndpoint "${entry.name}" auth type conflicts ` +
+        `AexClient.submitRun: proxyEndpoint "${entry.name}" auth type conflicts ` +
           `with secrets.proxyEndpointAuth (instance=${entry.value.type}, secrets=${existing.value.type})`
       );
     }
@@ -1223,6 +1223,6 @@ function mergeProxyEndpointAuth(
 }
 
 // Side-channel re-exports keep the proxy wire types reachable from
-// `import type { … } from "antpath/client"` without forcing consumers
+// `import type { … } from "aex/client"` without forcing consumers
 // to learn an additional entry point.
 export type { PlatformProxyEndpoint, PlatformProxyEndpointAuth };

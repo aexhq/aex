@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROXY_PROTOCOL_VERSION } from "@antpath/contracts";
+import { PROXY_PROTOCOL_VERSION } from "@aexhq/contracts";
 import { runCli } from "../src/run.js";
-import { ANTPATH_INDEX_PATH, ANTPATH_RUN_TOKEN_PATH, type CliIO } from "../src/internal.js";
+import { AEX_INDEX_PATH, AEX_RUN_TOKEN_PATH, type CliIO } from "../src/internal.js";
 
 interface IoCapture {
   io: CliIO;
@@ -25,7 +25,7 @@ function makeIo(opts: {
     io: undefined as unknown as CliIO
   };
   const io: CliIO = {
-    argv: ["node", "/antpath/antpath", ...opts.argv],
+    argv: ["node", "/aex/aex", ...opts.argv],
     readFile: async (path) => {
       if (!(path in files)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       return files[path]!;
@@ -80,13 +80,13 @@ function manifestJson(opts: {
   });
 }
 
-describe("antpath --help", () => {
+describe("aex --help", () => {
   it("prints host-mode usage and exits 0 without a manifest", async () => {
     const cap = makeIo({ argv: ["--help"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("antpath run");
-    expect(cap.stdout).toContain("antpath whoami");
+    expect(cap.stdout).toContain("aex run");
+    expect(cap.stdout).toContain("aex whoami");
     expect(cap.stdout).toContain("Usage:");
   });
 
@@ -99,18 +99,18 @@ describe("antpath --help", () => {
     expect(cap.stdout).not.toContain("--workspace");
   });
 
-  it("advertises --antpath-url as optional with the api.antpath.ai default", async () => {
+  it("advertises --aex-url as optional with the api.aex.dev default", async () => {
     const cap = makeIo({ argv: ["--help"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("https://api.antpath.ai");
+    expect(cap.stdout).toContain("https://api.aex.dev");
   });
 
   it("lists declared endpoints when manifest is present", async () => {
     const cap = makeIo({
       argv: [],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }, { name: "internal" }] })
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }, { name: "internal" }] })
       }
     });
     await runCli(cap.io);
@@ -122,7 +122,7 @@ describe("antpath --help", () => {
   it("notes when no proxy endpoints were declared", async () => {
     const cap = makeIo({
       argv: ["--help"],
-      files: { [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [], proxyBaseUrl: null }) }
+      files: { [AEX_INDEX_PATH]: manifestJson({ endpoints: [], proxyBaseUrl: null }) }
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -130,7 +130,7 @@ describe("antpath --help", () => {
   });
 });
 
-describe("antpath proxy — argument validation", () => {
+describe("aex proxy — argument validation", () => {
   it("exits 2 on unknown subcommand", async () => {
     const cap = makeIo({ argv: ["snorlax"] });
     await runCli(cap.io);
@@ -167,7 +167,7 @@ describe("antpath proxy — argument validation", () => {
   });
 });
 
-describe("antpath proxy — IO contract", () => {
+describe("aex proxy — IO contract", () => {
   it("fails when the manifest is missing", async () => {
     const cap = makeIo({ argv: ["proxy", "stripe"] });
     await runCli(cap.io);
@@ -178,7 +178,7 @@ describe("antpath proxy — IO contract", () => {
   it("fails when the run has no proxyBaseUrl declared", async () => {
     const cap = makeIo({
       argv: ["proxy", "stripe"],
-      files: { [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [], proxyBaseUrl: null }) }
+      files: { [AEX_INDEX_PATH]: manifestJson({ endpoints: [], proxyBaseUrl: null }) }
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(1);
@@ -189,7 +189,7 @@ describe("antpath proxy — IO contract", () => {
   it("fails when the run-token file is missing", async () => {
     const cap = makeIo({
       argv: ["proxy", "stripe"],
-      files: { [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }) }
+      files: { [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }) }
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(1);
@@ -198,7 +198,7 @@ describe("antpath proxy — IO contract", () => {
   });
 });
 
-describe("antpath proxy — successful call", () => {
+describe("aex proxy — successful call", () => {
   it("sends the protocol headers and writes the response envelope to stdout", async () => {
     const upstreamBody = {
       endpointName: "stripe",
@@ -212,8 +212,8 @@ describe("antpath proxy — successful call", () => {
     const cap = makeIo({
       argv: ["proxy", "stripe", "--method", "POST", "--path", "/v1/refunds"],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "bearer-xyz"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
+        [AEX_RUN_TOKEN_PATH]: "bearer-xyz"
       },
       fetchHandler: async () =>
         new Response(JSON.stringify(upstreamBody), {
@@ -228,20 +228,20 @@ describe("antpath proxy — successful call", () => {
     expect(call.url).toBe("https://dash.example.com/api/runs/run-1/proxy/stripe");
     const headers = new Headers((call.init as RequestInit).headers);
     expect(headers.get("authorization")).toBe("Bearer bearer-xyz");
-    expect(headers.get("x-antpath-proxy-protocol")).toBe(PROXY_PROTOCOL_VERSION);
-    expect(headers.get("x-antpath-method")).toBe("POST");
-    expect(headers.get("x-antpath-path")).toBe("/v1/refunds");
+    expect(headers.get("x-aex-proxy-protocol")).toBe(PROXY_PROTOCOL_VERSION);
+    expect(headers.get("x-aex-method")).toBe("POST");
+    expect(headers.get("x-aex-path")).toBe("/v1/refunds");
     const body = JSON.parse(cap.stdout.trim());
     expect(body.upstreamStatus).toBe(200);
   });
 
-  it("forwards --header K=V via the X-Antpath-Headers JSON record", async () => {
+  it("forwards --header K=V via the X-Aex-Headers JSON record", async () => {
     let captured: Headers | null = null;
     const cap = makeIo({
       argv: ["proxy", "stripe", "--header", "accept=application/json"],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "tok"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+        [AEX_RUN_TOKEN_PATH]: "tok"
       },
       fetchHandler: async (_url, init) => {
         captured = new Headers((init as RequestInit).headers);
@@ -250,17 +250,17 @@ describe("antpath proxy — successful call", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    const json = JSON.parse(captured!.get("x-antpath-headers")!);
+    const json = JSON.parse(captured!.get("x-aex-headers")!);
     expect(json.accept).toBe("application/json");
   });
 
-  it("propagates --query as the X-Antpath-Query header", async () => {
+  it("propagates --query as the X-Aex-Query header", async () => {
     let captured: Headers | null = null;
     const cap = makeIo({
       argv: ["proxy", "stripe", "--query", '{"limit":"10"}'],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "tok"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+        [AEX_RUN_TOKEN_PATH]: "tok"
       },
       fetchHandler: async (_url, init) => {
         captured = new Headers((init as RequestInit).headers);
@@ -268,7 +268,7 @@ describe("antpath proxy — successful call", () => {
       }
     });
     await runCli(cap.io);
-    expect(captured!.get("x-antpath-query")).toBe('{"limit":"10"}');
+    expect(captured!.get("x-aex-query")).toBe('{"limit":"10"}');
   });
 
   it("forwards --data inline as the request body", async () => {
@@ -276,8 +276,8 @@ describe("antpath proxy — successful call", () => {
     const cap = makeIo({
       argv: ["proxy", "stripe", "--method", "POST", "--data", "hello"],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "tok"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
+        [AEX_RUN_TOKEN_PATH]: "tok"
       },
       fetchHandler: async (_url, init) => {
         const b = (init as RequestInit).body;
@@ -290,13 +290,13 @@ describe("antpath proxy — successful call", () => {
   });
 });
 
-describe("antpath proxy — error envelope", () => {
+describe("aex proxy — error envelope", () => {
   it("exits 1 with a stable error body on a 4xx from the BFF", async () => {
     const cap = makeIo({
       argv: ["proxy", "stripe", "--method", "GET", "--path", "/x"],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "tok"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+        [AEX_RUN_TOKEN_PATH]: "tok"
       },
       fetchHandler: async () =>
         new Response(JSON.stringify({ error: "policy_denied", message: "[redacted]" }), {
@@ -314,8 +314,8 @@ describe("antpath proxy — error envelope", () => {
     const cap = makeIo({
       argv: ["proxy", "stripe"],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "tok"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+        [AEX_RUN_TOKEN_PATH]: "tok"
       },
       fetchHandler: async () =>
         new Response(JSON.stringify({ error: "unauthorized", message: "[redacted]" }), { status: 401 })
@@ -352,8 +352,8 @@ describe("antpath proxy — error envelope", () => {
       const cap = makeIo({
         argv: ["proxy", "stripe"],
         files: {
-          [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-          [ANTPATH_RUN_TOKEN_PATH]: "tok"
+          [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+          [AEX_RUN_TOKEN_PATH]: "tok"
         },
         fetchHandler: async () =>
           new Response(JSON.stringify({ error: tc.errorCode, message: "[redacted]" }), {
@@ -375,8 +375,8 @@ describe("antpath proxy — error envelope", () => {
     const cap = makeIo({
       argv: ["proxy", "stripe"],
       files: {
-        [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [ANTPATH_RUN_TOKEN_PATH]: "tok"
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+        [AEX_RUN_TOKEN_PATH]: "tok"
       },
       fetchHandler: async () =>
         new Response("not json at all", { status: 502, headers: { "content-type": "text/plain" } })
@@ -402,7 +402,7 @@ describe("antpath proxy — error envelope", () => {
       //   HTTP/2 307
       //   cache-control: public, max-age=0, must-revalidate
       //   content-type: text/plain
-      //   location: https://www.antpath.ai/api/runs/<runId>/proxy/<name>
+      //   location: https://aex.dev/api/runs/<runId>/proxy/<name>
       //   server: edge
       //
       //   Redirecting...
@@ -415,8 +415,8 @@ describe("antpath proxy — error envelope", () => {
       const cap = makeIo({
         argv: ["proxy", "stripe"],
         files: {
-          [ANTPATH_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-          [ANTPATH_RUN_TOKEN_PATH]: "tok"
+          [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
+          [AEX_RUN_TOKEN_PATH]: "tok"
         },
         fetchHandler: async () =>
           new Response("Redirecting...\n", {
@@ -445,7 +445,7 @@ describe("antpath proxy — error envelope", () => {
   );
 });
 
-describe("antpath proxy --help", () => {
+describe("aex proxy --help", () => {
   it("renders proxy help and exits 0", async () => {
     const cap = makeIo({ argv: ["proxy", "--help"] });
     await runCli(cap.io);

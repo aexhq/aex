@@ -5,11 +5,11 @@ import {
   mapStream,
   streamCoordinatorEvents,
   toAGUI,
-  type AntpathEvent,
+  type AexEvent,
   type WebSocketLike
 } from "../src/index.js";
 
-const evt = (sequence: number, type: AntpathEvent["type"] = "TEXT_MESSAGE_CONTENT", source: AntpathEvent["source"] = "agent"): AntpathEvent => ({
+const evt = (sequence: number, type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT", source: AexEvent["source"] = "agent"): AexEvent => ({
   specversion: "1.0",
   id: `r:${sequence}`,
   source,
@@ -34,7 +34,7 @@ class FakeWebSocket implements WebSocketLike {
     this.closed = true;
     this.#emit("close", {});
   }
-  message(event: AntpathEvent): void {
+  message(event: AexEvent): void {
     this.#emit("message", { data: JSON.stringify(event) });
   }
   #emit(type: string, ev: { data?: unknown }): void {
@@ -144,12 +144,12 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
 });
 
 describe("client-side filter + projection", () => {
-  async function* arr(items: AntpathEvent[]): AsyncGenerator<AntpathEvent> {
+  async function* arr(items: AexEvent[]): AsyncGenerator<AexEvent> {
     for (const i of items) yield i;
   }
 
   it("filterStream narrows by a guard predicate", async () => {
-    const events = [evt(0, "TEXT_MESSAGE_CONTENT", "agent"), evt(1, "CUSTOM", "antpath"), evt(2, "TOOL_CALL_START", "agent")];
+    const events = [evt(0, "TEXT_MESSAGE_CONTENT", "agent"), evt(1, "CUSTOM", "aex"), evt(2, "TOOL_CALL_START", "agent")];
     const out: number[] = [];
     for await (const e of filterStream(arr(events), (e) => isFromSource(e, "agent"))) out.push(e.sequence);
     expect(out).toEqual([0, 2]);

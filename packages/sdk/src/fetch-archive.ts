@@ -1,5 +1,5 @@
 import { unzipSync } from "fflate";
-import { SKILL_BUNDLE_LIMITS, type FetchLike } from "@antpath/contracts";
+import { SKILL_BUNDLE_LIMITS, type FetchLike } from "@aexhq/contracts";
 import type { SkillFiles } from "./bundle.js";
 
 /**

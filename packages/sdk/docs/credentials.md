@@ -4,9 +4,9 @@ title: Credentials
 
 # Credentials
 
-antpath does not store provider keys or MCP credential values across runs.
+aex does not store provider keys or MCP credential values across runs.
 
-The caller passes a workspace-scoped SDK token and exactly one matching provider key inline on every `submitRun` call. antpath holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the antpath-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
+The caller passes a workspace-scoped SDK token and exactly one matching provider key inline on every `submitRun` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
 
 Provider keys are coupled to the submitted `provider`:
 
@@ -29,9 +29,9 @@ Unsupported:
 
 - arbitrary headers;
 - OAuth refresh;
-- persisted antpath vault.
+- persisted aex vault.
 
-For Goose Managed runs, antpath injects the matching BYOK provider key at the hosted provider-proxy. Provider-side sessions and data remain subject to the selected provider account's retention and deletion policies.
+For Goose Managed runs, aex injects the matching BYOK provider key at the hosted provider-proxy. Provider-side sessions and data remain subject to the selected provider account's retention and deletion policies.
 
 ## Proxy endpoints (per-run custom HTTP credentials)
 
@@ -41,12 +41,12 @@ The platform's managed HTTP proxy is the agent-first alternative. The caller dec
 
 ```ts
 import {
-  AntpathClient,
+  AexClient,
   validateProxyAuth,
   buildPlatformAllowedHosts
-} from "antpath";
+} from "@aexhq/sdk";
 
-const client = new AntpathClient({
+const client = new AexClient({
   apiToken: "ant_..."
 });
 
@@ -87,16 +87,16 @@ const runId = await client.submitRun({
 });
 ```
 
-Inside the run container, every session has the platform CLI mounted at `/mnt/session/uploads/antpath/antpath` (a Node ESM bundle) and a manifest at `/mnt/session/uploads/antpath/index.json` describing the declared endpoints. The skill invokes the CLI through `node` (the mount has no execute permission so direct invocation fails with `bad interpreter: Permission denied`):
+Inside the run container, every session has the platform CLI mounted at `/mnt/session/uploads/aex/aex` (a Node ESM bundle) and a manifest at `/mnt/session/uploads/aex/index.json` describing the declared endpoints. The skill invokes the CLI through `node` (the mount has no execute permission so direct invocation fails with `bad interpreter: Permission denied`):
 
 ```bash
-node /mnt/session/uploads/antpath/antpath proxy stripe \
+node /mnt/session/uploads/aex/aex proxy stripe \
   --method GET \
   --path /v1/charges/ch_123 \
   --response-mode headers_only
 ```
 
-The CLI reads the per-run bearer from `/mnt/session/uploads/antpath/run-token`, attaches the `X-Antpath-Proxy-Protocol` header, and the BFF injects the bearer/header/query/basic credential before dispatching the outbound call. Only the response (subject to `responseMode` and `maxResponseBytes`) reaches the container. `--response-mode` can only narrow below the policy ceiling.
+The CLI reads the per-run bearer from `/mnt/session/uploads/aex/run-token`, attaches the `X-Aex-Proxy-Protocol` header, and the BFF injects the bearer/header/query/basic credential before dispatching the outbound call. Only the response (subject to `responseMode` and `maxResponseBytes`) reaches the container. `--response-mode` can only narrow below the policy ceiling.
 
 #### Keyless upstreams (`authShape: { type: "none" }`)
 
@@ -121,10 +121,10 @@ const runId = await client.submitRun({
 });
 ```
 
-The keyless endpoint still routes through the antpath managed proxy: every call is allow-listed, audited, redacted, and counted against per-run budgets. The BFF injects no `Authorization` header and no query-string credential. Shipping a `proxyEndpointAuth` entry for a `none`-shape endpoint is rejected at submission time. Equivalent class-based form:
+The keyless endpoint still routes through the aex managed proxy: every call is allow-listed, audited, redacted, and counted against per-run budgets. The BFF injects no `Authorization` header and no query-string credential. Shipping a `proxyEndpointAuth` entry for a `none`-shape endpoint is rejected at submission time. Equivalent class-based form:
 
 ```ts
-import { ProxyEndpoint } from "antpath";
+import { ProxyEndpoint } from "@aexhq/sdk";
 
 ProxyEndpoint.none({
   name: "wikimedia",
@@ -134,7 +134,7 @@ ProxyEndpoint.none({
 });
 ```
 
-`node /mnt/session/uploads/antpath/antpath --help` reads endpoint details from `/mnt/session/uploads/antpath/index.json`. Runs that do not declare any `proxyEndpoints` still have the CLI and an empty manifest mounted, so agents never need to introspect whether the surface exists.
+`node /mnt/session/uploads/aex/aex --help` reads endpoint details from `/mnt/session/uploads/aex/index.json`. Runs that do not declare any `proxyEndpoints` still have the CLI and an empty manifest mounted, so agents never need to introspect whether the surface exists.
 
 ### Networking
 
@@ -142,7 +142,7 @@ When a run uses `limited` networking, the platform host must appear in `allowed_
 
 ```ts
 const allowedHosts = buildPlatformAllowedHosts({
-  baseUrl: "https://api.antpath.ai",
+  baseUrl: "https://api.aex.dev",
   extraHosts: ["api.stripe.com"]
 });
 ```

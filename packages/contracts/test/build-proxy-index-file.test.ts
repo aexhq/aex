@@ -7,7 +7,7 @@ import {
 } from "../src/proxy-protocol.js";
 
 const RUN_ID = "11111111-2222-3333-4444-555555555555";
-const BASE = "https://antpath.local.test";
+const BASE = "https://aex.local.test";
 
 const minimalEndpoint: ProxyEndpointPolicy = {
   name: "httpbin",

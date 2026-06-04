@@ -21,13 +21,13 @@
  * against a live run, without unzipping in the child.
  *
  * Required env: same as the other live-sdk-* files
- * (ANTPATH_API_URL, ANTPATH_API_TOKEN,
- * DEEPSEEK_API_KEY, + ANTPATH_USER_TEST_TARBALL/VERSION).
+ * (AEX_API_URL, AEX_API_TOKEN,
+ * DEEPSEEK_API_KEY, + AEX_USER_TEST_TARBALL/VERSION).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -37,10 +37,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface Cell {
   readonly id: string;
@@ -105,11 +105,11 @@ function buildScript(cell: Cell, marker: string): string {
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
-    import { AntpathClient } from "antpath";
+    import { AexClient } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     const runId = await client.submitRun({
@@ -173,7 +173,7 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   });
 
   afterAll(() => {
@@ -189,8 +189,8 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
         cwd: install.installDir,
         timeoutMs: 8 * 60_000,
         env: buildPassEnv({
-          ANTPATH_API_URL: apiUrl,
-          ANTPATH_API_TOKEN: apiToken,
+          AEX_API_URL: apiUrl,
+          AEX_API_TOKEN: apiToken,
           DEEPSEEK_KEY_SUBMIT: deepseekKey
         })
       });

@@ -6,7 +6,7 @@
 //   - A terminal (RUN_FINISHED or RUN_ERROR) MUST appear.
 //   - Every "signal-bearing" event (TEXT_MESSAGE_CONTENT, TOOL_CALL_START,
 //     TOOL_CALL_RESULT) MUST come AFTER RUN_STARTED and BEFORE the terminal.
-//   - Bookkeeping events (CUSTOM — antpath.notification / antpath.* — and any
+//   - Bookkeeping events (CUSTOM — aex.notification / aex.* — and any
 //     other non-signal type) may appear anywhere, including after the
 //     terminal: they are the legitimate "batch carries an extra status event
 //     after idle" case, expressed as data instead of a tolerance.

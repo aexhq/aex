@@ -6,31 +6,31 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     const m = buildRuntimeManifest({ provider: "anthropic" });
     expect(m.provider).toBe("anthropic");
     expect(m.skillsRoot).toBe("/workspace/skills");
-    expect(m.filesRoot).toBe("/mnt/session/uploads/antpath/files");
-    expect(m.assetsRoot).toBe("/mnt/session/uploads/antpath/assets");
+    expect(m.filesRoot).toBe("/mnt/session/uploads/aex/files");
+    expect(m.assetsRoot).toBe("/mnt/session/uploads/aex/assets");
     expect(m.outputsRoot).toBe("/mnt/session/outputs");
-    expect(m.antpathCli).toBe("/mnt/session/uploads/antpath/antpath");
-    expect(m.indexJson).toBe("/mnt/session/uploads/antpath/index.json");
-    expect(m.readme).toBe("/mnt/session/uploads/antpath/SKILLS.md");
-    expect(m.runtimeJson).toBe("/mnt/session/uploads/antpath/RUNTIME.json");
-    expect(m.runtimeEnv).toBe("/mnt/session/uploads/antpath/RUNTIME.env");
+    expect(m.aexCli).toBe("/mnt/session/uploads/aex/aex");
+    expect(m.indexJson).toBe("/mnt/session/uploads/aex/index.json");
+    expect(m.readme).toBe("/mnt/session/uploads/aex/SKILLS.md");
+    expect(m.runtimeJson).toBe("/mnt/session/uploads/aex/RUNTIME.json");
+    expect(m.runtimeEnv).toBe("/mnt/session/uploads/aex/RUNTIME.env");
   });
 
-  it("populates the antpath-set env vars from the same path table", () => {
+  it("populates the aex-set env vars from the same path table", () => {
     const m = buildRuntimeManifest({ provider: "anthropic" });
-    expect(m.envVars.ANTPATH_PROVIDER).toBe("anthropic");
-    expect(m.envVars.ANTPATH_CLI).toBe(m.antpathCli);
-    expect(m.envVars.ANTPATH_OUTPUTS).toBe(m.outputsRoot);
-    expect(m.envVars.ANTPATH_SKILLS_ROOT).toBe(m.skillsRoot);
-    expect(m.envVars.ANTPATH_FILES_ROOT).toBe(m.filesRoot);
-    expect(m.envVars.ANTPATH_ASSETS_ROOT).toBe(m.assetsRoot);
-    expect(m.envVars.ANTPATH_INDEX_JSON).toBe(m.indexJson);
-    expect(m.envVars.ANTPATH_README).toBe(m.readme);
-    expect(m.envVars.ANTPATH_RUNTIME_JSON).toBe(m.runtimeJson);
-    expect(m.envVars.ANTPATH_RUNTIME_ENV).toBe(m.runtimeEnv);
+    expect(m.envVars.AEX_PROVIDER).toBe("anthropic");
+    expect(m.envVars.AEX_CLI).toBe(m.aexCli);
+    expect(m.envVars.AEX_OUTPUTS).toBe(m.outputsRoot);
+    expect(m.envVars.AEX_SKILLS_ROOT).toBe(m.skillsRoot);
+    expect(m.envVars.AEX_FILES_ROOT).toBe(m.filesRoot);
+    expect(m.envVars.AEX_ASSETS_ROOT).toBe(m.assetsRoot);
+    expect(m.envVars.AEX_INDEX_JSON).toBe(m.indexJson);
+    expect(m.envVars.AEX_README).toBe(m.readme);
+    expect(m.envVars.AEX_RUNTIME_JSON).toBe(m.runtimeJson);
+    expect(m.envVars.AEX_RUNTIME_ENV).toBe(m.runtimeEnv);
   });
 
-  it("merges customer env vars after antpath keys in insertion order", () => {
+  it("merges customer env vars after aex keys in insertion order", () => {
     const m = buildRuntimeManifest({
       provider: "anthropic",
       customerEnvVars: {
@@ -39,25 +39,25 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
       }
     });
     const keys = Object.keys(m.envVars);
-    expect(keys[0]).toBe("ANTPATH_PROVIDER");
+    expect(keys[0]).toBe("AEX_PROVIDER");
     expect(keys.includes("BROLL_STORE")).toBe(true);
     expect(keys.includes("BROLL_OUTPUTS")).toBe(true);
-    // antpath keys come first, customer keys afterwards
+    // aex keys come first, customer keys afterwards
     const brollIndex = keys.indexOf("BROLL_STORE");
-    const lastAntpathIndex = Math.max(...keys.map((k, i) => (k.startsWith("ANTPATH_") ? i : -1)));
-    expect(brollIndex).toBeGreaterThan(lastAntpathIndex);
+    const lastAexIndex = Math.max(...keys.map((k, i) => (k.startsWith("AEX_") ? i : -1)));
+    expect(brollIndex).toBeGreaterThan(lastAexIndex);
     expect(m.envVars.BROLL_STORE).toBe("/mnt/session/broll/store");
   });
 
-  it("defensively drops customer keys that smuggle in the reserved ANTPATH_ prefix", () => {
+  it("defensively drops customer keys that smuggle in the reserved AEX_ prefix", () => {
     // The strict submission parser rejects this; the builder still filters
     // as a defence-in-depth layer so a poisoned snapshot can't shadow our
     // values inside the container.
     const m = buildRuntimeManifest({
       provider: "anthropic",
-      customerEnvVars: { ANTPATH_OUTPUTS: "/elsewhere", BROLL_STORE: "/x" } as Record<string, string>
+      customerEnvVars: { AEX_OUTPUTS: "/elsewhere", BROLL_STORE: "/x" } as Record<string, string>
     });
-    expect(m.envVars.ANTPATH_OUTPUTS).toBe("/mnt/session/outputs");
+    expect(m.envVars.AEX_OUTPUTS).toBe("/mnt/session/outputs");
     expect(m.envVars.BROLL_STORE).toBe("/x");
   });
 

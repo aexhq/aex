@@ -35,7 +35,7 @@ describe("run custody manifest contract", () => {
           count: 1,
           exposures: [
             {
-              surface: "antpath_vault",
+              surface: "aex_vault",
               access: "stored",
               status: "revoked",
               firstExposedAt: "2026-06-02T10:00:00.000Z",
@@ -65,7 +65,7 @@ describe("run custody manifest contract", () => {
         {
           class: "runner_bearer",
           present: true,
-          exposures: [{ surface: "antpath_kv", access: "stored", status: "revoked" }],
+          exposures: [{ surface: "aex_kv", access: "stored", status: "revoked" }],
           disposition: { status: "revoked", decidedAt: "2026-06-02T10:05:01.000Z" }
         }
       ],
@@ -206,7 +206,7 @@ describe("run custody manifest contract", () => {
         {
           class: "provider_api_key",
           present: true,
-          exposures: [{ surface: "antpath_vault", access: "stored", status: "revoked" }],
+          exposures: [{ surface: "aex_vault", access: "stored", status: "revoked" }],
           disposition: { status: "destroyed", decidedAt: "2026-06-02T10:05:01.000Z" }
         }
       ],

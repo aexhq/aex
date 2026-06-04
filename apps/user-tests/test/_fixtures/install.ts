@@ -1,14 +1,14 @@
 /**
  * Shared install fixture for the user-tests layer.
  *
- * Each scenario calls {@link installAntpath} which:
- *   1. Reads ANTPATH_USER_TEST_TARBALL or ANTPATH_USER_TEST_VERSION
+ * Each scenario calls {@link installAex} which:
+ *   1. Reads AEX_USER_TEST_TARBALL or AEX_USER_TEST_VERSION
  *      (explicit overrides stay mutually exclusive). When neither is
  *      set, local/offline runs pack the current workspace SDK once and
  *      install that tarball.
  *   2. Creates a fresh tempdir.
  *   3. Materializes a minimal package.json there.
- *   4. Runs `npm install <tarball|antpath@version>` against it.
+ *   4. Runs `npm install <tarball|@aexhq/sdk@version>` against it.
  *   5. Returns paths for the install so scenarios can spawn child
  *      processes with cwd = installDir.
  *
@@ -29,13 +29,13 @@ import { fileURLToPath } from "node:url";
 export interface InstallResult {
   /** Absolute path to the install tempdir (npm install was run here). */
   readonly installDir: string;
-  /** `node_modules/antpath` inside the install tempdir. */
-  readonly antpathDir: string;
-  /** `node_modules/antpath/package.json` parsed. */
-  readonly antpathPackageJson: AntpathPackageJson;
-  /** Resolved version of antpath that was installed. */
+  /** `node_modules/@aexhq/sdk` inside the install tempdir. */
+  readonly aexDir: string;
+  /** `node_modules/@aexhq/sdk/package.json` parsed. */
+  readonly aexPackageJson: AexPackageJson;
+  /** Resolved version of aex that was installed. */
   readonly resolvedVersion: string;
-  /** Spec passed to npm install (tarball path or `antpath@<version>`). */
+  /** Spec passed to npm install (tarball path or `@aexhq/sdk@<version>`). */
   readonly installSpec: string;
   /** Source kind for diagnostics. */
   readonly source: "tarball" | "registry" | "local-pack";
@@ -43,7 +43,7 @@ export interface InstallResult {
   readonly cleanup: () => void;
 }
 
-export interface AntpathPackageJson {
+export interface AexPackageJson {
   readonly name: string;
   readonly version: string;
   readonly type?: string;
@@ -78,7 +78,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
 const packLockDir = join(
   tmpdir(),
-  `antpath-user-test-sdk-pack-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`
+  `aex-user-test-sdk-pack-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`
 );
 let localSdkPackPromise: Promise<string> | null = null;
 
@@ -93,41 +93,41 @@ export async function resolveInstallSpec(
   const env = options.env ?? process.env;
   const pathExists = options.pathExists ?? existsSync;
   const packLocalSdk = options.packLocalSdk ?? packCurrentSdkOnce;
-  const tarball = env["ANTPATH_USER_TEST_TARBALL"];
-  const version = env["ANTPATH_USER_TEST_VERSION"];
+  const tarball = env["AEX_USER_TEST_TARBALL"];
+  const version = env["AEX_USER_TEST_VERSION"];
   if (tarball && version) {
     throw new Error(
-      "user-tests: ANTPATH_USER_TEST_TARBALL and ANTPATH_USER_TEST_VERSION are mutually exclusive. Set exactly one."
+      "user-tests: AEX_USER_TEST_TARBALL and AEX_USER_TEST_VERSION are mutually exclusive. Set exactly one."
     );
   }
   if (tarball) {
     if (!pathExists(tarball)) {
-      throw new Error(`user-tests: ANTPATH_USER_TEST_TARBALL points at a non-existent path: ${tarball}`);
+      throw new Error(`user-tests: AEX_USER_TEST_TARBALL points at a non-existent path: ${tarball}`);
     }
     return { spec: tarball, source: "tarball" };
   }
   if (version) {
     if (!/^[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z.\-]+)?$/.test(version)) {
       throw new Error(
-        `user-tests: ANTPATH_USER_TEST_VERSION must be a concrete semver (e.g. 0.2.1), got: ${version}`
+        `user-tests: AEX_USER_TEST_VERSION must be a concrete semver (e.g. 0.2.1), got: ${version}`
       );
     }
-    return { spec: `antpath@${version}`, source: "registry" };
+    return { spec: `@aexhq/sdk@${version}`, source: "registry" };
   }
   const localTarball = await packLocalSdk();
   return { spec: localTarball, source: "local-pack" };
 }
 
 /**
- * Install the resolved antpath artifact into a fresh tempdir.
+ * Install the resolved aex artifact into a fresh tempdir.
  * Throws if npm exits non-zero or installs the wrong version.
  */
-export async function installAntpath(options: InstallOptions = {}): Promise<InstallResult> {
+export async function installAex(options: InstallOptions = {}): Promise<InstallResult> {
   const { spec, source } = await resolveInstallSpec();
-  const installDir = mkdtempSync(join(tmpdir(), "antpath-user-test-"));
+  const installDir = mkdtempSync(join(tmpdir(), "aex-user-test-"));
   // Minimal host package.json so npm install doesn't complain.
   const hostPkg = {
-    name: "antpath-user-test-host",
+    name: "aex-user-test-host",
     version: "0.0.0",
     private: true,
     type: "module"
@@ -147,31 +147,31 @@ export async function installAntpath(options: InstallOptions = {}): Promise<Inst
     throw error;
   }
 
-  const antpathDir = join(installDir, "node_modules", "antpath");
-  if (!existsSync(antpathDir)) {
+  const aexDir = join(installDir, "node_modules", "@aexhq", "sdk");
+  if (!existsSync(aexDir)) {
     rmSync(installDir, { recursive: true, force: true });
-    throw new Error(`user-tests: install completed but ${antpathDir} is missing`);
+    throw new Error(`user-tests: install completed but ${aexDir} is missing`);
   }
-  const pkgPath = join(antpathDir, "package.json");
+  const pkgPath = join(aexDir, "package.json");
   if (!existsSync(pkgPath)) {
     rmSync(installDir, { recursive: true, force: true });
     throw new Error(`user-tests: install completed but ${pkgPath} is missing`);
   }
-  let pkg: AntpathPackageJson;
+  let pkg: AexPackageJson;
   try {
     const text = await import("node:fs/promises").then((m) => m.readFile(pkgPath, "utf8"));
-    pkg = JSON.parse(text) as AntpathPackageJson;
+    pkg = JSON.parse(text) as AexPackageJson;
   } catch (error) {
     rmSync(installDir, { recursive: true, force: true });
     throw new Error(`user-tests: could not read installed package.json: ${(error as Error).message}`);
   }
 
   if (source === "registry") {
-    const want = spec.replace(/^antpath@/, "");
+    const want = spec.replace(/^@aexhq\/sdk@/, "");
     if (pkg.version !== want) {
       rmSync(installDir, { recursive: true, force: true });
       throw new Error(
-        `user-tests: registry resolved antpath@${want} but installed package reports version ${pkg.version}`
+        `user-tests: registry resolved @aexhq/sdk@${want} but installed package reports version ${pkg.version}`
       );
     }
   }
@@ -189,8 +189,8 @@ export async function installAntpath(options: InstallOptions = {}): Promise<Inst
 
   return {
     installDir,
-    antpathDir,
-    antpathPackageJson: pkg,
+    aexDir,
+    aexPackageJson: pkg,
     resolvedVersion: pkg.version,
     installSpec: spec,
     source,
@@ -205,22 +205,22 @@ function packCurrentSdkOnce(): Promise<string> {
 
 async function packCurrentSdk(): Promise<string> {
   return await withPackLock(async () => {
-    const packDir = mkdtempSync(join(tmpdir(), "antpath-user-test-sdk-pack-"));
+    const packDir = mkdtempSync(join(tmpdir(), "aex-user-test-sdk-pack-"));
     const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
     try {
-      await runCommand(pnpm, ["--filter", "antpath", "pack", "--pack-destination", packDir], {
+      await runCommand(pnpm, ["--filter", "@aexhq/sdk", "pack", "--pack-destination", packDir], {
         cwd: repoRoot,
         timeoutMs: 180_000
       }).then((result) => {
         if (result.exitCode !== 0) {
           throw new Error(
-            `pnpm --filter antpath pack exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
+            `pnpm --filter @aexhq/sdk pack exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
           );
         }
       });
-      const tarballs = readdirSync(packDir).filter((name) => /^antpath-.*\.tgz$/.test(name));
+      const tarballs = readdirSync(packDir).filter((name) => /^aexhq-sdk-.*\.tgz$/.test(name));
       if (tarballs.length !== 1) {
-        throw new Error(`user-tests: expected one packed antpath tarball in ${packDir}, found ${tarballs.length}`);
+        throw new Error(`user-tests: expected one packed @aexhq/sdk tarball in ${packDir}, found ${tarballs.length}`);
       }
       return join(packDir, tarballs[0]!);
     } catch (error) {

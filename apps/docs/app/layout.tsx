@@ -9,10 +9,10 @@ import { source } from "@/lib/source";
 import "./global.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://docs.antpath.ai"),
+  metadataBase: new URL("https://aex.dev"),
   title: {
-    default: "antpath",
-    template: "%s | antpath"
+    default: "aex",
+    template: "%s | aex"
   },
   description: "SDK and CLI docs for durable agent runs across providers."
 };

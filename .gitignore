@@ -21,4 +21,4 @@ coverage/
 .wrangler/
 
 # Local SDK playground (inlined keys — never commit)
-scripts/antpath-sample.ts
+scripts/aex-sample.ts

@@ -2,8 +2,8 @@ import type { RunStatus } from "./status.js";
 import { isTerminalRunStatus } from "./status.js";
 
 export const RUN_RETENTION_SCHEMA_VERSION = 1;
-export const RUN_DELETION_MANIFEST_KIND = "antpath.run_deletion_manifest.v1";
-export const RUN_DELETION_JOB_KIND = "antpath.run_deletion_job.v1";
+export const RUN_DELETION_MANIFEST_KIND = "aex.run_deletion_manifest.v1";
+export const RUN_DELETION_JOB_KIND = "aex.run_deletion_job.v1";
 export const RUN_DELETION_MANIFEST_CONTENT_TYPE = "application/json; charset=utf-8";
 export const RUN_RETENTION_REDACTION_SCANNER_VERSION = 1;
 

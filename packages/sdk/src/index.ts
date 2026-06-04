@@ -1,16 +1,16 @@
 /**
- * Public surface of the `antpath` SDK.
+ * Public surface of the `aex` SDK.
  *
- * ONE class (`AntpathClient`) talks to the dashboard BFF. The CLI exposes
+ * ONE class (`AexClient`) talks to the dashboard BFF. The CLI exposes
  * the SAME operations via subcommands. Composition primitives are
  * `Skill`, `McpServer`, and `ProxyEndpoint` — there is no saved-definition
  * wrapper. Everything else is types, errors, and event type guards re-exported
- * from `@antpath/contracts`.
+ * from `@aexhq/contracts`.
  */
 
-export { AgentsMdClient, AntpathClient, FilesClient, SkillsClient } from "./client.js";
+export { AgentsMdClient, AexClient, FilesClient, SkillsClient } from "./client.js";
 export type {
-  AntpathClientOptions,
+  AexClientOptions,
   OutputDownloadOptions,
   OutputFilePathMatch,
   OutputFilePathSelector,
@@ -41,13 +41,13 @@ export type { BundledSkill, SkillFiles } from "./bundle.js";
 
 // Errors
 export {
-  AntpathApiError,
-  AntpathError,
+  AexApiError,
+  AexError,
   CleanupError,
   CredentialValidationError,
   ProviderError,
   RunStateError
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 // Skill / MCP wire types
 export {
@@ -59,7 +59,7 @@ export {
   validateSkillBundleEntry,
   validateSkillBundleManifest,
   validateProxyAuth
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 export type {
   AssetRef,
   AgentsMdRef,
@@ -68,7 +68,7 @@ export type {
   SkillBundleEntry,
   SkillBundleManifest,
   SkillRef
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 // Runtime types
 export type {
@@ -95,10 +95,10 @@ export type {
   Skill as SkillRecord,
   UsageSummary,
   WhoAmI
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 // Platform submission types — exposed so callers can build typed `secrets`
-// arrays without depending on `@antpath/contracts` directly. The raw
+// arrays without depending on `@aexhq/contracts` directly. The raw
 // `PlatformProxyEndpoint` wire shape is intentionally re-exported under
 // its full name; the user-facing constructor for proxy endpoints is the
 // `ProxyEndpoint` class (above), which prevents the wire-format
@@ -115,7 +115,7 @@ export type {
   ProxyAuthShape,
   ProxyMethod,
   ProxyResponseMode
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 // Runtime sizing — the closed set of valid managed runtime presets.
 // Prefer the `RuntimeSizes` symbol const (e.g. `RuntimeSizes.SHARED_2X_2GB`)
@@ -128,8 +128,8 @@ export {
   RUNTIME_SIZE_PRESETS,
   RUNTIME_SIZES,
   RuntimeSizes
-} from "@antpath/contracts";
-export type { RuntimeResources, RuntimeSize } from "@antpath/contracts";
+} from "@aexhq/contracts";
+export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
 // Provider + runtime dispatch surface. Agents and SDK consumers
 // inspect these to know which (provider, runtime) combos are valid
@@ -144,13 +144,13 @@ export {
   RUNTIME_VALIDATION_CODES,
   RuntimeValidationError,
   selectRuntime
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 export type {
   CredentialMode,
   RunProvider,
   RuntimeKind,
   RuntimeValidationCode
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 // Normalized coordinator event guards
 export {
@@ -165,7 +165,7 @@ export {
   isTextMessage,
   isToolCallResult,
   isToolCallStart
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 // Secret utilities
-export { SecretString, redactSecrets } from "@antpath/contracts";
+export { SecretString, redactSecrets } from "@aexhq/contracts";

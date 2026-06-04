@@ -1,4 +1,4 @@
-// Pins the SDK's structured-error contract: AntpathError (or other
+// Pins the SDK's structured-error contract: AexError (or other
 // named subclasses), never a bare `Error`. Used by failure-case tests
 // (b1, b2, b3 in live-sdk-outputs-and-failures.test.ts).
 //
@@ -13,7 +13,7 @@ export interface StructuredError {
 }
 
 interface ExpectStructuredErrorOptions {
-  /** Allow-list of acceptable error class names. Default: must include "AntpathError". */
+  /** Allow-list of acceptable error class names. Default: must include "AexError". */
   readonly classes?: ReadonlyArray<string>;
   /** Optional substring (case-insensitive) the error message MUST contain. */
   readonly messageIncludes?: string;
@@ -24,7 +24,7 @@ interface ExpectStructuredErrorOptions {
 /**
  * Assert that a captured error is structured (a named error class, not
  * a bare Error or null) and optionally check its message contains a
- * required substring. The default class allow-list is ["AntpathError"]
+ * required substring. The default class allow-list is ["AexError"]
  * which matches the SDK's public error surface.
  */
 export function expectStructuredError(
@@ -32,7 +32,7 @@ export function expectStructuredError(
   options: ExpectStructuredErrorOptions = {}
 ): void {
   const ctx = options.context ? ` [${options.context}]` : "";
-  const acceptable = new Set(options.classes ?? ["AntpathError"]);
+  const acceptable = new Set(options.classes ?? ["AexError"]);
   const dump = (): string =>
     `\n  errorClass=${err.errorClass} errorCode=${err.errorCode ?? null} errorMessage=${err.errorMessage ?? null}`;
 

@@ -21,17 +21,17 @@
  *   - (deepseek,  managed)  — Goose Managed (R2 download)
  *
  * Required env:
- *   ANTPATH_API_URL              live hosted API URL
- *   ANTPATH_API_TOKEN             workspace API token
+ *   AEX_API_URL              live hosted API URL
+ *   AEX_API_TOKEN             workspace API token
  *   DEEPSEEK_API_KEY    customer DeepSeek key
  *   DEEPSEEK_API_KEY     customer DeepSeek key
- *   ANTPATH_USER_TEST_TARBALL          packed SDK tarball
- *     OR ANTPATH_USER_TEST_VERSION     published version on npm
+ *   AEX_USER_TEST_TARBALL          packed SDK tarball
+ *     OR AEX_USER_TEST_VERSION     published version on npm
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -41,10 +41,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface Cell {
   readonly id: string;
@@ -144,11 +144,11 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     `SHIBBOLETH. Please reply per the acknowledgement protocol.`;
 
   return `
-    import { AntpathClient, Skill } from "antpath";
+    import { AexClient, Skill } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     const alpha = await Skill.fromFiles({
@@ -185,17 +185,17 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     const events = await client.listEvents(runId);
 
     // Goose emits a skill_loaded_marker notification (with the skill's name in
-    // data.name). Also collect antpath.skill_loaded for compatibility with
+    // data.name). Also collect aex.skill_loaded for compatibility with
     // older event payloads.
     // CUSTOM envelopes nest the original payload under data.value, keyed by
-    // data.name (antpath.notification / antpath.skill_loaded / antpath.stream_error).
+    // data.name (aex.notification / aex.skill_loaded / aex.stream_error).
     const customEvents = events.filter((e) => e.type === "CUSTOM");
     const markerNames = customEvents
       .filter((n) => n.data && n.data.value && n.data.value.kind === "skill_loaded_marker")
       .map((n) => (n.data && n.data.value && n.data.value.name) || null)
       .filter(Boolean);
     const skillLoadedEventNames = customEvents
-      .filter((e) => e.data && e.data.name === "antpath.skill_loaded")
+      .filter((e) => e.data && e.data.name === "aex.skill_loaded")
       .map((e) => (e.data.value && (e.data.value.name || e.data.value.skillId)) || null)
       .filter(Boolean);
     const skillLoadedNames = [...markerNames, ...skillLoadedEventNames];
@@ -207,7 +207,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 
     const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
     const streamErrors = customEvents
-      .filter((e) => e.data && e.data.name === "antpath.stream_error")
+      .filter((e) => e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
@@ -256,8 +256,8 @@ async function runCell(cell: Cell, installDir: string, uniqueToken: string): Pro
   const scriptPath = join(installDir, `skill-invocation-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_URL: apiUrl,
-    ANTPATH_API_TOKEN: apiToken,
+    AEX_API_URL: apiUrl,
+    AEX_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });
@@ -277,7 +277,7 @@ async function runCell(cell: Cell, installDir: string, uniqueToken: string): Pro
 let install: InstallResult;
 
 beforeAll(async () => {
-  install = await installAntpath();
+  install = await installAex();
 }, 240_000);
 
 afterAll(() => {

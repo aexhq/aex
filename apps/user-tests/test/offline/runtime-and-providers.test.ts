@@ -2,7 +2,7 @@
  * Scenario 5: runtime-and-providers.test.ts
  *
  * Locks the managed-runtime + widened-provider surface as it appears
- * inside a clean `npm install antpath` tempdir — the same way a real
+ * inside a clean `npm install @aexhq/sdk` tempdir — the same way a real
  * user / AI agent sees the package. Catches regressions where:
  *   - SDK drops the `runtime?` option from SubmitRunOptions
  *   - SDK silently rejects providers in RUN_PROVIDERS
@@ -11,18 +11,18 @@
  *
  * Every assertion runs in a child Node process whose cwd is the
  * install tempdir, so resolution goes through the installed
- * `node_modules/antpath` and NOT the monorepo's pnpm symlink.
+ * `node_modules/@aexhq/sdk` and NOT the monorepo's pnpm symlink.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("managed runtime + widened providers (published surface)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   });
 
   afterAll(() => {
@@ -37,7 +37,7 @@ describe("managed runtime + widened providers (published surface)", () => {
 
   it("exports the v1 provider set + RUNTIME_KINDS + selectRuntime", async () => {
     const script = `
-      const mod = await import("antpath");
+      const mod = await import("@aexhq/sdk");
       const result = {
         providers: mod.RUN_PROVIDERS,
         runtimes: mod.RUNTIME_KINDS,
@@ -71,7 +71,7 @@ describe("managed runtime + widened providers (published surface)", () => {
 
   it("selectRuntime resolves every provider to managed", async () => {
     const script = `
-      const { selectRuntime } = await import("antpath");
+      const { selectRuntime } = await import("@aexhq/sdk");
       const base = {
         workspaceId: "ws", idempotencyKey: "id", provider: "anthropic",
         submission: { model: "claude-haiku-4-5", prompt: ["hi"], skills: [], agentsMd: [], files: [], mcpServers: [] },
@@ -89,12 +89,12 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ anthropic: "managed", deepseek: "managed" });
   });
 
-  it("AntpathClient.submitRun rejects runtime:'native' without an HTTP call", async () => {
+  it("AexClient.submitRun rejects runtime:'native' without an HTTP call", async () => {
     const script = `
-      const { AntpathClient, AntpathError } = await import("antpath");
+      const { AexClient, AexError } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
-      const client = new AntpathClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       try {
         await client.submitRun({
           provider: "anthropic",
@@ -107,7 +107,7 @@ describe("managed runtime + widened providers (published surface)", () => {
       } catch (err) {
         console.log(JSON.stringify({
           caught: true,
-          isClass: err instanceof AntpathError,
+          isClass: err instanceof AexError,
           code: err.code,
           messageHasRuntime: typeof err.message === "string" && err.message.includes("runtime"),
           fetchCalls: calls.length
@@ -128,7 +128,7 @@ describe("managed runtime + widened providers (published surface)", () => {
 
   it("selectRuntime throws feature_runtime_mismatch for Skill.provider on managed", async () => {
     const script = `
-      const { selectRuntime } = await import("antpath");
+      const { selectRuntime } = await import("@aexhq/sdk");
       const req = {
         workspaceId: "ws", idempotencyKey: "id", provider: "anthropic", runtime: "managed",
         submission: {
@@ -160,17 +160,17 @@ describe("managed runtime + widened providers (published surface)", () => {
     });
   });
 
-  it("AntpathClient.submitRun rejects non-matching provider secrets at the SDK boundary", async () => {
+  it("AexClient.submitRun rejects non-matching provider secrets at the SDK boundary", async () => {
     // The dispatcher rejects cross-provider secrets; the SDK does the
     // same check synchronously before hitting the network. We confirm
     // that by calling submitRun with the wrong shape and asserting it
     // throws before any fetch happens. Use a fetch-fake that records
     // calls to prove no network call leaked.
     const script = `
-      const { AntpathClient } = await import("antpath");
+      const { AexClient } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
-      const client = new AntpathClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       let caught = null;
       try {
         await client.submitRun({
@@ -191,9 +191,9 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(out.fetchCalls).toBe(0);
   });
 
-  it("AntpathClient.submitRun forwards the optional runtime field on the wire", async () => {
+  it("AexClient.submitRun forwards the optional runtime field on the wire", async () => {
     const script = `
-      const { AntpathClient } = await import("antpath");
+      const { AexClient } = await import("@aexhq/sdk");
       const requests = [];
       const fetchFake = async (url, init) => {
         let body = init?.body;
@@ -208,7 +208,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           createdAt: new Date().toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
       };
-      const client = new AntpathClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       await client.submitRun({
         provider: "anthropic",
         runtime: "managed",
@@ -238,9 +238,9 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(out.hasSecrets).toBe(true);
   });
 
-  it("AntpathClient.submitRun omits runtime from the wire when the caller doesn't supply it", async () => {
+  it("AexClient.submitRun omits runtime from the wire when the caller doesn't supply it", async () => {
     const script = `
-      const { AntpathClient } = await import("antpath");
+      const { AexClient } = await import("@aexhq/sdk");
       const requests = [];
       const fetchFake = async (url, init) => {
         let body = init?.body;
@@ -255,7 +255,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           createdAt: new Date().toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
       };
-      const client = new AntpathClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       await client.submitRun({
         provider: "anthropic",
         model: "claude-haiku-4-5",

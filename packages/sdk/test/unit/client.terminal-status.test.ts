@@ -8,8 +8,8 @@
  * set still recognizes the other terminal statuses).
  */
 import { describe, expect, it } from "vitest";
-import { TERMINAL_RUN_STATUSES } from "@antpath/contracts";
-import { AntpathClient } from "../../src/index.js";
+import { TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
+import { AexClient } from "../../src/index.js";
 
 function makeGetRunFetch(status: string): { fetch: typeof fetch; calls: number } {
   const state = { calls: 0 };
@@ -33,10 +33,10 @@ function makeGetRunFetch(status: string): { fetch: typeof fetch; calls: number }
   };
 }
 
-describe("AntpathClient.waitForRun — terminal statuses", () => {
+describe("AexClient.waitForRun — terminal statuses", () => {
   it("returns immediately for a timed_out run instead of hanging", async () => {
     const f = makeGetRunFetch("timed_out");
-    const client = new AntpathClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
     const run = await client.waitForRun("run-abc", { intervalMs: 1, timeoutMs: 1_000 });
     expect(run.status).toBe("timed_out");
     // A single GET is enough; no polling loop means no sleep happened.
@@ -46,7 +46,7 @@ describe("AntpathClient.waitForRun — terminal statuses", () => {
   it("treats every shared TERMINAL_RUN_STATUSES value as terminal", async () => {
     for (const status of TERMINAL_RUN_STATUSES) {
       const f = makeGetRunFetch(status);
-      const client = new AntpathClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+      const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
       const run = await client.waitForRun("run-abc", { intervalMs: 1, timeoutMs: 1_000 });
       expect(run.status).toBe(status);
       expect(f.calls).toBe(1);

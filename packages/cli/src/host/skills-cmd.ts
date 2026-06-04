@@ -1,13 +1,13 @@
 /**
- * `antpath skills <verb>` — workspace skill bundle management. Mirrors
+ * `aex skills <verb>` — workspace skill bundle management. Mirrors
  * the SDK's `client.skills` namespace 1:1 so SDK and CLI never drift.
  *
  * Verbs:
- *   antpath skills upload --from-path <dir> --name <n>
- *   antpath skills upload --file <path> [--file <path> ...] --name <n>
- *   antpath skills list
- *   antpath skills get <skill-id>
- *   antpath skills delete <skill-id>
+ *   aex skills upload --from-path <dir> --name <n>
+ *   aex skills upload --file <path> [--file <path> ...] --name <n>
+ *   aex skills list
+ *   aex skills get <skill-id>
+ *   aex skills delete <skill-id>
  *
  * `--file` stores each path verbatim (relative to cwd) under its
  * basename inside the bundle. For directory uploads, use `--from-path`.
@@ -19,7 +19,7 @@ import {
   SKILL_BUNDLE_LIMITS,
   operations,
   validateSkillBundleEntry
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -38,7 +38,7 @@ export async function runSkillsCmd(io: CliIO, argv: readonly string[]): Promise<
   if (await refuseInsideManagedRun(io, "skills")) return USAGE_ERR;
   const [verb, ...rest] = argv;
   if (!verb) {
-    io.stderr("usage: antpath skills <upload|list|get|delete> [flags]\n");
+    io.stderr("usage: aex skills <upload|list|get|delete> [flags]\n");
     return USAGE_ERR;
   }
   switch (verb) {
@@ -80,7 +80,7 @@ async function runSkillsUpload(io: CliIO, argv: readonly string[]): Promise<CliE
   }
 
   if ((fromPath.value && fileFlags.values.length > 0) || (!fromPath.value && fileFlags.values.length === 0)) {
-    io.stderr("antpath skills upload requires exactly one of: --from-path <dir> | --file <path> [--file ...]\n");
+    io.stderr("aex skills upload requires exactly one of: --from-path <dir> | --file <path> [--file ...]\n");
     return USAGE_ERR;
   }
 
@@ -126,7 +126,7 @@ interface SkillBundleBuild {
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
-  if (!subtle) throw new Error("antpath skills upload: globalThis.crypto.subtle is required (Node 18+)");
+  if (!subtle) throw new Error("aex skills upload: globalThis.crypto.subtle is required (Node 18+)");
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   const digest = await subtle.digest("SHA-256", copy.buffer);
@@ -143,7 +143,7 @@ async function runSkillsList(io: CliIO, argv: readonly string[]): Promise<CliExi
     return USAGE_ERR;
   }
   if (positional.length > 0) {
-    io.stderr(`antpath skills list takes no positional arguments\n`);
+    io.stderr(`aex skills list takes no positional arguments\n`);
     return USAGE_ERR;
   }
   const http = makeHttpClient(io, common.flags);
@@ -166,7 +166,7 @@ async function runSkillsGet(io: CliIO, argv: readonly string[]): Promise<CliExit
     return USAGE_ERR;
   }
   if (positional.length !== 1) {
-    io.stderr("usage: antpath skills get <skill-id>\n");
+    io.stderr("usage: aex skills get <skill-id>\n");
     return USAGE_ERR;
   }
   const skillId = positional[0]!;
@@ -190,7 +190,7 @@ async function runSkillsDelete(io: CliIO, argv: readonly string[]): Promise<CliE
     return USAGE_ERR;
   }
   if (positional.length !== 1) {
-    io.stderr("usage: antpath skills delete <skill-id>\n");
+    io.stderr("usage: aex skills delete <skill-id>\n");
     return USAGE_ERR;
   }
   const skillId = positional[0]!;
@@ -245,8 +245,8 @@ async function zipDirectory(rootDir: string): Promise<SkillBundleBuild> {
   if (!hasSkillMd) {
     throw new Error(
       'skill bundle must contain a "SKILL.md" file at the root. ' +
-        "For AGENTS.md / generic files use the corresponding `antpath agentsmd` / " +
-        "`antpath files` commands instead."
+        "For AGENTS.md / generic files use the corresponding `aex agentsmd` / " +
+        "`aex files` commands instead."
     );
   }
   // Sort entries for deterministic ordering (zipSync preserves insertion order).

@@ -72,9 +72,9 @@ describe("submission.environment.envVars — additive surface", () => {
     );
   });
 
-  it("rejects keys using the reserved ANTPATH_ prefix", () => {
-    expect(() => submit({ envVars: { ANTPATH_OUTPUTS: "/elsewhere" } })).toThrow(
-      /uses reserved prefix "ANTPATH_"/
+  it("rejects keys using the reserved AEX_ prefix", () => {
+    expect(() => submit({ envVars: { AEX_OUTPUTS: "/elsewhere" } })).toThrow(
+      /uses reserved prefix "AEX_"/
     );
   });
 

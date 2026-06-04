@@ -6,7 +6,7 @@
  * run, THIS suite submits one deliberately heavy, multi-minute session
  * per cell that exercises the *entire* customer feature surface at once
  * and validates EVERY observable aspect of the run. The goal is not to
- * test the model's capability — it is to prove the antpath app
+ * test the model's capability — it is to prove the aex app
  * (materialization, BYOK proxy, event log, outputs pipeline, secret
  * redaction) behaves as expected under a maximal submission.
  *
@@ -39,10 +39,10 @@
  *   - event log is framed RUN_STARTED … RUN_FINISHED, terminal reason
  *     "complete", gooseExitCode 0-or-absent.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
- *     superset of every type antpath emits on a successful run —
+ *     superset of every type aex emits on a successful run —
  *     RUN_STARTED, RUN_FINISHED, TEXT_MESSAGE_CONTENT, TOOL_CALL_START,
  *     TOOL_CALL_RESULT, CUSTOM (RUN_ERROR is failure-only and is covered
- *     by live-sdk-outputs-and-failures.test.ts). See ANTPATH_EVENT_TYPES
+ *     by live-sdk-outputs-and-failures.test.ts). See AEX_EVENT_TYPES
  *     in packages/contracts/src/event-envelope.ts — the single source of
  *     truth this list is kept in sync with.
  *   - the agent actually used tools (TOOL_CALL_START/RESULT counts > 0).
@@ -57,18 +57,18 @@
  *     the SDK-visible payload (run + events + outputs).
  *
  * Required env:
- *   ANTPATH_API_URL                live hosted API URL (local or prod)
- *   ANTPATH_API_TOKEN               workspace API token
+ *   AEX_API_URL                live hosted API URL (local or prod)
+ *   AEX_API_TOKEN               workspace API token
  *   DEEPSEEK_API_KEY                customer DeepSeek API key
- *   ANTPATH_USER_TEST_TARBALL            packed SDK tarball
- *     OR ANTPATH_USER_TEST_VERSION       published version on npm
+ *   AEX_USER_TEST_TARBALL            packed SDK tarball
+ *     OR AEX_USER_TEST_VERSION       published version on npm
  * Optional:
- *   ANTPATH_USER_TEST_DEEPSEEK_MODEL    default "deepseek-chat"
+ *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek-chat"
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -78,10 +78,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
@@ -96,11 +96,11 @@ const MCP_SERVER_NAME = "deepwiki";
 // /data — its writable tree is /workspace.)
 const CUSTOM_OUTPUT_DIR = "/workspace/outputs/heavy";
 
-// Every event type antpath emits on a SUCCESSFUL run. Mirror of
-// ANTPATH_EVENT_TYPES in packages/contracts/src/event-envelope.ts minus
+// Every event type aex emits on a SUCCESSFUL run. Mirror of
+// AEX_EVENT_TYPES in packages/contracts/src/event-envelope.ts minus
 // RUN_ERROR (failure-only; covered by live-sdk-outputs-and-failures).
 // Hardcoded rather than imported because the user-tests layer never
-// imports @antpath/* workspace packages.
+// imports @aexhq/* workspace packages.
 const EXPECTED_SUCCESS_EVENT_TYPES = [
   "RUN_STARTED",
   "RUN_FINISHED",
@@ -233,11 +233,11 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
   ];
 
   return `
-    import { AntpathClient, Skill, McpServer, AgentsMd } from "antpath";
+    import { AexClient, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     // SKILL.md starts with YAML frontmatter so each test skill is
@@ -395,8 +395,8 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   writeFileSync(scriptPath, script);
 
   const passEnv = buildPassEnv({
-    ANTPATH_API_URL: apiUrl,
-    ANTPATH_API_TOKEN: apiToken,
+    AEX_API_URL: apiUrl,
+    AEX_API_TOKEN: apiToken,
     [spec.keyEnvName]: spec.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });
@@ -468,7 +468,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
     throw new Error(`gooseExitCode=${exitCode}\n\n${dump()}`);
   }
 
-  // Full event vocabulary: every type antpath emits on success is
+  // Full event vocabulary: every type aex emits on success is
   // present. Forced by the submission (text reply, ls + write tool
   // calls, skill_loaded_marker CUSTOM notifications).
   for (const type of EXPECTED_SUCCESS_EVENT_TYPES) {
@@ -533,7 +533,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
 let install: InstallResult;
 
 beforeAll(async () => {
-  install = await installAntpath();
+  install = await installAex();
 }, 240_000);
 
 afterAll(() => {

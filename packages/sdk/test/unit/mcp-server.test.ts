@@ -54,7 +54,7 @@ describe("McpServer.remote (inline)", () => {
 
   it("rejects stdio-shaped local MCP declarations", () => {
     const expected =
-      "stdio MCP servers are not supported by Antpath. Antpath supports remote MCP servers over HTTP/SSE only.";
+      "stdio MCP servers are not supported by Aex. Aex supports remote MCP servers over HTTP/SSE only.";
     expect(() =>
       McpServer.remote({
         name: "local",

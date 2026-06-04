@@ -1,12 +1,12 @@
 /**
- * `antpath events <run-id> [--follow] [--transport=auto|sse|polling]`
+ * `aex events <run-id> [--follow] [--transport=auto|sse|polling]`
  *
  * Without `--follow`: lists events recorded so far and exits.
  *
  * With `--follow`: polls the coordinator-backed `/events` endpoint and
  * prints new events as NDJSON until the run reaches a terminal status.
  */
-import { operations, TERMINAL_RUN_STATUSES } from "@antpath/contracts";
+import { operations, TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -47,7 +47,7 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = timeoutFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath events <run-id> [--follow] [--timeout <dur>] [common flags]\n");
+    io.stderr("usage: aex events <run-id> [--follow] [--timeout <dur>] [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

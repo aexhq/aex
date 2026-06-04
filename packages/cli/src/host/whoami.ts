@@ -1,12 +1,12 @@
 /**
- * `antpath whoami` — GET /api/whoami. Lets agents confirm the token
+ * `aex whoami` — GET /api/whoami. Lets agents confirm the token
  * resolves to a workspace + scopes before submitting a real run.
  *
  * `--workspace` is NOT required: the whoami endpoint resolves the
  * principal by the bearer alone and tells the caller which workspace
  * the token belongs to.
  */
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

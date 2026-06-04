@@ -6,14 +6,14 @@ title: Outputs
 
 Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. File capture is always attempted against a runtime-specific default directory; the submission's `outputDirs` field overrides that default when you want to capture additional or different paths. `client.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
 
-> Inside the runtime, the primary output path is exposed as `$ANTPATH_OUTPUTS` (sourceable from `RUNTIME.env`) and as `runtimeManifest.envVars.ANTPATH_OUTPUTS` on the `Run` returned by `client.get(runId)`. Goose Managed defaults to `/workspace/outputs`.
+> Inside the runtime, the primary output path is exposed as `$AEX_OUTPUTS` (sourceable from `RUNTIME.env`) and as `runtimeManifest.envVars.AEX_OUTPUTS` on the `Run` returned by `client.get(runId)`. Goose Managed defaults to `/workspace/outputs`.
 
 ## Quickstart
 
 ```ts
 const runId = await client.submitRun({
   model: "claude-haiku-4-5",
-  prompt: "Produce a report and stash working files under $ANTPATH_OUTPUTS",
+  prompt: "Produce a report and stash working files under $AEX_OUTPUTS",
   secrets: { anthropic: { apiKey } }
 });
 
@@ -22,7 +22,7 @@ await client.download(runId, { to: "./run.zip" });
 ```
 
 ```bash
-antpath download <run-id> --out ./run.zip --api-token …
+aex download <run-id> --out ./run.zip --api-token …
 ```
 
 ## The four namespaces
@@ -98,7 +98,7 @@ client.submitRun({
 });
 ```
 
-When omitted, antpath captures the runtime default output directory. When supplied, `outputDirs` replaces that default with the listed paths.
+When omitted, aex captures the runtime default output directory. When supplied, `outputDirs` replaces that default with the listed paths.
 
 Validation:
 
@@ -116,7 +116,7 @@ Mechanism (no platform-magical paths — this is honest):
 
 1. The hosted platform submits the run, sends the user prompt, streams events.
 2. At session-idle (the agent's primary task is done), the platform sends one synthetic `user.message` to the agent:
-   *"Run `node /mnt/session/uploads/antpath/antpath outputs sync <dirs>` once."*
+   *"Run `node /mnt/session/uploads/aex/aex outputs sync <dirs>` once."*
 3. Goose Managed captures by walking managed runtime directories directly.
 4. The platform walks the Files API, copies bytes into durable output storage, and tears down the session.
 
@@ -127,7 +127,7 @@ Capture failure modes — when the platform could not capture a file's bytes at 
 | `reason` | What happened |
 | --- | --- |
 | `agent_did_not_sync` | The agent refused or skipped the synthetic instruction. Run still succeeded, just no file bytes. |
-| `agent_reported_error` | The `node /mnt/session/uploads/antpath/antpath outputs sync` invocation returned non-zero (e.g. dir did not exist). |
+| `agent_reported_error` | The `node /mnt/session/uploads/aex/aex outputs sync` invocation returned non-zero (e.g. dir did not exist). |
 | `session_terminated_pre_sync` | Session was terminated (cancel / timeout) before the sync turn ran. |
 | `storage_cap_exceeded` | Workspace storage quota would have been breached. |
 | `download_failed` | Files API entry could not be fetched. |
@@ -135,7 +135,7 @@ Capture failure modes — when the platform could not capture a file's bytes at 
 
 ## Runs without explicit `outputDirs`
 
-Metadata still gets the full treatment. antpath captures the runtime default output directory and returns whatever files exist there. A run that produces no files still returns a zip with `run.json`, `events.jsonl`, and an empty `outputs/` directory (manifest `outputs: []`).
+Metadata still gets the full treatment. aex captures the runtime default output directory and returns whatever files exist there. A run that produces no files still returns a zip with `run.json`, `events.jsonl`, and an empty `outputs/` directory (manifest `outputs: []`).
 
 ## Mid-session download semantics
 
@@ -145,5 +145,5 @@ Mid-session calls are **best-effort and side-effect-free**: the platform exposes
 
 - Filenames are sanitized for cross-platform safety; collisions are disambiguated with a short id suffix before the extension.
 - Downloads stay within the requested local directory.
-- The archive endpoint is workspace-scoped (`outputs:read` scope) and rate-limited (`ANTPATH_RATE_LIMIT_RUN_ARCHIVE_PER_MINUTE`, default 30/min/workspace).
+- The archive endpoint is workspace-scoped (`outputs:read` scope) and rate-limited (`AEX_RATE_LIMIT_RUN_ARCHIVE_PER_MINUTE`, default 30/min/workspace).
 - `manifest.json` never contains file bytes — only ids, paths, sizes, content types.

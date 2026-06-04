@@ -216,7 +216,7 @@ export interface RunUnit {
   /**
    * Per-run, per-provider runtime manifest — derived from the validated
    * submission + the chosen provider (`buildRuntimeManifest`). Tells
-   * SDK consumers where antpath placed things in-container and what
+   * SDK consumers where aex placed things in-container and what
    * env vars the agent will see. Undefined on responses from BFFs
    * that predate Phase 2 of the runtime-environment rollout.
    */

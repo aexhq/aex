@@ -38,7 +38,7 @@ export interface UsageSummary {
  * The unified-stream discriminators (`channel`, `source`, `sourceSeq`,
  * `emittedAt`, `receivedAt`, `level`) carry through from the coordinator
  * envelope (see `event-envelope.ts` —
- * {@link import("./event-envelope.js").AntpathEvent}) so SDK/CLI consumers can
+ * {@link import("./event-envelope.js").AexEvent}) so SDK/CLI consumers can
  * split/filter the one stream by channel or source. All are OPTIONAL: archived
  * events from before the unification (and any producer that omits an ordering
  * attribute) lack them, an absent `channel` means `"event"` (see `channelOf`),
@@ -50,9 +50,9 @@ export interface RunEvent {
   readonly runId?: string;
   readonly recordedAt?: string;
   /** Which sub-stream this record rides — `"event"` (typed) or `"log"`. Absent ⇒ `"event"`. */
-  readonly channel?: import("./event-envelope.js").AntpathEventChannel;
-  /** Coarse origin classifier (agent/worker/runtime/mcp/antpath/workflow/machine). */
-  readonly source?: import("./event-envelope.js").AntpathEventSource;
+  readonly channel?: import("./event-envelope.js").AexEventChannel;
+  /** Coarse origin classifier (agent/worker/runtime/mcp/aex/workflow/machine). */
+  readonly source?: import("./event-envelope.js").AexEventSource;
   /** Per-source monotonic counter assigned at the source (carried, not re-ordered). */
   readonly sourceSeq?: number;
   /** Source wall-clock ms at emit (carried for a best-effort client time view). */
@@ -60,7 +60,7 @@ export interface RunEvent {
   /** The DO's authoritative receive-time (wall-clock ms) stamped at ingest, companion to `seq`. */
   readonly receivedAt?: number;
   /** Log severity, first-class on a `channel: "log"` record ("info" | "warn" | "error"). */
-  readonly level?: import("./event-envelope.js").AntpathLogLevel;
+  readonly level?: import("./event-envelope.js").AexLogLevel;
   readonly [key: string]: unknown;
 }
 
@@ -137,7 +137,7 @@ export interface WhoAmI {
     readonly storageUsedBytes?: number;
     /**
      * Wall-clock ceiling on a single run before forced termination.
-     * `null` means no antpath-imposed cap, but this is **not unlimited
+     * `null` means no aex-imposed cap, but this is **not unlimited
      * overall**: the managed runner, infrastructure, or upstream provider may
      * still impose a ceiling, and a run that exceeds it terminates regardless.
      */

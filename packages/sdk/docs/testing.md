@@ -4,7 +4,7 @@ title: Testing
 
 # Testing
 
-antpath uses test-first development.
+aex uses test-first development.
 For repository changes, default the first meaningful test to blackbox behavior
 from requirements, public contracts, docs, logs, or user-visible evidence before
 reading or changing implementation.
@@ -23,7 +23,7 @@ pnpm run pack:sdk                              # SDK publish dry-run + public bo
 
 Unit tests are deterministic and may use fakes. Offline user tests install the
 packed or published SDK into clean temp projects and do not need provider
-credentials. Live user tests run against a hosted antpath API and fail loudly
-when required env is missing: `ANTPATH_API_URL`, `ANTPATH_API_TOKEN`,
-`DEEPSEEK_API_KEY`, and exactly one of `ANTPATH_USER_TEST_TARBALL` or
-`ANTPATH_USER_TEST_VERSION`.
+credentials. Live user tests run against a hosted aex API and fail loudly
+when required env is missing: `AEX_API_URL`, `AEX_API_TOKEN`,
+`DEEPSEEK_API_KEY`, and exactly one of `AEX_USER_TEST_TARBALL` or
+`AEX_USER_TEST_VERSION`.

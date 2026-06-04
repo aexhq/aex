@@ -1,4 +1,4 @@
-// @antpath/conformance — single place to tighten the test bar.
+// @aexhq/conformance — single place to tighten the test bar.
 //
 // These helpers exist so a Phase-1-style regression (e.g. silencing a
 // terminal-event check because the assertion is racy) can't be made by
@@ -14,9 +14,9 @@
 //      `expectOptionalField`) that says so in its name.
 //   2. Failure messages include a contextual dump (event list, raw
 //      result) so a CI failure can be diagnosed without re-running.
-//   3. New matchers are added here and consumed via `@antpath/conformance`,
+//   3. New matchers are added here and consumed via `@aexhq/conformance`,
 //      NEVER inlined in the test body. Phase 2's ESLint rule
-//      `antpath/require-test-contracts-matcher` will eventually enforce
+//      `aex/require-test-contracts-matcher` will eventually enforce
 //      this — until then, the convention holds via review + this comment.
 
 export {

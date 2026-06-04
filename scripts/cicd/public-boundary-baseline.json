@@ -13,11 +13,11 @@
     "packages/conformance/src"
   ],
   "temporaryAllowedPublicImports": [
-    "@antpath/contracts"
+    "@aexhq/contracts"
   ],
   "sdkPackage": {
     "dir": "packages/sdk",
-    "name": "antpath",
+    "name": "@aexhq/sdk",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -25,7 +25,7 @@
       }
     },
     "bin": {
-      "antpath": "./dist/cli.mjs"
+      "aex": "./dist/cli.mjs"
     },
     "allowedRuntimeDependencies": [
       "fflate"
@@ -46,7 +46,7 @@
     ]
   },
   "contractsInline": {
-    "sourcePackage": "@antpath/contracts",
+    "sourcePackage": "@aexhq/contracts",
     "sdkPackedPrefix": "dist/_contracts/",
     "allowedModuleFiles": [
       "./connection-ticket.js",

@@ -1,40 +1,40 @@
 ---
-title: antpath
+title: aex
 ---
 
-# antpath
+# aex
 
-antpath is a TypeScript-first SDK + CLI for running autonomous agent sessions across providers through the managed antpath service. Everything an agent or human needs is reachable through **one** import and **one** binary.
+aex is a TypeScript-first SDK + CLI for running autonomous agent sessions across providers through the managed aex service. Everything an agent or human needs is reachable through **one** import and **one** binary.
 
 ```ts
 import {
-  AntpathClient,        // the only client class — submits durable runs to antpath
+  AexClient,        // the only client class — submits durable runs to aex
   Skill,                // workspace / provider / inline skill bundles
   McpServer,            // MCP server declarations (headers split into secrets server-side)
   ProxyEndpoint,        // per-run managed HTTP proxy endpoint
   AgentsMd,             // AGENTS.md / CLAUDE.md uploads
   File,                 // arbitrary workspace files mounted into the session
   validateProxyAuth     // helper that fails fast on policy/auth mismatch
-} from "antpath";
+} from "@aexhq/sdk";
 ```
 
 ```bash
-antpath run     --config ./run.json --api-token ant_… \
+aex run     --config ./run.json --api-token ant_… \
                 --anthropic-api-key sk-ant-… --follow
-antpath status  <run-id>             --api-token …
-antpath wait    <run-id> [--timeout 8m] [--interval 2s] --api-token …
-antpath events  <run-id> [--follow] [--timeout 8m]  --api-token …
-antpath outputs <run-id>             --api-token …
-antpath download <run-id> [--only outputs|logs|events|metadata] [--out path] --api-token …
-antpath cancel  <run-id>             --api-token …
-antpath delete  <run-id>             --api-token …
-antpath whoami                       --api-token …
-antpath skills  <upload|list|get|delete> [flags] --api-token …
+aex status  <run-id>             --api-token …
+aex wait    <run-id> [--timeout 8m] [--interval 2s] --api-token …
+aex events  <run-id> [--follow] [--timeout 8m]  --api-token …
+aex outputs <run-id>             --api-token …
+aex download <run-id> [--only outputs|logs|events|metadata] [--out path] --api-token …
+aex cancel  <run-id>             --api-token …
+aex delete  <run-id>             --api-token …
+aex whoami                       --api-token …
+aex skills  <upload|list|get|delete> [flags] --api-token …
 ```
 
-The SDK class and the CLI are backed by the same public `@antpath/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `antpath` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `antpath proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
+The SDK class and the CLI are backed by the same public `@aexhq/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `aex` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `aex proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
 
-The antpath URL defaults to `https://api.antpath.ai`. Set `--antpath-url` on the CLI or `baseUrl` on `AntpathClient` for local, staging, or hosted antpath API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
+The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `baseUrl` on `AexClient` for local, staging, or hosted aex API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
 
 ## Product boundaries
 
@@ -49,16 +49,16 @@ The antpath URL defaults to `https://api.antpath.ai`. Set `--antpath-url` on the
 - Workspace is the tenant boundary. Workspace identity is derived server-side from the API token (1:1 binding); the SDK / CLI never name it.
 - No SDK-side storage of provider keys, MCP credentials, or output file contents.
 - Cleanup runs by default for tracked runtime resources.
-- Product boundaries are explicit: see [product capabilities and boundaries](docs/product-boundaries.md) for what antpath owns, inherits, and does not support.
+- Product boundaries are explicit: see [product capabilities and boundaries](docs/product-boundaries.md) for what aex owns, inherits, and does not support.
 
 ## Quickstart (SDK)
 
 ```ts
-import { AntpathClient } from "antpath";
+import { AexClient } from "@aexhq/sdk";
 
-const client = new AntpathClient({
-  apiToken: process.env.ANTPATH_API_TOKEN!
-  // baseUrl defaults to https://api.antpath.ai - set it for local or staging planes.
+const client = new AexClient({
+  apiToken: process.env.AEX_API_TOKEN!
+  // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
 const runId = await client.submitRun({
@@ -103,7 +103,7 @@ Stream events live with `client.stream(runId)`:
 ```ts
 for await (const event of client.stream(runId)) {
   if (event.type === "agent.message") {
-    // typed event helpers live under `antpath`'s event guard exports.
+    // typed event helpers live under `aex`'s event guard exports.
   }
 }
 ```
@@ -111,16 +111,16 @@ for await (const event of client.stream(runId)) {
 The same flow from the CLI (two equivalent forms):
 
 ```bash
-antpath run \
-  --api-token "$ANTPATH_API_TOKEN" \
+aex run \
+  --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --system "You are a concise automation agent." \
   --prompt "Write a short answer about agent-first SDK design." \
   --follow
 
-antpath run \
-  --api-token "$ANTPATH_API_TOKEN" \
+aex run \
+  --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --config ./run.json \
   --follow
@@ -138,9 +138,9 @@ pnpm test:user:heavy     # explicit heavy live canary
 ```
 
 User tests auto-pack the current SDK when no artifact env is set. CI can pin a
-specific artifact with exactly one of `ANTPATH_USER_TEST_TARBALL` or
-`ANTPATH_USER_TEST_VERSION`; live runs also need `ANTPATH_API_URL`,
-`ANTPATH_API_TOKEN`, and `DEEPSEEK_API_KEY`.
+specific artifact with exactly one of `AEX_USER_TEST_TARBALL` or
+`AEX_USER_TEST_VERSION`; live runs also need `AEX_API_URL`,
+`AEX_API_TOKEN`, and `DEEPSEEK_API_KEY`.
 
 ## Guides
 

@@ -7,7 +7,7 @@
 //   4. Compute a sha256 digest and write a sibling cli.mjs.sha256
 //      used by release/package integrity checks.
 //
-// The published SDK copies ONLY dist/cli.mjs as the user-facing `antpath`
+// The published SDK copies ONLY dist/cli.mjs as the user-facing `aex`
 // bin. Managed run internals use the separate runtime bridge artifact, so
 // this host-install bundle stays independent of platform injection.
 import { build } from "esbuild";

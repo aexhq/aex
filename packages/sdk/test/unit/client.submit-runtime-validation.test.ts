@@ -1,11 +1,11 @@
 /**
  * The SDK fails early when the caller explicitly asks for a runtime selector
- * outside the public enum — a typed AntpathError thrown CLIENT-SIDE, before
+ * outside the public enum — a typed AexError thrown CLIENT-SIDE, before
  * any HTTP request.
  */
 import { describe, expect, it } from "vitest";
-import { AntpathClient } from "../../src/index.js";
-import { AntpathError } from "@antpath/contracts";
+import { AexClient } from "../../src/index.js";
+import { AexError } from "@aexhq/contracts";
 
 function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   const calls: string[] = [];
@@ -16,25 +16,25 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   return { fetch: f, calls };
 }
 
-describe("AntpathClient.submitRun — client-side runtime validation", () => {
-  it("throws AntpathError(CREDENTIAL_INVALID) for managed-key mode without an HTTP call", async () => {
+describe("AexClient.submitRun — client-side runtime validation", () => {
+  it("throws AexError(CREDENTIAL_INVALID) for managed-key mode without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new AntpathClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.submitRun({
         credentialMode: "managed",
         model: "claude-haiku-4-5",
         prompt: "hi"
-      } as Parameters<AntpathClient["submitRun"]>[0])
-    ).rejects.toMatchObject({ name: "AntpathError", code: "CREDENTIAL_INVALID" });
+      } as Parameters<AexClient["submitRun"]>[0])
+    ).rejects.toMatchObject({ name: "AexError", code: "CREDENTIAL_INVALID" });
 
     expect(rec.calls).toHaveLength(0);
   });
 
-  it("throws AntpathError(RUNTIME_UNSUPPORTED) for native, WITHOUT any HTTP call", async () => {
+  it("throws AexError(RUNTIME_UNSUPPORTED) for native, WITHOUT any HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new AntpathClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.submitRun({
@@ -43,8 +43,8 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
         model: "deepseek-chat",
         prompt: "hi",
         secrets: { deepseek: { apiKey: "sk-x" } }
-      } as unknown as Parameters<AntpathClient["submitRun"]>[0])
-    ).rejects.toMatchObject({ name: "AntpathError", code: "RUNTIME_UNSUPPORTED" });
+      } as unknown as Parameters<AexClient["submitRun"]>[0])
+    ).rejects.toMatchObject({ name: "AexError", code: "RUNTIME_UNSUPPORTED" });
 
     // The rejection happened before the network: no request was made.
     expect(rec.calls).toHaveLength(0);
@@ -52,7 +52,7 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
 
   it("surfaces a 'native' hint in the message", async () => {
     const rec = recordingFetch();
-    const client = new AntpathClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     let caught: unknown;
     try {
       await client.submitRun({
@@ -61,11 +61,11 @@ describe("AntpathClient.submitRun — client-side runtime validation", () => {
         model: "deepseek-chat",
         prompt: "hi",
         secrets: { deepseek: { apiKey: "sk-x" } }
-      } as unknown as Parameters<AntpathClient["submitRun"]>[0]);
+      } as unknown as Parameters<AexClient["submitRun"]>[0]);
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AntpathError);
+    expect(caught).toBeInstanceOf(AexError);
     expect((caught as Error).message.toLowerCase()).toContain("native");
   });
 });

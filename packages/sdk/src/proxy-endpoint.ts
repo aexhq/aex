@@ -7,7 +7,7 @@ import {
   type ProxyAuthShape,
   type ProxyMethod,
   type ProxyResponseMode
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 /**
  * Constructor-only surface for declaring a per-run HTTP proxy endpoint.
@@ -120,7 +120,7 @@ export class ProxyEndpoint {
   }
 
   /**
-   * Keyless endpoint. Routes through the antpath managed proxy for
+   * Keyless endpoint. Routes through the aex managed proxy for
    * unified egress, audit, and budget enforcement, but the BFF injects
    * no auth header or query parameter. Use for public APIs (Wikimedia
    * Commons, NASA Images, Library of Congress, NARA, GDELT, etc.).
@@ -273,5 +273,5 @@ function requireNonEmpty(value: unknown, message: string): asserts value is stri
 
 // Re-export the wire type with a name that's hard to confuse with the
 // new SDK class — callers needing the raw discriminated union can
-// import it directly from `@antpath/contracts` as `PlatformProxyAuthValue`.
+// import it directly from `@aexhq/contracts` as `PlatformProxyAuthValue`.
 export type { PlatformProxyAuthValue as ProxyAuthValue };

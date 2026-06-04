@@ -22,7 +22,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   // Anthropic + OpenAI-style prefixed keys.
   /sk-ant-[A-Za-z0-9_-]{16,}/g,
   /sk-[A-Za-z0-9_-]{20,}/g,
-  // antpath workspace / proxy tokens: apt_… / ant_….
+  // aex workspace / proxy tokens: apt_… / ant_….
   /\b(?:apt|ant)_[A-Za-z0-9_-]{16,}/g,
   // Slack tokens.
   /xox[pbar]-[A-Za-z0-9-]{10,}/g,

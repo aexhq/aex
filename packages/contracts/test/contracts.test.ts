@@ -187,7 +187,7 @@ describe("platform run submission schema", () => {
 
   it("rejects stdio-shaped MCP servers with the canonical remote-only error", () => {
     const expected =
-      "stdio MCP servers are not supported by Antpath. Antpath supports remote MCP servers over HTTP/SSE only.";
+      "stdio MCP servers are not supported by Aex. Aex supports remote MCP servers over HTTP/SSE only.";
 
     expect(() => parseRunSubmissionRequest({
       workspaceId: "workspace-1",

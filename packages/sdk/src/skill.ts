@@ -3,7 +3,7 @@ import {
   type AssetRef,
   type FetchLike,
   type SkillRef
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 import { bundleSkillFiles, hashSkillBundle, type SkillFiles } from "./bundle.js";
 import { fetchSkillArchive } from "./fetch-archive.js";
 import { readDirectoryAsFiles } from "./node-fs.js";
@@ -128,7 +128,7 @@ export class Skill {
 
   /**
    * Reference a skill already uploaded to the workspace catalog
-   * (`antpath skills upload` / `operations.createSkillBundle`) in a run.
+   * (`aex skills upload` / `operations.createSkillBundle`) in a run.
    *
    * A catalog skill's bytes are a content-addressed asset, so referencing it
    * is just an `{ kind:"asset" }` ref — once a run snapshots the bytes, it is

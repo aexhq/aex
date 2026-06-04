@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AntpathClient } from "../../src/index.js";
-import type { RunUnit } from "@antpath/contracts";
+import { AexClient } from "../../src/index.js";
+import type { RunUnit } from "@aexhq/contracts";
 
 const SAMPLE_UNIT: RunUnit = {
   id: "run-1",
@@ -33,7 +33,7 @@ const SAMPLE_UNIT: RunUnit = {
   inlineSkills: []
 };
 
-describe("AntpathClient.getRunUnit", () => {
+describe("AexClient.getRunUnit", () => {
   it("hits GET /api/runs/:id and parses the wire RunUnit", async () => {
     const calls: string[] = [];
     const stub: typeof fetch = async (input) => {
@@ -44,7 +44,7 @@ describe("AntpathClient.getRunUnit", () => {
         headers: { "content-type": "application/json" }
       });
     };
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const unit = await client.getRunUnit("run-1");
     expect(calls).toEqual(["https://example.test/api/runs/run-1"]);
     expect(unit.id).toBe("run-1");
@@ -72,7 +72,7 @@ describe("AntpathClient.getRunUnit", () => {
         headers: { "content-type": "application/json" }
       });
     };
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const runId = await client.submitRun({
       model: "claude-haiku-4-5",
       prompt: "hi",

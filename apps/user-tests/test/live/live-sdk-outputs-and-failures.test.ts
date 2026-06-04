@@ -12,7 +12,7 @@
  * Block B — failure surfacing (single cell)
  *   Three sub-cases exercise the SDK's error contract:
  *     b1: corrupted skill zip → submit 4xx OR run "failed" with structured
- *         AntpathError/errorMessage
+ *         AexError/errorMessage
  *     b2: invalid model     → same accept-both shape
  *     b3: stdio MCP         → 4xx with REMOTE_MCP_STDIO_REJECTED_MESSAGE
  *
@@ -23,8 +23,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { expectStructuredError } from "@antpath/conformance";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { expectStructuredError } from "@aexhq/conformance";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -34,10 +34,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface Cell {
   readonly id: string;
@@ -105,11 +105,11 @@ function buildOutputScript(cell: Cell, marker: string): string {
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
-    import { AntpathClient } from "antpath";
+    import { AexClient } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     const runId = await client.submitRun({
@@ -164,7 +164,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       .join(" ");
     const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
     const streamErrors = events
-      .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "antpath.stream_error")
+      .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const result = {
@@ -213,8 +213,8 @@ async function runOutputCell(cell: Cell, installDir: string): Promise<OutputCase
   const scriptPath = join(installDir, `outputs-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_URL: apiUrl,
-    ANTPATH_API_TOKEN: apiToken,
+    AEX_API_URL: apiUrl,
+    AEX_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue
   });
   const child = await runCommand(process.execPath, [scriptPath], {
@@ -253,11 +253,11 @@ function buildCorruptedSkillScript(): string {
   // PKZIP end-of-central-directory record with empty payload — passes
   // magic-byte sniffing but is unparseable.
   return `
-    import { AntpathClient } from "antpath";
+    import { AexClient } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     const corruptedZip = new Uint8Array([0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
@@ -284,13 +284,13 @@ function buildCorruptedSkillScript(): string {
     try {
       const hashBuf = await crypto.subtle.digest("SHA-256", corruptedZip);
       const hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      const res = await fetch(process.env.ANTPATH_API_URL + "/assets", {
+      const res = await fetch(process.env.AEX_API_URL + "/assets", {
         method: "POST",
         headers: {
           "content-type": "application/octet-stream",
           "content-length": String(corruptedZip.byteLength),
           "x-asset-hash": "sha256:" + hashHex,
-          authorization: "Bearer " + process.env.ANTPATH_API_TOKEN
+          authorization: "Bearer " + process.env.AEX_API_TOKEN
         },
         body: corruptedZip
       });
@@ -338,7 +338,7 @@ function buildCorruptedSkillScript(): string {
         terminalKind = terminal ? terminal.type : null;
         terminalData = terminal ? terminal.data : null;
         streamErrors = events
-          .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "antpath.stream_error")
+          .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
           .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
       } catch (e) {
         errorClass = e && e.constructor ? e.constructor.name : "Error";
@@ -372,11 +372,11 @@ function buildIncompatibleRuntimeScript(): string {
   // must reject it before any HTTP call, giving a deterministic error-shape
   // check without depending on provider behavior.
   return `
-    import { AntpathClient } from "antpath";
+    import { AexClient } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     let submitOk = false;
@@ -400,7 +400,7 @@ function buildIncompatibleRuntimeScript(): string {
       errorClass = e && e.constructor ? e.constructor.name : "Error";
       errorCode = e && typeof e.code === "string" ? e.code : null;
       errorMessage = e && e.message ? e.message : String(e);
-      // The SDK throws AntpathError; also expose the HTTP status if it
+      // The SDK throws AexError; also expose the HTTP status if it
       // round-tripped through the structured error.
       if (e && typeof e.status === "number") submitStatus = e.status;
       if (e && typeof e.body === "string") submitBody = e.body.slice(0, 800);
@@ -440,11 +440,11 @@ function buildStdioMcpScript(): string {
     let errorMessage = null;
 
     try {
-      const res = await fetch(process.env.ANTPATH_API_URL + "/runs", {
+      const res = await fetch(process.env.AEX_API_URL + "/runs", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: "Bearer " + process.env.ANTPATH_API_TOKEN
+          authorization: "Bearer " + process.env.AEX_API_TOKEN
         },
         body: JSON.stringify({
           workspaceId: "ws-test",
@@ -500,8 +500,8 @@ async function runFailureCase(
   const scriptPath = join(installDir, scriptName);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_URL: apiUrl,
-    ANTPATH_API_TOKEN: apiToken,
+    AEX_API_URL: apiUrl,
+    AEX_API_TOKEN: apiToken,
     DEEPSEEK_KEY_SUBMIT: deepseekKey
   });
   const child = await runCommand(process.execPath, [scriptPath], {
@@ -537,7 +537,7 @@ function dumpFailureResult(result: FailureCaseResult): string {
 let install: InstallResult;
 
 beforeAll(async () => {
-  install = await installAntpath();
+  install = await installAex();
 }, 240_000);
 
 afterAll(() => {
@@ -605,7 +605,7 @@ describe("live failure surfacing — SDK error contract", () => {
       const dump = (): string => dumpFailureResult(result);
 
       // Accept either branch:
-      //  - submit threw with a structured AntpathError (errorClass non-null)
+      //  - submit threw with a structured AexError (errorClass non-null)
       //  - submit succeeded but the run reached terminal "failed" with
       //    a populated errorMessage (or runtime_terminal carrying reason!=
       //    "complete" + a stream_error event)

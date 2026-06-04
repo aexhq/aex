@@ -1,4 +1,4 @@
-// Local ESLint plugin for antpath-specific test-quality rules.
+// Local ESLint plugin for aex-specific test-quality rules.
 //
 // Background: Phase 2 of the test-bar remediation. The custom rules below
 // mechanically block the assertion-weakening anti-patterns that Phase 1

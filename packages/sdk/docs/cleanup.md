@@ -4,8 +4,8 @@ title: Cleanup
 
 # Cleanup
 
-antpath schedules cleanup after a run reaches a terminal status. There is no
-opt-out for antpath-owned cleanup attempts: tracked runtime resources such as
+aex schedules cleanup after a run reaches a terminal status. There is no
+opt-out for aex-owned cleanup attempts: tracked runtime resources such as
 Fly machines, scratch state, cached files, and run-scoped secret references are
 reclaimed when possible or surfaced through `cleanupStatus` when cleanup cannot
 complete.
@@ -29,7 +29,7 @@ run's tracked resources. It is one of:
 
 - `not_started` - terminal not yet reached, or no resources to clean.
 - `pending` / `running` - cleanup is queued or in progress.
-- `succeeded` - tracked cleanup work completed for the resources antpath
+- `succeeded` - tracked cleanup work completed for the resources aex
   controls.
 - `failed_retryable` - a step failed in a way the cleanup worker will retry.
 - `failed_terminal` - a step failed past retries; manual intervention may be

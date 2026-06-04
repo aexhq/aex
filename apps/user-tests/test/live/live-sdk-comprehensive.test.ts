@@ -3,7 +3,7 @@
  *
  * End-to-end user-perspective coverage of the full SDK + hosted API +
  * managed runtime surface against the deployed hosted API
- * (`ANTPATH_API_URL`). Drives the freshly-installed `antpath`
+ * (`AEX_API_URL`). Drives the freshly-installed `aex`
  * package (tarball or registry version) from a child process so
  * workspace symlinks cannot leak in.
  *
@@ -38,16 +38,16 @@
  * only knobs.
  *
  * Required env:
- *   ANTPATH_API_URL                live hosted API URL (local or prod)
- *   ANTPATH_API_TOKEN               workspace API token
+ *   AEX_API_URL                live hosted API URL (local or prod)
+ *   AEX_API_TOKEN               workspace API token
  *   DEEPSEEK_API_KEY                customer DeepSeek API key
- *   ANTPATH_USER_TEST_TARBALL            packed SDK tarball
- *     OR ANTPATH_USER_TEST_VERSION       published version on npm
+ *   AEX_USER_TEST_TARBALL            packed SDK tarball
+ *     OR AEX_USER_TEST_VERSION       published version on npm
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -57,10 +57,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
@@ -168,11 +168,11 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     `include this project tracking reference verbatim in your reply.`;
 
   return `
-    import { AntpathClient, Skill, McpServer, AgentsMd } from "antpath";
+    import { AexClient, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     const skillAlpha = await Skill.fromFiles({
@@ -314,8 +314,8 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   writeFileSync(scriptPath, script);
 
   const passEnv = buildPassEnv({
-    ANTPATH_API_URL: apiUrl,
-    ANTPATH_API_TOKEN: apiToken,
+    AEX_API_URL: apiUrl,
+    AEX_API_TOKEN: apiToken,
     [spec.keyEnvName]: spec.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });
@@ -424,7 +424,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
 let install: InstallResult;
 
 beforeAll(async () => {
-  install = await installAntpath();
+  install = await installAex();
 }, 240_000);
 
 afterAll(() => {

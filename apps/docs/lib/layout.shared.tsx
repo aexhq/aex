@@ -3,12 +3,12 @@ import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 
 export function baseOptions(): BaseLayoutProps {
   return {
-    githubUrl: "https://github.com/weilueluo/antpath",
+    githubUrl: "https://github.com/aexhq/aex",
     nav: {
       title: (
         <span className="ant-nav-title">
           <span className="ant-logo-mark">ap</span>
-          <span>antpath</span>
+          <span>aex</span>
         </span>
       )
     },
@@ -16,7 +16,7 @@ export function baseOptions(): BaseLayoutProps {
       {
         icon: <PackageOpen />,
         text: "npm",
-        url: "https://www.npmjs.com/package/antpath",
+        url: "https://www.npmjs.com/package/aex",
         active: "none",
         secondary: true
       }

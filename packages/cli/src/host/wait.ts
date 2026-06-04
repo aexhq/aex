@@ -1,5 +1,5 @@
 /**
- * `antpath wait <run-id> [--timeout <dur>] [--interval <dur>]`
+ * `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
  *
  * Block until the run reaches a terminal status (the host-side mirror of
  * the SDK's `client.waitForRun` / `client.wait`), then print the final
@@ -11,7 +11,7 @@
  * "tell me when it's done and what the outcome was" verb — one final
  * line of JSON, script-friendly exit code.
  */
-import { operations, TERMINAL_RUN_STATUSES } from "@antpath/contracts";
+import { operations, TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -67,7 +67,7 @@ export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<Cl
 
   const positional = intervalFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath wait <run-id> [--timeout <dur>] [--interval <dur>] [common flags]\n");
+    io.stderr("usage: aex wait <run-id> [--timeout <dur>] [--interval <dur>] [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

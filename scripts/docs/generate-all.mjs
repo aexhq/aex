@@ -12,7 +12,7 @@ const docsRoot = resolve(repoRoot, "apps", "docs");
 const contentRoot = resolve(docsRoot, "content", "docs");
 const publicRoot = resolve(docsRoot, "public");
 const generatedRoot = resolve(docsRoot, ".generated");
-const publicDocsBase = "https://www.antpath.ai/docs";
+const publicDocsBase = "https://aex.dev/docs";
 
 const guideSources = [
   ["quickstart.md", "quickstart"],
@@ -94,8 +94,8 @@ async function syncGeneratedCapabilityReference() {
 async function generateCliReference() {
   const cli = resolve(repoRoot, "packages", "sdk", "dist", "cli.mjs");
   if (!existsSync(cli) || (await latestSourceMtime()) > (await mtimeMs(cli))) {
-    await runPnpm(["--filter", "@antpath/contracts", "run", "build"]);
-    await runPnpm(["--filter", "antpath", "run", "build"]);
+    await runPnpm(["--filter", "@aexhq/contracts", "run", "build"]);
+    await runPnpm(["--filter", "@aexhq/sdk", "run", "build"]);
   }
   const { stdout } = await execFileAsync(process.execPath, [cli, "--help"], {
     cwd: repoRoot,
@@ -103,11 +103,11 @@ async function generateCliReference() {
   });
   await writeMarkdown(resolve(contentRoot, "reference", "cli.md"), {
     title: "CLI",
-    description: "Generated antpath command-line reference.",
+    description: "Generated aex command-line reference.",
     body: [
       "# CLI",
       "",
-      "Generated from `antpath --help`.",
+      "Generated from `aex --help`.",
       "",
       "```text",
       stdout.trimEnd(),
@@ -120,10 +120,10 @@ async function generateCliReference() {
 async function generateEventReference() {
   const envelope = await readFile(resolve(repoRoot, "packages", "contracts", "src", "event-envelope.ts"), "utf8");
 
-  const eventTypes = readConstArray(envelope, "ANTPATH_EVENT_TYPES");
-  const sources = readConstArray(envelope, "ANTPATH_EVENT_SOURCES");
-  const channels = readConstArray(envelope, "ANTPATH_EVENT_CHANNELS");
-  const levels = readConstArray(envelope, "ANTPATH_LOG_LEVELS");
+  const eventTypes = readConstArray(envelope, "AEX_EVENT_TYPES");
+  const sources = readConstArray(envelope, "AEX_EVENT_SOURCES");
+  const channels = readConstArray(envelope, "AEX_EVENT_CHANNELS");
+  const levels = readConstArray(envelope, "AEX_LOG_LEVELS");
 
   const body = [
     "# Events",
@@ -174,6 +174,8 @@ async function generateSdkReference() {
     "--excludeProtected",
     "--excludeInternal",
     "--skipErrorChecking",
+    "--sourceLinkTemplate",
+    "https://github.com/aexhq/aex/blob/{gitRevision}/{path}#L{line}",
     "--hideGenerator"
   ]);
   const typedoc = JSON.parse(await readFile(jsonPath, "utf8"));
@@ -201,11 +203,11 @@ async function generateSdkReference() {
 async function generateLlmsFiles() {
   await mkdir(publicRoot, { recursive: true });
   const summary = [
-    "# antpath",
+    "# aex",
     "",
     "> TypeScript SDK and CLI for durable autonomous agent runs across Anthropic, DeepSeek, OpenAI, Gemini, and Mistral.",
     "",
-    "antpath accepts one run submission shape, routes every provider through Goose Managed, emits one event stream, and returns captured outputs and logs.",
+    "aex accepts one run submission shape, routes every provider through Goose Managed, emits one event stream, and returns captured outputs and logs.",
     "",
     "## Start",
     "",
@@ -264,7 +266,7 @@ function repoSourceLink(match, sourceDir, href, hash = "") {
   const target = resolve(sourceDir, href);
   const relPath = relative(repoRoot, target);
   if (relPath.startsWith("..")) return match;
-  return `](https://github.com/weilueluo/antpath/blob/main/${toPosixPath(relPath)}${hash})`;
+  return `](https://github.com/aexhq/aex/blob/main/${toPosixPath(relPath)}${hash})`;
 }
 
 function readConstArray(source, name) {

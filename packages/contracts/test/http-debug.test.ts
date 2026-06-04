@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { HttpClient } from "../src/http.js";
-import { AntpathApiError } from "../src/sdk-errors.js";
+import { AexApiError } from "../src/sdk-errors.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -56,7 +56,7 @@ describe("HttpClient debug sink", () => {
       fetch: async () => jsonResponse({ ok: false, message: "nope" }, 404),
       debug: (line) => lines.push(line)
     });
-    await expect(client.request("/api/runs/missing")).rejects.toBeInstanceOf(AntpathApiError);
+    await expect(client.request("/api/runs/missing")).rejects.toBeInstanceOf(AexApiError);
     expect(lines).toHaveLength(1);
     expect(lines[0]!).toContain("-> 404");
   });

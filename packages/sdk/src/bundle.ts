@@ -1,5 +1,5 @@
 import { zipSync, type Zippable } from "fflate";
-import { SKILL_BUNDLE_LIMITS, validateSkillBundleEntry } from "@antpath/contracts";
+import { SKILL_BUNDLE_LIMITS, validateSkillBundleEntry } from "@aexhq/contracts";
 
 /**
  * In-memory skill bundle: a flat path -> bytes map and the

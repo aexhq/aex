@@ -15,7 +15,7 @@
  * (the firewall lives in the image) — see the api/test/live networking probe.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, type InstallResult } from "../_fixtures/install.js";
+import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
@@ -23,7 +23,7 @@ const env = requireUserEnv({ deepseek: true });
 describe("user/SDK: managed networking:limited allowlist is precise (allowed reachable, others blocked)", () => {
   let install: InstallResult;
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
   afterAll(() => install?.cleanup());
 

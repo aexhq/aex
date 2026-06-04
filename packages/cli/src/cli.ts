@@ -1,9 +1,9 @@
 /**
- * antpath CLI entrypoint. Wires the real IO surface and calls
+ * aex CLI entrypoint. Wires the real IO surface and calls
  * {@link runCli}. The shipped bundle has a `#!/usr/bin/env node` line
  * prepended by `scripts/finalize-bundle.mjs`.
  *
- * NO `process.env.ANTPATH_*` reads here — paths to the manifest and
+ * NO `process.env.AEX_*` reads here — paths to the manifest and
  * token file are fixed constants in `internal.ts`. The mechanical
  * enforcement test in Phase 9 greps the built artifact to confirm.
  */

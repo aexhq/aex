@@ -1,30 +1,30 @@
 /**
- * antpath CLI — main runner. Pure (no `process.*` reads), gets all IO
+ * aex CLI — main runner. Pure (no `process.*` reads), gets all IO
  * via the injected {@link CliIO} surface. The thin entrypoint in
  * `cli.ts` wires real stdin/stdout/fetch/readFile and calls `runCli()`.
  *
  * Subcommands:
- *   In-container (manifest at ANTPATH_INDEX_PATH —
- *   `/mnt/session/uploads/antpath/index.json` — present):
- *     - `antpath proxy <endpoint-name> [flags]`
+ *   In-container (manifest at AEX_INDEX_PATH —
+ *   `/mnt/session/uploads/aex/index.json` — present):
+ *     - `aex proxy <endpoint-name> [flags]`
  *
  *   Host (manifest absent):
- *     - `antpath run --config <run.json> [flags]`
- *     - `antpath status <run-id>`
- *     - `antpath wait <run-id> [--timeout <dur>] [--interval <dur>]`
- *     - `antpath events <run-id> [--follow] [--timeout <dur>]`
- *     - `antpath outputs <run-id>`
- *     - `antpath download <run-id> [--out path]`
- *     - `antpath cancel <run-id>`
- *     - `antpath delete <run-id>`
- *     - `antpath whoami`
+ *     - `aex run --config <run.json> [flags]`
+ *     - `aex status <run-id>`
+ *     - `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
+ *     - `aex events <run-id> [--follow] [--timeout <dur>]`
+ *     - `aex outputs <run-id>`
+ *     - `aex download <run-id> [--out path]`
+ *     - `aex cancel <run-id>`
+ *     - `aex delete <run-id>`
+ *     - `aex whoami`
  *
- * Every host subcommand requires `--api-token`. `--antpath-url` is
- * optional and defaults to `https://api.antpath.ai`. There is no
+ * Every host subcommand requires `--api-token`. `--aex-url` is
+ * optional and defaults to `https://api.aex.dev`. There is no
  * `--workspace` flag — the workspace is derived server-side from the
  * API token.
  */
-import { RUN_PROVIDERS, type ProxyErrorBody } from "@antpath/contracts";
+import { RUN_PROVIDERS, type ProxyErrorBody } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
 import { runOutputsSyncCmd } from "./outputs-sync.js";
 import { printProxyHelp, runProxy, tryReadManifest } from "./proxy.js";
@@ -92,7 +92,7 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       // bare `outputs <run-id>` form is the host-side list verb. We
       // distinguish on the first sub-arg rather than on
       // manifest-presence so a misconfigured host invocation
-      // (e.g. `antpath outputs sync ...` on a developer machine)
+      // (e.g. `aex outputs sync ...` on a developer machine)
       // produces a clear "in-container only" error instead of
       // silently routing to the wrong handler.
       if (rest[0] === "sync") {
@@ -111,7 +111,7 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runWhoamiCmd(io, rest);
     default:
       io.stderr(`unknown subcommand: ${sub}\n`);
-      io.stderr("run `antpath --help` for usage\n");
+      io.stderr("run `aex --help` for usage\n");
       return USAGE_ERR;
   }
 }
@@ -120,10 +120,10 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   const manifest = await tryReadManifest(io);
   if (manifest) {
     // In-container help — only `proxy` is reachable from inside a run.
-    io.stdout("antpath — in-container CLI for managed run sessions\n\n");
+    io.stdout("aex — in-container CLI for managed run sessions\n\n");
     io.stdout("Usage:\n");
-    io.stdout("  antpath proxy <endpoint-name> [flags]\n");
-    io.stdout("  antpath proxy --help\n\n");
+    io.stdout("  aex proxy <endpoint-name> [flags]\n");
+    io.stdout("  aex proxy --help\n\n");
     if (manifest.endpoints.length === 0) {
       io.stdout("This run declared no proxy endpoints.\n");
     } else {
@@ -139,30 +139,30 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   }
 
   // Host-side help: the unified surface mirroring the SDK 1:1.
-  io.stdout("antpath — unified CLI for the antpath platform (mirrors the SDK 1:1)\n\n");
+  io.stdout("aex — unified CLI for the aex platform (mirrors the SDK 1:1)\n\n");
   io.stdout("Usage:\n");
-  io.stdout("  antpath run --config <run.json> --<provider>-api-key K --api-token T [flags]\n");
-  io.stdout("  antpath run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-token T [flags]\n");
-  io.stdout("  antpath skills upload --name N --from-path <dir> --api-token T\n");
-  io.stdout("  antpath skills upload --name N --file <path> [--file <path> ...] --api-token T\n");
-  io.stdout("  antpath skills list --api-token T\n");
-  io.stdout("  antpath skills get <skill-id> --api-token T\n");
-  io.stdout("  antpath skills delete <skill-id> --api-token T\n");
-  io.stdout("  antpath status <run-id> --api-token T\n");
-  io.stdout("  antpath wait <run-id> [--timeout 8m] [--interval 2s] --api-token T\n");
-  io.stdout("  antpath events <run-id> [--follow] [--timeout 8m] --api-token T\n");
-  io.stdout("  antpath outputs <run-id> --api-token T\n");
-  io.stdout("  antpath download <run-id> [--out path] --api-token T\n");
-  io.stdout("  antpath cancel <run-id> --api-token T\n");
-  io.stdout("  antpath delete <run-id> --api-token T\n");
-  io.stdout("  antpath delete-asset <assetId|hash> --api-token T\n");
-  io.stdout("  antpath whoami --api-token T\n");
-  io.stdout("  antpath --help\n\n");
+  io.stdout("  aex run --config <run.json> --<provider>-api-key K --api-token T [flags]\n");
+  io.stdout("  aex run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-token T [flags]\n");
+  io.stdout("  aex skills upload --name N --from-path <dir> --api-token T\n");
+  io.stdout("  aex skills upload --name N --file <path> [--file <path> ...] --api-token T\n");
+  io.stdout("  aex skills list --api-token T\n");
+  io.stdout("  aex skills get <skill-id> --api-token T\n");
+  io.stdout("  aex skills delete <skill-id> --api-token T\n");
+  io.stdout("  aex status <run-id> --api-token T\n");
+  io.stdout("  aex wait <run-id> [--timeout 8m] [--interval 2s] --api-token T\n");
+  io.stdout("  aex events <run-id> [--follow] [--timeout 8m] --api-token T\n");
+  io.stdout("  aex outputs <run-id> --api-token T\n");
+  io.stdout("  aex download <run-id> [--out path] --api-token T\n");
+  io.stdout("  aex cancel <run-id> --api-token T\n");
+  io.stdout("  aex delete <run-id> --api-token T\n");
+  io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
+  io.stdout("  aex whoami --api-token T\n");
+  io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
-  io.stdout("  --api-token <token>         REQUIRED — antpath SDK API token (workspace is derived from it)\n");
-  io.stdout("  --antpath-url <url>         Optional; defaults to https://api.antpath.ai (local/staging/hosted plane)\n");
+  io.stdout("  --api-token <token>         REQUIRED — aex SDK API token (workspace is derived from it)\n");
+  io.stdout("  --aex-url <url>         Optional; defaults to https://api.aex.dev (local/staging/hosted plane)\n");
   io.stdout("  --debug                     Optional; print a redacted per-request trace to stderr (uploads nothing)\n\n");
-  io.stdout("antpath run flags:\n");
+  io.stdout("aex run flags:\n");
   io.stdout(`  --provider <name>           Optional; one of: ${RUN_PROVIDERS.join(", ")} (default anthropic)\n`);
   io.stdout("  --runtime managed           Optional runtime selector; omitted also uses managed\n");
   for (const provider of RUN_PROVIDERS) {

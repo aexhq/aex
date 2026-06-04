@@ -228,7 +228,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "### Managed unsupported features",
     "",
-    "Provider-hosted skill refs such as `Skill.provider(...)` are rejected because new runs dispatch to Goose Managed. Use inline antpath skills or remove the provider-hosted ref.",
+    "Provider-hosted skill refs such as `Skill.provider(...)` are rejected because new runs dispatch to Goose Managed. Use inline aex skills or remove the provider-hosted ref.",
     "",
     "Notes:",
     "",

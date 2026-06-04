@@ -21,17 +21,17 @@
  *   - (deepseek,  managed)  — Goose Managed + DeepSeek via provider-proxy
  *
  * Required env:
- *   ANTPATH_API_URL              live hosted API URL
- *   ANTPATH_API_TOKEN             workspace API token
+ *   AEX_API_URL              live hosted API URL
+ *   AEX_API_TOKEN             workspace API token
  *   DEEPSEEK_API_KEY    customer DeepSeek key
  *   DEEPSEEK_API_KEY     customer DeepSeek key
- *   ANTPATH_USER_TEST_TARBALL          packed SDK tarball
- *     OR ANTPATH_USER_TEST_VERSION     published version on npm
+ *   AEX_USER_TEST_TARBALL          packed SDK tarball
+ *     OR AEX_USER_TEST_VERSION     published version on npm
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -41,10 +41,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // DeepWiki — public, unauthenticated MCP exposing GitHub repo Q&A tools.
 // Same upstream as live-sdk-comprehensive uses; needs no credential.
@@ -127,11 +127,11 @@ function buildScript(cell: Cell): string {
     `of the GitHub repository anthropics/anthropic-cookbook. ` +
     `Reply with exactly one line: lang=<language>.`;
   return `
-    import { AntpathClient, McpServer } from "antpath";
+    import { AexClient, McpServer } from "@aexhq/sdk";
 
-    const client = new AntpathClient({
-      baseUrl: process.env.ANTPATH_API_URL,
-      apiToken: process.env.ANTPATH_API_TOKEN
+    const client = new AexClient({
+      baseUrl: process.env.AEX_API_URL,
+      apiToken: process.env.AEX_API_TOKEN
     });
 
     const mcp = McpServer.remote({
@@ -238,8 +238,8 @@ async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
   const scriptPath = join(installDir, `mcp-invocation-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
-    ANTPATH_API_URL: apiUrl,
-    ANTPATH_API_TOKEN: apiToken,
+    AEX_API_URL: apiUrl,
+    AEX_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });
@@ -259,7 +259,7 @@ async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
 let install: InstallResult;
 
 beforeAll(async () => {
-  install = await installAntpath();
+  install = await installAex();
 }, 240_000);
 
 afterAll(() => {

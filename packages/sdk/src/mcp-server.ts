@@ -3,7 +3,7 @@ import {
   type McpServerRef,
   type PlatformMcpServerSecret,
   type RemoteMcpTransport
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 const WORKSPACE_MCP_ID_PATTERN = /^mcp_[A-Za-z0-9_-]{8,128}$/;
 

@@ -7,8 +7,8 @@ import {
 import type { Run, RunEvent, Output } from "./runtime-types.js";
 import type { PlatformSubmission } from "./submission.js";
 
-export const RUN_RECORD_SCHEMA_VERSION = "antpath.run-record.v1" as const;
-export const RUN_RECORD_MANIFEST_SCHEMA_VERSION = "antpath.run-record.manifest.v1" as const;
+export const RUN_RECORD_SCHEMA_VERSION = "aex.run-record.v1" as const;
+export const RUN_RECORD_MANIFEST_SCHEMA_VERSION = "aex.run-record.manifest.v1" as const;
 
 export type RunRecordArchiveNamespaceV1 = "metadata" | "events" | "outputs" | "logs";
 

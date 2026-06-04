@@ -1,9 +1,9 @@
 {
-  "name": "@antpath/conformance",
+  "name": "@aexhq/conformance",
   "version": "0.13.6",
   "private": false,
   "license": "Apache-2.0",
-  "description": "Public conformance matchers for antpath-compatible event streams and structured errors.",
+  "description": "Public conformance matchers for aex-compatible event streams and structured errors.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

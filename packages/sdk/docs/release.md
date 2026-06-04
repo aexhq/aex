@@ -19,7 +19,7 @@ repository on a clean `main` branch unless tags are added deliberately later.
 4. Run the **Release** workflow from `main` and choose the npm dist-tag
    (`latest` or `next`).
 
-If `antpath@<version>` already exists on npm, the release workflow fails before
+If `@aexhq/sdk@<version>` already exists on npm, the release workflow fails before
 publishing. A failed release is fixed by bumping to a higher version and running
 the workflow again.
 
@@ -34,7 +34,7 @@ The workflow has two jobs:
    - `pnpm test`
    - `pnpm run docs:build`
    - `pnpm build`
-   - `pnpm --filter antpath pack`
+   - `pnpm --filter @aexhq/sdk pack`
    - `pnpm run test:user:offline` against the packed tarball
    - a final npm version availability check
    - `pnpm publish --provenance --no-git-checks --access public`
@@ -49,30 +49,30 @@ installable from clean user projects on both Linux and Windows.
 
 ## What ships in the tarball
 
-The published tarball is **self-contained**. It declares **zero `@antpath/*`
-runtime dependencies** and is installable from a clean `npm install antpath`
+The published tarball is **self-contained**. It declares **zero `@aexhq/*`
+runtime dependencies** and is installable from a clean `npm install @aexhq/sdk`
 with no workspace access:
 
-- `@antpath/contracts` lives in `packages/sdk/package.json#devDependencies`
+- `@aexhq/contracts` lives in `packages/sdk/package.json#devDependencies`
   only. At build time, [`packages/sdk/scripts/inline-contracts.mjs`](../scripts/inline-contracts.mjs)
   copies `packages/contracts/dist/**` into `packages/sdk/dist/_contracts/` and
-  rewrites `from "@antpath/contracts"` to `from "./_contracts/index.js"` across
+  rewrites `from "@aexhq/contracts"` to `from "./_contracts/index.js"` across
   the SDK dist tree. A sanity check at the end of that script refuses to finish
-  if any bare `@antpath/contracts` specifier survives.
-- `@antpath/cli` is bundled at build time by
+  if any bare `@aexhq/contracts` specifier survives.
+- `@aexhq/cli` is bundled at build time by
   [`packages/sdk/scripts/bundle-cli.mjs`](../scripts/bundle-cli.mjs) into a
-  single `dist/cli.mjs`, which is the `bin: antpath` entry in
+  single `dist/cli.mjs`, which is the `bin: aex` entry in
   `packages/sdk/package.json`.
 - This invariant is mechanically enforced by
-  `apps/user-tests/test/offline/install.test.ts` ("declares no @antpath/*
+  `apps/user-tests/test/offline/install.test.ts` ("declares no @aexhq/*
   runtime dependencies") before publish.
 
 ## Repository setup
 
 Configure npm Trusted Publishing for this repository:
 
-- **Organization or user**: `weilueluo`
-- **Repository**: `antpath`
+- **Organization or user**: `aexhq`
+- **Repository**: `aex`
 - **Workflow filename**: `release.yml`
 - **Environment name**: `npm-release`
 

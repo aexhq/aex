@@ -1,10 +1,10 @@
 /**
- * antpath CLI — internal IO surface.
+ * aex CLI — internal IO surface.
  *
  * This module exports the dependency-injection types and a thin
  * `createCli()` factory that the entrypoint (`cli.ts`) calls with real
  * IO. Tests import this module directly and inject fakes — there are
- * NO `process.env.ANTPATH_*` reads in the production code paths
+ * NO `process.env.AEX_*` reads in the production code paths
  * (mechanical test in Phase 9 enforces this against the built bundle).
  */
 import type {
@@ -12,18 +12,18 @@ import type {
   ProxyIndexEntry,
   ProxyMethod,
   ProxyResponseMode
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 
 /**
  * Manifest file path inside the run container (always present).
  *
  * The runner writes the manifest to this fixed path before invoking
- * in-container `antpath` commands.
+ * in-container `aex` commands.
  */
-export const ANTPATH_INDEX_PATH = "/mnt/session/uploads/antpath/index.json";
+export const AEX_INDEX_PATH = "/mnt/session/uploads/aex/index.json";
 
 /** Per-run bearer file path (only present when proxyEndpoints declared). */
-export const ANTPATH_RUN_TOKEN_PATH = "/mnt/session/uploads/antpath/run-token";
+export const AEX_RUN_TOKEN_PATH = "/mnt/session/uploads/aex/run-token";
 
 /**
  * IO surface the CLI depends on. The production entrypoint passes real

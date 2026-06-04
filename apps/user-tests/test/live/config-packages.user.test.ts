@@ -7,12 +7,12 @@
  * validates BOTH apt and pip — an unprefixed "jq" (→ apt) AND a "pip:cowsay"
  * (→ pip).
  *
- * Only passes once the fixes are DEPLOYED to the remote antpath-local worker
+ * Only passes once the fixes are DEPLOYED to the remote aex-local worker
  * (the goose half ALSO requires the runner image to be rebuilt, since package
  * pre-install now happens in the managed runtime before the user turn starts).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, type InstallResult } from "../_fixtures/install.js";
+import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
@@ -20,7 +20,7 @@ const env = requireUserEnv({ deepseek: true });
 describe("user/SDK: environment.packages is pre-installed on managed runs", () => {
   let install: InstallResult;
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
   afterAll(() => install?.cleanup());
 

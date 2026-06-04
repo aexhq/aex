@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AntpathClient, ProxyEndpoint } from "../../src/index.js";
+import { AexClient, ProxyEndpoint } from "../../src/index.js";
 
 function makeFetch(): { fetch: typeof fetch; calls: Array<{ body: Record<string, unknown> }> } {
   const calls: Array<{ body: Record<string, unknown> }> = [];
@@ -62,7 +62,7 @@ describe("ProxyEndpoint", () => {
 
   it("submitRun splits ProxyEndpoint instances into declaration + secrets bag", async () => {
     const { fetch, calls } = makeFetch();
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await client.submitRun({
       model: "m",
       prompt: "p",
@@ -128,7 +128,7 @@ describe("ProxyEndpoint", () => {
 
   it("rejects duplicate endpoint names within one submitRun call", async () => {
     const { fetch } = makeFetch();
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await expect(
       client.submitRun({
         model: "m",
@@ -167,7 +167,7 @@ describe("ProxyEndpoint", () => {
 
   it("submitRun omits keyless endpoints from secrets.proxyEndpointAuth", async () => {
     const { fetch, calls } = makeFetch();
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await client.submitRun({
       model: "m",
       prompt: "p",

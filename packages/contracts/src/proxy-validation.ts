@@ -39,7 +39,7 @@ export function validateProxyAuth(
 
 /**
  * Build an `allowedHosts` list for `environment.network` that includes
- * the antpath proxy host (and optionally Anthropic's MCP host) when the
+ * the aex proxy host (and optionally Anthropic's MCP host) when the
  * caller is hand-rolling networking.
  */
 export function buildPlatformAllowedHosts(input: {

@@ -4,7 +4,7 @@ title: MCP
 
 # MCP
 
-MCP support is remote HTTPS/SSE only. Stdio MCP servers are rejected because antpath is a remote session dispatcher, not a local process supervisor.
+MCP support is remote HTTPS/SSE only. Stdio MCP servers are rejected because aex is a remote session dispatcher, not a local process supervisor.
 
 Rules:
 
@@ -12,14 +12,14 @@ Rules:
 - Runtime HITL is disabled.
 - Tool policy must be configured before session start.
 - Enabled MCP tools use `always_allow` provider permissions.
-- `always_ask` is not used by antpath MVP.
+- `always_ask` is not used by aex MVP.
 - Bearer/OAuth-style auth is passed in the per-run `secrets.mcpServers` bundle.
 
 Use allowlists for sensitive servers whenever possible.
 
 ## Large-payload responses
 
-antpath is a session dispatcher, not an MCP runtime. We intentionally do
+aex is a session dispatcher, not an MCP runtime. We intentionally do
 **not** interpose on the transport between Claude and an upstream MCP
 server, so we cannot elide MCP responses or write them to the session
 filesystem on the user's behalf. Anything an MCP tool returns lands

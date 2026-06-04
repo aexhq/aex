@@ -1,11 +1,11 @@
 {
-  "name": "antpath",
+  "name": "@aexhq/sdk",
   "version": "0.13.6",
   "description": "TypeScript SDK for running autonomous agent sessions across providers (Anthropic, OpenAI, DeepSeek, Gemini, Mistral) behind one interface.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/weilueluo/antpath.git"
+    "url": "git+https://github.com/aexhq/aex.git"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,7 @@
     }
   },
   "bin": {
-    "antpath": "./dist/cli.mjs"
+    "aex": "./dist/cli.mjs"
   },
   "files": [
     "dist",
@@ -26,7 +26,7 @@
     "examples"
   ],
   "scripts": {
-    "build": "node ./scripts/clean-dist.mjs && pnpm --filter @antpath/contracts run build && pnpm --filter @antpath/cli run build && tsc -p tsconfig.build.json && node ./scripts/bundle-cli.mjs && node ./scripts/inline-contracts.mjs",
+    "build": "node ./scripts/clean-dist.mjs && pnpm --filter @aexhq/contracts run build && pnpm --filter @aexhq/cli run build && tsc -p tsconfig.build.json && node ./scripts/bundle-cli.mjs && node ./scripts/inline-contracts.mjs",
     "lint": "tsc --noEmit",
     "test": "pnpm test:unit",
     "test:unit": "vitest run test/unit",
@@ -37,7 +37,7 @@
     "publish:dry-run": "pnpm publish --dry-run --no-git-checks"
   },
   "devDependencies": {
-    "@antpath/contracts": "workspace:*"
+    "@aexhq/contracts": "workspace:*"
   },
   "engines": {
     "node": ">=20"

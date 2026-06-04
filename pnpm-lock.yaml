@@ -24,9 +24,9 @@ importers:
       eslint:
         specifier: 9.18.0
         version: 9.18.0(jiti@2.7.0)
-      eslint-plugin-antpath:
-        specifier: link:./tools/eslint-plugin-antpath
-        version: link:tools/eslint-plugin-antpath
+      eslint-plugin-aex:
+        specifier: link:./tools/eslint-plugin-aex
+        version: link:tools/eslint-plugin-aex
       fast-check:
         specifier: 4.3.0
         version: 4.3.0
@@ -54,7 +54,7 @@ importers:
       '@orama/orama':
         specifier: ^3.1.18
         version: 3.1.18
-      antpath:
+      aex:
         specifier: workspace:*
         version: link:../../packages/sdk
       fumadocs-core:
@@ -106,7 +106,7 @@ importers:
 
   apps/user-tests:
     devDependencies:
-      '@antpath/conformance':
+      '@aexhq/conformance':
         specifier: workspace:*
         version: link:../../packages/conformance
       dotenv:
@@ -121,7 +121,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@antpath/contracts':
+      '@aexhq/contracts':
         specifier: workspace:*
         version: link:../contracts
       fflate:
@@ -156,7 +156,7 @@ importers:
         specifier: 0.8.3
         version: 0.8.3
     devDependencies:
-      '@antpath/contracts':
+      '@aexhq/contracts':
         specifier: workspace:*
         version: link:../contracts
 

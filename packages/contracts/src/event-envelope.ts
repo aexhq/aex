@@ -1,5 +1,5 @@
 /**
- * The unified antpath event envelope.
+ * The unified aex event envelope.
  *
  * One versioned, self-describing record that every subscriber sees, derived
  * from the unified {@link RunnerEvent}. Managed runtime adapters emit
@@ -9,10 +9,10 @@
  *   - **CloudEvents-shaped** self-describing envelope: a stable `id`, the
  *     coarse `source`, the AG-UI-aligned `type`, the `subject` (run), a
  *     `time`, the `sequence` cursor, and the typed `data`.
- *   - **AG-UI vocabulary** for `type` where it maps; antpath-specific events
- *     ride AG-UI's reserved `CUSTOM` carrier under an `antpath.*` name, so an
- *     off-the-shelf AG-UI client reads an antpath run with no glue.
- *   - Two antpath extensions: a coarse `source` (filter first by origin) and
+ *   - **AG-UI vocabulary** for `type` where it maps; aex-specific events
+ *     ride AG-UI's reserved `CUSTOM` carrier under an `aex.*` name, so an
+ *     off-the-shelf AG-UI client reads an aex run with no glue.
+ *   - Two aex extensions: a coarse `source` (filter first by origin) and
  *     an optional human `message` (log / CLI / dashboard rendering).
  *
  * Unified observability spine:
@@ -42,32 +42,32 @@ import type { JsonValue } from "./submission.js";
 import type { RunnerEvent } from "./runner-event.js";
 
 /** CloudEvents `specversion` the envelope conforms to. */
-export const ANTPATH_EVENT_SPECVERSION = "1.0" as const;
+export const AEX_EVENT_SPECVERSION = "1.0" as const;
 
 /**
  * Mapping version. Bump when the RunnerEvent → envelope projection changes
  * shape (new `source`/`type`, renamed data field). Independent of
- * {@link ANTPATH_EVENT_SPECVERSION} (the CloudEvents version) and of
+ * {@link AEX_EVENT_SPECVERSION} (the CloudEvents version) and of
  * `RUNNER_EVENT_VERSION` (the upstream wire version).
  */
-export const ANTPATH_EVENT_MAP_VERSION = 1 as const;
+export const AEX_EVENT_MAP_VERSION = 1 as const;
 
 /**
  * Coarse origin classifier — the first axis a consumer filters on.
  *   - `agent`   — the model: text, reasoning, builtin tool calls/results.
- *   - `worker`  — the hosted antpath edge itself.
+ *   - `worker`  — the hosted aex edge itself.
  *   - `runtime` — the execution runtime (Goose container / Anthropic session):
  *                 lifecycle, diagnostics, non-fatal stream errors.
  *   - `mcp`     — an MCP server (a tool call/result routed through MCP).
- *   - `antpath` — the platform: skills, files, and other antpath-native events.
+ *   - `aex` — the platform: skills, files, and other aex-native events.
  *   - `workflow`— the orchestration layer (Cloudflare Workflows trace).
  *   - `machine` — the managed host the runtime executes on (machine-level host
  *                 logs). A forthcoming source; `runtime` stays the
  *                 Goose-container / Anthropic-session source, distinct from the
  *                 host machine that carries it.
  */
-export const ANTPATH_EVENT_SOURCES = ["agent", "worker", "runtime", "mcp", "antpath", "workflow", "machine"] as const;
-export type AntpathEventSource = (typeof ANTPATH_EVENT_SOURCES)[number];
+export const AEX_EVENT_SOURCES = ["agent", "worker", "runtime", "mcp", "aex", "workflow", "machine"] as const;
+export type AexEventSource = (typeof AEX_EVENT_SOURCES)[number];
 
 /**
  * The channel a record rides on the unified per-run stream:
@@ -76,8 +76,8 @@ export type AntpathEventSource = (typeof ANTPATH_EVENT_SOURCES)[number];
  *               coordinator prunes flushed log rows after R2 archival (logs are
  *               append-only, events are kept). Absent on the wire ⇒ `event`.
  */
-export const ANTPATH_EVENT_CHANNELS = ["event", "log"] as const;
-export type AntpathEventChannel = (typeof ANTPATH_EVENT_CHANNELS)[number];
+export const AEX_EVENT_CHANNELS = ["event", "log"] as const;
+export type AexEventChannel = (typeof AEX_EVENT_CHANNELS)[number];
 
 /**
  * Log severity carried by a `channel: "log"` record (the `LOG` event type).
@@ -85,15 +85,15 @@ export type AntpathEventChannel = (typeof ANTPATH_EVENT_CHANNELS)[number];
  * we keep "warn" for consistency with the existing in-code vocabulary — the
  * mapping is `warning ≡ warn`.
  */
-export const ANTPATH_LOG_LEVELS = ["info", "warn", "error"] as const;
-export type AntpathLogLevel = (typeof ANTPATH_LOG_LEVELS)[number];
+export const AEX_LOG_LEVELS = ["info", "warn", "error"] as const;
+export type AexLogLevel = (typeof AEX_LOG_LEVELS)[number];
 
 /**
  * The AG-UI-aligned `type` vocabulary the envelope emits. A subset of the
- * full AG-UI protocol — the events antpath actually produces today — plus
- * `CUSTOM`, AG-UI's reserved carrier for antpath-native events.
+ * full AG-UI protocol — the events aex actually produces today — plus
+ * `CUSTOM`, AG-UI's reserved carrier for aex-native events.
  */
-export const ANTPATH_EVENT_TYPES = [
+export const AEX_EVENT_TYPES = [
   "RUN_STARTED",
   "RUN_FINISHED",
   "RUN_ERROR",
@@ -107,22 +107,22 @@ export const ANTPATH_EVENT_TYPES = [
   // off-the-shelf AG-UI client filters logs out by `channel`.
   "LOG"
 ] as const;
-export type AntpathEventType = (typeof ANTPATH_EVENT_TYPES)[number];
+export type AexEventType = (typeof AEX_EVENT_TYPES)[number];
 
 /**
  * One event on the unified log. CloudEvents core attributes (`specversion`,
  * `id`, `source`, `type`, `subject`, `time`) plus the `sequence` extension
  * (the ordering cursor) and the typed `data`.
  */
-export interface AntpathEvent {
-  /** CloudEvents specversion. Always {@link ANTPATH_EVENT_SPECVERSION}. */
-  readonly specversion: typeof ANTPATH_EVENT_SPECVERSION;
+export interface AexEvent {
+  /** CloudEvents specversion. Always {@link AEX_EVENT_SPECVERSION}. */
+  readonly specversion: typeof AEX_EVENT_SPECVERSION;
   /** Stable, globally-unique event id: `${runId}:${sequence}`. Dedupe key. */
   readonly id: string;
   /** Coarse origin classifier. */
-  readonly source: AntpathEventSource;
+  readonly source: AexEventSource;
   /** AG-UI-aligned event type. */
-  readonly type: AntpathEventType;
+  readonly type: AexEventType;
   /** The run this event belongs to (CloudEvents `subject`). */
   readonly subject: string;
   /** ISO-8601 event time (run base + the RunnerEvent's relative `tMs`). */
@@ -136,7 +136,7 @@ export interface AntpathEvent {
    * Which sub-stream this record rides. Absent ⇒ `"event"` (existing typed
    * producers don't set it; the coordinator defaults it on ingest).
    */
-  readonly channel?: AntpathEventChannel;
+  readonly channel?: AexEventChannel;
   /**
    * Per-SOURCE monotonic counter assigned at the source. The coordinator
    * preserves the order of same-source records by `sourceSeq` and never
@@ -163,21 +163,21 @@ export interface AntpathEvent {
   /**
    * Log severity, first-class on a `channel: "log"` record (mirrors
    * `data.level`). Optional: only `log`-channel records carry it; typed `event`
-   * records omit it. ("warn" ≡ the owner's "warning" — see {@link ANTPATH_LOG_LEVELS}.)
+   * records omit it. ("warn" ≡ the owner's "warning" — see {@link AEX_LOG_LEVELS}.)
    */
-  readonly level?: AntpathLogLevel;
+  readonly level?: AexLogLevel;
   /** Optional human-readable summary for log / CLI / dashboard rendering. */
   readonly message?: string;
   /**
    * Typed payload. For `CUSTOM` events this is `{ name, value }` (AG-UI's
-   * custom carrier, `name` = `antpath.<kind>`); for typed events it is the
+   * custom carrier, `name` = `aex.<kind>`); for typed events it is the
    * RunnerEvent's own data, projected to AG-UI fields by {@link toAGUI}.
    */
   readonly data: Readonly<Record<string, JsonValue>>;
 }
 
 /** Context the mapper needs to stamp absolute identity/time onto an event. */
-export interface AntpathEventContext {
+export interface AexEventContext {
   readonly runId: string;
   /**
    * Run-start epoch ms. The RunnerEvent's `tMs` is relative to this, so
@@ -187,8 +187,8 @@ export interface AntpathEventContext {
 }
 
 interface Projection {
-  readonly type: AntpathEventType;
-  readonly source: AntpathEventSource;
+  readonly type: AexEventType;
+  readonly source: AexEventSource;
   readonly message?: string;
   readonly data: Record<string, JsonValue>;
 }
@@ -199,10 +199,10 @@ interface Projection {
  * RunnerEvents through this same function, so identical logical events
  * produce identical envelopes.
  */
-export function runnerEventToAntpathEvent(evt: RunnerEvent, ctx: AntpathEventContext): AntpathEvent {
+export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): AexEvent {
   const projection = project(evt);
   return {
-    specversion: ANTPATH_EVENT_SPECVERSION,
+    specversion: AEX_EVENT_SPECVERSION,
     id: `${ctx.runId}:${evt.seq}`,
     source: projection.source,
     type: projection.type,
@@ -244,13 +244,13 @@ function project(evt: RunnerEvent): Projection {
         data: { ...data }
       };
     case "skill_loaded":
-      return custom("antpath.skill_loaded", "antpath", data, "skill loaded");
+      return custom("aex.skill_loaded", "aex", data, "skill loaded");
     case "file_uploaded":
-      return custom("antpath.file_uploaded", "antpath", data, "file uploaded");
+      return custom("aex.file_uploaded", "aex", data, "file uploaded");
     case "notification":
-      return custom("antpath.notification", "runtime", data, str(data.reason) || undefined);
+      return custom("aex.notification", "runtime", data, str(data.reason) || undefined);
     case "stream_error":
-      return custom("antpath.stream_error", "runtime", data, str(data.message) || "stream error");
+      return custom("aex.stream_error", "runtime", data, str(data.message) || "stream error");
     case "runtime_terminal": {
       const reason = str(data.reason);
       return {
@@ -273,8 +273,8 @@ function project(evt: RunnerEvent): Projection {
 // minimal payload (level + message + optional fields).
 
 /** A log line as a producer hands it to {@link logToInbound} (pre-coordinator). */
-export interface AntpathLogLine {
-  readonly level: AntpathLogLevel;
+export interface AexLogLine {
+  readonly level: AexLogLevel;
   readonly message: string;
   readonly fields?: Readonly<Record<string, JsonValue>>;
   /** Source wall-clock ms at emit. */
@@ -289,8 +289,8 @@ export interface AntpathLogLine {
  * authority) AND `receivedAt` (its authoritative receive time) on ingest, so a
  * producer never supplies any of them.
  */
-export type AntpathInboundLog = Omit<
-  AntpathEvent,
+export type AexInboundLog = Omit<
+  AexEvent,
   "specversion" | "id" | "subject" | "sequence" | "receivedAt"
 >;
 
@@ -300,7 +300,7 @@ export type AntpathInboundLog = Omit<
  * authority); everything else — `channel`, `source`, `sourceSeq`, `emittedAt`,
  * and the `LOG` payload — is supplied here.
  */
-export function logToInbound(source: AntpathEventSource, line: AntpathLogLine): AntpathInboundLog {
+export function logToInbound(source: AexEventSource, line: AexLogLine): AexInboundLog {
   return {
     source,
     type: "LOG",
@@ -322,7 +322,7 @@ export function logToInbound(source: AntpathEventSource, line: AntpathLogLine): 
 
 function custom(
   name: string,
-  source: AntpathEventSource,
+  source: AexEventSource,
   value: Readonly<Record<string, JsonValue>>,
   message?: string
 ): Projection {
@@ -337,48 +337,48 @@ function custom(
 // --- Honest guards over the emitted vocabulary --------------------------------
 // These match the vocabulary a consumer of the unified stream actually receives.
 
-export function isRunStarted(e: AntpathEvent): boolean {
+export function isRunStarted(e: AexEvent): boolean {
   return e.type === "RUN_STARTED";
 }
-export function isRunFinished(e: AntpathEvent): boolean {
+export function isRunFinished(e: AexEvent): boolean {
   return e.type === "RUN_FINISHED";
 }
-export function isRunError(e: AntpathEvent): boolean {
+export function isRunError(e: AexEvent): boolean {
   return e.type === "RUN_ERROR";
 }
 /** A terminal event of either flavour (finished or error). */
-export function isRunTerminal(e: AntpathEvent): boolean {
+export function isRunTerminal(e: AexEvent): boolean {
   return e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 }
-export function isTextMessage(e: AntpathEvent): boolean {
+export function isTextMessage(e: AexEvent): boolean {
   return e.type === "TEXT_MESSAGE_CONTENT";
 }
-export function isToolCallStart(e: AntpathEvent): boolean {
+export function isToolCallStart(e: AexEvent): boolean {
   return e.type === "TOOL_CALL_START";
 }
-export function isToolCallResult(e: AntpathEvent): boolean {
+export function isToolCallResult(e: AexEvent): boolean {
   return e.type === "TOOL_CALL_RESULT";
 }
-export function isCustom(e: AntpathEvent): boolean {
+export function isCustom(e: AexEvent): boolean {
   return e.type === "CUSTOM";
 }
-/** The `antpath.*` name of a CUSTOM event, or null for typed events. */
-export function customName(e: AntpathEvent): string | null {
+/** The `aex.*` name of a CUSTOM event, or null for typed events. */
+export function customName(e: AexEvent): string | null {
   return e.type === "CUSTOM" ? str(e.data.name) || null : null;
 }
-export function isFromSource(e: AntpathEvent, source: AntpathEventSource): boolean {
+export function isFromSource(e: AexEvent, source: AexEventSource): boolean {
   return e.source === source;
 }
 /** The channel a record rides, defaulting an absent value to `"event"`. */
-export function channelOf(e: AntpathEvent): AntpathEventChannel {
+export function channelOf(e: AexEvent): AexEventChannel {
   return e.channel ?? "event";
 }
 /** True when a record is a log line (the `log` channel / `LOG` type). */
-export function isLog(e: AntpathEvent): boolean {
+export function isLog(e: AexEvent): boolean {
   return channelOf(e) === "log";
 }
 /** True when a record is a typed AG-UI event (the `event` channel). */
-export function isEventChannel(e: AntpathEvent): boolean {
+export function isEventChannel(e: AexEvent): boolean {
   return channelOf(e) === "event";
 }
 
@@ -394,21 +394,21 @@ export function isEventChannel(e: AntpathEvent): boolean {
 export const MAX_SQLITE_ROW_BYTES = 2_000_000 as const;
 
 /** Serialized UTF-8 byte length of an event (the size the row must hold). */
-export function serializedEventBytes(e: AntpathEvent): number {
+export function serializedEventBytes(e: AexEvent): number {
   return new TextEncoder().encode(JSON.stringify(e)).byteLength;
 }
 
 /** True when an event's serialized form exceeds the row budget and must be split. */
-export function exceedsRowBudget(e: AntpathEvent, max: number = MAX_SQLITE_ROW_BYTES): boolean {
+export function exceedsRowBudget(e: AexEvent, max: number = MAX_SQLITE_ROW_BYTES): boolean {
   return serializedEventBytes(e) > max;
 }
 
 // --- Strict AG-UI projection --------------------------------------------------
 
 /**
- * AG-UI events antpath projects to. Each carries the AG-UI `type` discriminant
+ * AG-UI events aex projects to. Each carries the AG-UI `type` discriminant
  * and a numeric `timestamp` (ms), plus the type-specific fields an off-the-shelf
- * AG-UI client expects. Antpath's envelope extensions (`source`, `message`, the
+ * AG-UI client expects. Aex's envelope extensions (`source`, `message`, the
  * CloudEvents framing) are dropped — `rawEvent` carries the original for clients
  * that want it.
  */
@@ -422,11 +422,11 @@ export type AguiEvent =
   | { type: "CUSTOM"; timestamp: number; name: string; value: JsonValue };
 
 /**
- * Project an antpath envelope to a strict AG-UI event so an off-the-shelf
- * AG-UI client can consume an antpath run with no glue. This is the
+ * Project an aex envelope to a strict AG-UI event so an off-the-shelf
+ * AG-UI client can consume an aex run with no glue. This is the
  * client-side projection the SDK exposes.
  */
-export function toAGUI(e: AntpathEvent): AguiEvent {
+export function toAGUI(e: AexEvent): AguiEvent {
   const timestamp = Date.parse(e.time);
   const d = e.data;
   switch (e.type) {
@@ -471,7 +471,7 @@ export function toAGUI(e: AntpathEvent): AguiEvent {
       // Logs ride the `log` channel and are normally filtered out before
       // projection. If a consumer projects one anyway, carry it under AG-UI's
       // reserved CUSTOM so the client still receives a valid record.
-      return { type: "CUSTOM", timestamp, name: "antpath.log", value: { ...d } };
+      return { type: "CUSTOM", timestamp, name: "aex.log", value: { ...d } };
   }
 }
 

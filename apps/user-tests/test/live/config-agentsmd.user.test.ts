@@ -13,10 +13,10 @@
  * inconclusive and that assert fails loudly rather than passing silently.
  *
  * Only passes once the agentsMd multi-ref fix is DEPLOYED to the remote
- * antpath-local worker.
+ * aex-local worker.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, type InstallResult } from "../_fixtures/install.js";
+import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
@@ -32,7 +32,7 @@ const PROMPT =
 describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", () => {
   let install: InstallResult;
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
   afterAll(() => install?.cleanup());
 

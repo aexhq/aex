@@ -36,15 +36,15 @@
  *
  * Required env (mirrors the other live-sdk-* tests; the whole suite skips
  * cleanly when these are absent — they run in CI against the deployed plane):
- *   ANTPATH_API_URL              live hosted API URL (local or prod)
- *   ANTPATH_API_TOKEN             workspace API token
+ *   AEX_API_URL              live hosted API URL (local or prod)
+ *   AEX_API_TOKEN             workspace API token
  *   DEEPSEEK_API_KEY    customer DeepSeek API key
- *   ANTPATH_USER_TEST_TARBALL | ANTPATH_USER_TEST_VERSION
+ *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 // Services that emit on the `log` channel TODAY. ADD-ONE-LINE extension point:
 // when runner/goose/proxy start emitting logs, append the source here and the
@@ -60,10 +60,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
-const apiToken = requireEnv("ANTPATH_API_TOKEN");
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface LogRecord {
   readonly source: string;
@@ -91,11 +91,11 @@ interface LogsResult {
   readonly leakedKey: boolean;
 }
 
-describe("live api.antpath.ai — unified stream: logs from platform services are visible", () => {
+describe("live api.aex.dev — unified stream: logs from platform services are visible", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
 
   afterAll(() => {
@@ -107,14 +107,14 @@ describe("live api.antpath.ai — unified stream: logs from platform services ar
     async () => {
       const probe = "logs-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AntpathClient } from "antpath";
+        import { AexClient } from "@aexhq/sdk";
 
-        const baseUrl = process.env.ANTPATH_API_URL;
-        const apiToken = process.env.ANTPATH_API_TOKEN;
+        const baseUrl = process.env.AEX_API_URL;
+        const apiToken = process.env.AEX_API_TOKEN;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
 
-        const client = new AntpathClient({ baseUrl, apiToken });
+        const client = new AexClient({ baseUrl, apiToken });
         const runId = await client.submitRun({
           provider: "deepseek",
           runtime: "managed",
@@ -227,8 +227,8 @@ describe("live api.antpath.ai — unified stream: logs from platform services ar
       writeFileSync(scriptPath, script);
 
       const passEnv: Record<string, string> = {
-        ANTPATH_API_URL: apiUrl,
-        ANTPATH_API_TOKEN: apiToken,
+        AEX_API_URL: apiUrl,
+        AEX_API_TOKEN: apiToken,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };

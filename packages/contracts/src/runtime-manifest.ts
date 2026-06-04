@@ -1,13 +1,13 @@
 /**
  * Runtime manifest: the per-run, per-provider description of where
- * antpath places things inside the agent container, plus the merged
+ * aex places things inside the agent container, plus the merged
  * env-var bag delivered via `RUNTIME.env` / `RUNTIME.json`.
  *
  * The hosted API computes a manifest at submitRun-response time
  * (from the validated submission + the chosen provider) via
  * {@link buildRuntimeManifest} and echoes it on the wire as
  * `Run.runtimeManifest`, so caller code (anyone rendering catalog markdown
- * pre-submission, or resolving antpath's in-container path strings) doesn't
+ * pre-submission, or resolving aex's in-container path strings) doesn't
  * have to guess.
  * The managed runtime materialises the actual `RUNTIME.env` / `RUNTIME.json`
  * files in-container from the same provider + envVars inputs, so the
@@ -15,12 +15,12 @@
  *
  * Manifest values are derived, never persisted separately — the source
  * of truth for the customer half remains `submission.environment.envVars`
- * on the run row; the antpath half is constant for a given
+ * on the run row; the aex half is constant for a given
  * provider+SDK-version pair.
  */
 
 /**
- * Set of providers whose runtime contract antpath models. Today only
+ * Set of providers whose runtime contract aex models. Today only
  * `"anthropic"` ships; the field is on the manifest so forward-compat
  * consumers can branch on it without us having to silently change
  * what `runtimeManifest` means when we add a second provider.
@@ -48,19 +48,19 @@ export interface RuntimeManifest {
   readonly assetsRoot: string;
   /** Absolute path the agent writes output files into for capture. */
   readonly outputsRoot: string;
-  /** Absolute path of the in-container antpath runtime bridge (invoke via `node`). */
-  readonly antpathCli: string;
+  /** Absolute path of the in-container aex runtime bridge (invoke via `node`). */
+  readonly aexCli: string;
   /** Absolute path of the per-run proxy-endpoints manifest. */
   readonly indexJson: string;
-  /** Absolute path of the always-mounted antpath runtime contract README. */
+  /** Absolute path of the always-mounted aex runtime contract README. */
   readonly readme: string;
   /** Absolute path of the machine-readable manifest mirror. */
   readonly runtimeJson: string;
   /** Absolute path of the POSIX-shell-sourceable runtime env file. */
   readonly runtimeEnv: string;
   /**
-   * Merged env-var bag: antpath-set runtime keys (with reserved
-   * `ANTPATH_` prefix) plus customer-supplied `environment.envVars`.
+   * Merged env-var bag: aex-set runtime keys (with reserved
+   * `AEX_` prefix) plus customer-supplied `environment.envVars`.
    * Both `RUNTIME.env` and `RUNTIME.json` are rendered from this
    * exact map; `__KEY__` substitution in agent-facing markdown
    * resolves against this exact map.
@@ -76,14 +76,14 @@ export interface RuntimeManifest {
  */
 const ANTHROPIC_PATHS = Object.freeze({
   skillsRoot: "/workspace/skills",
-  filesRoot: "/mnt/session/uploads/antpath/files",
-  assetsRoot: "/mnt/session/uploads/antpath/assets",
+  filesRoot: "/mnt/session/uploads/aex/files",
+  assetsRoot: "/mnt/session/uploads/aex/assets",
   outputsRoot: "/mnt/session/outputs",
-  antpathCli: "/mnt/session/uploads/antpath/antpath",
-  indexJson: "/mnt/session/uploads/antpath/index.json",
-  readme: "/mnt/session/uploads/antpath/SKILLS.md",
-  runtimeJson: "/mnt/session/uploads/antpath/RUNTIME.json",
-  runtimeEnv: "/mnt/session/uploads/antpath/RUNTIME.env"
+  aexCli: "/mnt/session/uploads/aex/aex",
+  indexJson: "/mnt/session/uploads/aex/index.json",
+  readme: "/mnt/session/uploads/aex/SKILLS.md",
+  runtimeJson: "/mnt/session/uploads/aex/RUNTIME.json",
+  runtimeEnv: "/mnt/session/uploads/aex/RUNTIME.env"
 } as const);
 
 /**
@@ -103,7 +103,7 @@ export interface BuildRuntimeManifestInput {
   readonly provider: RuntimeProvider;
   /**
    * Customer-supplied `environment.envVars` from the validated
-   * submission. Keys with the reserved `ANTPATH_` prefix are
+   * submission. Keys with the reserved `AEX_` prefix are
    * filtered out defensively — the strict submission parser already
    * rejects them, but defence-in-depth means a malformed snapshot
    * (or a future bypass) can't poison the manifest.
@@ -112,12 +112,12 @@ export interface BuildRuntimeManifestInput {
 }
 
 /**
- * Reserved env-var prefix for antpath-set runtime keys. Mirrors the
+ * Reserved env-var prefix for aex-set runtime keys. Mirrors the
  * constant in `submission.ts`; duplicated here so this module is
  * self-contained and can be tree-shaken by SDK consumers that don't
  * need the submission parser.
  */
-const ANTPATH_PREFIX = "ANTPATH_";
+const AEX_PREFIX = "AEX_";
 
 /**
  * Build the runtime manifest for a single submission. Pure function:
@@ -126,21 +126,21 @@ const ANTPATH_PREFIX = "ANTPATH_";
  */
 export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeManifest {
   const paths = runtimePathsFor(input.provider);
-  const antpathEnvVars: Record<string, string> = {
-    ANTPATH_PROVIDER: input.provider,
-    ANTPATH_CLI: paths.antpathCli,
-    ANTPATH_OUTPUTS: paths.outputsRoot,
-    ANTPATH_SKILLS_ROOT: paths.skillsRoot,
-    ANTPATH_FILES_ROOT: paths.filesRoot,
-    ANTPATH_ASSETS_ROOT: paths.assetsRoot,
-    ANTPATH_INDEX_JSON: paths.indexJson,
-    ANTPATH_README: paths.readme,
-    ANTPATH_RUNTIME_JSON: paths.runtimeJson,
-    ANTPATH_RUNTIME_ENV: paths.runtimeEnv
+  const aexEnvVars: Record<string, string> = {
+    AEX_PROVIDER: input.provider,
+    AEX_CLI: paths.aexCli,
+    AEX_OUTPUTS: paths.outputsRoot,
+    AEX_SKILLS_ROOT: paths.skillsRoot,
+    AEX_FILES_ROOT: paths.filesRoot,
+    AEX_ASSETS_ROOT: paths.assetsRoot,
+    AEX_INDEX_JSON: paths.indexJson,
+    AEX_README: paths.readme,
+    AEX_RUNTIME_JSON: paths.runtimeJson,
+    AEX_RUNTIME_ENV: paths.runtimeEnv
   };
   const customerEnvVars: Record<string, string> = {};
   for (const [key, value] of Object.entries(input.customerEnvVars ?? {})) {
-    if (key.startsWith(ANTPATH_PREFIX)) {
+    if (key.startsWith(AEX_PREFIX)) {
       // Defensive filter; the strict parser rejects this at submit
       // time. If a stored snapshot somehow carries a reserved key
       // we drop it rather than letting it shadow our value.
@@ -148,14 +148,14 @@ export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeM
     }
     customerEnvVars[key] = value;
   }
-  const envVars = Object.freeze({ ...antpathEnvVars, ...customerEnvVars });
+  const envVars = Object.freeze({ ...aexEnvVars, ...customerEnvVars });
   return Object.freeze({
     provider: input.provider,
     skillsRoot: paths.skillsRoot,
     filesRoot: paths.filesRoot,
     assetsRoot: paths.assetsRoot,
     outputsRoot: paths.outputsRoot,
-    antpathCli: paths.antpathCli,
+    aexCli: paths.aexCli,
     indexJson: paths.indexJson,
     readme: paths.readme,
     runtimeJson: paths.runtimeJson,

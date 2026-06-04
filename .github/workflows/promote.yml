@@ -2,7 +2,7 @@ name: Promote
 
 # Promote a dark release to a public dist-tag (default: latest).
 #
-# Dispatched manually OR cross-repo by antpath-platform's deploy.yml after the
+# Dispatched manually OR cross-repo by aex-platform's deploy.yml after the
 # platform's production plane is green against the dark release (automatic
 # promote). npm `dist-tag add` does NOT support OIDC trusted publishing
 # (OIDC is publish-only), so this step authenticates with a granular npm
@@ -23,7 +23,7 @@ on:
         type: string
 
 concurrency:
-  group: promote-antpath
+  group: promote-aex
   cancel-in-progress: false
 
 permissions:
@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   promote:
-    name: Promote antpath@${{ inputs.version }} -> ${{ inputs.to_tag }}
+    name: Promote @aexhq/sdk@${{ inputs.version }} -> ${{ inputs.to_tag }}
     runs-on: ubuntu-latest
     environment: npm-release
     steps:
@@ -52,11 +52,11 @@ jobs:
             echo "::error::NPM_TOKEN not set in the npm-release environment. dist-tag promotion needs a granular npm token (npm dist-tag does not support OIDC)."
             exit 1
           fi
-          for pkg in antpath @antpath/cli @antpath/contracts @antpath/conformance; do
+          for pkg in aex @aexhq/cli @aexhq/contracts @aexhq/conformance; do
             echo "promoting ${pkg}@${VERSION} -> ${TO_TAG}"
             npm dist-tag add "${pkg}@${VERSION}" "${TO_TAG}"
           done
           echo "=== resulting dist-tags ==="
-          for pkg in antpath @antpath/cli @antpath/contracts @antpath/conformance; do
+          for pkg in aex @aexhq/cli @aexhq/contracts @aexhq/conformance; do
             npm view "$pkg" dist-tags --json || true
           done

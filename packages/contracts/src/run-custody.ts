@@ -6,8 +6,8 @@ export const CUSTODY_MANIFEST_SCHEMA_VERSION = 1;
 export const CUSTODY_TOMBSTONE_SCHEMA_VERSION = 1;
 export const CUSTODY_REDACTION_SCANNER_VERSION = 1;
 
-export const CUSTODY_MANIFEST_KIND = "antpath.custody_manifest.v1";
-export const CUSTODY_TOMBSTONE_KIND = "antpath.custody_tombstone.v1";
+export const CUSTODY_MANIFEST_KIND = "aex.custody_manifest.v1";
+export const CUSTODY_TOMBSTONE_KIND = "aex.custody_tombstone.v1";
 export const CUSTODY_MANIFEST_CONTENT_TYPE = "application/json; charset=utf-8";
 export const CUSTODY_MANIFEST_RUN_REL_PATH = "metadata/custody.json";
 
@@ -35,8 +35,8 @@ export const CUSTODY_RESOURCE_CLASSES = [
 export type CustodyResourceClass = (typeof CUSTODY_RESOURCE_CLASSES)[number];
 
 export const CUSTODY_EXPOSURE_SURFACES = [
-  "antpath_vault",
-  "antpath_kv",
+  "aex_vault",
+  "aex_kv",
   "fly_machine_env",
   "fly_machine_file",
   "provider_vault",

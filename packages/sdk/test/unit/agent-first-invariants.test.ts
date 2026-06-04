@@ -70,16 +70,16 @@ function relPosix(abs: string): string {
  * deletes it deliberately (and is forced to read this header first).
  */
 describe("agent-first invariants (workspace-wide)", () => {
-  it("forbids subpath imports of the antpath package", () => {
-    // The `antpath` npm package exposes exactly one entry point. Subpath
-    // imports (`antpath/proxy`, `antpath/core`, ...) would create
+  it("forbids subpath imports of the aex package", () => {
+    // The `@aexhq/sdk` npm package exposes exactly one entry point. Subpath
+    // imports (`aex/proxy`, `aex/core`, ...) would create
     // multiple surfaces an agent has to track. The package's
     // package.json#exports field is also locked down in
     // `package-exports.test.ts`; this test catches drift on the
     // consumer side.
     const offenders: string[] = [];
-    const importPattern = /from\s+["']antpath\/[^"']+["']/g;
-    const requirePattern = /require\(["']antpath\/[^"']+["']\)/g;
+    const importPattern = /from\s+["']aex\/[^"']+["']/g;
+    const requirePattern = /require\(["']aex\/[^"']+["']\)/g;
     for (const file of listSourceFiles()) {
       const rel = relPosix(file);
       // The package itself defines the surface; allow its own README to
@@ -97,9 +97,9 @@ describe("agent-first invariants (workspace-wide)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("does not read process.env.ANTPATH_* from any user-facing parser surface", () => {
-    // Platform-operator env vars (`ANTPATH_TOKEN_PEPPER`,
-    // `ANTPATH_CLI_BUNDLE_PATH`, etc.) live in BFF / worker code
+  it("does not read process.env.AEX_* from any user-facing parser surface", () => {
+    // Platform-operator env vars (`AEX_TOKEN_PEPPER`,
+    // `AEX_CLI_BUNDLE_PATH`, etc.) live in BFF / worker code
     // ONLY. The user-facing parser surfaces (the SDK client and the
     // public contracts parser) must NEVER read process.env directly:
     // doing so creates an implicit default the agent reading the
@@ -110,7 +110,7 @@ describe("agent-first invariants (workspace-wide)", () => {
       "packages/contracts/src"
     ];
     const offenders: string[] = [];
-    const pattern = /process\.env\.ANTPATH_/g;
+    const pattern = /process\.env\.AEX_/g;
     const allowlist = new Set<string>();
     for (const file of listSourceFiles()) {
       const rel = relPosix(file);

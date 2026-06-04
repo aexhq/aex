@@ -8,35 +8,35 @@ const sdkRoot = resolve(here, "..", "..");
 const sdkPkg = JSON.parse(readFileSync(resolve(sdkRoot, "package.json"), "utf8")) as {
   readonly bin?: Record<string, string>;
 };
-const sdkBundlePath = resolve(sdkRoot, sdkPkg.bin?.antpath ?? "");
+const sdkBundlePath = resolve(sdkRoot, sdkPkg.bin?.aex ?? "");
 const cliBundlePath = resolve(sdkRoot, "..", "cli", "dist", "cli.mjs");
 
 /**
  * Lock the agent-first surface invariant on the SHIPPED artifact level.
  *
- * The published `antpath` npm package must expose exactly one binary
- * — `antpath` — pointing at a real ESM bundle inside its own dist
+ * The published `@aexhq/sdk` npm package must expose exactly one binary
+ * — `aex` — pointing at a real ESM bundle inside its own dist
  * directory. If `bin` ever goes missing, the worker mounts no CLI in
  * the run container and the entire agent-first surface decision
  * collapses; the user-test suite catches this from the outside, but
  * this unit test catches it before publish.
  */
-describe("antpath package: CLI bin surface", () => {
-  it("declares exactly one bin entry named `antpath`", () => {
+describe("aex package: CLI bin surface", () => {
+  it("declares exactly one bin entry named `aex`", () => {
     const bin = sdkPkg.bin ?? {};
-    expect(Object.keys(bin)).toEqual(["antpath"]);
-    expect(bin.antpath).toBe("./dist/cli.mjs");
+    expect(Object.keys(bin)).toEqual(["aex"]);
+    expect(bin.aex).toBe("./dist/cli.mjs");
   });
 
   it("ships a bundled CLI in dist after pnpm build", () => {
-    // The SDK's build script copies @antpath/cli's bundle into its own
-    // dist. If you see this fail locally, run `pnpm --filter antpath
+    // The SDK's build script copies @aexhq/cli's bundle into its own
+    // dist. If you see this fail locally, run `pnpm --filter @aexhq/sdk
     // run build` (or the workspace `pnpm build`) first.
     expect(existsSync(cliBundlePath)).toBe(true);
     expect(existsSync(sdkBundlePath)).toBe(true);
   });
 
-  it("bundles a byte-identical copy of the @antpath/cli artifact", () => {
+  it("bundles a byte-identical copy of the @aexhq/cli artifact", () => {
     if (!existsSync(sdkBundlePath) || !existsSync(cliBundlePath)) return;
     const sdkText = readFileSync(sdkBundlePath);
     const cliText = readFileSync(cliBundlePath);

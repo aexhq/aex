@@ -1,7 +1,7 @@
-// Self-test fixture for the antpath ESLint rules. Lives next to the plugin
+// Self-test fixture for the aex ESLint rules. Lives next to the plugin
 // so it ships with the rules. NOT a Vitest test — runs as a fixture-style
 // lint smoke (`pnpm run lint:tests` will fail with EXACTLY the four
-// expected antpath/* violations on this file). The verification script
+// expected aex/* violations on this file). The verification script
 // at the bottom of this comment block runs it programmatically; manual
 // re-introduction here serves the same purpose for ad-hoc verification.
 //

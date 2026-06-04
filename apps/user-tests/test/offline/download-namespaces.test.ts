@@ -4,7 +4,7 @@
  * Verifies the run-artifact download surface ships in the *installed*
  * package — no live API required:
  *
- *   - `AntpathClient` exposes the whole-run verb `download` plus the four
+ *   - `AexClient` exposes the whole-run verb `download` plus the four
  *     per-namespace verbs `downloadOutputs` / `downloadLogs` /
  *     `downloadEvents` / `downloadMetadata`.
  *   - The CLI `download` command validates `--only <namespace>` BEFORE any
@@ -12,13 +12,13 @@
  *     documented "must be one of" usage error, and the bare-usage banner
  *     advertises the flag.
  *
- * Every assertion runs against `node_modules/antpath` in a fresh install
+ * Every assertion runs against `node_modules/@aexhq/sdk` in a fresh install
  * tempdir, so it exercises the published shape, not the monorepo symlink.
  */
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -27,18 +27,18 @@ describe("download namespaces surface (offline)", () => {
   let binPath: string;
 
   beforeAll(async () => {
-    install = await installAntpath();
-    binPath = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "antpath.cmd" : "antpath");
+    install = await installAex();
+    binPath = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "aex.cmd" : "aex");
   });
 
   afterAll(() => {
     install?.cleanup();
   });
 
-  it("AntpathClient exposes the whole-run + per-namespace download verbs", async () => {
+  it("AexClient exposes the whole-run + per-namespace download verbs", async () => {
     const script = `
-      const { AntpathClient } = await import("antpath");
-      const c = new AntpathClient({ apiToken: "t", baseUrl: "https://example.test" });
+      const { AexClient } = await import("@aexhq/sdk");
+      const c = new AexClient({ apiToken: "t", baseUrl: "https://example.test" });
       const verbs = ["download", "downloadOutputs", "downloadLogs", "downloadEvents", "downloadMetadata"];
       const result = {};
       for (const v of verbs) result[v] = typeof c[v];
@@ -50,26 +50,26 @@ describe("download namespaces surface (offline)", () => {
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, string>;
     for (const v of ["download", "downloadOutputs", "downloadLogs", "downloadEvents", "downloadMetadata"]) {
-      expect(result[v], `AntpathClient.${v} should be a function`).toBe("function");
+      expect(result[v], `AexClient.${v} should be a function`).toBe("function");
     }
   });
 
-  it("`antpath download` usage advertises --only and its namespaces", async () => {
+  it("`aex download` usage advertises --only and its namespaces", async () => {
     expect(existsSync(binPath)).toBe(true);
     // No run id → usage error (exit 2) that lists the --only namespaces.
     const result = await runCommand(
       binPath,
-      ["download", "--api-token", "t", "--antpath-url", "https://example.test"],
+      ["download", "--api-token", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/--only outputs\|logs\|events\|metadata/);
   });
 
-  it("`antpath download --only <bogus>` rejects before any network call", async () => {
+  it("`aex download --only <bogus>` rejects before any network call", async () => {
     const result = await runCommand(
       binPath,
-      ["download", "run-x", "--only", "bogus", "--api-token", "t", "--antpath-url", "https://example.test"],
+      ["download", "run-x", "--only", "bogus", "--api-token", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);

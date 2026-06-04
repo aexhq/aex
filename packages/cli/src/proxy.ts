@@ -1,7 +1,7 @@
 /**
- * antpath proxy — in-container subcommand. Calls an upstream HTTP
+ * aex proxy — in-container subcommand. Calls an upstream HTTP
  * endpoint via the managed proxy described by the per-run manifest at
- * ANTPATH_INDEX_PATH (`/mnt/session/uploads/antpath/index.json`). NO
+ * AEX_INDEX_PATH (`/mnt/session/uploads/aex/index.json`). NO
  * env-var reads; manifest + run token come from fixed paths.
  *
  * This file was extracted from run.ts when the host-side subcommands
@@ -18,8 +18,8 @@ import {
   PROXY_RESPONSE_MODES,
   type ProxyErrorBody,
   type ProxyIndexFile
-} from "@antpath/contracts";
-import { ANTPATH_INDEX_PATH, ANTPATH_RUN_TOKEN_PATH, type CliIO } from "./internal.js";
+} from "@aexhq/contracts";
+import { AEX_INDEX_PATH, AEX_RUN_TOKEN_PATH, type CliIO } from "./internal.js";
 import { SUCCESS, USAGE_ERR, RUNTIME_ERR, type CliExitCode } from "./host/common.js";
 
 interface ProxyFlags {
@@ -99,9 +99,9 @@ function expect(arr: readonly string[], idx: number, flag: string): string {
 class CliUsageError extends Error {}
 
 export async function printProxyHelp(io: CliIO): Promise<CliExitCode> {
-  io.stdout("antpath proxy — call an upstream HTTP endpoint via the managed proxy.\n\n");
+  io.stdout("aex proxy — call an upstream HTTP endpoint via the managed proxy.\n\n");
   io.stdout("Usage:\n");
-  io.stdout("  antpath proxy <endpoint-name> [flags]\n\n");
+  io.stdout("  aex proxy <endpoint-name> [flags]\n\n");
   io.stdout("Flags:\n");
   io.stdout("  --method <verb>          HTTP method (default: GET)\n");
   io.stdout("  --path <path>            Caller-supplied path; must match policy prefixes\n");
@@ -143,7 +143,7 @@ export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliE
   }
   if (!f.endpointName) {
     io.stderr("missing endpoint-name\n");
-    io.stderr("usage: antpath proxy <endpoint-name> [flags]\n");
+    io.stderr("usage: aex proxy <endpoint-name> [flags]\n");
     return USAGE_ERR;
   }
   if (f.responseMode && !(PROXY_RESPONSE_MODES as readonly string[]).includes(f.responseMode)) {
@@ -155,7 +155,7 @@ export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliE
   if (!manifest) {
     emitError(io, {
       error: "internal_error",
-      message: "manifest not mounted; this CLI must run inside an antpath-managed run"
+      message: "manifest not mounted; this CLI must run inside an aex-managed run"
     });
     return RUNTIME_ERR;
   }
@@ -170,7 +170,7 @@ export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliE
 
   let token: string;
   try {
-    token = (await io.readFile(ANTPATH_RUN_TOKEN_PATH)).trim();
+    token = (await io.readFile(AEX_RUN_TOKEN_PATH)).trim();
   } catch {
     emitError(io, {
       error: "unauthorized",
@@ -280,7 +280,7 @@ function emitError(io: CliIO, body: ProxyErrorBody): void {
 
 export async function tryReadManifest(io: CliIO): Promise<ProxyIndexFile | null> {
   try {
-    const raw = await io.readFile(ANTPATH_INDEX_PATH);
+    const raw = await io.readFile(AEX_INDEX_PATH);
     return JSON.parse(raw) as ProxyIndexFile;
   } catch {
     return null;

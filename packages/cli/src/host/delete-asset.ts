@@ -1,11 +1,11 @@
 /**
- * `antpath delete-asset <assetId|hash>` — DELETE /assets/{assetId}.
+ * `aex delete-asset <assetId|hash>` — DELETE /assets/{assetId}.
  *
  * Removes a workspace asset blob from the shared content-addressed store.
  * Runs that already snapshotted the asset into their own prefix are
  * unaffected. Accepts `sha256:<hex>` or a bare 64-hex digest.
  */
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -27,7 +27,7 @@ export async function runDeleteAssetCmd(io: CliIO, argv: readonly string[]): Pro
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath delete-asset <hash> [common flags]\n");
+    io.stderr("usage: aex delete-asset <hash> [common flags]\n");
     return USAGE_ERR;
   }
   const hash = positional[0]!;

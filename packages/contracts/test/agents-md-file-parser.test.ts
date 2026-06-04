@@ -73,7 +73,7 @@ describe("parseRunSubmissionRequest — files[] (asset refs)", () => {
   });
 
   it("accepts a kind:'asset' ref with absolute mountPath", () => {
-    const withMount = { ...VALID_ASSET, mountPath: "/antpath/files/x/data.csv" };
+    const withMount = { ...VALID_ASSET, mountPath: "/aex/files/x/data.csv" };
     const parsed = parseRunSubmissionRequest(baseRequest({ files: [withMount] }));
     expect(parsed.submission.files).toEqual([withMount]);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AntpathClient } from "../../src/index.js";
+import { AexClient } from "../../src/index.js";
 
 /**
  * SDK contract: runtimeManifest is accessed on the Run record returned by
@@ -23,16 +23,16 @@ describe("Run.runtimeManifest — read from the run record", () => {
     const manifest = {
       provider: "anthropic" as const,
       skillsRoot: "/workspace/skills",
-      filesRoot: "/mnt/session/uploads/antpath/files",
-      assetsRoot: "/mnt/session/uploads/antpath/assets",
+      filesRoot: "/mnt/session/uploads/aex/files",
+      assetsRoot: "/mnt/session/uploads/aex/assets",
       outputsRoot: "/mnt/session/outputs",
-      antpathCli: "/mnt/session/uploads/antpath/antpath",
-      indexJson: "/mnt/session/uploads/antpath/index.json",
-      readme: "/mnt/session/uploads/antpath/SKILLS.md",
-      runtimeJson: "/mnt/session/uploads/antpath/RUNTIME.json",
-      runtimeEnv: "/mnt/session/uploads/antpath/RUNTIME.env",
+      aexCli: "/mnt/session/uploads/aex/aex",
+      indexJson: "/mnt/session/uploads/aex/index.json",
+      readme: "/mnt/session/uploads/aex/SKILLS.md",
+      runtimeJson: "/mnt/session/uploads/aex/RUNTIME.json",
+      runtimeEnv: "/mnt/session/uploads/aex/RUNTIME.env",
       envVars: {
-        ANTPATH_CLI: "/mnt/session/uploads/antpath/antpath",
+        AEX_CLI: "/mnt/session/uploads/aex/aex",
         BROLL_STORE: "/mnt/session/broll/store"
       }
     };
@@ -44,7 +44,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
         runtimeManifest: manifest
       }
     });
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const runId = await client.submitRun({
       model: "m",
       prompt: "p",
@@ -62,7 +62,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
       submitBody: { id: "run_no_manifest", status: "queued" },
       getBody: { id: "run_no_manifest", status: "queued" }
     });
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const runId = await client.submitRun({
       model: "m",
       prompt: "p",

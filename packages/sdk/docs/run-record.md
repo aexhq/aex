@@ -6,7 +6,7 @@ title: Run record
 
 The run record is the durable product primitive for one run id. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured outputs, platform diagnostics, and manifest entries for custody and cost telemetry.
 
-`client.download(runId)` and `antpath download <run-id>` return a zip with this layout:
+`client.download(runId)` and `aex download <run-id>` return a zip with this layout:
 
 ```text
 manifest.json
@@ -24,8 +24,8 @@ logs/<platform diagnostic files>
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | `antpath.run-record.manifest.v1`. |
-| `runRecordSchemaVersion` | `antpath.run-record.v1`. |
+| `schemaVersion` | `aex.run-record.manifest.v1`. |
+| `runRecordSchemaVersion` | `aex.run-record.v1`. |
 | `runId` | The run the archive was assembled for. |
 | `namespaces[]` | The documented top-level namespaces: `metadata`, `events`, `outputs`, `logs`. |
 | `files[]` | Inventory of expected and present files with `namespace`, `path`, `role`, and `status`. |

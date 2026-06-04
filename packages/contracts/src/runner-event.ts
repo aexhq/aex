@@ -1,6 +1,6 @@
 /**
  * Unified runner event schema. The managed runtime feeds one shape into
- * the hosted antpath event pipeline:
+ * the hosted aex event pipeline:
  *
  *   - **Goose Managed** — the per-run managed runtime POSTs batches of
  *     NDJSON events to `/runs/{id}/runner/events`; the Goose adapter
@@ -81,7 +81,7 @@ export interface RunnerEvent {
 /**
  * Batch envelope. The runner ships one or more events per POST so the
  * inbox writes them atomically. `events` MUST be sorted by `seq`
- * ascending; api.antpath.ai rejects malformed batches before touching
+ * ascending; api.aex.dev rejects malformed batches before touching
  * Postgres.
  */
 export interface RunnerEventBatch {
@@ -92,7 +92,7 @@ export interface RunnerEventBatch {
 
 /**
  * Maximum number of events per batch. Bounds the size of the body
- * api.antpath.ai accepts and the size of the downstream Postgres / KV
+ * api.aex.dev accepts and the size of the downstream Postgres / KV
  * write. Larger streams are split into multiple batches; the runner is
  * responsible for chunking.
  */
@@ -122,7 +122,7 @@ export type RunnerEventBatchValidationCode = (typeof RUNNER_EVENT_BATCH_VALIDATI
 
 /**
  * Parse + validate an inbound runner event batch (untrusted input).
- * Used at the api.antpath.ai ingress so adapters never have to
+ * Used at the api.aex.dev ingress so adapters never have to
  * re-check the wire shape, and used by tests to assert the contract.
  *
  * Successful validation guarantees:

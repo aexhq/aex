@@ -8,7 +8,7 @@
  *      → hosted run-lifecycle → managed runtime
  *      → /provider-proxy/anthropic-messages/v1/messages
  *        (Goose dials ANTHROPIC_HOST; gooseProvider="anthropic" → Anthropic
- *         shape, NOT the OpenAI-compat layer, which antpath no longer
+ *         shape, NOT the OpenAI-compat layer, which aex no longer
  *         serves for Anthropic — it loses prompt caching)
  *      → hosted API injects vault'd DeepSeek key
  *      → api.anthropic.com /v1/messages
@@ -20,29 +20,29 @@
  * SDK/R2 assets when skills or files are needed.
  *
  * Required env:
- *   ANTPATH_API_URL              live api.antpath.ai URL
+ *   AEX_API_URL              live api.aex.dev URL
  *   DEEPSEEK_API_KEY    customer's DeepSeek API key
- *   ANTPATH_USER_TEST_TARBALL          path to packed antpath tgz
- *     OR ANTPATH_USER_TEST_VERSION     published version on npm
+ *   AEX_USER_TEST_TARBALL          path to packed aex tgz
+ *     OR AEX_USER_TEST_VERSION     published version on npm
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The live DeepSeek-Managed scenario must run against a real api.antpath.ai URL with a real DeepSeek key.`
+      `user-tests live: required env ${name} is missing. The live DeepSeek-Managed scenario must run against a real api.aex.dev URL with a real DeepSeek key.`
     );
   }
   return value;
 }
 
-const apiUrl = requireEnv("ANTPATH_API_URL");
+const apiUrl = requireEnv("AEX_API_URL");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["ANTPATH_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 interface LiveResult {
   readonly runId: string;
@@ -71,11 +71,11 @@ interface LiveResult {
   readonly leakedProviderKey: boolean;
 }
 
-describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose Managed runtime", () => {
+describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Managed runtime", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
 
   afterAll(() => {
@@ -87,14 +87,14 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
     async () => {
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AntpathClient } from "antpath";
+        import { AexClient } from "@aexhq/sdk";
 
-        const apiBase = process.env.ANTPATH_API_URL;
+        const apiBase = process.env.AEX_API_URL;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
-        const apiToken = process.env.ANTPATH_API_TOKEN;
+        const apiToken = process.env.AEX_API_TOKEN;
 
-        const client = new AntpathClient({
+        const client = new AexClient({
           baseUrl: apiBase,
           apiToken
         });
@@ -158,10 +158,10 @@ describe("live api.antpath.ai via installed SDK — DeepSeek round-trip on Goose
       const scriptPath = join(install.installDir, "live-deepseek-managed-a-runner.mjs");
       writeFileSync(scriptPath, script);
 
-      const apiToken = requireEnv("ANTPATH_API_TOKEN");
+      const apiToken = requireEnv("AEX_API_TOKEN");
       const passEnv: Record<string, string> = {
-        ANTPATH_API_URL: apiUrl,
-        ANTPATH_API_TOKEN: apiToken,
+        AEX_API_URL: apiUrl,
+        AEX_API_TOKEN: apiToken,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };

@@ -3,7 +3,7 @@ import type { RunProvider, RuntimeKind } from "./submission.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
-export const SIDE_EFFECT_AUDIT_KIND = "antpath.side_effect_audit.v1";
+export const SIDE_EFFECT_AUDIT_KIND = "aex.side_effect_audit.v1";
 
 export const SIDE_EFFECT_AUDIT_ACTIONS = [
   "run.submit.accepted",

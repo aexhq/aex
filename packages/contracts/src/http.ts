@@ -1,5 +1,5 @@
-import { AntpathApiError } from "./sdk-errors.js";
-import { ANTPATH_DEFAULT_BASE_URL } from "./stable.js";
+import { AexApiError } from "./sdk-errors.js";
+import { AEX_DEFAULT_BASE_URL } from "./stable.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -14,8 +14,8 @@ export type DebugSink = (line: string) => void;
 
 export interface HttpClientOptions {
   /**
-   * API plane root. Optional — defaults to `ANTPATH_DEFAULT_BASE_URL`
-   * (`https://api.antpath.ai`). Self-hosted deployments override with their
+   * API plane root. Optional — defaults to `AEX_DEFAULT_BASE_URL`
+   * (`https://api.aex.dev`). Self-hosted deployments override with their
    * own URL; no env var consults this value.
    */
   readonly baseUrl?: string;
@@ -41,7 +41,7 @@ export class HttpClient {
     if (!options.apiToken) {
       throw new Error("HttpClient: apiToken is required");
     }
-    const raw = options.baseUrl ?? ANTPATH_DEFAULT_BASE_URL;
+    const raw = options.baseUrl ?? AEX_DEFAULT_BASE_URL;
     const normalized = raw.endsWith("/") ? raw : `${raw}/`;
     this.#baseUrl = new URL(normalized);
     this.#apiToken = options.apiToken;
@@ -51,7 +51,7 @@ export class HttpClient {
 
   /** Emit a redacted round-trip trace (no auth header, body, or query). */
   #trace(method: string | undefined, url: URL, status: number, startedMs: number): void {
-    this.#debug?.(`[antpath] ${(method ?? "GET").toUpperCase()} ${url.pathname} -> ${status} ${Date.now() - startedMs}ms`);
+    this.#debug?.(`[aex] ${(method ?? "GET").toUpperCase()} ${url.pathname} -> ${status} ${Date.now() - startedMs}ms`);
   }
 
   async request<T>(
@@ -82,7 +82,7 @@ export class HttpClient {
     this.#trace(init.method, url, response.status, startedMs);
     const body = await readJson(response);
     if (!response.ok) {
-      throw new AntpathApiError(response.status, extractErrorMessage(body), body);
+      throw new AexApiError(response.status, extractErrorMessage(body), body);
     }
     return body as T;
   }
@@ -105,7 +105,7 @@ export class HttpClient {
     this.#trace(init.method, url, response.status, startedMs);
     if (!response.ok) {
       const body = await readJson(response);
-      throw new AntpathApiError(response.status, extractErrorMessage(body), body);
+      throw new AexApiError(response.status, extractErrorMessage(body), body);
     }
     return { response };
   }
@@ -136,10 +136,10 @@ function extractErrorMessage(body: unknown): string {
       const message = (obj.error as { readonly message?: unknown }).message;
       if (typeof message === "string") return message;
     }
-    // antpath Worker error envelope: `{ ok:false, code, message }`. Surface
+    // aex Worker error envelope: `{ ok:false, code, message }`. Surface
     // the server's message so structured rejections (e.g. runtime support)
     // aren't flattened to the generic fallback below.
     if (typeof obj.message === "string") return obj.message;
   }
-  return "antpath API request failed";
+  return "aex API request failed";
 }

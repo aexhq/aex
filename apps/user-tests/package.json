@@ -1,9 +1,9 @@
 {
-  "name": "@antpath/user-tests",
+  "name": "@aexhq/user-tests",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Layer-4 'user tests' — exercise the packed/published antpath artifact in a clean install tree, the way a real user or AI agent would on day one. NEVER imports antpath or @antpath/* workspace packages directly; everything goes through a child process whose cwd is a fresh `npm install` tempdir.",
+  "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. NEVER imports aex or @aexhq/* workspace packages directly; everything goes through a child process whose cwd is a fresh `npm install` tempdir.",
   "scripts": {
     "test:user": "vitest run --config vitest.config.ts test",
     "test:user:offline": "vitest run --config vitest.config.ts --maxWorkers 1 --minWorkers 1 test/offline",
@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
-    "@antpath/conformance": "workspace:*",
+    "@aexhq/conformance": "workspace:*",
     "dotenv": "16.5.0",
     "typescript": "5.8.3",
     "vitest": "3.1.2"

@@ -1,7 +1,7 @@
 /**
- * `antpath delete <run-id>` — DELETE /api/runs/{id}.
+ * `aex delete <run-id>` — DELETE /api/runs/{id}.
  */
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -23,7 +23,7 @@ export async function runDeleteCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath delete <run-id> [common flags]\n");
+    io.stderr("usage: aex delete <run-id> [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

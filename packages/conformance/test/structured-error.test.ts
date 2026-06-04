@@ -4,7 +4,7 @@ import { expectStructuredError } from "../src/structured-error.js";
 describe("expectStructuredError", () => {
   it("accepts a named error class in the default allow-list", () => {
     expect(() =>
-      expectStructuredError({ errorClass: "AntpathError", errorMessage: "boom" })
+      expectStructuredError({ errorClass: "AexError", errorMessage: "boom" })
     ).not.toThrow();
   });
 
@@ -27,7 +27,7 @@ describe("expectStructuredError", () => {
     expect(() =>
       expectStructuredError(
         { errorClass: "TypeError", errorMessage: "boom" },
-        { classes: ["AntpathError", "ValidationError"] }
+        { classes: ["AexError", "ValidationError"] }
       )
     ).toThrow(/not in allow-list/);
   });
@@ -35,13 +35,13 @@ describe("expectStructuredError", () => {
   it("requires messageIncludes substring (case-insensitive)", () => {
     expect(() =>
       expectStructuredError(
-        { errorClass: "AntpathError", errorMessage: "Runtime native_unsupported" },
+        { errorClass: "AexError", errorMessage: "Runtime native_unsupported" },
         { messageIncludes: "native" }
       )
     ).not.toThrow();
     expect(() =>
       expectStructuredError(
-        { errorClass: "AntpathError", errorMessage: "something else" },
+        { errorClass: "AexError", errorMessage: "something else" },
         { messageIncludes: "native" }
       )
     ).toThrow(/does not include "native"/);

@@ -1,8 +1,8 @@
 /**
- * `antpath status <run-id>` — fetch a single run record via GET
+ * `aex status <run-id>` — fetch a single run record via GET
  * /api/runs/{id} and print it as JSON.
  */
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -24,7 +24,7 @@ export async function runStatusCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath status <run-id> [common flags]\n");
+    io.stderr("usage: aex status <run-id> [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

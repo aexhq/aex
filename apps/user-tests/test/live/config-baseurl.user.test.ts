@@ -13,10 +13,10 @@
  *     is the signal the customer baseUrl was used (pre-fix it hit the real
  *     api.deepseek.com and replied READY).
  *
- * Only passes once the baseUrl-honoring fix is DEPLOYED to antpath-local.
+ * Only passes once the baseUrl-honoring fix is DEPLOYED to aex-local.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, type InstallResult } from "../_fixtures/install.js";
+import { installAex, type InstallResult } from "../_fixtures/install.js";
 import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
@@ -26,7 +26,7 @@ const BAD_BASE_URL = "https://baseurl-canary.invalid.example";
 describe("user/SDK: secrets.{provider}.baseUrl is honored (unreachable baseUrl fails the run)", () => {
   let install: InstallResult;
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   }, 240_000);
   afterAll(() => install?.cleanup());
 

@@ -14,7 +14,7 @@ on:
           - dark
 
 concurrency:
-  group: release-antpath
+  group: release-aex
   cancel-in-progress: false
 
 permissions:
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish antpath
+    name: Publish @aexhq/sdk
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
@@ -52,12 +52,12 @@ jobs:
         run: |
           version="$(node -p "require('./packages/sdk/package.json').version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing antpath@$version"
+          echo "Releasing @aexhq/sdk@$version"
 
       - name: Ensure npm versions are available
         run: |
           set -euo pipefail
-          for pkg in antpath @antpath/cli @antpath/contracts @antpath/conformance; do
+          for pkg in @aexhq/sdk @aexhq/cli @aexhq/contracts @aexhq/conformance; do
             node scripts/cicd/assert-npm-version-available.mjs "$pkg" "${{ steps.version.outputs.version }}"
           done
 
@@ -73,28 +73,28 @@ jobs:
       - name: Pack SDK tarball
         id: pack
         run: |
-          pack_dir="$RUNNER_TEMP/antpath-pack"
+          pack_dir="$RUNNER_TEMP/aex-pack"
           mkdir -p "$pack_dir"
-          pnpm --filter antpath pack --pack-destination "$pack_dir"
-          tarball="$(find "$pack_dir" -maxdepth 1 -name 'antpath-*.tgz' -print -quit)"
+          pnpm --filter @aexhq/sdk pack --pack-destination "$pack_dir"
+          tarball="$(find "$pack_dir" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
           if [ -z "$tarball" ]; then
-            echo "No antpath tarball was produced." >&2
+            echo "No @aexhq/sdk tarball was produced." >&2
             exit 1
           fi
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Offline user tests against tarball
         env:
-          ANTPATH_USER_TEST_TARBALL: ${{ steps.pack.outputs.tarball }}
+          AEX_USER_TEST_TARBALL: ${{ steps.pack.outputs.tarball }}
         run: pnpm run test:user:offline
 
       - name: Final npm version check
-        run: node scripts/cicd/assert-npm-version-available.mjs antpath "${{ steps.version.outputs.version }}"
+        run: node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
 
       - name: Publish to npm (token + provenance)
         # Auth uses NPM_TOKEN (granular, publish rights for the four packages).
         # Trusted publishing (tokenless OIDC) can't be used for the first release
-        # because @antpath/cli, @antpath/contracts, and @antpath/conformance do
+        # because @aexhq/cli, @aexhq/contracts, and @aexhq/conformance do
         # not yet exist on npm and a trusted publisher can only be configured for
         # an existing package. `--provenance` is independent of trusted publishing
         # and still produces a signed attestation (this repo is public + has
@@ -112,7 +112,7 @@ jobs:
             echo "::error::NPM_TOKEN not set in the npm-release environment — required to publish (3 of the 4 packages are new, so tokenless trusted publishing is not yet possible)."
             exit 1
           fi
-          for pkg in @antpath/contracts @antpath/conformance @antpath/cli antpath; do
+          for pkg in @aexhq/contracts @aexhq/conformance @aexhq/cli @aexhq/sdk; do
             echo "publishing $pkg under tag $NPM_DIST_TAG"
             pnpm --filter "$pkg" publish --provenance --no-git-checks --access public --tag "$NPM_DIST_TAG"
           done
@@ -144,9 +144,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Wait for npm registry
-        run: node scripts/cicd/wait-for-npm.mjs antpath "${{ needs.publish.outputs.version }}"
+        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ needs.publish.outputs.version }}"
 
       - name: Offline user tests against published package
         env:
-          ANTPATH_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
+          AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
         run: pnpm run test:user:offline

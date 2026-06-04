@@ -1,7 +1,7 @@
 /**
- * Unit tests for `AntpathClient.getRunDebugLogs` / `AntpathClient.debugLogs`.
+ * Unit tests for `AexClient.getRunDebugLogs` / `AexClient.debugLogs`.
  *
- * The helper bundles the per-run debug artifacts antpath captures
+ * The helper bundles the per-run debug artifacts aex captures
  * automatically. These all live in the run's `logs` namespace, so the
  * helper lists `/logs` and
  * downloads each via the gated `/logs/:id/download` proxy (not anonymous
@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { AntpathClient } from "../../src/index.js";
+import { AexClient } from "../../src/index.js";
 
 const RUN_ID = "run_debug_logs";
 const STDERR_TEXT = "boot ok\nruntime spawn\nMCP loaded\n";
@@ -54,7 +54,7 @@ const LIST_BODY = {
   ]
 };
 
-describe("AntpathClient.getRunDebugLogs", () => {
+describe("AexClient.getRunDebugLogs", () => {
   it("lists the logs namespace and decodes textual content as UTF-8", async () => {
     const calls: string[] = [];
     const stub: typeof fetch = async (input) => {
@@ -77,7 +77,7 @@ describe("AntpathClient.getRunDebugLogs", () => {
       }
       return new Response("no handler", { status: 500 });
     };
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.runId).toBe(RUN_ID);
     expect(bundle.logs).toHaveLength(4);
@@ -118,7 +118,7 @@ describe("AntpathClient.getRunDebugLogs", () => {
       }
       return new Response("no handler", { status: 500 });
     };
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.logs).toHaveLength(3);
     expect(bundle.errors).toHaveLength(1);
@@ -133,7 +133,7 @@ describe("AntpathClient.getRunDebugLogs", () => {
       }
       return new Response("no handler", { status: 500 });
     };
-    const client = new AntpathClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.logs).toHaveLength(0);
     expect(bundle.errors).toHaveLength(0);

@@ -45,7 +45,7 @@ function checkSdkPackageManifest() {
   ]);
   const allowedRuntimeDeps = new Set(baseline.sdkPackage.allowedRuntimeDependencies);
   for (const dep of runtimeDeps) {
-    if (dep.startsWith("@antpath/")) {
+    if (dep.startsWith("@aexhq/")) {
       failures.push(`packages/sdk publishes runtime dependency ${dep}; inline or move it behind public contracts`);
     }
     if (!allowedRuntimeDeps.has(dep)) {
@@ -70,14 +70,14 @@ function checkContractsInlineBaseline() {
 
 function checkPublicImportDirection() {
   const publicRoots = baseline.publicSourceRoots.map((root) => resolve(repoRoot, root));
-  const allowedAntpathImports = new Set(baseline.temporaryAllowedPublicImports);
+  const allowedAexImports = new Set(baseline.temporaryAllowedPublicImports);
   const offenders = [];
 
   for (const root of publicRoots) {
     for (const file of walk(root, isSourceFile)) {
       const text = readFileSync(file, "utf8");
       for (const specifier of importSpecifiers(text)) {
-        if (specifier.startsWith("@antpath/") && !allowedAntpathImports.has(specifier)) {
+        if (specifier.startsWith("@aexhq/") && !allowedAexImports.has(specifier)) {
           offenders.push(`${rel(file)} imports ${specifier}`);
           continue;
         }
@@ -234,7 +234,7 @@ function checkSdkPackDryRun() {
   if (missingBuiltFiles.length > 0) {
     failures.push(
       `SDK npm pack dry-run is missing built file(s): ${missingBuiltFiles.join(", ")}. ` +
-        "Run pnpm --filter antpath run build before the boundary check."
+        "Run pnpm --filter @aexhq/sdk run build before the boundary check."
     );
     return;
   }

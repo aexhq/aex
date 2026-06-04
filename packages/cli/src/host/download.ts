@@ -1,5 +1,5 @@
 /**
- * `antpath download <run-id> [--only namespace] [--out path]` — download
+ * `aex download <run-id> [--only namespace] [--out path]` — download
  * a run's content as a zip, assembled client-side from the public read
  * endpoints (no per-output id required).
  *
@@ -14,11 +14,11 @@
  * namespace (files at the zip root).
  *
  * `--out` resolves relative to the host CWD; if omitted the file is
- * written to `antpath-run-<run-id>[-<namespace>].zip` in the current
+ * written to `aex-run-<run-id>[-<namespace>].zip` in the current
  * directory.
  */
 import { resolve as resolvePath } from "node:path";
-import { operations } from "@antpath/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -66,7 +66,7 @@ export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promis
 
   const positional = onlyFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: antpath download <run-id> [--only outputs|logs|events|metadata] [--out path] [common flags]\n");
+    io.stderr("usage: aex download <run-id> [--only outputs|logs|events|metadata] [--out path] [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;
@@ -97,5 +97,5 @@ function resolveDestination(io: CliIO, out: string | null, runId: string, namesp
     return resolvePath(io.cwd(), out);
   }
   const suffix = namespace ? `-${namespace}` : "";
-  return resolvePath(io.cwd(), `antpath-run-${runId}${suffix}.zip`);
+  return resolvePath(io.cwd(), `aex-run-${runId}${suffix}.zip`);
 }

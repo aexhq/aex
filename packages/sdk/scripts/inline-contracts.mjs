@@ -1,10 +1,10 @@
-// Inline `@antpath/contracts` into the SDK's `dist/` so the published
-// `antpath` npm tarball is fully self-contained.
+// Inline `@aexhq/contracts` into the SDK's `dist/` so the published
+// `aex` npm tarball is fully self-contained.
 //
 // Why this script exists
 // ----------------------
-// The SDK source imports from `@antpath/contracts`, which publishes in
-// lockstep with `antpath`. The SDK still inlines its dist output so a
+// The SDK source imports from `@aexhq/contracts`, which publishes in
+// lockstep with `aex`. The SDK still inlines its dist output so a
 // local packed SDK tarball can be clean-installed without staging a
 // companion contracts tarball first.
 //
@@ -12,16 +12,16 @@
 //   1. Copy packages/contracts/dist/** -> packages/sdk/dist/_contracts/**,
 //      skipping sourcemap / tsbuildinfo files (point at source paths
 //      that are not in the tarball anyway).
-//   2. Rewrite every `from "@antpath/contracts"` in the SDK's emitted
+//   2. Rewrite every `from "@aexhq/contracts"` in the SDK's emitted
 //      dist/*.js and dist/*.d.ts to `from "./_contracts/index.js"`.
 //      Files inside _contracts/ already use relative imports between
 //      siblings so no further rewriting is needed there.
-//   3. Sanity-check: no `@antpath/contracts` string survives in the SDK's
+//   3. Sanity-check: no `@aexhq/contracts` string survives in the SDK's
 //      dist (excluding the _contracts/ directory itself, where the
 //      substring is allowed to appear in comments). Throw loud if any
 //      leaked — that means we'd ship another broken tarball.
 //
-// Pair this with keeping `@antpath/contracts` in devDependencies in
+// Pair this with keeping `@aexhq/contracts` in devDependencies in
 // packages/sdk/package.json — npm strips devDependencies from the
 // published tarball, so the rewritten dist has zero external workspace
 // references at install time.
@@ -41,7 +41,7 @@ const contractsIndex = resolve(contractsDistDir, "index.js");
 const sdkDistDir = resolve(sdkRoot, "dist");
 const inlinedDir = resolve(sdkDistDir, "_contracts");
 
-const CONTRACTS_IMPORT_SPECIFIER = "@antpath/contracts";
+const CONTRACTS_IMPORT_SPECIFIER = "@aexhq/contracts";
 const REWRITE_TARGET = "./_contracts/index.js";
 
 async function fileExists(path) {
@@ -55,9 +55,9 @@ async function fileExists(path) {
 
 if (!(await fileExists(contractsIndex))) {
   throw new Error(
-    `Missing @antpath/contracts dist at ${contractsIndex}. ` +
+    `Missing @aexhq/contracts dist at ${contractsIndex}. ` +
       `Build the contracts package before packing the SDK ` +
-      `(e.g. \`pnpm --filter @antpath/contracts run build\`).`
+      `(e.g. \`pnpm --filter @aexhq/contracts run build\`).`
   );
 }
 
@@ -77,7 +77,7 @@ await cp(contractsDistDir, inlinedDir, {
   },
 });
 
-// 2. Rewrite SDK dist files that import from @antpath/contracts. We only
+// 2. Rewrite SDK dist files that import from @aexhq/contracts. We only
 //    look at the dist root (one level), not _contracts/ — those files
 //    came from packages/contracts/dist and don't reference the bare
 //    specifier.
@@ -109,7 +109,7 @@ for (const file of await listSdkDistRoots()) {
   rewritten.push(relative(sdkDistDir, file));
 }
 
-// 3. Sanity-check: no bare @antpath/contracts specifier survived in the
+// 3. Sanity-check: no bare @aexhq/contracts specifier survived in the
 //    SDK dist root (sourcemaps may still reference it as a string but
 //    we removed those above).
 async function scanForLeaks() {
@@ -133,6 +133,6 @@ if (leaks.length > 0) {
 }
 
 console.log(
-  `inlined @antpath/contracts into ${relative(sdkRoot, inlinedDir)} ` +
+  `inlined @aexhq/contracts into ${relative(sdkRoot, inlinedDir)} ` +
     `(rewrote ${rewritten.length} file${rewritten.length === 1 ? "" : "s"}: ${rewritten.join(", ")})`
 );

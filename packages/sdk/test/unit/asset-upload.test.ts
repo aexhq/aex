@@ -8,7 +8,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/asset-upload.js";
-import { AntpathApiError } from "../../src/index.js";
+import { AexApiError } from "../../src/index.js";
 
 const bytes = new TextEncoder().encode("hello skill bundle");
 // sha256("hello skill bundle") — precomputed so the client-side check passes.
@@ -77,7 +77,7 @@ describe("uploadAsset (direct-to-storage)", () => {
       request: vi.fn(async (path: string) => {
         calls.push(path);
         if (path === "/assets/presign") {
-          throw new AntpathApiError(503, "object storage S3 creds not configured", { ok: false, code: "presign_unconfigured" });
+          throw new AexApiError(503, "object storage S3 creds not configured", { ok: false, code: "presign_unconfigured" });
         }
         return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, sizeBytes: bytes.byteLength } as unknown;
       }) as AssetsHttpClient["request"]

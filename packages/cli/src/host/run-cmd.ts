@@ -1,5 +1,5 @@
 /**
- * `antpath run` — submit a flat run via the dashboard BFF using the
+ * `aex run` — submit a flat run via the dashboard BFF using the
  * same operations module the SDK uses.
  *
  * Two input modes (mutually exclusive):
@@ -33,7 +33,7 @@
  *   --timeout <dur>                with --follow: give up after this long (e.g. 8m); exit code 3
  */
 import {
-  ANTPATH_DEFAULT_BASE_URL,
+  AEX_DEFAULT_BASE_URL,
   DEFAULT_RUN_PROVIDER,
   operations,
   parseRunRequestConfig,
@@ -55,7 +55,7 @@ import {
   type RuntimeSize,
   type RuntimeKind,
   type SkillRef
-} from "@antpath/contracts";
+} from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import {
@@ -81,8 +81,8 @@ import {
 // back it with the canonical terminal set rather than a drift-prone local list.
 const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
-/* eslint-disable @typescript-eslint/no-unused-vars */ // ANTPATH_DEFAULT_BASE_URL is re-exported only for assertion clarity.
-void ANTPATH_DEFAULT_BASE_URL;
+/* eslint-disable @typescript-eslint/no-unused-vars */ // AEX_DEFAULT_BASE_URL is re-exported only for assertion clarity.
+void AEX_DEFAULT_BASE_URL;
 
 export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "run")) return USAGE_ERR;
@@ -230,7 +230,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     return USAGE_ERR;
   }
   if (positional.length > 0) {
-    io.stderr(`antpath run takes no positional arguments (got: ${positional.join(" ")})\n`);
+    io.stderr(`aex run takes no positional arguments (got: ${positional.join(" ")})\n`);
     return USAGE_ERR;
   }
 

@@ -2,27 +2,27 @@
  * Scenario 3: sdk-imports.test.ts
  *
  * Verifies the single-surface invariant on the *installed* package:
- *   - `await import("antpath")` resolves at runtime and exports the
+ *   - `await import("@aexhq/sdk")` resolves at runtime and exports the
  *     canonical named bindings.
- *   - `require("antpath")` fails with ERR_REQUIRE_ESM (the package is
+ *   - `require("@aexhq/sdk")` fails with ERR_REQUIRE_ESM (the package is
  *     ESM-only — that's the contract).
- *   - Subpath imports such as `antpath/platform` or `antpath/proxy`
+ *   - Subpath imports such as `@aexhq/sdk/platform` or `@aexhq/sdk/proxy`
  *     fail with ERR_PACKAGE_PATH_NOT_EXPORTED.
  *
  * Every assertion runs in a child Node process whose cwd is the install
- * tempdir, so resolution goes through the installed `node_modules/antpath`
+ * tempdir, so resolution goes through the installed `node_modules/@aexhq/sdk`
  * and NOT the monorepo's pnpm symlink.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("sdk imports", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
   });
 
   afterAll(() => {
@@ -35,11 +35,11 @@ describe("sdk imports", () => {
     return await runCommand(process.execPath, [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
-  it("await import(\"antpath\") resolves and exports the canonical names", async () => {
+  it("await import(\"@aexhq/sdk\") resolves and exports the canonical names", async () => {
     const script = `
-      const mod = await import("antpath");
+      const mod = await import("@aexhq/sdk");
       const names = [
-        "AntpathClient",
+        "AexClient",
         "Skill",
         "McpServer",
         "RUN_RECORD_SCHEMA_VERSION",
@@ -52,7 +52,7 @@ describe("sdk imports", () => {
         result[name] = typeof mod[name];
       }
       // Confirm the legacy platform export is GONE — single-surface invariant.
-      result.AntpathPlatformClient_present = (typeof mod.AntpathPlatformClient !== "undefined");
+      result.AexPlatformClient_present = (typeof mod.AexPlatformClient !== "undefined");
       // Confirm the legacy Template/compileTemplate exports are GONE — flat surface invariant (P5).
       result.Template_present = (typeof mod.Template !== "undefined");
       result.TemplateDefinition_present = (typeof mod.TemplateDefinition !== "undefined");
@@ -66,14 +66,14 @@ describe("sdk imports", () => {
     const child = await runChild(script, "esm-import.mjs");
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, string | boolean>;
-    expect(result["AntpathClient"]).toBe("function");
+    expect(result["AexClient"]).toBe("function");
     expect(result["Skill"]).toBe("function");
     expect(result["McpServer"]).toBe("function");
     expect(result["RUN_RECORD_SCHEMA_VERSION"]).toBe("string");
     expect(result["RUN_RECORD_MANIFEST_SCHEMA_VERSION"]).toBe("string");
     expect(result["validateProxyAuth"]).toBe("function");
     expect(result["buildPlatformAllowedHosts"]).toBe("function");
-    expect(result["AntpathPlatformClient_present"]).toBe(false);
+    expect(result["AexPlatformClient_present"]).toBe(false);
     expect(result["Template_present"]).toBe(false);
     expect(result["TemplateDefinition_present"]).toBe(false);
     expect(result["Blueprint_present"]).toBe(false);
@@ -83,11 +83,11 @@ describe("sdk imports", () => {
     expect(result["RunRef_present"]).toBe(false);
   });
 
-  it("require(\"antpath\") fails with a clear no-CJS error", async () => {
+  it("require(\"@aexhq/sdk\") fails with a clear no-CJS error", async () => {
     // .cjs forces CommonJS context regardless of host package.json type.
     const script = `
       try {
-        require("antpath");
+        require("@aexhq/sdk");
         process.stdout.write(JSON.stringify({ ok: true }));
       } catch (err) {
         process.stdout.write(JSON.stringify({ ok: false, code: err.code, message: String(err.message).slice(0, 200) }));
@@ -100,7 +100,7 @@ describe("sdk imports", () => {
     // The package's "exports" map has no `require` condition, so Node
     // rejects at the export-resolution layer with ERR_PACKAGE_PATH_NOT_EXPORTED
     // (not ERR_REQUIRE_ESM, which fires later in the pipeline). Either
-    // code communicates the same contract: antpath is ESM-only via the
+    // code communicates the same contract: @aexhq/sdk is ESM-only via the
     // root entry. Accept both for forward-compat with future Node
     // resolver changes.
     expect(["ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_REQUIRE_ESM"]).toContain(result.code);
@@ -108,7 +108,7 @@ describe("sdk imports", () => {
 
   it("subpath imports fail with ERR_PACKAGE_PATH_NOT_EXPORTED", async () => {
     const script = `
-      const probes = ["antpath/platform", "antpath/proxy", "antpath/cli"];
+      const probes = ["@aexhq/sdk/platform", "@aexhq/sdk/proxy", "@aexhq/sdk/cli"];
       const out = {};
       for (const spec of probes) {
         try {
@@ -123,7 +123,7 @@ describe("sdk imports", () => {
     const child = await runChild(script, "subpath.mjs");
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, { ok: boolean; code?: string }>;
-    for (const spec of ["antpath/platform", "antpath/proxy", "antpath/cli"]) {
+    for (const spec of ["@aexhq/sdk/platform", "@aexhq/sdk/proxy", "@aexhq/sdk/cli"]) {
       expect(result[spec]).toBeDefined();
       expect(result[spec]!.ok).toBe(false);
       expect(result[spec]!.code).toBe("ERR_PACKAGE_PATH_NOT_EXPORTED");

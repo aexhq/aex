@@ -7,17 +7,17 @@
  * it type-check.
  *
  * Strategy:
- *   1. Install antpath into the shared fixture tempdir.
+ *   1. Install aex into the shared fixture tempdir.
  *   2. Add TypeScript as a devDependency in the same tempdir.
  *   3. Write consumer tsconfigs + sources that import values and types
- *      only from the root `antpath` entry.
+ *      only from the root `aex` entry.
  *   4. Spawn `tsc --noEmit` from the install's local typescript.
  *   5. Assert exit 0 with no diagnostics.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAntpath, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -25,7 +25,7 @@ describe("typescript consumer", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAntpath();
+    install = await installAex();
     // Add TypeScript + Node declarations to the same install tempdir.
     // The SDK is a Node package and its public declarations reference
     // node:* modules, so strict consumers need the matching type package.
@@ -78,9 +78,9 @@ describe("typescript consumer", () => {
     const consumer = `
       import {
         AgentsMd,
-        AntpathApiError,
-        AntpathClient,
-        AntpathError,
+        AexApiError,
+        AexClient,
+        AexError,
         CleanupError,
         CredentialValidationError,
         DEFAULT_RUNTIME_SIZE,
@@ -130,7 +130,7 @@ describe("typescript consumer", () => {
         type SkillRef,
         type SubmitRunOptions,
         type WaitForRunOptions
-      } from "antpath";
+      } from "@aexhq/sdk";
 
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
@@ -267,7 +267,7 @@ describe("typescript consumer", () => {
           runtime: "managed",
           createdAt: new Date(0).toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
-      const client = new AntpathClient({
+      const client = new AexClient({
         apiToken: "ant_type_surface",
         baseUrl: "https://example.invalid",
         fetch: fetchFake
@@ -280,8 +280,8 @@ describe("typescript consumer", () => {
       const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
 
       const errors = [
-        AntpathError,
-        AntpathApiError,
+        AexError,
+        AexApiError,
         CleanupError,
         CredentialValidationError,
         ProviderError,
@@ -321,17 +321,17 @@ describe("typescript consumer", () => {
     `;
     const legacyNegative = `
       // @ts-expect-error legacy platform class must stay absent from the root surface
-      import { AntpathPlatformClient } from "antpath";
+      import { AexPlatformClient } from "@aexhq/sdk";
       // @ts-expect-error legacy template class must stay absent from the root surface
-      import { Template } from "antpath";
+      import { Template } from "@aexhq/sdk";
       // @ts-expect-error legacy template type must stay absent from the root surface
-      import type { TemplateDefinition } from "antpath";
+      import type { TemplateDefinition } from "@aexhq/sdk";
       // @ts-expect-error legacy blueprint type must stay absent from the root surface
-      import type { Blueprint } from "antpath";
+      import type { Blueprint } from "@aexhq/sdk";
       // @ts-expect-error legacy compile helper must stay absent from the root surface
-      import { compileTemplate } from "antpath";
+      import { compileTemplate } from "@aexhq/sdk";
       // @ts-expect-error legacy run reference must stay absent from the root surface
-      import type { RunRef } from "antpath";
+      import type { RunRef } from "@aexhq/sdk";
       export {};
     `;
     writeFileSync(join(install.installDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
@@ -360,7 +360,7 @@ describe("typescript consumer", () => {
     };
     const consumer = `
       import {
-        AntpathClient,
+        AexClient,
         RuntimeSizes,
         ProxyEndpoint,
         RUN_PROVIDERS,
@@ -369,7 +369,7 @@ describe("typescript consumer", () => {
         type RuntimeKind,
         type RuntimeSize,
         type SubmitRunOptions
-      } from "antpath";
+      } from "@aexhq/sdk";
 
       const provider: RunProvider = RUN_PROVIDERS[0];
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
@@ -393,7 +393,7 @@ describe("typescript consumer", () => {
         secrets: { anthropic: { apiKey: "sk-ant-bundler" } }
       } satisfies SubmitRunOptions;
 
-      const client = new AntpathClient({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
+      const client = new AexClient({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
       void client;
       void options;
     `;

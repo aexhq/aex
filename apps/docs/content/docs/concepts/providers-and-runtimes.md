@@ -1,10 +1,10 @@
 ---
 title: Providers & Runtimes
-description: How provider selection maps to antpath runtime execution.
+description: How provider selection maps to aex runtime execution.
 icon: Network
 ---
 
-antpath exposes one customer-facing submission shape across providers:
+aex exposes one customer-facing submission shape across providers:
 
 | Provider | Default runtime |
 | --- | --- |
@@ -14,7 +14,7 @@ antpath exposes one customer-facing submission shape across providers:
 | `gemini` | Goose Managed |
 | `mistral` | Goose Managed |
 
-Goose Managed means antpath starts a per-run Goose process in an isolated managed runtime and routes upstream model calls through the BYOK provider-proxy.
+Goose Managed means aex starts a per-run Goose process in an isolated managed runtime and routes upstream model calls through the BYOK provider-proxy.
 
 The optional `runtime` field accepts only `"managed"`; omitting it also uses Goose Managed. `runtime: "native"` is rejected as an invalid runtime selector.
 

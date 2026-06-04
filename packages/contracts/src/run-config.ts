@@ -22,7 +22,7 @@
  *     run snapshot.
  *
  *   - `RunRequestConfig` is the credential-free set of run parameters that
- *     can be persisted to disk (e.g. `antpath run --config run.json`) or
+ *     can be persisted to disk (e.g. `aex run --config run.json`) or
  *     returned from ordinary application helper functions. It excludes
  *     `secrets`/`idempotencyKey`/`signal`; strings are already resolved at
  *     the call site before submission.
@@ -440,7 +440,7 @@ export function hasSkillMdAtRoot(manifest: SkillBundleManifest): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Remote MCP transports Antpath accepts. Both are over HTTP — `http`
+ * Remote MCP transports Aex accepts. Both are over HTTP — `http`
  * is the streamable-HTTP transport, `sse` is the event-stream
  * transport. `stdio` is explicitly NOT a value here: local-process
  * MCP is not implemented.
@@ -456,7 +456,7 @@ export type RemoteMcpTransport = (typeof REMOTE_MCP_TRANSPORTS)[number];
  * message and a user can find it via grep.
  */
 export const REMOTE_MCP_STDIO_REJECTED_MESSAGE =
-  "stdio MCP servers are not supported by Antpath. Antpath supports remote MCP servers over HTTP/SSE only.";
+  "stdio MCP servers are not supported by Aex. Aex supports remote MCP servers over HTTP/SSE only.";
 
 /**
  * Stdio-only fields. Used by the parser to detect a stdio shape even
@@ -679,7 +679,7 @@ function parseRunConfigMcpServerRef(input: unknown, path: string): RunConfigMcpS
 // ---------------------------------------------------------------------------
 
 /**
- * Plain JSON accepted by `antpath run --config <path>`. This is not a
+ * Plain JSON accepted by `aex run --config <path>`. This is not a
  * platform object; it is only the non-secret run parameters that the CLI folds
  * into the normal `submitRun` request.
  */

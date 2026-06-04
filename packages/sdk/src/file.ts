@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { FileRef } from "@antpath/contracts";
+import type { FileRef } from "@aexhq/contracts";
 import { hashSkillBundle } from "./bundle.js";
 import { zipSync } from "fflate";
 

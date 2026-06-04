@@ -11,13 +11,13 @@ const CWD = "/tmp/cli-test";
 
 /**
  * Make a real temp directory containing a SKILL.md file so the
- * `antpath skills upload --file ...` path can read actual bytes.
+ * `aex skills upload --file ...` path can read actual bytes.
  * The skills-cmd module reads from `node:fs/promises` directly (not the
  * CliIO abstraction), so virtualizing files via `makeHostIo({files})`
  * does not work for this path. The test is responsible for cleanup.
  */
 function makeSkillsTmpDir(skillBody: string): { dir: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), "antpath-cli-skills-"));
+  const dir = mkdtempSync(join(tmpdir(), "aex-cli-skills-"));
   writeFileSync(join(dir, "SKILL.md"), skillBody, "utf8");
   return {
     dir,
@@ -61,7 +61,7 @@ function makeHostIo(opts: {
   const writes = opts.writes ?? new Map<string, Uint8Array>();
 
   const io: CliIO = {
-    argv: ["node", "/antpath/antpath", ...opts.argv],
+    argv: ["node", "/aex/aex", ...opts.argv],
     readFile: async (path) => {
       if (!(path in files)) {
         throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
@@ -108,12 +108,12 @@ function makeHostIo(opts: {
   };
 }
 
-const COMMON = ["--api-token", "tok-1", "--antpath-url", "https://dash.example/"];
+const COMMON = ["--api-token", "tok-1", "--aex-url", "https://dash.example/"];
 
-describe("antpath whoami", () => {
+describe("aex whoami", () => {
   it("calls GET /api/whoami without a workspace query and prints the body", async () => {
     const cap = makeHostIo({
-      argv: ["whoami", "--api-token", "tok-1", "--antpath-url", "https://dash.example/"],
+      argv: ["whoami", "--api-token", "tok-1", "--aex-url", "https://dash.example/"],
       fetchHandler: () =>
         new Response(JSON.stringify({ principalType: "api_token", workspaceId: "ws-7", scopes: ["runs.write"] }), {
           status: 200,
@@ -131,13 +131,13 @@ describe("antpath whoami", () => {
   });
 
   it("rejects when --api-token is missing", async () => {
-    const cap = makeHostIo({ argv: ["whoami", "--antpath-url", "https://dash.example/"] });
+    const cap = makeHostIo({ argv: ["whoami", "--aex-url", "https://dash.example/"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--api-token");
   });
 
-  it("defaults --antpath-url to https://api.antpath.ai when omitted", async () => {
+  it("defaults --aex-url to https://api.aex.dev when omitted", async () => {
     const cap = makeHostIo({
       argv: ["whoami", "--api-token", "tok-1"],
       fetchHandler: () =>
@@ -148,11 +148,11 @@ describe("antpath whoami", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toBe("https://api.antpath.ai/api/whoami");
+    expect(cap.calls[0]!.url).toBe("https://api.aex.dev/api/whoami");
   });
 });
 
-describe("antpath status", () => {
+describe("aex status", () => {
   it("does not send a workspaceId query parameter (derived from token server-side)", async () => {
     const cap = makeHostIo({
       argv: ["status", "run-42", ...COMMON],
@@ -171,7 +171,7 @@ describe("antpath status", () => {
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
     const cap = makeHostIo({
-      argv: ["status", "run-1", "--workspace", "ws-1", "--api-token", "tok", "--antpath-url", "https://x"]
+      argv: ["status", "run-1", "--workspace", "ws-1", "--api-token", "tok", "--aex-url", "https://x"]
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
@@ -179,7 +179,7 @@ describe("antpath status", () => {
   });
 });
 
-describe("antpath events", () => {
+describe("aex events", () => {
   it("lists events as NDJSON", async () => {
     const cap = makeHostIo({
       argv: ["events", "run-9", ...COMMON],
@@ -272,7 +272,7 @@ describe("parseDuration", () => {
   });
 });
 
-describe("antpath wait", () => {
+describe("aex wait", () => {
   it("polls GET /runs/{id} until terminal, prints the final run, exits 0 on succeeded", async () => {
     let polls = 0;
     const cap = makeHostIo({
@@ -335,11 +335,11 @@ describe("antpath wait", () => {
     const cap = makeHostIo({ argv: ["wait", ...COMMON] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("usage: antpath wait");
+    expect(cap.stderr).toContain("usage: aex wait");
   });
 });
 
-describe("antpath events --follow --timeout", () => {
+describe("aex events --follow --timeout", () => {
   it("exits 3 with a JSON error when the follow deadline elapses before terminal", async () => {
     const cap = makeHostIo({
       argv: ["events", "run-ev", "--follow", "--timeout", "0ms", ...COMMON],
@@ -362,7 +362,7 @@ describe("antpath events --follow --timeout", () => {
   });
 });
 
-describe("antpath outputs", () => {
+describe("aex outputs", () => {
   it("lists outputs as NDJSON", async () => {
     const cap = makeHostIo({
       argv: ["outputs", "run-9", ...COMMON],
@@ -378,7 +378,7 @@ describe("antpath outputs", () => {
   });
 });
 
-describe("antpath cancel + delete", () => {
+describe("aex cancel + delete", () => {
   it("cancel POSTs and prints the result", async () => {
     const cap = makeHostIo({
       argv: ["cancel", "run-x", ...COMMON],
@@ -422,7 +422,7 @@ describe("antpath cancel + delete", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("usage: antpath delete-asset");
+    expect(cap.stderr).toContain("usage: aex delete-asset");
     expect(cap.calls).toHaveLength(0);
   });
 
@@ -444,7 +444,7 @@ describe("antpath cancel + delete", () => {
   });
 });
 
-describe("antpath download", () => {
+describe("aex download", () => {
   // Route the reads the download verbs fan out to: getRun + listEvents +
   // listOutputs + listLogs + per-artifact /download. The run has one
   // deliverable (report.txt in the outputs namespace) and one legacy-named
@@ -502,7 +502,7 @@ describe("antpath download", () => {
     expect(printed.bytes).toBe(writes.get(writtenKey)!.byteLength);
   });
 
-  it("defaults the output path to antpath-run-<run-id>.zip when --out is omitted", async () => {
+  it("defaults the output path to aex-run-<run-id>.zip when --out is omitted", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
       argv: ["download", "run-2", ...COMMON],
@@ -512,7 +512,7 @@ describe("antpath download", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/antpath-run-run-2\.zip$/);
+    expect(writtenKey).toMatch(/aex-run-run-2\.zip$/);
   });
 
   it("--only outputs zips just the deliverables (no logs, no metadata/events)", async () => {
@@ -525,7 +525,7 @@ describe("antpath download", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/antpath-run-run-1-outputs\.zip$/);
+    expect(writtenKey).toMatch(/aex-run-run-1-outputs\.zip$/);
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual(["manifest.json", "report.txt"]);
     expect(new TextDecoder().decode(entries["report.txt"]!)).toBe("hello");
@@ -572,7 +572,7 @@ describe("antpath download", () => {
   });
 });
 
-describe("antpath run", () => {
+describe("aex run", () => {
   it("submits a run config loaded from --config and prints the run record", async () => {
     const runConfig = {
       model: "claude-sonnet-test",
@@ -901,7 +901,7 @@ describe("antpath run", () => {
   });
 });
 
-describe("antpath skills", () => {
+describe("aex skills", () => {
   it("lists skills as NDJSON", async () => {
     const cap = makeHostIo({
       argv: ["skills", "list", ...COMMON],

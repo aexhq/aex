@@ -19,7 +19,7 @@ export function HomePage() {
           <p className="ant-kicker">Durable agent runs</p>
           <h1>Run autonomous agents across providers with one SDK.</h1>
           <p className="ant-hero-lede">
-            antpath is the serverless control plane for autonomous agent sessions: submit the task,
+            aex is the serverless control plane for autonomous agent sessions: submit the task,
             stream a unified event log, capture outputs, and archive the run record through Goose Managed.
           </p>
           <div className="ant-actions">
@@ -38,7 +38,7 @@ export function HomePage() {
             <span className="ant-chip">mistral</span>
           </div>
         </div>
-        <aside className="ant-command-panel" aria-label="antpath run example">
+        <aside className="ant-command-panel" aria-label="aex run example">
           <header>
             <span>submit a run</span>
             <span>TypeScript</span>
@@ -56,7 +56,7 @@ export function HomePage() {
         </a>
         <a className="ant-card" href="/docs/guides/product-boundaries/">
           <h2>Capabilities & boundaries</h2>
-          <p>What antpath owns, what providers and infrastructure own, and which claims are out of scope.</p>
+          <p>What aex owns, what providers and infrastructure own, and which claims are out of scope.</p>
         </a>
         <a className="ant-card" href="/docs/concepts/providers-and-runtimes/">
           <h2>Providers & runtimes</h2>
