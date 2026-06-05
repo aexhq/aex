@@ -6,9 +6,9 @@ title: Cleanup
 
 aex schedules cleanup after a run reaches a terminal status. There is no
 opt-out for aex-owned cleanup attempts: tracked runtime resources such as
-Fly machines, scratch state, cached files, and run-scoped secret references are
-reclaimed when possible or surfaced through `cleanupStatus` when cleanup cannot
-complete.
+managed runtime machines, scratch state, cached files, and run-scoped secret
+references are reclaimed when possible or surfaced through `cleanupStatus` when
+cleanup cannot complete.
 
 The hosted product uses managed runtimes for all supported providers. Reusable
 provider-session retention is not a supported run option, and the removed

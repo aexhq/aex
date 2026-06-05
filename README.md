@@ -1,6 +1,6 @@
 # aex
 
-[![npm version](https://img.shields.io/npm/v/aex.svg)](https://www.npmjs.com/package/aex)
+[![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
 > **Early development.** API and CLI surface are stable in intent but
 > may shift. Pin a version and watch the GitHub releases page until
@@ -59,7 +59,7 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
 - **Skills, MCP servers, AGENTS.md, files** are first-class. Pass
   per-run bundles inline with `Skill.fromPath(...)` /
   `Skill.fromFiles(...)`; `client.submitRun` materializes the bytes to
-  content-addressable, workspace-scoped R2 storage before the run lands,
+  content-addressable, workspace-scoped asset storage before the run lands,
   so the same bytes are a no-op upload on subsequent runs. MCP servers
   can be remote or workspace-registered.
 - **Outputs are captured, tracked resource cleanup is attempted.** Managed
@@ -96,13 +96,13 @@ documentation sources are open in this repo.
 Anthropic, DeepSeek, OpenAI, Gemini, and Mistral today — **more
 coming.** Anthropic is the default provider; set `provider` for the
 others. Omit `runtime` or pass `runtime: "managed"`; every provider uses
-Goose Managed and the same `submitRun` shape / `RunnerEvent` stream.
+the managed runtime and the same `submitRun` shape / `RunnerEvent` stream.
 See the [generated capability matrix](packages/sdk/docs/provider-runtime-capabilities.md).
 
 **How do provider keys work?**
 **BYOK.** Provider keys, MCP `Authorization` headers, and any
 auxiliary secrets travel inline with each submission as a single
-`secrets` bundle. They live in our Vault for the lifetime of the
+`secrets` bundle. They live in run-scoped custody for the lifetime of the
 run and aex attempts cleanup/revocation for aex-held references
 at terminal. We never persist tenant provider keys as workspace-level
 connections; provider-side sessions and data remain under the selected

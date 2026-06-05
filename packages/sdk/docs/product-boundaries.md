@@ -4,7 +4,7 @@ title: Product capabilities and boundaries
 
 # Product capabilities and boundaries
 
-aex is the serverless control plane for autonomous agent sessions. It accepts a complete run request, dispatches it to Goose Managed, records ordered events and logs, captures outputs, and exposes auth-gated reads and downloads.
+aex is the serverless control plane for autonomous agent sessions. It accepts a complete run request, dispatches it to the managed runtime, records ordered events and logs, captures outputs, and exposes auth-gated reads and downloads.
 
 aex is not a custom agent loop, a general-purpose sandbox, an interactive approval system, or a provider compliance layer. True self-host and customer-cloud deployment modes are not supported today.
 
@@ -13,7 +13,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 ## Owned by aex today
 
 - Run submission, idempotency, status, cancellation, reads, downloads, and workspace auth.
-- Runtime dispatch through Goose Managed, with unsupported runtime selectors rejected at submission.
+- Runtime dispatch through the managed runtime, with unsupported runtime selectors rejected at submission.
 - Ordered event/log capture through the per-run coordinator and durable archive.
 - Output capture into the run record, subject to runtime behavior and storage limits.
 - BYOK provider-key custody for a single run, using the top-level `secrets` carrier and terminal cleanup/revocation attempts for aex-controlled references.
@@ -25,7 +25,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 | Area | aex-owned behavior | Inherited or customer-owned behavior |
 | --- | --- | --- |
 | Provider and model policy | aex validates the selected provider, injects the run-scoped BYOK credential, and records public-safe runtime events. | Provider retention, training exclusion, zero-retention, HIPAA/BAA, data residency, abuse policy, and pricing are properties of the selected provider account, endpoint, and contract. |
-| Runtime isolation | Goose Managed runs in an isolated managed runtime. aex tracks resources and runs cleanup attempts. | Runtime isolation guarantees belong to the managed runtime provider. |
+| Runtime isolation | Managed runs execute in an isolated managed runtime. aex tracks resources and runs cleanup attempts. | Runtime isolation guarantees belong to the managed runtime provider. |
 | Secrets | Provider keys, MCP credentials, and proxy auth values are supplied inline per run, held in run-scoped custody, excluded from idempotency, and targeted for cleanup/revocation at terminal where aex controls the reference. | Customers choose and rotate their provider keys and MCP/proxy credentials. Provider-side credentials, sessions, and data may have their own retention rules. |
 | MCP servers | aex accepts remote HTTP/SSE MCP servers, validates their declaration, attaches run-scoped credentials, and records access metadata on the aex-controlled edge. | MCP servers are customer-trusted remote systems. aex does not sandbox their downstream behavior or make an untrusted MCP server safe. |
 | Proxy endpoints | The named endpoint proxy enforces declared host/path/method/auth policy and response caps for calls routed through it. | The upstream service's own auth, data handling, side effects, and compliance posture remain with the upstream service and customer. |

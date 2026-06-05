@@ -4,7 +4,7 @@ title: Events
 
 # Events
 
-aex runs agent sessions on Goose Managed. Runs are **non-blocking**: the managed runtime advances the agent while aex observes lifecycle state, maps runtime output into one event shape, and persists every captured event. The SDK and CLI observe the durable event timeline from aex — there is no in-process tool-approval hook.
+aex runs agent sessions on the managed runtime. Runs are **non-blocking**: the managed runtime advances the agent while aex observes lifecycle state, maps runtime output into one event shape, and persists every captured event. The SDK and CLI observe the durable event timeline from aex — there is no in-process tool-approval hook.
 
 ## Two ways to consume events
 

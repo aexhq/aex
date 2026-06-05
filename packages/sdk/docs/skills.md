@@ -18,20 +18,18 @@ Skill inputs accepted by the platform:
   persist on aex as workspace skills with auto-suffixed names,
   one row per submission (see "Inline supply" below).
 
-**Routing at session create:** bundles that contain `SKILL.md` at the
-bundle root are registered with Anthropic's Skills API
-(`POST /v1/skills`) and surface to the agent as auto-discoverable
-skills. Bundles without `SKILL.md` mount under
-`/mnt/session/uploads/aex/assets/<skl_id>/<rel-path>` in the agent
-container — the agent reads them by explicit path reference in the
-prompt.
+**How skills reach the agent:** every skill bundle is materialized into
+the run's workspace under `skills/<name>/` before the first agent turn.
+A bundle's `SKILL.md` is composed into the agent's instructions, so the
+agent is told the skill exists and what it does without the model having
+to discover it. Bundles without `SKILL.md` are still mounted as files at
+`skills/<name>/`, but nothing prompts the agent to read them — reference
+them explicitly from the prompt or your `AGENTS.md`.
 
-The platform also mounts the `aex` CLI at
-`/mnt/session/uploads/aex/aex` and a per-run manifest at
-`/mnt/session/uploads/aex/index.json` on **every** run. Skills
-invoke the managed HTTP proxy via
-`node /mnt/session/uploads/aex/aex proxy …` — see
-`credentials.md` for the policy/auth model.
+The platform also mounts the `aex` CLI and a per-run manifest into the
+workspace on **every** run. Skills invoke the managed HTTP proxy via the
+mounted CLI (`aex proxy …`) — see `credentials.md` for the policy/auth
+model.
 
 ## Inline supply at `submitRun`
 
@@ -53,7 +51,7 @@ await client.submitRun({
 
 `client.submitRun` walks the `skills` array, sends a multipart body
 alongside the JSON submission, and materializes the bytes to
-content-addressable, workspace-scoped R2 storage before the run lands.
+content-addressable, workspace-scoped asset storage before the run lands.
 The BFF re-canonicalises the bundle, verifies the advisory hash, and
 persists it as a workspace skill — but with an **auto-suffixed name**
 (`rules-x8q7lk2`) so repeated supplies of the same logical skill across

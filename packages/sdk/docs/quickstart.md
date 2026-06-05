@@ -64,10 +64,10 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 |---|---|---|
 | Non-secret paths or config (`BROLL_STORE`, mode flags) | `environment.envVars` | Mounted as `RUNTIME.env` / `RUNTIME.json`; `__KEY__` substitution in agent-facing markdown; echoed back as `run.runtimeManifest.envVars` |
 | Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; aex proxy injects them on outbound calls. The key never enters the container. |
-| MCP server credentials | `secrets.mcpServers` | Anthropic Vault, attached per session |
-| Provider API key | `secrets.<provider>.apiKey` | Required on every `submitRun`; per-run vault entry matching `provider` |
-| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Materialized under `/workspace/files/<f_id>/<name>` by default and described in the agent-facing instructions |
-| Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Registered with Anthropic's Skills API; auto-discovered by the agent |
+| MCP server credentials | `secrets.mcpServers` | Held in run-scoped custody, attached per run |
+| Provider API key | `secrets.<provider>.apiKey` | Required on every `submitRun`; held in run-scoped custody, matching `provider` |
+| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Materialized under `files/<f_id>/<name>` in the run workspace by default and described in the agent-facing instructions |
+| Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Mounted under `skills/<name>/`; the bundle's `SKILL.md` is composed into the agent's instructions |
 | Agent instructions file | `AgentsMd.fromPath('./AGENTS.md')` | Prepended as the first user turn |
 
 `Skill`, `AgentsMd`, and `File` values are materialized for the run before the first agent turn. `environment.envVars` values surface in runtime metadata and can be referenced by `__KEY__` placeholders in agent-facing markdown.

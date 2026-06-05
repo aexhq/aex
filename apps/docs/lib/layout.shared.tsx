@@ -16,7 +16,7 @@ export function baseOptions(): BaseLayoutProps {
       {
         icon: <PackageOpen />,
         text: "npm",
-        url: "https://www.npmjs.com/package/aex",
+        url: "https://www.npmjs.com/package/@aexhq/sdk",
         active: "none",
         secondary: true
       }

@@ -31,7 +31,7 @@ Unsupported:
 - OAuth refresh;
 - persisted aex vault.
 
-For Goose Managed runs, aex injects the matching BYOK provider key at the hosted provider-proxy. Provider-side sessions and data remain subject to the selected provider account's retention and deletion policies.
+For managed-runtime runs, aex injects the matching BYOK provider key at the hosted provider-proxy. Provider-side sessions and data remain subject to the selected provider account's retention and deletion policies.
 
 ## Proxy endpoints (per-run custom HTTP credentials)
 

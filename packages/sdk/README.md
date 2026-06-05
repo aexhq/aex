@@ -38,7 +38,7 @@ The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `ba
 
 ## Product boundaries
 
-- Multi-provider via Goose Managed. The published surface is the same
+- Multi-provider via the managed runtime. The published surface is the same
   regardless of provider:
   - omit `runtime` or pass `runtime: "managed"`; every provider uses the
     managed runtime and BYOK provider-proxy.

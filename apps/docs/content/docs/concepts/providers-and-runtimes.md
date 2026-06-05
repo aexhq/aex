@@ -8,15 +8,15 @@ aex exposes one customer-facing submission shape across providers:
 
 | Provider | Default runtime |
 | --- | --- |
-| `anthropic` | Goose Managed |
-| `deepseek` | Goose Managed |
-| `openai` | Goose Managed |
-| `gemini` | Goose Managed |
-| `mistral` | Goose Managed |
+| `anthropic` | managed |
+| `deepseek` | managed |
+| `openai` | managed |
+| `gemini` | managed |
+| `mistral` | managed |
 
-Goose Managed means aex starts a per-run Goose process in an isolated managed runtime and routes upstream model calls through the BYOK provider-proxy.
+The managed runtime means aex starts a per-run agent process in an isolated managed runtime and routes upstream model calls through the BYOK provider-proxy.
 
-The optional `runtime` field accepts only `"managed"`; omitting it also uses Goose Managed. `runtime: "native"` is rejected as an invalid runtime selector.
+The optional `runtime` field accepts only `"managed"`; omitting it also uses the managed runtime. `runtime: "native"` is rejected as an invalid runtime selector.
 
 ```ts
 await client.submitRun({

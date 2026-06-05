@@ -36,4 +36,4 @@ Current v1 downloads always include `metadata/run.json` and `events/events.jsonl
 
 `metadata/submission.json` is present only when the run read shape includes a public-safe submission snapshot. `metadata/cost.json` is present only when the run read shape includes public `costTelemetry`; otherwise cost stays `pending`. `metadata/custody.json` remains `pending` until the custody manifest writer and public read surface land. `events/manifest.json` remains `unavailable` in this client-side slice because there is no public coordinator-manifest download route.
 
-The record boundary is public-safe. It must not contain provider API keys, runner bearers, workspace tokens, signed URLs, raw provider response bodies, R2 object keys, Vault ids, raw query strings, or secret-shaped values. Credentials are supplied per run and vaulted separately for the run lifetime.
+The record boundary is public-safe. It must not contain provider API keys, runner bearers, workspace tokens, signed URLs, raw provider response bodies, object-store keys, Vault ids, raw query strings, or secret-shaped values. Credentials are supplied per run and vaulted separately for the run lifetime.
