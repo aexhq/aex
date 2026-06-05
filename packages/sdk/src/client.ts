@@ -18,6 +18,7 @@ import {
   type FileRef,
   type McpServerRef,
   type Output,
+  type OutputMode,
   type PlatformRunSubmissionInput,
   type PlatformSubmission,
   type PlatformInlineSecrets,
@@ -157,6 +158,12 @@ export interface SubmitRunOptions {
    * entries, deduplicated server-side.
    */
   readonly builtins?: readonly string[];
+  /**
+   * Assistant-output granularity. `"buffered"` (default) delivers one event per
+   * assistant message; `"stream"` delivers per-token text deltas for live
+   * typing UIs.
+   */
+  readonly outputMode?: OutputMode;
   readonly secrets: PlatformInlineSecrets;
   readonly idempotencyKey?: string;
   readonly signal?: AbortSignal;
@@ -560,7 +567,8 @@ export class AexClient {
       // Pass-through `builtins` verbatim — including an empty array,
       // which is the "disable all builtins" signal. Distinguish from
       // omitted (default applies) via `!== undefined`.
-      ...(options.builtins !== undefined ? { builtins: options.builtins } : {})
+      ...(options.builtins !== undefined ? { builtins: options.builtins } : {}),
+      ...(options.outputMode !== undefined ? { outputMode: options.outputMode } : {})
     };
 
     const secrets: PlatformInlineSecrets = {

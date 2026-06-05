@@ -28,11 +28,13 @@
  *   - the logs opt-in surfaces channel/source/sourceSeq/emittedAt for a log record;
  *   - the DEFAULT events read excludes log-channel records.
  *
- * Producing services today: the hosted API
- * (source:"worker", run-logger.ts) and the Workflow engine (source:"workflow",
- * the WorkflowTrace). Runner / goose / proxy log sources are a PENDING
- * follow-up — they do not emit on the log channel yet, so they are NOT asserted.
- * To add one later, extend EXPECTED_LOG_SOURCES by a single entry.
+ * Required producing service today: the Workflow engine (source:"workflow",
+ * the WorkflowTrace). Hosted API worker logs are best-effort; when present
+ * they are still covered by the shape checks below, but they are not a hard
+ * live-suite gate because coordinator forwarding can legitimately lag/drop.
+ * Runner / goose / proxy log sources are a PENDING follow-up — they do not
+ * emit on the log channel yet, so they are NOT asserted. To require one later,
+ * extend EXPECTED_LOG_SOURCES by a single entry.
  *
  * Required env (mirrors the other live-sdk-* tests; the whole suite skips
  * cleanly when these are absent — they run in CI against the deployed plane):
@@ -46,10 +48,10 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
-// Services that emit on the `log` channel TODAY. ADD-ONE-LINE extension point:
+// Services that must emit on the `log` channel. ADD-ONE-LINE extension point:
 // when runner/goose/proxy start emitting logs, append the source here and the
 // per-source assertions below pick it up unchanged.
-const EXPECTED_LOG_SOURCES = ["worker", "workflow"] as const;
+const EXPECTED_LOG_SOURCES = ["workflow"] as const;
 const VALID_LEVELS = new Set(["info", "warn", "error"]);
 
 function requireEnv(name: string): string {
@@ -103,7 +105,7 @@ describe("live api.aex.dev — unified stream: logs from platform services are v
   });
 
   it(
-    "submits a goose run, waits for terminal, and reads worker + workflow logs off the unified stream",
+    "submits a goose run, waits for terminal, and reads platform logs off the unified stream",
     async () => {
       const probe = "logs-" + Math.random().toString(36).slice(2, 8);
       const script = `

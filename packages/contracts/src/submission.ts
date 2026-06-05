@@ -136,27 +136,22 @@ export function packageInstallString(pkg: PlatformPackage): string {
 
 export interface PlatformAnthropicSecrets {
   readonly apiKey: string;
-  readonly baseUrl?: string;
 }
 
 export interface PlatformDeepseekSecrets {
   readonly apiKey: string;
-  readonly baseUrl?: string;
 }
 
 export interface PlatformOpenAISecrets {
   readonly apiKey: string;
-  readonly baseUrl?: string;
 }
 
 export interface PlatformGeminiSecrets {
   readonly apiKey: string;
-  readonly baseUrl?: string;
 }
 
 export interface PlatformMistralSecrets {
   readonly apiKey: string;
-  readonly baseUrl?: string;
 }
 
 /**
@@ -815,27 +810,17 @@ function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
 function parseProviderSecret(
   input: unknown,
   provider: RunProvider
-): { apiKey: string; baseUrl?: string } {
+): { apiKey: string } {
   const field = `secrets.${provider}`;
   const value = requireRecord(input, field);
-  const allowed = new Set(["apiKey", "baseUrl"]);
+  const allowed = new Set(["apiKey"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
-      throw new Error(`${field}.${key} is not an allowed field; permitted: apiKey, baseUrl`);
+      throw new Error(`${field}.${key} is not an allowed field; permitted: apiKey`);
     }
   }
   const apiKey = requireString(value.apiKey, `${field}.apiKey`);
-  const rawBaseUrl = optionalString(value.baseUrl, `${field}.baseUrl`);
-  if (rawBaseUrl === undefined) {
-    return { apiKey };
-  }
-  // Reuse the proxy-endpoint URL guard so provider baseUrl gets the
-  // same protection: https-only, no credentials, no query/fragment.
-  // The provider-proxy in the dashboard forwards a customer-controlled
-  // baseUrl to the upstream — accepting http:// (or a userinfo-laden
-  // URL) here is an SSRF / credential-leak vector.
-  const baseUrl = parseProxyBaseUrl(rawBaseUrl, `${field}.baseUrl`);
-  return { apiKey, baseUrl };
+  return { apiKey };
 }
 
 function parseMcpServerSecrets(input: unknown): readonly PlatformMcpServerSecret[] | undefined {
@@ -1142,6 +1127,12 @@ export interface PlatformSubmission {
    */
   readonly builtins?: readonly string[];
   /**
+   * Assistant-output granularity. `buffered` (the default) emits one event per
+   * assistant message; `stream` emits the agent's per-token text deltas as they
+   * arrive. Buffered is quieter and cheaper; stream suits live typing UIs.
+   */
+  readonly outputMode?: OutputMode;
+  /**
    * Platform-injection controls. The platform prepends a small system
    * prompt (see `platformSystemPrompt`) ahead of `system` to explain
    * managed-run expectations such as durable file capture. Set
@@ -1442,6 +1433,7 @@ function parseSubmission(input: unknown): PlatformSubmission {
     "metadata",
     "outputs",
     "builtins",
+    "outputMode",
     "platform"
   ]);
   for (const key of Object.keys(value)) {
@@ -1461,6 +1453,7 @@ function parseSubmission(input: unknown): PlatformSubmission {
   const metadata = optionalJsonRecord(value.metadata, "submission.metadata");
   const outputs = parseOutputs(value.outputs);
   const builtins = parseBuiltins(value.builtins);
+  const outputMode = parseOutputMode(value.outputMode);
   const platform = parsePlatformConfig(value.platform);
 
   return {
@@ -1476,6 +1469,7 @@ function parseSubmission(input: unknown): PlatformSubmission {
     ...(metadata ? { metadata } : {}),
     ...(outputs ? { outputs } : {}),
     ...(builtins !== undefined ? { builtins } : {}),
+    ...(outputMode !== undefined ? { outputMode } : {}),
     ...(platform ? { platform } : {})
   };
 }
@@ -1493,6 +1487,19 @@ function parsePlatformConfig(input: unknown): PlatformInjectionConfig | undefine
     throw new Error(`submission.platform.systemPrompt must be "default" or "off"`);
   }
   return { systemPrompt: value.systemPrompt };
+}
+
+/** Assistant-output granularity values. Buffered is the platform default. */
+export const OUTPUT_MODES = ["buffered", "stream"] as const;
+export type OutputMode = (typeof OUTPUT_MODES)[number];
+export const DEFAULT_OUTPUT_MODE: OutputMode = "buffered";
+
+function parseOutputMode(input: unknown): OutputMode | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== "string" || !(OUTPUT_MODES as readonly string[]).includes(input)) {
+    throw new Error(`submission.outputMode must be one of ${OUTPUT_MODES.join(", ")}`);
+  }
+  return input as OutputMode;
 }
 
 const BUILTIN_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;

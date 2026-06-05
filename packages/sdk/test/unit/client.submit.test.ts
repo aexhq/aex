@@ -107,6 +107,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
       model: "claude-sonnet-4-5-20250929",
       system: "You are tidy.",
       prompt: "do work",
+      outputMode: "stream",
       mcpServers: [
         McpServer.remote({
           name: "github",
@@ -132,6 +133,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
     const submission = body.submission as Record<string, unknown>;
     expect(submission.model).toBe("claude-sonnet-4-5-20250929");
+    expect(submission.outputMode).toBe("stream");
     expect(submission.system).toBe("You are tidy.");
     expect(submission.prompt).toEqual(["do work"]);
     expect(submission.skills).toEqual([]);

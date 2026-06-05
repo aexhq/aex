@@ -145,6 +145,16 @@ describe("submission parser - providers and secrets", () => {
       })
     ).toThrow(/secrets\.openai is not allowed when provider is anthropic/);
   });
+
+  it("rejects provider baseUrl overrides; use proxyEndpoints for upstream routing", () => {
+    const req = baseRequest({ provider: "deepseek" });
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...req,
+        secrets: { deepseek: { apiKey: "sk-deepseek-x", baseUrl: "https://gateway.example.com" } }
+      })
+    ).toThrow(/secrets\.deepseek\.baseUrl is not an allowed field; permitted: apiKey/);
+  });
 });
 
 describe("submission parser - managed-only runtime field", () => {
@@ -240,5 +250,30 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
 
   it("RUNTIME_KINDS exposes only managed", () => {
     expect([...RUNTIME_KINDS]).toEqual(["managed"]);
+  });
+});
+
+describe("submission parser - outputMode", () => {
+  it("accepts 'buffered' and 'stream'", () => {
+    for (const mode of ["buffered", "stream"] as const) {
+      const req = baseRequest();
+      const parsed = parseRunSubmissionRequest({
+        ...req,
+        submission: { ...req.submission, outputMode: mode }
+      });
+      expect(parsed.submission.outputMode).toBe(mode);
+    }
+  });
+
+  it("omits outputMode when not provided", () => {
+    const parsed = parseRunSubmissionRequest(baseRequest());
+    expect("outputMode" in parsed.submission).toBe(false);
+  });
+
+  it("rejects an unknown outputMode", () => {
+    const req = baseRequest();
+    expect(() =>
+      parseRunSubmissionRequest({ ...req, submission: { ...req.submission, outputMode: "fast" } })
+    ).toThrow(/outputMode/);
   });
 });

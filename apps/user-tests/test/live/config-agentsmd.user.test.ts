@@ -41,6 +41,10 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
     async () => {
       const tokenA = rand("ALPHA");
       const tokenB = rand("BRAVO");
+      // The high-entropy suffix is the delivery proof; the "ALPHA-"/"BRAVO-"
+      // prefix is a human label the model may reformat away.
+      const markerA = tokenA.slice(tokenA.indexOf("-") + 1);
+      const markerB = tokenB.slice(tokenB.indexOf("-") + 1);
       const script = sdkRunnerScript({
         setup: `
           const a = await AgentsMd.fromContent("# Project notes A\\n\\nThe internal codename for this project is ${tokenA}.", { name: "rules-a" });
@@ -67,9 +71,9 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
 
       const text = dense(result.assistantText);
       // The first ref WAS delivered (proves the mechanism + a conclusive run)...
-      expect(text).toContain(tokenA);
+      expect(text).toContain(markerA);
       // THE FIX: ...and the second ref reaches the agent too.
-      expect(text).toContain(tokenB);
+      expect(text).toContain(markerB);
     },
     10 * 60_000
   );
@@ -79,6 +83,10 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
     async () => {
       const tokenA = rand("ALPHA");
       const tokenB = rand("BRAVO");
+      // The high-entropy suffix is the delivery proof; the "ALPHA-"/"BRAVO-"
+      // prefix is a human label the model may reformat away.
+      const markerA = tokenA.slice(tokenA.indexOf("-") + 1);
+      const markerB = tokenB.slice(tokenB.indexOf("-") + 1);
       const script = sdkRunnerScript({
         setup: `
           const a = await AgentsMd.fromContent("# Project notes A\\n\\nThe internal codename for this project is ${tokenA}.", { name: "rules-a" });
@@ -104,8 +112,8 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
       expect(result.status).toBe("succeeded");
 
       const text = dense(result.assistantText);
-      expect(text).toContain(tokenA);
-      expect(text).toContain(tokenB);
+      expect(text).toContain(markerA);
+      expect(text).toContain(markerB);
     },
     10 * 60_000
   );
