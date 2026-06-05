@@ -109,14 +109,14 @@ describe("live api.aex.dev — unified stream: logs from platform services are v
     async () => {
       const probe = "logs-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AexClient } from "@aexhq/sdk";
+        import { AgentExecutor } from "@aexhq/sdk";
 
         const baseUrl = process.env.AEX_API_URL;
         const apiToken = process.env.AEX_API_TOKEN;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
 
-        const client = new AexClient({ baseUrl, apiToken });
+        const client = new AgentExecutor({ baseUrl, apiToken });
         const runId = await client.submitRun({
           provider: "deepseek",
           runtime: "managed",

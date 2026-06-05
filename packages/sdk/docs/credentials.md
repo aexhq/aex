@@ -41,12 +41,12 @@ The platform's managed HTTP proxy is the agent-first alternative. The caller dec
 
 ```ts
 import {
-  AexClient,
+  AgentExecutor,
   validateProxyAuth,
   buildPlatformAllowedHosts
 } from "@aexhq/sdk";
 
-const client = new AexClient({
+const aex = new AgentExecutor({
   apiToken: "ant_..."
 });
 
@@ -76,7 +76,7 @@ const proxyEndpointAuth = [
 // Fail fast at submission time when policy and auth disagree.
 validateProxyAuth(proxyEndpoints, proxyEndpointAuth);
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "…",
   proxyEndpoints,
@@ -113,7 +113,7 @@ const proxyEndpoints = [
   }
 ] as const;
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "…",
   proxyEndpoints,

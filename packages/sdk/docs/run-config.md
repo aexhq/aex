@@ -34,7 +34,7 @@ function summarise(topic: string) {
   };
 }
 
-await client.submitRun({
+await aex.submitRun({
   ...summarise("agent-first SDK design"),
   secrets: { anthropic: { apiKey } }
 });

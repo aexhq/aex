@@ -8,7 +8,7 @@ aex is a TypeScript-first SDK + CLI for running autonomous agent sessions across
 
 ```ts
 import {
-  AexClient,        // the only client class — submits durable runs to aex
+  AgentExecutor,        // the only client class — submits durable runs to aex
   Skill,                // workspace / provider / inline skill bundles
   McpServer,            // MCP server declarations (headers split into secrets server-side)
   ProxyEndpoint,        // per-run managed HTTP proxy endpoint
@@ -34,7 +34,7 @@ aex skills  <upload|list|get|delete> [flags] --api-token …
 
 The SDK class and the CLI are backed by the same public `@aexhq/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `aex` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `aex proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
 
-The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `baseUrl` on `AexClient` for local, staging, or hosted aex API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
+The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `baseUrl` on `AgentExecutor` for local, staging, or hosted aex API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
 
 ## Product boundaries
 
@@ -54,31 +54,31 @@ The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `ba
 ## Quickstart (SDK)
 
 ```ts
-import { AexClient } from "@aexhq/sdk";
+import { AgentExecutor } from "@aexhq/sdk";
 
-const client = new AexClient({
+const aex = new AgentExecutor({
   apiToken: process.env.AEX_API_TOKEN!
   // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   system: "You are a concise automation agent.",
   prompt: "Write a short answer about agent-first SDK design.",
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
 });
 
-const run = await client.wait(runId);
+const run = await aex.wait(runId);
 console.log(run.status);
 
-for (const output of await client.outputs(runId)) {
+for (const output of await aex.outputs(runId)) {
   console.log(output.id, output.filename);
 }
 
-const report = await client.downloadOutput(runId, { path: "report.txt", match: "suffix" });
+const report = await aex.downloadOutput(runId, { path: "report.txt", match: "suffix" });
 console.log(new TextDecoder().decode(report));
 
-await client.downloadOutputs(runId, { to: "./outputs.zip" });
+await aex.downloadOutputs(runId, { to: "./outputs.zip" });
 ```
 
 Reusable, credential-free configs can be ordinary functions:
@@ -92,16 +92,16 @@ function summarise(topic: string) {
   };
 }
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   ...summarise("agent-first SDK design"),
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 
-Stream events live with `client.stream(runId)`:
+Stream events live with `aex.stream(runId)`:
 
 ```ts
-for await (const event of client.stream(runId)) {
+for await (const event of aex.stream(runId)) {
   if (event.type === "agent.message") {
     // typed event helpers live under `aex`'s event guard exports.
   }

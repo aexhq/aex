@@ -39,7 +39,7 @@ describe("sdk imports", () => {
     const script = `
       const mod = await import("@aexhq/sdk");
       const names = [
-        "AexClient",
+        "AgentExecutor",
         "Skill",
         "McpServer",
         "RUN_RECORD_SCHEMA_VERSION",
@@ -51,7 +51,8 @@ describe("sdk imports", () => {
       for (const name of names) {
         result[name] = typeof mod[name];
       }
-      // Confirm the legacy platform export is GONE — single-surface invariant.
+      // Confirm the renamed SDK client and legacy platform export are GONE — single-surface invariant.
+      result.AexClient_present = (typeof mod.AexClient !== "undefined");
       result.AexPlatformClient_present = (typeof mod.AexPlatformClient !== "undefined");
       // Confirm the legacy Template/compileTemplate exports are GONE — flat surface invariant (P5).
       result.Template_present = (typeof mod.Template !== "undefined");
@@ -66,13 +67,14 @@ describe("sdk imports", () => {
     const child = await runChild(script, "esm-import.mjs");
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, string | boolean>;
-    expect(result["AexClient"]).toBe("function");
+    expect(result["AgentExecutor"]).toBe("function");
     expect(result["Skill"]).toBe("function");
     expect(result["McpServer"]).toBe("function");
     expect(result["RUN_RECORD_SCHEMA_VERSION"]).toBe("string");
     expect(result["RUN_RECORD_MANIFEST_SCHEMA_VERSION"]).toBe("string");
     expect(result["validateProxyAuth"]).toBe("function");
     expect(result["buildPlatformAllowedHosts"]).toBe("function");
+    expect(result["AexClient_present"]).toBe(false);
     expect(result["AexPlatformClient_present"]).toBe(false);
     expect(result["Template_present"]).toBe(false);
     expect(result["TemplateDefinition_present"]).toBe(false);

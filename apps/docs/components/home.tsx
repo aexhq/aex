@@ -1,4 +1,4 @@
-const example = `const runId = await client.submitRun({
+const example = `const runId = await aex.submitRun({
   provider: "anthropic",
   model: "claude-haiku-4-5",
   prompt: "Write the report and save outputs.",
@@ -7,7 +7,7 @@ const example = `const runId = await client.submitRun({
   }
 });
 
-for await (const event of client.stream(runId)) {
+for await (const event of aex.stream(runId)) {
   console.log(event.type);
 }`;
 

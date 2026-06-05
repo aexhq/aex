@@ -1,5 +1,5 @@
 /**
- * Unit tests for `AexClient.getRunDebugLogs` / `AexClient.debugLogs`.
+ * Unit tests for `AgentExecutor.getRunDebugLogs` / `AgentExecutor.debugLogs`.
  *
  * The helper bundles the per-run debug artifacts aex captures
  * automatically. These all live in the run's `logs` namespace, so the
@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
 const RUN_ID = "run_debug_logs";
 const STDERR_TEXT = "boot ok\nruntime spawn\nMCP loaded\n";
@@ -54,7 +54,7 @@ const LIST_BODY = {
   ]
 };
 
-describe("AexClient.getRunDebugLogs", () => {
+describe("AgentExecutor.getRunDebugLogs", () => {
   it("lists the logs namespace and decodes textual content as UTF-8", async () => {
     const calls: string[] = [];
     const stub: typeof fetch = async (input) => {
@@ -77,7 +77,7 @@ describe("AexClient.getRunDebugLogs", () => {
       }
       return new Response("no handler", { status: 500 });
     };
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.runId).toBe(RUN_ID);
     expect(bundle.logs).toHaveLength(4);
@@ -118,7 +118,7 @@ describe("AexClient.getRunDebugLogs", () => {
       }
       return new Response("no handler", { status: 500 });
     };
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.logs).toHaveLength(3);
     expect(bundle.errors).toHaveLength(1);
@@ -133,7 +133,7 @@ describe("AexClient.getRunDebugLogs", () => {
       }
       return new Response("no handler", { status: 500 });
     };
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const bundle = await client.getRunDebugLogs(RUN_ID);
     expect(bundle.logs).toHaveLength(0);
     expect(bundle.errors).toHaveLength(0);

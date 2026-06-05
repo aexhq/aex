@@ -144,9 +144,9 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     `SHIBBOLETH. Please reply per the acknowledgement protocol.`;
 
   return `
-    import { AexClient, Skill } from "@aexhq/sdk";
+    import { AgentExecutor, Skill } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

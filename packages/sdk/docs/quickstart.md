@@ -5,26 +5,26 @@ title: aex quickstart
 # Quickstart
 
 1. Get an aex SDK API token (`ant_…`).
-2. Create `AexClient` — the workspace is derived server-side from the token.
+2. Create `AgentExecutor` — the workspace is derived server-side from the token.
 3. Submit the run with the agent's brief plus an inline `secrets` bundle. Wait for terminal status. Fetch outputs.
 
 ```ts
-import { AexClient } from "@aexhq/sdk";
+import { AgentExecutor } from "@aexhq/sdk";
 
-const client = new AexClient({
+const aex = new AgentExecutor({
   apiToken: process.env.AEX_API_TOKEN!
   // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Write a short answer about agent-first SDK design.",
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
 });
 
-const run = await client.wait(runId);
+const run = await aex.wait(runId);
 console.log(run.status);
-console.log(await client.outputs(runId));
+console.log(await aex.outputs(runId));
 ```
 
 For reusable, credential-free configs, use an ordinary function:
@@ -37,7 +37,7 @@ function summarise(topic: string) {
   };
 }
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   ...summarise("agent-first SDK design"),
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
 });
@@ -92,7 +92,7 @@ const idempotencyKey = crypto.randomUUID();
 async function submitWithRetry() {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      return await client.submitRun({
+      return await aex.submitRun({
         model: "claude-haiku-4-5",
         prompt: "...",
         idempotencyKey,

@@ -82,7 +82,7 @@ describe("typescript consumer", () => {
       import {
         AgentsMd,
         AexApiError,
-        AexClient,
+        AgentExecutor,
         AexError,
         CleanupError,
         CredentialValidationError,
@@ -270,7 +270,7 @@ describe("typescript consumer", () => {
           runtime: "managed",
           createdAt: new Date(0).toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
-      const client = new AexClient({
+      const client = new AgentExecutor({
         apiToken: "ant_type_surface",
         baseUrl: "https://example.invalid",
         fetch: fetchFake
@@ -323,6 +323,8 @@ describe("typescript consumer", () => {
       void exportedFns;
     `;
     const legacyNegative = `
+      // @ts-expect-error legacy SDK client class must stay absent from the root surface
+      import { AexClient } from "@aexhq/sdk";
       // @ts-expect-error legacy platform class must stay absent from the root surface
       import { AexPlatformClient } from "@aexhq/sdk";
       // @ts-expect-error legacy template class must stay absent from the root surface
@@ -363,7 +365,7 @@ describe("typescript consumer", () => {
     };
     const consumer = `
       import {
-        AexClient,
+        AgentExecutor,
         RuntimeSizes,
         ProxyEndpoint,
         RUN_PROVIDERS,
@@ -396,7 +398,7 @@ describe("typescript consumer", () => {
         secrets: { anthropic: { apiKey: "sk-ant-bundler" } }
       } satisfies SubmitRunOptions;
 
-      const client = new AexClient({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
+      const client = new AgentExecutor({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
       void client;
       void options;
     `;

@@ -12,19 +12,19 @@ plus captured outputs.
 One submission shape works across every supported provider:
 
 ```ts
-import { AexClient } from "@aexhq/sdk";
+import { AgentExecutor } from "@aexhq/sdk";
 
-const client = new AexClient({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Summarise Q1 revenue by region.",
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
 });
 
-for await (const event of client.stream(runId)) console.log(event.type);
-const run = await client.wait(runId);
-await client.download(runId, { to: "./run.zip" });
+for await (const event of aex.stream(runId)) console.log(event.type);
+const run = await aex.wait(runId);
+await aex.download(runId, { to: "./run.zip" });
 ```
 
 What you get:

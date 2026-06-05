@@ -38,7 +38,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import {
-  AexClient,
+  AgentExecutor,
   Skill,
   AgentsMd,
   File as AexFile
@@ -101,43 +101,43 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       (obj as unknown as Record<string, unknown>)[key] !== undefined;
 
     const manifest: ReadonlyArray<{ doc: string; needle: RegExp; present: boolean; method: string }> = [
-      // Skill.upload(client)
+      // Skill.upload(aex)
       {
         doc: "README.md",
-        needle: /Skill\.fromPath\([^)]*\)\.upload\(client\)/,
+        needle: /Skill\.fromPath\([^)]*\)\.upload\((?:client|aex)\)/,
         present: probe(Skill.prototype, "upload"),
         method: "Skill.prototype.upload"
       },
-      // Skill.uploadIfChanged(client)
+      // Skill.uploadIfChanged(aex)
       {
         doc: "skills.md",
-        needle: /\.uploadIfChanged\(client\)/,
+        needle: /\.uploadIfChanged\((?:client|aex)\)/,
         present: probe(Skill.prototype, "uploadIfChanged"),
         method: "Skill.prototype.uploadIfChanged"
       },
-      // client.skills.findByHash
+      // aex.skills.findByHash
       {
         doc: "skills.md",
-        needle: /client\.skills\.findByHash\(/,
-        present: hasKey(AexClient.prototype, "skills"),
-        method: "AexClient.prototype.skills.findByHash"
+        needle: /(?:client|aex)\.skills\.findByHash\(/,
+        present: hasKey(AgentExecutor.prototype, "skills"),
+        method: "AgentExecutor.prototype.skills.findByHash"
       },
-      // client.skills.findByName
+      // aex.skills.findByName
       {
         doc: "skills.md",
-        needle: /client\.skills\.findByName\(/,
-        present: hasKey(AexClient.prototype, "skills"),
-        method: "AexClient.prototype.skills.findByName"
+        needle: /(?:client|aex)\.skills\.findByName\(/,
+        present: hasKey(AgentExecutor.prototype, "skills"),
+        method: "AgentExecutor.prototype.skills.findByName"
       },
       // 2-arg submitRun(config, opts)
       {
         doc: "credentials.md",
-        needle: /client\.submitRun\((?:config|template),/,
+        needle: /(?:client|aex)\.submitRun\((?:config|template),/,
         // The signature is `submitRun(options)`; a 2-arg shape would
         // accept run config as the first positional. We probe by calling
         // length on the function.
-        present: AexClient.prototype.submitRun.length >= 2,
-        method: "AexClient.prototype.submitRun(config, options)"
+        present: AgentExecutor.prototype.submitRun.length >= 2,
+        method: "AgentExecutor.prototype.submitRun(config, options)"
       }
     ];
 
@@ -185,7 +185,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       { name: "RunRef type", needle: /\bRunRef\b/ },
       { name: "ref.runId", needle: /\bref\.runId\b/ },
       { name: "ref method", needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadLogs|downloadEvents|downloadMetadata|debugLogs|cancel|delete)\s*\(/ },
-      { name: "const ref submitRun", needle: /\bconst\s+ref\s*=\s*await\s+client\.submitRun\(/ }
+      { name: "const ref submitRun", needle: /\bconst\s+ref\s*=\s*await\s+(?:client|aex)\.submitRun\(/ }
     ];
     const failures: string[] = [];
     for (const doc of publishedDocFiles()) {

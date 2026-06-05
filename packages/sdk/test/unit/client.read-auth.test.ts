@@ -12,7 +12,7 @@
  * it can break against the gated routes in production.
  */
 import { describe, expect, it } from "vitest";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
 const TOKEN = "apt_read_auth_token";
 const BASE = "https://example.test";
@@ -39,7 +39,7 @@ function recordingClient(body: unknown, contentType = "application/json") {
       headers: { "content-type": contentType }
     });
   };
-  const client = new AexClient({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+  const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
   return { client, calls };
 }
 
@@ -96,7 +96,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       }
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
     };
-    const client = new AexClient({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
 
     const bytes = await client.downloadOutput("run-1", { path: "result.txt", match: "suffix" });
 

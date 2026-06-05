@@ -105,9 +105,9 @@ function buildOutputScript(cell: Cell, marker: string): string {
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
-    import { AexClient } from "@aexhq/sdk";
+    import { AgentExecutor } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });
@@ -274,9 +274,9 @@ function buildCorruptedSkillScript(): string {
   // PKZIP end-of-central-directory record with empty payload — passes
   // magic-byte sniffing but is unparseable.
   return `
-    import { AexClient } from "@aexhq/sdk";
+    import { AgentExecutor } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });
@@ -393,9 +393,9 @@ function buildIncompatibleRuntimeScript(): string {
   // must reject it before any HTTP call, giving a deterministic error-shape
   // check without depending on provider behavior.
   return `
-    import { AexClient } from "@aexhq/sdk";
+    import { AgentExecutor } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

@@ -6,7 +6,7 @@
  *
  * Each test installs the SDK (install fixture), then runs a small node script
  * IN the install dir that builds a submission via the SDK's classes
- * (AexClient/AgentsMd/ProxyEndpoint/…), submits, polls to terminal, and
+ * (AgentExecutor/AgentsMd/ProxyEndpoint/…), submits, polls to terminal, and
  * prints a standard result JSON which the test asserts on.
  *
  * They validate the FIXED behaviour and so only pass once the fixes are
@@ -69,8 +69,8 @@ export interface SdkRunResult {
  * `AgentsMd` / `ProxyEndpoint`.
  */
 const PREAMBLE = `
-import { AexClient, AgentsMd, ProxyEndpoint } from "@aexhq/sdk";
-const client = new AexClient({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+import { AgentExecutor, AgentsMd, ProxyEndpoint } from "@aexhq/sdk";
+const client = new AgentExecutor({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;

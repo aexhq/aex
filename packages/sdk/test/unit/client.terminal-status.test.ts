@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
 function makeGetRunFetch(status: string): { fetch: typeof fetch; calls: number } {
   const state = { calls: 0 };
@@ -33,10 +33,10 @@ function makeGetRunFetch(status: string): { fetch: typeof fetch; calls: number }
   };
 }
 
-describe("AexClient.waitForRun — terminal statuses", () => {
+describe("AgentExecutor.waitForRun — terminal statuses", () => {
   it("returns immediately for a timed_out run instead of hanging", async () => {
     const f = makeGetRunFetch("timed_out");
-    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
     const run = await client.waitForRun("run-abc", { intervalMs: 1, timeoutMs: 1_000 });
     expect(run.status).toBe("timed_out");
     // A single GET is enough; no polling loop means no sleep happened.
@@ -46,7 +46,7 @@ describe("AexClient.waitForRun — terminal statuses", () => {
   it("treats every shared TERMINAL_RUN_STATUSES value as terminal", async () => {
     for (const status of TERMINAL_RUN_STATUSES) {
       const f = makeGetRunFetch(status);
-      const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+      const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
       const run = await client.waitForRun("run-abc", { intervalMs: 1, timeoutMs: 1_000 });
       expect(run.status).toBe(status);
       expect(f.calls).toBe(1);

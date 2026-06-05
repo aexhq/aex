@@ -87,14 +87,14 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Ma
     async () => {
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AexClient } from "@aexhq/sdk";
+        import { AgentExecutor } from "@aexhq/sdk";
 
         const apiBase = process.env.AEX_API_URL;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const apiToken = process.env.AEX_API_TOKEN;
 
-        const client = new AexClient({
+        const client = new AgentExecutor({
           baseUrl: apiBase,
           apiToken
         });

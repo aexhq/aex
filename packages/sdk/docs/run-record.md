@@ -6,7 +6,7 @@ title: Run record
 
 The run record is the durable product primitive for one run id. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured outputs, platform diagnostics, and manifest entries for custody and cost telemetry.
 
-`client.download(runId)` and `aex download <run-id>` return a zip with this layout:
+`aex.download(runId)` and `aex download <run-id>` return a zip with this layout:
 
 ```text
 manifest.json

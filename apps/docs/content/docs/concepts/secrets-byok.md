@@ -7,7 +7,7 @@ icon: KeyRound
 aex is BYOK. Every run supplies exactly one provider key matching the selected `provider`, plus any MCP credentials or proxy endpoint auth values needed for that run. There is no default secret store in the SDK and no client-held provider-key state.
 
 ```ts
-await client.submitRun({
+await aex.submitRun({
   provider: "mistral",
   model: "mistral-large-latest",
   prompt: "Compare the docs and return a short changelog.",

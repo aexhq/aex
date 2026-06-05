@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
 interface RecordedCall {
   readonly url: string;
@@ -13,7 +13,7 @@ function json(body: unknown): Response {
   });
 }
 
-function aliasClient(): { readonly client: AexClient; readonly calls: RecordedCall[] } {
+function aliasClient(): { readonly client: AgentExecutor; readonly calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -25,12 +25,12 @@ function aliasClient(): { readonly client: AexClient; readonly calls: RecordedCa
     return json({ id: "run-1", status: "succeeded" });
   };
   return {
-    client: new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
+    client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
     calls
   };
 }
 
-describe("AexClient run-id aliases", () => {
+describe("AgentExecutor run-id aliases", () => {
   it("delegate to the explicit run operations", async () => {
     const { client, calls } = aliasClient();
 

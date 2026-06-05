@@ -19,7 +19,7 @@ The managed runtime means aex starts a per-run agent process in an isolated mana
 The optional `runtime` field accepts only `"managed"`; omitting it also uses the managed runtime. `runtime: "native"` is rejected as an invalid runtime selector.
 
 ```ts
-await client.submitRun({
+await aex.submitRun({
   provider: "openai",
   model: "gpt-4.1",
   prompt: "Summarise the attached files.",

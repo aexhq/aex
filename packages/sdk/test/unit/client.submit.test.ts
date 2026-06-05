@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentsMd, AexClient, File as AexFile, McpServer, Skill } from "../../src/index.js";
+import { AgentsMd, AgentExecutor, File as AexFile, McpServer, Skill } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly url: string;
@@ -124,10 +124,10 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
   return { fetch: stub, calls };
 }
 
-describe("AexClient.submitRun (flat surface, wire shape)", () => {
+describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
   it("builds the flat submission and routes MCP headers into secrets", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new AexClient({
+    const client = new AgentExecutor({
       apiToken: "tkn_test",
       baseUrl: "https://example.test",
       fetch
@@ -181,7 +181,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("requires anthropic.apiKey", async () => {
     const { fetch } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
         model: "m",
@@ -193,7 +193,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("submits DeepSeek provider runs with DeepSeek secrets only", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await client.submitRun({
       provider: "deepseek",
       model: "deepseek-chat",
@@ -209,7 +209,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("rejects cross-provider secrets before submitting", async () => {
     const { fetch } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
         provider: "deepseek",
@@ -222,7 +222,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("rejects empty prompts", async () => {
     const { fetch } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
         model: "m",
@@ -234,7 +234,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("accepts prompt arrays", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await client.submitRun({
       model: "m",
       prompt: ["one", "two"],
@@ -247,7 +247,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("rejects mismatched MCP urls between run request server and explicit secret", async () => {
     const { fetch } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
         model: "m",
@@ -271,7 +271,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("rejects non-Skill entries with index in the message", async () => {
     const { fetch } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
         model: "m",
@@ -284,7 +284,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("submits an inline AgentsMd as a direct bootstrap input without /assets calls", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
     await client.submitRun({
       model: "m",
@@ -313,7 +313,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("uploads draft Skill, AgentsMd, and File refs to the bootstrap target before resolving", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const skill = await Skill.fromFiles({
       name: "rules",
       files: {
@@ -423,7 +423,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
         headers: { "content-type": "application/json" }
       });
     });
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const skill = await Skill.fromFiles({
       name: "rules",
       files: { "SKILL.md": "# rules\n" }
@@ -448,7 +448,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
 
   it("rejects non-AgentsMd entries in the agentsMd array with index in the message", async () => {
     const { fetch } = makeStubFetch();
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
         model: "m",
@@ -460,7 +460,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
   });
 });
 
-describe("AexClient.deleteWorkspaceAsset", () => {
+describe("AgentExecutor.deleteWorkspaceAsset", () => {
   it("DELETEs /assets/:assetId and normalizes sha256-prefixed hashes", async () => {
     const calls: CapturedRequest[] = [];
     const stub: typeof fetch = vi.fn(async (input, init) => {
@@ -476,7 +476,7 @@ describe("AexClient.deleteWorkspaceAsset", () => {
       calls.push({ url, method: (init?.method ?? "GET").toString(), headers, body: init?.body });
       return new Response(null, { status: 204 });
     });
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch: stub });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: stub });
     const hex = "b".repeat(64);
 
     await client.deleteWorkspaceAsset(`sha256:${hex}`);

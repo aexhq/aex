@@ -15,7 +15,7 @@ provider-session retention is not a supported run option, and the removed
 retention field is rejected if supplied.
 
 ```ts
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "...",
   secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }

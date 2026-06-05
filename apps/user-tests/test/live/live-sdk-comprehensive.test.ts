@@ -168,9 +168,9 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     `include this project tracking reference verbatim in your reply.`;
 
   return `
-    import { AexClient, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { AgentExecutor, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

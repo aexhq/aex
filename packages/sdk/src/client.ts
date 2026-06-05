@@ -43,7 +43,7 @@ import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
 import { Skill } from "./skill.js";
 
-export interface AexClientOptions {
+export interface AgentExecutorOptions {
   /** Workspace-scoped SDK API token. */
   readonly apiToken: string;
   /**
@@ -204,7 +204,7 @@ export interface OutputDownloadOptions {
 }
 
 /**
- * One captured debug artifact returned by {@link AexClient.getRunDebugLogs}.
+ * One captured debug artifact returned by {@link AgentExecutor.getRunDebugLogs}.
  *
  *   - `filename` is the path under `runs/{runId}/logs/` — leading
  *     `runtime/` for runtime logs and `host/` for host logs.
@@ -391,7 +391,7 @@ export class FilesClient {
  * `client.whoami()` if you want to introspect which workspace the
  * token resolves to.
  */
-export class AexClient {
+export class AgentExecutor {
   readonly #http: HttpClient;
   /** The same fetch the HttpClient uses, kept for direct bootstrap uploads. */
   readonly #fetch: FetchLike | undefined;
@@ -399,9 +399,9 @@ export class AexClient {
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
 
-  constructor(options: AexClientOptions) {
+  constructor(options: AgentExecutorOptions) {
     if (!options.apiToken) {
-      throw new Error("AexClient: apiToken is required");
+      throw new Error("AgentExecutor: apiToken is required");
     }
     this.#http = new HttpClient({
       ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
@@ -488,18 +488,18 @@ export class AexClient {
    */
   async submitRun(options: SubmitRunOptions): Promise<string> {
     if (!options || typeof options !== "object") {
-      throw new Error("AexClient.submitRun: options is required");
+      throw new Error("AgentExecutor.submitRun: options is required");
     }
     const provider: RunProvider = options.provider ?? DEFAULT_RUN_PROVIDER;
     const credentialMode = parseCredentialMode(options.credentialMode);
     if (credentialMode === "managed") {
       throw new AexError(
         "CREDENTIAL_INVALID",
-        "AexClient.submitRun: credentialMode \"managed\" is not available without a private managed-key implementation"
+        "AgentExecutor.submitRun: credentialMode \"managed\" is not available without a private managed-key implementation"
       );
     }
     if (!options.secrets) {
-      throw new Error("AexClient.submitRun: secrets is required");
+      throw new Error("AgentExecutor.submitRun: secrets is required");
     }
     // The matching provider's apiKey is required; every OTHER provider's
     // secret block must be absent. The shared parser re-runs this check
@@ -507,18 +507,18 @@ export class AexClient {
     // error before any network call.
     const providerSecret = (options.secrets as Record<string, { apiKey?: string } | undefined>)[provider];
     if (!providerSecret?.apiKey) {
-      throw new Error(`AexClient.submitRun: secrets.${provider}.apiKey is required`);
+      throw new Error(`AgentExecutor.submitRun: secrets.${provider}.apiKey is required`);
     }
     for (const other of ["anthropic", "deepseek", "openai", "gemini", "mistral"] as const) {
       if (other === provider) continue;
       if ((options.secrets as Record<string, unknown>)[other] !== undefined) {
         throw new Error(
-          `AexClient.submitRun: secrets.${other} is not allowed when provider is ${provider}`
+          `AgentExecutor.submitRun: secrets.${other} is not allowed when provider is ${provider}`
         );
       }
     }
     if (typeof options.model !== "string" || !options.model) {
-      throw new Error("AexClient.submitRun: model is required");
+      throw new Error("AgentExecutor.submitRun: model is required");
     }
     const prompt = normalisePrompt(options.prompt);
     const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
@@ -606,7 +606,7 @@ export class AexClient {
     ) {
       throw new AexError(
         "RUNTIME_UNSUPPORTED",
-        `AexClient.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
+        `AgentExecutor.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
           `(got ${JSON.stringify(options.runtime)})`
       );
     }
@@ -746,11 +746,11 @@ export class AexClient {
       const run = await this.getRun(runId);
       if (isTerminal(run.status)) return run;
       if (Date.now() >= deadline) {
-        throw new Error(`AexClient.waitForRun: timeout after ${timeoutMs}ms`);
+        throw new Error(`AgentExecutor.waitForRun: timeout after ${timeoutMs}ms`);
       }
       await sleep(intervalMs, signal);
     }
-    throw new Error("AexClient.waitForRun: aborted");
+    throw new Error("AgentExecutor.waitForRun: aborted");
   }
 
   /** Short alias for `waitForRun`. */
@@ -954,7 +954,7 @@ function resolveOutputFileSelector(
   if (isOutputPathSelector(selector)) {
     const target = normalizeOutputLookupPath(selector.path);
     if (!target) {
-      throw new RunStateError("AexClient.downloadOutput: output path must be non-empty", {
+      throw new RunStateError("AgentExecutor.downloadOutput: output path must be non-empty", {
         runId,
         path: selector.path
       });
@@ -970,17 +970,17 @@ function resolveOutputFileSelector(
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new RunStateError(
-        `AexClient.downloadOutput: output path "${selector.path}" matched multiple files`,
+        `AgentExecutor.downloadOutput: output path "${selector.path}" matched multiple files`,
         { runId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
       );
     }
-    throw new RunStateError(`AexClient.downloadOutput: output path "${selector.path}" was not found`, {
+    throw new RunStateError(`AgentExecutor.downloadOutput: output path "${selector.path}" was not found`, {
       runId,
       path: selector.path
     });
   }
   if (typeof selector.id !== "string" || selector.id.length === 0) {
-    throw new RunStateError("AexClient.downloadOutput: selector must include an output id or path", { runId });
+    throw new RunStateError("AgentExecutor.downloadOutput: selector must include an output id or path", { runId });
   }
   return { ...selector, id: selector.id };
 }
@@ -1042,16 +1042,16 @@ function generateIdempotencyKey(): string {
 function normalisePrompt(input: string | readonly string[]): readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new Error("AexClient.submitRun: prompt must be a non-empty string");
+      throw new Error("AgentExecutor.submitRun: prompt must be a non-empty string");
     }
     return [input];
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new Error("AexClient.submitRun: prompt must be a non-empty string or string array");
+    throw new Error("AgentExecutor.submitRun: prompt must be a non-empty string or string array");
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new Error("AexClient.submitRun: prompt segments must be non-empty strings");
+      throw new Error("AgentExecutor.submitRun: prompt segments must be non-empty strings");
     }
   }
   return [...input];
@@ -1100,16 +1100,16 @@ function prepareSkills(skills: readonly Skill[]): PreparedDirectRefs<SkillRef> {
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
-      throw new Error(`AexClient.submitRun: skills[${i}] must be a Skill instance`);
+      throw new Error(`AgentExecutor.submitRun: skills[${i}] must be a Skill instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AexClient.submitRun: skills[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AgentExecutor.submitRun: skills[${i}] was already consumed by a prior submitRun`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AexClient.submitRun: skills[${i}] is draft but has no bytes`);
+        throw new Error(`AgentExecutor.submitRun: skills[${i}] is draft but has no bytes`);
       }
       const input = directInputFor({
         role: "skill",
@@ -1140,16 +1140,16 @@ function prepareAgentsMd(agentsMds: readonly AgentsMd[]): PreparedDirectRefs<Age
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
-      throw new Error(`AexClient.submitRun: agentsMd[${i}] must be an AgentsMd instance`);
+      throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] must be an AgentsMd instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AexClient.submitRun: agentsMd[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] was already consumed by a prior submitRun`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AexClient.submitRun: agentsMd[${i}] is draft but has no bytes`);
+        throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] is draft but has no bytes`);
       }
       const input = directInputFor({
         role: "agentsMd",
@@ -1179,16 +1179,16 @@ function prepareFiles(files: readonly File[]): PreparedDirectRefs<FileRef> {
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
-      throw new Error(`AexClient.submitRun: files[${i}] must be a File instance`);
+      throw new Error(`AgentExecutor.submitRun: files[${i}] must be a File instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AexClient.submitRun: files[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AgentExecutor.submitRun: files[${i}] was already consumed by a prior submitRun`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AexClient.submitRun: files[${i}] is draft but has no bytes`);
+        throw new Error(`AgentExecutor.submitRun: files[${i}] is draft but has no bytes`);
       }
       const input = directInputFor({
         role: "file",
@@ -1235,7 +1235,7 @@ function directInputFor(args: {
     : `sha256:${args.contentHash}`;
   const hashHex = sha256.slice("sha256:".length);
   if (!/^[0-9a-f]{64}$/.test(hashHex)) {
-    throw new Error(`AexClient.submitRun: ${args.role}[${args.index}] content hash must be sha256:<64-hex>`);
+    throw new Error(`AgentExecutor.submitRun: ${args.role}[${args.index}] content hash must be sha256:<64-hex>`);
   }
   return {
     inputId: `input_${args.role}_${args.index}_${hashHex}`,
@@ -1253,7 +1253,7 @@ function directInputFor(args: {
 function getSubmittedRunId(response: Run & DirectBootstrapSubmitResponse): string {
   const id = response.id ?? response.runId;
   if (typeof id !== "string" || id.length === 0) {
-    throw new Error("AexClient.submitRun: submit response did not include a run id");
+    throw new Error("AgentExecutor.submitRun: submit response did not include a run id");
   }
   return id;
 }
@@ -1311,7 +1311,7 @@ async function pollBootstrapReady(args: {
   const deadline = bootstrapDeadline(args.expiresAt);
   while (!args.signal?.aborted) {
     if (Date.now() >= deadline) {
-      throw new Error("AexClient.submitRun: bootstrap target did not become ready before it expired");
+      throw new Error("AgentExecutor.submitRun: bootstrap target did not become ready before it expired");
     }
     const res = await args.fetchImpl(args.statusUrl, {
       method: "GET",
@@ -1325,13 +1325,13 @@ async function pollBootstrapReady(args: {
     } else if (![202, 404, 425].includes(res.status)) {
       const detail = await res.text().catch(() => "");
       throw new Error(
-        `AexClient.submitRun: bootstrap status failed with ${res.status}` +
+        `AgentExecutor.submitRun: bootstrap status failed with ${res.status}` +
           (detail ? `: ${detail.slice(0, 300)}` : "")
       );
     }
     await sleep(250, args.signal);
   }
-  throw new Error("AexClient.submitRun: aborted");
+  throw new Error("AgentExecutor.submitRun: aborted");
 }
 
 function resolveBootstrapReady(value: unknown): DirectBootstrapReady | undefined {
@@ -1386,7 +1386,7 @@ async function uploadDirectInput(args: {
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(
-      `AexClient.submitRun: bootstrap input upload failed for ${args.input.inputId} ` +
+      `AgentExecutor.submitRun: bootstrap input upload failed for ${args.input.inputId} ` +
         `(status ${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`
     );
   }
@@ -1420,7 +1420,7 @@ async function commitDirectInputs(args: {
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(
-      `AexClient.submitRun: bootstrap commit failed with ${res.status}` +
+      `AgentExecutor.submitRun: bootstrap commit failed with ${res.status}` +
         (detail ? `: ${detail.slice(0, 300)}` : "")
     );
   }
@@ -1482,7 +1482,7 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new Error(`AexClient.submitRun: mcpServers[${i}] must be an McpServer instance`);
+      throw new Error(`AgentExecutor.submitRun: mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
@@ -1490,7 +1490,7 @@ function mergeMcpServers(
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
         throw new Error(
-          `AexClient.submitRun: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
+          `AgentExecutor.submitRun: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
         );
       }
       secretByName.set(secret.name, secret);
@@ -1523,7 +1523,7 @@ function mergeProxyEndpointAuth(
     const existing = byName.get(entry.name);
     if (existing && existing.value.type !== entry.value.type) {
       throw new Error(
-        `AexClient.submitRun: proxyEndpoint "${entry.name}" auth type conflicts ` +
+        `AgentExecutor.submitRun: proxyEndpoint "${entry.name}" auth type conflicts ` +
           `with secrets.proxyEndpointAuth (instance=${entry.value.type}, secrets=${existing.value.type})`
       );
     }

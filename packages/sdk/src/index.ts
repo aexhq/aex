@@ -1,16 +1,16 @@
 /**
  * Public surface of the `aex` SDK.
  *
- * ONE class (`AexClient`) talks to the dashboard BFF. The CLI exposes
+ * ONE class (`AgentExecutor`) talks to the dashboard BFF. The CLI exposes
  * the SAME operations via subcommands. Composition primitives are
  * `Skill`, `McpServer`, and `ProxyEndpoint` — there is no saved-definition
  * wrapper. Everything else is types, errors, and event type guards re-exported
  * from `@aexhq/contracts`.
  */
 
-export { AgentsMdClient, AexClient, FilesClient, SkillsClient } from "./client.js";
+export { AgentsMdClient, AgentExecutor, FilesClient, SkillsClient } from "./client.js";
 export type {
-  AexClientOptions,
+  AgentExecutorOptions,
   OutputDownloadOptions,
   OutputFilePathMatch,
   OutputFilePathSelector,

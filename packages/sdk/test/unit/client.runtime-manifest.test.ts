@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
 /**
  * SDK contract: runtimeManifest is accessed on the Run record returned by
@@ -43,7 +43,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
         runtimeManifest: manifest
       }
     });
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const runId = await client.submitRun({
       model: "m",
       prompt: "p",
@@ -61,7 +61,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
       submitBody: { id: "run_no_manifest", status: "queued" },
       getBody: { id: "run_no_manifest", status: "queued" }
     });
-    const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const runId = await client.submitRun({
       model: "m",
       prompt: "p",

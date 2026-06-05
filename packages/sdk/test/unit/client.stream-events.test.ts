@@ -1,12 +1,12 @@
 /**
- * SDK-level coverage for `AexClient.streamEvents` (the loose `RunEvent`
+ * SDK-level coverage for `AgentExecutor.streamEvents` (the loose `RunEvent`
  * snapshot poll loop). It polls the coordinator-backed `/events` endpoint,
  * dedupes by event id, and stops on a terminal run status or an abort. The
  * low-latency live envelope stream is covered separately (streamEnvelopes →
  * coordinator WS, shared event-stream-client tests).
  */
 import { describe, expect, it } from "vitest";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -28,7 +28,7 @@ function makeFetch(plan: ReadonlyArray<{ match: RegExp; respond: () => Response 
   return { fetch: fakeFetch, calls };
 }
 
-describe("AexClient.streamEvents — polling the coordinator-backed /events", () => {
+describe("AgentExecutor.streamEvents — polling the coordinator-backed /events", () => {
   it("yields events, dedupes by id across polls, and stops on terminal status", async () => {
     let listCount = 0;
     let getCount = 0;
@@ -56,7 +56,7 @@ describe("AexClient.streamEvents — polling the coordinator-backed /events", ()
       }
     ]);
 
-    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
     const events: string[] = [];
     for await (const ev of client.streamEvents("run-abc", { intervalMs: 1 })) {
       events.push(ev.id);
@@ -71,7 +71,7 @@ describe("AexClient.streamEvents — polling the coordinator-backed /events", ()
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
       { match: /\/runs\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
     ]);
-    const client = new AexClient({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 5);
     const events: string[] = [];

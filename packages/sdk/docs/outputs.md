@@ -4,19 +4,19 @@ title: Outputs
 
 # Outputs
 
-Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the run creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `client.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
+Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the run creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `aex.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
 
 ## Quickstart
 
 ```ts
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Produce a report and save it as a file.",
   secrets: { anthropic: { apiKey } }
 });
 
-await client.wait(runId);
-await client.download(runId, { to: "./run.zip" });
+await aex.wait(runId);
+await aex.download(runId, { to: "./run.zip" });
 ```
 
 ```bash
@@ -64,16 +64,16 @@ The single-namespace verbs return the same per-file bytes at the zip root (e.g. 
 
 ## Downloading one output
 
-`downloadOutput(runId, selector)` returns a `Uint8Array`. Omit the selector to download the whole outputs namespace as a zip; pass an output from `client.outputs(runId)`, an `{ id }`, or a path selector against the listed `Output.filename` values to download one file:
+`downloadOutput(runId, selector)` returns a `Uint8Array`. Omit the selector to download the whole outputs namespace as a zip; pass an output from `aex.outputs(runId)`, an `{ id }`, or a path selector against the listed `Output.filename` values to download one file:
 
 ```ts
-const allOutputs = await client.downloadOutput(runId);
-await client.downloadOutput(runId, undefined, { to: "./outputs.zip" });
+const allOutputs = await aex.downloadOutput(runId);
+await aex.downloadOutput(runId, undefined, { to: "./outputs.zip" });
 
-const report = await client.downloadOutput(runId, { path: "reports/report.txt" });
+const report = await aex.downloadOutput(runId, { path: "reports/report.txt" });
 console.log(new TextDecoder().decode(report));
 
-const looseReport = await client.downloadOutput(runId, { path: "report.txt", match: "suffix" });
+const looseReport = await aex.downloadOutput(runId, { path: "report.txt", match: "suffix" });
 console.log(looseReport.byteLength);
 ```
 
@@ -90,7 +90,7 @@ console.log(looseReport.byteLength);
 ## `outputs.allowedDirs` — override capture roots
 
 ```ts
-client.submitRun({
+aex.submitRun({
   /* ... */,
   outputs: {
     allowedDirs: ["/workspace/reports", "/workspace/state"]
@@ -115,7 +115,7 @@ Runtime notes:
 ## `outputs.deniedDirs` — subtract noise
 
 ```ts
-client.submitRun({
+aex.submitRun({
   /* ... */,
   outputs: {
     deniedDirs: ["node_modules", "/var/cache", "*.tmp"]

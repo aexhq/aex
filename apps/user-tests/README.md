@@ -78,7 +78,7 @@ DeepSeek-managed because that is the provider key provisioned for the public
 live workflow.
 
 Each test installs the packed tarball into a tempdir, spawns
-`AexClient.submitRun({ provider, ... })`, polls `getRun`,
+`AgentExecutor.submitRun({ provider, ... })`, polls `getRun`,
 `listEvents`, and `listOutputs`, and asserts the user's probe
 string round-trips through a real upstream LLM call.
 

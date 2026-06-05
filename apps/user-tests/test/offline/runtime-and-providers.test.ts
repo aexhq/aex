@@ -89,12 +89,12 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ anthropic: "managed", deepseek: "managed" });
   });
 
-  it("AexClient.submitRun rejects runtime:'native' without an HTTP call", async () => {
+  it("AgentExecutor.submitRun rejects runtime:'native' without an HTTP call", async () => {
     const script = `
-      const { AexClient, AexError } = await import("@aexhq/sdk");
+      const { AgentExecutor, AexError } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
-      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       try {
         await client.submitRun({
           provider: "anthropic",
@@ -160,17 +160,17 @@ describe("managed runtime + widened providers (published surface)", () => {
     });
   });
 
-  it("AexClient.submitRun rejects non-matching provider secrets at the SDK boundary", async () => {
+  it("AgentExecutor.submitRun rejects non-matching provider secrets at the SDK boundary", async () => {
     // The dispatcher rejects cross-provider secrets; the SDK does the
     // same check synchronously before hitting the network. We confirm
     // that by calling submitRun with the wrong shape and asserting it
     // throws before any fetch happens. Use a fetch-fake that records
     // calls to prove no network call leaked.
     const script = `
-      const { AexClient } = await import("@aexhq/sdk");
+      const { AgentExecutor } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
-      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       let caught = null;
       try {
         await client.submitRun({
@@ -191,9 +191,9 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(out.fetchCalls).toBe(0);
   });
 
-  it("AexClient.submitRun forwards the optional runtime field on the wire", async () => {
+  it("AgentExecutor.submitRun forwards the optional runtime field on the wire", async () => {
     const script = `
-      const { AexClient } = await import("@aexhq/sdk");
+      const { AgentExecutor } = await import("@aexhq/sdk");
       const requests = [];
       const fetchFake = async (url, init) => {
         let body = init?.body;
@@ -208,7 +208,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           createdAt: new Date().toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
       };
-      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       await client.submitRun({
         provider: "anthropic",
         runtime: "managed",
@@ -238,9 +238,9 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(out.hasSecrets).toBe(true);
   });
 
-  it("AexClient.submitRun omits runtime from the wire when the caller doesn't supply it", async () => {
+  it("AgentExecutor.submitRun omits runtime from the wire when the caller doesn't supply it", async () => {
     const script = `
-      const { AexClient } = await import("@aexhq/sdk");
+      const { AgentExecutor } = await import("@aexhq/sdk");
       const requests = [];
       const fetchFake = async (url, init) => {
         let body = init?.body;
@@ -255,7 +255,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           createdAt: new Date().toISOString()
         }), { status: 202, headers: { "content-type": "application/json" } });
       };
-      const client = new AexClient({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       await client.submitRun({
         provider: "anthropic",
         model: "claude-haiku-4-5",

@@ -4,7 +4,7 @@
  * Verifies the run-artifact download surface ships in the *installed*
  * package — no live API required:
  *
- *   - `AexClient` exposes the whole-run verb `download` plus the four
+ *   - `AgentExecutor` exposes the whole-run verb `download` plus the four
  *     per-namespace verbs `downloadOutputs` / `downloadLogs` /
  *     `downloadEvents` / `downloadMetadata`.
  *   - The CLI `download` command validates `--only <namespace>` BEFORE any
@@ -35,10 +35,10 @@ describe("download namespaces surface (offline)", () => {
     install?.cleanup();
   });
 
-  it("AexClient exposes the whole-run + per-namespace download verbs", async () => {
+  it("AgentExecutor exposes the whole-run + per-namespace download verbs", async () => {
     const script = `
-      const { AexClient } = await import("@aexhq/sdk");
-      const c = new AexClient({ apiToken: "t", baseUrl: "https://example.test" });
+      const { AgentExecutor } = await import("@aexhq/sdk");
+      const c = new AgentExecutor({ apiToken: "t", baseUrl: "https://example.test" });
       const verbs = ["download", "downloadOutputs", "downloadLogs", "downloadEvents", "downloadMetadata"];
       const result = {};
       for (const v of verbs) result[v] = typeof c[v];
@@ -50,7 +50,7 @@ describe("download namespaces surface (offline)", () => {
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, string>;
     for (const v of ["download", "downloadOutputs", "downloadLogs", "downloadEvents", "downloadMetadata"]) {
-      expect(result[v], `AexClient.${v} should be a function`).toBe("function");
+      expect(result[v], `AgentExecutor.${v} should be a function`).toBe("function");
     }
   });
 

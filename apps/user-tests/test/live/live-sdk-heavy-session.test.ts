@@ -233,9 +233,9 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
   ];
 
   return `
-    import { AexClient, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { AgentExecutor, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

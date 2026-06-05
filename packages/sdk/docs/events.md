@@ -10,13 +10,13 @@ aex runs agent sessions on the managed runtime. Runs are **non-blocking**: the m
 
 ```ts
 // Pull a snapshot of every event captured so far.
-const events = await client.events(runId);
+const events = await aex.events(runId);
 ```
 
 ```ts
 // Stream the RunEvent snapshot shape: yields each event once, stops when the
 // run reaches a terminal status. Backed by polling the aex events endpoint.
-for await (const event of client.stream(runId, { intervalMs: 1000 })) {
+for await (const event of aex.stream(runId, { intervalMs: 1000 })) {
   if (event.type === "agent.message") {
     // ...
   }
@@ -26,7 +26,7 @@ for await (const event of client.stream(runId, { intervalMs: 1000 })) {
 For the canonical event envelope, use the coordinator WebSocket stream:
 
 ```ts
-for await (const event of client.streamEnvelopes(runId, { from: 0 })) {
+for await (const event of aex.streamEnvelopes(runId, { from: 0 })) {
   console.log(event.sequence, event.type, event.source);
 }
 ```
@@ -41,7 +41,7 @@ aex events <run-id> --follow [--timeout 8m] --api-token … [--aex-url …]  # s
 aex wait   <run-id> [--timeout 8m] [--interval 2s] --api-token …          # block, print final run
 ```
 
-`aex wait` is the host mirror of `client.wait(runId)` / `client.waitForRun(runId)`:
+`aex wait` is the host mirror of `aex.wait(runId)` / `aex.waitForRun(runId)`:
 it polls until the run reaches a terminal status and prints the final `Run`
 record. Exit `0` when the run `succeeded`, `1` for any other terminal status,
 and `3` when `--timeout` elapses first (a `--timeout` on `events --follow` /

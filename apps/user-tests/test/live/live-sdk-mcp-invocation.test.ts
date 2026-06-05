@@ -127,9 +127,9 @@ function buildScript(cell: Cell): string {
     `of the GitHub repository anthropics/anthropic-cookbook. ` +
     `Reply with exactly one line: lang=<language>.`;
   return `
-    import { AexClient, McpServer } from "@aexhq/sdk";
+    import { AgentExecutor, McpServer } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

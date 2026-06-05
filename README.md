@@ -22,9 +22,9 @@ npm install @aexhq/sdk   # or: pnpm add @aexhq/sdk  /  yarn add @aexhq/sdk
 ## Example
 
 ```ts
-import { AexClient, Skill, McpServer } from "@aexhq/sdk";
+import { AgentExecutor, Skill, McpServer } from "@aexhq/sdk";
 
-const client = new AexClient({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const github = McpServer.remote({
   name: "github",
@@ -32,7 +32,7 @@ const github = McpServer.remote({
   headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN!}` },
 });
 
-const runId = await client.submitRun({
+const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Summarise Q1 revenue by region.",
   skills: [await Skill.fromPath("./skills/sheet-tools", { name: "sheet-tools" })],
@@ -41,12 +41,12 @@ const runId = await client.submitRun({
 });
 
 // Listen for events as the run executes...
-for await (const event of client.stream(runId)) console.log(event.type);
+for await (const event of aex.stream(runId)) console.log(event.type);
 
 // ...then download everything about the run — record, events, and all
 // captured outputs (including debug logs) — as one zip once it finishes.
-await client.wait(runId);
-await client.download(runId, { to: "./run.zip" });
+await aex.wait(runId);
+await aex.download(runId, { to: "./run.zip" });
 ```
 
 Same run request from the CLI: `aex run --config run.json` accepts
@@ -58,7 +58,7 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
 
 - **Skills, MCP servers, AGENTS.md, files** are first-class. Pass
   per-run bundles inline with `Skill.fromPath(...)` /
-  `Skill.fromFiles(...)`; `client.submitRun` materializes the bytes to
+  `Skill.fromFiles(...)`; `aex.submitRun` materializes the bytes to
   content-addressable, workspace-scoped asset storage before the run lands,
   so the same bytes are a no-op upload on subsequent runs. MCP servers
   can be remote or workspace-registered.

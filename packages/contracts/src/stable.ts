@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 /**
  * Canonical hosted aex API plane URL. Used as the default `baseUrl`
- * for the SDK `AexClient` and the host-side CLI `--aex-url`
+ * for the SDK `AgentExecutor` and the host-side CLI `--aex-url`
  * flag.
  *
  * Pinned to `api.aex.dev` on purpose: the dashboard at

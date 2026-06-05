@@ -2,9 +2,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AexClient } from "../../src/index.js";
+import { AgentExecutor } from "../../src/index.js";
 
-function downloadClient(): AexClient {
+function downloadClient(): AgentExecutor {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url.endsWith("/api/runs/run-1/outputs/abc/download")) {
@@ -36,10 +36,10 @@ function downloadClient(): AexClient {
     }
     throw new Error(`No fake responder for ${url}`);
   };
-  return new AexClient({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+  return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
 }
 
-describe("AexClient download { to } options", () => {
+describe("AgentExecutor download { to } options", () => {
   it("download writes the zip to disk and still returns the bytes", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {

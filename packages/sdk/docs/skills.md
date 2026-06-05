@@ -38,18 +38,18 @@ build an **unstaged** `Skill`. The instance carries the canonicalised
 zip bytes and the `sha256:<hex>` content hash:
 
 ```ts
-import { AexClient, Skill } from "@aexhq/sdk";
+import { AgentExecutor, Skill } from "@aexhq/sdk";
 
-const client = new AexClient({ apiToken });
+const aex = new AgentExecutor({ apiToken });
 
-await client.submitRun({
+await aex.submitRun({
   model, prompt,
   skills: [await Skill.fromFiles({ name: "rules", files })],
   secrets: { anthropic: { apiKey } }
 });
 ```
 
-`client.submitRun` walks the `skills` array, sends a multipart body
+`aex.submitRun` walks the `skills` array, sends a multipart body
 alongside the JSON submission, and materializes the bytes to
 content-addressable, workspace-scoped asset storage before the run lands.
 The BFF re-canonicalises the bundle, verifies the advisory hash, and
@@ -77,11 +77,11 @@ rules-az3lkmt
 
 Same prefix, different suffix. Each is a real workspace skill — you
 can list, get, download, and delete it through the regular
-`client.skills.*` verbs.
+`aex.skills.*` verbs.
 
 ### Deletion semantics
 
-Soft-deleting a skill (`client.skills.delete(skl_id)` or the
+Soft-deleting a skill (`aex.skills.delete(skl_id)` or the
 dashboard's Delete button) marks the row tombstoned. Existing runs
 that pinned a snapshot of the skill keep working — they read from
 `run_skill_snapshots` which preserves the name, hash, size, and
@@ -101,11 +101,11 @@ bundle skill bytes with it. Host the skill yourself as a **zip archive**
 URL — e.g. an S3 presigned URL:
 
 ```ts
-import { AexClient, Skill } from "@aexhq/sdk";
+import { AgentExecutor, Skill } from "@aexhq/sdk";
 
-const client = new AexClient({ apiToken });
+const aex = new AgentExecutor({ apiToken });
 
-await client.submitRun({
+await aex.submitRun({
   model, prompt,
   skills: [
     await Skill.fromUrl(signedUrl, { name: "rules", sha256: "sha256:<hex>" })
@@ -123,7 +123,7 @@ produce the **same canonical asset** and dedup against each other.
 - The archive must contain `SKILL.md` at its root, or inside a single
   top-level folder, which is stripped automatically. Anything else is
   rejected with an error listing the archive's actual top-level entries.
-- The signed URL only needs to be valid **for this call**. `client.submitRun`
+- The signed URL only needs to be valid **for this call**. `aex.submitRun`
   snapshots the bytes into the run immediately, so the URL can expire
   afterwards with no effect on the run.
 - `sha256` is an optional source-integrity check on the downloaded archive

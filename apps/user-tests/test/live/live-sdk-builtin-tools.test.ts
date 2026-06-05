@@ -107,9 +107,9 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
         `If you have no shell tool available, reply briefly explaining that.`;
 
   return `
-    import { AexClient } from "@aexhq/sdk";
+    import { AgentExecutor } from "@aexhq/sdk";
 
-    const client = new AexClient({
+    const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });
