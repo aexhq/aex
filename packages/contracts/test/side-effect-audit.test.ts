@@ -139,7 +139,7 @@ describe("side-effect audit contract", () => {
       ["headers", { headers: { authorization: "Bearer runner-token-1234567890" } }, "forbidden_field_name"],
       ["provider key", "sk-ant-test-1234567890", "provider_key"],
       ["signed URL", "https://r2.example.test/file?X-Amz-Signature=abc", "signed_url"],
-      ["R2 key", "runs/run-11111111/outputs/result.txt", "r2_object_key"],
+      ["R2 key", "runs/run-11111111/outputs/result.txt", "object_store_key"],
       ["Vault id", "vault_secret_1234567890", "vault_id"],
       ["resource handle", "machine_1234567890", "private_resource_handle"],
       ["raw URL", "https://service.example.test/path", "raw_url"],

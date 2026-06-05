@@ -166,6 +166,24 @@ describe("run-config — parseMcpServerRef", () => {
       parseMcpServerRef({ name: "x", url: "https://user@example.com" }, "r")
     ).toThrow(/userinfo|username|password/i);
   });
+
+  // SSRF deny-list parity with platform `denyReasonForHostIp`. The cases
+  // below are the ones the hardened deny-list adds over the prior public
+  // copy: IPv4-mapped IPv6 (both dotted and hex normalisation), CGNAT
+  // (100.64.0.0/10), and ULA (fc00::/7). A mapped form must not smuggle a
+  // private target past the literal checks.
+  it.each([
+    ["http://localhost/mcp", /loopback hostname/i],
+    ["http://127.0.0.1/mcp", /loopback IPv4/i],
+    ["http://169.254.169.254/mcp", /link-local IPv4/i],
+    ["http://100.64.0.1/mcp", /CGNAT IPv4/i],
+    ["http://[::ffff:127.0.0.1]/mcp", /loopback IPv4/i],
+    ["http://[::ffff:169.254.169.254]/mcp", /link-local IPv4/i],
+    ["http://[fc00::1]/mcp", /unique-local IPv6/i],
+    ["http://[fd12:3456::1]/mcp", /unique-local IPv6/i]
+  ])("rejects %s as an SSRF target", (url, pattern) => {
+    expect(() => parseMcpServerRef({ name: "x", url }, "r")).toThrow(pattern);
+  });
 });
 
 describe("run-config — normaliseSkillBundlePath", () => {

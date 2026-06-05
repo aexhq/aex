@@ -61,21 +61,41 @@ export async function getRunUnit(http: HttpClient, runId: string): Promise<RunUn
   return http.request<RunUnit>(`/api/runs/${encodeURIComponent(runId)}`);
 }
 
+// Bound the transparent pager: the read route caps each page at 1000, so this
+// admits up to ~1e6 events before bailing — past any real run, but bounded so a
+// server that never clears `nextCursor` can't loop forever.
+const LIST_EVENTS_PAGE_BUDGET = 1000;
+
+/**
+ * List a run's events. The read endpoint is PAGED (bounded per response so a
+ * long run can't return an unbounded body); this follows `nextCursor` across
+ * pages and returns the FULL accumulated list, preserving the prior single-call
+ * contract for callers (download/*, CLI, streamEvents polling).
+ */
 export async function listRunEvents(
   http: HttpClient,
   runId: string,
   options: { readonly channel?: "event" | "log" | "all" } = {}
 ): Promise<readonly RunEvent[]> {
-  const query =
+  const channelQuery =
     options.channel && options.channel !== "event"
       ? { channel: options.channel }
       : {};
-  const result = await http.request<{ readonly events: readonly RunEvent[] }>(
-    `/api/runs/${encodeURIComponent(runId)}/events`,
-    {},
-    query
-  );
-  return result.events;
+  const path = `/api/runs/${encodeURIComponent(runId)}/events`;
+  const all: RunEvent[] = [];
+  let cursor: number | undefined;
+  for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
+    const query = cursor !== undefined ? { ...channelQuery, cursor: String(cursor) } : channelQuery;
+    const result = await http.request<{ readonly events: readonly RunEvent[]; readonly nextCursor?: number | null }>(
+      path,
+      {},
+      query
+    );
+    all.push(...result.events);
+    if (typeof result.nextCursor !== "number") break;
+    cursor = result.nextCursor;
+  }
+  return all;
 }
 
 /** A coordinator WS connection grant minted by the hosted API's ticket broker. */

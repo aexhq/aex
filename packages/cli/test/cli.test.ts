@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROXY_PROTOCOL_VERSION } from "@aexhq/contracts";
+import { PROXY_PROTOCOL_VERSION, PROXY_PROTOCOL_VERSION_V2 } from "@aexhq/contracts";
 import { runCli } from "../src/run.js";
 import { AEX_INDEX_PATH, AEX_RUN_TOKEN_PATH, type CliIO } from "../src/internal.js";
 
@@ -228,11 +228,46 @@ describe("aex proxy — successful call", () => {
     expect(call.url).toBe("https://dash.example.com/api/runs/run-1/proxy/stripe");
     const headers = new Headers((call.init as RequestInit).headers);
     expect(headers.get("authorization")).toBe("Bearer bearer-xyz");
-    expect(headers.get("x-aex-proxy-protocol")).toBe(PROXY_PROTOCOL_VERSION);
+    expect(headers.get("x-aex-proxy-protocol")).toBe(PROXY_PROTOCOL_VERSION_V2);
     expect(headers.get("x-aex-method")).toBe("POST");
     expect(headers.get("x-aex-path")).toBe("/v1/refunds");
     const body = JSON.parse(cap.stdout.trim());
     expect(body.upstreamStatus).toBe(200);
+  });
+
+  it("reconstructs the envelope from a v2 streamed response (headers + raw body)", async () => {
+    const upstreamPayload = JSON.stringify({ streamed: true });
+    const cap = makeIo({
+      argv: ["proxy", "stripe", "--method", "POST", "--path", "/v1/refunds", "--response-mode", "full"],
+      files: {
+        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
+        [AEX_RUN_TOKEN_PATH]: "bearer-xyz"
+      },
+      // Mirror the Worker v2 streamed response: raw upstream body + the
+      // x-aex-proxy-* metadata headers (no JSON envelope, no base64).
+      fetchHandler: async () =>
+        new Response(upstreamPayload, {
+          status: 200,
+          headers: {
+            "x-aex-proxy-status": "200",
+            "x-aex-proxy-effective-mode": "full",
+            "x-aex-proxy-truncated": "false",
+            "x-aex-proxy-remaining-calls": "59",
+            "x-aex-proxy-remaining-bytes": "999000",
+            "x-aex-proxy-upstream-headers": JSON.stringify({ "content-type": "application/json" }),
+            "content-type": "application/octet-stream"
+          }
+        })
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    const body = JSON.parse(cap.stdout.trim());
+    expect(body.upstreamStatus).toBe(200);
+    expect(body.effectiveResponseMode).toBe("full");
+    expect(body.remainingCalls).toBe(59);
+    expect(body.upstreamHeaders["content-type"]).toBe("application/json");
+    // Body round-trips through the same base64 field v1 used.
+    expect(Buffer.from(body.upstreamBodyBase64, "base64").toString("utf8")).toBe(upstreamPayload);
   });
 
   it("forwards --header K=V via the X-Aex-Headers JSON record", async () => {

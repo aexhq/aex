@@ -1,6 +1,6 @@
 // Wire format between the in-container runtime bridge (mounted at
 // `/mnt/session/uploads/aex/aex`, invoked through `node`) and
-// the dashboard BFF proxy route
+// the Worker-owned named proxy route
 // (`POST /api/runs/:runId/proxy/:endpointName`).
 //
 // This module is the single source of truth for the request shape, the
@@ -19,7 +19,42 @@
  */
 export const PROXY_PROTOCOL_VERSION = "1" as const;
 
+/**
+ * Streaming named-proxy protocol. A client that sends `"2"` in
+ * {@link PROXY_PROTOCOL_HEADER} opts into the streamed response path: the
+ * Worker pipes the upstream body back unbuffered (no base64, no
+ * `arrayBuffer()` in the ~128MB isolate) and carries the envelope metadata
+ * in the `x-aex-proxy-*` response headers below instead of a JSON envelope.
+ *
+ * Additive: `"1"` stays valid and keeps the buffered
+ * {@link ProxyResponseEnvelope}. Old runners keep working; new runners
+ * stream. The version is on the request header so the Worker can serve
+ * both shapes without a coordinated CLI/BFF release.
+ */
+export const PROXY_PROTOCOL_VERSION_V2 = "2" as const;
+
 export const PROXY_PROTOCOL_HEADER = "x-aex-proxy-protocol";
+
+/**
+ * Response headers for the streamed (v2) named-proxy path. The Worker sets
+ * these BEFORE it starts streaming the upstream body, so the client can
+ * reconstruct the same fields the v1 {@link ProxyResponseEnvelope} carried
+ * without buffering. All values are plain strings; numeric fields are
+ * decimal, booleans are `"true"`/`"false"`.
+ */
+export const PROXY_RESP_STATUS_HEADER = "x-aex-proxy-status";
+export const PROXY_RESP_MODE_HEADER = "x-aex-proxy-effective-mode";
+/**
+ * `"true"` when the cap forced truncation, `"false"` when the full body
+ * fit, `"unknown"` when the upstream omitted `content-length` and the body
+ * happened to reach the cap (can't distinguish exact-fit from over-cap
+ * without buffering). See the streaming byte-cap note in proxy-routes.ts.
+ */
+export const PROXY_RESP_TRUNCATED_HEADER = "x-aex-proxy-truncated";
+export const PROXY_RESP_REMAINING_CALLS_HEADER = "x-aex-proxy-remaining-calls";
+export const PROXY_RESP_REMAINING_BYTES_HEADER = "x-aex-proxy-remaining-bytes";
+/** JSON object of lowercase upstream header names → values (mode-filtered). */
+export const PROXY_RESP_UPSTREAM_HEADERS_HEADER = "x-aex-proxy-upstream-headers";
 
 /**
  * Default `User-Agent` the proxy attaches to every outbound request when
@@ -163,8 +198,8 @@ export interface ProxyEndpointPolicy {
 export interface BuildProxyIndexFileInput {
   readonly runId: string;
   /**
-   * Dashboard host that serves `/api/runs/:runId/proxy/:endpointName`
-   * (the BFF proxy route). Distinct from the api Worker host. When unset
+   * Worker host that serves `/api/runs/:runId/proxy/:endpointName`.
+   * When unset
    * (or empty) the run has no reachable proxy plane and `proxyBaseUrl`
    * resolves to `null`.
    */

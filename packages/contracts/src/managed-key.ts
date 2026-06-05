@@ -5,12 +5,16 @@ export type CredentialMode = (typeof CREDENTIAL_MODES)[number];
 export const DEFAULT_CREDENTIAL_MODE: CredentialMode = "byok";
 
 export const MANAGED_KEY_POLICY_SCHEMA_VERSION = 1;
+export const MANAGED_KEY_RESERVATION_SCHEMA_VERSION = 1;
 
 export const MANAGED_KEY_LAUNCH_STAGES = ["blocked", "pilot", "ga"] as const;
 export type ManagedKeyLaunchStage = (typeof MANAGED_KEY_LAUNCH_STAGES)[number];
 
 export const MANAGED_KEY_FEATURE_DECISIONS = ["disabled", "allowed"] as const;
 export type ManagedKeyFeatureDecision = (typeof MANAGED_KEY_FEATURE_DECISIONS)[number];
+
+export const MANAGED_KEY_RESERVATION_STATUSES = ["open", "settled", "released"] as const;
+export type ManagedKeyReservationStatus = (typeof MANAGED_KEY_RESERVATION_STATUSES)[number];
 
 export interface ManagedKeyFeaturePolicyV1 {
   readonly files: ManagedKeyFeatureDecision;
@@ -30,13 +34,40 @@ export interface ManagedKeyPolicyV1 {
   readonly schemaVersion: typeof MANAGED_KEY_POLICY_SCHEMA_VERSION;
   readonly credentialMode: "managed";
   readonly launchStage: ManagedKeyLaunchStage;
-  readonly serviceAvailable: boolean;
+  readonly privateImplementationAvailable: boolean;
   readonly billingRequired: true;
   readonly providers: readonly RunProvider[];
   readonly runtimes: readonly RuntimeKind[];
   readonly models?: readonly string[];
   readonly features: ManagedKeyFeaturePolicyV1;
 }
+
+/**
+ * Public-safe reservation lifecycle summary. It intentionally carries only
+ * credit-unit invariants and public row identifiers; private key handles,
+ * account selection, rate cards, margins, and payment-provider references
+ * remain outside this contract.
+ */
+export interface ManagedKeyReservationLifecycleV1 {
+  readonly schemaVersion: typeof MANAGED_KEY_RESERVATION_SCHEMA_VERSION;
+  readonly reservationId: string;
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly credentialMode: "managed";
+  readonly status: ManagedKeyReservationStatus;
+  readonly reservedCreditUnits: number;
+  readonly chargedCreditUnits: number;
+  readonly releasedCreditUnits: number;
+  readonly createdAt?: string;
+  readonly closedAt?: string;
+}
+
+export type ManagedKeyReservationLifecycleInput = Omit<
+  ManagedKeyReservationLifecycleV1,
+  "schemaVersion" | "credentialMode"
+> & {
+  readonly credentialMode?: "managed";
+};
 
 export const BLOCKED_MANAGED_KEY_FEATURE_POLICY_V1: ManagedKeyFeaturePolicyV1 = Object.freeze({
   files: "disabled",
@@ -51,7 +82,7 @@ export const BLOCKED_MANAGED_KEY_POLICY_V1: ManagedKeyPolicyV1 = Object.freeze({
   schemaVersion: MANAGED_KEY_POLICY_SCHEMA_VERSION,
   credentialMode: "managed",
   launchStage: "blocked",
-  serviceAvailable: false,
+  privateImplementationAvailable: false,
   billingRequired: true,
   providers: Object.freeze([]),
   runtimes: Object.freeze([]),
@@ -61,7 +92,7 @@ export const BLOCKED_MANAGED_KEY_POLICY_V1: ManagedKeyPolicyV1 = Object.freeze({
 export class ManagedKeyUnavailableError extends Error {
   readonly code = "managed_key_unavailable";
 
-  constructor(message = "credentialMode: \"managed\" is not available") {
+  constructor(message = "credentialMode: \"managed\" is not available without a private managed-key implementation") {
     super(message);
     this.name = "ManagedKeyUnavailableError";
   }
@@ -87,12 +118,64 @@ export function isCredentialMode(input: unknown): input is CredentialMode {
   return typeof input === "string" && (CREDENTIAL_MODES as readonly string[]).includes(input);
 }
 
+export function buildManagedKeyReservationLifecycle(
+  input: ManagedKeyReservationLifecycleInput
+): ManagedKeyReservationLifecycleV1 {
+  const status = normalizeManagedKeyReservationStatus(input.status);
+  const reservedCreditUnits = nonNegativeFinite(input.reservedCreditUnits, "reservedCreditUnits");
+  const chargedCreditUnits = nonNegativeFinite(input.chargedCreditUnits, "chargedCreditUnits");
+  const releasedCreditUnits = nonNegativeFinite(input.releasedCreditUnits, "releasedCreditUnits");
+
+  if (input.credentialMode !== undefined && input.credentialMode !== "managed") {
+    throw new Error("managed-key reservation credentialMode must be managed");
+  }
+  if (status === "open") {
+    if (input.closedAt !== undefined) {
+      throw new Error("managed-key open reservation must not have closedAt");
+    }
+    if (chargedCreditUnits !== 0 || releasedCreditUnits !== 0) {
+      throw new Error("managed-key open reservation cannot have charged or released credit units");
+    }
+  }
+  if (status === "settled") {
+    if (!input.closedAt) {
+      throw new Error("managed-key settled reservation requires closedAt");
+    }
+    const expectedReleased = Math.max(0, reservedCreditUnits - chargedCreditUnits);
+    if (!nearlyEqual(releasedCreditUnits, expectedReleased)) {
+      throw new Error("managed-key settlement releasedCreditUnits must equal max(reserved - charged, 0)");
+    }
+  }
+  if (status === "released") {
+    if (!input.closedAt) {
+      throw new Error("managed-key released reservation requires closedAt");
+    }
+    if (chargedCreditUnits !== 0 || !nearlyEqual(releasedCreditUnits, reservedCreditUnits)) {
+      throw new Error("managed-key released reservation must release all reserved credit units without charge");
+    }
+  }
+
+  return Object.freeze({
+    schemaVersion: MANAGED_KEY_RESERVATION_SCHEMA_VERSION,
+    reservationId: nonEmptyString(input.reservationId, "reservationId"),
+    workspaceId: nonEmptyString(input.workspaceId, "workspaceId"),
+    runId: nonEmptyString(input.runId, "runId"),
+    credentialMode: "managed",
+    status,
+    reservedCreditUnits,
+    chargedCreditUnits,
+    releasedCreditUnits,
+    ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    ...(input.closedAt ? { closedAt: input.closedAt } : {})
+  });
+}
+
 export function isManagedKeyGenerallyAvailable(policy: ManagedKeyPolicyV1): boolean {
-  return policy.launchStage === "ga" && policy.serviceAvailable;
+  return policy.launchStage === "ga" && policy.privateImplementationAvailable;
 }
 
 export function isManagedKeyAdmissionAllowed(policy: ManagedKeyPolicyV1): boolean {
-  return policy.launchStage !== "blocked" && policy.serviceAvailable;
+  return policy.launchStage !== "blocked" && policy.privateImplementationAvailable;
 }
 
 export function assertManagedKeyModeAvailable(policy: ManagedKeyPolicyV1 = BLOCKED_MANAGED_KEY_POLICY_V1): void {
@@ -194,4 +277,32 @@ function resolvePolicyDenial(
     };
   }
   return null;
+}
+
+function normalizeManagedKeyReservationStatus(input: unknown): ManagedKeyReservationStatus {
+  if (
+    typeof input !== "string" ||
+    !(MANAGED_KEY_RESERVATION_STATUSES as readonly string[]).includes(input)
+  ) {
+    throw new Error(`managed-key reservation status ${String(input)} is not supported`);
+  }
+  return input as ManagedKeyReservationStatus;
+}
+
+function nonEmptyString(value: string, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`managed-key reservation ${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function nonNegativeFinite(value: number, field: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`managed-key reservation ${field} must be a non-negative finite number`);
+  }
+  return value;
+}
+
+function nearlyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= 1e-9;
 }

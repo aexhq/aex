@@ -17,7 +17,7 @@
  *
  * Unified observability spine:
  * the envelope additionally carries four ordering attributes so BOTH the typed
- * event stream and the high-volume hosted runtime log stream ride one per-run
+ * event stream and the high-volume hosted-platform log stream ride one per-run
  * coordinator:
  *   - `channel`   — "event" (the typed AG-UI stream) or "log" (a verbose log
  *                   line). The single axis a consumer splits the unified stream
@@ -56,25 +56,24 @@ export const AEX_EVENT_MAP_VERSION = 1 as const;
  * Coarse origin classifier — the first axis a consumer filters on.
  *   - `agent`   — the model: text, reasoning, builtin tool calls/results.
  *   - `worker`  — the hosted aex edge itself.
- *   - `runtime` — the execution runtime (Goose container / Anthropic session):
- *                 lifecycle, diagnostics, non-fatal stream errors.
+ *   - `runtime` — the execution runtime: lifecycle, diagnostics, non-fatal
+ *                 stream errors.
  *   - `mcp`     — an MCP server (a tool call/result routed through MCP).
  *   - `aex` — the platform: skills, files, and other aex-native events.
- *   - `workflow`— the orchestration layer (Cloudflare Workflows trace).
- *   - `machine` — the managed host the runtime executes on (machine-level host
- *                 logs). A forthcoming source; `runtime` stays the
- *                 Goose-container / Anthropic-session source, distinct from the
- *                 host machine that carries it.
+ *   - `workflow`— the orchestration layer.
+ *   - `host`    — the managed host the runtime executes on; distinct from the
+ *                 runtime process itself.
  */
-export const AEX_EVENT_SOURCES = ["agent", "worker", "runtime", "mcp", "aex", "workflow", "machine"] as const;
+export const AEX_EVENT_SOURCES = ["agent", "worker", "runtime", "mcp", "aex", "workflow", "host"] as const;
 export type AexEventSource = (typeof AEX_EVENT_SOURCES)[number];
 
 /**
  * The channel a record rides on the unified per-run stream:
  *   - `event` — the typed, low-volume, fully-replayed AG-UI event stream.
  *   - `log`   — a high-volume verbose log line (level + message + fields). The
- *               coordinator prunes flushed log rows after R2 archival (logs are
- *               append-only, events are kept). Absent on the wire ⇒ `event`.
+ *               coordinator prunes flushed log rows after evidence archival
+ *               (logs are append-only, events are kept). Absent on the wire ⇒
+ *               `event`.
  */
 export const AEX_EVENT_CHANNELS = ["event", "log"] as const;
 export type AexEventChannel = (typeof AEX_EVENT_CHANNELS)[number];
@@ -151,13 +150,13 @@ export interface AexEvent {
    * companion to `sequence` — distinct from `emittedAt` (the SOURCE's clock) and
    * `time` (the LOGICAL time = run base + relative tMs).
    *
-   * NOTE: a Workers clock is coarsened/frozen-at-I/O (a side-channel
-   * mitigation), so `receivedAt` is precisely "the DO's last-I/O wall-clock at
-   * ingest" — that is fine as the authoritative receive marker. It does NOT need
-   * to exceed `emittedAt`: the source runs on a different machine with an
-   * independent clock, so cross-machine drift can leave `receivedAt < emittedAt`
-   * and that is expected, not an error. Absent on records produced before this
-   * field existed (back-compat with archived records).
+   * NOTE: some edge clocks are coarsened/frozen-at-I/O, so `receivedAt` is
+   * precisely "the coordinator's last-I/O wall-clock at ingest" — that is fine
+   * as the authoritative receive marker. It does NOT need to exceed `emittedAt`:
+   * the source runs on a different host with an independent clock, so cross-host
+   * drift can leave `receivedAt < emittedAt` and that is expected, not an error.
+   * Absent on records produced before this field existed (back-compat with
+   * archived records).
    */
   readonly receivedAt?: number;
   /**

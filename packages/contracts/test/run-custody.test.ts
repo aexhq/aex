@@ -120,7 +120,7 @@ describe("run custody manifest contract", () => {
       "bearer_hashes",
       "provider_response_bodies",
       "signed_urls",
-      "r2_object_keys",
+      "object_store_keys",
       "vault_ids",
       "private_resource_handles"
     ]);
@@ -133,7 +133,7 @@ describe("run custody manifest contract", () => {
       ["provider key", "sk-ant-test-1234567890", "provider_key"],
       ["bearer", "Bearer runner-token-1234567890", "bearer_token"],
       ["signed URL", "https://r2.example.test/file?X-Amz-Signature=abc", "signed_url"],
-      ["R2 key", "runs/run-11111111/metadata/custody.json", "r2_object_key"],
+      ["R2 key", "runs/run-11111111/metadata/custody.json", "object_store_key"],
       ["Vault id", "vault_secret_1234567890", "vault_id"],
       ["resource handle", "session_1234567890", "private_resource_handle"],
       ["forbidden field", { vaultId: "redacted" }, "forbidden_field_name"]

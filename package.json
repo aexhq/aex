@@ -10,6 +10,7 @@
     "lint": "pnpm run brand:check && pnpm --filter @aexhq/contracts run build && pnpm --filter @aexhq/conformance run build && pnpm --filter @aexhq/sdk run build && tsc --noEmit -p tsconfig.scripts.json && pnpm -r --workspace-concurrency=4 --if-present run lint && pnpm run lint:tests",
     "lint:tests": "eslint --max-warnings=0",
     "brand:check": "node scripts/cicd/check-old-brand.mjs",
+    "contracts:parity:check": "node scripts/cicd/check-contract-parity.mjs",
     "test": "pnpm test:unit",
     "test:unit": "pnpm -r --workspace-concurrency=2 --if-present run test:unit && pnpm exec vitest run --root scripts/validate capability-matrix.test.ts",
     "test:user": "pnpm --filter @aexhq/user-tests run test:user",

@@ -40,7 +40,26 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
       }
     }
     calls.push({ url, method, headers, body });
-    // Direct-to-storage upload flow: presign → PUT (object storage) → finalize.
+    if (url.endsWith("/api/runs/run_test/bootstrap/status")) {
+      return new Response(
+        JSON.stringify({
+          status: "ready",
+          uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap",
+          routingHeaders: { "x-aex-route": "machine-1" }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+    if (url.startsWith("https://bootstrap.example/run_test/bootstrap/inputs/")) {
+      return new Response("", { status: 200 });
+    }
+    if (url === "https://bootstrap.example/run_test/bootstrap/commit") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url === "https://bootstrap.example/run_test/bootstrap/abort") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    // Legacy direct-to-storage workspace asset flow.
     if (url.endsWith("/assets/presign")) {
       const reqBody = (body ?? {}) as { hash?: string; sizeBytes?: number };
       const hash = reqBody.hash ?? `sha256:${"a".repeat(64)}`;
@@ -86,8 +105,19 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
         { status: 201, headers: { "content-type": "application/json" } }
       );
     }
+    const runBody = body as { directInputs?: unknown[] } | undefined;
     return new Response(
-      JSON.stringify({ id: "run_test", status: "queued" }),
+      JSON.stringify({
+        id: "run_test",
+        status: "queued",
+        ...(Array.isArray(runBody?.directInputs) && runBody.directInputs.length > 0
+          ? {
+              bootstrapStatusUrl: "https://example.test/api/runs/run_test/bootstrap/status",
+              bootstrapToken: "boot_test",
+              bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+            }
+          : {})
+      }),
       { status: 200, headers: { "content-type": "application/json" } }
     );
   });
@@ -252,7 +282,7 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
     ).rejects.toThrow(/skills\[0\] must be a Skill instance/);
   });
 
-  it("uploads an inline AgentsMd via presign→object storage PUT→finalize then submits a kind:'asset' ref", async () => {
+  it("submits an inline AgentsMd as a direct bootstrap input without /assets calls", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
@@ -263,18 +293,25 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
       secrets: { anthropic: { apiKey: "k" } },
       idempotencyKey: "idem-asset-agentsmd"
     });
-    // Direct-to-storage flow: presign (control plane) → PUT (object storage, no worker bytes) → finalize.
-    expect(calls.filter((c) => c.url.endsWith("/assets/presign"))).toHaveLength(1);
-    expect(calls.filter((c) => c.url.includes("r2.cloudflarestorage.com"))).toHaveLength(1);
-    expect(calls.filter((c) => c.url.endsWith("/assets/finalize"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.includes("/assets"))).toHaveLength(0);
     const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
     expect(runCalls).toHaveLength(1);
-    const submission = (runCalls[0]!.body as { submission: { agentsMd: ReadonlyArray<{ kind: string; name?: string }> } })
-      .submission;
-    expect(submission.agentsMd[0]).toMatchObject({ kind: "asset", name: "rules" });
+    const body = runCalls[0]!.body as {
+      bootstrapMode: string;
+      directInputs: ReadonlyArray<{ role: string; inputId: string; name: string; sha256: string; sizeBytes: number }>;
+      submission: { agentsMd: ReadonlyArray<{ kind: string; name?: string; assetId?: string }> };
+    };
+    expect(body.bootstrapMode).toBe("direct");
+    expect(body.directInputs).toHaveLength(1);
+    expect(body.directInputs[0]).toMatchObject({ role: "agentsMd", name: "rules" });
+    expect("bytes" in body.directInputs[0]!).toBe(false);
+    expect(body.submission.agentsMd[0]).toMatchObject({ kind: "asset", name: "rules" });
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/status"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.includes("bootstrap.example") && c.method === "PUT")).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
   });
 
-  it("materializes draft Skill, AgentsMd, and File refs via presign→object storage PUT→finalize before submitting", async () => {
+  it("uploads draft Skill, AgentsMd, and File refs to the bootstrap target before resolving", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AexClient({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const skill = await Skill.fromFiles({
@@ -303,33 +340,34 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
       idempotencyKey: "idem-assets"
     });
 
-    // Three uploads, each presign → object storage PUT → finalize, then the run submit.
-    const presignCalls = calls.filter((c) => c.url.endsWith("/assets/presign"));
-    const r2PutCalls = calls.filter((c) => c.url.includes("r2.cloudflarestorage.com"));
-    const finalizeCalls = calls.filter((c) => c.url.endsWith("/assets/finalize"));
+    const assetCalls = calls.filter((c) => c.url.includes("/assets"));
+    const bootstrapPutCalls = calls.filter((c) => c.url.includes("bootstrap.example") && c.method === "PUT");
+    const commitCalls = calls.filter((c) => c.url.endsWith("/bootstrap/commit"));
     const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
-    expect(presignCalls).toHaveLength(3);
-    expect(r2PutCalls).toHaveLength(3);
-    expect(finalizeCalls).toHaveLength(3);
+    expect(assetCalls).toHaveLength(0);
+    expect(bootstrapPutCalls).toHaveLength(3);
+    expect(commitCalls).toHaveLength(1);
     expect(runCalls).toHaveLength(1);
 
-    // presign declares the content hash + size; the worker never sees bytes.
     const expectedHashes = [skillHash, agentsMdHash, fileHash];
-    for (let i = 0; i < presignCalls.length; i++) {
-      const call = presignCalls[i]!;
-      expect(call.method).toBe("POST");
-      expect(call.headers.authorization).toBe("Bearer tkn");
-      expect((call.body as { hash: string }).hash).toBe(expectedHashes[i]);
-    }
-    // The object storage PUT carries the bytes + the signed checksum header (no Bearer).
-    for (const put of r2PutCalls) {
+    const runBody = runCalls[0]!.body as {
+      bootstrapMode: string;
+      directInputs: ReadonlyArray<{ role: string; name: string; sha256: string; sizeBytes: number; mountPath?: string }>;
+      submission: Record<string, unknown>;
+    };
+    expect(runBody.bootstrapMode).toBe("direct");
+    expect(runBody.directInputs.map((input) => input.sha256)).toEqual(expectedHashes);
+    expect(runBody.directInputs.map((input) => input.role)).toEqual(["skill", "agentsMd", "file"]);
+    expect(runBody.directInputs[2]).toMatchObject({ mountPath: "/workspace/input/dataset.csv" });
+    for (const put of bootstrapPutCalls) {
       expect(put.method).toBe("PUT");
       expect(put.body).toBeInstanceOf(Uint8Array);
-      expect(put.headers["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
-      expect(put.headers.authorization).toBeUndefined();
+      expect(put.headers.authorization).toBe("Bearer boot_test");
+      expect(put.headers["x-aex-route"]).toBe("machine-1");
+      expect(put.headers["x-aex-input-sha256"]).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
 
-    const submission = (runCalls[0]!.body as { submission: Record<string, unknown> }).submission;
+    const submission = runBody.submission;
     const assetRef = (name: string, hash: string, extra: Record<string, string> = {}) => {
       return {
         kind: "asset",
@@ -345,29 +383,40 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
     ]);
   });
 
-  it("does not submit the run when draft skill finalization fails", async () => {
+  it("best-effort aborts bootstrap when a direct input upload fails", async () => {
     const calls: CapturedRequest[] = [];
     const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
-      if (url.endsWith("/assets/presign")) {
-        const body = (init?.body ? JSON.parse(String(init.body)) : {}) as { hash?: string };
-        const hash = body.hash ?? `sha256:${"a".repeat(64)}`;
-        const hex = hash.slice("sha256:".length);
+      if (url.endsWith("/api/runs")) {
         return new Response(
           JSON.stringify({
-            ok: true,
-            exists: false,
-            assetId: `asset_${hex}`,
-            contentHash: hash,
-            uploadUrl: `https://acct.r2.cloudflarestorage.com/bucket/assets/ws/${hex}?X-Amz-Signature=sig`,
-            requiredHeaders: {}
+            id: "run_test",
+            status: "queued",
+            bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+            bootstrapToken: "boot_fail",
+            bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
           }),
-          { status: 201, headers: { "content-type": "application/json" } }
+          { status: 202, headers: { "content-type": "application/json" } }
         );
       }
-      if (url.includes("r2.cloudflarestorage.com")) {
-        return new Response("", { status: 200 });
+      if (url.endsWith("/bootstrap/status")) {
+        return new Response(
+          JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.includes("/bootstrap/inputs/")) {
+        return new Response(JSON.stringify({ ok: false, code: "bad_upload" }), {
+          status: 500,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/bootstrap/abort")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
       }
       return new Response(JSON.stringify({ ok: false, code: "asset_finalize_failed" }), {
         status: 500,
@@ -390,9 +439,10 @@ describe("AexClient.submitRun (flat surface, wire shape)", () => {
     ).rejects.toThrow();
 
     expect(calls.map((c) => c.url)).toEqual([
-      "https://x/assets/presign",
-      expect.stringContaining("r2.cloudflarestorage.com"),
-      "https://x/assets/finalize"
+      "https://x/api/runs",
+      "https://x/api/runs/run_test/bootstrap/status",
+      expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
+      "https://x/api/runs/run_test/bootstrap/abort"
     ]);
   });
 

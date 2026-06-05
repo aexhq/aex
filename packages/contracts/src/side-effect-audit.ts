@@ -138,7 +138,7 @@ export const SIDE_EFFECT_AUDIT_METADATA_EXCLUDED_VALUE_CLASSES = [
   "query_strings",
   "provider_response_bodies",
   "signed_urls",
-  "r2_object_keys",
+  "object_store_keys",
   "vault_ids",
   "resource_handles",
   "bearer_hashes",
@@ -256,7 +256,7 @@ export type SideEffectAuditRedactionReason =
   | "bearer_token"
   | "provider_key"
   | "signed_url"
-  | "r2_object_key"
+  | "object_store_key"
   | "vault_id"
   | "private_resource_handle"
   | "raw_url"
@@ -655,7 +655,7 @@ const forbiddenStringPatterns: readonly {
     regex: /\b(?:sk-(?:ant|proj|live|test|deepseek|openai)|xox[baprs]-|AIza)[A-Za-z0-9_-]{8,}/i
   },
   { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "r2_object_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
+  { reason: "object_store_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
@@ -667,7 +667,7 @@ const forbiddenStringPatterns: readonly {
 ]);
 
 function isForbiddenAuditFieldName(key: string): boolean {
-  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|r2Key|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|secretValue|sessionId|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
+  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|secretValue|sessionId|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
     key
   );
 }

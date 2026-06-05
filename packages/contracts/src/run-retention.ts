@@ -30,7 +30,7 @@ export const RUN_DELETION_BLOCKERS = [
 export type RunDeletionBlocker = (typeof RUN_DELETION_BLOCKERS)[number];
 
 export const RUN_DELETION_COUNT_CLASSES = [
-  "r2_objects",
+  "object_store_objects",
   "outputs",
   "logs",
   "events",
@@ -264,7 +264,7 @@ export interface RunDeletionManifestWriter {
 export type RunRetentionRedactionReason =
   | "forbidden_field_name"
   | "signed_url"
-  | "r2_object_key"
+  | "object_store_key"
   | "vault_id"
   | "private_resource_handle"
   | "hash_like_value";
@@ -719,7 +719,7 @@ const forbiddenStringPatterns: readonly {
   readonly regex: RegExp;
 }[] = Object.freeze([
   { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "r2_object_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
+  { reason: "object_store_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
@@ -729,7 +729,7 @@ const forbiddenStringPatterns: readonly {
 ]);
 
 function isForbiddenRetentionFieldName(key: string): boolean {
-  return /^(path|paths|objectKey|objectKeys|r2Key|r2Keys|fileName|filename|filenames|size|sizes|bytes|byteCount|hash|hashes|providerId|providerIds|vaultId|vaultIds|resourceId|resourceIds|handle|handles|signedUrl|signedUrls|url|urls)$/i.test(
+  return /^(path|paths|objectKey|objectKeys|objectStoreKey|objectStoreKeys|fileName|filename|filenames|size|sizes|bytes|byteCount|hash|hashes|providerId|providerIds|vaultId|vaultIds|resourceId|resourceIds|handle|handles|signedUrl|signedUrls|url|urls)$/i.test(
     key
   );
 }

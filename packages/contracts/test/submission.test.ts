@@ -46,7 +46,7 @@ const injectedManagedKeyPolicy = {
   schemaVersion: 1,
   credentialMode: "managed",
   launchStage: "pilot",
-  serviceAvailable: true,
+  privateImplementationAvailable: true,
   billingRequired: true,
   providers: ["anthropic"],
   runtimes: ["managed"],

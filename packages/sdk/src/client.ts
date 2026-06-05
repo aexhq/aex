@@ -37,7 +37,6 @@ import {
   type WhoAmI,
   TERMINAL_RUN_STATUSES
 } from "@aexhq/contracts";
-import { uploadAsset } from "./asset-upload.js";
 import { AgentsMd } from "./agents-md.js";
 import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
@@ -394,12 +393,8 @@ export class FilesClient {
  */
 export class AexClient {
   readonly #http: HttpClient;
-  /**
-   * The same fetch the HttpClient uses, kept so the asset materializer can
-   * PUT bytes DIRECTLY to the presigned upload URL (a non-aex origin) with the
-   * caller's fetch (tests inject one; prod uses the global).
-   */
-  readonly #fetch: import("./asset-upload.js").AssetFetch | undefined;
+  /** The same fetch the HttpClient uses, kept for direct bootstrap uploads. */
+  readonly #fetch: FetchLike | undefined;
   readonly skills: SkillsClient;
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
@@ -419,7 +414,7 @@ export class AexClient {
         ? { debug: typeof options.debug === "function" ? options.debug : (line: string) => console.error(line) }
         : {})
     });
-    this.#fetch = options.fetch as import("./asset-upload.js").AssetFetch | undefined;
+    this.#fetch = options.fetch;
     this.skills = new SkillsClient(this.#http);
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
@@ -533,11 +528,18 @@ export class AexClient {
       options.secrets.proxyEndpointAuth ?? []
     );
 
-    // Walk Skill / AgentsMd / File instances and materialize every draft before
-    // the submit round-trip. The wire shape carries only kind:"asset" refs.
-    const assetSkills = await materializeSkills(this.#http, options.skills ?? [], this.#fetch);
-    const assetAgentsMd = await materializeAgentsMd(this.#http, options.agentsMd ?? [], this.#fetch);
-    const assetFiles = await materializeFiles(this.#http, options.files ?? [], this.#fetch);
+    // Walk Skill / AgentsMd / File instances. Drafts are declared as direct
+    // inputs on the submit request, then uploaded to the run bootstrap target
+    // after the control plane accepts the run. Already-materialized asset refs
+    // still pass through unchanged.
+    const preparedSkills = prepareSkills(options.skills ?? []);
+    const preparedAgentsMd = prepareAgentsMd(options.agentsMd ?? []);
+    const preparedFiles = prepareFiles(options.files ?? []);
+    const directInputs = [
+      ...preparedSkills.directInputs,
+      ...preparedAgentsMd.directInputs,
+      ...preparedFiles.directInputs
+    ];
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
       options.secrets.mcpServers ?? []
@@ -547,9 +549,9 @@ export class AexClient {
       model: options.model,
       ...(options.system ? { system: options.system } : {}),
       prompt,
-      skills: assetSkills,
-      agentsMd: assetAgentsMd,
-      files: assetFiles,
+      skills: preparedSkills.refs,
+      agentsMd: preparedAgentsMd.refs,
+      files: preparedFiles.refs,
       // submissionMcpServers may contain workspace refs of the shape
       // {kind:"workspace", id:"mcp_..."}. The BFF runs
       // `resolveWorkspaceMcpRefsInSubmission` BEFORE the shared parser
@@ -609,10 +611,29 @@ export class AexClient {
       );
     }
 
-    // All inline refs were materialized above, so submitRun is
-    // always a plain JSON post. The multipart code path is gone.
-    const run = await operations.submitRun(this.#http, request);
-    return run.id;
+    const submitRequest =
+      directInputs.length > 0
+        ? {
+            ...request,
+            bootstrapMode: "direct",
+            directInputs: directInputs.map(({ bytes: _bytes, ...descriptor }) => descriptor)
+          }
+        : request;
+
+    const run = await operations.submitRun(
+      this.#http,
+      submitRequest as PlatformRunSubmissionInput
+    ) as Run & DirectBootstrapSubmitResponse;
+    const runId = getSubmittedRunId(run);
+    if (directInputs.length > 0) {
+      await completeDirectBootstrap({
+        response: run,
+        directInputs,
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(this.#fetch ? { fetch: this.#fetch } : {})
+      });
+    }
+    return runId;
   }
 
   getRun(runId: string): Promise<Run> {
@@ -1036,27 +1057,46 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
   return [...input];
 }
 
-/**
- * Walk the user-provided `Skill[]`, validating each instance and
- * producing:
- *   - `skillRefs[]` — the wire entries for `submission.skills[]`, with
- *     inline refs assigned positional slot ids (`transient-0`, …).
- *   - `inlineBundles[]` — the bytes for each inline skill,
- *     parallel-indexed by slot.
- *
- * Throws on consumed Skills (the user reused a draft after a prior
- * `submitRun` call) so that mistake is loud, not silent.
- */
-/**
- * Walk the user-provided Skill[], materialize every draft to assets, and return
- * the wire-shape refs.
- */
-async function materializeSkills(
-  http: import("./asset-upload.js").AssetsHttpClient,
-  skills: readonly Skill[],
-  fetch?: import("./asset-upload.js").AssetFetch
-): Promise<readonly SkillRef[]> {
-  const out: SkillRef[] = [];
+type DirectInputRole = "skill" | "agentsMd" | "file";
+
+interface DirectInputUpload {
+  readonly inputId: string;
+  readonly role: DirectInputRole;
+  readonly assetId: string;
+  readonly name: string;
+  readonly sha256: string;
+  readonly sizeBytes: number;
+  readonly contentType: string;
+  readonly mountPath?: string;
+  readonly bytes: Uint8Array;
+}
+
+interface PreparedDirectRefs<T> {
+  readonly refs: readonly T[];
+  readonly directInputs: readonly DirectInputUpload[];
+}
+
+interface DirectBootstrapSubmitResponse {
+  readonly id?: string;
+  readonly runId?: string;
+  readonly bootstrapStatusUrl?: string;
+  readonly bootstrapToken?: string;
+  readonly bootstrapExpiresAt?: string;
+  readonly uploadBaseUrl?: string;
+  readonly routingHeaders?: Record<string, string>;
+}
+
+interface DirectBootstrapReady {
+  readonly uploadBaseUrl: string;
+  readonly routingHeaders?: Record<string, string>;
+  readonly abortUrl?: string;
+  readonly commitUrl?: string;
+}
+
+/** Walk Skill[] and turn drafts into direct-bootstrap descriptors. */
+function prepareSkills(skills: readonly Skill[]): PreparedDirectRefs<SkillRef> {
+  const refs: SkillRef[] = [];
+  const directInputs: DirectInputUpload[] = [];
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
@@ -1071,32 +1111,32 @@ async function materializeSkills(
       if (!bundle) {
         throw new Error(`AexClient.submitRun: skills[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAsset({
-        http,
+      const input = directInputFor({
+        role: "skill",
+        index: i,
+        name: bundle.name,
+        contentHash: bundle.contentHash,
         bytes: bundle.bytes,
-        hash: bundle.contentHash,
-        ...(fetch ? { fetch } : {})
+        contentType: "application/zip"
       });
-      out.push({
+      directInputs.push(input);
+      refs.push({
         kind: "asset",
-        assetId: uploaded.assetId,
+        assetId: input.assetId,
         name: bundle.name
       });
       continue;
     }
     // Already-materialized asset ref.
-    out.push(ref);
+    refs.push(ref);
   }
-  return out;
+  return { refs, directInputs };
 }
 
-/** Materialize draft AgentsMd[] to assets; pass-through any already-materialized refs. */
-async function materializeAgentsMd(
-  http: import("./asset-upload.js").AssetsHttpClient,
-  agentsMds: readonly AgentsMd[],
-  fetch?: import("./asset-upload.js").AssetFetch
-): Promise<readonly AgentsMdRef[]> {
-  const out: AgentsMdRef[] = [];
+/** Walk AgentsMd[] and turn drafts into direct-bootstrap descriptors. */
+function prepareAgentsMd(agentsMds: readonly AgentsMd[]): PreparedDirectRefs<AgentsMdRef> {
+  const refs: AgentsMdRef[] = [];
+  const directInputs: DirectInputUpload[] = [];
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
@@ -1111,26 +1151,31 @@ async function materializeAgentsMd(
       if (!bundle) {
         throw new Error(`AexClient.submitRun: agentsMd[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash, ...(fetch ? { fetch } : {}) });
-      out.push({
+      const input = directInputFor({
+        role: "agentsMd",
+        index: i,
+        name: bundle.name,
+        contentHash: bundle.contentHash,
+        bytes: bundle.bytes,
+        contentType: "application/zip"
+      });
+      directInputs.push(input);
+      refs.push({
         kind: "asset",
-        assetId: uploaded.assetId,
+        assetId: input.assetId,
         name: bundle.name
       });
       continue;
     }
-    out.push(ref);
+    refs.push(ref);
   }
-  return out;
+  return { refs, directInputs };
 }
 
-/** Materialize draft File[] to assets; pass-through any already-materialized refs. */
-async function materializeFiles(
-  http: import("./asset-upload.js").AssetsHttpClient,
-  files: readonly File[],
-  fetch?: import("./asset-upload.js").AssetFetch
-): Promise<readonly FileRef[]> {
-  const out: FileRef[] = [];
+/** Walk File[] and turn drafts into direct-bootstrap descriptors. */
+function prepareFiles(files: readonly File[]): PreparedDirectRefs<FileRef> {
+  const refs: FileRef[] = [];
+  const directInputs: DirectInputUpload[] = [];
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
@@ -1145,26 +1190,280 @@ async function materializeFiles(
       if (!bundle) {
         throw new Error(`AexClient.submitRun: files[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploadAsset({ http, bytes: bundle.bytes, hash: bundle.contentHash, ...(fetch ? { fetch } : {}) });
-      out.push(
+      const input = directInputFor({
+        role: "file",
+        index: i,
+        name: bundle.name,
+        contentHash: bundle.contentHash,
+        bytes: bundle.bytes,
+        contentType: "application/zip",
+        ...(bundle.mountPath ? { mountPath: bundle.mountPath } : {})
+      });
+      directInputs.push(input);
+      refs.push(
         bundle.mountPath !== undefined
           ? {
               kind: "asset",
-              assetId: uploaded.assetId,
+              assetId: input.assetId,
               name: bundle.name,
               mountPath: bundle.mountPath
             }
           : {
               kind: "asset",
-              assetId: uploaded.assetId,
+              assetId: input.assetId,
               name: bundle.name
             }
       );
       continue;
     }
-    out.push(ref);
+    refs.push(ref);
   }
-  return out;
+  return { refs, directInputs };
+}
+
+function directInputFor(args: {
+  readonly role: DirectInputRole;
+  readonly index: number;
+  readonly name: string;
+  readonly contentHash: string;
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
+  readonly mountPath?: string;
+}): DirectInputUpload {
+  const sha256 = args.contentHash.startsWith("sha256:")
+    ? args.contentHash
+    : `sha256:${args.contentHash}`;
+  const hashHex = sha256.slice("sha256:".length);
+  if (!/^[0-9a-f]{64}$/.test(hashHex)) {
+    throw new Error(`AexClient.submitRun: ${args.role}[${args.index}] content hash must be sha256:<64-hex>`);
+  }
+  return {
+    inputId: `input_${args.role}_${args.index}_${hashHex}`,
+    role: args.role,
+    assetId: `asset_${hashHex}`,
+    name: args.name,
+    sha256,
+    sizeBytes: args.bytes.byteLength,
+    contentType: args.contentType,
+    ...(args.mountPath ? { mountPath: args.mountPath } : {}),
+    bytes: args.bytes
+  };
+}
+
+function getSubmittedRunId(response: Run & DirectBootstrapSubmitResponse): string {
+  const id = response.id ?? response.runId;
+  if (typeof id !== "string" || id.length === 0) {
+    throw new Error("AexClient.submitRun: submit response did not include a run id");
+  }
+  return id;
+}
+
+async function completeDirectBootstrap(args: {
+  readonly response: DirectBootstrapSubmitResponse;
+  readonly directInputs: readonly DirectInputUpload[];
+  readonly fetch?: FetchLike;
+  readonly signal?: AbortSignal;
+}): Promise<void> {
+  const token = args.response.bootstrapToken;
+  const statusUrl = args.response.bootstrapStatusUrl;
+  if (typeof token !== "string" || token.length === 0 || typeof statusUrl !== "string" || statusUrl.length === 0) {
+    return;
+  }
+  const fetchImpl = args.fetch ?? globalThis.fetch.bind(globalThis);
+  let target: DirectBootstrapReady | undefined;
+  try {
+    target = resolveBootstrapReady(args.response) ?? await pollBootstrapReady({
+      fetchImpl,
+      statusUrl,
+      token,
+      ...(args.response.bootstrapExpiresAt ? { expiresAt: args.response.bootstrapExpiresAt } : {}),
+      ...(args.signal ? { signal: args.signal } : {})
+    });
+    for (const input of args.directInputs) {
+      await uploadDirectInput({ fetchImpl, target, token, input, ...(args.signal ? { signal: args.signal } : {}) });
+    }
+    await commitDirectInputs({
+      fetchImpl,
+      target,
+      token,
+      inputs: args.directInputs,
+      ...(args.signal ? { signal: args.signal } : {})
+    });
+  } catch (err) {
+    await abortDirectBootstrap({
+      fetchImpl,
+      token,
+      statusUrl,
+      ...(target ? { target } : {}),
+      ...(args.signal ? { signal: args.signal } : {})
+    }).catch(() => undefined);
+    throw err;
+  }
+}
+
+async function pollBootstrapReady(args: {
+  readonly fetchImpl: FetchLike;
+  readonly statusUrl: string;
+  readonly token: string;
+  readonly expiresAt?: string;
+  readonly signal?: AbortSignal;
+}): Promise<DirectBootstrapReady> {
+  const deadline = bootstrapDeadline(args.expiresAt);
+  while (!args.signal?.aborted) {
+    if (Date.now() >= deadline) {
+      throw new Error("AexClient.submitRun: bootstrap target did not become ready before it expired");
+    }
+    const res = await args.fetchImpl(args.statusUrl, {
+      method: "GET",
+      headers: { authorization: `Bearer ${args.token}`, accept: "application/json" },
+      ...(args.signal ? { signal: args.signal } : {})
+    });
+    if (res.ok) {
+      const body = await res.json() as unknown;
+      const ready = resolveBootstrapReady(body);
+      if (ready) return ready;
+    } else if (![202, 404, 425].includes(res.status)) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(
+        `AexClient.submitRun: bootstrap status failed with ${res.status}` +
+          (detail ? `: ${detail.slice(0, 300)}` : "")
+      );
+    }
+    await sleep(250, args.signal);
+  }
+  throw new Error("AexClient.submitRun: aborted");
+}
+
+function resolveBootstrapReady(value: unknown): DirectBootstrapReady | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as {
+    readonly uploadBaseUrl?: unknown;
+    readonly bootstrapUploadBaseUrl?: unknown;
+    readonly routingHeaders?: unknown;
+    readonly abortUrl?: unknown;
+    readonly commitUrl?: unknown;
+    readonly state?: unknown;
+    readonly status?: unknown;
+  };
+  const base =
+    typeof record.uploadBaseUrl === "string"
+      ? record.uploadBaseUrl
+      : typeof record.bootstrapUploadBaseUrl === "string"
+        ? record.bootstrapUploadBaseUrl
+        : undefined;
+  if (!base) return undefined;
+  const routingHeaders = isStringRecord(record.routingHeaders) ? record.routingHeaders : undefined;
+  return {
+    uploadBaseUrl: stripTrailingSlash(base),
+    ...(routingHeaders ? { routingHeaders } : {}),
+    ...(typeof record.abortUrl === "string" ? { abortUrl: record.abortUrl } : {}),
+    ...(typeof record.commitUrl === "string" ? { commitUrl: record.commitUrl } : {})
+  };
+}
+
+async function uploadDirectInput(args: {
+  readonly fetchImpl: FetchLike;
+  readonly target: DirectBootstrapReady;
+  readonly token: string;
+  readonly input: DirectInputUpload;
+  readonly signal?: AbortSignal;
+}): Promise<void> {
+  const res = await args.fetchImpl(
+    `${args.target.uploadBaseUrl}/inputs/${encodeURIComponent(args.input.inputId)}`,
+    {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${args.token}`,
+        "content-type": args.input.contentType,
+        "x-aex-input-sha256": args.input.sha256,
+        "x-aex-input-size": String(args.input.sizeBytes),
+        ...(args.target.routingHeaders ?? {})
+      },
+      body: args.input.bytes as unknown as BodyInit,
+      ...(args.signal ? { signal: args.signal } : {})
+    }
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `AexClient.submitRun: bootstrap input upload failed for ${args.input.inputId} ` +
+        `(status ${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`
+    );
+  }
+}
+
+async function commitDirectInputs(args: {
+  readonly fetchImpl: FetchLike;
+  readonly target: DirectBootstrapReady;
+  readonly token: string;
+  readonly inputs: readonly DirectInputUpload[];
+  readonly signal?: AbortSignal;
+}): Promise<void> {
+  const commitUrl = args.target.commitUrl ?? `${args.target.uploadBaseUrl}/commit`;
+  const res = await args.fetchImpl(commitUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.token}`,
+      "content-type": "application/json",
+      accept: "application/json",
+      ...(args.target.routingHeaders ?? {})
+    },
+    body: JSON.stringify({
+      inputs: args.inputs.map((input) => ({
+        inputId: input.inputId,
+        sha256: input.sha256,
+        sizeBytes: input.sizeBytes
+      }))
+    }),
+    ...(args.signal ? { signal: args.signal } : {})
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `AexClient.submitRun: bootstrap commit failed with ${res.status}` +
+        (detail ? `: ${detail.slice(0, 300)}` : "")
+    );
+  }
+}
+
+async function abortDirectBootstrap(args: {
+  readonly fetchImpl: FetchLike;
+  readonly token: string;
+  readonly statusUrl: string;
+  readonly target?: DirectBootstrapReady;
+  readonly signal?: AbortSignal;
+}): Promise<void> {
+  const abortUrl = args.target?.abortUrl ?? `${args.statusUrl.replace(/\/status$/, "")}/abort`;
+  await args.fetchImpl(abortUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.token}`,
+      accept: "application/json",
+      ...(args.target?.routingHeaders ?? {})
+    },
+    ...(args.signal ? { signal: args.signal } : {})
+  });
+}
+
+function bootstrapDeadline(expiresAt: string | undefined): number {
+  if (typeof expiresAt === "string") {
+    const parsed = Date.parse(expiresAt);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now() + 60_000;
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "string")
+  );
+}
+
+function stripTrailingSlash(s: string): string {
+  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 

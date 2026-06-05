@@ -1,0 +1,538 @@
+{
+  "entries": [
+    {
+      "scope": "deny-list",
+      "side": "platform",
+      "line": "* (the dashboard's `ssrf.ts`/`pinned-fetch.ts`); that pinning is deferred",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "platform",
+      "line": "* below exist as defense in depth.",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "platform",
+      "line": "* not loopback/169.254/CGNAT/ULA — which is exactly why the literal checks",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "platform",
+      "line": "* per backlog. CF's outbound fetch still refuses RFC1918 at connect, but",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "platform",
+      "line": "* resolve at parse time). Closing that requires resolve-then-pin at egress",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "public",
+      "line": "* at connect, but not loopback/169.254/CGNAT/ULA — which is exactly why the",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "public",
+      "line": "* literal checks below exist as defense in depth.",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "public",
+      "line": "* resolve at parse time). Closing that requires resolve-then-pin at egress;",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "deny-list",
+      "side": "public",
+      "line": "* that pinning is deferred. The host's outbound fetch still refuses RFC1918",
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+    },
+    {
+      "scope": "event-envelope.ts",
+      "side": "platform",
+      "line": "*",
+      "why": "Intentional: public strips the platform-internal references/event-system.md doc pointer from the header comment. No code/contract delta."
+    },
+    {
+      "scope": "event-envelope.ts",
+      "side": "platform",
+      "line": "* Design (see references/event-system.md — the principles source of truth):",
+      "why": "Intentional: public strips the platform-internal references/event-system.md doc pointer from the header comment. No code/contract delta."
+    },
+    {
+      "scope": "operations.ts",
+      "side": "platform",
+      "line": "* `references/engineering.md` (Agent-first surface design,",
+      "why": "Intentional: public strips the platform-internal references/engineering.md doc pointer (Agent-first surface, Concrete rule 3) from the workspace-id doc comment. No code/contract delta."
+    },
+    {
+      "scope": "operations.ts",
+      "side": "platform",
+      "line": "* Concrete rule 3).",
+      "why": "Intentional: public strips the platform-internal references/engineering.md doc pointer (Agent-first surface, Concrete rule 3) from the workspace-id doc comment. No code/contract delta."
+    },
+    {
+      "scope": "operations.ts",
+      "side": "platform",
+      "line": "* every request — callers do not pass `workspaceId`. See",
+      "why": "Intentional: public strips the platform-internal references/engineering.md doc pointer (Agent-first surface, Concrete rule 3) from the workspace-id doc comment. No code/contract delta."
+    },
+    {
+      "scope": "operations.ts",
+      "side": "public",
+      "line": "* every request; callers do not pass `workspaceId`.",
+      "why": "Intentional: public strips the platform-internal references/engineering.md doc pointer (Agent-first surface, Concrete rule 3) from the workspace-id doc comment. No code/contract delta."
+    },
+    {
+      "scope": "proxy-protocol.ts",
+      "side": "platform",
+      "line": "* the new version. See plan.md \"CLI design\".",
+      "why": "Intentional: public strips platform-internal plan.md / references/engineering.md doc pointers from the module + version comments. No code/contract delta."
+    },
+    {
+      "scope": "proxy-protocol.ts",
+      "side": "platform",
+      "line": "//   - plan.md sections \"Proxy route\" and \"CLI design\"",
+      "why": "Intentional: public strips platform-internal plan.md / references/engineering.md doc pointers from the module + version comments. No code/contract delta."
+    },
+    {
+      "scope": "proxy-protocol.ts",
+      "side": "platform",
+      "line": "//   - references/engineering.md (Agent-first surface design)",
+      "why": "Intentional: public strips platform-internal plan.md / references/engineering.md doc pointers from the module + version comments. No code/contract delta."
+    },
+    {
+      "scope": "proxy-protocol.ts",
+      "side": "platform",
+      "line": "// References:",
+      "why": "Intentional: public strips platform-internal plan.md / references/engineering.md doc pointers from the module + version comments. No code/contract delta."
+    },
+    {
+      "scope": "proxy-protocol.ts",
+      "side": "public",
+      "line": "* the new version.",
+      "why": "Intentional: public strips platform-internal plan.md / references/engineering.md doc pointers from the module + version comments. No code/contract delta."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "...file,",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": ");",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "}",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "})",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "| \"run_record\"",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "const logs = input.logs.map((file) =>",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "file(\"metadata\", \"metadata/run-record.json\", \"run_record\", \"present\"),",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "filename: file.filename === null ? null : runArtifactRel(file.filename)",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "finding.path",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "if (entryPath === \"metadata/run-record.json\") {",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "if (entryPath.endsWith(\"manifest.json\")) {",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "if (finding.reason !== \"high_entropy_token\") {",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "import { runArtifactRel } from \"./run-artifacts.js\";",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "normalizeArtifactSummary({",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "return /^\\$(?:\\.files\\[\\d+\\]|\\.outputs\\[\\d+\\]|\\.logs\\[\\d+\\])\\.id$/.test(finding.path);",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "return /^\\$(?:\\.outputs\\[\\d+\\]|\\.logs\\[\\d+\\]|\\.manifest(?:\\.files\\[\\d+\\]|\\.outputs\\[\\d+\\]|\\.logs\\[\\d+\\]))\\.id$/.test(",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "platform",
+      "line": "return false;",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "public",
+      "line": "const logs = input.logs.map((file) => normalizeArtifactSummary(file));",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "public",
+      "line": "if (finding.reason !== \"high_entropy_token\" || !entryPath.endsWith(\"manifest.json\")) {",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "run-record.ts",
+      "side": "public",
+      "line": "return /^\\$(?:\\.files\\[\\d+\\]|\\.outputs\\[\\d+\\]|\\.logs\\[\\d+\\])\\.id$/.test(finding.path);",
+      "why": "PRE-EXISTING DRIFT (out of this unit scope, tracked in MIGRATION-PLAN needs_followup): platform added the run_record metadata artifact + runArtifactRel rewrite + the metadata/run-record.json manifest-allow path; public has not yet ported it. Port in a follow-up, then trim these entries."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "platform",
+      "line": "*     each event into one or more `RunnerEvent`s.",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "platform",
+      "line": "*     events to `/runs/{id}/runner/events`; the runtime adapter translates",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "platform",
+      "line": "*   - **Managed runtime** — the per-run runtime POSTs batches of NDJSON",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "platform",
+      "line": "*   - `file_uploaded`    — a file became available to the agent.",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "platform",
+      "line": "*   - `runtime_started`  — the runtime announced \"ready\".",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "platform",
+      "line": "*   - `skill_loaded`     — a skill was loaded.",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*                          (Files API id OR workspace path).",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*                          accepted the first turn).",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*                          machine running goose; Anthropic session",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*                          ref OR a workspace folder mount).",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*     NDJSON events to `/runs/{id}/runner/events`; the Goose adapter",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*     translates each event into one or more `RunnerEvent`s.",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*   - **Goose Managed** — the per-run managed runtime POSTs batches of",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*   - `file_uploaded`    — a file became available to the agent",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*   - `runtime_started`  — either runtime announced \"ready\" (Fly",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "runner-event.ts",
+      "side": "public",
+      "line": "*   - `skill_loaded`     — a skill was loaded (Anthropic Skills API",
+      "why": "PRE-EXISTING doc de-branding drift (out of this unit scope): public docs still name Goose/Fly/Anthropic specifics; platform genericized them to runtime. Comment-only, no contract delta. Reconcile in a follow-up."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "*   - Each entry matches /^[a-z][a-z0-9_-]{0,63}$/.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* (pure-MCP setup), pass an empty array.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* `\"managed\"` is a public contract value but remains fail-closed in this",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* `[\"developer\"]`, which gives the agent shell + write + edit + tree tools.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* Absolute entries are normalised (collapse `/+`, drop trailing `/`); bare",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* absolute subtree (`/var/cache`), bare segment (`node_modules`), or `*.ext`.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* Each entry is a stable product-level builtin name. The platform default is",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* entries are glob-ish patterns rather than absolute paths:",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* names are left as-is. Rejects NUL/newline/`..`.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* Optional override for managed-runtime builtins enabled inside the runner.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* Parse `outputs.deniedDirs`. Same count/byte limits as `allowedDirs`, but",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* repository until a private managed-key implementation supplies credential",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* resolution and billing admission.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "* To opt in to more tools, pass the full list. To opt out of all builtins",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "*/",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "/**",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "`submission.builtins[${i}] (${JSON.stringify(v)}) is not a valid builtin name; expected /^[a-z][a-z0-9_-]{0,63}$/`",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "platform",
+      "line": "return undefined; // empty == omission, keeps the idempotency hash stable",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "*     naming convention).",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "*   - Each entry matches /^[a-z][a-z0-9_-]{0,63}$/ (Goose builtin",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* `\"managed\"` is a public contract value but remains fail-closed until",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* `crates/goose-cli/src/cli.rs` `with-builtin` flag). The platform",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* `goose run --with-builtin <NAME>` (see Goose v1.34.1's",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* credential resolution and billing admission are available.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* default is `[\"developer\"]` which gives the agent shell + write +",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* edit + tree tools (bash, grep via shell, file read via shell or",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* editor, file edit). To opt in to more tools (e.g. web search via",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* Optional override for the Goose builtin extensions enabled inside",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* out of all builtins (pure-MCP setup), pass an empty array.",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* the `computercontroller` extension), pass the full list. To opt",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "* the runner container. Each entry is the bare name accepted by",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "`submission.builtins[${i}] (${JSON.stringify(v)}) is not a valid Goose builtin name; expected /^[a-z][a-z0-9_-]{0,63}$/`",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    },
+    {
+      "scope": "submission.ts",
+      "side": "public",
+      "line": "return undefined;",
+      "why": "PRE-EXISTING drift (out of this unit scope; submission.ts is under active concurrent edit): mostly doc de-branding (managed-runtime vs Goose-specific builtins) plus an empty==omission comment delta. Reconcile when submission.ts converges."
+    }
+  ]
+}

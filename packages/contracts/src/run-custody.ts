@@ -37,8 +37,8 @@ export type CustodyResourceClass = (typeof CUSTODY_RESOURCE_CLASSES)[number];
 export const CUSTODY_EXPOSURE_SURFACES = [
   "aex_vault",
   "aex_kv",
-  "fly_machine_env",
-  "fly_machine_file",
+  "host_env",
+  "host_file",
   "provider_vault",
   "provider_session",
   "dashboard_proxy",
@@ -106,7 +106,7 @@ export const CUSTODY_MANIFEST_EXCLUDED_VALUE_CLASSES = [
   "bearer_hashes",
   "provider_response_bodies",
   "signed_urls",
-  "r2_object_keys",
+  "object_store_keys",
   "vault_ids",
   "private_resource_handles"
 ] as const;
@@ -330,7 +330,7 @@ export type CustodyRedactionReason =
   | "bearer_token"
   | "provider_key"
   | "signed_url"
-  | "r2_object_key"
+  | "object_store_key"
   | "vault_id"
   | "private_resource_handle"
   | "high_entropy_token";
@@ -724,7 +724,7 @@ const forbiddenStringPatterns: readonly {
     regex: /\b(?:sk-(?:ant|proj|live|test|deepseek|openai)|xox[baprs]-|AIza)[A-Za-z0-9_-]{8,}/i
   },
   { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "r2_object_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
+  { reason: "object_store_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
@@ -734,7 +734,7 @@ const forbiddenStringPatterns: readonly {
 ]);
 
 function isForbiddenCustodyFieldName(key: string): boolean {
-  return /^(apiKey|secretValue|bearerHash|signedUrl|r2Key|objectKey|vaultId|providerResponseBody|responseBody|privateResourceHandle|resourceHandle|rawBody)$/i.test(
+  return /^(apiKey|secretValue|bearerHash|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|responseBody|privateResourceHandle|resourceHandle|rawBody)$/i.test(
     key
   );
 }

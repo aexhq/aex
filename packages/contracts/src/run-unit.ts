@@ -99,17 +99,16 @@ export interface RunUnitEventPage {
 }
 
 /**
- * One gzipped JSONL page of raw provider events captured to Storage.
- * Bytes are downloaded via signed URL or surfaced inside the per-run
- * archive zip. `storagePath` is bucket-relative; the BFF turns it
- * into a signed URL for clients.
+ * One gzipped JSONL page of raw provider events captured for the run record.
+ * Bytes are downloaded through auth-gated routes or surfaced inside the
+ * per-run archive zip. `artifactPath` is run-record relative.
  */
 export interface RunUnitRawEventPage {
   readonly attempt: number;
   readonly page: number;
   readonly byteSize: number;
   readonly eventCount: number;
-  readonly storagePath: string;
+  readonly artifactPath: string;
   readonly contentEncoding: "gzip";
   readonly createdAt: string;
 }

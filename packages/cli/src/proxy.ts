@@ -9,15 +9,23 @@
  */
 import {
   PROXY_PROTOCOL_HEADER,
-  PROXY_PROTOCOL_VERSION,
+  PROXY_PROTOCOL_VERSION_V2,
   PROXY_METHOD_HEADER,
   PROXY_PATH_HEADER,
   PROXY_QUERY_HEADER,
   PROXY_HEADERS_HEADER,
   PROXY_RESPONSE_MODE_HEADER,
   PROXY_RESPONSE_MODES,
+  PROXY_RESP_MODE_HEADER,
+  PROXY_RESP_REMAINING_BYTES_HEADER,
+  PROXY_RESP_REMAINING_CALLS_HEADER,
+  PROXY_RESP_STATUS_HEADER,
+  PROXY_RESP_TRUNCATED_HEADER,
+  PROXY_RESP_UPSTREAM_HEADERS_HEADER,
   type ProxyErrorBody,
-  type ProxyIndexFile
+  type ProxyIndexFile,
+  type ProxyResponseEnvelope,
+  type ProxyResponseMode
 } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, AEX_RUN_TOKEN_PATH, type CliIO } from "./internal.js";
 import { SUCCESS, USAGE_ERR, RUNTIME_ERR, type CliExitCode } from "./host/common.js";
@@ -196,7 +204,7 @@ export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliE
   const url = `${manifest.proxyBaseUrl.replace(/\/+$/, "")}/${encodeURIComponent(f.endpointName)}`;
   const requestHeaders = new Headers();
   requestHeaders.set("authorization", `Bearer ${token}`);
-  requestHeaders.set(PROXY_PROTOCOL_HEADER, PROXY_PROTOCOL_VERSION);
+  requestHeaders.set(PROXY_PROTOCOL_HEADER, PROXY_PROTOCOL_VERSION_V2);
   requestHeaders.set(PROXY_METHOD_HEADER, f.method.toUpperCase());
   requestHeaders.set(PROXY_PATH_HEADER, f.path);
   if (f.query) {
@@ -231,6 +239,18 @@ export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliE
       endpointName: f.endpointName
     });
     return RUNTIME_ERR;
+  }
+
+  // v2 streamed success: the Worker carries the envelope metadata in the
+  // x-aex-proxy-* response headers and streams the (already byte-capped)
+  // body. Reconstruct the same ProxyResponseEnvelope JSON the agent saw
+  // under v1 so the stdout contract is unchanged. A BFF-level error (e.g.
+  // unsupported_protocol, policy_denied) still returns a JSON error body
+  // with no status header, so it falls through to the JSON path below.
+  if (response.headers.get(PROXY_RESP_STATUS_HEADER) !== null) {
+    const envelope = await readStreamedEnvelope(response, f.endpointName);
+    io.stdout(JSON.stringify(envelope) + "\n");
+    return SUCCESS;
   }
 
   const text = await response.text();
@@ -276,6 +296,61 @@ async function resolveBody(io: CliIO, spec: string): Promise<Uint8Array> {
 
 function emitError(io: CliIO, body: ProxyErrorBody): void {
   io.stderr(JSON.stringify(body) + "\n");
+}
+
+/**
+ * Reassemble a {@link ProxyResponseEnvelope} from a v2 streamed response.
+ * The Worker has already enforced the byte-cap, so reading the body to the
+ * end here is bounded by `maxResponseBytes` — the OOM risk lived on the
+ * Worker isolate, not in this per-call container process.
+ */
+async function readStreamedEnvelope(
+  response: Response,
+  endpointName: string
+): Promise<ProxyResponseEnvelope> {
+  const effectiveResponseMode = (response.headers.get(PROXY_RESP_MODE_HEADER) ??
+    "headers_only") as ProxyResponseMode;
+  const upstreamStatus = Number.parseInt(response.headers.get(PROXY_RESP_STATUS_HEADER) ?? "0", 10);
+  const remainingCalls = Number.parseInt(
+    response.headers.get(PROXY_RESP_REMAINING_CALLS_HEADER) ?? "0",
+    10
+  );
+  const remainingResponseBytes = Number.parseInt(
+    response.headers.get(PROXY_RESP_REMAINING_BYTES_HEADER) ?? "0",
+    10
+  );
+  let upstreamHeaders: Record<string, string> = {};
+  const rawHeaders = response.headers.get(PROXY_RESP_UPSTREAM_HEADERS_HEADER);
+  if (rawHeaders) {
+    try {
+      const parsed = JSON.parse(rawHeaders);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        upstreamHeaders = parsed as Record<string, string>;
+      }
+    } catch {
+      // The metadata header is Worker-controlled; a malformed value is a
+      // protocol bug, not agent input. Degrade to empty rather than crash.
+    }
+  }
+  const truncatedRaw = response.headers.get(PROXY_RESP_TRUNCATED_HEADER);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+
+  return {
+    endpointName,
+    upstreamStatus,
+    upstreamHeaders,
+    effectiveResponseMode,
+    // The streamed path can't echo the request-side clamp decision (it
+    // isn't carried back); the effective mode is authoritative for the
+    // agent and matches what v1 surfaced for an un-clamped call.
+    modeClamped: false,
+    remainingCalls,
+    remainingResponseBytes,
+    ...(effectiveResponseMode === "full" && bytes.byteLength > 0
+      ? { upstreamBodyBase64: Buffer.from(bytes).toString("base64") }
+      : {}),
+    ...(truncatedRaw === "true" ? { truncated: true } : {})
+  };
 }
 
 export async function tryReadManifest(io: CliIO): Promise<ProxyIndexFile | null> {

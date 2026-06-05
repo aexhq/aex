@@ -18,7 +18,7 @@ const availablePolicy = {
   schemaVersion: 1,
   credentialMode: "managed",
   launchStage: "ga",
-  serviceAvailable: true,
+  privateImplementationAvailable: true,
   billingRequired: true,
   providers: ["anthropic"],
   runtimes: ["managed"],
@@ -42,7 +42,7 @@ describe("managed-key public contract", () => {
     expect(BLOCKED_MANAGED_KEY_POLICY_V1).toMatchObject({
       credentialMode: "managed",
       launchStage: "blocked",
-      serviceAvailable: false,
+      privateImplementationAvailable: false,
       billingRequired: true,
       providers: [],
       runtimes: []
@@ -53,10 +53,10 @@ describe("managed-key public contract", () => {
     );
   });
 
-  it("does not mark GA available when the managed-key service is unavailable", () => {
+  it("does not mark GA available without the private implementation flag", () => {
     const policy = {
       ...availablePolicy,
-      serviceAvailable: false
+      privateImplementationAvailable: false
     } satisfies ManagedKeyPolicyV1;
 
     expect(policy.launchStage).toBe("ga");

@@ -77,6 +77,13 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 export const SKILL_BUNDLE_LIMITS = {
   /** Compressed (.zip) ceiling. */
   maxCompressedBytes: 10 * 1024 * 1024,
+  /**
+   * Hard ceiling for the direct-to-storage (presigned PUT) upload path, where
+   * bytes never transit the hosted API so its memory/request-payload limits no
+   * longer cap the bundle. Kept well under the object store's 5 GiB single-PUT
+   * limit; objects above this would need S3 multipart, which is out of scope.
+   */
+  maxBytes: 2 * 1024 * 1024 * 1024,
   /** Sum of uncompressed file sizes. */
   maxDecompressedBytes: 50 * 1024 * 1024,
   /** Number of regular file entries (directories don't count). */
@@ -572,10 +579,90 @@ export function rejectStdioMcpShape(record: Record<string, unknown>): void {
 }
 
 /**
+ * Reasons an IP-literal host should be refused. Returns null when the
+ * literal is a routable public address (or not an IP literal at all — name
+ * resolution is the caller's concern). Single source of truth for the
+ * numeric-range deny-list so the shared MCP parser, the Worker BYOK proxy
+ * handlers, and `submission.parseProxyBaseUrl` classify the same bytes.
+ *
+ * `host` is the already-bracket-stripped, lowercased hostname.
+ *
+ * NOTE — residual DNS-rebind gap: this denies IP *literals* only. A name
+ * that resolves to a private/metadata IP is NOT caught here (we don't
+ * resolve at parse time). Closing that requires resolve-then-pin at egress;
+ * that pinning is deferred. The host's outbound fetch still refuses RFC1918
+ * at connect, but not loopback/169.254/CGNAT/ULA — which is exactly why the
+ * literal checks below exist as defense in depth.
+ */
+function denyReasonForHostIp(host: string): string | null {
+  // IPv4-mapped / IPv4-compatible IPv6 literals decode to an embedded IPv4 —
+  // classify that IPv4 so a mapped form can't smuggle a private target. Two
+  // shapes reach us: the dotted-quad form a caller may type (`::ffff:127.0.0.1`)
+  // and the hex form `new URL().hostname` normalises it to (`::ffff:7f00:1`),
+  // where the two trailing hextets ARE the four IPv4 octets.
+  const mappedDotted = /^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
+  if (mappedDotted) {
+    return denyReasonForV4(mappedDotted[1]!);
+  }
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (mappedHex) {
+    const hi = Number.parseInt(mappedHex[1]!, 16);
+    const lo = Number.parseInt(mappedHex[2]!, 16);
+    const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+    return denyReasonForV4(dotted);
+  }
+  const v4 = denyReasonForV4(host);
+  if (v4) return v4;
+  // Loopback IPv6 (::1 in any acceptable form)
+  if (host === "::1" || host === "0:0:0:0:0:0:0:1") {
+    return "must not target loopback IPv6 (::1)";
+  }
+  // Link-local IPv6 (fe80::/10 — fe80:: through febf::)
+  if (/^fe[89ab][0-9a-f]?:/.test(host)) {
+    return "must not target link-local IPv6 (fe80::/10)";
+  }
+  // Unique-local IPv6 (fc00::/7 — fc00:: through fdff::), the IPv6
+  // equivalent of RFC1918 private space.
+  if (/^f[cd][0-9a-f]{0,2}:/.test(host)) {
+    return "must not target unique-local IPv6 (fc00::/7)";
+  }
+  return null;
+}
+
+/**
+ * IPv4-literal deny-list. Returns null when `host` is not a dotted-quad or
+ * is a routable public IPv4. Split out of {@link denyReasonForHostIp} so the
+ * IPv4-mapped IPv6 branch reuses the exact same ranges.
+ */
+function denyReasonForV4(host: string): string | null {
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return null;
+  const octets = host.split(".").map((o) => Number.parseInt(o, 10));
+  if (octets.some((o) => o > 255)) return null;
+  const [a, b] = octets as [number, number, number, number];
+  // Loopback IPv4 (127.0.0.0/8)
+  if (a === 127) return "must not target loopback IPv4 (127.0.0.0/8)";
+  // Link-local / metadata IPv4 (169.254.0.0/16 — includes 169.254.169.254)
+  if (a === 169 && b === 254) {
+    return "must not target link-local IPv4 (169.254.0.0/16) — cloud metadata range";
+  }
+  // CGNAT shared address space (100.64.0.0/10) — runners NAT through it, so
+  // an upstream there can reach sibling tenants / the runner host.
+  if (a === 100 && b >= 64 && b <= 127) {
+    return "must not target CGNAT IPv4 (100.64.0.0/10)";
+  }
+  // RFC1918 private ranges (10/8, 172.16/12, 192.168/16) — defense in depth.
+  if (a === 10) return "must not target RFC1918 IPv4 (10.0.0.0/8)";
+  if (a === 172 && b >= 16 && b <= 31) return "must not target RFC1918 IPv4 (172.16.0.0/12)";
+  if (a === 192 && b === 168) return "must not target RFC1918 IPv4 (192.168.0.0/16)";
+  return null;
+}
+
+/**
  * Reasons an MCP server URL should be refused at parse time. Returns null
  * when the URL is acceptable. Hostnames are lowercased; numeric ranges
  * are checked literally so the catch covers both names ("localhost") and
- * IP literals ("127.0.0.1") symmetrically.
+ * IP literals ("127.0.0.1") symmetrically. The numeric-range checks
+ * delegate to {@link denyReasonForHostIp} (shared with the Worker proxy).
  *
  * Surface tracked by server-side SSRF regression coverage.
  */
@@ -588,32 +675,8 @@ function denyReasonForMcpHost(parsed: URL): string | null {
   if (host === "localhost" || host.endsWith(".localhost")) {
     return "must not target a loopback hostname";
   }
-  // Loopback IPv4 (127.0.0.0/8)
-  if (/^127(?:\.[0-9]+){3}$/.test(host)) {
-    return "must not target loopback IPv4 (127.0.0.0/8)";
-  }
-  // Loopback IPv6 (::1 in any acceptable form)
-  if (host === "::1" || host === "0:0:0:0:0:0:0:1") {
-    return "must not target loopback IPv6 (::1)";
-  }
-  // Link-local IPv6 (fe80::/10 — fe80:: through febf::)
-  if (/^fe[89ab][0-9a-f]?:/.test(host)) {
-    return "must not target link-local IPv6 (fe80::/10)";
-  }
-  // Link-local / metadata IPv4 (169.254.0.0/16 — includes 169.254.169.254)
-  if (/^169\.254\.[0-9]+\.[0-9]+$/.test(host)) {
-    return "must not target link-local IPv4 (169.254.0.0/16) — cloud metadata range";
-  }
-  // RFC1918 private ranges (10/8, 172.16/12, 192.168/16) — defense in depth.
-  if (/^10\.[0-9]+\.[0-9]+\.[0-9]+$/.test(host)) {
-    return "must not target RFC1918 IPv4 (10.0.0.0/8)";
-  }
-  if (/^172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+$/.test(host)) {
-    return "must not target RFC1918 IPv4 (172.16.0.0/12)";
-  }
-  if (/^192\.168\.[0-9]+\.[0-9]+$/.test(host)) {
-    return "must not target RFC1918 IPv4 (192.168.0.0/16)";
-  }
+  const ipDenial = denyReasonForHostIp(host);
+  if (ipDenial) return ipDenial;
   // Port constraint: https must be on 443 (defense in depth — non-standard
   // https ports often indicate internal services). http allowance keeps
   // the existing local-dev pattern (e.g. host.docker.internal:8787) usable.

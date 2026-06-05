@@ -176,7 +176,7 @@ describe("run retention and deletion contract", () => {
       },
       counts: [
         {
-          class: "r2_objects",
+          class: "object_store_objects",
           count: 8,
           status: "counted",
           countedAt: "2026-06-02T09:59:59.000Z"
@@ -227,7 +227,7 @@ describe("run retention and deletion contract", () => {
   it("rejects paths, object keys, filenames, sizes, hashes, provider ids, Vault ids, handles, and signed URLs", () => {
     const cases: readonly [string, unknown, string][] = [
       ["path field", { path: "redacted" }, "forbidden_field_name"],
-      ["object key", "runs/run-11111111/outputs/result.txt", "r2_object_key"],
+      ["object key", "runs/run-11111111/outputs/result.txt", "object_store_key"],
       ["filename field", { filename: "result.txt" }, "forbidden_field_name"],
       ["size field", { size: 10 }, "forbidden_field_name"],
       ["hash field", { hash: "sha256:abcdef1234567890" }, "forbidden_field_name"],

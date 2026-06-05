@@ -252,7 +252,7 @@ describe("log channel — logToInbound + guards (unified stream)", () => {
     expect(logToInbound("workflow", line).source).toBe("workflow");
   });
 
-  it("machine is a recognized source (Fly-machine host logs)", () => {
-    expect(logToInbound("machine", line).source).toBe("machine");
+  it("host is a recognized source (managed-host logs)", () => {
+    expect(logToInbound("host", line).source).toBe("host");
   });
 });
