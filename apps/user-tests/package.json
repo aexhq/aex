@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. NEVER imports aex or @aexhq/* workspace packages directly; everything goes through a child process whose cwd is a fresh `npm install` tempdir.",
+  "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. Product SDK/CLI access goes through a child process whose cwd is a fresh `npm install` tempdir; the harness may import shared conformance matchers.",
   "scripts": {
+    "pretest:user": "pnpm --filter @aexhq/conformance run build",
     "test:user": "vitest run --config vitest.config.ts test",
+    "pretest:user:offline": "pnpm --filter @aexhq/conformance run build",
     "test:user:offline": "vitest run --config vitest.config.ts --maxWorkers 1 --minWorkers 1 test/offline",
+    "pretest:user:heavy": "pnpm --filter @aexhq/conformance run build",
     "test:user:heavy": "vitest run --config vitest.heavy.config.ts",
     "lint": "tsc --noEmit"
   },
