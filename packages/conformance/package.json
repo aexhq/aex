@@ -1,6 +1,10 @@
 {
   "name": "@aexhq/conformance",
   "version": "0.13.6",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aexhq/aex.git"
+  },
   "private": false,
   "license": "Apache-2.0",
   "description": "Public conformance matchers for aex-compatible event streams and structured errors.",
