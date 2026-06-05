@@ -2,12 +2,14 @@ name: Promote
 
 # Promote a dark release to a public dist-tag (default: latest).
 #
-# Dispatched manually OR cross-repo by aex-platform's deploy.yml after the
-# platform's production plane is green against the dark release (automatic
-# promote). npm `dist-tag add` does NOT support OIDC trusted publishing
-# (OIDC is publish-only), so this step authenticates with a granular npm
-# token (NPM_TOKEN) scoped to the four packages — the one place a token is
-# still required. The dark publish itself stays tokenless (release.yml/OIDC).
+# Manual only (workflow_dispatch). There is no cross-repo auto-dispatch from
+# the platform: a human promotes after deciding the dark release is good.
+# To stop a typo promoting an unvetted build, the job fails closed unless the
+# requested version is the one currently published under the `dark` dist-tag.
+# npm `dist-tag add` does NOT support OIDC trusted publishing (OIDC is
+# publish-only), so this step authenticates with a granular npm token
+# (NPM_TOKEN) scoped to the four packages — the one place a token is still
+# required. The dark publish itself stays tokenless (release.yml/OIDC).
 
 on:
   workflow_dispatch:
@@ -40,6 +42,17 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+
+      - name: Verify version was dark-released
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          dark="$(npm view @aexhq/sdk dist-tags.dark)"
+          if [ "$dark" != "$VERSION" ]; then
+            echo "::error::Refusing to promote @aexhq/sdk@${VERSION}: it is not the current dark release (dark=${dark:-<none>}). Only a version validated under the dark dist-tag may be promoted."
+            exit 1
+          fi
 
       - name: Promote dist-tags
         env:
