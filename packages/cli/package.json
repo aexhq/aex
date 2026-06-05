@@ -1,6 +1,10 @@
 {
   "name": "@aexhq/cli",
   "version": "0.13.6",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aexhq/aex.git"
+  },
   "private": false,
   "publishConfig": {
     "access": "public"

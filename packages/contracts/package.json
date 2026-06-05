@@ -1,6 +1,10 @@
 {
   "name": "@aexhq/contracts",
   "version": "0.13.6",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aexhq/aex.git"
+  },
   "description": "Public aex wire contracts, SDK transport helpers, and conformance-facing schemas.",
   "license": "Apache-2.0",
   "private": false,
