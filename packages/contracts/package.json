@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/contracts",
-  "version": "0.13.8",
+  "version": "0.13.9",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git"

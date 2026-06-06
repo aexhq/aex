@@ -155,6 +155,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           leakedDeepseekKey: serialized.includes(deepseekKey)
         };
         process.stdout.write(JSON.stringify(result));
+        process.exit(0);
       `;
       const scriptPath = join(install.installDir, "live-deepseek-runner.mjs");
       writeFileSync(scriptPath, script);

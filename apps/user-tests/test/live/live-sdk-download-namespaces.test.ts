@@ -142,6 +142,7 @@ function buildScript(cell: Cell, marker: string): string {
       marker: ${JSON.stringify(marker)}
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 

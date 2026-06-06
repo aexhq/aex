@@ -369,6 +369,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       streamErrors
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 

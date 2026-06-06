@@ -230,6 +230,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 

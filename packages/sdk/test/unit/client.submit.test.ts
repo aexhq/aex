@@ -311,6 +311,299 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
   });
 
+  it("retries a direct bootstrap input upload after a 502 and then commits", async () => {
+    const calls: CapturedRequest[] = [];
+    let inputPutCount = 0;
+    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+      if (url.endsWith("/api/runs")) {
+        return new Response(
+          JSON.stringify({
+            id: "run_test",
+            status: "queued",
+            bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+            bootstrapToken: "boot_retry",
+            bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+          }),
+          { status: 202, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/bootstrap/status")) {
+        return new Response(
+          JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.includes("/bootstrap/inputs/")) {
+        inputPutCount += 1;
+        return inputPutCount === 1
+          ? new Response("try again", { status: 502 })
+          : new Response("", { status: 200 });
+      }
+      if (url.endsWith("/bootstrap/commit")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/bootstrap/abort")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(JSON.stringify({ ok: false }), {
+        status: 500,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const draft = await AgentsMd.fromContent("# Rules\nRetry the upload.\n", { name: "rules" });
+
+    await expect(
+      client.submitRun({
+        model: "m",
+        prompt: "p",
+        agentsMd: [draft],
+        secrets: { anthropic: { apiKey: "k" } }
+      })
+    ).resolves.toBe("run_test");
+
+    const inputPutCalls = calls.filter((c) => c.url.includes("/bootstrap/inputs/"));
+    expect(inputPutCalls).toHaveLength(2);
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://x/api/runs",
+      "https://x/api/runs/run_test/bootstrap/status",
+      expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
+      expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
+      "https://bootstrap.example/run_test/bootstrap/commit"
+    ]);
+  });
+
+  it("retries a thrown direct bootstrap input upload error and then commits", async () => {
+    const calls: CapturedRequest[] = [];
+    let inputPutCount = 0;
+    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+      if (url.endsWith("/api/runs")) {
+        return new Response(
+          JSON.stringify({
+            id: "run_test",
+            status: "queued",
+            bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+            bootstrapToken: "boot_retry",
+            bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+          }),
+          { status: 202, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/bootstrap/status")) {
+        return new Response(
+          JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.includes("/bootstrap/inputs/")) {
+        inputPutCount += 1;
+        if (inputPutCount === 1) throw new TypeError("fetch failed");
+        return new Response("", { status: 200 });
+      }
+      if (url.endsWith("/bootstrap/commit")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/bootstrap/abort")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(JSON.stringify({ ok: false }), {
+        status: 500,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const draft = await AgentsMd.fromContent("# Rules\nRetry the upload.\n", { name: "rules" });
+
+    await expect(
+      client.submitRun({
+        model: "m",
+        prompt: "p",
+        agentsMd: [draft],
+        secrets: { anthropic: { apiKey: "k" } }
+      })
+    ).resolves.toBe("run_test");
+
+    expect(calls.filter((c) => c.url.includes("/bootstrap/inputs/"))).toHaveLength(2);
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+  });
+
+  it("retries a stalled direct bootstrap commit and then resolves", async () => {
+    const draft = await AgentsMd.fromContent("# Rules\nRetry the commit.\n", { name: "rules" });
+    const calls: CapturedRequest[] = [];
+    let commitCount = 0;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-06T00:00:00Z"));
+    try {
+      const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+        if (url.endsWith("/api/runs")) {
+          return new Response(
+            JSON.stringify({
+              id: "run_test",
+              status: "queued",
+              bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+              bootstrapToken: "boot_retry",
+              bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+            }),
+            { status: 202, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.endsWith("/bootstrap/status")) {
+          return new Response(
+            JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.includes("/bootstrap/inputs/")) {
+          return new Response("", { status: 200 });
+        }
+        if (url.endsWith("/bootstrap/commit")) {
+          commitCount += 1;
+          if (commitCount === 1) {
+            return await new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(new Error("commit response stalled")), { once: true });
+            });
+          }
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (url.endsWith("/bootstrap/abort")) {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ ok: false }), {
+          status: 500,
+          headers: { "content-type": "application/json" }
+        });
+      });
+      const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+
+      const submitted = client.submitRun({
+        model: "m",
+        prompt: "p",
+        agentsMd: [draft],
+        secrets: { anthropic: { apiKey: "k" } }
+      });
+
+      for (let i = 0; i < 10 && commitCount === 0; i += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(commitCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(submitted).resolves.toBe("run_test");
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(2);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the run read path when a direct bootstrap commit response is lost", async () => {
+    const draft = await AgentsMd.fromContent("# Rules\nCommit can race cleanup.\n", { name: "rules" });
+    const calls: CapturedRequest[] = [];
+    let commitCount = 0;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-06T00:00:00Z"));
+    try {
+      const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+        if (url.endsWith("/api/runs") && (init?.method ?? "GET") === "POST") {
+          return new Response(
+            JSON.stringify({
+              id: "run_test",
+              status: "queued",
+              bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+              bootstrapToken: "boot_retry",
+              bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+            }),
+            { status: 202, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.endsWith("/api/runs/run_test")) {
+          return new Response(
+            JSON.stringify({
+              id: "run_test",
+              status: "succeeded",
+              terminalAt: new Date(Date.now()).toISOString()
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.endsWith("/bootstrap/status")) {
+          return new Response(
+            JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.includes("/bootstrap/inputs/")) {
+          return new Response("", { status: 200 });
+        }
+        if (url.endsWith("/bootstrap/commit")) {
+          commitCount += 1;
+          return await new Promise<Response>(() => undefined);
+        }
+        if (url.endsWith("/bootstrap/abort")) {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ ok: false }), {
+          status: 500,
+          headers: { "content-type": "application/json" }
+        });
+      });
+      const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+
+      const submitted = client.submitRun({
+        model: "m",
+        prompt: "p",
+        agentsMd: [draft],
+        secrets: { anthropic: { apiKey: "k" } }
+      });
+
+      for (let i = 0; i < 10 && commitCount === 0; i += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(commitCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(submitted).resolves.toBe("run_test");
+      expect(calls.filter((c) => c.url.endsWith("/api/runs/run_test"))).toHaveLength(1);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uploads draft Skill, AgentsMd, and File refs to the bootstrap target before resolving", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });

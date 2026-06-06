@@ -182,6 +182,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       streamErrors
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 
@@ -385,6 +386,7 @@ function buildCorruptedSkillScript(): string {
       streamErrors
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 
@@ -444,6 +446,7 @@ function buildIncompatibleRuntimeScript(): string {
       streamErrors: []
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 
@@ -509,6 +512,7 @@ function buildStdioMcpScript(): string {
       streamErrors: []
     };
     process.stdout.write(JSON.stringify(result));
+    process.exit(0);
   `;
 }
 
