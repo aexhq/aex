@@ -91,7 +91,7 @@ jobs:
       - name: Final npm version check
         run: node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
 
-      # Same gate PR CI runs (ci.yml -> pack:sdk). Fails closed before publish so a
+      # Same gate CI runs (ci.yml -> pack:sdk). Fails closed before publish so a
       # private-impl / substrate / billing leak can never reach npm.
       - name: Public-boundary leak gate
         run: pnpm run pack:sdk

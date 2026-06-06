@@ -30,8 +30,8 @@ pack checks.
    `pnpm test`, `pnpm run test:user:offline`, `pnpm run docs:build`, and
    `pnpm run pack:sdk`.
 4. Open a PR against `main`. [`CI`](.github/workflows/ci.yml)
-   runs the static/type/unit/offline user-test/docs/package gates
-   automatically.
+   runs the static/type/unit/offline user-test/docs/package gates after merge
+   to `main` or manual dispatch.
 5. Don't force-push `main`. Force-pushing your topic branch is fine.
 
 ## Commit messages
@@ -47,7 +47,7 @@ pack checks.
 
 | Workflow | Scope |
 | --- | --- |
-| [`CI`](.github/workflows/ci.yml) | automatic lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
+| [`CI`](.github/workflows/ci.yml) | main-push/manual lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
 | [`Release`](.github/workflows/release.yml) | manual protected npm publish plus post-publish offline user tests |
 | [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 

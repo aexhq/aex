@@ -1,14 +1,13 @@
 name: CI
 
 on:
-  pull_request:
   push:
     branches:
       - main
+  workflow_dispatch:
 
-# Cancel superseded in-flight runs for the same PR; main-push runs are never
-# cancelled (github.head_ref is empty on push, so each push gets its own
-# run_id group and runs to completion).
+# Main-push and manual runs each get a run_id-scoped concurrency group, so they
+# run to completion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -16,7 +15,7 @@ concurrency:
 jobs:
   public:
     name: Install, lint, test, pack
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     # Secrets can't be referenced in step-level `if`; surface the platform PAT
     # presence as a job-level flag so the parity checkout can gate on it.
     env:
