@@ -165,54 +165,58 @@ describe("live: run-artifact public outputs + download verbs", () => {
   });
 
   for (const cell of CELLS) {
-    it(`[${cell.id}] keeps diagnostics out of outputs and public download verbs round-trip`, async () => {
-      const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
-      const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
-      writeFileSync(scriptPath, buildScript(cell, marker));
-      const child = await runCommand(process.execPath, [scriptPath], {
-        cwd: install.installDir,
-        timeoutMs: 8 * 60_000,
-        env: buildPassEnv({
-          AEX_API_URL: apiUrl,
-          AEX_API_TOKEN: apiToken,
-          DEEPSEEK_KEY_SUBMIT: deepseekKey
-        })
-      });
-      if (child.exitCode !== 0) {
-        throw new Error(
-          `download-namespaces runner (${cell.id}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-        );
-      }
-      const r = JSON.parse(child.stdout.trim()) as CaseResult;
-      const ctx = `\n\n${dump(cell, r)}`;
+    it(
+      `[${cell.id}] keeps diagnostics out of outputs and public download verbs round-trip`,
+      async () => {
+        const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
+        const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
+        writeFileSync(scriptPath, buildScript(cell, marker));
+        const child = await runCommand(process.execPath, [scriptPath], {
+          cwd: install.installDir,
+          timeoutMs: 8 * 60_000,
+          env: buildPassEnv({
+            AEX_API_URL: apiUrl,
+            AEX_API_TOKEN: apiToken,
+            DEEPSEEK_KEY_SUBMIT: deepseekKey
+          })
+        });
+        if (child.exitCode !== 0) {
+          throw new Error(
+            `download-namespaces runner (${cell.id}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+          );
+        }
+        const r = JSON.parse(child.stdout.trim()) as CaseResult;
+        const ctx = `\n\n${dump(cell, r)}`;
 
-      // 1. The `outputs` namespace is deliverables-only — no diagnostic
-      //    artifact leaks into the customer-facing listing.
-      const leaked = r.outputs.filter((o) => isDiagnostic(o.filename));
-      expect(leaked, `diagnostics leaked into outputs listing${ctx}`).toEqual([]);
+        // 1. The `outputs` namespace is deliverables-only — no diagnostic
+        //    artifact leaks into the customer-facing listing.
+        const leaked = r.outputs.filter((o) => isDiagnostic(o.filename));
+        expect(leaked, `diagnostics leaked into outputs listing${ctx}`).toEqual([]);
 
-      // 2. Outputs have a stable id-space and contain only deliverables.
-      const outIds = new Set(r.outputs.map((o) => o.id));
-      expect(outIds.size).toBe(r.outputs.length);
+        // 2. Outputs have a stable id-space and contain only deliverables.
+        const outIds = new Set(r.outputs.map((o) => o.id));
+        expect(outIds.size).toBe(r.outputs.length);
 
-      // 3. Every public download verb produced a valid (PK-magic) zip.
-      for (const [verb, z] of [
-        ["download", r.download],
-        ["downloadOutputs", r.downloadOutputs]
-      ] as const) {
-        expect(z.byteLength, `${verb} zip empty${ctx}`).toBeGreaterThan(0);
-        expect(z.magicOk, `${verb} zip not a zip (bad magic)${ctx}`).toBe(true);
-      }
+        // 3. Every public download verb produced a valid (PK-magic) zip.
+        for (const [verb, z] of [
+          ["download", r.download],
+          ["downloadOutputs", r.downloadOutputs]
+        ] as const) {
+          expect(z.byteLength, `${verb} zip empty${ctx}`).toBeGreaterThan(0);
+          expect(z.magicOk, `${verb} zip not a zip (bad magic)${ctx}`).toBe(true);
+        }
 
-      // 4. The run reaches a successful terminal state and the deliverable
-      //    is captured in the outputs namespace. (Asserted unconditionally:
-      //    this is the happy path, and checks 1–5 above already assume a
-      //    completed run.)
-      expect(r.runStatus, `run did not succeed${ctx}`).toBe("succeeded");
-      expect(
-        r.outputs.some((o) => (o.filename ?? "").endsWith("report.txt")),
-        `report.txt missing from outputs on a succeeded run${ctx}`
-      ).toBe(true);
-    });
+        // 4. The run reaches a successful terminal state and the deliverable
+        //    is captured in the outputs namespace. (Asserted unconditionally:
+        //    this is the happy path, and checks 1-5 above already assume a
+        //    completed run.)
+        expect(r.runStatus, `run did not succeed${ctx}`).toBe("succeeded");
+        expect(
+          r.outputs.some((o) => (o.filename ?? "").endsWith("report.txt")),
+          `report.txt missing from outputs on a succeeded run${ctx}`
+        ).toBe(true);
+      },
+      9 * 60_000
+    );
   }
 });

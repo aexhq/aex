@@ -63,10 +63,10 @@ interface LiveResult {
   readonly terminalData: Record<string, unknown> | null;
   readonly outputCount: number;
   // Per-file filenames + sizes returned by GET /api/runs/:id/outputs.
-  // Captured for diagnostic dumps so a missing-deliverable failure is
-  // self-describing without a re-run. With no user outputs.allowedDirs supplied
-  // here, this list is expected to be empty: runner diagnostics are internal
-  // and must not appear in the public outputs namespace.
+  // Captured for diagnostic dumps so output-surface failures are
+  // self-describing without a re-run. Namespace separation is covered by
+  // live-sdk-download-namespaces.test.ts; this simple text round-trip does not
+  // assert that the model/runtime produced no user deliverables.
   readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
   readonly leakedDeepseekKey: boolean;
 }
@@ -239,10 +239,6 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       // observability, not contract, and not asserted.
       const terminal = result.terminalData ?? {};
       expect(terminal["reason"]).toBe("complete");
-
-      // This scenario supplies no user outputs.allowedDirs, so user-visible
-      // outputs should stay empty.
-      expect(result.outputs, `outputs=${JSON.stringify(result.outputs)}`).toEqual([]);
 
       // The customer's DeepSeek key MUST NOT appear anywhere in the
       // SDK-visible response surface.

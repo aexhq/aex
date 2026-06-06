@@ -20,25 +20,25 @@ export default defineConfig({
     // Each scenario spawns its own child processes (npm install, tsc,
     // node) with cwd in an install tempdir and drives a live run.
     // Unbounded parallelism multiplies disk usage and piles concurrent
-    // live-run spend + managed runtime pressure, so cap at 3 files at once —
-    // a bounded speedup over the previous fully-serial run. (The CI
+    // live-run spend + managed runtime pressure, so cap at 2 files at once.
+    // This keeps the default live workflow below provider/runtime pressure
+    // while preserving a bounded speedup over a fully serial run. (The CI
     // fan-out already parallelizes e2e vs user vs heavy as separate jobs;
     // the heavy suite stays fully serial — see vitest.heavy.config.ts.)
     fileParallelism: true,
-    maxWorkers: 3,
+    maxWorkers: 2,
     minWorkers: 1,
     // Tests WITHIN a file run CONCURRENTLY. The shared install tempdir is
     // read-only after the `beforeAll` install, and every scenario writes a
     // UNIQUELY-named runner script (e.g. `outputs-<cell>.mjs`,
     // `user-envvars-managed.mjs`, `comprehensive-managed-anthropic.mjs`) with a
     // unique idempotencyKey — so concurrent tests in one file never collide on
-    // disk or run identity. `maxConcurrency` bounds intra-file concurrency to 2;
-    // with `maxWorkers: 3` that caps TOTAL concurrent live runs at ~6 (2x the
-    // prior serial-within-file rate) — a deliberate bound on live-run spend +
-    // Anthropic/DeepSeek rate limits + managed runtime pressure. Raise it to go
-    // faster at higher spend/limit risk. (The heavy suite stays fully serial —
-    // see vitest.heavy.config.ts.)
-    maxConcurrency: 2,
+    // disk or run identity. `maxConcurrency: 1` serializes live cells inside a
+    // file; with `maxWorkers: 2` that caps total concurrent live runs at ~2, a
+    // deliberate bound on live-run spend, provider rate limits, and managed
+    // runtime pressure. Raise it to go faster at higher spend/limit risk. (The
+    // heavy suite stays fully serial — see vitest.heavy.config.ts.)
+    maxConcurrency: 1,
     sequence: {
       concurrent: true
     }
