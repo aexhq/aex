@@ -14,8 +14,8 @@
  * sha256, writes /mnt/session/uploads/aex/aex, and the entrypoint drops
  * an `aex` PATH wrapper.
  *
- * Only passes once the worker is deployed with AEX_RUNTIME_BRIDGE_MANIFEST and
- * the dashboard AEX_PROXY_PUBLIC_BASE_URL is set (the index.json's
+ * Only passes once the Worker is deployed with AEX_RUNTIME_BRIDGE_MANIFEST and
+ * AEX_PROXY_PUBLIC_BASE_URL is set (the index.json's
  * `proxyBaseUrl` is composed from it). Runs on managed (deepseek). waitMs ~8min.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -40,14 +40,8 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
           runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
-            "Using the shell, do EXACTLY the following and report short tokens:",
-            "1) Check the proxy bridge file:",
-            "   test -f /mnt/session/uploads/aex/index.json && echo INDEX_PRESENT || echo INDEX_MISSING",
-            "2) Make a real proxy round-trip with the aex runtime bridge (invoke via node, which always works):",
-            "   node /mnt/session/uploads/aex/aex proxy httpbin --path /get",
-            "   (equivalently, bare 'aex proxy httpbin --path /get' also works on this runtime)",
-            "   If that command returns ANY HTTP/JSON response, echo PROXY_OK; if it errors, echo PROXY_ERR.",
-            "Reply with ONLY the tokens you produced, separated by spaces."
+            "Using the shell, run this exact one-liner and reply with its exact final stdout line, no prose:",
+            "if test -f /mnt/session/uploads/aex/index.json; then printf 'INDEX_PRESENT '; else printf 'INDEX_MISSING '; fi; if node /mnt/session/uploads/aex/aex proxy httpbin --path /get >/tmp/aex-proxy-response.json 2>/tmp/aex-proxy-error.txt; then printf 'PROXY_OK\\\\n'; else printf 'PROXY_ERR\\\\n'; fi"
           ],
           proxyEndpoints: [
             ProxyEndpoint.none({
@@ -73,20 +67,26 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
       // the agent just reports what it found.
       expect(result.status).toBe("succeeded");
 
-      const text = dense(result.assistantText);
+      const shellEvidence = dense(`${result.toolResultText} ${result.assistantText}`);
 
-      // The bridge file is mounted (validated end-to-end through the SDK).
-      // Plane-independent: the runner writes index.json + the runtime bridge into
-      // the container regardless of where the proxy is served, so this always
-      // holds.
-      expect(text).toContain("INDEX_PRESENT");
+      // Assert the shell result, not only the assistant's final prose. The model
+      // can summarize only the proxy token even when the shell printed both.
+      expect(shellEvidence, `INDEX_PRESENT missing from shell evidence: ${shellEvidence}`).toContain(
+        "INDEX_PRESENT"
+      );
+      expect(
+        shellEvidence,
+        `INDEX_MISSING reported while proxy should require the manifest: ${shellEvidence}`
+      ).not.toContain("INDEX_MISSING");
 
-      // scope: the actual proxy round-trip is served by the dashboard-owned
+      // scope: the actual proxy round-trip is served by the API Worker-owned
       // named proxy route at ${AEX_PROXY_PUBLIC_BASE_URL}/api/runs/:id/proxy.
       // Every plane that runs this user test is configured enough to prove the
       // real customer path, not just the mounted bridge files.
-      expect(text, `PROXY_OK missing for configured proxy plane: ${text}`).toContain("PROXY_OK");
-      expect(text, `PROXY_ERR present for configured proxy plane: ${text}`).not.toContain("PROXY_ERR");
+      expect(shellEvidence, `PROXY_OK missing for configured proxy plane: ${shellEvidence}`).toContain("PROXY_OK");
+      expect(shellEvidence, `PROXY_ERR present for configured proxy plane: ${shellEvidence}`).not.toContain(
+        "PROXY_ERR"
+      );
     },
     10 * 60_000
   );

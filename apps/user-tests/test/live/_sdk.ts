@@ -59,6 +59,7 @@ export interface SdkRunResult {
   readonly runtime: string | null;
   readonly provider: string | null;
   readonly assistantText: string;
+  readonly toolResultText: string;
   readonly eventKinds: readonly string[];
   readonly outputCount: number;
 }
@@ -91,12 +92,17 @@ const text = events
   .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
   .map((e) => (e && e.data && typeof e.data.text === "string" ? e.data.text : ""))
   .join(" ");
+const toolResultText = events
+  .filter((e) => e.type === "TOOL_CALL_RESULT")
+  .map((e) => JSON.stringify(e && e.data !== undefined ? e.data : ""))
+  .join(" ");
 process.stdout.write(JSON.stringify({
   runId: runId,
   status: run ? run.status : "(none)",
   runtime: run ? (run.runtime ?? null) : null,
   provider: run ? (run.provider ?? null) : null,
   assistantText: text,
+  toolResultText,
   eventKinds: events.map((e) => e.type),
   outputCount: Array.isArray(outputs) ? outputs.length : 0
 }));
