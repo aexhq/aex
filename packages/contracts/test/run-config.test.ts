@@ -43,7 +43,7 @@ const baseSubmission = {
     prompt: "do the thing"
   },
   secrets: {
-    anthropic: { apiKey: "sk-ant-x" }
+    apiKey: "sk-ant-x"
   }
 } as const;
 
@@ -467,7 +467,7 @@ describe("run-config — parseRunSubmissionRequest", () => {
     expect(parsed.submission.prompt).toEqual(["do the thing"]);
     expect(parsed.submission.skills).toEqual([]);
     expect(parsed.submission.mcpServers).toEqual([]);
-    expect(parsed.secrets.anthropic?.apiKey).toBe("sk-ant-x");
+    expect(parsed.secrets.apiKey).toBe("sk-ant-x");
   });
 
   it("normalises a string prompt into an array on the wire", () => {

@@ -15,7 +15,7 @@ const baseSubmission = {
     mcpServers: []
   },
   secrets: {
-    anthropic: { apiKey: "sk-ant-test" }
+    apiKey: "sk-ant-test"
   }
 } as const;
 

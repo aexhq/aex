@@ -23,8 +23,6 @@ function assetRef(name: string, seed = 1) {
 
 function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind }> = {}) {
   const provider = overrides.provider ?? "anthropic";
-  const secrets: Record<string, { apiKey: string }> = {};
-  secrets[provider] = { apiKey: `sk-${provider}-test` };
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
@@ -38,7 +36,7 @@ function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: Runtim
       files: [],
       mcpServers: []
     },
-    secrets
+    secrets: { apiKey: `sk-${provider}-test` }
   };
 }
 
@@ -74,7 +72,7 @@ describe("submission parser - providers and secrets", () => {
     const { provider: _drop, ...rest } = baseRequest();
     const parsed = parseRunSubmissionRequest({
       ...rest,
-      secrets: { anthropic: { apiKey: "sk-ant-default" } }
+      secrets: { apiKey: "sk-ant-default" }
     });
     expect(DEFAULT_RUN_PROVIDER).toBe("anthropic");
     expect(parsed.provider).toBe("anthropic");
@@ -114,7 +112,7 @@ describe("submission parser - providers and secrets", () => {
     expect(parsed.secrets).toEqual({});
   });
 
-  it("rejects caller-supplied provider secrets in managed-key mode", () => {
+  it("rejects a caller-supplied apiKey in managed-key mode", () => {
     expect(() =>
       parseRunSubmissionRequest(
         {
@@ -123,37 +121,29 @@ describe("submission parser - providers and secrets", () => {
         },
         { managedKeyPolicy: injectedManagedKeyPolicy }
       )
-    ).toThrow(/secrets\.anthropic is not allowed when credentialMode is managed/);
+    ).toThrow(/secrets\.apiKey is not allowed when credentialMode is managed/);
   });
 
   it.each(["deepseek", "openai", "gemini", "mistral"] as const)(
-    "requires secrets.%s.apiKey when provider is %s",
+    "requires secrets.apiKey when provider is %s",
     (provider) => {
       const req = baseRequest({ provider });
       expect(() =>
         parseRunSubmissionRequest({ ...req, secrets: {} })
-      ).toThrow(new RegExp(`secrets\\.${provider}\\.apiKey is required when provider is ${provider}`));
+      ).toThrow(/secrets\.apiKey is required when credentialMode is byok/);
     }
   );
 
-  it("rejects cross-provider secret leakage", () => {
+  it("rejects unknown sibling keys inside the flat secrets bundle", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
       parseRunSubmissionRequest({
         ...req,
         secrets: { ...req.secrets, openai: { apiKey: "sk-openai-x" } }
       })
-    ).toThrow(/secrets\.openai is not allowed when provider is anthropic/);
-  });
-
-  it("rejects provider baseUrl overrides; use proxyEndpoints for upstream routing", () => {
-    const req = baseRequest({ provider: "deepseek" });
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...req,
-        secrets: { deepseek: { apiKey: "sk-deepseek-x", baseUrl: "https://gateway.example.com" } }
-      })
-    ).toThrow(/secrets\.deepseek\.baseUrl is not an allowed field; permitted: apiKey/);
+    ).toThrow(
+      /secrets\.openai is not an allowed field; permitted: apiKey, mcpServers, proxyEndpointAuth/
+    );
   });
 });
 

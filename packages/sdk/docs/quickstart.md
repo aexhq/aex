@@ -19,7 +19,7 @@ const aex = new AgentExecutor({
 const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Write a short answer about agent-first SDK design.",
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 
 const run = await aex.wait(runId);
@@ -39,7 +39,7 @@ function summarise(topic: string) {
 
 const runId = await aex.submitRun({
   ...summarise("agent-first SDK design"),
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -65,7 +65,7 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 | Non-secret paths or config (`BROLL_STORE`, mode flags) | `environment.envVars` | Mounted as `RUNTIME.env` / `RUNTIME.json`; `__KEY__` substitution in agent-facing markdown; echoed back as `run.runtimeManifest.envVars` |
 | Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; aex proxy injects them on outbound calls. The key never enters the container. |
 | MCP server credentials | `secrets.mcpServers` | Held in run-scoped custody, attached per run |
-| Provider API key | `secrets.<provider>.apiKey` | Required on every `submitRun`; held in run-scoped custody, matching `provider` |
+| Provider API key | `secrets.apiKey` | Required on every `submitRun`; held in run-scoped custody. Carries the BYOK key for the selected `provider` |
 | Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Materialized under `files/<f_id>/<name>` in the run workspace by default and described in the agent-facing instructions |
 | Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Mounted under `skills/<name>/`; the bundle's `SKILL.md` is composed into the agent's instructions |
 | Agent instructions file | `AgentsMd.fromPath('./AGENTS.md')` | Prepended as the first user turn |
@@ -96,7 +96,7 @@ async function submitWithRetry() {
         model: "claude-haiku-4-5",
         prompt: "...",
         idempotencyKey,
-        secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+        secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
       });
     } catch (err) {
       if (err instanceof Error && err.message.includes("network")) continue;

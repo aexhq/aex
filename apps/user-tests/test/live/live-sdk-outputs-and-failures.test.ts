@@ -340,7 +340,7 @@ function buildCorruptedSkillScript(): string {
           model: ${JSON.stringify(deepseekModel)},
           prompt: "Hello.",
           skills: [skillRef],
-          secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT } },
+          secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT },
           idempotencyKey: "fail-corrupt-skill-" + Date.now()
         });
         submitOk = true;
@@ -415,7 +415,7 @@ function buildIncompatibleRuntimeScript(): string {
         runtime: "native",
         model: "deepseek-chat",
         prompt: "Hello.",
-        secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" } },
+        secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" },
         idempotencyKey: "fail-incompat-runtime-" + Date.now()
       });
       submitOk = true;
@@ -483,7 +483,7 @@ function buildStdioMcpScript(): string {
             files: [],
             mcpServers: [{ name: "bad-stdio", url: "stdio:///dev/null", transport: "stdio" }]
           },
-          secrets: { deepseek: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT } }
+          secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT }
         })
       });
       submitStatus = res.status;

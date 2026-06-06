@@ -24,7 +24,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
     idempotencyKey: "idem-1",
     provider: "anthropic",
     submission: { model: "model-x", prompt: ["hello"], skills: [], agentsMd: [], files: [], mcpServers: [] },
-    secrets: { anthropic: { apiKey: "sk-anthropic-test" } },
+    secrets: { apiKey: "sk-anthropic-test" },
     ...overrides
   };
 }

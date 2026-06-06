@@ -52,7 +52,7 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
               responseMode: "full"
             })
           ],
-          secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
+          secrets: { apiKey: DEEPSEEK_KEY },
           idempotencyKey: "user-proxyendpoints-" + Date.now()
         }`
       });

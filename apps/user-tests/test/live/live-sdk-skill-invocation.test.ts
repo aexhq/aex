@@ -166,7 +166,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
       skills: [alpha, beta],
-      secrets: { ${cell.provider}: { apiKey: process.env.${cell.keyEnvName} } },
+      secrets: { apiKey: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     });
 

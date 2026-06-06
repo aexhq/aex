@@ -45,7 +45,7 @@ const aex = new AgentExecutor({ apiToken });
 await aex.submitRun({
   model, prompt,
   skills: [await Skill.fromFiles({ name: "rules", files })],
-  secrets: { anthropic: { apiKey } }
+  secrets: { apiKey }
 });
 ```
 
@@ -110,7 +110,7 @@ await aex.submitRun({
   skills: [
     await Skill.fromUrl(signedUrl, { name: "rules", sha256: "sha256:<hex>" })
   ],
-  secrets: { anthropic: { apiKey } }
+  secrets: { apiKey }
 });
 ```
 

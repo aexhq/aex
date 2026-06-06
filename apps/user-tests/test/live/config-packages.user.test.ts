@@ -37,7 +37,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
             "reply with the path, or JQ_MISSING if absent."
           ],
           environment: { packages: [{ name: "jq" }] },
-          secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
+          secrets: { apiKey: DEEPSEEK_KEY },
           idempotencyKey: "user-packages-deepseek-managed-a-" + Date.now()
         }`
       });
@@ -74,7 +74,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
             "2) \`python3 -c \\"import cowsay; print('PIP_OK')\\"\` — reply with its output, or PIP_MISSING if the import fails."
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
-          secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
+          secrets: { apiKey: DEEPSEEK_KEY },
           idempotencyKey: "user-packages-managed-runtime-" + Date.now()
         }`
       });

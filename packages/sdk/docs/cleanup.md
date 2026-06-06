@@ -18,7 +18,7 @@ retention field is rejected if supplied.
 const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "...",
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

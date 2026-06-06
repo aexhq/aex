@@ -101,7 +101,6 @@ export type {
 // `ProxyEndpoint` class (above), which prevents the wire-format
 // mistakes agents hit when authoring the wire shape by hand.
 export type {
-  PlatformAnthropicSecrets as AnthropicSecrets,
   PlatformInlineSecrets as InlineSecrets,
   PlatformMcpServerSecret as McpServerSecret,
   PlatformProxyEndpoint,

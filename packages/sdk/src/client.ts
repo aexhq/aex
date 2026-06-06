@@ -79,8 +79,9 @@ export interface AgentExecutorOptions {
  *     secret is bundled into the constructor and split into
  *     `secrets.proxyEndpointAuth` server-side; the public submission
  *     only carries the declaration (`{ name, baseUrl, authShape, … }`).
- *   - `secrets.<provider>.apiKey` — REQUIRED for the selected provider.
- *     The platform never holds a long-lived provider key on your behalf.
+ *   - `secrets.apiKey` — REQUIRED: the provider key for the selected
+ *     `provider`. The platform never holds a long-lived provider key on
+ *     your behalf.
  *
  * `idempotencyKey` is auto-generated when omitted; pass one explicitly
  * if you want client-driven retry safety across process restarts.
@@ -88,16 +89,16 @@ export interface AgentExecutorOptions {
 export interface SubmitRunOptions {
   /**
    * Credential source for upstream provider access. Omitted defaults to
-   * `"byok"`, which requires `secrets.<provider>.apiKey` as today.
+   * `"byok"`, which requires `secrets.apiKey`.
    * `"managed"` is reserved for paid managed-key mode and currently fails
    * closed until the hosted private implementation is wired.
    */
   readonly credentialMode?: CredentialMode;
   /**
    * Provider selector. Optional — defaults to
-   * {@link DEFAULT_RUN_PROVIDER} (`"anthropic"`). The call site must
-   * supply the matching `secrets.<provider>.apiKey` and MUST NOT
-   * supply any other provider's secret block.
+   * {@link DEFAULT_RUN_PROVIDER} (`"anthropic"`). Selects which upstream
+   * model route the managed provider-proxy uses; the BYOK key for it is
+   * supplied as `secrets.apiKey`.
    */
   readonly provider?: RunProvider;
   /**
@@ -472,21 +473,11 @@ export class AgentExecutor {
     if (!options.secrets) {
       throw new Error("AgentExecutor.submitRun: secrets is required");
     }
-    // The matching provider's apiKey is required; every OTHER provider's
-    // secret block must be absent. The shared parser re-runs this check
-    // on the server; failing early here gives the caller a synchronous
-    // error before any network call.
-    const providerSecret = (options.secrets as Record<string, { apiKey?: string } | undefined>)[provider];
-    if (!providerSecret?.apiKey) {
-      throw new Error(`AgentExecutor.submitRun: secrets.${provider}.apiKey is required`);
-    }
-    for (const other of ["anthropic", "deepseek", "openai", "gemini", "mistral"] as const) {
-      if (other === provider) continue;
-      if ((options.secrets as Record<string, unknown>)[other] !== undefined) {
-        throw new Error(
-          `AgentExecutor.submitRun: secrets.${other} is not allowed when provider is ${provider}`
-        );
-      }
+    // The BYOK provider key (for the selected `provider`) is required. The
+    // shared parser re-runs this check on the server; failing early here
+    // gives the caller a synchronous error before any network call.
+    if (typeof options.secrets.apiKey !== "string" || !options.secrets.apiKey) {
+      throw new Error("AgentExecutor.submitRun: secrets.apiKey is required");
     }
     if (typeof options.model !== "string" || !options.model) {
       throw new Error("AgentExecutor.submitRun: model is required");

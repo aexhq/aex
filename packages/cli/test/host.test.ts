@@ -611,7 +611,7 @@ describe("aex run", () => {
       { name: "github", url: "https://example.com/mcp" }
     ]);
     const secrets = body.secrets as Record<string, unknown>;
-    expect(secrets.anthropic).toEqual({ apiKey: "sk-ant-1" });
+    expect(secrets.apiKey).toBe("sk-ant-1");
     expect(secrets.mcpServers).toEqual([
       {
         name: "github",
@@ -691,7 +691,7 @@ describe("aex run", () => {
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("deepseek");
-    expect(body.secrets).toEqual({ deepseek: { apiKey: "sk-ds-1" } });
+    expect(body.secrets).toEqual({ apiKey: "sk-ds-1" });
   });
 
   it("rejects when --anthropic-api-key is missing", async () => {

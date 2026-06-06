@@ -36,7 +36,7 @@ function summarise(topic: string) {
 
 await aex.submitRun({
   ...summarise("agent-first SDK design"),
-  secrets: { anthropic: { apiKey } }
+  secrets: { apiKey }
 });
 ```
 

@@ -3,7 +3,7 @@ const example = `const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Write the report and save outputs.",
   secrets: {
-    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! }
+    apiKey: process.env.ANTHROPIC_API_KEY!
   }
 });
 

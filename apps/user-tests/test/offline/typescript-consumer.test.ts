@@ -109,7 +109,7 @@ describe("typescript consumer", () => {
         selectRuntime,
         validateProxyAuth,
         type AgentsMdRef,
-        type AnthropicSecrets,
+        type InlineSecrets,
         type McpServerSecret,
         type Output,
         type OutputFileSelector,
@@ -143,7 +143,7 @@ describe("typescript consumer", () => {
       const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
       const authValue: ProxyAuthValue = { type: "header", value: "proxy-test-value" };
       const resources: RuntimeResources = { cpus: 2, memoryMb: 2048 };
-      const anthropicSecrets: AnthropicSecrets = { apiKey: "sk-ant-type-surface" };
+      const anthropicSecrets: InlineSecrets = { apiKey: "sk-ant-type-surface" };
       const mcpSecret: McpServerSecret = {
         name: "docs",
         url: "https://mcp.example.test/sse",
@@ -207,7 +207,7 @@ describe("typescript consumer", () => {
         runtimeSize,
         timeout: "15m",
         secrets: {
-          anthropic: anthropicSecrets,
+          ...anthropicSecrets,
           mcpServers: [mcpSecret],
           proxyEndpointAuth: [{ name: "metadata", value: authValue }]
         },
@@ -221,7 +221,7 @@ describe("typescript consumer", () => {
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
         builtins: [],
-        secrets: { deepseek: { apiKey: "sk-deepseek-type-surface" } },
+        secrets: { apiKey: "sk-deepseek-type-surface" },
         idempotencyKey: "type-surface-managed"
       } satisfies SubmitRunOptions;
 
@@ -244,7 +244,7 @@ describe("typescript consumer", () => {
           outputs: { allowedDirs: ["/workspace/outputs"] },
           builtins: ["developer"]
         },
-        secrets: { anthropic: anthropicSecrets },
+        secrets: anthropicSecrets,
         proxyEndpoints: [proxy.declaration],
         runtimeSize,
         timeoutMs: 15 * 60_000
@@ -402,7 +402,7 @@ describe("typescript consumer", () => {
         prompt: "hello",
         proxyEndpoints: [proxy],
         runtimeSize,
-        secrets: { anthropic: { apiKey: "sk-ant-bundler" } }
+        secrets: { apiKey: "sk-ant-bundler" }
       } satisfies SubmitRunOptions;
 
       const client = new AgentExecutor({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });

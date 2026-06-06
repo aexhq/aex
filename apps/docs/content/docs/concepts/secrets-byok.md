@@ -12,7 +12,7 @@ await aex.submitRun({
   model: "mistral-large-latest",
   prompt: "Compare the docs and return a short changelog.",
   secrets: {
-    mistral: { apiKey: process.env.MISTRAL_API_KEY! }
+    apiKey: process.env.MISTRAL_API_KEY!
   }
 });
 ```

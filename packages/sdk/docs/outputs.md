@@ -12,7 +12,7 @@ Every run produces durable metadata (status, events, snapshots, cleanup state) a
 const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Produce a report and save it as a file.",
-  secrets: { anthropic: { apiKey } }
+  secrets: { apiKey }
 });
 
 await aex.wait(runId);

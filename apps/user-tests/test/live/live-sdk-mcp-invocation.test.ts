@@ -151,7 +151,7 @@ function buildScript(cell: Cell): string {
       // the MCP — even when correctly wired — is never invoked. This
       // pins the assertion to MCP behaviour instead of model whim.
       builtins: [],
-      secrets: { ${cell.provider}: { apiKey: process.env.${cell.keyEnvName} } },
+      secrets: { apiKey: process.env.${cell.keyEnvName} },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     });
 

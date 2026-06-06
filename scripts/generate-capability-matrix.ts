@@ -82,8 +82,8 @@ function buildDispatcherProbe(provider: RunProvider): PlatformRunSubmissionReque
       mcpServers: []
     },
     secrets: {
-      [provider]: { apiKey: `sk-${provider}-capability-matrix` }
-    } as PlatformRunSubmissionRequest["secrets"]
+      apiKey: `sk-${provider}-capability-matrix`
+    }
   };
 }
 

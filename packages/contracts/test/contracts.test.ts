@@ -37,7 +37,7 @@ describe("platform status contracts", () => {
 });
 
 describe("platform run submission schema", () => {
-  const baseSecrets = { anthropic: { apiKey: "sk-ant-test" } } as const;
+  const baseSecrets = { apiKey: "sk-ant-test" } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
     prompt: ["say hello"],
@@ -58,42 +58,20 @@ describe("platform run submission schema", () => {
     expect(parsed.provider).toBe("anthropic");
     expect(parsed.submission.prompt).toEqual(["say hello"]);
     expect(parsed.submission.metadata?.topic).toBe("platform");
-    expect(parsed.secrets.anthropic?.apiKey).toBe("sk-ant-test");
+    expect(parsed.secrets.apiKey).toBe("sk-ant-test");
   });
 
-  it("accepts DeepSeek as an explicit provider with DeepSeek secrets", () => {
+  it("accepts DeepSeek as an explicit provider with a flat apiKey", () => {
     const parsed = parseRunSubmissionRequest({
       provider: "deepseek",
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { deepseek: { apiKey: "sk-deepseek-test" } }
+      secrets: { apiKey: "sk-deepseek-test" }
     });
 
     expect(parsed.provider).toBe("deepseek");
-    expect(parsed.secrets.deepseek?.apiKey).toBe("sk-deepseek-test");
-    expect(parsed.secrets.anthropic).toBeUndefined();
-  });
-
-  it("rejects provider secrets that do not match the selected provider", () => {
-    expect(() => parseRunSubmissionRequest({
-      provider: "deepseek",
-      workspaceId: "workspace-1",
-      idempotencyKey: "idem-1",
-      submission: baseSubmission,
-      secrets: { anthropic: { apiKey: "sk-ant-test" } }
-    })).toThrow(/secrets\.deepseek\.apiKey/);
-
-    expect(() => parseRunSubmissionRequest({
-      provider: "anthropic",
-      workspaceId: "workspace-1",
-      idempotencyKey: "idem-1",
-      submission: baseSubmission,
-      secrets: {
-        anthropic: { apiKey: "sk-ant-test" },
-        deepseek: { apiKey: "sk-deepseek-test" }
-      }
-    })).toThrow(/secrets\.deepseek.*not allowed.*provider is anthropic/);
+    expect(parsed.secrets.apiKey).toBe("sk-deepseek-test");
   });
 
   it("rejects the removed cleanup policy field", () => {
@@ -159,13 +137,13 @@ describe("platform run submission schema", () => {
     })).toThrow(/secrets/);
   });
 
-  it("requires secrets.anthropic.apiKey", () => {
+  it("requires secrets.apiKey", () => {
     expect(() => parseRunSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { anthropic: { apiKey: "" } }
-    })).toThrow(/secrets\.anthropic\.apiKey/);
+      secrets: { apiKey: "" }
+    })).toThrow(/secrets\.apiKey must be a non-empty string/);
   });
 
   it("accepts mcpServers inside the secrets block", () => {
@@ -177,7 +155,7 @@ describe("platform run submission schema", () => {
         mcpServers: [{ name: "files", url: "https://mcp.example.test" }]
       },
       secrets: {
-        anthropic: { apiKey: "sk-ant-test" },
+        apiKey: "sk-ant-test",
         mcpServers: [{ name: "files", url: "https://mcp.example.test", headers: { authorization: "Bearer x" } }]
       }
     });
@@ -215,8 +193,10 @@ describe("platform run submission schema", () => {
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { anthropic: { apiKey: "sk-ant-test" }, openai: { apiKey: "x" } }
-    })).toThrow(/secrets\.openai/);
+      secrets: { apiKey: "sk-ant-test", openai: { apiKey: "x" } }
+    })).toThrow(
+      /secrets\.openai is not an allowed field; permitted: apiKey, mcpServers, proxyEndpointAuth/
+    );
   });
 
   it("rejects secret-bearing fields outside the secrets allowlist", () => {
@@ -250,7 +230,7 @@ describe("environment.packages ecosystem parsing", () => {
   const base = {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
-    secrets: { anthropic: { apiKey: "sk-ant-test" } }
+    secrets: { apiKey: "sk-ant-test" }
   } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",

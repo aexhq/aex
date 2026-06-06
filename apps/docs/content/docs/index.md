@@ -19,7 +19,7 @@ const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "Summarise Q1 revenue by region.",
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 
 for await (const event of aex.stream(runId)) console.log(event.type);

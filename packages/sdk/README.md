@@ -65,7 +65,7 @@ const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   system: "You are a concise automation agent.",
   prompt: "Write a short answer about agent-first SDK design.",
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 
 const run = await aex.wait(runId);
@@ -94,7 +94,7 @@ function summarise(topic: string) {
 
 const runId = await aex.submitRun({
   ...summarise("agent-first SDK design"),
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

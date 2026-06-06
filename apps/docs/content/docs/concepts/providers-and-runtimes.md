@@ -23,7 +23,7 @@ await aex.submitRun({
   provider: "openai",
   model: "gpt-4.1",
   prompt: "Summarise the attached files.",
-  secrets: { openai: { apiKey: process.env.OPENAI_API_KEY! } }
+  secrets: { apiKey: process.env.OPENAI_API_KEY! }
 });
 ```
 

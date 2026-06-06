@@ -8,16 +8,14 @@
  * SDK/CLI clients ship a different wire contract than the Worker enforces —
  * the class of bug this gate exists to catch at PR time instead of in prod.
  *
- * Two axes are enforced:
- *   1. platform/contracts/src/<f>  <->  public/contracts/src/<f>
- *      (the published-surface parity). Every overlapping source file is
- *      compared line-multiset after CRLF normalisation. A line present on
- *      exactly one side is a divergence.
- *   2. the SSRF host deny-list, whose single source of truth is
- *      platform/shared/src/blueprint.ts. The public copy lives inline in
- *      run-config.ts (public has no blueprint.ts), so the three deny
- *      functions are compared directly so the Wave-1 hardening can't
- *      regress on one side only.
+ * Platform now consumes the public `@aexhq/contracts` package directly (via a
+ * filesystem `link:` to this repo), so there is no longer a platform/contracts
+ * mirror to compare. One axis remains:
+ *   - the SSRF host deny-list, whose single source of truth is
+ *     platform/shared/src/blueprint.ts. The public copy lives inline in
+ *     run-config.ts (public has no blueprint.ts), so the three deny
+ *     functions are compared directly so the Wave-1 hardening can't
+ *     regress on one side only.
  *
  * A divergence fails the gate UNLESS it is recorded in the baseline
  * (`contract-parity-baseline.json`, same dir). The baseline is the explicit
@@ -34,7 +32,7 @@
  * Run `node scripts/cicd/check-contract-parity.mjs --update` after an
  * intentional, reviewed divergence to refresh the baseline.
  */
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,12 +50,9 @@ function findPlatformRoot() {
         resolve(publicRoot, "..", "platform"), // workspace: <root>/platform + <root>/public
       ];
   for (const c of candidates) {
-    // Require both trees the gate reads, so a misconfigured override skips
-    // (loud notice) rather than crashing mid-read.
-    if (
-      existsSync(join(c, "packages", "contracts", "src")) &&
-      existsSync(join(c, "packages", "shared", "src", "blueprint.ts"))
-    ) {
+    // Require the tree the gate reads (the SSRF deny-list SoT), so a
+    // misconfigured override skips (loud notice) rather than crashing mid-read.
+    if (existsSync(join(c, "packages", "shared", "src", "blueprint.ts"))) {
       return c;
     }
   }
@@ -72,7 +67,6 @@ if (!platformRoot) {
   process.exit(0);
 }
 
-const platformContractsSrc = join(platformRoot, "packages", "contracts", "src");
 const publicContractsSrc = join(publicRoot, "packages", "contracts", "src");
 const blueprintPath = join(platformRoot, "packages", "shared", "src", "blueprint.ts");
 const publicRunConfigPath = join(publicContractsSrc, "run-config.ts");
@@ -82,38 +76,6 @@ function norm(text) {
 }
 function readNorm(path) {
   return norm(readFileSync(path, "utf8"));
-}
-
-/**
- * The SSRF deny functions are checked on axis 2 against blueprint.ts (the
- * SoT), NOT against platform/contracts (whose copy is the pre-Wave-1
- * monolith). Drop the deny region from the axis-1 multiset on both sides so
- * the same lines aren't double-reported under run-config.ts.
- */
-function stripDenyRegion(text) {
-  // Anchor on the deny-function DEFINITIONS (the `function denyReason…`
-  // declarations), not their call sites — `denyReasonForMcpHost` is also
-  // referenced earlier inside the parser. The block runs from the doc-comment
-  // of the first definition to the next `function ` declaration after the last
-  // definition. Present in both the hardened (public, split) and pre-Wave-1
-  // monolithic (platform/contracts) copies, so the region excises
-  // symmetrically.
-  const defRe = /^(?:export )?function denyReason[A-Za-z0-9]*\(/m;
-  const firstMatch = defRe.exec(text);
-  if (!firstMatch) return text;
-  const firstFn = firstMatch.index;
-  const docStart = text.lastIndexOf("/**", firstFn);
-  // End at the first `function ` declaration that follows the LAST deny def.
-  let lastDefEnd = firstFn;
-  for (const m of text.matchAll(/^(?:export )?function denyReason[A-Za-z0-9]*\(/gm)) {
-    lastDefEnd = m.index;
-  }
-  const afterRe = /^(?:export )?function (?!denyReason)/m;
-  const tail = text.slice(lastDefEnd);
-  const afterMatch = afterRe.exec(tail);
-  if (!afterMatch) return text;
-  const end = lastDefEnd + afterMatch.index;
-  return text.slice(0, docStart === -1 ? firstFn : docStart) + text.slice(end);
 }
 
 /**
@@ -154,28 +116,7 @@ function foundEntry(scope, side, line) {
 // Collect every current divergence across both axes.
 const found = new Map(); // fp -> { scope, side, line }
 
-// ---- Axis 1: platform/contracts <-> public/contracts -----------------------
-const publicFiles = readdirSync(publicContractsSrc).filter((f) => f.endsWith(".ts"));
-for (const file of publicFiles) {
-  const platformFile = join(platformContractsSrc, file);
-  if (!existsSync(platformFile)) {
-    const entry = foundEntry(file, "public", "<file present in public, absent in platform/contracts>");
-    found.set(entryKey(entry), entry);
-    continue;
-  }
-  let platformText = readNorm(platformFile);
-  let publicText = readNorm(join(publicContractsSrc, file));
-  if (file === "run-config.ts") {
-    platformText = stripDenyRegion(platformText);
-    publicText = stripDenyRegion(publicText);
-  }
-  for (const d of diffLines(platformText, publicText)) {
-    const entry = foundEntry(file, d.side, d.line);
-    found.set(entryKey(entry), entry);
-  }
-}
-
-// ---- Axis 2: SSRF deny-list (blueprint.ts <-> run-config.ts) ----------------
+// ---- SSRF deny-list parity (blueprint.ts <-> run-config.ts) ----------------
 function extractDenyBlock(text) {
   const start = text.indexOf("denyReasonForHostIp");
   const end = text.indexOf("parseRemoteMcpTransport", start);

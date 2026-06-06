@@ -75,12 +75,12 @@ describe("managed runtime + widened providers (published surface)", () => {
       const base = {
         workspaceId: "ws", idempotencyKey: "id", provider: "anthropic",
         submission: { model: "claude-haiku-4-5", prompt: ["hi"], skills: [], agentsMd: [], files: [], mcpServers: [] },
-        secrets: { anthropic: { apiKey: "sk-ant-test-1" } }
+        secrets: { apiKey: "sk-ant-test-1" }
       };
       const a = selectRuntime(base);
       const b = selectRuntime({
         ...base, provider: "deepseek",
-        secrets: { deepseek: { apiKey: "sk-d-test" } }
+        secrets: { apiKey: "sk-d-test" }
       });
       console.log(JSON.stringify({ anthropic: a, deepseek: b }));
     `;
@@ -101,7 +101,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           runtime: "native",
           model: "claude-haiku-4-5",
           prompt: "hi",
-          secrets: { anthropic: { apiKey: "sk-ant-test" } }
+          secrets: { apiKey: "sk-ant-test" }
         });
         console.log(JSON.stringify({ caught: false }));
       } catch (err) {
@@ -136,7 +136,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" }],
           agentsMd: [], files: [], mcpServers: []
         },
-        secrets: { anthropic: { apiKey: "sk-ant-test-1" } }
+        secrets: { apiKey: "sk-ant-test-1" }
       };
       try {
         selectRuntime(req);
@@ -158,37 +158,6 @@ describe("managed runtime + widened providers (published surface)", () => {
       mentionsPdf: true,
       mentionsNative: false
     });
-  });
-
-  it("AgentExecutor.submitRun rejects non-matching provider secrets at the SDK boundary", async () => {
-    // The dispatcher rejects cross-provider secrets; the SDK does the
-    // same check synchronously before hitting the network. We confirm
-    // that by calling submitRun with the wrong shape and asserting it
-    // throws before any fetch happens. Use a fetch-fake that records
-    // calls to prove no network call leaked.
-    const script = `
-      const { AgentExecutor } = await import("@aexhq/sdk");
-      const calls = [];
-      const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
-      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      let caught = null;
-      try {
-        await client.submitRun({
-          provider: "openai",
-          model: "gpt-4o-mini",
-          prompt: "hi",
-          secrets: { anthropic: { apiKey: "sk-ant-wrong" } }
-        });
-      } catch (err) {
-        caught = err.message;
-      }
-      console.log(JSON.stringify({ caught, fetchCalls: calls.length }));
-    `;
-    const { exitCode, stdout } = await runChild(script, "client-secret-mismatch.mjs");
-    expect(exitCode).toBe(0);
-    const out = JSON.parse(stdout.trim()) as { caught: string | null; fetchCalls: number };
-    expect(out.caught).toMatch(/secrets\.openai\.apiKey is required/);
-    expect(out.fetchCalls).toBe(0);
   });
 
   it("AgentExecutor.submitRun forwards the optional runtime field on the wire", async () => {
@@ -214,7 +183,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         runtime: "managed",
         model: "claude-haiku-4-5",
         prompt: "test",
-        secrets: { anthropic: { apiKey: "sk-ant-test-12345" } }
+        secrets: { apiKey: "sk-ant-test-12345" }
       });
       const submitBody = JSON.parse(requests[0].body);
       console.log(JSON.stringify({
@@ -260,7 +229,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         provider: "anthropic",
         model: "claude-haiku-4-5",
         prompt: "hi",
-        secrets: { anthropic: { apiKey: "sk-ant-test-12345" } }
+        secrets: { apiKey: "sk-ant-test-12345" }
       });
       const body = JSON.parse(requests[0].body);
       console.log(JSON.stringify({ hasRuntime: "runtime" in body }));

@@ -75,7 +75,7 @@ describe("ProxyEndpoint", () => {
           allowPathPrefixes: ["/v1/charges"]
         })
       ],
-      secrets: { anthropic: { apiKey: "k" } },
+      secrets: { apiKey: "k" },
       idempotencyKey: "i-px"
     });
     const body = calls[0]!.body;
@@ -149,7 +149,7 @@ describe("ProxyEndpoint", () => {
             allowPathPrefixes: ["/"]
           })
         ],
-        secrets: { anthropic: { apiKey: "k" } }
+        secrets: { apiKey: "k" }
       })
     ).rejects.toThrow(/duplicate name/);
   });
@@ -186,7 +186,7 @@ describe("ProxyEndpoint", () => {
           allowPathPrefixes: ["/v1/charges"]
         })
       ],
-      secrets: { anthropic: { apiKey: "k" } },
+      secrets: { apiKey: "k" },
       idempotencyKey: "i-px-mixed"
     });
     const body = calls[0]!.body;

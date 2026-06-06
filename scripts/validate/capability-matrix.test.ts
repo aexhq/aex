@@ -41,8 +41,8 @@ function dispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
       mcpServers: []
     },
     secrets: {
-      [provider]: { apiKey: `sk-${provider}-capability-test` }
-    } as PlatformRunSubmissionRequest["secrets"]
+      apiKey: `sk-${provider}-capability-test`
+    }
   };
 }
 

@@ -37,7 +37,7 @@ const runId = await aex.submitRun({
   prompt: "Summarise Q1 revenue by region.",
   skills: [await Skill.fromPath("./skills/sheet-tools", { name: "sheet-tools" })],
   mcpServers: [github],
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } },
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! },
 });
 
 // Listen for events as the run executes...

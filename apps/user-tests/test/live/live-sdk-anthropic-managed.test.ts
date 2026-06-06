@@ -100,7 +100,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-deepseek-mgd-" + Date.now(),
-          secrets: { deepseek: { apiKey: deepseekKey } }
+          secrets: { apiKey: deepseekKey }
         });
 
         const deadline = Date.now() + 8 * 60 * 1000;

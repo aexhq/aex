@@ -11,7 +11,7 @@ const runId = await aex.submitRun({
   provider: "anthropic",
   model: "claude-haiku-4-5",
   prompt: "Write the report and save it as a file.",
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 
 for await (const event of aex.stream(runId)) {

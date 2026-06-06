@@ -120,7 +120,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
       builtins: ${builtinsLiteral},
-      secrets: { ${cell.provider}: { apiKey: process.env.${cell.keyEnvName} } },
+      secrets: { apiKey: process.env.${cell.keyEnvName} },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
     });
 

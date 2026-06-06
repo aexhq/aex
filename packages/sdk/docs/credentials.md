@@ -6,19 +6,15 @@ title: Credentials
 
 aex does not store provider keys or MCP credential values across runs.
 
-The caller passes a workspace-scoped SDK token and exactly one matching provider key inline on every `submitRun` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
+The caller passes a workspace-scoped SDK token and the provider key inline on every `submitRun` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
 
-Provider keys are coupled to the submitted `provider`:
+A run targets exactly one provider (selected by `provider`, default `anthropic`), so the key is a single flat field:
 
-| `provider` | Required secret |
+| Field | Required secret |
 | --- | --- |
-| `anthropic` | `secrets.anthropic.apiKey` |
-| `deepseek` | `secrets.deepseek.apiKey` |
-| `openai` | `secrets.openai.apiKey` |
-| `gemini` | `secrets.gemini.apiKey` |
-| `mistral` | `secrets.mistral.apiKey` |
+| Provider API key | `secrets.apiKey` |
 
-Supplying a key for any other provider is rejected at submission time.
+The same `secrets.apiKey` carries the BYOK key for whichever `provider` the run selects.
 
 MCP credential types:
 
@@ -81,7 +77,7 @@ const runId = await aex.submitRun({
   prompt: "…",
   proxyEndpoints,
   secrets: {
-    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! },
+    apiKey: process.env.ANTHROPIC_API_KEY!,
     proxyEndpointAuth
   }
 });
@@ -117,7 +113,7 @@ const runId = await aex.submitRun({
   model: "claude-haiku-4-5",
   prompt: "…",
   proxyEndpoints,
-  secrets: { anthropic: { apiKey: process.env.ANTHROPIC_API_KEY! } }
+  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

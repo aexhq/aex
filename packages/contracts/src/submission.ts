@@ -134,26 +134,6 @@ export function packageInstallString(pkg: PlatformPackage): string {
   }
 }
 
-export interface PlatformAnthropicSecrets {
-  readonly apiKey: string;
-}
-
-export interface PlatformDeepseekSecrets {
-  readonly apiKey: string;
-}
-
-export interface PlatformOpenAISecrets {
-  readonly apiKey: string;
-}
-
-export interface PlatformGeminiSecrets {
-  readonly apiKey: string;
-}
-
-export interface PlatformMistralSecrets {
-  readonly apiKey: string;
-}
-
 /**
  * Run-time provider selector. Aex exposes one customer interface
  * for every provider. All new submissions execute through the managed
@@ -222,21 +202,15 @@ export type PlatformProxyAuthValue =
   | { readonly type: "query"; readonly value: string };
 
 /**
- * Per-run inline secrets bundle. Exactly one of `anthropic` | `deepseek`
- * | `openai` | `gemini` | `mistral` is required, matching the run's
- * `provider`; the cross-provider coupling is enforced in
- * `parseRunSubmissionRequest` so the wire shape stays simple and
- * individual provider keys remain optional in the type system.
- * `mcpServers` and `proxyEndpointAuth` are cross-provider (an MCP
- * credential is the same secret whether Anthropic or another model is
- * driving the MCP client).
+ * Per-run inline secrets bundle. `apiKey` is the BYOK provider key for the
+ * run's selected `provider` (required in `"byok"` credential mode, rejected
+ * in `"managed"` mode). A run targets exactly one provider, so the key is a
+ * single flat field rather than a per-provider block. `mcpServers` and
+ * `proxyEndpointAuth` are cross-provider (an MCP credential is the same
+ * secret whichever model is driving the MCP client).
  */
 export interface PlatformInlineSecrets {
-  readonly anthropic?: PlatformAnthropicSecrets;
-  readonly deepseek?: PlatformDeepseekSecrets;
-  readonly openai?: PlatformOpenAISecrets;
-  readonly gemini?: PlatformGeminiSecrets;
-  readonly mistral?: PlatformMistralSecrets;
+  readonly apiKey?: string;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
   readonly proxyEndpointAuth?: readonly PlatformProxyEndpointAuth[];
 }
@@ -266,10 +240,10 @@ export interface PlatformProxyEndpoint {
   readonly responseByteBudget?: number;
 }
 
-const SECRETS_KEY = "secrets";
+export const SECRETS_KEY = "secrets";
 
-const PROXY_ENDPOINT_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,62}$/;
-const RESERVED_PROXY_ENDPOINT_NAMES = new Set(["proxy", "aex", "internal", "admin"]);
+export const PROXY_ENDPOINT_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,62}$/;
+export const RESERVED_PROXY_ENDPOINT_NAMES = new Set(["proxy", "aex", "internal", "admin"]);
 
 /**
  * Headers the proxy never lets through, regardless of policy. Lowercase.
@@ -293,7 +267,7 @@ const PROXY_DENY_HEADER_LIST = new Set([
   "x-real-ip"
 ]);
 
-const deniedSecretFields = new Set([
+export const deniedSecretFields = new Set([
   "providerApiKey",
   "anthropicApiKey",
   "apiKey",
@@ -591,7 +565,7 @@ function parseProxyBaseUrl(input: unknown, field: string): string {
   return normalized;
 }
 
-function parseProxyAuthShape(input: unknown, field: string): ProxyAuthShape {
+export function parseProxyAuthShape(input: unknown, field: string): ProxyAuthShape {
   const value = requireRecord(input, field);
   const type = requireString(value.type, `${field}.type`);
   switch (type as ProxyAuthType) {
@@ -623,7 +597,7 @@ function parseProxyAuthShape(input: unknown, field: string): ProxyAuthShape {
   }
 }
 
-function parseProxyMethods(input: unknown, field: string): readonly ProxyMethod[] {
+export function parseProxyMethods(input: unknown, field: string): readonly ProxyMethod[] {
   if (!Array.isArray(input) || input.length === 0) {
     throw new Error(`${field} must be a non-empty array of HTTP methods`);
   }
@@ -641,7 +615,7 @@ function parseProxyMethods(input: unknown, field: string): readonly ProxyMethod[
   return Array.from(seen);
 }
 
-function parseProxyPathPrefixes(input: unknown, field: string): readonly string[] {
+export function parseProxyPathPrefixes(input: unknown, field: string): readonly string[] {
   if (!Array.isArray(input) || input.length === 0) {
     throw new Error(`${field} must be a non-empty array of path prefixes`);
   }
@@ -660,7 +634,7 @@ function parseProxyPathPrefixes(input: unknown, field: string): readonly string[
   return Array.from(seen);
 }
 
-function parseProxyAllowedHeaders(
+export function parseProxyAllowedHeaders(
   input: unknown,
   field: string,
   authShape: ProxyAuthShape
@@ -713,7 +687,7 @@ function assertOnlyKeys(value: Record<string, unknown>, field: string, allowed: 
   }
 }
 
-function crossValidateProxyEndpointsAndAuth(
+export function crossValidateProxyEndpointsAndAuth(
   endpoints: readonly PlatformProxyEndpoint[] | undefined,
   auth: readonly PlatformProxyEndpointAuth[] | undefined
 ): void {
@@ -758,15 +732,9 @@ function crossValidateProxyEndpointsAndAuth(
   }
 }
 
-const PROVIDER_SECRET_KEYS = ["anthropic", "deepseek", "openai", "gemini", "mistral"] as const;
-
-function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
+export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   const value = requireRecord(input, "secrets");
-  const allowedTopLevel = new Set<string>([
-    ...PROVIDER_SECRET_KEYS,
-    "mcpServers",
-    "proxyEndpointAuth"
-  ]);
+  const allowedTopLevel = new Set<string>(["apiKey", "mcpServers", "proxyEndpointAuth"]);
   for (const key of Object.keys(value)) {
     if (key.startsWith("__aex_")) {
       // Platform-internal namespace (e.g. __aex_proxy_token). The BFF
@@ -783,44 +751,16 @@ function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
       );
     }
   }
-  const anthropic =
-    value.anthropic !== undefined ? parseProviderSecret(value.anthropic, "anthropic") : undefined;
-  const deepseek =
-    value.deepseek !== undefined ? parseProviderSecret(value.deepseek, "deepseek") : undefined;
-  const openai =
-    value.openai !== undefined ? parseProviderSecret(value.openai, "openai") : undefined;
-  const gemini =
-    value.gemini !== undefined ? parseProviderSecret(value.gemini, "gemini") : undefined;
-  const mistral =
-    value.mistral !== undefined ? parseProviderSecret(value.mistral, "mistral") : undefined;
+  const apiKey =
+    value.apiKey !== undefined ? requireString(value.apiKey, "secrets.apiKey") : undefined;
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
   const proxyEndpointAuth = parseProxyEndpointAuth(value.proxyEndpointAuth);
 
   return {
-    ...(anthropic ? { anthropic } : {}),
-    ...(deepseek ? { deepseek } : {}),
-    ...(openai ? { openai } : {}),
-    ...(gemini ? { gemini } : {}),
-    ...(mistral ? { mistral } : {}),
+    ...(apiKey !== undefined ? { apiKey } : {}),
     ...(mcpServers ? { mcpServers } : {}),
     ...(proxyEndpointAuth ? { proxyEndpointAuth } : {})
   };
-}
-
-function parseProviderSecret(
-  input: unknown,
-  provider: RunProvider
-): { apiKey: string } {
-  const field = `secrets.${provider}`;
-  const value = requireRecord(input, field);
-  const allowed = new Set(["apiKey"]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) {
-      throw new Error(`${field}.${key} is not an allowed field; permitted: apiKey`);
-    }
-  }
-  const apiKey = requireString(value.apiKey, `${field}.apiKey`);
-  return { apiKey };
 }
 
 function parseMcpServerSecrets(input: unknown): readonly PlatformMcpServerSecret[] | undefined {
@@ -963,7 +903,7 @@ function requireSecretValue(input: unknown, field: string): string {
   return value;
 }
 
-function assertNoSecretBearingFields(input: unknown, path: readonly string[]): void {
+export function assertNoSecretBearingFields(input: unknown, path: readonly string[]): void {
   if (Array.isArray(input)) {
     input.forEach((item, index) => assertNoSecretBearingFields(item, [...path, String(index)]));
     return;
@@ -980,7 +920,7 @@ function assertNoSecretBearingFields(input: unknown, path: readonly string[]): v
   }
 }
 
-function requireRecord(input: unknown, field: string): Record<string, unknown> {
+export function requireRecord(input: unknown, field: string): Record<string, unknown> {
   if (!isRecord(input)) {
     throw new Error(`${field} must be an object`);
   }
@@ -991,21 +931,21 @@ function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input);
 }
 
-function requireString(input: unknown, field: string): string {
+export function requireString(input: unknown, field: string): string {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error(`${field} must be a non-empty string`);
   }
   return input;
 }
 
-function optionalString(input: unknown, field: string): string | undefined {
+export function optionalString(input: unknown, field: string): string | undefined {
   if (input === undefined) {
     return undefined;
   }
   return requireString(input, field);
 }
 
-function optionalEnum<const T extends readonly string[]>(input: unknown, field: string, allowed: T): T[number] | undefined {
+export function optionalEnum<const T extends readonly string[]>(input: unknown, field: string, allowed: T): T[number] | undefined {
   if (input === undefined) {
     return undefined;
   }
@@ -1048,7 +988,7 @@ function optionalJsonRecord(input: unknown, field: string): Record<string, JsonV
   return value as Record<string, JsonValue>;
 }
 
-function optionalPositiveInt(input: unknown, field: string): number | undefined {
+export function optionalPositiveInt(input: unknown, field: string): number | undefined {
   if (input === undefined) {
     return undefined;
   }
@@ -1289,7 +1229,7 @@ export function parseRunSubmissionRequest(
   const timeoutMs = parseRunTimeout(value.timeout);
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
-  enforceCredentialSecretPolicy(provider, credentialMode, secrets);
+  enforceCredentialSecretPolicy(credentialMode, secrets);
 
   crossValidateProxyEndpointsAndAuth(proxyEndpoints, secrets.proxyEndpointAuth);
 
@@ -1350,7 +1290,7 @@ export function parseRunSubmissionRequest(
   };
 }
 
-function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
+export function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
   if (input === undefined) {
     return undefined;
   }
@@ -1362,7 +1302,7 @@ function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
   return input as RuntimeKind;
 }
 
-function parseRunProvider(input: unknown): RunProvider {
+export function parseRunProvider(input: unknown): RunProvider {
   if (input === undefined) {
     return DEFAULT_RUN_PROVIDER;
   }
@@ -1375,49 +1315,34 @@ function parseRunProvider(input: unknown): RunProvider {
 }
 
 /**
- * Cross-check the chosen provider against the supplied secrets bundle.
+ * Cross-check the supplied secrets bundle against the credential mode.
  *
- *  - The matching provider's apiKey MUST be present.
- *  - Every OTHER provider's secret block MUST be absent (cross-provider
- *    secrets are explicitly rejected, not silently dropped — they are
- *    almost always a copy-paste mistake or a confused caller, and we
- *    want to fail loud).
+ *  - `"byok"`: `secrets.apiKey` (the provider key for the run's `provider`)
+ *    MUST be present.
+ *  - `"managed"`: `secrets.apiKey` MUST be absent — provider access is
+ *    resolved by the managed-key policy, not a caller-supplied key.
  *  - MCP / proxy endpoint auth carry across providers and are not
  *    checked here.
  */
-function enforceCredentialSecretPolicy(
-  provider: RunProvider,
+export function enforceCredentialSecretPolicy(
   credentialMode: CredentialMode,
   secrets: PlatformInlineSecrets
 ): void {
   if (credentialMode === "managed") {
-    for (const providerKey of PROVIDER_SECRET_KEYS) {
-      if (secrets[providerKey] !== undefined) {
-        throw new Error(
-          `secrets.${providerKey} is not allowed when credentialMode is managed; provider access is resolved by the managed-key policy`
-        );
-      }
+    if (secrets.apiKey !== undefined) {
+      throw new Error(
+        `secrets.apiKey is not allowed when credentialMode is managed; provider access is resolved by the managed-key policy`
+      );
     }
     return;
   }
 
-  const required = secrets[provider];
-  if (!required?.apiKey) {
-    throw new Error(`secrets.${provider}.apiKey is required when provider is ${provider}`);
-  }
-  for (const other of PROVIDER_SECRET_KEYS) {
-    if (other === provider) {
-      continue;
-    }
-    if (secrets[other] !== undefined) {
-      throw new Error(
-        `secrets.${other} is not allowed when provider is ${provider}; remove it or set provider to ${other}`
-      );
-    }
+  if (!secrets.apiKey) {
+    throw new Error(`secrets.apiKey is required when credentialMode is byok`);
   }
 }
 
-function parseSubmission(input: unknown): PlatformSubmission {
+export function parseSubmission(input: unknown): PlatformSubmission {
   const value = requireRecord(input, "submission.submission");
   const allowed = new Set([
     "model",

@@ -382,11 +382,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     ...(runConfig.metadata ? { metadata: runConfig.metadata } : {})
   };
 
-  const providerSecrets: PlatformInlineSecrets = {
-    [provider]: { apiKey: providerKeyValues[provider] as string }
-  } as PlatformInlineSecrets;
   const secrets: PlatformInlineSecrets = {
-    ...providerSecrets,
+    apiKey: providerKeyValues[provider] as string,
     ...(mcpServerSecrets.length > 0 ? { mcpServers: mcpServerSecrets } : {}),
     ...(proxyAuth.length > 0 ? { proxyEndpointAuth: proxyAuth } : {})
   };
