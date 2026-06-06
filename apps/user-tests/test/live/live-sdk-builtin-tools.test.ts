@@ -6,8 +6,8 @@
  * (builtins:[] disarmed). Proves:
  *
  *   - The agent ACTUALLY USES a built-in shell/edit tool when one is
- *     available (positive). Goose surfaces this as
- *     tool_request.data.name = "shell" (goose-adapter.mjs:113-133).
+ *     available (positive). The managed runtime surfaces this as
+ *     tool_request.data.name = "shell" (runtime adapter.mjs:113-133).
  *   - When builtins:[] is requested, ZERO shell-family tool_requests fire
  *     (negative). This is the only proof the empty allowlist actually
  *     disarms tooling; the default ["developer"] would otherwise let the
@@ -36,7 +36,7 @@ const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
 
 // Tool names that the agent might call to satisfy "use your shell tool".
-// Goose: "shell" (developer builtin). Older event payloads may use "bash".
+// managed runtime: "shell" (developer builtin). Older event payloads may use "bash".
 const SHELL_FAMILY = new Set(["shell", "bash"]);
 
 interface Cell {
@@ -241,7 +241,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
-      // (Goose + DeepSeek Managed) always populate reason on the success
+      // (managed DeepSeek runtime) always populate reason on the success
       // path. Tolerating `undefined` (the pre-Phase-1 pattern) was masking
       // a regression where the field could go missing entirely.
       const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
@@ -249,7 +249,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
 
-      // The agent reached for the shell. Goose surfaces "shell"; older event
+      // The agent reached for the shell. The managed runtime surfaces "shell"; older event
       // payloads may surface "bash". Accept either.
       const shellCalls = result.toolRequestNames.filter((n) => SHELL_FAMILY.has(n));
       if (shellCalls.length === 0) {
@@ -283,7 +283,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
-      // (Goose + DeepSeek Managed) always populate reason on the success
+      // (managed DeepSeek runtime) always populate reason on the success
       // path. Tolerating `undefined` (the pre-Phase-1 pattern) was masking
       // a regression where the field could go missing entirely.
       const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;

@@ -6,7 +6,7 @@
  * that the skill bundle was materialized:
  *
  *   SDK → POST /runs (with inline skills wired)
- *      → preflight uploads skill to R2
+ *      → preflight uploads skill to object storage
  *      → manifest mounts the skill so the model sees its SKILL.md
  *      → user prompt contains the skill's trigger token (SHIBBOLETH)
  *      → model emits the per-case unique reply the skill demanded
@@ -17,8 +17,8 @@
  * collapse into one (model would echo distractor text too).
  *
  * The same body runs on every managed provider cell:
- *   - (deepseek, managed)  — Goose Managed (R2 download)
- *   - (deepseek,  managed)  — Goose Managed (R2 download)
+ *   - (deepseek, managed)  — managed runtime (object storage download)
+ *   - (deepseek,  managed)  — managed runtime (object storage download)
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL
@@ -109,7 +109,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
   // token is per-case so a model that hallucinates the well-known
   // XKCD-927 reference without consulting the skill still fails.
   //
-  // YAML frontmatter is accepted by Goose Managed and keeps the skill bundle
+  // YAML frontmatter is accepted by managed runtime and keeps the skill bundle
   // self-describing. Use the per-case uniqueToken suffix as the disambiguator;
   // it is already random per-run.
   const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
@@ -184,7 +184,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 
     const events = await client.listEvents(runId);
 
-    // Goose emits a skill_loaded_marker notification (with the skill's name in
+    // The managed runtime emits a skill_loaded_marker notification (with the skill's name in
     // data.name). Also collect aex.skill_loaded for compatibility with
     // older event payloads.
     // CUSTOM envelopes nest the original payload under data.value, keyed by
@@ -320,7 +320,7 @@ describe("live skill invocation — agent actually follows skill content", () =>
       // any `token`/`key`/`secret`-keyworded `key<sep>value` run AND any
       // high-entropy [A-Za-z0-9+/=-]{24,} run. The old `skill-token=<tok>`
       // tripped BOTH (the literal word "token" + the `=`-glued blob), so
-      // the canonical reply was redacted to `skill-[REDACTED]` in goose
+      // the canonical reply was redacted to `skill-[REDACTED]` in managed-runtime
       // stdout before the event stream was built and never matched. A
       // space-separated, keyword-free `skill-ack <tok>` survives, and the
       // 17-char `XKCD-927-…` token survives standalone (sub-24-char).

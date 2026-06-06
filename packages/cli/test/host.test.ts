@@ -446,9 +446,7 @@ describe("aex cancel + delete", () => {
 
 describe("aex download", () => {
   // Route the reads the download verbs fan out to: getRun + listEvents +
-  // listOutputs + listLogs + per-artifact /download. The run has one
-  // deliverable (report.txt in the outputs namespace) and one legacy-named
-  // diagnostic in the logs namespace.
+  // listOutputs + per-output /download.
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const wholeRunHandler =
@@ -458,19 +456,13 @@ describe("aex download", () => {
       if (url.endsWith(`/api/runs/${runId}/outputs`)) {
         return json({ outputs: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] });
       }
-      if (url.endsWith(`/api/runs/${runId}/logs`)) {
-        return json({ logs: [{ id: "o2", filename: "goose-logs/stderr.log", sizeBytes: 3, contentType: "text/plain" }] });
-      }
       if (url.endsWith(`/api/runs/${runId}/outputs/o1/download`)) {
         return new Response(strToU8("hello").buffer, { status: 200, headers: { "content-type": "text/plain" } });
-      }
-      if (url.endsWith(`/api/runs/${runId}/logs/o2/download`)) {
-        return new Response(strToU8("err").buffer, { status: 200, headers: { "content-type": "text/plain" } });
       }
       return json({ id: runId, status: "succeeded" });
     };
 
-  it("assembles the whole-run zip client-side (four namespace folders) and writes it to --out", async () => {
+  it("assembles the public whole-run zip client-side and writes it to --out", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
       argv: ["download", "run-1", "--out", "run-1.zip", ...COMMON],
@@ -479,16 +471,14 @@ describe("aex download", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // getRun + events + optional log/all event reads + outputs + logs +
-    // two per-artifact downloads.
-    expect(cap.calls).toHaveLength(8);
+    // getRun + events + outputs + one per-output download.
+    expect(cap.calls).toHaveLength(4);
 
     const writtenKey = [...writes.keys()][0]!;
     expect(writtenKey).toMatch(/run-1\.zip$/);
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
-      "logs/runtime/stderr.log",
       "manifest.json",
       "metadata/run.json",
       "outputs/report.txt"
@@ -532,17 +522,15 @@ describe("aex download", () => {
     expect((JSON.parse(cap.stdout.trim()) as { namespace: string }).namespace).toBe("outputs");
   });
 
-  it("--only logs zips just the diagnostics", async () => {
-    const writes = new Map<string, Uint8Array>();
+  it("rejects --only logs with a usage error", async () => {
     const cap = makeHostIo({
       argv: ["download", "run-1", "--only", "logs", ...COMMON],
-      writes,
       fetchHandler: wholeRunHandler("run-1")
     });
     await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    const entries = unzipSync(writes.get([...writes.keys()][0]!)!);
-    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "runtime/stderr.log"]);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("--only must be one of");
+    expect(cap.calls).toHaveLength(0);
   });
 
   it("--only metadata reads only the run record", async () => {
@@ -1031,14 +1019,14 @@ describe("aex skills", () => {
             JSON.stringify({
               ok: true,
               skillId: "skl_cli_42",
-              uploadUrl: "https://acct.r2.cloudflarestorage.com/bucket/assets/ws/hash?X-Amz-Signature=sig",
+              uploadUrl: "https://object-storage.example.test/bucket/assets/ws/hash?X-Amz-Signature=sig",
               requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" },
               expiresInSeconds: 300
             }),
             { status: 201, headers: { "content-type": "application/json" } }
           );
         }
-        if (call.url.includes("r2.cloudflarestorage.com")) {
+        if (call.url.includes("object-storage.example.test")) {
           return new Response("", { status: 200 }); // object storage accepts the direct PUT
         }
         if (call.url.endsWith("/api/skills/skl_cli_42/finalize")) {
@@ -1058,11 +1046,11 @@ describe("aex skills", () => {
       expect(cap.exitCode).toBe(0);
       const urls = cap.calls.map((c) => c.url);
       expect(urls).toContain("https://dash.example/api/skills/presign");
-      expect(urls.some((u) => u.includes("r2.cloudflarestorage.com"))).toBe(true);
+      expect(urls.some((u) => u.includes("object-storage.example.test"))).toBe(true);
       expect(urls).toContain("https://dash.example/api/skills/skl_cli_42/finalize");
-      const r2Put = cap.calls.find((c) => c.url.includes("r2.cloudflarestorage.com"))!;
-      expect(r2Put.init.method).toBe("PUT");
-      expect((r2Put.init.headers as Record<string, string>)["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
+      const storagePut = cap.calls.find((c) => c.url.includes("object-storage.example.test"))!;
+      expect(storagePut.init.method).toBe("PUT");
+      expect((storagePut.init.headers as Record<string, string>)["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
       const printed = JSON.parse(cap.stdout.trim()) as { id: string; name: string };
       expect(printed.id).toBe("skl_cli_42");
       expect(printed.name).toBe("rules-cli");
@@ -1099,7 +1087,7 @@ describe("aex skills", () => {
       const urls = cap.calls.map((c) => c.url);
       expect(urls).toContain("https://dash.example/api/skills/presign");
       expect(urls).toContain("https://dash.example/api/skills");
-      expect(urls.some((u) => u.includes("r2.cloudflarestorage.com"))).toBe(false);
+      expect(urls.some((u) => u.includes("object-storage.example.test"))).toBe(false);
       const printed = JSON.parse(cap.stdout.trim()) as { id: string };
       expect(printed.id).toBe("skl_fb");
     } finally {

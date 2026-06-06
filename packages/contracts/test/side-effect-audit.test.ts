@@ -56,7 +56,7 @@ describe("side-effect audit contract", () => {
           finishedAt: "2026-06-02T12:00:00.000Z"
         },
         dimensions: {
-          runtime: "goose",
+          runtime: "managed",
           provider: "anthropic",
           credentialMode: "byok",
           method: "GET",
@@ -138,8 +138,8 @@ describe("side-effect audit contract", () => {
     const cases: readonly [string, unknown, string][] = [
       ["headers", { headers: { authorization: "Bearer runner-token-1234567890" } }, "forbidden_field_name"],
       ["provider key", "sk-ant-test-1234567890", "provider_key"],
-      ["signed URL", "https://r2.example.test/file?X-Amz-Signature=abc", "signed_url"],
-      ["R2 key", "runs/run-11111111/outputs/result.txt", "object_store_key"],
+      ["signed URL", "https://object-storage.example.test/file?X-Amz-Signature=abc", "signed_url"],
+      ["object-store key", "runs/run-11111111/outputs/result.txt", "object_store_key"],
       ["Vault id", "vault_secret_1234567890", "vault_id"],
       ["resource handle", "machine_1234567890", "private_resource_handle"],
       ["raw URL", "https://service.example.test/path", "raw_url"],
@@ -341,7 +341,7 @@ describe("side-effect audit contract", () => {
         observedAt: "2026-06-02T12:00:00.000Z",
         actor,
         metadata: {
-          status: { status: "https://r2.example.test/file?X-Amz-Signature=abc" }
+          status: { status: "https://object-storage.example.test/file?X-Amz-Signature=abc" }
         }
       })
     ).toThrow(SideEffectAuditRedactionError);

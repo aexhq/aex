@@ -4,7 +4,7 @@ title: Product capabilities and boundaries
 
 # Product capabilities and boundaries
 
-aex is the serverless control plane for autonomous agent sessions. It accepts a complete run request, dispatches it to the managed runtime, records ordered events and logs, captures outputs, and exposes auth-gated reads and downloads.
+aex is the serverless control plane for autonomous agent sessions. It accepts a complete run request, dispatches it to the managed runtime, records typed events, captures outputs, and exposes auth-gated reads and downloads.
 
 aex is not a custom agent loop, a general-purpose sandbox, an interactive approval system, or a provider compliance layer. True self-host and customer-cloud deployment modes are not supported today.
 
@@ -14,7 +14,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 
 - Run submission, idempotency, status, cancellation, reads, downloads, and workspace auth.
 - Runtime dispatch through the managed runtime, with unsupported runtime selectors rejected at submission.
-- Ordered event/log capture through the per-run coordinator and durable archive.
+- Ordered event capture through the per-run coordinator and durable archive, with platform diagnostics kept on internal/admin surfaces.
 - Output capture into the run record, subject to runtime behavior and storage limits.
 - BYOK provider-key custody for a single run, using the top-level `secrets` carrier and terminal cleanup/revocation attempts for aex-controlled references.
 - Named proxy endpoint policy, auth injection, redaction, call budgets, and audit metadata on the aex-owned proxy path.
@@ -29,7 +29,7 @@ Start with the generated [provider/runtime capability matrix](provider-runtime-c
 | Secrets | Provider keys, MCP credentials, and proxy auth values are supplied inline per run, held in run-scoped custody, excluded from idempotency, and targeted for cleanup/revocation at terminal where aex controls the reference. | Customers choose and rotate their provider keys and MCP/proxy credentials. Provider-side credentials, sessions, and data may have their own retention rules. |
 | MCP servers | aex accepts remote HTTP/SSE MCP servers, validates their declaration, attaches run-scoped credentials, and records access metadata on the aex-controlled edge. | MCP servers are customer-trusted remote systems. aex does not sandbox their downstream behavior or make an untrusted MCP server safe. |
 | Proxy endpoints | The named endpoint proxy enforces declared host/path/method/auth policy and response caps for calls routed through it. | The upstream service's own auth, data handling, side effects, and compliance posture remain with the upstream service and customer. |
-| Outputs and run record | Captured outputs, events, logs, and metadata are stored under the run record and downloaded through auth-gated routes. | Output content is customer content. Storage, deletion, and retention follow the run policy and infrastructure behavior; deletion-proof custody manifests are roadmap work until shipped. |
+| Outputs and run record | Captured outputs, events, and metadata are stored under the public run record and downloaded through auth-gated routes. Internal diagnostics are stored separately under internal/admin access. | Output content is customer content. Storage, deletion, and retention follow the run policy and infrastructure behavior; deletion-proof custody manifests are roadmap work until shipped. |
 | Human review | Runs execute full-auto after submission. Cancellation is available as an abort control. | Required input, approval, and planning happen before submission or after inspecting the completed run record. aex does not pause a run for platform-mediated human approval or interactive clarification. |
 | Agent identity and memory | The durable product primitive is the run record, addressed by run id. | Persistent agent identity, agent profiles, stateful memory, reusable provider sessions, and saved-definition products are out of scope. |
 | Deployment model | The supported product is the hosted aex control plane, plus the SDK and CLI used to submit and inspect runs. | True self-host and customer-cloud deployments are not supported product modes today. Alternate `baseUrl` values are for local, staging, or hosted aex API planes, not a self-host promise. |

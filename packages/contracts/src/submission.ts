@@ -1107,10 +1107,9 @@ export interface PlatformSubmission {
    */
   readonly outputs?: PlatformOutputCaptureConfig;
   /**
-   * Optional override for the Goose builtin extensions enabled inside
-   * the runner container. Each entry is the bare name accepted by
-   * `goose run --with-builtin <NAME>` (see Goose v1.34.1's
-   * `crates/goose-cli/src/cli.rs` `with-builtin` flag). The platform
+   * Optional override for the managed-runtime builtin extensions enabled
+   * inside the runner container. Each entry is the bare extension name
+   * accepted by the selected runtime. The platform
    * default is `["developer"]` which gives the agent shell + write +
    * edit + tree tools (bash, grep via shell, file read via shell or
    * editor, file edit). To opt in to more tools (e.g. web search via
@@ -1118,8 +1117,8 @@ export interface PlatformSubmission {
    * out of all builtins (pure-MCP setup), pass an empty array.
    *
    * Validation:
-   *   - Each entry matches /^[a-z][a-z0-9_-]{0,63}$/ (Goose builtin
-   *     naming convention).
+   *   - Each entry matches /^[a-z][a-z0-9_-]{0,63}$/ (managed-runtime
+   *     builtin naming convention).
    *   - Max 16 entries.
    *   - Deduplicated.
    *
@@ -1522,7 +1521,7 @@ function parseBuiltins(input: unknown): readonly string[] | undefined {
     }
     if (!BUILTIN_NAME_PATTERN.test(v)) {
       throw new Error(
-        `submission.builtins[${i}] (${JSON.stringify(v)}) is not a valid Goose builtin name; expected /^[a-z][a-z0-9_-]{0,63}$/`
+        `submission.builtins[${i}] (${JSON.stringify(v)}) is not a valid managed-runtime builtin name; expected /^[a-z][a-z0-9_-]{0,63}$/`
       );
     }
     if (seen.has(v)) continue; // dedupe silently

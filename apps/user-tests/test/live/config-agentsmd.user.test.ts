@@ -79,7 +79,7 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
   );
 
   it(
-    "goose (managed) delivers both agentsMd refs",
+    "managed runtime delivers both agentsMd refs",
     async () => {
       const tokenA = rand("ALPHA");
       const tokenB = rand("BRAVO");
@@ -99,11 +99,11 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
           prompt: ${JSON.stringify([PROMPT])},
           agentsMd: [a, b],
           secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
-          idempotencyKey: "user-agentsmd-goose-" + Date.now()
+          idempotencyKey: "user-agentsmd-managed-runtime-" + Date.now()
         }`
       });
       const result = await runSdkScript(install, env, script, {
-        scriptName: "user-agentsmd-goose.mjs",
+        scriptName: "user-agentsmd-managed-runtime.mjs",
         waitMs: 8 * 60_000,
         timeoutMs: 9 * 60_000
       });

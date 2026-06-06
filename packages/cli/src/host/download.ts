@@ -3,14 +3,11 @@
  * a run's content as a zip, assembled client-side from the public read
  * endpoints (no per-output id required).
  *
- * Without `--only`, downloads EVERYTHING — organised into the four
- * namespace folders `metadata/run.json`, typed `events/events.jsonl`,
- * optional `events/logs.jsonl` / `events/all.jsonl` when the event API
- * serves channel opt-ins, `outputs/<rel>` (deliverables), `logs/<rel>`
- * (the `.anthropic-debug/` / `.goose-logs/` / `.fly-logs/` diagnostics)
- * — plus `manifest.json`.
+ * Without `--only`, downloads everything public — organised into
+ * `metadata/run.json`, typed `events/events.jsonl`, `outputs/<rel>`
+ * (deliverables), plus `manifest.json`.
  *
- * `--only outputs|logs|events|metadata` downloads just that one
+ * `--only outputs|events|metadata` downloads just that one
  * namespace (files at the zip root).
  *
  * `--out` resolves relative to the host CWD; if omitted the file is
@@ -31,11 +28,10 @@ import {
   takeFlagValue
 } from "./common.js";
 
-type Namespace = "outputs" | "logs" | "events" | "metadata";
+type Namespace = "outputs" | "events" | "metadata";
 
 const NAMESPACE_DOWNLOADERS = {
   outputs: operations.downloadOutputs,
-  logs: operations.downloadLogs,
   events: operations.downloadEvents,
   metadata: operations.downloadMetadata
 } satisfies Record<Namespace, typeof operations.download>;
@@ -66,7 +62,7 @@ export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promis
 
   const positional = onlyFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex download <run-id> [--only outputs|logs|events|metadata] [--out path] [common flags]\n");
+    io.stderr("usage: aex download <run-id> [--only outputs|events|metadata] [--out path] [common flags]\n");
     return USAGE_ERR;
   }
   const runId = positional[0]!;

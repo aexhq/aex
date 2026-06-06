@@ -2,7 +2,7 @@
  * USER TEST (SDK-driven) — environment.networking allowlist works as expected.
  *
  * Validates the FIX end-to-end through the installed SDK: on a managed
- * (Goose) run with `networking.mode:"limited"`, an explicitly ALLOWED host
+ * (managed runtime) run with `networking.mode:"limited"`, an explicitly ALLOWED host
  * stays reachable while a non-allowed host is BLOCKED — proving the OS-level
  * egress firewall is precise, not a
  * block-everything sledgehammer.

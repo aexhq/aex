@@ -9,7 +9,7 @@
  *      (ticket broker → coordinator WS, exactly-once cursor resume).
  *   3. SNAPSHOT the same log via `client.listEvents()`.
  *   4. DOWNLOAD the durable event archive: mint a ticket and read the
- *      coordinator manifest (rolling R2 chunks + counts), proving the events
+ *      coordinator manifest (rolling object storage chunks + counts), proving the events
  *      are durably archived and downloadable after the run.
  *
  * Asserts the expected unified-envelope events exist (AG-UI vocabulary):

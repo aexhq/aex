@@ -9,7 +9,7 @@
  * runtime-appropriate path and echo back a random per-test canary.
  *
  * Only passes once the fixes are DEPLOYED to the remote aex-local worker
- * (the goose half also requires the runner image to be rebuilt, since the
+ * (the managed-runtime half also requires the runner image to be rebuilt, since the
  * file is written by the runtime materialization step).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -59,7 +59,7 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
   );
 
   it(
-    "goose (managed) delivers envVars via /workspace/RUNTIME.env",
+    "managed runtime delivers envVars via /workspace/RUNTIME.env",
     async () => {
       const canary = "ENVVAR-" + Math.random().toString(36).slice(2, 10);
       const script = sdkRunnerScript({
@@ -74,11 +74,11 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
           ],
           environment: { envVars: { CANARY_VALUE: ${JSON.stringify(canary)} } },
           secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
-          idempotencyKey: "user-envvars-goose-" + Date.now()
+          idempotencyKey: "user-envvars-managed-runtime-" + Date.now()
         }`
       });
       const result = await runSdkScript(install, env, script, {
-        scriptName: "user-envvars-goose.mjs",
+        scriptName: "user-envvars-managed-runtime.mjs",
         waitMs: 8 * 60_000,
         timeoutMs: 9 * 60_000
       });

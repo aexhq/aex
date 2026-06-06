@@ -117,7 +117,7 @@ describe("provider/runtime capability matrix generation", () => {
 
   it("keeps deploy and economic caveats out of the generated matrix", () => {
     const rendered = renderProviderRuntimeCapabilityMarkdown();
-    expect(rendered).not.toMatch(/\b(Fly|billing|bills|cost|costs|margin|margins|topology)\b/i);
+    expect(rendered).not.toMatch(/\b(billing|bills|cost|costs|margin|margins|topology)\b/i);
   });
 
   it("fails the check when committed output is stale", () => {

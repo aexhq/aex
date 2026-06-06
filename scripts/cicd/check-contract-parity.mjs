@@ -35,6 +35,7 @@
  * intentional, reviewed divergence to refresh the baseline.
  */
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -133,9 +134,21 @@ function diffLines(aText, bText) {
   return divergences;
 }
 
+function lineHash(line) {
+  return createHash("sha256").update(line).digest("hex");
+}
+
 /** Stable fingerprint for a divergence, used as the baseline key. */
-function fp(scope, side, line) {
-  return `${scope}|${side}|${line}`;
+function fp(scope, side, hash) {
+  return `${scope}|${side}|${hash}`;
+}
+
+function entryKey(entry) {
+  return fp(entry.scope, entry.side, entry.lineHash ?? lineHash(entry.line ?? ""));
+}
+
+function foundEntry(scope, side, line) {
+  return { scope, side, lineHash: lineHash(line) };
 }
 
 // Collect every current divergence across both axes.
@@ -146,8 +159,8 @@ const publicFiles = readdirSync(publicContractsSrc).filter((f) => f.endsWith(".t
 for (const file of publicFiles) {
   const platformFile = join(platformContractsSrc, file);
   if (!existsSync(platformFile)) {
-    const entry = { scope: file, side: "public", line: "<file present in public, absent in platform/contracts>" };
-    found.set(fp(entry.scope, entry.side, entry.line), entry);
+    const entry = foundEntry(file, "public", "<file present in public, absent in platform/contracts>");
+    found.set(entryKey(entry), entry);
     continue;
   }
   let platformText = readNorm(platformFile);
@@ -157,8 +170,8 @@ for (const file of publicFiles) {
     publicText = stripDenyRegion(publicText);
   }
   for (const d of diffLines(platformText, publicText)) {
-    const entry = { scope: file, side: d.side, line: d.line };
-    found.set(fp(file, d.side, d.line), entry);
+    const entry = foundEntry(file, d.side, d.line);
+    found.set(entryKey(entry), entry);
   }
 }
 
@@ -177,12 +190,12 @@ function extractDenyBlock(text) {
 const platformDeny = extractDenyBlock(readNorm(blueprintPath));
 const publicDeny = extractDenyBlock(readNorm(publicRunConfigPath));
 if (platformDeny === null || publicDeny === null) {
-  const entry = { scope: "deny-list", side: "n/a", line: "could not locate deny functions in one tree" };
-  found.set(fp(entry.scope, entry.side, entry.line), entry);
+  const entry = foundEntry("deny-list", "n/a", "could not locate deny functions in one tree");
+  found.set(entryKey(entry), entry);
 } else {
   for (const d of diffLines(platformDeny, publicDeny)) {
-    const entry = { scope: "deny-list", side: d.side, line: d.line };
-    found.set(fp("deny-list", d.side, d.line), entry);
+    const entry = foundEntry("deny-list", d.side, d.line);
+    found.set(entryKey(entry), entry);
   }
 }
 
@@ -191,27 +204,27 @@ let baseline = { entries: [] };
 if (existsSync(baselinePath)) {
   baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
 }
-const baselineKeys = new Set(baseline.entries.map((e) => fp(e.scope, e.side, e.line)));
+const baselineKeys = new Set(baseline.entries.map(entryKey));
 
 if (UPDATE) {
   const merged = [...found.values()]
     .map((e) => {
-      const existing = baseline.entries.find((b) => fp(b.scope, b.side, b.line) === fp(e.scope, e.side, e.line));
-      return { ...e, why: existing?.why ?? "TODO: explain this divergence" };
+      const existing = baseline.entries.find((b) => entryKey(b) === entryKey(e));
+      return { ...e, why: existing?.why ?? "Explain this divergence before committing the baseline update." };
     })
-    .sort((a, b) => fp(a.scope, a.side, a.line).localeCompare(fp(b.scope, b.side, b.line)));
+    .sort((a, b) => entryKey(a).localeCompare(entryKey(b)));
   writeFileSync(baselinePath, JSON.stringify({ entries: merged }, null, 2) + "\n");
   process.stdout.write(`contract-parity: baseline updated (${merged.length} entries)\n`);
   process.exit(0);
 }
 
-const unexplained = [...found.values()].filter((e) => !baselineKeys.has(fp(e.scope, e.side, e.line)));
-const stale = baseline.entries.filter((e) => !found.has(fp(e.scope, e.side, e.line)));
+const unexplained = [...found.values()].filter((e) => !baselineKeys.has(entryKey(e)));
+const stale = baseline.entries.filter((e) => !found.has(entryKey(e)));
 
 if (unexplained.length > 0) {
   process.stderr.write(
     `contract-parity FAILED: ${unexplained.length} NEW divergence${unexplained.length === 1 ? "" : "s"} not in the baseline:\n` +
-      unexplained.map((e) => `  - [${e.scope}] (${e.side}-only) ${e.line.slice(0, 140)}`).join("\n") +
+      unexplained.map((e) => `  - [${e.scope}] (${e.side}-only) ${e.lineHash}`).join("\n") +
       "\n\nPort the platform change into public, or — if the divergence is " +
       "intentional public-only surface or tracked-temporary — run " +
       "`node scripts/cicd/check-contract-parity.mjs --update` and fill in the " +
@@ -227,7 +240,7 @@ if (stale.length > 0) {
   process.stderr.write(
     `contract-parity FAILED: ${stale.length} baseline entr${stale.length === 1 ? "y is" : "ies are"} stale ` +
       `(the divergence is gone — trim the baseline):\n` +
-      stale.map((e) => `  - [${e.scope}] (${e.side}-only) ${e.line.slice(0, 140)}`).join("\n") +
+      stale.map((e) => `  - [${e.scope}] (${e.side}-only) ${e.lineHash ?? lineHash(e.line ?? "")}`).join("\n") +
       "\n\nRun `node scripts/cicd/check-contract-parity.mjs --update` to refresh.\n"
   );
   process.exit(1);

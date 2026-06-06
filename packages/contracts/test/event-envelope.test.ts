@@ -47,7 +47,7 @@ describe("runnerEventToAexEvent — CloudEvents framing", () => {
 
 describe("runnerEventToAexEvent — per-kind projection (type + source)", () => {
   it("runtime_started → RUN_STARTED / runtime", () => {
-    const out = map(ev(0, "runtime_started", { source: "goose-managed" }));
+    const out = map(ev(0, "runtime_started", { source: "managed-runtime" }));
     expect([out.type, out.source]).toEqual(["RUN_STARTED", "runtime"]);
     expect(isRunStarted(out)).toBe(true);
   });
@@ -92,7 +92,7 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
     expect([note.type, note.source]).toEqual(["CUSTOM", "runtime"]);
     expect(customName(note)).toBe("aex.notification");
 
-    const err = map(ev(8, "stream_error", { source: "goose", message: "echo timed out" }));
+    const err = map(ev(8, "stream_error", { source: "runtime", message: "echo timed out" }));
     expect([err.type, err.source]).toEqual(["CUSTOM", "runtime"]);
     expect(customName(err)).toBe("aex.stream_error");
     // A non-fatal stream error must NOT masquerade as the terminal RUN_ERROR.
@@ -159,18 +159,18 @@ describe("toAGUI — strict AG-UI projection", () => {
 
 describe("cross-runtime parity (same logical event ⇒ same envelope shape)", () => {
   // Representative assistant-text RunnerEvents as each adapter emits them:
-  // Goose tags the message id `messageId`; the Anthropic adapter tags it
+  // One adapter tags the message id `messageId`; another adapter tags it
   // `eventId`. The envelope type/source are identical, and toAGUI normalizes
   // both to a populated `messageId`.
-  it("Goose and Anthropic assistant_text map to the same type/source and a normalized AG-UI message", () => {
-    const goose = map(ev(0, "assistant_text", { role: "assistant", text: "Done", messageId: "msg_goose" }));
+  it("different assistant_text adapters map to the same type/source and a normalized AG-UI message", () => {
+    const runtime = map(ev(0, "assistant_text", { role: "assistant", text: "Done", messageId: "msg_runtime" }));
     const anthropic = map(ev(0, "assistant_text", { role: "assistant", text: "Done", eventId: "evt_anthropic" }));
 
-    expect([goose.type, goose.source]).toEqual([anthropic.type, anthropic.source]);
+    expect([runtime.type, runtime.source]).toEqual([anthropic.type, anthropic.source]);
 
     // toMatchObject avoids union-narrowing control flow while still asserting
     // the type-specific AG-UI fields.
-    expect(toAGUI(goose)).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", delta: "Done", messageId: "msg_goose" });
+    expect(toAGUI(runtime)).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", delta: "Done", messageId: "msg_runtime" });
     expect(toAGUI(anthropic)).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", delta: "Done", messageId: "evt_anthropic" });
   });
 

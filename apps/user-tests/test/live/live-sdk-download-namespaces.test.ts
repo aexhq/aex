@@ -4,21 +4,16 @@
  * Exercises the run-artifact namespace split end-to-end against a real
  * run on the live API:
  *
- *   - A run's deliverables live in the `outputs` namespace; platform
- *     diagnostics (runtime/, host/) live in the
- *     physically-separate `logs` namespace.
+ *   - A run's deliverables live in the `outputs` namespace.
  *   - `listOutputs` returns ONLY deliverables (no diagnostic-prefixed
  *     entries leak in).
- *   - `getRunDebugLogs` returns ONLY diagnostics, dot-stripped
- *     (`runtime/...`, not `.runtime/...`).
- *   - The four download verbs (`download`, `downloadOutputs`,
- *     `downloadLogs`, `downloadEvents` via the everything zip) each
+ *   - Public download verbs (`download`, `downloadOutputs`) each
  *     produce a valid (PK-magic) zip against the real server.
  *
  * The zip's internal folder layout is pinned by the shared unit test
  * (packages/contracts/test/operations-download.test.ts); here we prove the
- * REAL server's outputs-vs-logs separation + that every verb round-trips
- * against a live run, without unzipping in the child.
+ * REAL server keeps diagnostics out of public outputs and every public
+ * download verb round-trips against a live run, without unzipping in the child.
  *
  * Required env: same as the other live-sdk-* files
  * (AEX_API_URL, AEX_API_TOKEN,
@@ -45,14 +40,10 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-c
 interface Cell {
   readonly id: string;
   readonly runtime: "managed";
-  /** The diagnostic prefix this runtime is guaranteed to emit under logs/. */
-  readonly expectedLogPrefix: string;
 }
 
-// One managed Anthropic cell pins the diagnostic namespace:
-//   managed → runtime/{stdout,stderr,args} (always uploaded)
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed-a", runtime: "managed", expectedLogPrefix: "runtime/" }
+  { id: "deepseek-managed-a", runtime: "managed" }
 ];
 
 const DIAGNOSTIC_PREFIXES = ["runtime/", "host/"];
@@ -91,10 +82,8 @@ interface CaseResult {
   readonly runId: string;
   readonly runStatus: string;
   readonly outputs: ReadonlyArray<{ id: string; filename: string | null }>;
-  readonly debugLogs: ReadonlyArray<{ filename: string }>;
   readonly download: ZipProbe;
   readonly downloadOutputs: ZipProbe;
-  readonly downloadLogs: ZipProbe;
   readonly marker: string;
 }
 
@@ -141,19 +130,15 @@ function buildScript(cell: Cell, marker: string): string {
     });
 
     const outputs = await client.listOutputs(runId);
-    const debug = await client.getRunDebugLogs(runId);
     const downloadAll = await client.download(runId);
     const downloadOut = await client.downloadOutputs(runId);
-    const downloadLog = await client.downloadLogs(runId);
 
     const result = {
       runId: runId,
       runStatus: run.status,
       outputs: outputs.map((o) => ({ id: o.id, filename: o.filename ?? null })),
-      debugLogs: debug.logs.map((l) => ({ filename: l.filename })),
       download: probe(downloadAll),
       downloadOutputs: probe(downloadOut),
-      downloadLogs: probe(downloadLog),
       marker: ${JSON.stringify(marker)}
     };
     process.stdout.write(JSON.stringify(result));
@@ -164,12 +149,11 @@ function dump(cell: Cell, r: CaseResult): string {
   return [
     `cell=${cell.id} runId=${r.runId} status=${r.runStatus} marker=${r.marker}`,
     `outputs=${JSON.stringify(r.outputs)}`,
-    `debugLogs=${JSON.stringify(r.debugLogs)}`,
-    `zips: download=${JSON.stringify(r.download)} outputs=${JSON.stringify(r.downloadOutputs)} logs=${JSON.stringify(r.downloadLogs)}`
+    `zips: download=${JSON.stringify(r.download)} outputs=${JSON.stringify(r.downloadOutputs)}`
   ].join("\n");
 }
 
-describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () => {
+describe("live: run-artifact public outputs + download verbs", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -181,7 +165,7 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
   });
 
   for (const cell of CELLS) {
-    it(`[${cell.id}] splits deliverables from diagnostics and every download verb round-trips`, async () => {
+    it(`[${cell.id}] keeps diagnostics out of outputs and public download verbs round-trip`, async () => {
       const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
       const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
       writeFileSync(scriptPath, buildScript(cell, marker));
@@ -207,37 +191,20 @@ describe("live: run-artifact namespaces (outputs vs logs) + download verbs", () 
       const leaked = r.outputs.filter((o) => isDiagnostic(o.filename));
       expect(leaked, `diagnostics leaked into outputs listing${ctx}`).toEqual([]);
 
-      // 2. The `logs` namespace (via getRunDebugLogs) is ALL diagnostics,
-      //    and dot-stripped (e.g. "runtime/…", not ".runtime/…").
-      expect(r.debugLogs.length, `expected at least one diagnostic${ctx}`).toBeGreaterThan(0);
-      for (const l of r.debugLogs) {
-        expect(isDiagnostic(l.filename), `non-diagnostic in logs namespace: ${l.filename}${ctx}`).toBe(true);
-        expect(l.filename.startsWith("."), `logs entry not dot-stripped: ${l.filename}${ctx}`).toBe(false);
-      }
-
-      // 3. This runtime's guaranteed diagnostic prefix is present.
-      expect(
-        r.debugLogs.some((l) => l.filename.startsWith(cell.expectedLogPrefix)),
-        `expected a ${cell.expectedLogPrefix} artifact${ctx}`
-      ).toBe(true);
-
-      // 4. outputs and logs are disjoint id-spaces.
+      // 2. Outputs have a stable id-space and contain only deliverables.
       const outIds = new Set(r.outputs.map((o) => o.id));
-      const logNames = new Set(r.debugLogs.map((l) => l.filename));
-      for (const o of r.outputs) expect(logNames.has(o.filename ?? "")).toBe(false);
       expect(outIds.size).toBe(r.outputs.length);
 
-      // 5. Every download verb produced a valid (PK-magic) zip.
+      // 3. Every public download verb produced a valid (PK-magic) zip.
       for (const [verb, z] of [
         ["download", r.download],
-        ["downloadOutputs", r.downloadOutputs],
-        ["downloadLogs", r.downloadLogs]
+        ["downloadOutputs", r.downloadOutputs]
       ] as const) {
         expect(z.byteLength, `${verb} zip empty${ctx}`).toBeGreaterThan(0);
         expect(z.magicOk, `${verb} zip not a zip (bad magic)${ctx}`).toBe(true);
       }
 
-      // 6. The run reaches a successful terminal state and the deliverable
+      // 4. The run reaches a successful terminal state and the deliverable
       //    is captured in the outputs namespace. (Asserted unconditionally:
       //    this is the happy path, and checks 1–5 above already assume a
       //    completed run.)

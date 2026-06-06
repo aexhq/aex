@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/cli",
-  "version": "0.13.7",
+  "version": "0.13.8",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git"
@@ -26,7 +26,7 @@
     "aex": "./dist/cli.mjs"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node ./scripts/finalize-bundle.mjs",
+    "build": "pnpm --filter @aexhq/contracts run build && tsc -p tsconfig.build.json && node ./scripts/finalize-bundle.mjs",
     "lint": "tsc --noEmit -p tsconfig.json",
     "pretest": "pnpm run build",
     "test": "pnpm test:unit",

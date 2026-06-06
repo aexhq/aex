@@ -49,7 +49,7 @@ describe("parseRunSubmissionRequest — agentsMd[] (asset refs)", () => {
     expect(() =>
       parseRunSubmissionRequest(baseRequest({
         agentsMd: [{
-          kind: "r2",
+          kind: "storage_backend",
           path: `assets/${WS_ID}/${HASH_HEX}`,
           hash: `sha256:${HASH_HEX}`,
           sizeBytes: 100,

@@ -21,7 +21,6 @@ function aliasClient(): { readonly client: AgentExecutor; readonly calls: Record
     calls.push({ url, method });
     if (url.endsWith("/api/runs/run-1/events")) return json({ events: [{ id: "evt-1", type: "agent.message" }] });
     if (url.endsWith("/api/runs/run-1/outputs")) return json({ outputs: [] });
-    if (url.endsWith("/api/runs/run-1/logs")) return json({ logs: [] });
     return json({ id: "run-1", status: "succeeded" });
   };
   return {
@@ -46,7 +45,6 @@ describe("AgentExecutor run-id aliases", () => {
 
     await client.wait("run-1", { intervalMs: 1, timeoutMs: 100 });
     await client.outputs("run-1");
-    await client.debugLogs("run-1");
     await client.cancel("run-1");
     await client.delete("run-1");
 
@@ -58,7 +56,6 @@ describe("AgentExecutor run-id aliases", () => {
       { url: "https://example.test/api/runs/run-1", method: "GET" },
       { url: "https://example.test/api/runs/run-1", method: "GET" },
       { url: "https://example.test/api/runs/run-1/outputs", method: "GET" },
-      { url: "https://example.test/api/runs/run-1/logs", method: "GET" },
       { url: "https://example.test/api/runs/run-1/cancel", method: "POST" },
       { url: "https://example.test/api/runs/run-1", method: "DELETE" }
     ]);

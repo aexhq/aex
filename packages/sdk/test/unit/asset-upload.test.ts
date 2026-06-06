@@ -47,7 +47,7 @@ describe("uploadAsset (direct-to-storage)", () => {
             exists: false,
             assetId: `asset_${hex}`,
             contentHash: hash,
-            uploadUrl: "https://acct.r2.cloudflarestorage.com/bucket/assets/ws/" + hex + "?X-Amz-Signature=sig",
+            uploadUrl: "https://object-storage.example.test/bucket/assets/ws/" + hex + "?X-Amz-Signature=sig",
             requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" }
           } as unknown;
         }
@@ -65,7 +65,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     expect(out.exists).toBe(false);
     expect(out.assetId).toBe(`asset_${hex}`);
     expect(calls).toEqual(["/assets/presign", "/assets/finalize"]);
-    expect(putUrl).toContain("r2.cloudflarestorage.com");
+    expect(putUrl).toContain("object-storage.example.test");
     expect(putHeaders["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
   });
 
@@ -96,7 +96,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     const http: AssetsHttpClient = {
       request: vi.fn(async (path: string) => {
         if (path === "/assets/presign") {
-          return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl: "https://acct.r2.cloudflarestorage.com/b/k?X-Amz-Signature=s", requiredHeaders: {} } as unknown;
+          return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl: "https://acct.object-storage.example.test/b/k?X-Amz-Signature=s", requiredHeaders: {} } as unknown;
         }
         return {} as unknown;
       }) as AssetsHttpClient["request"]

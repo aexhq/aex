@@ -59,7 +59,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
     if (url === "https://bootstrap.example/run_test/bootstrap/abort") {
       return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    // Legacy direct-to-storage workspace asset flow.
+    // Direct-to-storage workspace asset flow.
     if (url.endsWith("/assets/presign")) {
       const reqBody = (body ?? {}) as { hash?: string; sizeBytes?: number };
       const hash = reqBody.hash ?? `sha256:${"a".repeat(64)}`;
@@ -70,14 +70,14 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
           exists: false,
           assetId: `asset_${hex}`,
           contentHash: hash,
-          uploadUrl: `https://acct.r2.cloudflarestorage.com/bucket/assets/ws/${hex}?X-Amz-Signature=sig`,
+          uploadUrl: `https://object-storage.example.test/bucket/assets/ws/${hex}?X-Amz-Signature=sig`,
           requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" },
           expiresInSeconds: 300
         }),
         { status: 201, headers: { "content-type": "application/json" } }
       );
     }
-    if (url.includes("r2.cloudflarestorage.com")) {
+    if (url.includes("object-storage.example.test")) {
       return new Response("", { status: 200 }); // object storage accepts the direct PUT
     }
     if (url.endsWith("/assets/finalize")) {

@@ -43,8 +43,8 @@ const runId = await aex.submitRun({
 // Listen for events as the run executes...
 for await (const event of aex.stream(runId)) console.log(event.type);
 
-// ...then download everything about the run — record, events, and all
-// captured outputs (including debug logs) — as one zip once it finishes.
+// ...then download the public run record — metadata, events, and
+// captured outputs — as one zip once it finishes.
 await aex.wait(runId);
 await aex.download(runId, { to: "./run.zip" });
 ```

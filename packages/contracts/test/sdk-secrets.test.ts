@@ -22,7 +22,7 @@ describe("redactString — value-agnostic shapes", () => {
     ["openai sk- key", "OPENAI=sk-proj-abcdefghijklmnop1234567890ABCD", "sk-proj-abcdefghijklmnop1234567890ABCD"],
     ["apt_ workspace token", "token apt_abcdEFGH1234ijklMNOP5678 trailing", "apt_abcdEFGH1234ijklMNOP5678"],
     ["JWT", "Cookie: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N"],
-    ["postgres connection string", "DB=postgresql://postgres:s3cr3tPassw0rd@db.poozsebwtfvdchhtixuq.supabase.co:5432/postgres now", "s3cr3tPassw0rd"],
+    ["postgres connection string", "DB=postgresql://postgres:s3cr3tPassw0rd@db.example.test:5432/postgres now", "s3cr3tPassw0rd"],
     ["AWS access key id", "id AKIAIOSFODNN7EXAMPLE done", "AKIAIOSFODNN7EXAMPLE"],
     ["slack token", "xoxb-1234567890-abcdefghijkl rest", "xoxb-1234567890-abcdefghijkl"]
   ];
@@ -53,7 +53,7 @@ describe("redactString — value-agnostic shapes", () => {
   it("redacts the substring-of-a-known-secret case (the sed-mask leak)", () => {
     // A naive mask might blank only the prefix and leave the password tail as a
     // substring. The pg-URI shape redacts the whole URI, killing the tail.
-    const dbUrl = "postgresql://postgres.poozsebwtfvdchhtixuq:LongPasswordValue9999@aws-1.pooler.supabase.com:5432/postgres";
+    const dbUrl = "postgresql://postgres.example_project:LongPasswordValue9999@db-pool.example.test:5432/postgres";
     const out = redactString(dbUrl);
     expect(out).not.toContain("LongPasswordValue9999");
   });
@@ -65,7 +65,7 @@ describe("redactString — value-agnostic shapes", () => {
       "compatibility_date = 2026-05-20",
       "https://api.aex.dev/v1/runs",
       "run-1234-terminal",
-      "supabase status shows API URL http://127.0.0.1:56321",
+      "local database status shows API URL http://127.0.0.1:56321",
       // Long digit-free mixed-case identifiers (stack-trace frames / API symbol
       // names the diagnostic bundle captures) must survive — eating them guts
       // debuggability. These are 24-39 chars, mixed-case, no digit.

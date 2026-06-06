@@ -2,9 +2,9 @@
  * Unified runner event schema. The managed runtime feeds one shape into
  * the hosted aex event pipeline:
  *
- *   - **Goose Managed** — the per-run managed runtime POSTs batches of
- *     NDJSON events to `/runs/{id}/runner/events`; the Goose adapter
- *     translates each event into one or more `RunnerEvent`s.
+ *   - The per-run managed runtime POSTs batches of NDJSON events to
+ *     `/runs/{id}/runner/events`; the runtime adapter translates each
+ *     event into one or more `RunnerEvent`s.
  *
  * The downstream subscribers (dashboard, SDK `streamEvents`, observable
  * spans) never see runtime-specific wire shapes — they only see
@@ -28,14 +28,13 @@ export const RUNNER_EVENT_VERSION = 1 as const;
  * doesn't fit is mapped to `notification` so the data is captured
  * even when no UI handler exists yet.
  *
- *   - `runtime_started`  — either runtime announced "ready" (Fly
- *                          machine running goose; Anthropic session
- *                          accepted the first turn).
+ *   - `runtime_started`  — the managed runtime announced "ready" or
+ *                          accepted the first turn.
  *   - `assistant_text`   — model text delta.
  *   - `tool_request`     — model emitted a tool_use / function call.
  *   - `tool_response`    — tool result delivered back to the model.
- *   - `skill_loaded`     — a skill was loaded (Anthropic Skills API
- *                          ref OR a workspace folder mount).
+ *   - `skill_loaded`     — a skill was loaded from a provider ref or
+ *                          a workspace folder mount.
  *   - `file_uploaded`    — a file became available to the agent
  *                          (Files API id OR workspace path).
  *   - `notification`     — runtime/extension notification; catch-all

@@ -4,7 +4,7 @@ title: Outputs
 
 # Outputs
 
-Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the run creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `aex.download(runId)` returns the whole run — metadata, events, logs, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadLogs` / `downloadEvents` / `downloadMetadata`) return one slice each.
+Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the run creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `aex.download(runId)` returns the public run record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadEvents` / `downloadMetadata`) return one slice each.
 
 ## Quickstart
 
@@ -23,30 +23,28 @@ await aex.download(runId, { to: "./run.zip" });
 aex download <run-id> --out ./run.zip --api-token …
 ```
 
-## The four namespaces
+## The three namespaces
 
-A run's downloadable content is organised into four logical namespaces, each with a matching verb. Every zip is assembled **client-side** from the public read endpoints (`getRun` + `listEvents` + `listOutputs` + per-output `/download`) — there is no server-side archive route.
+A run's downloadable content is organised into three logical namespaces, each with a matching verb. Every zip is assembled **client-side** from the public read endpoints (`getRun` + `listEvents` + `listOutputs` + per-output `/download`) — there is no server-side archive route.
 
 | Namespace | What it holds | Verb | CLI |
 | --- | --- | --- | --- |
 | `outputs` | The run's real deliverables. | `downloadOutputs(runId)` | `download <id> --only outputs` |
-| `logs` | Platform diagnostics in canonical namespaces: `runtime/`, `host/`, `provider-proxy/`, and `control-plane/`. Stored separately from `outputs`, so deliverables stay deliverables-only. | `downloadLogs(runId)` | `download <id> --only logs` |
-| `events` | Typed events (`events.jsonl`) plus log/full-stream JSONL when the event channel opt-ins are available. | `downloadEvents(runId)` | `download <id> --only events` |
+| `events` | Typed event-channel records (`events.jsonl`). | `downloadEvents(runId)` | `download <id> --only events` |
 | `metadata` | The run record (`run.json`). | `downloadMetadata(runId)` | `download <id> --only metadata` |
+
+Platform diagnostics are stored outside the public archive under `runs/<runId>/internal/logs/` for internal/admin access only. They are not exposed by the SDK download helpers or the public CLI.
 
 ## What `download()` returns
 
-`download(runId)` is the **whole-run** verb — it bundles all four namespaces as top-level folders. It is distinct from `downloadOutput(runId, selector)`, which fetches a single file. Layout:
+`download(runId)` is the **whole-run** verb — it bundles the public namespaces as top-level folders. It is distinct from `downloadOutput(runId, selector)`, which fetches a single file. Layout:
 
 ```
 metadata/run.json     # run record (status, runId, timestamps, snapshot)
 metadata/submission.json # public-safe submission snapshot, when available
 metadata/cost.json    # public cost telemetry, when available
 events/events.jsonl   # typed event-channel records, ordered
-events/logs.jsonl     # log-channel records, when available
-events/all.jsonl      # full unified stream, when available
 outputs/<name>        # one file per deliverable
-logs/<name>           # platform diagnostics
 manifest.json         # RunRecordManifestV1
 ```
 
@@ -56,11 +54,11 @@ manifest.json         # RunRecordManifestV1
 | --- | --- |
 | `schemaVersion` / `runRecordSchemaVersion` | Manifest and run-record contract versions. |
 | `runId` | The run the zip was assembled for. |
-| `namespaces[]` / `files[]` | Namespace inventory and per-file presence state. Optional submission/cost/event-channel files are marked `present` only when the client assembled actual entries; custody remains `pending` until its writer/read path exists. |
-| `outputs[]` / `logs[]` | `{ id, filename, sizeBytes?, contentType? }` — one row per file successfully written under `outputs/` / `logs/`. |
+| `namespaces[]` / `files[]` | Namespace inventory and per-file presence state. Optional submission/cost files are marked `present` only when the client assembled actual entries; custody remains `pending` until its writer/read path exists. |
+| `outputs[]` | `{ id, filename, sizeBytes?, contentType? }` — one row per file successfully written under `outputs/`. |
 | `errors[]` | `{ namespace, id, filename, message }` — per-artifact byte fetches that failed during assembly. Best-effort: a failure records an entry here and is skipped from the tree rather than aborting the whole zip. |
 
-The single-namespace verbs return the same per-file bytes at the zip root (e.g. `downloadOutputs(runId)` → `report.txt` + a `manifest.json`; `downloadEvents(runId)` → `events.jsonl` plus optional `logs.jsonl` / `all.jsonl`).
+The single-namespace verbs return the same per-file bytes at the zip root (e.g. `downloadOutputs(runId)` -> `report.txt` + a `manifest.json`; `downloadEvents(runId)` -> `events.jsonl`).
 
 ## Downloading one output
 
@@ -85,7 +83,7 @@ console.log(looseReport.byteLength);
 | --- | --- |
 | `pending` / `queued` / `provisioning` | `metadata/run.json` reflects the early state; `events/` and `outputs/` are typically empty. |
 | `provider_running`, mid-session / `cleaning_up` | Whatever events + outputs have been captured so far. Call again after terminal for the complete set. |
-| `succeeded` / `failed` / `cancelled` / `terminated` | The complete typed event archive + all captured outputs; log/full-stream JSONL are included when the deployed event API serves those channel opt-ins. |
+| `succeeded` / `failed` / `cancelled` / `terminated` | The complete typed event archive + all captured outputs. |
 
 ## `outputs.allowedDirs` — override capture roots
 
@@ -130,7 +128,7 @@ Mechanism (no platform-magical paths — this is honest):
 1. The hosted platform materializes the workspace, opens runtime logs, and records a filesystem baseline across the capture roots.
 2. The agent runs normally. There is no extra model turn and no synthetic sync instruction.
 3. When the agent exits, the runner rescans the capture roots and finds files that are new or whose metadata changed.
-4. The runner uploads changed regular files to durable run artifact storage. Diagnostic log paths are routed to `logs`; other paths are routed to `outputs`.
+4. The runner uploads changed regular files to durable run artifact storage. Diagnostic log paths are routed to internal diagnostics under `runs/<runId>/internal/logs/`; other paths are routed to `outputs`.
 
 Cost: output capture does not add a model turn. The runner pays a filesystem scan and upload cost near the end of the run.
 
@@ -139,7 +137,7 @@ Capture notes:
 - Files over a configured per-file size cap are skipped.
 - Once total file or byte caps are reached, remaining changed files are dropped from upload.
 - Files that vanish between scan and upload are skipped.
-- Upload failures are recorded in runner events/logs. The zip's `manifest.errors[]` only records byte fetches that failed while assembling the download archive.
+- Upload failures are recorded in runner diagnostics. The zip's `manifest.errors[]` only records byte fetches that failed while assembling the download archive.
 
 ## Runs without explicit `outputs.allowedDirs`
 

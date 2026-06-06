@@ -24,7 +24,6 @@ import type {
   WhoAmI
 } from "./runtime-types.js";
 import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
-import { runArtifactRel } from "./run-artifacts.js";
 
 /**
  * The single source of truth for SDK<->BFF transport. The SDK class
@@ -74,18 +73,13 @@ const LIST_EVENTS_PAGE_BUDGET = 1000;
  */
 export async function listRunEvents(
   http: HttpClient,
-  runId: string,
-  options: { readonly channel?: "event" | "log" | "all" } = {}
+  runId: string
 ): Promise<readonly RunEvent[]> {
-  const channelQuery =
-    options.channel && options.channel !== "event"
-      ? { channel: options.channel }
-      : {};
   const path = `/api/runs/${encodeURIComponent(runId)}/events`;
   const all: RunEvent[] = [];
   let cursor: number | undefined;
   for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
-    const query = cursor !== undefined ? { ...channelQuery, cursor: String(cursor) } : channelQuery;
+    const query = cursor !== undefined ? { cursor: String(cursor) } : {};
     const result = await http.request<{ readonly events: readonly RunEvent[]; readonly nextCursor?: number | null }>(
       path,
       {},
@@ -126,19 +120,6 @@ export async function listOutputs(
     `/api/runs/${encodeURIComponent(runId)}/outputs`
   );
   return result.outputs;
-}
-
-/**
- * List the run's platform diagnostics (the `logs` namespace). Legacy stored
- * filenames are normalized to canonical public namespaces.
- */
-export async function listLogs(http: HttpClient, runId: string): Promise<readonly Output[]> {
-  const result = await http.request<{ readonly logs: readonly Output[] }>(
-    `/api/runs/${encodeURIComponent(runId)}/logs`
-  );
-  return result.logs.map((log) =>
-    typeof log.filename === "string" ? { ...log, filename: runArtifactRel(log.filename) } : log
-  );
 }
 
 export async function createOutputLink(
@@ -234,25 +215,19 @@ export async function whoami(http: HttpClient): Promise<WhoAmI> {
 }
 
 /**
- * A run's downloadable content is organised into four namespaces, each
+ * A run's downloadable content is organised into three public namespaces, each
  * with a matching `download*` verb:
  *
  *   - `outputs`  — the run's real deliverables (`runs/<id>/outputs/`).
- *   - `logs`     — platform diagnostics (`runs/<id>/logs/`: canonical
- *                  `runtime/`, `host/`, `provider-proxy/`, and
- *                  `control-plane/` namespaces), stored separately from
- *                  deliverables.
- *   - `events`   — typed events (`events.jsonl`) plus optional
- *                  log/full-stream JSONL files when the deployed event API
- *                  serves `channel=log` / `channel=all`.
+ *   - `events`   — typed event-channel records (`events.jsonl`).
  *   - `metadata` — the run record (`run.json`).
  *
- * `download` bundles all four as top-level folders; `downloadOutputs` /
- * `downloadLogs` / `downloadEvents` / `downloadMetadata` each bundle one.
+ * `download` bundles all three as top-level folders; `downloadOutputs` /
+ * `downloadEvents` / `downloadMetadata` each bundle one.
  * Every zip is assembled client-side from the public read endpoints —
  * there is no server-side archive route. Callers write the bytes to disk.
  */
-type ArtifactNamespace = "outputs" | "logs";
+type ArtifactNamespace = "outputs";
 
 interface CollectedArtifacts {
   readonly entries: readonly ZipEntry[];
@@ -265,14 +240,9 @@ interface ZipEntry extends RunRecordArchiveEntryForRedactionV1 {
   readonly bytes: Uint8Array;
 }
 
-interface OptionalEventsExport {
-  readonly status: "present" | "unavailable";
-  readonly events: readonly RunEvent[];
-}
-
 /**
  * Download each artifact's bytes into a zip-file map keyed by
- * `<zipPrefix><relative-path>`, fetched from the `outputs` or `logs`
+ * `<zipPrefix><relative-path>`, fetched from the `outputs`
  * download route. Best-effort: a per-artifact fetch failure records an
  * `errors[]` entry rather than aborting the rest, so the failure is
  * surfaced (never silent) while a partially-available run still yields a
@@ -299,7 +269,7 @@ async function collectArtifactBytes(
         path: `${zipPrefix}${rel}`,
         bytes: new Uint8Array(await response.arrayBuffer()),
         ...(item.contentType !== undefined ? { contentType: item.contentType } : {}),
-        ...(namespace === "outputs" ? { customerContent: true } : {})
+        customerContent: true
       });
       captured.push({
         id: item.id,
@@ -319,34 +289,6 @@ function eventsJsonl(events: readonly RunEvent[]): Uint8Array {
   return strToU8(events.map((event) => JSON.stringify(event)).join("\n"));
 }
 
-async function tryListOptionalRunEvents(
-  http: HttpClient,
-  runId: string,
-  channel: "log" | "all"
-): Promise<OptionalEventsExport> {
-  try {
-    const events = await listRunEvents(http, runId, { channel });
-    if (channel === "log") {
-      return events.length > 0 && events.every(isLogChannelEvent)
-        ? { status: "present", events }
-        : { status: "unavailable", events: [] };
-    }
-    return hasUnifiedStreamEvidence(events)
-      ? { status: "present", events }
-      : { status: "unavailable", events: [] };
-  } catch {
-    return { status: "unavailable", events: [] };
-  }
-}
-
-function isLogChannelEvent(event: RunEvent): boolean {
-  return event.channel === "log";
-}
-
-function hasUnifiedStreamEvidence(events: readonly RunEvent[]): boolean {
-  return events.some((event) => event.channel === "log" || event.channel === "event");
-}
-
 function isPathSelector(selector: OutputFileSelector): selector is OutputFilePathSelector {
   return Boolean(selector && typeof selector === "object" && "path" in selector);
 }
@@ -356,41 +298,31 @@ function normalizeOutputLookupPath(path: string): string {
 }
 
 /**
- * Download EVERYTHING about a run as one zip, organised into the four
+ * Download EVERYTHING public about a run as one zip, organised into the three
  * namespace folders:
  *
  *   metadata/run.json     — the run record.
  *   events/events.jsonl   — typed event-channel records.
- *   events/logs.jsonl     — log-channel records, when the API serves them.
- *   events/all.jsonl      — full unified stream, when the API serves it.
  *   outputs/<rel>         — the run's deliverables.
- *   logs/<rel>            — platform diagnostics.
  *   manifest.json         — `RunRecordManifestV1`.
  */
 export async function download(http: HttpClient, runId: string): Promise<Uint8Array> {
-  const [run, events, logEvents, allEvents, outputs, logItems] = await Promise.all([
+  const [run, events, outputs] = await Promise.all([
     getRun(http, runId),
     listRunEvents(http, runId),
-    tryListOptionalRunEvents(http, runId, "log"),
-    tryListOptionalRunEvents(http, runId, "all"),
-    listOutputs(http, runId),
-    listLogs(http, runId)
+    listOutputs(http, runId)
   ]);
 
   const out = await collectArtifactBytes(http, runId, outputs, "outputs/", "outputs");
-  const logs = await collectArtifactBytes(http, runId, logItems, "logs/", "logs");
   const submissionSnapshot = extractSubmissionSnapshot(run);
   const costTelemetry = extractCostTelemetry(run);
   const manifest = buildRunRecordDownloadManifestV1({
     runId,
     outputs: out.captured,
-    logs: logs.captured,
-    errors: [...out.errors, ...logs.errors],
+    errors: out.errors,
     typedEventCount: events.length,
     ...(submissionSnapshot ? { submission: { status: "present" } } : {}),
-    ...(costTelemetry ? { cost: { status: "present" } } : {}),
-    logEvents: { status: logEvents.status, recordCount: logEvents.events.length },
-    allEvents: { status: allEvents.status, recordCount: allEvents.events.length }
+    ...(costTelemetry ? { cost: { status: "present" } } : {})
   });
 
   return zipEntries([
@@ -398,10 +330,7 @@ export async function download(http: HttpClient, runId: string): Promise<Uint8Ar
     ...(submissionSnapshot ? [jsonEntry("metadata/submission.json", submissionSnapshot)] : []),
     ...(costTelemetry ? [jsonEntry("metadata/cost.json", costTelemetry)] : []),
     jsonlEntry("events/events.jsonl", events),
-    ...(logEvents.status === "present" ? [jsonlEntry("events/logs.jsonl", logEvents.events)] : []),
-    ...(allEvents.status === "present" ? [jsonlEntry("events/all.jsonl", allEvents.events)] : []),
     ...out.entries,
-    ...logs.entries,
     jsonEntry("manifest.json", manifest)
   ]);
 }
@@ -421,35 +350,12 @@ export async function downloadOutputs(http: HttpClient, runId: string): Promise<
 }
 
 /**
- * Download only the platform diagnostics (the `logs` namespace). Zip
- * layout: `<rel>` per file plus a `manifest.json`
- * (`{ runId, namespace: "logs", logs[], errors[] }`).
- */
-export async function downloadLogs(http: HttpClient, runId: string): Promise<Uint8Array> {
-  const logItems = await listLogs(http, runId);
-  const { entries, captured, errors } = await collectArtifactBytes(http, runId, logItems, "", "logs");
-  return zipEntries([
-    ...entries,
-    jsonEntry("manifest.json", { runId, namespace: "logs", logs: captured, errors })
-  ]);
-}
-
-/**
  * Download only the event archive (the `events` namespace). Always includes
- * typed `events.jsonl`; includes `logs.jsonl` / `all.jsonl` when the deployed
- * event API proves those channel exports are available.
+ * typed `events.jsonl`.
  */
 export async function downloadEvents(http: HttpClient, runId: string): Promise<Uint8Array> {
-  const [events, logEvents, allEvents] = await Promise.all([
-    listRunEvents(http, runId),
-    tryListOptionalRunEvents(http, runId, "log"),
-    tryListOptionalRunEvents(http, runId, "all")
-  ]);
-  return zipEntries([
-    jsonlEntry("events.jsonl", events),
-    ...(logEvents.status === "present" ? [jsonlEntry("logs.jsonl", logEvents.events)] : []),
-    ...(allEvents.status === "present" ? [jsonlEntry("all.jsonl", allEvents.events)] : [])
-  ]);
+  const events = await listRunEvents(http, runId);
+  return zipEntries([jsonlEntry("events.jsonl", events)]);
 }
 
 /**

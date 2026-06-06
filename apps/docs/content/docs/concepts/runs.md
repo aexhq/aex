@@ -4,7 +4,7 @@ description: The durable unit aex submits, observes, and archives.
 icon: Play
 ---
 
-A run is an immutable request to execute an agent task. The call site supplies the model, prompt, optional system message, composition primitives, output capture policy, and one inline `secrets` bundle. aex snapshots the non-secret inputs, vaults the secrets for the run lifetime, dispatches to the selected runtime, and records status, events, logs, and outputs.
+A run is an immutable request to execute an agent task. The call site supplies the model, prompt, optional system message, composition primitives, output capture policy, and one inline `secrets` bundle. aex snapshots the non-secret inputs, vaults the secrets for the run lifetime, dispatches to the selected runtime, and records status, typed events, and outputs.
 
 ```ts
 const runId = await aex.submitRun({

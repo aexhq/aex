@@ -1,13 +1,13 @@
 /**
  * Live scenario: live-sdk-deepseek-managed-a.test.ts
  *
- * Sibling of live-sdk-deepseek.test.ts. Same Goose Managed runtime
+ * Sibling of live-sdk-deepseek.test.ts. Same managed runtime runtime
  * path, swapped provider — DeepSeek via the BYOK provider-proxy.
  *
  *   SDK → POST /api/runs { provider: "deepseek", runtime: "managed" }
  *      → hosted run-lifecycle → managed runtime
  *      → /provider-proxy/anthropic-messages/v1/messages
- *        (Goose dials ANTHROPIC_HOST; gooseProvider="anthropic" → Anthropic
+ *        (managed runtime dials ANTHROPIC_HOST; runtimeProvider="anthropic" → Anthropic
  *         shape, NOT the OpenAI-compat layer, which aex no longer
  *         serves for Anthropic — it loses prompt caching)
  *      → hosted API injects vault'd DeepSeek key
@@ -17,7 +17,7 @@
  * The customer may omit runtime or pass runtime:'managed'; both use the
  * same managed sandbox semantics as every other provider. The dispatcher
  * rejects provider-hosted skill refs on managed, so this path uses local
- * SDK/R2 assets when skills or files are needed.
+ * SDK/object storage assets when skills or files are needed.
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
@@ -60,18 +60,13 @@ interface LiveResult {
   // Per-file filenames + sizes returned by GET /api/runs/:id/outputs.
   // Captured for diagnostic dumps so a missing-deliverable failure is
   // self-describing without a re-run. With no user outputs.allowedDirs supplied
-  // here, this list is expected to be empty — the runner's `.goose-logs`
-  // diagnostics now live in the separate `logs` namespace (see below),
-  // not in `outputs`.
+  // here, this list is expected to be empty: runner diagnostics are internal
+  // and must not appear in the public outputs namespace.
   readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
-  // Diagnostic filenames in the `logs` namespace (GET /api/runs/:id/logs,
-  // via SDK `getRunDebugLogs`). The runner always emits the three
-  // `runtime/{stdout.log,stderr.log,args.json}` artifacts here.
-  readonly debugLogNames: readonly string[];
   readonly leakedProviderKey: boolean;
 }
 
-describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Managed runtime", () => {
+describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed runtime runtime", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -124,11 +119,6 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Ma
 
         const events = await client.listEvents(runId);
         const outputs = await client.listOutputs(runId);
-        // Diagnostics (.runtime/*) now live in the physically-separate
-        // logs namespace — fetch them via the same SDK API the
-        // download-namespaces reference test uses.
-        const debug = await client.getRunDebugLogs(runId);
-
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
@@ -150,7 +140,6 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Ma
           terminalData: terminal ? terminal.data : null,
           outputCount: outputs.length,
           outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
-          debugLogNames: debug.logs.map((l) => l.filename),
           leakedProviderKey: serialized.includes(deepseekKey)
         };
         process.stdout.write(JSON.stringify(result));
@@ -205,47 +194,33 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on Goose Ma
       expect(result.provider).toBe("deepseek");
       expect(result.runStatus).toBe("succeeded");
 
-      // Real-Goose event frame.
+      // Real managed-runtime event frame.
       expect(result.eventKinds[0]).toBe("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       expect(result.eventKinds[result.eventKinds.length - 1]).toBe("RUN_FINISHED");
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length).toBeGreaterThan(0);
-      // Strip whitespace before matching the probe — goose stream-json
+      // Strip whitespace before matching the probe — managed-runtime stream
       // fragments responses across content blocks (per token), so the
       // joined text may have spaces in the middle of the probe.
       expect(result.assistantTextJoined.replace(/\s+/g, "")).toContain(result.probe);
 
-      // Terminal carries reason: "complete". gooseExitCode is NOT asserted
-      // here — runner.mjs emits a terminal with { gooseExitCode } AFTER the
-      // Goose process exits, but the goose-adapter's transformObject
+      // Terminal carries reason: "complete". runtimeExitCode is NOT asserted
+      // here — runner.mjs emits a terminal with { runtimeExitCode } AFTER the
+      // managed-runtime process exits, but the runtime adapter's transformObject
       // ("complete") path emits a terminal with { totalTokens } as soon as
-      // Goose's stdout emits the complete record, and the adapter's
+      // the managed runtime stdout emits the complete record, and the adapter's
       // idempotency guard drops the second emit. The race winner is the
-      // stdout path on a clean run, so gooseExitCode is normally absent.
-      // The previous `if (gooseExitCode !== undefined) expect(===0)` was a
+      // stdout path on a clean run, so runtimeExitCode is normally absent.
+      // The previous `if (runtimeExitCode !== undefined) expect(===0)` was a
       // silent-skip anti-pattern. Tightening the contract (defer terminal
       // emission to the runner so BOTH signals land on the same event) is
-      // tracked as a managed-runtime refactor — until then, gooseExitCode is
+      // tracked as a managed-runtime refactor — until then, runtimeExitCode is
       // observability, not contract, and not asserted.
       const terminal = result.terminalData ?? {};
       expect(terminal["reason"]).toBe("complete");
 
-      // Run-artifact namespace split: customer deliverables live in the
-      // `outputs` namespace; the runner's always-on diagnostics
-      // (.runtime/{stdout.log,stderr.log,args.json}) live in the
-      // physically-separate `logs` namespace. No user outputs.allowedDirs are
-      // supplied here, so `outputs` is empty and the diagnostic-coverage
-      // check (>= the 3 the runner always emits) moves to the logs
-      // namespace. Dump both listings on failure so a missing artifact is
-      // self-describing without a re-run. The runner's outputsSummary is
-      // NOT on the SDK-visible terminal event (the goose-adapter's
-      // `complete` terminal wins the idempotency race and carries
-      // { reason, totalTokens }, not { outputs }), so it isn't dumped here.
-      const ctx =
-        `outputs=${JSON.stringify(result.outputs)} ` +
-        `debugLogNames=${JSON.stringify(result.debugLogNames)}`;
-      expect(result.debugLogNames.filter((n) => n.startsWith("runtime/")).length, ctx).toBeGreaterThanOrEqual(3);
+      expect(result.outputs, `outputs=${JSON.stringify(result.outputs)}`).toEqual([]);
       expect(result.leakedProviderKey).toBe(false);
     },
     11 * 60 * 1000

@@ -14,7 +14,7 @@ const SKIP_DIR_NAMES = new Set([
   "coverage",
   ".git",
   ".vercel",
-  "supabase-out",
+  "db-status-out",
   ".pnpm-store",
   "tmp"
 ]);

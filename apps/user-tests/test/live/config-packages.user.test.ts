@@ -8,7 +8,7 @@
  * (→ pip).
  *
  * Only passes once the fixes are DEPLOYED to the remote aex-local worker
- * (the goose half ALSO requires the runner image to be rebuilt, since package
+ * (the managed-runtime half ALSO requires the runner image to be rebuilt, since package
  * pre-install now happens in the managed runtime before the user turn starts).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -58,7 +58,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
   );
 
   it(
-    "goose (managed) pre-installs apt (jq) AND pip (cowsay) before the agent runs",
+    "managed runtime pre-installs apt (jq) AND pip (cowsay) before the agent runs",
     async () => {
       // apt jq (unprefixed → apt) exercises the ROOT-entrypoint apt path.
       // pip:cowsay exercises the system-wide pip path. Both must be present
@@ -75,11 +75,11 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
           secrets: { deepseek: { apiKey: DEEPSEEK_KEY } },
-          idempotencyKey: "user-packages-goose-" + Date.now()
+          idempotencyKey: "user-packages-managed-runtime-" + Date.now()
         }`
       });
       const result = await runSdkScript(install, env, script, {
-        scriptName: "user-packages-goose.mjs",
+        scriptName: "user-packages-managed-runtime.mjs",
         waitMs: 8 * 60_000,
         timeoutMs: 9 * 60_000
       });

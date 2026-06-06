@@ -22,12 +22,6 @@ function downloadClient(): AgentExecutor {
         headers: { "content-type": "application/json" }
       });
     }
-    if (url.endsWith("/api/runs/run-1/logs")) {
-      return new Response(JSON.stringify({ logs: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      });
-    }
     if (url.endsWith("/api/runs/run-1")) {
       return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
         status: 200,

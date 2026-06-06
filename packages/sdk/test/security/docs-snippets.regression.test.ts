@@ -184,7 +184,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const forbidden: ReadonlyArray<{ readonly name: string; readonly needle: RegExp }> = [
       { name: "RunRef type", needle: /\bRunRef\b/ },
       { name: "ref.runId", needle: /\bref\.runId\b/ },
-      { name: "ref method", needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadLogs|downloadEvents|downloadMetadata|debugLogs|cancel|delete)\s*\(/ },
+      { name: "ref method", needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadEvents|downloadMetadata|cancel|delete)\s*\(/ },
       { name: "const ref submitRun", needle: /\bconst\s+ref\s*=\s*await\s+(?:client|aex)\.submitRun\(/ }
     ];
     const failures: string[] = [];

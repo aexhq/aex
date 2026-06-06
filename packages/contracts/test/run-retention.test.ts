@@ -234,7 +234,7 @@ describe("run retention and deletion contract", () => {
       ["provider id field", { providerId: "session_1234567890" }, "forbidden_field_name"],
       ["Vault id", "vault_secret_1234567890", "vault_id"],
       ["handle", "machine_1234567890", "private_resource_handle"],
-      ["signed URL", "https://r2.example.test/file?X-Amz-Signature=abc", "signed_url"]
+      ["signed URL", "https://object-storage.example.test/file?X-Amz-Signature=abc", "signed_url"]
     ];
 
     for (const [name, payload, reason] of cases) {

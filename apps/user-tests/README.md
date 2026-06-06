@@ -89,8 +89,9 @@ Required env (all three):
 - `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION`
 - `DEEPSEEK_API_KEY`
 
-Local `.env.local` files must use the canonical variables above; the test
-loader does not provide compatibility aliases.
+Local `.env.local` files should use the canonical variables above. The loader
+also accepts the legacy local-only `AEX_TEST_DEEPSEEK_API_TOKEN` alias for
+`DEEPSEEK_API_KEY` when the canonical name is absent.
 
 CI lives in `.github/workflows/live-user-tests.yml`.
 

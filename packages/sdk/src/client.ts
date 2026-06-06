@@ -204,37 +204,6 @@ export interface OutputDownloadOptions {
 }
 
 /**
- * One captured debug artifact returned by {@link AgentExecutor.getRunDebugLogs}.
- *
- *   - `filename` is the path under `runs/{runId}/logs/` — leading
- *     `runtime/` for runtime logs and `host/` for host logs.
- *   - `text` is populated when the content type looks textual
- *     (`text/*`, `application/json`); decoded as UTF-8.
- *   - `bytesBase64` is always present so a caller that wants raw bytes
- *     (e.g. piping into a file) can use it uniformly across textual
- *     and binary artifacts.
- */
-export interface RunDebugLog {
-  readonly filename: string;
-  readonly sizeBytes: number;
-  readonly contentType: string;
-  readonly createdAt: string;
-  readonly text?: string;
-  readonly bytesBase64: string;
-}
-
-export interface RunDebugLogError {
-  readonly filename: string;
-  readonly message: string;
-}
-
-export interface RunDebugLogs {
-  readonly runId: string;
-  readonly logs: ReadonlyArray<RunDebugLog>;
-  readonly errors: ReadonlyArray<RunDebugLogError>;
-}
-
-/**
  * Workspace skill admin operations exposed under `client.skills`.
  *
  * New run submissions usually use `Skill.fromFiles(...)` or
@@ -802,60 +771,6 @@ export class AgentExecutor {
     return writeOptionalFile(bytes, to);
   }
 
-  /**
-   * Bundle the per-run debug artifacts aex captures automatically:
-   *
-   *   - `runtime/{stdout,stderr,args}.log` — runtime process diagnostics.
-   *   - `host/...` — managed host logs when the platform includes them.
-   * These all live in the run's `logs` namespace (`runs/<id>/logs/`).
-   * Each is downloaded through the gated `/logs/:id/download` endpoint,
-   * decoded as UTF-8 text when the content type looks textual, and
-   * surfaced as raw bytes (base64) otherwise. The call is best-effort: a
-   * download failure for one file does not block the others; the failing
-   * entry lands in `errors` with the underlying message.
-   *
-   * Use this when a run failed or behaved oddly and you want all the
-   * post-mortem material in one round-trip — no need to wire
-   * `listOutputs` + `createOutputLink` by hand.
-   */
-  async getRunDebugLogs(runId: string): Promise<RunDebugLogs> {
-    // The `logs` namespace IS the diagnostics surface — everything it
-    // lists is a debug artifact, so no client-side prefix filter.
-    const matches = await operations.listLogs(this.#http, runId);
-    const logs: RunDebugLog[] = [];
-    const errors: RunDebugLogError[] = [];
-    for (const out of matches) {
-      const filename = out.filename ?? "(unnamed)";
-      try {
-        const { response } = await this.#http.download(
-          `/api/runs/${runId}/logs/${out.id}/download`
-        );
-        const buf = await response.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        const contentType = out.contentType ?? "application/octet-stream";
-        const isText = /^(text\/|application\/json)/.test(contentType);
-        const bytesBase64 = bytesToBase64(bytes);
-        logs.push({
-          filename,
-          sizeBytes: out.sizeBytes ?? bytes.byteLength,
-          contentType,
-          createdAt: out.createdAt ?? new Date(0).toISOString(),
-          ...(isText ? { text: new TextDecoder().decode(bytes) } : {}),
-          bytesBase64
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        errors.push({ filename, message });
-      }
-    }
-    return { runId, logs, errors };
-  }
-
-  /** Short alias for `getRunDebugLogs`. */
-  debugLogs(runId: string): Promise<RunDebugLogs> {
-    return this.getRunDebugLogs(runId);
-  }
-
   cancelRun(runId: string): Promise<void> {
     return operations.cancelRun(this.#http, runId);
   }
@@ -888,12 +803,11 @@ export class AgentExecutor {
   }
 
   /**
-   * Download EVERYTHING about a run as one zip, assembled client-side
+   * Download EVERYTHING public about a run as one zip, assembled client-side
    * from the public read endpoints (`getRun` + `listEvents` +
-   * `listOutputs` + per-output `/download`). Organised into the four
-   * namespace folders: `metadata/`, `events/`, `outputs/` (deliverables),
-   * `logs/` (`runtime/`, `host/`, `provider-proxy/`, `control-plane/`
-   * diagnostics), plus a `manifest.json`. Pass `to` to also write the
+   * `listOutputs` + per-output `/download`). Organised into the namespace
+   * folders `metadata/`, `events/`, and `outputs/`, plus a `manifest.json`.
+   * Pass `to` to also write the
    * bytes to a file path while still returning the bytes.
    */
   async download(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
@@ -903,11 +817,6 @@ export class AgentExecutor {
   /** Download only the run's deliverables (the `outputs` namespace) as a zip. */
   async downloadOutputs(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
     return writeOptionalFile(await operations.downloadOutputs(this.#http, runId), options?.to);
-  }
-
-  /** Download only the platform diagnostics (the `logs` namespace) as a zip. */
-  async downloadLogs(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
-    return writeOptionalFile(await operations.downloadLogs(this.#http, runId), options?.to);
   }
 
   /** Download only the indexed event archive (the `events` namespace) as a zip. */
@@ -1013,24 +922,6 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-/**
- * Encode a byte array as base64. Uses Node's `Buffer` when available
- * (the SDK ships as a Node tarball; this is the hot path), and falls
- * back to `btoa` for browser or edge runtimes that pull the SDK in
- * without Buffer.
- */
-function bytesToBase64(bytes: Uint8Array): string {
-  const BufferCtor = (globalThis as { Buffer?: { from: (b: Uint8Array) => { toString: (enc: string) => string } } }).Buffer;
-  if (BufferCtor) {
-    return BufferCtor.from(bytes).toString("base64");
-  }
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return globalThis.btoa(binary);
 }
 
 function generateIdempotencyKey(): string {

@@ -207,7 +207,7 @@ async function generateLlmsFiles() {
     "",
     "> TypeScript SDK and CLI for durable autonomous agent runs across Anthropic, DeepSeek, OpenAI, Gemini, and Mistral.",
     "",
-    "aex accepts one run submission shape, routes every provider through Goose Managed, emits one event stream, and returns captured outputs and logs.",
+    "aex accepts one run submission shape, routes every provider through the managed runtime, emits one event stream, and returns captured outputs and logs.",
     "",
     "## Start",
     "",

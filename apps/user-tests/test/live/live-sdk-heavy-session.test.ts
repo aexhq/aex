@@ -37,7 +37,7 @@
  * Managed cells (full assertion set — "validate all aspects"):
  *   - run reached `succeeded`; runtime/provider echo back correctly.
  *   - event log is framed RUN_STARTED … RUN_FINISHED, terminal reason
- *     "complete", gooseExitCode 0-or-absent.
+ *     "complete", runtimeExitCode 0-or-absent.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
  *     superset of every type aex emits on a successful run —
  *     RUN_STARTED, RUN_FINISHED, TEXT_MESSAGE_CONTENT, TOOL_CALL_START,
@@ -52,7 +52,7 @@
  *     (composeInstructions carried all three channels into the recipe).
  *   - the OUTPUTS pipeline round-trips: every captured output downloads
  *     without error, and at least one agent-written file carries its
- *     expected REF-out token (write → capture → R2 → download e2e).
+ *     expected REF-out token (write → capture → object storage → download e2e).
  *   - no secret value (provider key, runner bearer) appears anywhere in
  *     the SDK-visible payload (run + events + outputs).
  *
@@ -380,7 +380,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // key=value shape ("session=<ref> project=<ref> request=<ref>"), and a
   // hyphen-segmented ref glued to its `session=` label forms one 24+ char
   // run that the redactor eats whole — the probe never survives into the
-  // goose stdout the event stream is built from. A dot is OUTSIDE that
+  // managed-runtime stdout the event stream is built from. A dot is OUTSIDE that
   // char class, so it splits the run into sub-24-char segments that
   // survive regardless of how the model punctuates the reply. REF-out tokens
   // go to output FILES, not the redacted stdout stream, so they keep hyphens.
@@ -416,7 +416,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
 
 // Self-diagnosing dump shared by every assertion path. The heavy case
 // touches many surfaces, so a failure must be self-explanatory from the
-// CI log alone (.goose-logs samples + streamErrors carry the real cause).
+// CI log alone (.managed-runtime-logs samples + streamErrors carry the real cause).
 function dumpCase(result: CaseResult): string {
   const lines: string[] = [];
   lines.push(`runId=${result.runId} runtime=${result.runtime} provider=${result.provider}`);
@@ -452,7 +452,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   const dump = (): string => dumpCase(result);
 
   // Lifecycle: succeeded, framed RUN_STARTED … RUN_FINISHED, terminal
-  // reason "complete", gooseExitCode 0-or-absent.
+  // reason "complete", runtimeExitCode 0-or-absent.
   if (result.runStatus !== "succeeded") {
     throw new Error(`expected runStatus "succeeded" but got "${result.runStatus}"\n\n${dump()}`);
   }
@@ -463,9 +463,9 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   if (terminal["reason"] !== "complete") {
     throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dump()}`);
   }
-  const exitCode = terminal["gooseExitCode"];
+  const exitCode = terminal["runtimeExitCode"];
   if (exitCode !== undefined && exitCode !== 0) {
-    throw new Error(`gooseExitCode=${exitCode}\n\n${dump()}`);
+    throw new Error(`runtimeExitCode=${exitCode}\n\n${dump()}`);
   }
 
   // Full event vocabulary: every type aex emits on success is
@@ -510,7 +510,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
 
   // Outputs pipeline: every captured output downloads cleanly, and at
   // least one agent-written file carries its REF-out token (the
-  // write → capture → R2 → download path works end-to-end). We require
+  // write → capture → object storage → download path works end-to-end). We require
   // ≥1 (not all 3) so a single missed write doesn't flip a hard gate on
   // model write-variance — the dump records exactly which were found.
   for (const out of result.outputs) {

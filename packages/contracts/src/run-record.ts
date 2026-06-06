@@ -10,7 +10,7 @@ import type { PlatformSubmission } from "./submission.js";
 export const RUN_RECORD_SCHEMA_VERSION = "aex.run-record.v1" as const;
 export const RUN_RECORD_MANIFEST_SCHEMA_VERSION = "aex.run-record.manifest.v1" as const;
 
-export type RunRecordArchiveNamespaceV1 = "metadata" | "events" | "outputs" | "logs";
+export type RunRecordArchiveNamespaceV1 = "metadata" | "events" | "outputs";
 
 export type RunRecordFileStatusV1 =
   | "present"
@@ -26,11 +26,8 @@ export type RunRecordArchiveFileRoleV1 =
   | "cost"
   | "custody"
   | "typed_events"
-  | "log_events"
-  | "all_events"
   | "coordinator_events_manifest"
-  | "output"
-  | "log";
+  | "output";
 
 export interface RunRecordSubmissionSnapshotV1 {
   readonly submission: PlatformSubmission;
@@ -49,14 +46,8 @@ export interface RunRecordMetadataV1 {
 }
 
 export interface RunRecordEventsV1 {
-  /**
-   * Typed `channel: "event"` records. This is the current SDK
-   * `events/events.jsonl` export. Log-channel records are not mixed into this
-   * file.
-   */
+  /** Typed `channel: "event"` records in the SDK `events/events.jsonl` export. */
   readonly typed: readonly RunEvent[];
-  readonly logs?: readonly RunEvent[];
-  readonly all?: readonly RunEvent[];
 }
 
 export interface RunRecordV1 {
@@ -65,7 +56,6 @@ export interface RunRecordV1 {
   readonly metadata: RunRecordMetadataV1;
   readonly events: RunRecordEventsV1;
   readonly outputs: readonly Output[];
-  readonly logs: readonly Output[];
   readonly manifest: RunRecordManifestV1;
 }
 
@@ -96,7 +86,7 @@ export interface RunRecordArtifactSummaryV1 {
 }
 
 export interface RunRecordDownloadErrorV1 {
-  readonly namespace: "outputs" | "logs";
+  readonly namespace: "outputs";
   readonly id: string;
   readonly filename: string | null;
   readonly message: string;
@@ -114,21 +104,17 @@ export interface RunRecordManifestV1 {
    * presence state for optional run-record members.
    */
   readonly outputs: readonly RunRecordArtifactSummaryV1[];
-  readonly logs: readonly RunRecordArtifactSummaryV1[];
   readonly errors: readonly RunRecordDownloadErrorV1[];
 }
 
 export interface BuildRunRecordDownloadManifestV1Input {
   readonly runId: string;
   readonly outputs: readonly RunRecordArtifactSummaryV1[];
-  readonly logs: readonly RunRecordArtifactSummaryV1[];
   readonly errors?: readonly RunRecordDownloadErrorV1[];
   readonly typedEventCount?: number;
   readonly submission?: RunRecordFileManifestInputV1;
   readonly cost?: RunRecordFileManifestInputV1;
   readonly custody?: RunRecordFileManifestInputV1;
-  readonly logEvents?: RunRecordFileManifestInputV1;
-  readonly allEvents?: RunRecordFileManifestInputV1;
   readonly coordinatorEventsManifest?: RunRecordFileManifestInputV1;
 }
 
@@ -143,8 +129,7 @@ export interface RunRecordArchiveEntryForRedactionV1 {
   readonly contentType?: string;
   /**
    * Customer-authored output bytes are intentionally outside the public-record
-   * redaction guarantee. Metadata, event exports, manifests, and platform logs
-   * remain scanned.
+   * redaction guarantee. Metadata, event exports, and manifests remain scanned.
    */
   readonly customerContent?: boolean;
 }
@@ -171,7 +156,6 @@ export function buildRunRecordDownloadManifestV1(
   input: BuildRunRecordDownloadManifestV1Input
 ): RunRecordManifestV1 {
   const outputs = input.outputs.map((file) => normalizeArtifactSummary(file));
-  const logs = input.logs.map((file) => normalizeArtifactSummary(file));
   const errors = (input.errors ?? []).map((error) => Object.freeze({ ...error }));
 
   return Object.freeze({
@@ -180,9 +164,8 @@ export function buildRunRecordDownloadManifestV1(
     runId: input.runId,
     namespaces: Object.freeze([
       namespace("metadata", "Run metadata, submission snapshot, custody, and cost files."),
-      namespace("events", "Typed event-channel exports and optional full-stream/log-channel exports."),
-      namespace("outputs", "Captured deliverables produced by the run."),
-      namespace("logs", "Platform diagnostics and runtime log artifacts.")
+      namespace("events", "Typed event-channel exports."),
+      namespace("outputs", "Captured deliverables produced by the run.")
     ]),
     files: Object.freeze([
       file("metadata", "metadata/run.json", "run_metadata", "present"),
@@ -194,33 +177,15 @@ export function buildRunRecordDownloadManifestV1(
       }),
       file(
         "events",
-        "events/logs.jsonl",
-        "log_events",
-        input.logEvents?.status ?? "unavailable",
-        recordCountExtra(input.logEvents)
-      ),
-      file(
-        "events",
-        "events/all.jsonl",
-        "all_events",
-        input.allEvents?.status ?? "unavailable",
-        recordCountExtra(input.allEvents)
-      ),
-      file(
-        "events",
         "events/manifest.json",
         "coordinator_events_manifest",
         input.coordinatorEventsManifest?.status ?? "unavailable"
       ),
       ...outputs.map((output) =>
         artifactFile("outputs", "output", "outputs/", output)
-      ),
-      ...logs.map((log) =>
-        artifactFile("logs", "log", "logs/", log)
       )
     ]),
     outputs: Object.freeze(outputs),
-    logs: Object.freeze(logs),
     errors: Object.freeze(errors)
   });
 }
@@ -253,18 +218,10 @@ function file(
   });
 }
 
-function recordCountExtra(
-  input: RunRecordFileManifestInputV1 | undefined
-): Pick<RunRecordArchiveFileV1, "recordCount"> | undefined {
-  return input?.status === "present" && input.recordCount !== undefined
-    ? { recordCount: input.recordCount }
-    : undefined;
-}
-
 function artifactFile(
-  namespaceName: "outputs" | "logs",
-  role: "output" | "log",
-  prefix: "outputs/" | "logs/",
+  namespaceName: "outputs",
+  role: "output",
+  prefix: "outputs/",
   artifact: RunRecordArtifactSummaryV1
 ): RunRecordArchiveFileV1 {
   return Object.freeze({
@@ -361,7 +318,7 @@ function isAllowedArchiveHighEntropyField(
   if (finding.reason !== "high_entropy_token" || !entryPath.endsWith("manifest.json")) {
     return false;
   }
-  return /^\$(?:\.files\[\d+\]|\.outputs\[\d+\]|\.logs\[\d+\])\.id$/.test(finding.path);
+  return /^\$(?:\.files\[\d+\]|\.outputs\[\d+\])\.id$/.test(finding.path);
 }
 
 function parseArchiveTextValues(

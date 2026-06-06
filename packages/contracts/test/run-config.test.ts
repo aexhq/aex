@@ -96,7 +96,7 @@ describe("run-config — parseSkillRef", () => {
 
   it("rejects a storage-specific ref", () => {
     const bad = {
-      kind: "r2",
+      kind: "storage_backend",
       path: `assets/11111111-1111-4111-8111-111111111111/${"a".repeat(64)}`,
       hash: goodInlineHash,
       sizeBytes: 100,

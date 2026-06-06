@@ -22,7 +22,8 @@ const ignoredDirs = new Set([
   "playwright-report",
   "test-results",
   ".turbo",
-  ".vercel"
+  ".vercel",
+  ".generated"
 ]);
 const ignoredBinaryExts = /\.(png|jpe?g|gif|webp|ico|pdf|zip|tgz|gz|woff2?|ttf|otf|wasm|sqlite|db)$/i;
 

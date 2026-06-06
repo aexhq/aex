@@ -15,9 +15,6 @@ export type {
   OutputFilePathMatch,
   OutputFilePathSelector,
   OutputFileSelector,
-  RunDebugLog,
-  RunDebugLogError,
-  RunDebugLogs,
   StreamEventsOptions,
   SubmitRunOptions,
   WaitForRunOptions

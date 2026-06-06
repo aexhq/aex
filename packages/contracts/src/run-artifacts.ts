@@ -1,23 +1,25 @@
 /**
  * Single source of truth for a run's artifact namespaces.
  *
- * Every run stores its artifacts under two sibling prefixes:
+ * Every run stores public outputs and internal diagnostics under separate
+ * prefixes:
  *
- *   runs/<runId>/outputs/<rel>   — the run's real deliverables.
- *   runs/<runId>/logs/<rel>      — platform diagnostics (`runtime/`,
- *                                  `host/`, `provider-proxy/`,
- *                                  `control-plane/`).
+ *   runs/<runId>/outputs/<rel>              — the run's real deliverables.
+ *   runs/<runId>/internal/logs/<rel>        — platform diagnostics
+ *                                             (`runtime/`, `host/`,
+ *                                             `provider-proxy/`,
+ *                                             `control-plane/`).
  *
  * The runner uploads every file with a workspace-relative path and the
  * server decides the namespace from that path's prefix, so the split is
  * owned here — the runner does not need to know about it. Diagnostics
  * reach the upload route as workspace dotdirs (`.runtime-logs/...`,
- * `.host-logs/...`, etc.); the stored path uses canonical log namespaces.
- * Legacy diagnostic prefixes are normalized on read/write compatibility paths.
+ * `.host-logs/...`, etc.) or runtime-managed home-directory state; the stored
+ * path uses canonical log namespaces.
  */
 
 export const RUN_OUTPUTS_PREFIX = "outputs";
-export const RUN_LOGS_PREFIX = "logs";
+export const RUN_INTERNAL_LOGS_PREFIX = "internal/logs";
 
 /**
  * Relative-path prefixes that mark a stored artifact as a platform diagnostic
@@ -41,7 +43,7 @@ export const RUN_LOG_REL_PREFIXES = [
   "fly-logs/"
 ] as const;
 
-/** True when a workspace-relative artifact path belongs to the `logs` namespace. */
+/** True when a workspace-relative artifact path belongs to the internal logs namespace. */
 export function isRunLogRelPath(rel: string): boolean {
   return RUN_LOG_REL_PREFIXES.some((prefix) => rel.startsWith(prefix));
 }
@@ -71,10 +73,10 @@ export function runArtifactRel(rel: string): string {
 
 /**
  * Storage key for a run artifact uploaded with relative path `rel`, routing
- * diagnostics into `logs/` and everything else into `outputs/`.
+ * diagnostics into `internal/logs/` and everything else into `outputs/`.
  */
 export function runArtifactKey(runId: string, rel: string): string {
-  const namespace = isRunLogRelPath(rel) ? RUN_LOGS_PREFIX : RUN_OUTPUTS_PREFIX;
+  const namespace = isRunLogRelPath(rel) ? RUN_INTERNAL_LOGS_PREFIX : RUN_OUTPUTS_PREFIX;
   return `runs/${runId}/${namespace}/${runArtifactRel(rel)}`;
 }
 

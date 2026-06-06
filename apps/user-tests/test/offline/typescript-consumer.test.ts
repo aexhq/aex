@@ -121,7 +121,6 @@ describe("typescript consumer", () => {
         type ProxyMethod,
         type ProxyResponseMode,
         type Run,
-        type RunDebugLogs,
         type RunEvent,
         type RunProvider,
         type RuntimeResources,
@@ -279,7 +278,6 @@ describe("typescript consumer", () => {
       const runPromise: Promise<Run> = client.getRun("run_type_surface");
       const eventsPromise: Promise<readonly RunEvent[]> = client.listEvents("run_type_surface");
       const outputsPromise: Promise<readonly Output[]> = client.outputs("run_type_surface");
-      const debugPromise: Promise<RunDebugLogs> = client.debugLogs("run_type_surface");
       const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
 
       const errors = [
@@ -316,7 +314,6 @@ describe("typescript consumer", () => {
       void runPromise;
       void eventsPromise;
       void outputsPromise;
-      void debugPromise;
       void downloadPromise;
       void errors;
       void redacted;
@@ -337,6 +334,16 @@ describe("typescript consumer", () => {
       import { compileTemplate } from "@aexhq/sdk";
       // @ts-expect-error legacy run reference must stay absent from the root surface
       import type { RunRef } from "@aexhq/sdk";
+      // @ts-expect-error removed debug-log result type must stay absent from the root surface
+      import type { RunDebugLogs } from "@aexhq/sdk";
+      import { AgentExecutor } from "@aexhq/sdk";
+      const client = new AgentExecutor({ apiToken: "ant_legacy_negative", baseUrl: "https://example.invalid" });
+      // @ts-expect-error removed logs download helper must stay absent from AgentExecutor
+      void client.downloadLogs("run_type_surface");
+      // @ts-expect-error removed debug logs helper must stay absent from AgentExecutor
+      void client.getRunDebugLogs("run_type_surface");
+      // @ts-expect-error removed debug logs alias must stay absent from AgentExecutor
+      void client.debugLogs("run_type_surface");
       export {};
     `;
     writeFileSync(join(install.installDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));

@@ -10,7 +10,7 @@
  * The DeepSeek-managed cell submits one run with:
  *   - 2 inline Skills (proves multi-skill manifest + materialization)
  *   - 2 remote MCP servers (proves multi-MCP recipe.yaml `extensions:`
- *     block reaches Goose with Authorization headers; the CLI flag
+ *     block reaches managed runtime with Authorization headers; the CLI flag
  *     --with-streamable-http-extension can't carry auth, so authenticated
  *     proxy MCPs go through the recipe)
  *   - 1 AGENTS.md (probe-tagged so a model reply that omits it fails)
@@ -23,14 +23,14 @@
  * Then waits for `runtime_terminal` and asserts:
  *   - The run reached `succeeded`.
  *   - The event log starts with `runtime_started` and ends with
- *     `runtime_terminal` (Goose actually spawned and exited cleanly).
+ *     `runtime_terminal` (The managed runtime actually spawned and exited cleanly).
  *   - Every submitted skill produced a `skill_loaded_marker`
  *     notification (proves materialization of all skills).
- *   - At least one `assistant_text` event landed (Goose generated a
+ *   - At least one `assistant_text` event landed (The managed runtime generated a
  *     real reply via the BYOK provider-proxy).
  *   - The collected assistant text contains the system + AGENTS.md +
  *     prompt probes (proves `composeInstructions()` carried all three
- *     channels into the recipe.yaml that Goose reads).
+ *     channels into the recipe.yaml that the managed runtime reads).
  *   - No secret value (provider key, runner bearer) appears anywhere
  *     in the SDK-visible payload (run + events + outputs).
  *
@@ -300,7 +300,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // [A-Za-z0-9+/=-]{24,}. The model echoes the probes in a key=value
   // shape ("session=<ref> ..."), and a hyphen-segmented ref glued to its
   // `session=` label forms one 24+ char run that the redactor eats whole —
-  // the probe never survives into the goose stdout the event stream is
+  // the probe never survives into the managed-runtime stdout the event stream is
   // built from. A dot is OUTSIDE that char class, so it splits the run
   // into sub-24-char segments that survive regardless of how the model
   // punctuates the reply.
@@ -337,14 +337,14 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.runStatus).toBe("succeeded");
 
   // Event log frames the run: starts with runtime_started, ends with
-  // runtime_terminal. Both are emitted by the runner; goose stream-json
+  // runtime_terminal. Both are emitted by the runner; managed-runtime stream
   // events sit in between.
   // On terminal mismatch, dump everything we know so the failure
   // log is self-diagnosing. The comprehensive case touches many
   // surfaces (skills, MCP, AGENTS.md, system, custom outputs.allowedDirs)
-  // and a runner_error here means materialize() or the manifest
-  // fetch tripped; the .goose-logs files (collected in
-  // result.outputs) contain the actual stderr.
+  // and a runner_error here means materialize() or the manifest fetch tripped.
+  // Internal runtime diagnostics are intentionally not exposed through the
+  // public outputs list.
   const dumpComprehensive = (): string => {
     const lines: string[] = [];
     lines.push(`runId=${result.runId} runtime=${result.runtime} provider=${result.provider}`);
@@ -360,13 +360,6 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
       }
     }
     lines.push(`outputs=${result.outputs.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
-    for (const o of result.outputs) {
-      if (o.filename && o.filename.startsWith(".runtime/")) {
-        lines.push(`--- ${o.filename} (sample, first 256 bytes) ---`);
-        lines.push(o.sample ?? "(empty)");
-        lines.push(`--- end ${o.filename} ---`);
-      }
-    }
     lines.push(`assistantTextJoined=${result.assistantTextJoined.slice(0, 800)}`);
     return lines.join("\n");
   };
@@ -378,12 +371,12 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   if (terminal["reason"] !== "complete") {
     throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dumpComprehensive()}`);
   }
-  // gooseExitCode is undefined when the goose-adapter's own complete
+  // runtimeExitCode is undefined when the runtime adapter's own complete
   // event fires before the runner's terminal emit (idempotency guard);
   // that's the happy path. If present it must be 0.
-  const exitCode = terminal["gooseExitCode"];
+  const exitCode = terminal["runtimeExitCode"];
   if (exitCode !== undefined && exitCode !== 0) {
-    throw new Error(`gooseExitCode=${exitCode}\n\n${dumpComprehensive()}`);
+    throw new Error(`runtimeExitCode=${exitCode}\n\n${dumpComprehensive()}`);
   }
 
   // Materialization carried every submitted skill into the container.
@@ -391,14 +384,14 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.skillLoadedNames.some((n) => n.startsWith(expectedSkillPrefixes[0]))).toBe(true);
   expect(result.skillLoadedNames.some((n) => n.startsWith(expectedSkillPrefixes[1]))).toBe(true);
 
-  // Goose actually produced a reply: at least one assistant_text event
+  // The managed runtime actually produced a reply: at least one assistant_text event
   // with non-empty text.
   expect(result.assistantTextEventCount).toBeGreaterThan(0);
   expect(result.assistantTextJoined.length).toBeGreaterThan(0);
 
-  // system + AGENTS.md + prompt all reached Goose via the recipe.yaml
+  // system + AGENTS.md + prompt all reached managed runtime via the recipe.yaml
   // instructions. The model echoed each probe. Strip whitespace because
-  // goose stream-json fragments content across blocks per-token.
+  // managed-runtime stream fragments content across blocks per-token.
   const normalized = result.assistantTextJoined.replace(/\s+/g, "");
   expect(normalized).toContain(result.probes.system);
   expect(normalized).toContain(result.probes.agentsMd);
@@ -408,9 +401,9 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.leakedProviderKey).toBe(false);
   expect(result.leakedDeepseekKey).toBe(false);
 
-  // Outputs: any file Goose wrote under the custom outputs.allowedDirs path was
+  // Outputs: any file the managed runtime wrote under the custom outputs.allowedDirs path was
   // uploaded. Downloading each one returns content (a download error
-  // would surface in `sample`). We don't require Goose to write files —
+  // would surface in `sample`). We don't require managed runtime to write files —
   // some upstreams + models do, some don't — but if it did, the bytes
   // must round-trip.
   for (const out of result.outputs) {
@@ -433,7 +426,7 @@ afterAll(() => {
 
 describe("live hosted API — comprehensive end-to-end via installed SDK", () => {
   it(
-    "managed deepseek: real Goose + skills + MCP + AGENTS.md + system + outputs.allowedDirs",
+    "managed deepseek: real managed runtime + skills + MCP + AGENTS.md + system + outputs.allowedDirs",
     async () => {
       const result = await runCase(
         {

@@ -17,8 +17,8 @@
  * adapter drops the tool_request translation.
  *
  * This file runs the same body on every managed provider cell:
- *   - (deepseek, managed)  — Goose Managed + Anthropic via provider-proxy
- *   - (deepseek,  managed)  — Goose Managed + DeepSeek via provider-proxy
+ *   - (deepseek, managed)  — managed runtime + Anthropic via provider-proxy
+ *   - (deepseek,  managed)  — managed runtime + DeepSeek via provider-proxy
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL
@@ -291,7 +291,7 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
 
-      // The agent actually selected the MCP tool. Goose/AG-UI often emits
+      // The agent actually selected the MCP tool. managed runtime/AG-UI often emits
       // tool_request.data.name = "<serverName>__<toolName>" with
       // data.extension = "<serverName>". Some payloads carry bare tool names,
       // so accept either: name starts with the MCP name, OR extension equals it.

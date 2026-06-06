@@ -21,6 +21,21 @@ describe("connection ticket", () => {
     expect(await verifyConnectionTicket(ticket, "run_b", SECRET, NOW + 1_000)).toBe(false);
   });
 
+  it("rejects a ticket presented for a different channel", async () => {
+    const { ticket } = await mintConnectionTicket("run_a", SECRET, NOW);
+    expect(await verifyConnectionTicket(ticket, "run_a", SECRET, NOW + 1_000, "log")).toBe(false);
+  });
+
+  it("verifies tickets minted for non-default channels only on their bound channel", async () => {
+    const { ticket: logTicket } = await mintConnectionTicket("run_a", SECRET, NOW, 60_000, "log");
+    const { ticket: allTicket } = await mintConnectionTicket("run_a", SECRET, NOW, 60_000, "all");
+
+    expect(await verifyConnectionTicket(logTicket, "run_a", SECRET, NOW + 1_000, "log")).toBe(true);
+    expect(await verifyConnectionTicket(logTicket, "run_a", SECRET, NOW + 1_000)).toBe(false);
+    expect(await verifyConnectionTicket(allTicket, "run_a", SECRET, NOW + 1_000, "all")).toBe(true);
+    expect(await verifyConnectionTicket(allTicket, "run_a", SECRET, NOW + 1_000, "log")).toBe(false);
+  });
+
   it("rejects a ticket signed with a different secret", async () => {
     const { ticket } = await mintConnectionTicket("run_a", SECRET, NOW);
     expect(await verifyConnectionTicket(ticket, "run_a", "some-other-secret-32-chars-aaaaaaaaaa", NOW + 1_000)).toBe(false);

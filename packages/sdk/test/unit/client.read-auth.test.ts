@@ -118,28 +118,16 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
 
   it("download assembles the run zip and every read carries Authorization: Bearer", async () => {
     // `download` is the SDK's whole-run verb: it fans out to getRun +
-    // listEvents + listOutputs + listLogs (and per-artifact /download) and
-    // zips the result client-side. EVERY one of those reads must carry the
-    // token because the entire read/download surface is gated. Empty
-    // outputs + logs listings keep this to the four required metadata reads
-    // plus the two best-effort event-channel opt-ins.
-    const { client, calls } = recordingClient({ events: [], outputs: [], logs: [] });
+    // listEvents + listOutputs (and per-output /download) and zips the result
+    // client-side. EVERY one of those reads must carry the token because the
+    // public read/download surface is gated.
+    const { client, calls } = recordingClient({ events: [], outputs: [] });
     await client.download("run-1");
     expect(calls.map((c) => c.url)).toEqual([
       `${BASE}/api/runs/run-1`,
       `${BASE}/api/runs/run-1/events`,
-      `${BASE}/api/runs/run-1/events?channel=log`,
-      `${BASE}/api/runs/run-1/events?channel=all`,
-      `${BASE}/api/runs/run-1/outputs`,
-      `${BASE}/api/runs/run-1/logs`
+      `${BASE}/api/runs/run-1/outputs`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
-  });
-
-  it("listLogs sends Authorization: Bearer", async () => {
-    const { client, calls } = recordingClient({ logs: [] });
-    await client.downloadLogs("run-1");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/logs`);
-    expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 });
