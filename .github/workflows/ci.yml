@@ -15,7 +15,7 @@ concurrency:
 jobs:
   public:
     name: Install, lint, test, pack
-    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    runs-on: ubuntu-latest
     # Secrets can't be referenced in step-level `if`; surface the platform PAT
     # presence as a job-level flag so the parity checkout can gate on it.
     env:
