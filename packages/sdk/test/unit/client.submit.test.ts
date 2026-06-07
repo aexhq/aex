@@ -754,6 +754,71 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     ]);
   });
 
+  it("pre-uploads a Skill via .upload(client) and submits it as a plain asset ref", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const draft = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
+    const draftHash = draft.ref.kind === "draft" ? draft.ref.contentHash : "";
+    const draftHex = draftHash.slice("sha256:".length);
+
+    // Pre-upload: blocking, returns a materialized asset-ref Skill.
+    const uploaded = await draft.upload(client);
+    expect(uploaded.isDraft).toBe(false);
+    // The pre-upload hit the content-addressed asset store, not the bootstrap path.
+    expect(calls.some((c) => c.url.endsWith("/assets/presign"))).toBe(true);
+
+    const assetCallsBefore = calls.filter((c) => c.url.includes("/assets")).length;
+    expect(assetCallsBefore).toBeGreaterThan(0);
+
+    await client.submitRun({
+      model: "m",
+      prompt: "p",
+      skills: [uploaded],
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-preuploaded"
+    });
+
+    const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
+    expect(runCalls).toHaveLength(1);
+    const runBody = runCalls[0]!.body as {
+      bootstrapMode?: unknown;
+      directInputs?: unknown;
+      submission: { skills: ReadonlyArray<Record<string, unknown>> };
+    };
+    // A pre-uploaded skill submits as a plain asset ref — no direct bootstrap.
+    expect("bootstrapMode" in runBody).toBe(false);
+    expect("directInputs" in runBody).toBe(false);
+    expect(runBody.submission.skills).toEqual([
+      { kind: "asset", assetId: `asset_${draftHex}`, name: "rules" }
+    ]);
+    // Submit performed no bootstrap round-trips.
+    expect(calls.filter((c) => c.url.includes("bootstrap")).length).toBe(0);
+  });
+
+  it("submits a draft Skill (not pre-uploaded) via the inline direct-bootstrap path", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const draft = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
+
+    await client.submitRun({
+      model: "m",
+      prompt: "p",
+      skills: [draft],
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-draft-inline"
+    });
+
+    // Inline draft: no /assets calls, direct bootstrap instead.
+    expect(calls.filter((c) => c.url.includes("/assets"))).toHaveLength(0);
+    const runBody = calls.find((c) => c.url.endsWith("/api/runs"))!.body as {
+      bootstrapMode: string;
+      directInputs: ReadonlyArray<{ role: string }>;
+    };
+    expect(runBody.bootstrapMode).toBe("direct");
+    expect(runBody.directInputs.map((i) => i.role)).toEqual(["skill"]);
+    expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
+  });
+
   it("rejects non-AgentsMd entries in the agentsMd array with index in the message", async () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
@@ -796,5 +861,111 @@ describe("AgentExecutor.deleteWorkspaceAsset", () => {
     ]);
     expect(calls.map((c) => c.method)).toEqual(["DELETE", "DELETE"]);
     expect(calls.map((c) => c.headers.authorization)).toEqual(["Bearer tkn", "Bearer tkn"]);
+  });
+});
+
+describe("AgentExecutor.submitRun — inline draft Skill against the locked P0 bootstrap contract", () => {
+  it("PUTs each input with sha256/size/bearer headers then commits the descriptor set", async () => {
+    const BOOT_TOKEN = "boot_p0";
+    const UPLOAD_BASE = "https://bootstrap.p0.example/run_p0/bootstrap";
+    const ROUTING = { "x-aex-route": "machine-7" };
+    const calls: CapturedRequest[] = [];
+
+    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method ?? "GET").toString();
+      // Capture headers as a flat lowercase-friendly record.
+      const headers: Record<string, string> = {};
+      const ih = init?.headers;
+      if (ih instanceof Headers) for (const [k, v] of ih.entries()) headers[k] = v;
+      else if (Array.isArray(ih)) for (const [k, v] of ih) headers[k] = v;
+      else if (ih) Object.assign(headers, ih);
+      let body: unknown = init?.body;
+      if (typeof body === "string") {
+        try { body = JSON.parse(body); } catch { /* leave raw */ }
+      }
+      calls.push({ url, method, headers, body });
+
+      // POST /api/runs → 202 with the full direct-bootstrap envelope.
+      if (url.endsWith("/api/runs") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            runId: "run_p0",
+            bootstrapToken: BOOT_TOKEN,
+            bootstrapStatusUrl: "https://api.p0.example/api/runs/run_p0/bootstrap/status",
+            bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+            uploadBaseUrl: UPLOAD_BASE,
+            routingHeaders: ROUTING
+          }),
+          { status: 202, headers: { "content-type": "application/json" } }
+        );
+      }
+      // GET status → ready target.
+      if (url.endsWith("/bootstrap/status")) {
+        return new Response(
+          JSON.stringify({ status: "ready", uploadBaseUrl: UPLOAD_BASE, routingHeaders: ROUTING }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      // PUT {uploadBaseUrl}/inputs/:inputId → 200.
+      if (url.startsWith(`${UPLOAD_BASE}/inputs/`)) {
+        return new Response("", { status: 200 });
+      }
+      // POST {uploadBaseUrl}/commit → 200.
+      if (url === `${UPLOAD_BASE}/commit`) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 500, headers: { "content-type": "application/json" } });
+    });
+
+    const client = new AgentExecutor({ apiToken: "tkn_p0", baseUrl: "https://api.p0.example", fetch });
+    const skill = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
+    const skillHash = skill.ref.kind === "draft" ? skill.ref.contentHash : "";
+
+    const runId = await client.submitRun({
+      model: "m",
+      prompt: "p",
+      skills: [skill],
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-p0"
+    });
+    expect(runId).toBe("run_p0");
+
+    // Submit carried the descriptor on the wire.
+    const submit = calls.find((c) => c.url.endsWith("/api/runs"))!;
+    const submitBody = submit.body as {
+      bootstrapMode: string;
+      directInputs: ReadonlyArray<{ inputId: string; sha256: string; sizeBytes: number; role: string }>;
+    };
+    expect(submitBody.bootstrapMode).toBe("direct");
+    expect(submitBody.directInputs).toHaveLength(1);
+    const descriptor = submitBody.directInputs[0]!;
+    expect(descriptor.sha256).toBe(skillHash);
+
+    // PUT input: bearer + sha256 + size headers (+ routing), body is the bytes.
+    const put = calls.find((c) => c.method === "PUT" && c.url.startsWith(`${UPLOAD_BASE}/inputs/`))!;
+    expect(put.url).toBe(`${UPLOAD_BASE}/inputs/${encodeURIComponent(descriptor.inputId)}`);
+    expect(put.headers.authorization).toBe(`Bearer ${BOOT_TOKEN}`);
+    expect(put.headers["x-aex-input-sha256"]).toBe(skillHash);
+    expect(put.headers["x-aex-input-size"]).toBe(String(descriptor.sizeBytes));
+    expect(put.headers["x-aex-route"]).toBe("machine-7");
+    expect(put.body).toBeInstanceOf(Uint8Array);
+
+    // Commit: bearer + JSON body listing each input.
+    const commit = calls.find((c) => c.url === `${UPLOAD_BASE}/commit`)!;
+    expect(commit.method).toBe("POST");
+    expect(commit.headers.authorization).toBe(`Bearer ${BOOT_TOKEN}`);
+    expect(commit.body).toEqual({
+      inputs: [
+        { inputId: descriptor.inputId, sha256: descriptor.sha256, sizeBytes: descriptor.sizeBytes }
+      ]
+    });
+
+    // Exactly one of each round-trip in order.
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST https://api.p0.example/api/runs",
+      `PUT ${UPLOAD_BASE}/inputs/${encodeURIComponent(descriptor.inputId)}`,
+      `POST ${UPLOAD_BASE}/commit`
+    ]);
   });
 });

@@ -19,8 +19,16 @@ import { readDirectoryAsFiles } from "./node-fs.js";
  * identical content dedups across sources.
  *
  * Asset deduplication makes the same bytes a no-op upload on subsequent runs.
- * There is no `Skill.fromId(...)` and no `.upload(client)` — a URL is an
- * ingestion source, not a persistent reference.
+ * There is no `Skill.fromId(...)`. A URL is an ingestion source, not a
+ * persistent reference.
+ *
+ * Two run-time flows exist for a draft Skill:
+ *   - INLINE (default): pass the draft straight into `submitRun` — its bytes
+ *     upload directly to the run's runtime (direct bootstrap).
+ *   - PRE-UPLOADED: call `await skill.upload(client)` first — the bytes upload
+ *     to the workspace asset store and a NEW materialized (`kind:"asset"`)
+ *     Skill is returned. Submitting that one sends a plain asset ref and the
+ *     machine pulls the bytes from storage at run time.
  */
 export class Skill {
   readonly #ref: AssetRef | DraftSkillRef;
@@ -186,6 +194,32 @@ export class Skill {
     };
   }
 
+  /**
+   * Pre-upload a draft Skill's bytes to the workspace asset store and return a
+   * NEW materialized Skill carrying a `kind:"asset"` ref. Blocking: the upload
+   * completes before this resolves. Submitting the returned Skill sends a plain
+   * asset ref (no direct bootstrap) and the run pulls the bytes from storage.
+   *
+   * Consumes this draft (a draft becomes an asset exactly once); call only on a
+   * draft built via `Skill.fromFiles` / `Skill.fromPath` / `Skill.fromUrl`.
+   */
+  async upload(client: SkillUploader): Promise<Skill> {
+    const bundle = this._takeDraftBundle();
+    if (!bundle) {
+      throw new Error(
+        "Skill.upload: only draft Skills can be uploaded. A Skill from " +
+          "Skill.fromCatalog(...) is already materialized."
+      );
+    }
+    const uploaded = await client._uploadAsset({
+      bytes: bundle.bytes,
+      hash: bundle.contentHash,
+      contentType: "application/zip"
+    });
+    const ref: AssetRef = { kind: "asset", assetId: uploaded.assetId, name: bundle.name };
+    return new Skill(ref);
+  }
+
   toJSON(): SkillRef {
     if (this.#ref.kind === "draft") {
       throw new Error(
@@ -206,4 +240,17 @@ export interface DraftSkillRef {
   readonly kind: "draft";
   readonly name: string;
   readonly contentHash: string;
+}
+
+/**
+ * Minimal client surface `Skill.upload` needs. `AgentExecutor` satisfies it via
+ * its internal `_uploadAsset`; defined structurally here so `skill.ts` does not
+ * import `client.ts` (which would be circular — `client.ts` imports `Skill`).
+ */
+export interface SkillUploader {
+  _uploadAsset(args: {
+    readonly bytes: Uint8Array;
+    readonly hash: string;
+    readonly contentType?: string;
+  }): Promise<{ readonly assetId: string }>;
 }

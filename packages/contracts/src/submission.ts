@@ -1103,6 +1103,94 @@ export interface PlatformInjectionConfig {
   readonly systemPrompt?: "default" | "off";
 }
 
+// ===========================================================================
+// Bootstrap / direct-inputs
+//
+// Internal fast-start path used by the SDK to upload local draft
+// Skill / AGENTS.md / File bytes straight to the run's runtime. Mirrors the
+// platform enforcer (`@aexhq/shared`) so the SDK's own client-side typing and
+// validation never drift from what the worker accepts.
+// ===========================================================================
+
+export const RUN_BOOTSTRAP_MODES = ["direct"] as const;
+export type RunBootstrapMode = (typeof RUN_BOOTSTRAP_MODES)[number];
+
+export const RUN_DIRECT_INPUT_ROLES = ["skill", "agentsMd", "file"] as const;
+export type RunDirectInputRole = (typeof RUN_DIRECT_INPUT_ROLES)[number];
+
+export interface RunDirectInputDescriptor {
+  readonly inputId: string;
+  readonly role: RunDirectInputRole;
+  readonly assetId: string;
+  readonly name: string;
+  readonly sha256: `sha256:${string}`;
+  readonly sizeBytes: number;
+  readonly contentType: string;
+  readonly mountPath?: string;
+}
+
+export function parseBootstrapMode(input: unknown): RunBootstrapMode | undefined {
+  if (input === undefined) return undefined;
+  if (typeof input !== "string" || !(RUN_BOOTSTRAP_MODES as readonly string[]).includes(input)) {
+    throw new Error(`bootstrapMode must be one of: ${RUN_BOOTSTRAP_MODES.join(", ")}`);
+  }
+  return input as RunBootstrapMode;
+}
+
+export function parseDirectInputs(input: unknown): readonly RunDirectInputDescriptor[] {
+  if (input === undefined) return [];
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new Error("directInputs must be a non-empty array");
+  }
+  if (input.length > 128) {
+    throw new Error("directInputs exceeds the max of 128 entries");
+  }
+  const seen = new Set<string>();
+  return input.map((entry, index) => {
+    const value = requireRecord(entry, `directInputs[${index}]`);
+    const inputId = requireString(value.inputId, `directInputs[${index}].inputId`);
+    if (!/^[A-Za-z0-9._:-]{1,160}$/.test(inputId)) {
+      throw new Error(`directInputs[${index}].inputId must match /^[A-Za-z0-9._:-]{1,160}$/`);
+    }
+    if (seen.has(inputId)) {
+      throw new Error(`directInputs[${index}].inputId is duplicated`);
+    }
+    seen.add(inputId);
+    const role = value.role;
+    if (typeof role !== "string" || !(RUN_DIRECT_INPUT_ROLES as readonly string[]).includes(role)) {
+      throw new Error(`directInputs[${index}].role must be one of: ${RUN_DIRECT_INPUT_ROLES.join(", ")}`);
+    }
+    const assetId = requireString(value.assetId, `directInputs[${index}].assetId`);
+    if (!/^asset_[0-9a-f]{64}$/.test(assetId)) {
+      throw new Error(`directInputs[${index}].assetId must be asset_<64-hex>`);
+    }
+    const sha256 = requireString(value.sha256, `directInputs[${index}].sha256`);
+    if (!/^sha256:[0-9a-f]{64}$/.test(sha256)) {
+      throw new Error(`directInputs[${index}].sha256 must be sha256:<64-hex>`);
+    }
+    if (assetId.slice("asset_".length) !== sha256.slice("sha256:".length)) {
+      throw new Error(`directInputs[${index}].assetId must match sha256`);
+    }
+    const sizeBytes = value.sizeBytes;
+    if (typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
+      throw new Error(`directInputs[${index}].sizeBytes must be a positive safe integer`);
+    }
+    const name = requireString(value.name, `directInputs[${index}].name`);
+    const contentType = requireString(value.contentType, `directInputs[${index}].contentType`);
+    const mountPath = optionalString(value.mountPath, `directInputs[${index}].mountPath`);
+    return {
+      inputId,
+      role: role as RunDirectInputRole,
+      assetId,
+      name,
+      sha256: sha256 as `sha256:${string}`,
+      sizeBytes,
+      contentType,
+      ...(mountPath ? { mountPath } : {})
+    };
+  });
+}
+
 export interface PlatformRunSubmissionRequest {
   readonly workspaceId: string;
   readonly idempotencyKey: string;
@@ -1133,6 +1221,14 @@ export interface PlatformRunSubmissionRequest {
    * or absent (downstream applies the default).
    */
   readonly runtimeSize?: RuntimeSize;
+  /**
+   * Internal fast-start bootstrap mode used by the SDK for local draft
+   * Skill/AGENTS.md/File bytes. Public caller method signatures stay stable;
+   * only the SDK/control-plane wire carries these descriptors. Required iff
+   * {@link directInputs} is non-empty (and vice versa).
+   */
+  readonly bootstrapMode?: RunBootstrapMode;
+  readonly directInputs?: readonly RunDirectInputDescriptor[];
   /**
    * Run deadline in milliseconds, normalised by the parser from the wire
    * `timeout` duration string (bounded to [1m, 6h]). Absent ⇒
@@ -1195,6 +1291,8 @@ export function parseRunSubmissionRequest(
     "runtimeSize",
     "timeout",
     "proxyEndpoints",
+    "bootstrapMode",
+    "directInputs",
     SECRETS_KEY
   ]);
   for (const key of Object.keys(value)) {
@@ -1226,6 +1324,14 @@ export function parseRunSubmissionRequest(
     throw new Error(runtimeSupport.message ?? "unsupported runtime");
   }
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
+  const bootstrapMode = parseBootstrapMode(value.bootstrapMode);
+  const directInputs = parseDirectInputs(value.directInputs);
+  if (directInputs.length > 0 && bootstrapMode === undefined) {
+    throw new Error("bootstrapMode is required when directInputs are present");
+  }
+  if (bootstrapMode !== undefined && directInputs.length === 0) {
+    throw new Error("directInputs must be a non-empty array when bootstrapMode is set");
+  }
   const timeoutMs = parseRunTimeout(value.timeout);
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
@@ -1284,6 +1390,8 @@ export function parseRunSubmissionRequest(
     ...(runtime ? { runtime } : {}),
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
+    ...(bootstrapMode ? { bootstrapMode } : {}),
+    ...(directInputs.length > 0 ? { directInputs } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
     secrets

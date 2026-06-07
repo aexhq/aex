@@ -40,6 +40,7 @@ import {
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { AgentsMd } from "./agents-md.js";
+import { uploadAsset, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
 import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
@@ -427,6 +428,26 @@ export class AgentExecutor {
    */
   async _uploadFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<FileRecord> {
     return this.files._uploadFile(args);
+  }
+
+  /**
+   * Internal: materialize raw bytes to the content-addressable asset store
+   * (`/assets/presign` → PUT → `/assets/finalize`). Used by `Skill.upload(this)`
+   * to pre-upload a draft skill bundle so a later run carries only a plain
+   * `kind:"asset"` ref. NOT part of the public API.
+   */
+  async _uploadAsset(args: {
+    readonly bytes: Uint8Array;
+    readonly hash: string;
+    readonly contentType?: string;
+  }): Promise<UploadedAsset> {
+    return uploadAsset({
+      http: this.#http,
+      bytes: args.bytes,
+      hash: args.hash,
+      ...(args.contentType ? { contentType: args.contentType } : {}),
+      ...(this.#fetch ? { fetch: this.#fetch as unknown as AssetFetch } : {})
+    });
   }
 
   /**

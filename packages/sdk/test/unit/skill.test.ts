@@ -7,7 +7,7 @@
  * Skill.fromFiles — so a URL-sourced skill and the identical local skill
  * produce the same canonical asset. The URL never reaches the wire.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { zipSync } from "fflate";
 import { Skill } from "../../src/skill.js";
 
@@ -196,5 +196,48 @@ describe("Skill.fromCatalog — reference an uploaded catalog skill", () => {
 
   it("rejects an invalid name", () => {
     expect(() => Skill.fromCatalog({ name: "Bad Name!", hash: `sha256:${HASH}` })).toThrow(/name must match/);
+  });
+})
+
+describe("Skill.upload — pre-upload a draft to the workspace asset store", () => {
+  it("uploads the draft bundle and returns a materialized asset-ref Skill", async () => {
+    const skill = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
+    const draftHash = skill.ref.kind === "draft" ? skill.ref.contentHash : "";
+    const draftHex = draftHash.slice("sha256:".length);
+
+    const calls: Array<{ bytes: Uint8Array; hash: string; contentType?: string }> = [];
+    const client = {
+      _uploadAsset: vi.fn(async (args: { bytes: Uint8Array; hash: string; contentType?: string }) => {
+        calls.push(args);
+        return { assetId: `asset_${args.hash.slice("sha256:".length)}` };
+      })
+    };
+
+    const uploaded = await skill.upload(client);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.hash).toBe(draftHash);
+    expect(calls[0]!.contentType).toBe("application/zip");
+    expect(calls[0]!.bytes).toBeInstanceOf(Uint8Array);
+
+    expect(uploaded).toBeInstanceOf(Skill);
+    expect(uploaded.isDraft).toBe(false);
+    expect(uploaded.toJSON()).toEqual({ kind: "asset", assetId: `asset_${draftHex}`, name: "rules" });
+    // The original draft is consumed by the upload.
+    expect(skill.isConsumed).toBe(true);
+  });
+
+  it("rejects uploading an already-materialized (catalog) Skill", async () => {
+    const catalog = Skill.fromCatalog({ name: "t", hash: `sha256:${"a".repeat(64)}` });
+    const client = { _uploadAsset: vi.fn() };
+    await expect(catalog.upload(client)).rejects.toThrow(/only draft Skills can be uploaded/);
+    expect(client._uploadAsset).not.toHaveBeenCalled();
+  });
+
+  it("rejects re-uploading a consumed draft", async () => {
+    const skill = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
+    const client = { _uploadAsset: vi.fn(async (a: { hash: string }) => ({ assetId: `asset_${a.hash.slice(7)}` })) };
+    await skill.upload(client);
+    await expect(skill.upload(client)).rejects.toThrow(/cannot reuse a consumed Skill/);
   });
 })
