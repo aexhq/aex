@@ -17,6 +17,7 @@ describe("proxy protocol version", () => {
   it("is a non-empty stable string", () => {
     expect(typeof PROXY_PROTOCOL_VERSION).toBe("string");
     expect(PROXY_PROTOCOL_VERSION.length).toBeGreaterThan(0);
+    expect(PROXY_PROTOCOL_VERSION).toBe("1");
   });
 
   it("has every error code mapped to an HTTP status", () => {

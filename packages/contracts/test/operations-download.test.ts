@@ -46,7 +46,10 @@ describe("operations.download", () => {
       "outputs/report.txt"
     ]);
     expect(JSON.parse(decode(entries["metadata/run.json"]!)).id).toBe("run-1");
-    expect(decode(entries["events/events.jsonl"]!).split("\n")).toHaveLength(2);
+    expect(decode(entries["events/events.jsonl"]!).split("\n").map((l) => JSON.parse(l))).toEqual([
+      { seq: 0, kind: "a" },
+      { seq: 1, kind: "b" }
+    ]);
     expect(decode(entries["outputs/report.txt"]!)).toBe("hello");
 
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
@@ -209,7 +212,10 @@ describe("operations.downloadEvents", () => {
   it("zips the indexed event archive as events.jsonl", async () => {
     const entries = unzipSync(await operations.downloadEvents(runWithOutput(), "run-1"));
     expect(Object.keys(entries)).toEqual(["events.jsonl"]);
-    expect(decode(entries["events.jsonl"]!).split("\n")).toHaveLength(2);
+    expect(decode(entries["events.jsonl"]!).split("\n").map((l) => JSON.parse(l))).toEqual([
+      { seq: 0, kind: "a" },
+      { seq: 1, kind: "b" }
+    ]);
   });
 });
 

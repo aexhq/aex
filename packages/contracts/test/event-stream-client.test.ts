@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   filterStream,
   isFromSource,
@@ -76,11 +76,12 @@ describe("streamCoordinatorEvents — live fanout", () => {
 describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
   it("reconnects from lastSeq+1 with no gap and no duplicate", async () => {
     const sockets: FakeWebSocket[] = [];
+    const fetchTicket = vi.fn(async () => "tkt");
     const gen = streamCoordinatorEvents({
       wsUrl: "wss://co/runs/r/subscribe",
       from: 0,
       reconnectDelayMs: 0,
-      fetchTicket: async () => "tkt",
+      fetchTicket,
       webSocketFactory: (url) => {
         const w = new FakeWebSocket(url);
         sockets.push(w);
@@ -100,8 +101,9 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     await flush(8); // allow backoff + reconnect
 
     expect(sockets).toHaveLength(2);
-    // Resume strictly after the last seen sequence.
-    expect(sockets[1]!.url).toContain("from=2");
+    // Resume strictly after the last seen sequence, with a freshly-minted ticket.
+    expect(sockets[1]!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=2");
+    expect(fetchTicket).toHaveBeenCalledTimes(2);
     sockets[1]!.message(evt(2));
     sockets[1]!.message(evt(3, "RUN_FINISHED"));
     await consume;
