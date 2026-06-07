@@ -19,18 +19,14 @@
  *     OR AEX_USER_TEST_VERSION     published version on npm
  *
  * Optional:
- *   AEX_COST_LOG_PATH              when set, append a JSONL line per
- *                                      LLM round-trip with shape
- *                                        { ts, test, provider, model,
- *                                          promptTokens, completionTokens,
- *                                          estimatedUsd }
- *                                      consumed by scripts/cicd/smoke-cost-budget.mjs.
- *                                      Tests don't yet write to it; this
- *                                      is the documented contract for
- *                                      when D7 cost tracking is enabled.
- *
- * Optional:
  *   AEX_USER_TEST_DEEPSEEK_MODEL            default "deepseek-chat"
+ *
+ * TODO (D7 cost tracking, not yet implemented): when enabled, an
+ * AEX_COST_LOG_PATH env var would have these tests append a JSONL line per
+ * LLM round-trip ({ ts, test, provider, model, promptTokens,
+ * completionTokens, estimatedUsd }) consumed by
+ * scripts/cicd/smoke-cost-budget.mjs. The tests do NOT read or write this
+ * var today — it is not an active env contract.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

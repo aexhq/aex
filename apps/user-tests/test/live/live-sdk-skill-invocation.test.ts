@@ -16,15 +16,13 @@
  * but skill *content* is dropped, and the failure mode where ALL skills
  * collapse into one (model would echo distractor text too).
  *
- * The same body runs on every managed provider cell:
+ * The assertion body runs on a single managed cell:
  *   - (deepseek, managed)  — managed runtime (object storage download)
- *   - (deepseek,  managed)  — managed runtime (object storage download)
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL
  *   AEX_API_TOKEN             workspace API token
  *   DEEPSEEK_API_KEY    customer DeepSeek key
- *   DEEPSEEK_API_KEY     customer DeepSeek key
  *   AEX_USER_TEST_TARBALL          packed SDK tarball
  *     OR AEX_USER_TEST_VERSION     published version on npm
  */
@@ -73,7 +71,6 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
 }
 
@@ -226,7 +223,6 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       terminalKind: terminal ? terminal.type : null,
       terminalData: terminal ? terminal.data : null,
       streamErrors,
-      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
@@ -335,7 +331,6 @@ describe("live skill invocation — agent actually follows skill content", () =>
       }
 
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.leakedProviderKey, dump()).toBe(false);
       expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     10 * 60_000

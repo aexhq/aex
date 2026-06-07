@@ -9,15 +9,18 @@
  *
  * The DeepSeek-managed cell submits one run with:
  *   - 2 inline Skills (proves multi-skill manifest + materialization)
- *   - 2 remote MCP servers (proves multi-MCP recipe.yaml `extensions:`
- *     block reaches managed runtime with Authorization headers; the CLI flag
- *     --with-streamable-http-extension can't carry auth, so authenticated
- *     proxy MCPs go through the recipe)
+ *   - 2 remote MCP servers (exercises the multi-MCP submission path; that
+ *     the model actually INVOKES a wired MCP is asserted separately by
+ *     live-sdk-mcp-invocation.test.ts, which disarms builtins so the MCP
+ *     is the only available tool — this comprehensive run keeps builtins on
+ *     and does not assert MCP invocation)
  *   - 1 AGENTS.md (probe-tagged so a model reply that omits it fails)
  *   - 1 `system` message (probe-tagged)
  *   - 1 prompt (probe-tagged)
- *   - 1 custom outputs.allowedDirs entry (not /workspace/outputs — proves the
- *     runner re-roots arbitrary absolute paths under workspaceRoot)
+ *   - 1 custom outputs.allowedDirs entry (not /workspace/outputs — exercises
+ *     the custom-dir submission path; this run does not force a write into it,
+ *     so the re-root is not asserted here, only that any uploaded outputs
+ *     round-trip)
  *   - `secrets` carrying the customer's provider key
  *
  * Then waits for `runtime_terminal` and asserts:
@@ -31,7 +34,7 @@
  *   - The collected assistant text contains the system + AGENTS.md +
  *     prompt probes (proves `composeInstructions()` carried all three
  *     channels into the recipe.yaml that the managed runtime reads).
- *   - No secret value (provider key, runner bearer) appears anywhere
+ *   - No secret value (the provider key) appears anywhere
  *     in the SDK-visible payload (run + events + outputs).
  *
  * No env-var flags gate scope. The five `test:*` commands are the
@@ -83,7 +86,6 @@ interface CaseResult {
   readonly outputCount: number;
   readonly outputs: readonly { filename: string; sizeBytes: number; sample: string | null }[];
   readonly leakedProviderKey: boolean;
-  readonly leakedDeepseekKey: boolean;
   // Full payload of every stream_error event the runner emitted —
   // captures the actual exception message + phase when materialize or
   // manifest fetch fails (the runner emits a stream_error with the
@@ -246,7 +248,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     // (manifest/materialize). Collect them all so the diagnostic
     // can show the actual cause.
     const streamErrors = events
-      .filter((e) => e.type === "CUSTOM" && e.data && e.data.value && e.data.value.source === "runner")
+      .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const outputsCollected = [];
@@ -281,7 +283,6 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       outputCount: outputs.length,
       outputs: outputsCollected,
       leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
-      leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       streamErrors
     };
     process.stdout.write(JSON.stringify(result));
@@ -400,7 +401,6 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
 
   // No secret leakage anywhere in the SDK-visible payload.
   expect(result.leakedProviderKey).toBe(false);
-  expect(result.leakedDeepseekKey).toBe(false);
 
   // Outputs: any file the managed runtime wrote under the custom outputs.allowedDirs path was
   // uploaded. Downloading each one returns content (a download error

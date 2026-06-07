@@ -169,7 +169,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         if (typeof body !== "string" && body) {
           body = await new Response(body).text();
         }
-        requests.push({ url: typeof url === "string" ? url : url.toString(), body });
+        requests.push({ url: typeof url === "string" ? url : url.toString(), method: init?.method, body });
         return new Response(JSON.stringify({
           id: "run_test_user_e2e",
           workspaceId: "ws_t",
@@ -188,6 +188,7 @@ describe("managed runtime + widened providers (published surface)", () => {
       const submitBody = JSON.parse(requests[0].body);
       console.log(JSON.stringify({
         url: requests[0].url,
+        method: requests[0].method,
         provider: submitBody.provider,
         runtime: submitBody.runtime,
         hasSecrets: typeof submitBody.secrets === "object"
@@ -197,11 +198,14 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(exitCode, stderr).toBe(0);
     const out = JSON.parse(stdout.trim()) as {
       url: string;
+      method: string;
       provider: string;
       runtime: string;
       hasSecrets: boolean;
     };
     expect(out.url).toMatch(/example\.invalid/);
+    expect(out.url).toMatch(/\/api\/runs$/);
+    expect(out.method).toBe("POST");
     expect(out.provider).toBe("anthropic");
     expect(out.runtime).toBe("managed");
     expect(out.hasSecrets).toBe(true);

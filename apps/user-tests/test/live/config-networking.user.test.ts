@@ -58,11 +58,17 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
       // through the firewall, so the agent could run at all.
       expect(result.status).toBe("succeeded");
 
-      const text = dense(result.assistantText);
+      // Drive the assertion off the REAL curl evidence (tool_result) joined
+      // with the model's narration, not just the LLM's self-reported token.
+      const shellEvidence = dense(`${result.toolResultText} ${result.assistantText}`);
       // Precision: the customer's allowed host worked...
-      expect(text).toContain("ALLOWED_REACHED");
+      expect(shellEvidence).toContain("ALLOWED_REACHED");
       // ...and the non-allowed host was blocked.
-      expect(text).toContain("OTHER_BLOCKED");
+      expect(shellEvidence).toContain("OTHER_BLOCKED");
+      // Negative guards: a wide-open firewall would surface the failure
+      // tokens for the allowed host or the reached token for the other host.
+      expect(shellEvidence).not.toContain("ALLOWED_FAILED");
+      expect(shellEvidence).not.toContain("OTHER_REACHED");
     },
     10 * 60_000
   );

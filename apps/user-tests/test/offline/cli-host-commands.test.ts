@@ -165,14 +165,24 @@ describe("installed CLI host commands", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(run.exitCode, `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
-    expect(JSON.parse(run.stdout.trim())).toMatchObject({ id: "run-cli-1", status: "queued" });
+    expect(JSON.parse(run.stdout.trim())).toEqual({
+      id: "run-cli-1",
+      status: "queued",
+      provider: "deepseek",
+      runtime: "managed"
+    });
 
     const status = await runCommand(binPath, ["status", "run-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
-    expect(JSON.parse(status.stdout.trim())).toMatchObject({ id: "run-cli-1" });
+    expect(JSON.parse(status.stdout.trim())).toMatchObject({
+      id: "run-cli-1",
+      status: "running",
+      provider: "deepseek",
+      runtime: "managed"
+    });
 
     const events = await runCommand(binPath, ["events", "run-cli-1", ...common], {
       cwd: install.installDir,
@@ -188,7 +198,12 @@ describe("installed CLI host commands", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(wait.exitCode, `stdout:\n${wait.stdout}\nstderr:\n${wait.stderr}`).toBe(0);
-    expect(JSON.parse(wait.stdout.trim())).toMatchObject({ id: "run-cli-1", status: "succeeded" });
+    expect(JSON.parse(wait.stdout.trim())).toEqual({
+      id: "run-cli-1",
+      status: "succeeded",
+      provider: "deepseek",
+      runtime: "managed"
+    });
 
     const outPath = join(install.installDir, "installed-cli-run.zip");
     const download = await runCommand(binPath, ["download", "run-cli-1", "--out", outPath, ...common], {

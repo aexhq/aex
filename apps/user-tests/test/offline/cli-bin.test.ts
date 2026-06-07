@@ -86,6 +86,7 @@ describe("cli bin", () => {
     });
     expect(withEnv.exitCode).toBe(baseline.exitCode);
     expect(withEnv.stdout).toBe(baseline.stdout);
+    expect(withEnv.stderr).toBe(baseline.stderr);
   });
 
   it("the shipped bundle source contains no `process.env.AEX_*` reads", () => {

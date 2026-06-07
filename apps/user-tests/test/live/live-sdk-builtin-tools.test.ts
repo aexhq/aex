@@ -68,7 +68,6 @@ interface CaseResult {
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
   readonly leakedProviderKey: boolean;
-  readonly leakedDeepseekKey: boolean;
 }
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -170,8 +169,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       terminalKind: terminal ? terminal.type : null,
       terminalData: terminal ? terminal.data : null,
       streamErrors,
-      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
-      leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
+      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
     process.exit(0);
@@ -267,7 +265,6 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       }
 
       expect(result.leakedProviderKey, dump()).toBe(false);
-      expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     9 * 60_000
   );
@@ -304,7 +301,6 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       // reply rather than nothing).
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
       expect(result.leakedProviderKey, dump()).toBe(false);
-      expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     9 * 60_000
   );

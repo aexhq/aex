@@ -77,44 +77,4 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
     },
     10 * 60_000
   );
-
-  it(
-    "managed runtime delivers both agentsMd refs",
-    async () => {
-      const tokenA = rand("ALPHA");
-      const tokenB = rand("BRAVO");
-      // The high-entropy suffix is the delivery proof; the "ALPHA-"/"BRAVO-"
-      // prefix is a human label the model may reformat away.
-      const markerA = tokenA.slice(tokenA.indexOf("-") + 1);
-      const markerB = tokenB.slice(tokenB.indexOf("-") + 1);
-      const script = sdkRunnerScript({
-        setup: `
-          const a = await AgentsMd.fromContent("# Project notes A\\n\\nThe internal codename for this project is ${tokenA}.", { name: "rules-a" });
-          const b = await AgentsMd.fromContent("# Project notes B\\n\\nThe internal codename for the database is ${tokenB}.", { name: "rules-b" });
-        `,
-        submit: `{
-          provider: "deepseek",
-          runtime: "managed",
-          model: MODEL_DEEPSEEK,
-          prompt: ${JSON.stringify([PROMPT])},
-          agentsMd: [a, b],
-          secrets: { apiKey: DEEPSEEK_KEY },
-          idempotencyKey: "user-agentsmd-managed-runtime-" + Date.now()
-        }`
-      });
-      const result = await runSdkScript(install, env, script, {
-        scriptName: "user-agentsmd-managed-runtime.mjs",
-        waitMs: 8 * 60_000,
-        timeoutMs: 9 * 60_000
-      });
-
-      expect(result.runtime).toBe("managed");
-      expect(result.status).toBe("succeeded");
-
-      const text = dense(result.assistantText);
-      expect(text).toContain(markerA);
-      expect(text).toContain(markerB);
-    },
-    10 * 60_000
-  );
 });

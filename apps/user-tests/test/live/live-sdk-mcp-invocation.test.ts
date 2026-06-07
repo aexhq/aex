@@ -16,15 +16,13 @@
  * model can't reach the MCP, when the proxy mishandles auth, or when the
  * adapter drops the tool_request translation.
  *
- * This file runs the same body on every managed provider cell:
- *   - (deepseek, managed)  — managed runtime + Anthropic via provider-proxy
- *   - (deepseek,  managed)  — managed runtime + DeepSeek via provider-proxy
+ * This file runs the assertion body on a single managed cell:
+ *   - (deepseek, managed)  — managed runtime + DeepSeek via provider-proxy
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL
  *   AEX_API_TOKEN             workspace API token
  *   DEEPSEEK_API_KEY    customer DeepSeek key
- *   DEEPSEEK_API_KEY     customer DeepSeek key
  *   AEX_USER_TEST_TARBALL          packed SDK tarball
  *     OR AEX_USER_TEST_VERSION     published version on npm
  */
@@ -85,7 +83,6 @@ interface CaseResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
 }
 
@@ -187,7 +184,7 @@ function buildScript(cell: Cell): string {
 
     const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
     const streamErrors = events
-      .filter((e) => e.type === "stream_error")
+      .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const serialized = JSON.stringify({ run, events });
@@ -206,7 +203,6 @@ function buildScript(cell: Cell): string {
       terminalKind: terminal ? terminal.type : null,
       terminalData: terminal ? terminal.data : null,
       streamErrors,
-      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
     process.stdout.write(JSON.stringify(result));
@@ -325,7 +321,6 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
 
       // No secret leakage.
-      expect(result.leakedProviderKey, dump()).toBe(false);
       expect(result.leakedDeepseekKey, dump()).toBe(false);
     },
     10 * 60_000

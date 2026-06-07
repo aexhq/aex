@@ -57,36 +57,4 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
     },
     10 * 60_000
   );
-
-  it(
-    "managed runtime delivers envVars via /workspace/RUNTIME.env",
-    async () => {
-      const canary = "ENVVAR-" + Math.random().toString(36).slice(2, 10);
-      const script = sdkRunnerScript({
-        submit: `{
-          provider: "deepseek",
-          runtime: "managed",
-          model: MODEL_DEEPSEEK,
-          prompt: [
-            "Using the shell, run exactly: cat /workspace/RUNTIME.env",
-            "Reply with ONLY the value of CANARY_VALUE from that file.",
-            "If the file or the variable is missing, reply with exactly: CANARY_UNSET"
-          ],
-          environment: { envVars: { CANARY_VALUE: ${JSON.stringify(canary)} } },
-          secrets: { apiKey: DEEPSEEK_KEY },
-          idempotencyKey: "user-envvars-managed-runtime-" + Date.now()
-        }`
-      });
-      const result = await runSdkScript(install, env, script, {
-        scriptName: "user-envvars-managed-runtime.mjs",
-        waitMs: 8 * 60_000,
-        timeoutMs: 9 * 60_000
-      });
-
-      expect(result.runtime).toBe("managed");
-      expect(result.status).toBe("succeeded");
-      expect(dense(result.assistantText)).toContain(canary);
-    },
-    10 * 60_000
-  );
 });

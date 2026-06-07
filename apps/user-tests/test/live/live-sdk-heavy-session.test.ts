@@ -20,7 +20,10 @@
  *
  * Each cell submits ONE run carrying the full surface together:
  *   - 3 inline Skills          multi-skill manifest + materialization
- *   - 2 remote MCP servers      multi-MCP recipe `extensions:` wiring
+ *   - 2 remote MCP servers      submission accepts a multi-MCP payload
+ *                               (tool INVOCATION is proven by
+ *                               live-sdk-mcp-invocation.test.ts, not here —
+ *                               this prompt does not steer the model to the MCP)
  *   - a long multi-paragraph `system` message (probe-tagged)
  *   - a multi-step `prompt` array (forces shell + multiple file WRITES +
  *                                  multiple file READS, then a probe ack)
@@ -53,8 +56,8 @@
  *   - the OUTPUTS pipeline round-trips: every captured output downloads
  *     without error, and at least one agent-written file carries its
  *     expected REF-out token (write → capture → object storage → download e2e).
- *   - no secret value (provider key, runner bearer) appears anywhere in
- *     the SDK-visible payload (run + events + outputs).
+ *   - the customer provider key never appears anywhere in the
+ *     SDK-visible payload (run + events + outputs).
  *
  * Required env:
  *   AEX_API_URL                live hosted API URL (local or prod)
@@ -137,7 +140,6 @@ interface CaseResult {
   readonly outputCount: number;
   readonly outputs: readonly { filename: string | null; sizeBytes: number; sample: string | null }[];
   readonly outProbesFound: readonly string[];
-  readonly leakedProviderKey: boolean;
   readonly leakedDeepseekKey: boolean;
   // Full payload of every runner-sourced stream_error — captures the
   // actual exception message + phase when materialize / manifest fetch
@@ -321,8 +323,8 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
 
     const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
     const streamErrors = events
-      .filter((e) => e.type === "CUSTOM" && e.data && e.data.value && e.data.value.source === "runner")
-      .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
+      .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
+      .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
 
     const outProbes = ${JSON.stringify(probes.out)};
     const outputsCollected = [];
@@ -364,7 +366,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       outputCount: outputs.length,
       outputs: outputsCollected,
       outProbesFound: Array.from(outProbesFound),
-      leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       streamErrors
     };
@@ -527,7 +528,6 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   }
 
   // No secret leakage anywhere in the SDK-visible payload.
-  expect(result.leakedProviderKey, dump()).toBe(false);
   expect(result.leakedDeepseekKey, dump()).toBe(false);
 }
 
