@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import {
 import {
   PROVIDER_PUBLIC_SUPPORT,
   PROVIDER_SUPPORT_STATUSES,
+  type SupportPointer,
   type ProviderSupportStatus
 } from "../../packages/contracts/src/provider-support.js";
 import {
@@ -25,6 +26,16 @@ import {
 } from "../generate-capability-matrix.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+
+function liveEvidencePointers(provider: RunProvider): readonly SupportPointer[] {
+  return PROVIDER_PUBLIC_SUPPORT[provider].evidence.filter((pointer) =>
+    pointer.href.includes("apps/user-tests/test/live/")
+  );
+}
+
+function evidencePath(pointer: SupportPointer): string {
+  return resolve(repoRoot, "packages", "sdk", "docs", pointer.href);
+}
 
 function dispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
   return {
@@ -71,7 +82,6 @@ describe("provider/runtime capability matrix generation", () => {
       "| `openai` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch |"
     );
     expect(rendered).not.toContain("Native feature parity");
-    expect(rendered).not.toContain("anthropic-managed");
   });
 
   it("keeps public support facts complete and anchor-safe", () => {
@@ -103,6 +113,25 @@ describe("provider/runtime capability matrix generation", () => {
       const row = buildCapabilityMatrixRows().find((candidate) => candidate.provider === provider);
       expect(row?.managedRuntime.status).toBe("live-unverified");
       expect(row?.publicStatus).toBe("live-unverified" satisfies ProviderSupportStatus);
+    }
+  });
+
+  it("keeps supported-provider live evidence provider-specific", () => {
+    for (const provider of RUN_PROVIDERS) {
+      const support = PROVIDER_PUBLIC_SUPPORT[provider];
+      const pointers = liveEvidencePointers(provider);
+      if (support.status !== "supported") {
+        expect(pointers, `${provider} is ${support.status} and must not advertise live evidence`).toEqual([]);
+        continue;
+      }
+
+      expect(pointers.length, `${provider} supported rows need installed-SDK live evidence`).toBeGreaterThan(0);
+      for (const pointer of pointers) {
+        const path = evidencePath(pointer);
+        expect(existsSync(path), `${provider} evidence pointer must resolve: ${pointer.href}`).toBe(true);
+        const source = readFileSync(path, "utf8");
+        expect(source, `${provider} evidence file must submit that provider`).toContain(`provider: "${provider}"`);
+      }
     }
   });
 

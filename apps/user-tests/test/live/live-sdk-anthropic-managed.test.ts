@@ -1,18 +1,14 @@
 /**
- * Live scenario: live-sdk-deepseek-managed-a.test.ts
+ * Live scenario: live-sdk-anthropic-managed.test.ts
  *
- * Sibling of live-sdk-deepseek.test.ts. Same managed runtime runtime
- * path, swapped provider — DeepSeek via the BYOK provider-proxy.
+ * Sibling of live-sdk-deepseek.test.ts. Same installed SDK and managed
+ * runtime path, swapped provider — Anthropic via the BYOK provider-proxy.
  *
- *   SDK → POST /api/runs { provider: "deepseek", runtime: "managed" }
+ *   SDK → POST /api/runs { provider: "anthropic", runtime: "managed" }
  *      → hosted run-lifecycle → managed runtime
  *      → /provider-proxy/anthropic-messages/v1/messages
- *        (managed runtime dials ANTHROPIC_HOST; runtimeProvider="anthropic" → Anthropic
- *         shape, NOT the OpenAI-compat layer, which aex no longer
- *         serves for Anthropic — it loses prompt caching)
- *      → hosted API injects vault'd DeepSeek key
- *      → api.anthropic.com /v1/messages
- *      → real deepseek-chat response → assistant_text event
+ *      → hosted API injects the run-scoped Anthropic key
+ *      → api.anthropic.com /v1/messages → assistant_text event
  *
  * The customer may omit runtime or pass runtime:'managed'; both use the
  * same managed sandbox semantics as every other provider. The dispatcher
@@ -21,9 +17,13 @@
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
- *   DEEPSEEK_API_KEY    customer's DeepSeek API key
+ *   AEX_API_TOKEN            workspace API token
+ *   ANTHROPIC_API_KEY        customer's Anthropic API key
  *   AEX_USER_TEST_TARBALL          path to packed aex tgz
  *     OR AEX_USER_TEST_VERSION     published version on npm
+ *
+ * Optional:
+ *   AEX_USER_TEST_ANTHROPIC_MODEL  default "claude-haiku-4-5"
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,15 +34,15 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The live DeepSeek-Managed scenario must run against a real api.aex.dev URL with a real DeepSeek key.`
+      `user-tests live: required env ${name} is missing. The live Anthropic managed scenario must run against a real api.aex.dev URL with a real Anthropic key.`
     );
   }
   return value;
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
 
 interface LiveResult {
   readonly runId: string;
@@ -66,7 +66,7 @@ interface LiveResult {
   readonly leakedProviderKey: boolean;
 }
 
-describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed runtime runtime", () => {
+describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed runtime", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -78,14 +78,14 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
   });
 
   it(
-    "submits via SDK with runtime:'managed', waits for terminal, asserts a real DeepSeek response landed in the event log",
+    "submits via SDK with runtime:'managed', waits for terminal, asserts a real Anthropic response landed in the event log",
     async () => {
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
         import { AgentExecutor } from "@aexhq/sdk";
 
         const apiBase = process.env.AEX_API_URL;
-        const deepseekKey = process.env.DEEPSEEK_KEY;
+        const anthropicKey = process.env.ANTHROPIC_KEY;
         const model = process.env.MODEL;
         const apiToken = process.env.AEX_API_TOKEN;
 
@@ -95,12 +95,12 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         });
 
         const runId = await client.submitRun({
-          provider: "deepseek",
+          provider: "anthropic",
           runtime: "managed",
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
-          idempotencyKey: "user-test-deepseek-mgd-" + Date.now(),
-          secrets: { apiKey: deepseekKey }
+          idempotencyKey: "user-test-anthropic-mgd-" + Date.now(),
+          secrets: { apiKey: anthropicKey }
         });
 
         const deadline = Date.now() + 8 * 60 * 1000;
@@ -140,19 +140,19 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           terminalData: terminal ? terminal.data : null,
           outputCount: outputs.length,
           outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
-          leakedProviderKey: serialized.includes(deepseekKey)
+          leakedProviderKey: serialized.includes(anthropicKey)
         };
         process.stdout.write(JSON.stringify(result));
         process.exit(0);
       `;
-      const scriptPath = join(install.installDir, "live-deepseek-managed-a-runner.mjs");
+      const scriptPath = join(install.installDir, "live-anthropic-managed-runner.mjs");
       writeFileSync(scriptPath, script);
 
       const apiToken = requireEnv("AEX_API_TOKEN");
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
         AEX_API_TOKEN: apiToken,
-        DEEPSEEK_KEY: deepseekKey,
+        ANTHROPIC_KEY: anthropicKey,
         MODEL: model
       };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -192,7 +192,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       const result = JSON.parse(child.stdout.trim()) as LiveResult;
 
       expect(result.runtime).toBe("managed");
-      expect(result.provider).toBe("deepseek");
+      expect(result.provider).toBe("anthropic");
       expect(result.runStatus).toBe("succeeded");
 
       // Real managed-runtime event frame.

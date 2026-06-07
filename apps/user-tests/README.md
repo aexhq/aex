@@ -67,6 +67,8 @@ the configured hosted API. They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
 - **Secret `AEX_API_TOKEN`** — workspace API token for the selected API URL.
+- **Secret `ANTHROPIC_API_KEY`** — customer Anthropic key for the managed
+  Anthropic live scenario.
 - **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key for the managed live
   scenarios.
 
@@ -74,19 +76,21 @@ the configured hosted API. They require:
 
 The `test/live/live-sdk-*.test.ts` files exercise the published tarball
 end-to-end against the configured hosted API. Current CI coverage is
-DeepSeek-managed because that is the provider key provisioned for the public
-live workflow.
+Anthropic-managed for the default-provider proof and DeepSeek-managed for the
+broad feature-surface matrix, because those are the provider keys provisioned
+for the public live workflow.
 
 Each test installs the packed tarball into a tempdir, spawns
 `AgentExecutor.submitRun({ provider, ... })`, polls `getRun`,
 `listEvents`, and `listOutputs`, and asserts the user's probe
 string round-trips through a real upstream LLM call.
 
-Required env (all three):
+Required env:
 
 - `AEX_API_URL`
 - `AEX_API_TOKEN`
 - `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION`
+- `ANTHROPIC_API_KEY`
 - `DEEPSEEK_API_KEY`
 
 Local `.env.local` files should use the canonical variables above. The loader
