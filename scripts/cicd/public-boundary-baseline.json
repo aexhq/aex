@@ -54,6 +54,7 @@
       "./event-stream-client.js",
       "./http.js",
       "./index.js",
+      "./internal.js",
       "./runtime-sizes.js",
       "./managed-key.js",
       "./operations.js",

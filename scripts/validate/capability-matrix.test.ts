@@ -117,14 +117,17 @@ describe("provider/runtime capability matrix generation", () => {
   });
 
   it("keeps supported-provider live evidence provider-specific", () => {
-    for (const provider of RUN_PROVIDERS) {
-      const support = PROVIDER_PUBLIC_SUPPORT[provider];
-      const pointers = liveEvidencePointers(provider);
-      if (support.status !== "supported") {
-        expect(pointers, `${provider} is ${support.status} and must not advertise live evidence`).toEqual([]);
-        continue;
-      }
+    const providers = RUN_PROVIDERS.map((provider) => ({
+      provider,
+      support: PROVIDER_PUBLIC_SUPPORT[provider],
+      pointers: liveEvidencePointers(provider)
+    }));
 
+    for (const { provider, support, pointers } of providers.filter(({ support }) => support.status !== "supported")) {
+      expect(pointers, `${provider} is ${support.status} and must not advertise live evidence`).toEqual([]);
+    }
+
+    for (const { provider, pointers } of providers.filter(({ support }) => support.status === "supported")) {
       expect(pointers.length, `${provider} supported rows need installed-SDK live evidence`).toBeGreaterThan(0);
       for (const pointer of pointers) {
         const path = evidencePath(pointer);
