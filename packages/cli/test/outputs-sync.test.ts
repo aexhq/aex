@@ -101,5 +101,7 @@ describe("aex outputs sync (internal)", () => {
     const exit = await runOutputsSyncCmd(cap.io, ["workspace/outputs"]);
     expect(exit.code).toBe(0);
     expect(cap.stderr).toContain(`"non_absolute_path"`);
+    const summary = cap.stdout.trim().split("\n").pop()!;
+    expect(JSON.parse(summary)).toMatchObject({ summary: { dirs: 1, files: 0, missing: 1 } });
   });
 });

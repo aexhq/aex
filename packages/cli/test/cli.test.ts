@@ -233,6 +233,10 @@ describe("aex proxy — successful call", () => {
     expect(headers.get("x-aex-path")).toBe("/v1/refunds");
     const body = JSON.parse(cap.stdout.trim());
     expect(body.upstreamStatus).toBe(200);
+    expect(body.effectiveResponseMode).toBe("headers_only");
+    expect(body.remainingCalls).toBe(59);
+    expect(body.remainingResponseBytes).toBe(1000000);
+    expect(body.upstreamHeaders).toEqual({ "content-type": "application/json" });
   });
 
   it("reconstructs the envelope from a v2 streamed response (headers + raw body)", async () => {

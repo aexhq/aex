@@ -166,7 +166,7 @@ describe("aex status", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.url).toContain("/api/runs/run-42");
     expect(cap.calls[0]!.url).not.toContain("workspaceId=");
-    expect(JSON.parse(cap.stdout)).toMatchObject({ id: "run-42", status: "succeeded" });
+    expect(JSON.parse(cap.stdout)).toEqual({ id: "run-42", status: "succeeded" });
   });
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
@@ -198,8 +198,8 @@ describe("aex events", () => {
     expect(cap.exitCode).toBe(0);
     const lines = cap.stdout.trim().split("\n");
     expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]!)).toMatchObject({ id: "e1" });
-    expect(JSON.parse(lines[1]!)).toMatchObject({ id: "e2" });
+    expect(JSON.parse(lines[0]!)).toEqual({ id: "e1", type: "agent.message" });
+    expect(JSON.parse(lines[1]!)).toEqual({ id: "e2", type: "session.status_running" });
   });
 
   it("--follow polls /events and emits NDJSON until terminal (never opens an SSE stream)", async () => {
@@ -288,7 +288,7 @@ describe("aex wait", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(polls).toBeGreaterThanOrEqual(3);
+    expect(polls).toBe(3);
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
     expect(printed).toMatchObject({ id: "run-w", status: "succeeded" });
   });
