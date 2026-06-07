@@ -506,6 +506,20 @@ export class AgentExecutor {
       options.secrets.proxyEndpointAuth ?? []
     );
 
+    // Validate the runtime selector before any network I/O — inline drafts
+    // are uploaded below, so an invalid runtime must reject first rather than
+    // leak an asset upload.
+    if (
+      options.runtime !== undefined &&
+      !(RUNTIME_KINDS as readonly string[]).includes(options.runtime)
+    ) {
+      throw new AexError(
+        "RUNTIME_UNSUPPORTED",
+        `AgentExecutor.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
+          `(got ${JSON.stringify(options.runtime)})`
+      );
+    }
+
     // Walk Skill / AgentsMd / File instances. Inline drafts are eagerly
     // uploaded to the content-addressable asset store here (before POST /runs)
     // and referenced as plain `kind:"asset"` refs. Already-materialized asset
@@ -573,17 +587,6 @@ export class AgentExecutor {
         ? { proxyEndpoints: proxyEndpointDeclarations }
         : {})
     };
-
-    if (
-      options.runtime !== undefined &&
-      !(RUNTIME_KINDS as readonly string[]).includes(options.runtime)
-    ) {
-      throw new AexError(
-        "RUNTIME_UNSUPPORTED",
-        `AgentExecutor.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
-          `(got ${JSON.stringify(options.runtime)})`
-      );
-    }
 
     const run = await operations.submitRun(this.#http, request);
     return getSubmittedRunId(run);
