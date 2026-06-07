@@ -37,8 +37,6 @@ import {
   type WhoAmI,
   TERMINAL_RUN_STATUSES
 } from "@aexhq/contracts";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
 import { AgentsMd } from "./agents-md.js";
 import { uploadAsset, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
 import { File } from "./file.js";
@@ -366,7 +364,7 @@ export class FilesClient {
  */
 export class AgentExecutor {
   readonly #http: HttpClient;
-  /** The same fetch the HttpClient uses, kept for direct bootstrap uploads. */
+  /** The same fetch the HttpClient uses, threaded into `_uploadAsset`. */
   readonly #fetch: FetchLike | undefined;
   readonly skills: SkillsClient;
   readonly agentsMd: AgentsMdClient;
@@ -400,10 +398,10 @@ export class AgentExecutor {
    * NOTE (tech-debt): this is part of the legacy workspace-skill upload
    * surface (`SkillsClient` + `operations.createSkillBundle` + the TUS
    * chunked path in asset-upload.ts). The live submit path materializes
-   * inline skills via `uploadAsset` instead; `Skill` no longer
-   * exposes `.upload()`/`.fromId()`. This surface is retained pending a
-   * deliberate deprecation pass (it still threads into the CLI host
-   * commands), tracked in the remediation plan as item 4a.
+   * inline skills via `uploadAsset` instead; `Skill.upload(client)`
+   * pre-stages a draft explicitly for reuse. This surface is retained
+   * pending a deliberate deprecation pass (it still threads into the CLI
+   * host commands), tracked in the remediation plan as item 4a.
    */
   async _uploadSkillBundle(args: { readonly name: string; readonly body: Uint8Array }): Promise<SkillRecord> {
     return this.skills._uploadSkillBundle(args);
@@ -469,15 +467,12 @@ export class AgentExecutor {
    * before sending so credentials never enter the hashed submission or
    * the run snapshot.
    *
-   * Unstaged inline skills (`Skill.fromFiles` / `Skill.fromPath`
-   * without a prior `.upload`) are accepted: the SDK switches to a
-   * multipart body that carries the canonical zip bytes alongside the
-   * JSON submission. The dashboard BFF ingests each one through the
-   * standard workspace-skill upload pipeline (dedup by content hash;
-   * upload via the existing two-phase pending → ready flow) and
-   * rewrites the run's `skills[]` to reference the resulting `skl_*`
-   * ids. The bytes persist on aex; the user can browse and
-   * download the resulting workspace skill from the dashboard.
+   * Unstaged inline skills / agentsMd / files (`Skill.fromFiles` /
+   * `Skill.fromPath` / `AgentsMd.fromContent` / `File.fromBytes` without a
+   * prior `.upload`) are auto-uploaded to the content-addressable asset
+   * store (`/assets/presign` → PUT → `/assets/finalize`) before `POST /runs`,
+   * deduped by content hash, and referenced in the submission as plain
+   * `{ kind:"asset" }` refs — identical to a pre-staged `.upload(client)`.
    */
   async submitRun(options: SubmitRunOptions): Promise<string> {
     if (!options || typeof options !== "object") {
@@ -511,18 +506,14 @@ export class AgentExecutor {
       options.secrets.proxyEndpointAuth ?? []
     );
 
-    // Walk Skill / AgentsMd / File instances. Drafts are declared as direct
-    // inputs on the submit request, then uploaded to the run bootstrap target
-    // after the control plane accepts the run. Already-materialized asset refs
-    // still pass through unchanged.
-    const preparedSkills = prepareSkills(options.skills ?? []);
-    const preparedAgentsMd = prepareAgentsMd(options.agentsMd ?? []);
-    const preparedFiles = prepareFiles(options.files ?? []);
-    const directInputs = [
-      ...preparedSkills.directInputs,
-      ...preparedAgentsMd.directInputs,
-      ...preparedFiles.directInputs
-    ];
+    // Walk Skill / AgentsMd / File instances. Inline drafts are eagerly
+    // uploaded to the content-addressable asset store here (before POST /runs)
+    // and referenced as plain `kind:"asset"` refs. Already-materialized asset
+    // refs pass through unchanged.
+    const uploader: AssetUploader = (args) => this._uploadAsset(args);
+    const preparedSkills = await prepareSkills(options.skills ?? [], uploader);
+    const preparedAgentsMd = await prepareAgentsMd(options.agentsMd ?? [], uploader);
+    const preparedFiles = await prepareFiles(options.files ?? [], uploader);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
       options.secrets.mcpServers ?? []
@@ -532,9 +523,9 @@ export class AgentExecutor {
       model: options.model,
       ...(options.system ? { system: options.system } : {}),
       prompt,
-      skills: preparedSkills.refs,
-      agentsMd: preparedAgentsMd.refs,
-      files: preparedFiles.refs,
+      skills: preparedSkills,
+      agentsMd: preparedAgentsMd,
+      files: preparedFiles,
       // submissionMcpServers may contain workspace refs of the shape
       // {kind:"workspace", id:"mcp_..."}. The BFF runs
       // `resolveWorkspaceMcpRefsInSubmission` BEFORE the shared parser
@@ -594,30 +585,8 @@ export class AgentExecutor {
       );
     }
 
-    const submitRequest =
-      directInputs.length > 0
-        ? {
-            ...request,
-            bootstrapMode: "direct",
-            directInputs: directInputs.map(({ bytes: _bytes, ...descriptor }) => descriptor)
-          }
-        : request;
-
-    const run = await operations.submitRun(
-      this.#http,
-      submitRequest as PlatformRunSubmissionInput
-    ) as Run & DirectBootstrapSubmitResponse;
-    const runId = getSubmittedRunId(run);
-    if (directInputs.length > 0) {
-      await completeDirectBootstrap({
-        response: run,
-        directInputs,
-        hasRunAcceptedBootstrap: async () => hasRunAcceptedBootstrap(await operations.getRun(this.#http, runId)),
-        ...(options.signal ? { signal: options.signal } : {}),
-        ...(this.#fetch ? { fetch: this.#fetch } : {})
-      });
-    }
-    return runId;
+    const run = await operations.submitRun(this.#http, request);
+    return getSubmittedRunId(run);
   }
 
   getRun(runId: string): Promise<Run> {
@@ -849,10 +818,6 @@ export class AgentExecutor {
 // against the canonical terminal set rather than re-deriving one (which is how
 // `timed_out` got dropped from the old hardcoded list).
 const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
-const DIRECT_BOOTSTRAP_RETRY_STATUSES = new Set([408, 425, 429, 502, 503, 504]);
-const DIRECT_BOOTSTRAP_INITIAL_BACKOFF_MS = 100;
-const DIRECT_BOOTSTRAP_MAX_BACKOFF_MS = 1_000;
-const DIRECT_BOOTSTRAP_ATTEMPT_TIMEOUT_MS = 10_000;
 
 function isTerminal(status: string | undefined): boolean {
   return typeof status === "string" && TERMINAL_STATUSES.has(status);
@@ -967,46 +932,22 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
   return [...input];
 }
 
-type DirectInputRole = "skill" | "agentsMd" | "file";
-
-interface DirectInputUpload {
-  readonly inputId: string;
-  readonly role: DirectInputRole;
-  readonly assetId: string;
-  readonly name: string;
-  readonly sha256: string;
-  readonly sizeBytes: number;
-  readonly contentType: string;
-  readonly mountPath?: string;
+/**
+ * Stages a draft bundle's bytes to the content-addressable asset store and
+ * returns the resulting asset id. Satisfied by `AgentExecutor._uploadAsset`.
+ */
+type AssetUploader = (args: {
   readonly bytes: Uint8Array;
-}
+  readonly hash: string;
+  readonly contentType?: string;
+}) => Promise<UploadedAsset>;
 
-interface PreparedDirectRefs<T> {
-  readonly refs: readonly T[];
-  readonly directInputs: readonly DirectInputUpload[];
-}
-
-interface DirectBootstrapSubmitResponse {
-  readonly id?: string;
-  readonly runId?: string;
-  readonly bootstrapStatusUrl?: string;
-  readonly bootstrapToken?: string;
-  readonly bootstrapExpiresAt?: string;
-  readonly uploadBaseUrl?: string;
-  readonly routingHeaders?: Record<string, string>;
-}
-
-interface DirectBootstrapReady {
-  readonly uploadBaseUrl: string;
-  readonly routingHeaders?: Record<string, string>;
-  readonly abortUrl?: string;
-  readonly commitUrl?: string;
-}
-
-/** Walk Skill[] and turn drafts into direct-bootstrap descriptors. */
-function prepareSkills(skills: readonly Skill[]): PreparedDirectRefs<SkillRef> {
+/** Walk Skill[], eagerly upload drafts as assets, and return plain asset refs. */
+async function prepareSkills(
+  skills: readonly Skill[],
+  uploader: AssetUploader
+): Promise<readonly SkillRef[]> {
   const refs: SkillRef[] = [];
-  const directInputs: DirectInputUpload[] = [];
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
@@ -1021,18 +962,14 @@ function prepareSkills(skills: readonly Skill[]): PreparedDirectRefs<SkillRef> {
       if (!bundle) {
         throw new Error(`AgentExecutor.submitRun: skills[${i}] is draft but has no bytes`);
       }
-      const input = directInputFor({
-        role: "skill",
-        index: i,
-        name: bundle.name,
-        contentHash: bundle.contentHash,
+      const uploaded = await uploader({
         bytes: bundle.bytes,
+        hash: bundle.contentHash,
         contentType: "application/zip"
       });
-      directInputs.push(input);
       refs.push({
         kind: "asset",
-        assetId: input.assetId,
+        assetId: uploaded.assetId,
         name: bundle.name
       });
       continue;
@@ -1040,13 +977,15 @@ function prepareSkills(skills: readonly Skill[]): PreparedDirectRefs<SkillRef> {
     // Already-materialized asset ref.
     refs.push(ref);
   }
-  return { refs, directInputs };
+  return refs;
 }
 
-/** Walk AgentsMd[] and turn drafts into direct-bootstrap descriptors. */
-function prepareAgentsMd(agentsMds: readonly AgentsMd[]): PreparedDirectRefs<AgentsMdRef> {
+/** Walk AgentsMd[], eagerly upload drafts as assets, and return plain asset refs. */
+async function prepareAgentsMd(
+  agentsMds: readonly AgentsMd[],
+  uploader: AssetUploader
+): Promise<readonly AgentsMdRef[]> {
   const refs: AgentsMdRef[] = [];
-  const directInputs: DirectInputUpload[] = [];
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
@@ -1061,31 +1000,29 @@ function prepareAgentsMd(agentsMds: readonly AgentsMd[]): PreparedDirectRefs<Age
       if (!bundle) {
         throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] is draft but has no bytes`);
       }
-      const input = directInputFor({
-        role: "agentsMd",
-        index: i,
-        name: bundle.name,
-        contentHash: bundle.contentHash,
+      const uploaded = await uploader({
         bytes: bundle.bytes,
+        hash: bundle.contentHash,
         contentType: "application/zip"
       });
-      directInputs.push(input);
       refs.push({
         kind: "asset",
-        assetId: input.assetId,
+        assetId: uploaded.assetId,
         name: bundle.name
       });
       continue;
     }
     refs.push(ref);
   }
-  return { refs, directInputs };
+  return refs;
 }
 
-/** Walk File[] and turn drafts into direct-bootstrap descriptors. */
-function prepareFiles(files: readonly File[]): PreparedDirectRefs<FileRef> {
+/** Walk File[], eagerly upload drafts as assets, and return plain asset refs. */
+async function prepareFiles(
+  files: readonly File[],
+  uploader: AssetUploader
+): Promise<readonly FileRef[]> {
   const refs: FileRef[] = [];
-  const directInputs: DirectInputUpload[] = [];
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
@@ -1100,27 +1037,22 @@ function prepareFiles(files: readonly File[]): PreparedDirectRefs<FileRef> {
       if (!bundle) {
         throw new Error(`AgentExecutor.submitRun: files[${i}] is draft but has no bytes`);
       }
-      const input = directInputFor({
-        role: "file",
-        index: i,
-        name: bundle.name,
-        contentHash: bundle.contentHash,
+      const uploaded = await uploader({
         bytes: bundle.bytes,
-        contentType: "application/zip",
-        ...(bundle.mountPath ? { mountPath: bundle.mountPath } : {})
+        hash: bundle.contentHash,
+        contentType: "application/zip"
       });
-      directInputs.push(input);
       refs.push(
         bundle.mountPath !== undefined
           ? {
               kind: "asset",
-              assetId: input.assetId,
+              assetId: uploaded.assetId,
               name: bundle.name,
               mountPath: bundle.mountPath
             }
           : {
               kind: "asset",
-              assetId: input.assetId,
+              assetId: uploaded.assetId,
               name: bundle.name
             }
       );
@@ -1128,589 +1060,15 @@ function prepareFiles(files: readonly File[]): PreparedDirectRefs<FileRef> {
     }
     refs.push(ref);
   }
-  return { refs, directInputs };
+  return refs;
 }
 
-function directInputFor(args: {
-  readonly role: DirectInputRole;
-  readonly index: number;
-  readonly name: string;
-  readonly contentHash: string;
-  readonly bytes: Uint8Array;
-  readonly contentType: string;
-  readonly mountPath?: string;
-}): DirectInputUpload {
-  const sha256 = args.contentHash.startsWith("sha256:")
-    ? args.contentHash
-    : `sha256:${args.contentHash}`;
-  const hashHex = sha256.slice("sha256:".length);
-  if (!/^[0-9a-f]{64}$/.test(hashHex)) {
-    throw new Error(`AgentExecutor.submitRun: ${args.role}[${args.index}] content hash must be sha256:<64-hex>`);
-  }
-  return {
-    inputId: `input_${args.role}_${args.index}_${hashHex}`,
-    role: args.role,
-    assetId: `asset_${hashHex}`,
-    name: args.name,
-    sha256,
-    sizeBytes: args.bytes.byteLength,
-    contentType: args.contentType,
-    ...(args.mountPath ? { mountPath: args.mountPath } : {}),
-    bytes: args.bytes
-  };
-}
-
-function getSubmittedRunId(response: Run & DirectBootstrapSubmitResponse): string {
+function getSubmittedRunId(response: { readonly id?: string; readonly runId?: string }): string {
   const id = response.id ?? response.runId;
   if (typeof id !== "string" || id.length === 0) {
     throw new Error("AgentExecutor.submitRun: submit response did not include a run id");
   }
   return id;
-}
-
-async function completeDirectBootstrap(args: {
-  readonly response: DirectBootstrapSubmitResponse;
-  readonly directInputs: readonly DirectInputUpload[];
-  readonly fetch?: FetchLike;
-  readonly hasRunAcceptedBootstrap?: () => Promise<boolean>;
-  readonly signal?: AbortSignal;
-}): Promise<void> {
-  const token = args.response.bootstrapToken;
-  const statusUrl = args.response.bootstrapStatusUrl;
-  if (typeof token !== "string" || token.length === 0 || typeof statusUrl !== "string" || statusUrl.length === 0) {
-    return;
-  }
-  const fetchImpl = args.fetch ?? globalThis.fetch.bind(globalThis);
-  const useNodeTransport = args.fetch === undefined;
-  const deadline = bootstrapDeadline(args.response.bootstrapExpiresAt);
-  let target: DirectBootstrapReady | undefined;
-  try {
-    target = resolveBootstrapReady(args.response) ?? await pollBootstrapReady({
-      fetchImpl,
-      statusUrl,
-      token,
-      deadline,
-      ...(args.signal ? { signal: args.signal } : {})
-    });
-    for (const input of args.directInputs) {
-      await uploadDirectInput({
-        fetchImpl,
-        target,
-        token,
-        input,
-        deadline,
-        useNodeTransport,
-        ...(args.signal ? { signal: args.signal } : {})
-      });
-    }
-    await commitDirectInputs({
-      fetchImpl,
-      target,
-      token,
-      inputs: args.directInputs,
-      deadline,
-      useNodeTransport,
-      ...(args.hasRunAcceptedBootstrap ? { hasRunAcceptedBootstrap: args.hasRunAcceptedBootstrap } : {}),
-      ...(args.signal ? { signal: args.signal } : {})
-    });
-  } catch (err) {
-    await abortDirectBootstrap({
-      fetchImpl,
-      token,
-      statusUrl,
-      ...(target ? { target } : {}),
-      ...(args.signal ? { signal: args.signal } : {})
-    }).catch(() => undefined);
-    throw err;
-  }
-}
-
-async function pollBootstrapReady(args: {
-  readonly fetchImpl: FetchLike;
-  readonly statusUrl: string;
-  readonly token: string;
-  readonly deadline: number;
-  readonly signal?: AbortSignal;
-}): Promise<DirectBootstrapReady> {
-  while (!args.signal?.aborted) {
-    if (Date.now() >= args.deadline) {
-      throw new Error("AgentExecutor.submitRun: bootstrap target did not become ready before it expired");
-    }
-    const res = await args.fetchImpl(args.statusUrl, {
-      method: "GET",
-      headers: { authorization: `Bearer ${args.token}`, accept: "application/json" },
-      ...(args.signal ? { signal: args.signal } : {})
-    });
-    if (res.ok) {
-      const body = await res.json() as unknown;
-      const ready = resolveBootstrapReady(body);
-      if (ready) return ready;
-    } else if (![202, 404, 425].includes(res.status)) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(
-        `AgentExecutor.submitRun: bootstrap status failed with ${res.status}` +
-          (detail ? `: ${detail.slice(0, 300)}` : "")
-      );
-    }
-    await sleep(250, args.signal);
-  }
-  throw new Error("AgentExecutor.submitRun: aborted");
-}
-
-function resolveBootstrapReady(value: unknown): DirectBootstrapReady | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as {
-    readonly uploadBaseUrl?: unknown;
-    readonly bootstrapUploadBaseUrl?: unknown;
-    readonly routingHeaders?: unknown;
-    readonly abortUrl?: unknown;
-    readonly commitUrl?: unknown;
-    readonly state?: unknown;
-    readonly status?: unknown;
-  };
-  const base =
-    typeof record.uploadBaseUrl === "string"
-      ? record.uploadBaseUrl
-      : typeof record.bootstrapUploadBaseUrl === "string"
-        ? record.bootstrapUploadBaseUrl
-        : undefined;
-  if (!base) return undefined;
-  const routingHeaders = isStringRecord(record.routingHeaders) ? record.routingHeaders : undefined;
-  return {
-    uploadBaseUrl: stripTrailingSlash(base),
-    ...(routingHeaders ? { routingHeaders } : {}),
-    ...(typeof record.abortUrl === "string" ? { abortUrl: record.abortUrl } : {}),
-    ...(typeof record.commitUrl === "string" ? { commitUrl: record.commitUrl } : {})
-  };
-}
-
-async function uploadDirectInput(args: {
-  readonly fetchImpl: FetchLike;
-  readonly target: DirectBootstrapReady;
-  readonly token: string;
-  readonly input: DirectInputUpload;
-  readonly deadline: number;
-  readonly useNodeTransport: boolean;
-  readonly signal?: AbortSignal;
-}): Promise<void> {
-  let backoffMs = DIRECT_BOOTSTRAP_INITIAL_BACKOFF_MS;
-  let lastError: Error | undefined;
-  const uploadUrl = `${args.target.uploadBaseUrl}/inputs/${encodeURIComponent(args.input.inputId)}`;
-  while (!args.signal?.aborted) {
-    if (Date.now() >= args.deadline) {
-      throw lastError ?? new Error("AgentExecutor.submitRun: bootstrap input upload did not complete before it expired");
-    }
-    let res: Response;
-    try {
-      res = await directBootstrapFetch({
-        fetchImpl: args.fetchImpl,
-        url: uploadUrl,
-        deadline: args.deadline,
-        operation: `input upload for ${args.input.inputId}`,
-        useNodeTransport: args.useNodeTransport,
-        ...(args.signal ? { signal: args.signal } : {}),
-        init: {
-          method: "PUT",
-          headers: {
-            authorization: `Bearer ${args.token}`,
-            "content-type": args.input.contentType,
-            "x-aex-input-sha256": args.input.sha256,
-            "x-aex-input-size": String(args.input.sizeBytes),
-            ...(args.target.routingHeaders ?? {})
-          },
-          body: args.input.bytes as unknown as BodyInit
-        }
-      });
-    } catch (err) {
-      if (args.signal?.aborted) throw err;
-      lastError = bootstrapNetworkError(`input upload for ${args.input.inputId}`, err);
-      backoffMs = await waitForBootstrapRetry(backoffMs, args.deadline, args.signal, lastError);
-      continue;
-    }
-    if (res.ok) return;
-    const detail = await res.text().catch(() => "");
-    const err = new Error(
-      `AgentExecutor.submitRun: bootstrap input upload failed for ${args.input.inputId} ` +
-        `(status ${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`
-    );
-    if (!DIRECT_BOOTSTRAP_RETRY_STATUSES.has(res.status)) {
-      throw err;
-    }
-    lastError = err;
-    backoffMs = await waitForBootstrapRetry(backoffMs, args.deadline, args.signal, lastError);
-  }
-  throw lastError ?? new Error("AgentExecutor.submitRun: aborted");
-}
-
-async function waitForBootstrapRetry(
-  backoffMs: number,
-  deadline: number,
-  signal: AbortSignal | undefined,
-  lastError: Error
-): Promise<number> {
-  const remainingMs = deadline - Date.now();
-  if (remainingMs <= 0) throw lastError;
-  await sleep(Math.min(backoffMs, remainingMs), signal);
-  return Math.min(backoffMs * 2, DIRECT_BOOTSTRAP_MAX_BACKOFF_MS);
-}
-
-async function directBootstrapFetch(args: {
-  readonly fetchImpl: FetchLike;
-  readonly url: string;
-  readonly init: RequestInit;
-  readonly deadline: number;
-  readonly operation: string;
-  readonly useNodeTransport: boolean;
-  readonly hasRunAcceptedBootstrap?: () => Promise<boolean>;
-  readonly signal?: AbortSignal;
-}): Promise<Response> {
-  const remainingMs = args.deadline - Date.now();
-  if (remainingMs <= 0) {
-    throw new Error(`AgentExecutor.submitRun: bootstrap ${args.operation} did not complete before it expired`);
-  }
-  const timeoutMs = Math.min(DIRECT_BOOTSTRAP_ATTEMPT_TIMEOUT_MS, remainingMs);
-  if (args.useNodeTransport) {
-    return nodeDirectBootstrapFetch({
-      url: args.url,
-      init: args.init,
-      timeoutMs,
-      operation: args.operation,
-      ...(args.hasRunAcceptedBootstrap ? { hasRunAcceptedBootstrap: args.hasRunAcceptedBootstrap } : {}),
-      ...(args.signal ? { signal: args.signal } : {})
-    });
-  }
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  args.signal?.addEventListener("abort", onAbort, { once: true });
-  const fetchPromise = args.fetchImpl(args.url, { ...args.init, signal: controller.signal });
-  fetchPromise.catch(() => undefined);
-  let timer: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error(`AgentExecutor.submitRun: bootstrap ${args.operation} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([fetchPromise, timeoutPromise]);
-  } catch (err) {
-    if (args.signal?.aborted) throw err;
-    throw err;
-  } finally {
-    clearTimeout(timer!);
-    args.signal?.removeEventListener("abort", onAbort);
-  }
-}
-
-async function nodeDirectBootstrapFetch(args: {
-  readonly url: string;
-  readonly init: RequestInit;
-  readonly timeoutMs: number;
-  readonly operation: string;
-  readonly hasRunAcceptedBootstrap?: () => Promise<boolean>;
-  readonly signal?: AbortSignal;
-}): Promise<Response> {
-  const url = new URL(args.url);
-  const requestImpl = url.protocol === "http:" ? httpRequest : url.protocol === "https:" ? httpsRequest : undefined;
-  if (!requestImpl) {
-    throw new Error(`AgentExecutor.submitRun: bootstrap ${args.operation} URL must use http or https`);
-  }
-
-  return await new Promise<Response>((resolve, reject) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let activeResponse: { destroy: (error?: Error) => void } | undefined;
-    let acceptedPollStarted = false;
-    const requestHeaders = normalizeBootstrapRequestHeaders(args.init.headers);
-    if (!hasHeader(requestHeaders, "connection")) {
-      requestHeaders.connection = "close";
-    }
-
-    const request = requestImpl(
-      url,
-      {
-        method: args.init.method ?? "GET",
-        headers: requestHeaders,
-        agent: false
-      },
-      (res) => {
-        activeResponse = res;
-        const chunks: Uint8Array[] = [];
-        res.on("data", (chunk: string | Uint8Array) => {
-          chunks.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk));
-        });
-        res.on("end", () => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          activeResponse = undefined;
-          request.destroy();
-          resolve(
-            new Response(concatUint8Arrays(chunks), {
-              status: res.statusCode ?? 599,
-              statusText: res.statusMessage ?? "",
-              headers: normalizeBootstrapResponseHeaders(res.headers)
-            })
-          );
-        });
-        res.on("error", fail);
-      }
-    );
-
-    function cleanup(): void {
-      if (timer) clearTimeout(timer);
-      args.signal?.removeEventListener("abort", onAbort);
-    }
-
-    function fail(err: Error): void {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      activeResponse?.destroy(err);
-      request.destroy(err);
-      reject(err);
-    }
-
-    function timeoutError(): Error {
-      return new Error(`AgentExecutor.submitRun: bootstrap ${args.operation} timed out after ${args.timeoutMs}ms`);
-    }
-
-    function onAbort(): void {
-      fail(new Error(`AgentExecutor.submitRun: bootstrap ${args.operation} aborted`));
-    }
-
-    function startAcceptedPoll(): void {
-      if (!args.hasRunAcceptedBootstrap || acceptedPollStarted) return;
-      acceptedPollStarted = true;
-      void pollAcceptedBootstrapAfterRequestFinish({
-        check: args.hasRunAcceptedBootstrap,
-        isSettled: () => settled,
-        ...(args.signal ? { signal: args.signal } : {})
-      })
-        .then((accepted) => {
-          if (!accepted || settled) return;
-          settled = true;
-          cleanup();
-          activeResponse?.destroy();
-          request.destroy();
-          resolve(
-            new Response(JSON.stringify({ ok: true }), {
-              status: 200,
-              headers: { "content-type": "application/json" }
-            })
-          );
-        })
-        .catch(fail);
-    }
-
-    timer = setTimeout(() => fail(timeoutError()), args.timeoutMs);
-    request.setTimeout(args.timeoutMs, () => fail(timeoutError()));
-    request.on("error", fail);
-    request.on("finish", startAcceptedPoll);
-    args.signal?.addEventListener("abort", onAbort, { once: true });
-
-    try {
-      const body = normalizeBootstrapRequestBody(args.init.body);
-      if (body !== undefined) request.write(body);
-      request.end();
-      startAcceptedPoll();
-    } catch (err) {
-      fail(err instanceof Error ? err : new Error(String(err)));
-    }
-  });
-}
-
-async function pollAcceptedBootstrapAfterRequestFinish(args: {
-  readonly check: () => Promise<boolean>;
-  readonly isSettled: () => boolean;
-  readonly signal?: AbortSignal;
-}): Promise<boolean> {
-  while (!args.isSettled()) {
-    if (await checkRunAcceptedBootstrap(args.check)) return true;
-    await sleep(250, args.signal);
-  }
-  return false;
-}
-
-function normalizeBootstrapRequestHeaders(headers: HeadersInit | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!headers) return result;
-  if (headers instanceof Headers) {
-    headers.forEach((value, key) => {
-      result[key] = value;
-    });
-    return result;
-  }
-  if (Array.isArray(headers)) {
-    for (const [key, value] of headers) result[key] = value;
-    return result;
-  }
-  for (const [key, value] of Object.entries(headers)) {
-    if (value !== undefined) result[key] = String(value);
-  }
-  return result;
-}
-
-function hasHeader(headers: Record<string, string>, name: string): boolean {
-  const normalized = name.toLowerCase();
-  return Object.keys(headers).some((key) => key.toLowerCase() === normalized);
-}
-
-function normalizeBootstrapResponseHeaders(headers: Record<string, string | string[] | undefined>): Headers {
-  const result = new Headers();
-  for (const [key, value] of Object.entries(headers)) {
-    if (value === undefined) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) result.append(key, item);
-    } else {
-      result.set(key, value);
-    }
-  }
-  return result;
-}
-
-function normalizeBootstrapRequestBody(body: BodyInit | null | undefined): string | Uint8Array | undefined {
-  if (body === null || body === undefined) return undefined;
-  if (typeof body === "string") return body;
-  if (body instanceof Uint8Array) return body;
-  if (body instanceof ArrayBuffer) return new Uint8Array(body);
-  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
-  if (body instanceof URLSearchParams) return body.toString();
-  throw new Error("AgentExecutor.submitRun: unsupported bootstrap request body type");
-}
-
-function concatUint8Arrays(chunks: readonly Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-
-function bootstrapNetworkError(operation: string, value: unknown): Error {
-  const message = value instanceof Error ? value.message : String(value);
-  return new Error(`AgentExecutor.submitRun: bootstrap ${operation} failed: ${message}`);
-}
-
-async function commitDirectInputs(args: {
-  readonly fetchImpl: FetchLike;
-  readonly target: DirectBootstrapReady;
-  readonly token: string;
-  readonly inputs: readonly DirectInputUpload[];
-  readonly deadline: number;
-  readonly useNodeTransport: boolean;
-  readonly hasRunAcceptedBootstrap?: () => Promise<boolean>;
-  readonly signal?: AbortSignal;
-}): Promise<void> {
-  const commitUrl = args.target.commitUrl ?? `${args.target.uploadBaseUrl}/commit`;
-  let backoffMs = DIRECT_BOOTSTRAP_INITIAL_BACKOFF_MS;
-  let lastError: Error | undefined;
-  while (!args.signal?.aborted) {
-    if (Date.now() >= args.deadline) {
-      throw lastError ?? new Error("AgentExecutor.submitRun: bootstrap commit did not complete before it expired");
-    }
-    let res: Response;
-    try {
-      res = await directBootstrapFetch({
-        fetchImpl: args.fetchImpl,
-        url: commitUrl,
-        deadline: args.deadline,
-        operation: "commit",
-        useNodeTransport: args.useNodeTransport,
-        ...(args.hasRunAcceptedBootstrap ? { hasRunAcceptedBootstrap: args.hasRunAcceptedBootstrap } : {}),
-        ...(args.signal ? { signal: args.signal } : {}),
-        init: {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${args.token}`,
-            "content-type": "application/json",
-            accept: "application/json",
-            ...(args.target.routingHeaders ?? {})
-          },
-          body: JSON.stringify({
-            inputs: args.inputs.map((input) => ({
-              inputId: input.inputId,
-              sha256: input.sha256,
-              sizeBytes: input.sizeBytes
-            }))
-          })
-        }
-      });
-    } catch (err) {
-      if (args.signal?.aborted) throw err;
-      lastError = bootstrapNetworkError("commit", err);
-      if (await checkRunAcceptedBootstrap(args.hasRunAcceptedBootstrap)) return;
-      backoffMs = await waitForBootstrapRetry(backoffMs, args.deadline, args.signal, lastError);
-      continue;
-    }
-    if (res.ok) return;
-    const detail = await res.text().catch(() => "");
-    const err = new Error(
-      `AgentExecutor.submitRun: bootstrap commit failed with ${res.status}` +
-        (detail ? `: ${detail.slice(0, 300)}` : "")
-    );
-    if (!DIRECT_BOOTSTRAP_RETRY_STATUSES.has(res.status)) {
-      throw err;
-    }
-    lastError = err;
-    if (await checkRunAcceptedBootstrap(args.hasRunAcceptedBootstrap)) return;
-    backoffMs = await waitForBootstrapRetry(backoffMs, args.deadline, args.signal, lastError);
-  }
-  throw lastError ?? new Error("AgentExecutor.submitRun: aborted");
-}
-
-async function checkRunAcceptedBootstrap(check: (() => Promise<boolean>) | undefined): Promise<boolean> {
-  if (!check) return false;
-  return await check().catch(() => false);
-}
-
-function hasRunAcceptedBootstrap(run: Run): boolean {
-  if (run.status === "succeeded" || run.status === "cancelled" || run.status === "timed_out") return true;
-  if (run.status === "failed") return run.terminalAt !== undefined && run.terminalAt !== null;
-  return run.status === "running" || run.status === "provider_running";
-}
-
-async function abortDirectBootstrap(args: {
-  readonly fetchImpl: FetchLike;
-  readonly token: string;
-  readonly statusUrl: string;
-  readonly target?: DirectBootstrapReady;
-  readonly signal?: AbortSignal;
-}): Promise<void> {
-  const abortUrl = args.target?.abortUrl ?? `${args.statusUrl.replace(/\/status$/, "")}/abort`;
-  await args.fetchImpl(abortUrl, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${args.token}`,
-      accept: "application/json",
-      ...(args.target?.routingHeaders ?? {})
-    },
-    ...(args.signal ? { signal: args.signal } : {})
-  });
-}
-
-function bootstrapDeadline(expiresAt: string | undefined): number {
-  if (typeof expiresAt === "string") {
-    const parsed = Date.parse(expiresAt);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return Date.now() + 60_000;
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "string")
-  );
-}
-
-function stripTrailingSlash(s: string): string {
-  return s.endsWith("/") ? s.slice(0, -1) : s;
 }
 
 

@@ -22,13 +22,11 @@ import { readDirectoryAsFiles } from "./node-fs.js";
  * There is no `Skill.fromId(...)`. A URL is an ingestion source, not a
  * persistent reference.
  *
- * Two run-time flows exist for a draft Skill:
- *   - INLINE (default): pass the draft straight into `submitRun` — its bytes
- *     upload directly to the run's runtime (direct bootstrap).
- *   - PRE-UPLOADED: call `await skill.upload(client)` first — the bytes upload
- *     to the workspace asset store and a NEW materialized (`kind:"asset"`)
- *     Skill is returned. Submitting that one sends a plain asset ref and the
- *     machine pulls the bytes from storage at run time.
+ * An inline draft is auto-staged to the content-addressable asset store at
+ * submit time (the bytes upload before `POST /runs`; the wire ref becomes
+ * `kind:"asset"`). Call `await skill.upload(client)` to pre-stage the bytes
+ * explicitly — useful when you want to reuse the resulting `kind:"asset"`
+ * Skill across multiple runs.
  */
 export class Skill {
   readonly #ref: AssetRef | DraftSkillRef;
@@ -198,7 +196,7 @@ export class Skill {
    * Pre-upload a draft Skill's bytes to the workspace asset store and return a
    * NEW materialized Skill carrying a `kind:"asset"` ref. Blocking: the upload
    * completes before this resolves. Submitting the returned Skill sends a plain
-   * asset ref (no direct bootstrap) and the run pulls the bytes from storage.
+   * asset ref and the run pulls the bytes from storage.
    *
    * Consumes this draft (a draft becomes an asset exactly once); call only on a
    * draft built via `Skill.fromFiles` / `Skill.fromPath` / `Skill.fromUrl`.
