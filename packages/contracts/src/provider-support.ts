@@ -40,12 +40,31 @@ const COMMON_EVIDENCE = [
   { label: "Generated matrix freshness", href: "../../../scripts/validate/capability-matrix.test.ts" }
 ] as const satisfies readonly SupportPointer[];
 
-const LIVE_USER_MATRIX_EVIDENCE = [
-  { label: "Installed-SDK live user matrix", href: "../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts" }
+const ANTHROPIC_LIVE_USER_EVIDENCE = [
+  {
+    label: "Installed-SDK Anthropic live user test",
+    href: "../../../apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts"
+  }
 ] as const satisfies readonly SupportPointer[];
 
-const MANAGED_PROXY_EVIDENCE = [
-  ...LIVE_USER_MATRIX_EVIDENCE,
+const DEEPSEEK_LIVE_USER_EVIDENCE = [
+  {
+    label: "Installed-SDK DeepSeek live user test",
+    href: "../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts"
+  },
+  {
+    label: "Installed-SDK DeepSeek comprehensive live user matrix",
+    href: "../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts"
+  }
+] as const satisfies readonly SupportPointer[];
+
+const ANTHROPIC_MANAGED_EVIDENCE = [
+  ...ANTHROPIC_LIVE_USER_EVIDENCE,
+  { label: "Runtime support validator", href: "../../contracts/test/runtime-support.test.ts" }
+] as const satisfies readonly SupportPointer[];
+
+const DEEPSEEK_MANAGED_EVIDENCE = [
+  ...DEEPSEEK_LIVE_USER_EVIDENCE,
   { label: "Runtime support validator", href: "../../contracts/test/runtime-support.test.ts" }
 ] as const satisfies readonly SupportPointer[];
 
@@ -69,9 +88,9 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     status: "supported",
     docsAnchor: "anthropic",
     docs: COMMON_DOCS,
-    evidence: [...COMMON_EVIDENCE, ...MANAGED_PROXY_EVIDENCE],
+    evidence: [...COMMON_EVIDENCE, ...ANTHROPIC_MANAGED_EVIDENCE],
     runtimeEvidence: {
-      managed: MANAGED_PROXY_EVIDENCE
+      managed: ANTHROPIC_MANAGED_EVIDENCE
     }
   },
   deepseek: {
@@ -79,9 +98,9 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     status: "supported",
     docsAnchor: "deepseek",
     docs: COMMON_DOCS,
-    evidence: [...COMMON_EVIDENCE, ...MANAGED_PROXY_EVIDENCE],
+    evidence: [...COMMON_EVIDENCE, ...DEEPSEEK_MANAGED_EVIDENCE],
     runtimeEvidence: {
-      managed: MANAGED_PROXY_EVIDENCE
+      managed: DEEPSEEK_MANAGED_EVIDENCE
     }
   },
   openai: {

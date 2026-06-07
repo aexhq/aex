@@ -12,7 +12,7 @@
     "brand:check": "node scripts/cicd/check-old-brand.mjs",
     "contracts:parity:check": "node scripts/cicd/check-contract-parity.mjs",
     "test": "pnpm test:unit",
-    "test:unit": "pnpm -r --workspace-concurrency=2 --if-present run test:unit && pnpm exec vitest run --root scripts/validate capability-matrix.test.ts",
+    "test:unit": "pnpm -r --workspace-concurrency=2 --if-present run test:unit && pnpm --filter @aexhq/sdk run test:security && pnpm exec vitest run --root scripts/validate capability-matrix.test.ts",
     "test:user": "pnpm --filter @aexhq/user-tests run test:user",
     "test:user:offline": "pnpm --filter @aexhq/user-tests run test:user:offline",
     "test:user:heavy": "pnpm --filter @aexhq/user-tests run test:user:heavy",
