@@ -18,7 +18,7 @@
  *                                                       run-config.md,
  *                                                       cleanup.md:10
  *
- * `packages/sdk/src/skill.ts:28-30` explicitly states *"There is no
+ * `packages/sdk/src/skill.ts:22-23` explicitly states *"There is no
  * `Skill.fromId(...)` and no `.upload(client)`"* — i.e. the doc/code
  * gap is acknowledged in the source comment, but the published docs
  * weren't updated. Every snippet that touches uploads is currently

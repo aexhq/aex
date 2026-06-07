@@ -17,7 +17,7 @@ const events = await aex.events(runId);
 // Stream the RunEvent snapshot shape: yields each event once, stops when the
 // run reaches a terminal status. Backed by polling the aex events endpoint.
 for await (const event of aex.stream(runId, { intervalMs: 1000 })) {
-  if (event.type === "agent.message") {
+  if (event.type === "TEXT_MESSAGE_CONTENT") {
     // ...
   }
 }

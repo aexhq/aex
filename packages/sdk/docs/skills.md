@@ -6,17 +6,17 @@ title: Skills
 
 Skill inputs accepted by the platform:
 
-- provider-managed Anthropic prebuilt Agent Skills (`pdf`, `xlsx`,
-  `docx`, `pptx` — see the
-  [Anthropic Agent Skills overview](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview)
-  for the live catalog). Note that Anthropic web search is a Messages
-  API *tool* (`{ type: "web_search_…" }`), not an Agent Skill, and is
-  not currently exposed through `submitRun`;
-- existing custom provider skill IDs;
 - workspace skill bundles (persistent, referenced by `skl_*` id);
 - inline-supplied bundles passed directly at `submitRun` — these
   persist on aex as workspace skills with auto-suffixed names,
   one row per submission (see "Inline supply" below).
+
+Provider-hosted skill refs (`kind:"provider"`, e.g. Anthropic prebuilt
+Agent Skills or custom provider skill IDs) are **not supported on the
+managed runtime** — every new submission dispatches to managed and a
+`kind:"provider"` ref is rejected at submission time with
+`feature_runtime_mismatch`. Supply the bytes as a workspace or inline
+bundle instead.
 
 **How skills reach the agent:** every skill bundle is materialized into
 the run's workspace under `skills/<name>/` before the first agent turn.
@@ -135,3 +135,23 @@ produce the **same canonical asset** and dedup against each other.
 
 `Skill.fromUrl` is universal (Node 18+ / browser): it uses the global `fetch`,
 or pass one via `{ fetch }`.
+
+## Re-reference an uploaded skill (`Skill.fromCatalog`)
+
+To re-use a skill already persisted in the workspace catalog (e.g. one an
+earlier inline supply created), pass the `Skill` record returned by
+`aex.skills.list()` / `aex.skills.get()` to `Skill.fromCatalog`:
+
+```ts
+const [record] = await aex.skills.list();
+
+await aex.submitRun({
+  model, prompt,
+  skills: [Skill.fromCatalog(record)],
+  secrets: { apiKey }
+});
+```
+
+The record must be `ready` (it carries a content hash). Unlike the draft
+builders this performs no upload — `fromCatalog` produces a `kind:"asset"`
+ref directly against the bytes already in the catalog.

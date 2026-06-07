@@ -30,6 +30,7 @@ aex cancel  <run-id>             --api-token …
 aex delete  <run-id>             --api-token …
 aex whoami                       --api-token …
 aex skills  <upload|list|get|delete> [flags] --api-token …
+aex delete-asset <assetId|hash>  --api-token …
 ```
 
 The SDK class and the CLI are backed by the same public `@aexhq/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `aex` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `aex proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
@@ -102,7 +103,7 @@ Stream events live with `aex.stream(runId)`:
 
 ```ts
 for await (const event of aex.stream(runId)) {
-  if (event.type === "agent.message") {
+  if (event.type === "TEXT_MESSAGE_CONTENT") {
     // typed event helpers live under `aex`'s event guard exports.
   }
 }

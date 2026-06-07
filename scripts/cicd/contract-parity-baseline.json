@@ -4,55 +4,55 @@
       "scope": "deny-list",
       "side": "platform",
       "lineHash": "2c6fa7fa92c8c0aa29dfb0a53ef6ba2111a2b5ff4ebdac4ae859f813fddec826",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "platform",
       "lineHash": "490606c3de66e7692bccbbf1b5cf984437d7795ddbc065914e70539bd06513b5",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "platform",
       "lineHash": "556fe507723c402f9b3157c1ec516fa28e9308e38abb162a2e83e4437c2f2945",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "platform",
       "lineHash": "8730f22e460952db26477acf275f6b042400862bd4384509ef290f04241e05e5",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "platform",
       "lineHash": "d5771aa340e753c621f3889d6ef9e2e3ad8fa533af2e2477b9e7c7db75d6da4f",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "public",
       "lineHash": "16f3aabb19983284093f54c8e24de04f6d78acd5e39e7de4979e2716d514f53d",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "public",
       "lineHash": "84171989c3a4617f0caf4325360132ef9388c23d47d6957df47e455de5249c61",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "public",
       "lineHash": "a3df861fb8e4fae35e664993737cecf58ffcddef5d2371b302717eef11cac87f",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     },
     {
       "scope": "deny-list",
       "side": "public",
       "lineHash": "be5262d64acde5c1ecf70f3da31f9fa72979c58c7933894bd2a6b7da229aa355",
-      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate (axis 2); only the comment wording differs."
+      "why": "Intentional doc de-internalization: public strips platform-internal infra refs (dashboard ssrf.ts/pinned-fetch.ts, CF, backlog) from the residual-DNS-rebind NOTE. The deny-list CODE is verified byte-identical against blueprint.ts by this gate; only the comment wording differs."
     }
   ]
 }

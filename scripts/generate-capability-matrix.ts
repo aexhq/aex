@@ -228,7 +228,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "### Managed unsupported features",
     "",
-    "Provider-hosted skill refs such as `Skill.provider(...)` are rejected because new runs dispatch to the managed runtime. Use inline aex skills or remove the provider-hosted ref.",
+    "Provider-hosted skill refs (a `kind:\"provider\"` skill ref) are rejected because new runs dispatch to the managed runtime. Supply the skill as an inline or workspace aex bundle, or remove the provider-hosted ref.",
     "",
     "Notes:",
     "",

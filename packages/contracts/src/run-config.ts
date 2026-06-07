@@ -581,9 +581,11 @@ export function rejectStdioMcpShape(record: Record<string, unknown>): void {
 /**
  * Reasons an IP-literal host should be refused. Returns null when the
  * literal is a routable public address (or not an IP literal at all — name
- * resolution is the caller's concern). Single source of truth for the
- * numeric-range deny-list so the shared MCP parser, the Worker BYOK proxy
- * handlers, and `submission.parseProxyBaseUrl` classify the same bytes.
+ * resolution is the caller's concern). This in-package copy of the
+ * numeric-range deny-list is kept byte-identical to
+ * platform/packages/shared/src/blueprint.ts by the contract-parity gate, so
+ * the shared MCP parser, the Worker BYOK proxy handlers, and
+ * `submission.parseProxyBaseUrl` all classify the same bytes.
  *
  * `host` is the already-bracket-stripped, lowercased hostname.
  *

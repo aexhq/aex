@@ -30,7 +30,11 @@ await aex.download(runId, { to: "./run.zip" });
 What you get:
 
 - **One multi-provider surface.** The same `submitRun` shape and event stream
-  for Anthropic, DeepSeek, OpenAI, Gemini, and Mistral.
+  for Anthropic, DeepSeek, OpenAI, Gemini, and Mistral. Anthropic and DeepSeek
+  are live-verified; OpenAI, Gemini, and Mistral are accepted but not yet
+  live-verified — see the
+  [provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)
+  for per-provider status.
 - **BYOK custody.** Provider keys travel inline per run, are held in
   run-scoped custody, and are excluded from idempotency hashing.
 - **An ordered, durable event stream.** Every run emits one typed event

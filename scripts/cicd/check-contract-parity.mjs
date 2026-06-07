@@ -2,27 +2,20 @@
 /**
  * Cross-repo contract parity gate.
  *
- * The public `@aexhq/contracts` source is a published mirror of the platform
- * contract surface (`aexhq/aex-platform` `packages/contracts/src`, itself a
- * mirror of `packages/shared/src`). When the two drift silently, published
- * SDK/CLI clients ship a different wire contract than the Worker enforces —
- * the class of bug this gate exists to catch at PR time instead of in prod.
- *
- * Platform now consumes the public `@aexhq/contracts` package directly (via a
- * filesystem `link:` to this repo), so there is no longer a platform/contracts
- * mirror to compare. One axis remains:
- *   - the SSRF host deny-list, whose single source of truth is
- *     platform/shared/src/blueprint.ts. The public copy lives inline in
- *     run-config.ts (public has no blueprint.ts), so the three deny
- *     functions are compared directly so the Wave-1 hardening can't
- *     regress on one side only.
+ * This repo (public) is the single source of truth for the contract surface;
+ * platform consumes `@aexhq/contracts` directly via a filesystem `link:` to
+ * this repo, so there is no platform/contracts mirror to diff. The gate's sole
+ * remaining axis is the SSRF host deny-list, which is duplicated by necessity:
+ *   - the public copy lives inline in run-config.ts (public has no blueprint.ts);
+ *   - the platform copy lives in platform/packages/shared/src/blueprint.ts.
+ * The two are kept byte-identical so the Wave-1 SSRF hardening can't regress on
+ * one side only — the three deny functions are compared directly here.
  *
  * A divergence fails the gate UNLESS it is recorded in the baseline
  * (`contract-parity-baseline.json`, same dir). The baseline is the explicit
- * allowlist: it pins KNOWN, intentional or tracked-temporary deltas
- * (public-only `createSkillBundleDirect`, the `./blueprint.js` vs
- * `./run-config.js` import-path mirror, public's de-branded doc comments, and
- * any platform feature not yet ported). Each baseline entry carries a `why`.
+ * allowlist: it pins KNOWN, intentional or tracked-temporary deny-list deltas
+ * (e.g. public's de-branded doc comments inside the deny block, which strip
+ * platform-internal infra references). Each baseline entry carries a `why`.
  * NEW divergence that isn't in the baseline fails — that's the tripwire.
  *
  * The gate SKIPS (exit 0, loud notice) when the platform tree isn't checked
@@ -113,7 +106,7 @@ function foundEntry(scope, side, line) {
   return { scope, side, lineHash: lineHash(line) };
 }
 
-// Collect every current divergence across both axes.
+// Collect every current divergence on the deny-list axis.
 const found = new Map(); // fp -> { scope, side, line }
 
 // ---- SSRF deny-list parity (blueprint.ts <-> run-config.ts) ----------------
