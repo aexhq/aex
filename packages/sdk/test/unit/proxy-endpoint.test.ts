@@ -35,7 +35,7 @@ describe("ProxyEndpoint", () => {
       allowPathPrefixes: ["/api/v1/series"]
     });
     expect(header.declaration.authShape).toEqual({ type: "header", name: "DD-API-KEY" });
-    expect(header.auth?.value).toEqual({ type: "header", value: "ddkey" });
+    expect(header.auth).toEqual({ name: "datadog", value: { type: "header", value: "ddkey" } });
 
     const basic = ProxyEndpoint.basic({
       name: "legacy",
@@ -46,7 +46,7 @@ describe("ProxyEndpoint", () => {
       allowPathPrefixes: ["/v1"]
     });
     expect(basic.declaration.authShape).toEqual({ type: "basic" });
-    expect(basic.auth?.value).toEqual({ type: "basic", username: "u", password: "p" });
+    expect(basic.auth).toEqual({ name: "legacy", value: { type: "basic", username: "u", password: "p" } });
 
     const query = ProxyEndpoint.query({
       name: "weather",
@@ -57,7 +57,7 @@ describe("ProxyEndpoint", () => {
       allowPathPrefixes: ["/forecast"]
     });
     expect(query.declaration.authShape).toEqual({ type: "query", name: "apikey" });
-    expect(query.auth?.value).toEqual({ type: "query", value: "wk" });
+    expect(query.auth).toEqual({ name: "weather", value: { type: "query", value: "wk" } });
   });
 
   it("submitRun splits ProxyEndpoint instances into declaration + secrets bag", async () => {

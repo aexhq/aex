@@ -8,8 +8,7 @@ describe("secret redaction", () => {
       message: "Authorization header sk-ant-test-secretsecretsecretsecret"
     });
 
-    expect(JSON.stringify(redacted)).not.toContain("sk-ant-test");
-    expect(JSON.stringify(redacted)).toContain("[REDACTED]");
+    expect(redacted).toEqual({ apiKey: "[REDACTED]", message: "Authorization header [REDACTED]" });
   });
 
   it("does not stringify SecretString values", () => {

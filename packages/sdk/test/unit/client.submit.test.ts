@@ -299,138 +299,166 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
   });
 
   it("retries a direct bootstrap input upload after a 502 and then commits", async () => {
+    const draft = await AgentsMd.fromContent("# Rules\nRetry the upload.\n", { name: "rules" });
     const calls: CapturedRequest[] = [];
     let inputPutCount = 0;
-    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-      calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
-      if (url.endsWith("/api/runs")) {
-        return new Response(
-          JSON.stringify({
-            id: "run_test",
-            status: "queued",
-            bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
-            bootstrapToken: "boot_retry",
-            bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
-          }),
-          { status: 202, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.endsWith("/bootstrap/status")) {
-        return new Response(
-          JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.includes("/bootstrap/inputs/")) {
-        inputPutCount += 1;
-        return inputPutCount === 1
-          ? new Response("try again", { status: 502 })
-          : new Response("", { status: 200 });
-      }
-      if (url.endsWith("/bootstrap/commit")) {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-06T00:00:00Z"));
+    try {
+      const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+        if (url.endsWith("/api/runs")) {
+          return new Response(
+            JSON.stringify({
+              id: "run_test",
+              status: "queued",
+              bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+              bootstrapToken: "boot_retry",
+              bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+            }),
+            { status: 202, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.endsWith("/bootstrap/status")) {
+          return new Response(
+            JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.includes("/bootstrap/inputs/")) {
+          inputPutCount += 1;
+          return inputPutCount === 1
+            ? new Response("try again", { status: 502 })
+            : new Response("", { status: 200 });
+        }
+        if (url.endsWith("/bootstrap/commit")) {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (url.endsWith("/bootstrap/abort")) {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ ok: false }), {
+          status: 500,
           headers: { "content-type": "application/json" }
         });
-      }
-      if (url.endsWith("/bootstrap/abort")) {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-      return new Response(JSON.stringify({ ok: false }), {
-        status: 500,
-        headers: { "content-type": "application/json" }
       });
-    });
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    const draft = await AgentsMd.fromContent("# Rules\nRetry the upload.\n", { name: "rules" });
+      const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
 
-    await expect(
-      client.submitRun({
+      const submitted = client.submitRun({
         model: "m",
         prompt: "p",
         agentsMd: [draft],
         secrets: { apiKey: "k" }
-      })
-    ).resolves.toBe("run_test");
+      });
 
-    const inputPutCalls = calls.filter((c) => c.url.includes("/bootstrap/inputs/"));
-    expect(inputPutCalls).toHaveLength(2);
-    expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
-    expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
-    expect(calls.map((c) => c.url)).toEqual([
-      "https://x/api/runs",
-      "https://x/api/runs/run_test/bootstrap/status",
-      expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
-      expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
-      "https://bootstrap.example/run_test/bootstrap/commit"
-    ]);
+      // Drive the loop until the first (502) input upload lands, then advance
+      // the 100ms backoff on fake timers so the retry fires without a real sleep.
+      for (let i = 0; i < 10 && inputPutCount === 0; i += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(inputPutCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(submitted).resolves.toBe("run_test");
+
+      const inputPutCalls = calls.filter((c) => c.url.includes("/bootstrap/inputs/"));
+      expect(inputPutCalls).toHaveLength(2);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+      expect(calls.map((c) => c.url)).toEqual([
+        "https://x/api/runs",
+        "https://x/api/runs/run_test/bootstrap/status",
+        expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
+        expect.stringContaining("https://bootstrap.example/run_test/bootstrap/inputs/"),
+        "https://bootstrap.example/run_test/bootstrap/commit"
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retries a thrown direct bootstrap input upload error and then commits", async () => {
+    const draft = await AgentsMd.fromContent("# Rules\nRetry the upload.\n", { name: "rules" });
     const calls: CapturedRequest[] = [];
     let inputPutCount = 0;
-    const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-      calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
-      if (url.endsWith("/api/runs")) {
-        return new Response(
-          JSON.stringify({
-            id: "run_test",
-            status: "queued",
-            bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
-            bootstrapToken: "boot_retry",
-            bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
-          }),
-          { status: 202, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.endsWith("/bootstrap/status")) {
-        return new Response(
-          JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.includes("/bootstrap/inputs/")) {
-        inputPutCount += 1;
-        if (inputPutCount === 1) throw new TypeError("fetch failed");
-        return new Response("", { status: 200 });
-      }
-      if (url.endsWith("/bootstrap/commit")) {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-06T00:00:00Z"));
+    try {
+      const fetch: typeof globalThis.fetch = vi.fn(async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        calls.push({ url, method: (init?.method ?? "GET").toString(), headers: {}, body: init?.body });
+        if (url.endsWith("/api/runs")) {
+          return new Response(
+            JSON.stringify({
+              id: "run_test",
+              status: "queued",
+              bootstrapStatusUrl: "https://x/api/runs/run_test/bootstrap/status",
+              bootstrapToken: "boot_retry",
+              bootstrapExpiresAt: new Date(Date.now() + 60_000).toISOString()
+            }),
+            { status: 202, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.endsWith("/bootstrap/status")) {
+          return new Response(
+            JSON.stringify({ status: "ready", uploadBaseUrl: "https://bootstrap.example/run_test/bootstrap" }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        if (url.includes("/bootstrap/inputs/")) {
+          inputPutCount += 1;
+          if (inputPutCount === 1) throw new TypeError("fetch failed");
+          return new Response("", { status: 200 });
+        }
+        if (url.endsWith("/bootstrap/commit")) {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (url.endsWith("/bootstrap/abort")) {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ ok: false }), {
+          status: 500,
           headers: { "content-type": "application/json" }
         });
-      }
-      if (url.endsWith("/bootstrap/abort")) {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-      return new Response(JSON.stringify({ ok: false }), {
-        status: 500,
-        headers: { "content-type": "application/json" }
       });
-    });
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    const draft = await AgentsMd.fromContent("# Rules\nRetry the upload.\n", { name: "rules" });
+      const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
 
-    await expect(
-      client.submitRun({
+      const submitted = client.submitRun({
         model: "m",
         prompt: "p",
         agentsMd: [draft],
         secrets: { apiKey: "k" }
-      })
-    ).resolves.toBe("run_test");
+      });
 
-    expect(calls.filter((c) => c.url.includes("/bootstrap/inputs/"))).toHaveLength(2);
-    expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
-    expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+      // Drive the loop until the first (thrown) input upload lands, then advance
+      // the 100ms backoff on fake timers so the retry fires without a real sleep.
+      for (let i = 0; i < 10 && inputPutCount === 0; i += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(inputPutCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(submitted).resolves.toBe("run_test");
+
+      expect(calls.filter((c) => c.url.includes("/bootstrap/inputs/"))).toHaveLength(2);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/commit"))).toHaveLength(1);
+      expect(calls.filter((c) => c.url.endsWith("/bootstrap/abort"))).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retries a stalled direct bootstrap commit and then resolves", async () => {

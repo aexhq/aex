@@ -37,7 +37,11 @@ describe("aex package: CLI bin surface", () => {
   });
 
   it("bundles a byte-identical copy of the @aexhq/cli artifact", () => {
-    if (!existsSync(sdkBundlePath) || !existsSync(cliBundlePath)) return;
+    // No silent skip: a missing bundle must fail loudly (run `pnpm
+    // --filter @aexhq/sdk run build` first). The presence test above
+    // documents the same build hint on its own failure path.
+    expect(existsSync(sdkBundlePath)).toBe(true);
+    expect(existsSync(cliBundlePath)).toBe(true);
     const sdkText = readFileSync(sdkBundlePath);
     const cliText = readFileSync(cliBundlePath);
     expect(sdkText.equals(cliText)).toBe(true);

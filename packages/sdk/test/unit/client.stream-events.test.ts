@@ -67,7 +67,7 @@ describe("AgentExecutor.streamEvents — polling the coordinator-backed /events"
   });
 
   it("stops promptly when the signal aborts", async () => {
-    const { fetch: f } = makeFetch([
+    const { fetch: f, calls } = makeFetch([
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
       { match: /\/runs\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
     ]);
@@ -79,5 +79,7 @@ describe("AgentExecutor.streamEvents — polling the coordinator-backed /events"
       events.push(ev.id);
     }
     expect(events).toEqual([]);
+    // The loop was provably live (polling started) before the abort stopped it.
+    expect(calls.length).toBeGreaterThan(0);
   });
 });

@@ -52,10 +52,15 @@ function walk(dir: string, out: string[]): void {
   }
 }
 
+let sourceFilesCache: readonly string[] | undefined;
+
 function listSourceFiles(): readonly string[] {
-  const out: string[] = [];
-  walk(repoRoot, out);
-  return out;
+  if (sourceFilesCache === undefined) {
+    const out: string[] = [];
+    walk(repoRoot, out);
+    sourceFilesCache = out;
+  }
+  return sourceFilesCache;
 }
 
 function relPosix(abs: string): string {
@@ -111,11 +116,9 @@ describe("agent-first invariants (workspace-wide)", () => {
     ];
     const offenders: string[] = [];
     const pattern = /process\.env\.AEX_/g;
-    const allowlist = new Set<string>();
     for (const file of listSourceFiles()) {
       const rel = relPosix(file);
       if (!userFacingRoots.some((root) => rel.startsWith(`${root}/`))) continue;
-      if (allowlist.has(rel)) continue;
       const text = readFileSync(file, "utf8");
       for (const match of text.matchAll(pattern)) {
         offenders.push(`${rel}: ${match[0]}`);

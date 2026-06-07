@@ -55,9 +55,13 @@ describe("uploadAsset (direct-to-storage)", () => {
       }) as AssetsHttpClient["request"]
     };
     let putUrl = "";
+    let putMethod = "";
+    let putBody: BodyInit | null | undefined;
     let putHeaders: Record<string, string> = {};
     const fetch: AssetFetch = vi.fn(async (url: string, init?: RequestInit) => {
       putUrl = url;
+      putMethod = init?.method ?? "";
+      putBody = init?.body;
       putHeaders = (init?.headers ?? {}) as Record<string, string>;
       return { ok: true, status: 200, text: async () => "" };
     });
@@ -65,7 +69,9 @@ describe("uploadAsset (direct-to-storage)", () => {
     expect(out.exists).toBe(false);
     expect(out.assetId).toBe(`asset_${hex}`);
     expect(calls).toEqual(["/assets/presign", "/assets/finalize"]);
-    expect(putUrl).toContain("object-storage.example.test");
+    expect(putUrl).toBe("https://object-storage.example.test/bucket/assets/ws/" + hex + "?X-Amz-Signature=sig");
+    expect(putMethod).toBe("PUT");
+    expect(Array.from(putBody as Uint8Array)).toEqual(Array.from(bytes));
     expect(putHeaders["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
   });
 
