@@ -12,16 +12,18 @@ repository on a clean `main` branch unless tags are added deliberately later.
 
 ## How to ship a release
 
-1. Bump both `packages/sdk/package.json#version` and
-   `packages/sdk/src/version.ts` to the next semver.
+1. Bump the publishable package manifests to the next shared semver:
+   `packages/contracts/package.json`, `packages/conformance/package.json`,
+   `packages/cli/package.json`, and `packages/sdk/package.json`. Also update
+   `packages/sdk/src/version.ts` to match.
 2. Land the change on `main` with any companion code or docs.
 3. Confirm CI is green.
 4. Run the **Release** workflow from `main` and choose the npm dist-tag
    (`latest` or `next`).
 
-If `@aexhq/sdk@<version>` already exists on npm, the release workflow fails before
-publishing. A failed release is fixed by bumping to a higher version and running
-the workflow again.
+If any package at `<version>` already exists on npm, the release workflow fails
+before publishing. A failed release is fixed by bumping to a higher version and
+running the workflow again.
 
 ## Release pipeline
 
@@ -29,7 +31,9 @@ The workflow has two jobs:
 
 1. **`publish`** runs on Ubuntu in the protected `npm-release` environment:
    - `pnpm install --frozen-lockfile`
-   - npm version availability check for `packages/sdk/package.json#version`
+   - npm version availability checks for `@aexhq/contracts`,
+     `@aexhq/conformance`, `@aexhq/cli`, and `@aexhq/sdk` at
+     `packages/sdk/package.json#version`
    - `pnpm lint`
    - `pnpm test`
    - `pnpm run docs:build`
@@ -37,7 +41,8 @@ The workflow has two jobs:
    - `pnpm --filter @aexhq/sdk pack`
    - `pnpm run test:user:offline` against the packed tarball
    - a final npm version availability check
-   - `pnpm publish --provenance --no-git-checks --access public`
+   - `pnpm publish --provenance --no-git-checks --access public` for
+     `@aexhq/contracts`, `@aexhq/conformance`, `@aexhq/cli`, and `@aexhq/sdk`
 2. **`post-publish-user-tests`** waits for npm registry visibility, then runs
    `pnpm run test:user:offline` against the published version on Ubuntu and
    Windows.
@@ -69,16 +74,17 @@ with no workspace access:
 
 ## Repository setup
 
-Configure npm Trusted Publishing for this repository:
+Set `NPM_TOKEN` in the protected GitHub `npm-release` environment. The token must
+have publish rights for all four packages. The workflow still publishes with
+provenance.
+
+Trusted Publishing can replace the token after every package exists on npm and
+the trusted publisher is configured for each package:
 
 - **Organization or user**: `aexhq`
 - **Repository**: `aex`
 - **Workflow filename**: `release.yml`
 - **Environment name**: `npm-release`
-
-Protect the GitHub `npm-release` environment with the reviewers or deployment
-rules you want before enabling real publishes. No `NPM_TOKEN` secret is
-required when Trusted Publishing is configured.
 
 ## Local checklist
 

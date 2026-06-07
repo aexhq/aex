@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/contracts",
-  "version": "0.13.9",
+  "version": "0.13.10",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git"
@@ -14,11 +14,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./internal": {
       "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js"
+      "import": "./dist/internal.js",
+      "default": "./dist/internal.js"
     }
   },
   "dependencies": {

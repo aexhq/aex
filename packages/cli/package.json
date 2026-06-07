@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/cli",
-  "version": "0.13.9",
+  "version": "0.13.10",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git"
