@@ -31,7 +31,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const publicRoot = resolve(here, "..", ".."); // public/
+const publicRoot = resolve(here, "..", ".."); // aex/ (the public repo)
 const baselinePath = join(here, "contract-parity-baseline.json");
 const UPDATE = process.argv.includes("--update");
 
@@ -39,8 +39,8 @@ function findPlatformRoot() {
   const candidates = process.env.AEX_PLATFORM_DIR
     ? [resolve(process.env.AEX_PLATFORM_DIR)]
     : [
-        resolve(publicRoot, "..", "aex-platform"), // CI: sibling checkout of aexhq/aex-platform
-        resolve(publicRoot, "..", "platform"), // workspace: <root>/platform + <root>/public
+        resolve(publicRoot, "..", "aex-platform"), // sibling checkout of aexhq/aex-platform (CI + local workspace)
+        resolve(publicRoot, "..", "platform"), // legacy: pre-rename local checkout name
       ];
   for (const c of candidates) {
     // Require the tree the gate reads (the SSRF deny-list SoT), so a

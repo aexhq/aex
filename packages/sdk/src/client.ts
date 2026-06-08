@@ -19,6 +19,7 @@ import {
   type McpServerRef,
   type Output,
   type OutputMode,
+  type PlatformEnvironmentInput,
   type PlatformRunSubmissionInput,
   type PlatformSubmission,
   type PlatformInlineSecrets,
@@ -113,7 +114,7 @@ export interface SubmitRunOptions {
   readonly agentsMd?: readonly AgentsMd[];
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
-  readonly environment?: PlatformSubmission["environment"];
+  readonly environment?: PlatformEnvironmentInput;
   readonly metadata?: PlatformSubmission["metadata"];
   /**
    * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
@@ -548,7 +549,13 @@ export class AgentExecutor {
       // shape matches McpServerRef. The cast acknowledges that the
       // SDK is producing pre-resolution wire input here.
       mcpServers: submissionMcpServers as readonly McpServerRef[],
-      ...(options.environment ? { environment: options.environment } : {}),
+      // `options.environment.packages` carry the customer wire shape
+      // (`{name:"pip:pandas"}`); the shared parser resolves the ecosystem
+      // prefix into PlatformPackage. The cast acknowledges the SDK is
+      // producing pre-parse wire input here, same as `mcpServers` above.
+      ...(options.environment
+        ? { environment: options.environment as NonNullable<PlatformSubmission["environment"]> }
+        : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
       ...(options.outputs &&
       ((options.outputs.allowedDirs?.length ?? 0) > 0 || (options.outputs.deniedDirs?.length ?? 0) > 0)

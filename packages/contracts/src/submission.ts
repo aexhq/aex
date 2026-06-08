@@ -57,6 +57,17 @@ export interface PlatformEnvironment {
 }
 
 /**
+ * Wire/input form of {@link PlatformEnvironment}, i.e. what a customer hands
+ * to the SDK / sends to the submission endpoint BEFORE parsing. Identical to
+ * the parsed shape except `packages` use the customer-supplied
+ * {@link PlatformPackageInput} (prefixed name, no `ecosystem`). The shared
+ * parser resolves it into a {@link PlatformEnvironment}.
+ */
+export type PlatformEnvironmentInput = Omit<PlatformEnvironment, "packages"> & {
+  readonly packages?: readonly PlatformPackageInput[];
+};
+
+/**
  * Reserved prefix for aex-set runtime env vars (`AEX_CLI`,
  * `AEX_RUNTIME_JSON`, …). Customer `environment.envVars` keys carrying this
  * prefix are rejected at submission parse time so platform-set values
@@ -109,6 +120,19 @@ export interface PlatformPackage {
   readonly name: string;
   readonly version?: string;
   readonly ecosystem: PlatformPackageEcosystem;
+}
+
+/**
+ * Submission package as the CUSTOMER supplies it on the wire: the target
+ * ecosystem is encoded as an optional `name` prefix (`"pip:pandas"`,
+ * `"npm:express"`, `"apt:ffmpeg"`; an unprefixed name defaults to `apt`).
+ * Customers never set `ecosystem` directly — `parsePackages` resolves it and
+ * the submission schema rejects `ecosystem` as an unknown field. The parsed
+ * result is a {@link PlatformPackage} (bare `name` + explicit `ecosystem`).
+ */
+export interface PlatformPackageInput {
+  readonly name: string;
+  readonly version?: string;
 }
 
 /**
