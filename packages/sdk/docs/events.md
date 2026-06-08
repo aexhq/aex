@@ -50,6 +50,44 @@ suffixes or a bare millisecond integer.
 
 Both surfaces observe the same events. A subscriber attached after `submitRun()` returns replays the events it missed, then continues live.
 
+## Terminal events vs. the run record
+
+A run emits a terminal **event** — `RUN_FINISHED` (success) or `RUN_ERROR` — when
+the agent's stream ends. This is an AG-UI *render-complete* signal: the runner
+emits it **before** aex commits the authoritative run record, so a `getRun(runId)`
+issued the instant you observe `RUN_FINISHED` can still read `status: "running"`
+for a moment. Treat the terminal event as the lowest-latency "stop the spinner"
+signal — **not** a read-consistency barrier.
+
+Two facts make this easy to work with:
+
+- **Outputs are already durable at the terminal event.** The runner uploads every
+  output before it emits the terminal event, and `listOutputs(runId)` / downloads
+  read object storage directly — so the moment you see `RUN_FINISHED` the outputs
+  are complete and readable.
+- **The run _record_ settles a beat later.** To read the authoritative status
+  consistently, don't key off the terminal event — use one of:
+
+```ts
+// Blocking: resolves only once the RECORD is terminal (polls getRun, not the event).
+const run = await aex.run(runConfig);      // submit + wait
+const same = await aex.waitForRun(runId);  // or wait on an already-submitted run
+```
+
+```ts
+// Live events AND a settle-consistent end: the iterator keeps reading past
+// RUN_FINISHED until the post-mirror barrier, so the record is terminal when it ends.
+for await (const event of aex.streamEnvelopes(runId, { settleConsistent: true })) {
+  // render events live…
+}
+const run = await aex.getRun(runId); // guaranteed terminal here
+```
+
+Under the hood the coordinator broadcasts one `aex.run.settled` CUSTOM event as a
+run's last stream event, immediately after the durable record commits.
+`settleConsistent` ends the stream on it; on a raw stream, detect it with
+`isRunSettled(event)`.
+
 ## Event shape
 
 Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submitRun`.
@@ -64,6 +102,7 @@ import {
   isRunFinished,
   isRunError,
   isRunTerminal,
+  isRunSettled,
   isTextMessage,
   isToolCallStart,
   isToolCallResult,

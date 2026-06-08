@@ -40,15 +40,24 @@ export interface CoordinatorStreamOptions {
   readonly maxReconnects?: number;
   /** Backoff between reconnect attempts (default 500 ms). */
   readonly reconnectDelayMs?: number;
+  /**
+   * Predicate that decides which event ENDS the stream. Default: the AG-UI
+   * terminal events (RUN_FINISHED / RUN_ERROR) — the render-complete UX signal.
+   * Pass {@link isRunSettled} for a settle-consistent stream that keeps reading
+   * PAST RUN_FINISHED until the post-mirror barrier, so the iterator only ends
+   * once a subsequent `getRun` is guaranteed terminal.
+   */
+  readonly isTerminal?: (event: AexEvent) => boolean;
 }
 
-const isTerminalType = (t: string): boolean => t === "RUN_FINISHED" || t === "RUN_ERROR";
+const isTerminalType = (e: AexEvent): boolean => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
 ): AsyncGenerator<AexEvent, void, void> {
   const makeWs =
     opts.webSocketFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
+  const isTerminal = opts.isTerminal ?? isTerminalType;
   const reconnectDelayMs = opts.reconnectDelayMs ?? 500;
   const maxReconnects = opts.maxReconnects ?? Number.POSITIVE_INFINITY;
   let cursor = (opts.from ?? 0) - 1;
@@ -110,7 +119,7 @@ export async function* streamCoordinatorEvents(
           const evt = queue.shift()!;
           cursor = evt.sequence;
           yield evt;
-          if (isTerminalType(evt.type)) done = true;
+          if (isTerminal(evt)) done = true;
         }
         if (done || opts.signal?.aborted) {
           closeQuietly(ws);

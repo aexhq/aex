@@ -150,12 +150,14 @@ export type {
 
 // Normalized coordinator event guards
 export {
+  AEX_RUN_SETTLED_NAME,
   isCustom,
   isEventChannel,
   isFromSource,
   isLog,
   isRunError,
   isRunFinished,
+  isRunSettled,
   isRunStarted,
   isRunTerminal,
   isTextMessage,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   filterStream,
   isFromSource,
+  isRunSettled,
   mapStream,
   streamCoordinatorEvents,
   toAGUI,
@@ -69,6 +70,40 @@ describe("streamCoordinatorEvents — live fanout", () => {
     await consume;
 
     expect(received).toEqual([0, 1, 2]);
+    expect(ws!.closed).toBe(true);
+  });
+});
+
+describe("streamCoordinatorEvents — settle-consistent terminal predicate", () => {
+  it("keeps reading past RUN_FINISHED until the aex.run.settled barrier", async () => {
+    let ws: FakeWebSocket | undefined;
+    const settled: AexEvent = {
+      ...evt(4, "CUSTOM", "aex"),
+      data: { name: "aex.run.settled", value: { runId: "r", outcome: "succeeded" } }
+    };
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/runs/r/subscribe",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      isTerminal: isRunSettled,
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url))
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) received.push(e.sequence);
+    })();
+
+    await flush();
+    ws!.message(evt(0));
+    // The AG-UI terminal must NOT end a settle-consistent stream...
+    ws!.message(evt(1, "RUN_FINISHED"));
+    // ...nor an interleaved lifecycle fact (CUSTOM without the settled name)...
+    ws!.message(evt(2, "CUSTOM", "aex"));
+    // ...only the post-mirror barrier ends it.
+    ws!.message(settled);
+    await consume;
+
+    expect(received).toEqual([0, 1, 2, 4]);
     expect(ws!.closed).toBe(true);
   });
 });

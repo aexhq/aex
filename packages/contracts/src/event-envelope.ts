@@ -365,6 +365,22 @@ export function isCustom(e: AexEvent): boolean {
 export function customName(e: AexEvent): string | null {
   return e.type === "CUSTOM" ? str(e.data.name) || null : null;
 }
+/**
+ * The `data.name` of the settle-consistency barrier event. The coordinator
+ * broadcasts ONE such CUSTOM event as a run's LAST stream event, after the
+ * Postgres mirror lands — so observing it ⇒ a subsequent `getRun` is terminal
+ * and `listOutputs` is complete. It is intentionally a CUSTOM event (not a
+ * typed RUN_* event): off-the-shelf AG-UI clients ignore it, while
+ * `streamEnvelopes(runId, { settleConsistent: true })` ends the iterator on it.
+ * Unlike RUN_FINISHED (the AG-UI render-complete UX signal, emitted by the
+ * runner BEFORE the platform learns the outcome), this is settle-gated. The
+ * platform mirrors this constant in `@aexhq/shared`.
+ */
+export const AEX_RUN_SETTLED_NAME = "aex.run.settled";
+/** True for the settle-consistency barrier event (post-mirror, read-consistent). */
+export function isRunSettled(e: AexEvent): boolean {
+  return customName(e) === AEX_RUN_SETTLED_NAME;
+}
 export function isFromSource(e: AexEvent, source: AexEventSource): boolean {
   return e.source === source;
 }

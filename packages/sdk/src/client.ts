@@ -5,6 +5,7 @@ import {
   HttpClient,
   RUNTIME_KINDS,
   RunStateError,
+  isRunSettled,
   operations,
   parseCredentialMode,
   streamCoordinatorEvents,
@@ -181,6 +182,18 @@ export interface StreamEnvelopesOptions {
   /** Starting cursor — events with `sequence >= from` are delivered. Default 0. */
   readonly from?: number;
   readonly signal?: AbortSignal;
+  /**
+   * End the stream settle-consistently. By default the iterator ends on the
+   * AG-UI terminal event (RUN_FINISHED / RUN_ERROR) — the render-complete UX
+   * signal, which the runner emits BEFORE the platform commits the run record,
+   * so a `getRun` immediately after can still read `running`. With
+   * `settleConsistent: true` the iterator keeps reading PAST the terminal event
+   * until the post-mirror `aex.run.settled` barrier, so when it ends a
+   * subsequent `getRun` is guaranteed terminal and `listOutputs` is complete.
+   * Note: outputs are durable at the RUN_FINISHED event already; this only adds
+   * the run-RECORD consistency barrier.
+   */
+  readonly settleConsistent?: boolean;
 }
 
 export interface WaitForRunOptions {
@@ -450,9 +463,13 @@ export class AgentExecutor {
   }
 
   /**
-   * Submit a run and wait for it to reach a terminal state. Returns the
-   * final `Run` record. For long-running flows, prefer `submitRun` +
-   * `stream(runId)` + `wait(runId)`.
+   * Submit a run and wait until its RECORD is terminal — the settle-consistent
+   * "do it and give me the result" primitive. Returns the final `Run`, so on
+   * resolve a subsequent `getRun`/`listOutputs` is guaranteed consistent (it
+   * polls `getRun` via {@link waitForRun}, NOT the RUN_FINISHED event, which the
+   * runner emits before the platform commits the record). For long-running flows
+   * that need live events, prefer `submitRun` + `streamEnvelopes(runId, {
+   * settleConsistent: true })`, or `submitRun` + `stream(runId)` + `wait(runId)`.
    */
   async run(options: SubmitRunOptions): Promise<Run> {
     const runId = await this.submitRun(options);
@@ -667,6 +684,9 @@ export class AgentExecutor {
       wsUrl: first.wsUrl,
       from: options.from ?? 0,
       fetchTicket: async () => (await operations.getCoordinatorTicket(this.#http, runId)).ticket,
+      // settleConsistent ends the stream on the post-mirror barrier instead of the
+      // earlier RUN_FINISHED UX signal, so "stream ended" ⇒ getRun is terminal.
+      ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
       ...(options.signal ? { signal: options.signal } : {})
     });
   }
