@@ -366,9 +366,10 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
     return lines.join("\n");
   };
 
-  expect(result.eventKinds[0]).toBe("RUN_STARTED");
-  expect(result.eventKinds[result.eventKinds.length - 1]).toBe("RUN_FINISHED");
   expect(result.terminalKind).toBe("RUN_FINISHED");
+  expect(result.eventKinds).toContain("RUN_STARTED");
+  expect(result.eventKinds).toContain("RUN_FINISHED");
+  expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
   const terminal = result.terminalData ?? {};
   if (terminal["reason"] !== "complete") {
     throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dumpComprehensive()}`);

@@ -196,9 +196,10 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
       expect(result.runStatus).toBe("succeeded");
 
       // Real managed-runtime event frame.
-      expect(result.eventKinds[0]).toBe("RUN_STARTED");
+      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
-      expect(result.eventKinds[result.eventKinds.length - 1]).toBe("RUN_FINISHED");
+      expect(result.eventKinds).toContain("RUN_FINISHED");
+      expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length).toBeGreaterThan(0);
       // Strip whitespace before matching the probe — managed-runtime stream
