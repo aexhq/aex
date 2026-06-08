@@ -10,7 +10,14 @@ source of truth. The workflow publishes to npm and runs post-publish install
 checks, but it does not create git tags or GitHub Releases, keeping the remote
 repository on a clean `main` branch unless tags are added deliberately later.
 
-## How to ship a release
+## How to ship a release (canary → validate → promote)
+
+The default flow publishes a **canary** first, validates it against the real
+platform (aex-platform's local + prod cross-service suite installs
+`@aexhq/sdk@canary` and exercises it like a user), and only then promotes the
+**same bytes** to `latest`. Because npm versions are immutable, the version the
+platform tested is byte-for-byte the version users get — there is no second
+publish.
 
 1. Bump the publishable package manifests to the next shared semver:
    `packages/contracts/package.json`, `packages/conformance/package.json`,
@@ -18,12 +25,25 @@ repository on a clean `main` branch unless tags are added deliberately later.
    `packages/sdk/src/version.ts` to match.
 2. Land the change on `main` with any companion code or docs.
 3. Confirm CI is green.
-4. Run the **Release** workflow from `main` and choose the npm dist-tag
-   (`latest` or `next`).
+4. Run the **Release** workflow from `main` with dist-tag **`canary`**. This
+   publishes `@aexhq/sdk@<version>` under the `canary` tag — `latest` is
+   untouched, so `npm install @aexhq/sdk` users are unaffected.
+5. Run the platform release against the canary: in **aex-platform**, dispatch
+   `deploy.yml` with `sdk_version=<version>` (threads `AEX_USER_TEST_SDK_VERSION`
+   into the suite). The local plane gates prod, and both planes' user-tests run
+   against `@aexhq/sdk@<version>`.
+6. On a green platform release, run the **Promote** workflow
+   (`promote.yml`) with `version=<version>`. It runs
+   `npm dist-tag add @aexhq/{contracts,conformance,cli,sdk}@<version> latest` —
+   a pure re-tag, never a re-publish.
+
+Shortcut: choosing dist-tag `latest` (or `next`) at step 4 publishes straight to
+that tag and skips the canary/promote gate — use it only for docs-only or
+out-of-band releases where the platform suite is not the gate.
 
 If any package at `<version>` already exists on npm, the release workflow fails
-before publishing. A failed release is fixed by bumping to a higher version and
-running the workflow again.
+before publishing (this is also what forbids a re-publish — promotion must be a
+re-tag). A failed release is fixed by bumping to a higher version.
 
 ## Release pipeline
 

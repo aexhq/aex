@@ -1,0 +1,63 @@
+name: Promote
+
+# Promote an already-published version to the `latest` dist-tag — a pure
+# re-tag of existing bytes, never a re-publish. This is the second half of the
+# canary release flow:
+#
+#   1. Release workflow publishes X.Y.Z under dist-tag `canary` (not latest).
+#   2. The platform local+prod suite runs against `@aexhq/sdk@canary`.
+#   3. On green, dispatch THIS workflow with version=X.Y.Z to move `latest`.
+#
+# Because npm versions are immutable, the bytes the platform tested ARE the
+# bytes that become `latest` — there is no second build/pack/publish. Run it
+# only after the platform suite is green for that exact version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The already-published version to promote to `latest` (e.g. 0.15.0).
+        required: true
+        type: string
+
+concurrency:
+  group: promote-aex
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote @aexhq/* to latest
+    runs-on: ubuntu-latest
+    environment: npm-release
+    steps:
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Promote each package to latest
+        # Same NPM_TOKEN (publish rights cover `npm dist-tag add`). Dependency
+        # order is irrelevant for a re-tag, but kept for consistency. `npm dist-tag
+        # add` fails if the version was never published, so a typo can't silently
+        # mis-tag latest.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN not set in the npm-release environment — required to move dist-tags."
+            exit 1
+          fi
+          version="${{ inputs.version }}"
+          for pkg in @aexhq/contracts @aexhq/conformance @aexhq/cli @aexhq/sdk; do
+            echo "promoting $pkg@$version -> latest"
+            npm dist-tag add "$pkg@$version" latest
+          done
+          echo "Promoted @aexhq/{contracts,conformance,cli,sdk}@$version to latest."

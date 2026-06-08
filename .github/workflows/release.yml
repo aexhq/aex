@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       npm_dist_tag:
-        description: npm dist-tag to publish under.
+        description: >-
+          npm dist-tag to publish under. Use `canary` for a release that the
+          platform suite will validate before promotion; `promote.yml` then
+          moves the SAME version to `latest` (re-tag, never re-publish).
         required: true
-        default: latest
+        default: canary
         type: choice
         options:
+          - canary
           - latest
           - next
 
