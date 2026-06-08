@@ -200,7 +200,7 @@ describe("typescript consumer", () => {
         builtins: ["developer"],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
-          packages: [{ ecosystem: "apt", name: "jq" }],
+          packages: [{ name: "apt:jq" }],
           envVars: { USER_SURFACE_TEST: "1" }
         },
         metadata: { suite: "typescript-consumer", runtime: "managed" },
