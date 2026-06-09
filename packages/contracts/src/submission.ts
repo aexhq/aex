@@ -24,6 +24,11 @@ import type {
 } from "./run-config.js";
 import { parseRunTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import {
+  assertRunModelMatchesProvider,
+  parseRunModel,
+  type RunModel
+} from "./models.js";
+import {
   parseRuntimeSecurityProfile,
   type RuntimeSecurityProfileName
 } from "./runtime-security-profile.js";
@@ -1046,7 +1051,7 @@ function isJsonValue(input: unknown): input is JsonValue {
  * into `run_skill_snapshots`), provider refs pass through unchanged.
  */
 export interface PlatformSubmission {
-  readonly model: string;
+  readonly model: RunModel;
   readonly system?: string;
   readonly prompt: readonly string[];
   readonly skills: readonly SkillRef[];
@@ -1250,6 +1255,7 @@ export function parseRunSubmissionRequest(
   crossValidateProxyEndpointsAndAuth(proxyEndpoints, secrets.proxyEndpointAuth);
 
   const submission = parseSubmission(value.submission);
+  assertRunModelMatchesProvider(provider, submission.model);
 
   // mcpServers names must agree across the submission half and the
   // secrets half — every secrets.mcpServers[i].name MUST resolve to a
@@ -1381,7 +1387,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
       throw new Error(`submission.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
     }
   }
-  const model = requireString(value.model, "submission.model");
+  const model = parseRunModel(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
   const skills = parseSkills(value.skills);

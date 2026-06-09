@@ -7,9 +7,11 @@ icon: Play
 A run is an immutable request to execute an agent task. The call site supplies the model, prompt, optional system message, composition primitives, output capture policy, and one inline `secrets` bundle. aex snapshots the non-secret inputs, vaults the secrets for the run lifetime, dispatches to the selected runtime, and records status, typed events, and outputs.
 
 ```ts
+import { RunModels } from "@aexhq/sdk";
+
 const runId = await aex.submitRun({
   provider: "anthropic",
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save it as a file.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });

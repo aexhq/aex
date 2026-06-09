@@ -4,4 +4,5 @@
 // of validator code. NOT part of the public `@aexhq/contracts` surface — do
 // NOT add this to the package `index`; consumers reach it via the explicit
 // `@aexhq/contracts/internal` subpath.
+export * from "./models.js";
 export * from "./submission.js";

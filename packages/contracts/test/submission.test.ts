@@ -7,6 +7,8 @@ import {
   RuntimeValidationError,
   collectManagedUnsupportedFeatures,
   DEFAULT_RUN_PROVIDER,
+  RUN_MODELS,
+  RunModels,
   RUN_PROVIDERS,
   parseRunSubmissionRequest,
   selectRuntime,
@@ -23,13 +25,20 @@ function assetRef(name: string, seed = 1) {
 
 function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind }> = {}) {
   const provider = overrides.provider ?? "anthropic";
+  const model = {
+    anthropic: RunModels.CLAUDE_HAIKU_4_5,
+    deepseek: RunModels.DEEPSEEK_CHAT,
+    openai: RunModels.GPT_4_1,
+    gemini: RunModels.GEMINI_2_5_FLASH,
+    mistral: RunModels.MISTRAL_LARGE_LATEST
+  }[provider];
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
     provider,
     ...(overrides.runtime !== undefined ? { runtime: overrides.runtime } : {}),
     submission: {
-      model: "model-x",
+      model,
       prompt: ["hello"],
       skills: [],
       agentsMd: [],
@@ -48,7 +57,7 @@ const injectedManagedKeyPolicy = {
   billingRequired: true,
   providers: ["anthropic"],
   runtimes: ["managed"],
-  models: ["model-x"],
+  models: [RunModels.CLAUDE_HAIKU_4_5],
   features: {
     ...BLOCKED_MANAGED_KEY_FEATURE_POLICY_V1
   }
@@ -66,6 +75,27 @@ describe("submission parser - providers and secrets", () => {
     expect(() =>
       parseRunSubmissionRequest({ ...baseRequest(), provider: "bogus" })
     ).toThrow(/provider must be one of: anthropic, deepseek, openai, gemini, mistral/);
+  });
+
+  it("rejects unknown model ids with a helpful enumeration", () => {
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...baseRequest(),
+        submission: { ...baseRequest().submission, model: "model-x" }
+      })
+    ).toThrow(/submission\.model must be one of: claude-haiku-4-5, claude-3-5-haiku-latest/);
+  });
+
+  it("rejects provider/model mismatches", () => {
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...baseRequest({ provider: "deepseek" }),
+        submission: {
+          ...baseRequest({ provider: "deepseek" }).submission,
+          model: RunModels.CLAUDE_HAIKU_4_5
+        }
+      })
+    ).toThrow(/not supported for provider deepseek/);
   });
 
   it("defaults to anthropic when provider is omitted", () => {
@@ -234,6 +264,21 @@ describe("managed runtime unsupported features", () => {
 });
 
 describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
+  it("RUN_MODELS is the public model allowlist", () => {
+    expect([...RUN_MODELS]).toEqual([
+      "claude-haiku-4-5",
+      "claude-3-5-haiku-latest",
+      "claude-3-5-sonnet-latest",
+      "deepseek-chat",
+      "gpt-4.1",
+      "gpt-4o-mini",
+      "gemini-2.0-flash",
+      "gemini-2.5-flash",
+      "mistral-large-latest",
+      "mistral-small-latest"
+    ]);
+  });
+
   it("RUN_PROVIDERS is the v1 set", () => {
     expect([...RUN_PROVIDERS]).toEqual(["anthropic", "deepseek", "openai", "gemini", "mistral"]);
   });

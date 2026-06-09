@@ -104,7 +104,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     });
 
     const runId = await client.submitRun({
-      model: "claude-sonnet-4-5-20250929",
+      model: "claude-haiku-4-5",
       system: "You are tidy.",
       prompt: "do work",
       outputMode: "stream",
@@ -132,7 +132,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     expect("cleanup" in body).toBe(false);
 
     const submission = body.submission as Record<string, unknown>;
-    expect(submission.model).toBe("claude-sonnet-4-5-20250929");
+    expect(submission.model).toBe("claude-haiku-4-5");
     expect(submission.outputMode).toBe("stream");
     expect(submission.system).toBe("You are tidy.");
     expect(submission.prompt).toEqual(["do work"]);
@@ -154,7 +154,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
-        model: "m",
+        model: "claude-haiku-4-5",
         prompt: "p",
         secrets: { apiKey: "" }
       })
@@ -182,7 +182,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
-        model: "m",
+        model: "claude-haiku-4-5",
         prompt: "",
         secrets: { apiKey: "k" }
       })
@@ -193,7 +193,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: ["one", "two"],
       secrets: { apiKey: "k" },
       idempotencyKey: "i"
@@ -207,7 +207,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
-        model: "m",
+        model: "claude-haiku-4-5",
         prompt: "p",
         mcpServers: [
           McpServer.remote({
@@ -231,7 +231,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
-        model: "m",
+        model: "claude-haiku-4-5",
         prompt: "p",
         skills: [{ kind: "workspace", id: "skl_x" } as unknown as Skill],
         secrets: { apiKey: "k" }
@@ -244,7 +244,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       agentsMd: [draft],
       secrets: { apiKey: "k" },
@@ -287,7 +287,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const fileHash = file.ref.kind === "draft" ? file.ref.contentHash : "";
 
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       skills: [skill],
       agentsMd: [agentsMd],
@@ -348,7 +348,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     expect(assetCallsBefore).toBeGreaterThan(0);
 
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       skills: [uploaded],
       secrets: { apiKey: "k" },
@@ -379,7 +379,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const draftHex = draft.ref.kind === "draft" ? draft.ref.contentHash.slice("sha256:".length) : "";
 
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       skills: [draft],
       secrets: { apiKey: "k" },
@@ -407,7 +407,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submitRun({
-        model: "m",
+        model: "claude-haiku-4-5",
         prompt: "p",
         agentsMd: [{ kind: "workspace_agentsmd", id: "amd_x" } as unknown as AgentsMd],
         secrets: { apiKey: "k" }

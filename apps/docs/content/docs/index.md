@@ -12,12 +12,12 @@ plus captured outputs.
 One submission shape works across every supported provider:
 
 ```ts
-import { AgentExecutor } from "@aexhq/sdk";
+import { AgentExecutor, RunModels } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Summarise Q1 revenue by region.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });

@@ -4,154 +4,139 @@ title: Skills
 
 # Skills
 
-Skill inputs accepted by the platform:
+A skill is executable or instructional content that is mounted into a run before
+the first agent turn. Every accepted skill ends up as a storage-neutral
+`kind:"asset"` reference in the run submission, and the hosted platform snapshots
+that asset into the run's R2 prefix before dispatch.
 
-- workspace skill bundles (persistent, referenced by `skl_*` id);
-- inline-supplied bundles passed directly at `submitRun` — these
-  persist on aex as workspace skills with auto-suffixed names,
-  one row per submission (see "Inline supply" below).
+There are three sources for skill bytes:
 
-Provider-hosted skill refs (`kind:"provider"`, e.g. Anthropic prebuilt
-Agent Skills or custom provider skill IDs) are **not supported on the
-managed runtime** — every new submission dispatches to managed and a
-`kind:"provider"` ref is rejected at submission time with
-`feature_runtime_mismatch`. Supply the bytes as a workspace or inline
-bundle instead.
+- **Inline/local draft:** `Skill.fromFiles(...)`, `Skill.fromPath(...)`, or
+  `Skill.fromUrl(...)` builds a draft in the SDK process. `submitRun` uploads
+  it before posting `/runs`.
+- **Pre-uploaded workspace asset:** call `await draft.upload(aex)` and reuse the
+  returned materialized `Skill`, or pass an existing `kind:"asset"` ref from a
+  config file.
+- **Workspace skill catalog:** upload with `aex skills upload` or the dashboard,
+  then pass the returned record to `Skill.fromCatalog(record)`.
 
-**How skills reach the agent:** every skill bundle is materialized into
-the run's workspace under `skills/<name>/` before the first agent turn.
-A bundle's `SKILL.md` is composed into the agent's instructions, so the
-agent is told the skill exists and what it does without the model having
-to discover it. Bundles without `SKILL.md` are still mounted as files at
-`skills/<name>/`, but nothing prompts the agent to read them — reference
-them explicitly from the prompt or your `AGENTS.md`.
+All three sources normalize to the same content-addressed asset. Identical bytes
+dedup by hash, so repeated submissions of the same bundle are no-op uploads.
+There is no per-run auto-suffixed `skl_*` row for inline skills.
 
-The platform also mounts the `aex` CLI and a per-run manifest into the
-workspace on **every** run. Skills invoke the managed HTTP proxy via the
-mounted CLI (`aex proxy …`) — see `credentials.md` for the policy/auth
-model.
+Provider-hosted skill refs (`kind:"provider"`, e.g. Anthropic prebuilt Agent
+Skills or custom provider skill IDs) are not supported on the managed runtime.
+Every new submission dispatches to managed, so a `kind:"provider"` ref is
+rejected at submission time with `feature_runtime_mismatch`. Supply the bytes as
+an aex asset instead.
 
-## Inline supply at `submitRun`
+## Materialization
 
-`Skill.fromFiles({name, files})` and `Skill.fromPath(rootDir, {name})`
-build an **unstaged** `Skill`. The instance carries the canonicalised
-zip bytes and the `sha256:<hex>` content hash:
+For each run, the platform copies referenced skill assets into that run's R2
+directory (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
+workspace under `skills/<name>/`.
+
+A bundle's `SKILL.md` is composed into the agent's instructions, so the agent is
+told the skill exists and what it does without needing to discover it. Bundles
+without `SKILL.md` are still mounted as files at `skills/<name>/`, but nothing
+prompts the agent to read them; reference them explicitly from the prompt or
+your `AGENTS.md`.
+
+The platform also mounts the `aex` CLI and a per-run manifest into every run.
+Skills call managed HTTP proxy endpoints through the mounted CLI
+(`aex proxy ...`); see `credentials.md` for the policy and auth model.
+
+Run-scoped R2 copies are part of the run record and are removed by run deletion
+or retention cleanup. Catalog assets are separate workspace records: deleting a
+catalog skill hard-deletes its metadata and removes the shared R2 object only
+when no other catalog row still references those bytes. Existing run snapshots
+keep their run-scoped copy.
+
+## Inline And Local Drafts
+
+`Skill.fromFiles({ name, files })`, `Skill.fromPath(rootDir, { name })`, and
+`Skill.fromUrl(url, { name })` build an unstaged `Skill`. The instance carries
+canonical zip bytes and a `sha256:<hex>` content hash.
 
 ```ts
-import { AgentExecutor, Skill } from "@aexhq/sdk";
+import { AgentExecutor, RunModels, Skill } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken });
 
 await aex.submitRun({
-  model, prompt,
-  skills: [await Skill.fromFiles({ name: "rules", files })],
+  model: RunModels.CLAUDE_HAIKU_4_5,
+  prompt,
+  skills: [await Skill.fromPath("./skills/rules", { name: "rules" })],
   secrets: { apiKey }
 });
 ```
 
-`aex.submitRun` walks the `skills` array, sends a multipart body
-alongside the JSON submission, and materializes the bytes to
-content-addressable, workspace-scoped asset storage before the run lands.
-The BFF re-canonicalises the bundle, verifies the advisory hash, and
-persists it as a workspace skill — but with an **auto-suffixed name**
-(`rules-x8q7lk2`) so repeated supplies of the same logical skill across
-many runs produce distinct `skl_*` rows. This is by design: a
-submitted skill is a **per-run artifact**.
+Before it posts `/runs`, the SDK uploads each draft through the asset upload
+flow:
 
-`contentHash` is `sha256:<hex>` of the canonical bundle zip (the SDK
-normalises file order, mtime, and permissions before hashing).
-Identical inputs always produce the same hash, so the same bytes are a
-no-op upload (content-addressable dedup) on subsequent runs. There is no
-separate workspace pre-upload step.
+1. `POST /assets/presign` checks for a dedup hit and, when needed, returns a
+   signed R2 upload URL.
+2. The SDK PUTs bytes directly to R2 with the signed checksum headers.
+3. `POST /assets/finalize` confirms the object exists.
 
-### What auto-suffix looks like
+When direct R2 upload credentials are not configured, small bundles fall back to
+the buffered `/assets` upload path. The runner re-verifies the content hash when
+it downloads the asset.
 
-Submit `Skill.fromFiles({ name: "rules", files })` three times across
-three runs and the dashboard shows three distinct skills:
+## Pre-Upload For Reuse
 
-```
-rules-x8q7lk2
-rules-mp2vqa1
-rules-az3lkmt
-```
-
-Same prefix, different suffix. Each is a real workspace skill — you
-can list, get, download, and delete it through the regular
-`aex.skills.*` verbs.
-
-### Deletion semantics
-
-Soft-deleting a skill (`aex.skills.delete(skl_id)` or the
-dashboard's Delete button) marks the row tombstoned. Existing runs
-that pinned a snapshot of the skill keep working — they read from
-`run_skill_snapshots` which preserves the name, hash, size, and
-manifest. The run detail view shows a "deleted" badge for those
-orphan references; the download endpoint returns
-**HTTP 410 Gone** with `{ error: { code: "skill_deleted", … } }`
-when the caller tries to fetch the bytes of a deleted skill.
-
-New `submitRun` calls referencing a soft-deleted `skl_*` id are
-rejected before insertion.
-
-## Fetch from a signed URL (`Skill.fromUrl`)
-
-When your app runs in the cloud with limited storage, you may not want to
-bundle skill bytes with it. Host the skill yourself as a **zip archive**
-(with `SKILL.md` at the archive root) and hand the SDK a temporary signed
-URL — e.g. an S3 presigned URL:
+If you want to build a local skill once and reuse the materialized asset across
+multiple submissions, upload the draft explicitly:
 
 ```ts
-import { AgentExecutor, Skill } from "@aexhq/sdk";
-
-const aex = new AgentExecutor({ apiToken });
+const draft = await Skill.fromFiles({ name: "rules", files });
+const uploaded = await draft.upload(aex);
 
 await aex.submitRun({
-  model, prompt,
-  skills: [
-    await Skill.fromUrl(signedUrl, { name: "rules", sha256: "sha256:<hex>" })
-  ],
+  model: RunModels.CLAUDE_HAIKU_4_5,
+  prompt,
+  skills: [uploaded],
   secrets: { apiKey }
 });
 ```
 
-`Skill.fromUrl` fetches the archive **in the SDK process** — the URL is
-caller-controlled, so there is no server-side fetch — optionally verifies the
-download against `sha256`, unzips it, and reduces it to the same files map as
-`Skill.fromFiles`. A URL-sourced skill and the identical local skill therefore
-produce the **same canonical asset** and dedup against each other.
+The returned `uploaded` skill carries a plain `kind:"asset"` ref. Submitting it
+does not upload bytes again.
 
-- The archive must contain `SKILL.md` at its root, or inside a single
-  top-level folder, which is stripped automatically. Anything else is
-  rejected with an error listing the archive's actual top-level entries.
-- The signed URL only needs to be valid **for this call**. `aex.submitRun`
-  snapshots the bytes into the run immediately, so the URL can expire
-  afterwards with no effect on the run.
-- `sha256` is an optional source-integrity check on the downloaded archive
-  (distinct from the canonical bundle hash); a mismatch fails fast before the
-  unzip. Signed-URL query strings are never echoed in error messages.
-- The same upload caps apply (10 MB compressed / 50 MB decompressed /
-  1000 files); `Skill.fromUrl` materialises the whole bundle, it is not a
-  streaming mount.
+## Fetch From A Signed URL
 
-`Skill.fromUrl` is universal (Node 18+ / browser): it uses the global `fetch`,
-or pass one via `{ fetch }`.
+When your app runs in the cloud with limited local storage, host the skill
+yourself as a zip archive with `SKILL.md` at the archive root and pass a
+temporary signed URL:
 
-## Re-reference an uploaded skill (`Skill.fromCatalog`)
+```ts
+const skill = await Skill.fromUrl(signedUrl, {
+  name: "rules",
+  sha256: "sha256:<hex>"
+});
+```
 
-To re-use a skill already persisted in the workspace catalog (e.g. one an
-earlier inline supply created), pass the `Skill` record returned by
-`aex.skills.list()` / `aex.skills.get()` to `Skill.fromCatalog`:
+`Skill.fromUrl` fetches the archive in the SDK process. The hosted platform does
+not fetch the caller-controlled URL. The signed URL only needs to be valid for
+this call; the SDK snapshots the bytes into the asset store before the run is
+submitted.
+
+## Workspace Catalog
+
+Catalog skills are workspace records backed by the same content-addressed R2
+assets. Use them when a team wants a named, listed skill record:
 
 ```ts
 const [record] = await aex.skills.list();
 
 await aex.submitRun({
-  model, prompt,
+  model: RunModels.CLAUDE_HAIKU_4_5,
+  prompt,
   skills: [Skill.fromCatalog(record)],
   secrets: { apiKey }
 });
 ```
 
-The record must be `ready` (it carries a content hash). Unlike the draft
-builders this performs no upload — `fromCatalog` produces a `kind:"asset"`
-ref directly against the bytes already in the catalog.
+The record must be `ready` and carry a content hash. `Skill.fromCatalog` performs
+no upload; it produces a `kind:"asset"` ref directly against bytes already in
+the catalog.

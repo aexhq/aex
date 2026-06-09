@@ -5,6 +5,7 @@ import {
   DEFAULT_CREDENTIAL_MODE,
   FakeManagedCredentialResolver,
   ManagedKeyUnavailableError,
+  RunModels,
   assertManagedKeyAdmissionAllowed,
   assertManagedKeyModeAvailable,
   credentialModeOrDefault,
@@ -22,7 +23,7 @@ const availablePolicy = {
   billingRequired: true,
   providers: ["anthropic"],
   runtimes: ["managed"],
-  models: ["claude-haiku-4-5"],
+  models: [RunModels.CLAUDE_HAIKU_4_5],
   features: {
     ...BLOCKED_MANAGED_KEY_FEATURE_POLICY_V1,
     files: "allowed"
@@ -83,7 +84,7 @@ describe("managed-key public contract", () => {
         runId: "run-1",
         provider: "anthropic",
         runtime: "managed",
-        model: "claude-haiku-4-5",
+        model: RunModels.CLAUDE_HAIKU_4_5,
         policy: BLOCKED_MANAGED_KEY_POLICY_V1
       })
     ).resolves.toMatchObject({ ok: false, code: "managed_key_unavailable" });
@@ -96,7 +97,7 @@ describe("managed-key public contract", () => {
       runId: "run-1",
       provider: "anthropic",
       runtime: "managed",
-      model: "claude-haiku-4-5",
+      model: RunModels.CLAUDE_HAIKU_4_5,
       policy: availablePolicy
     });
 
@@ -118,7 +119,7 @@ describe("managed-key public contract", () => {
       runId: "run-1",
       provider: "anthropic" as const,
       runtime: "managed" as const,
-      model: "claude-haiku-4-5",
+      model: RunModels.CLAUDE_HAIKU_4_5,
       policy: availablePolicy
     };
 
@@ -129,7 +130,7 @@ describe("managed-key public contract", () => {
       resolver.resolveManagedCredential({ ...base, policy: { ...availablePolicy, runtimes: [] } })
     ).resolves.toMatchObject({ ok: false, code: "runtime_not_allowed" });
     await expect(
-      resolver.resolveManagedCredential({ ...base, model: "other-model" })
+      resolver.resolveManagedCredential({ ...base, model: RunModels.DEEPSEEK_CHAT })
     ).resolves.toMatchObject({ ok: false, code: "model_not_allowed" });
   });
 });

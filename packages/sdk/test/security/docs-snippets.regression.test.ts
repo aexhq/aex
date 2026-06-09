@@ -5,25 +5,11 @@
  *
  * Issue
  * -----
- * The README and `packages/sdk/docs/*.md` advertise SDK methods that
- * do not exist in the current shipped code:
- *
- *   - `Skill.fromPath(...).upload(client)`           — README:38, skills.md:51
- *   - `Skill.fromFiles(...).upload(client)`          — skills.md:96
- *   - `Skill.fromPath(...).uploadIfChanged(client)`  — skills.md:62
- *   - `Skill.fromId(...)`                            — implied throughout
- *   - `client.skills.findByHash(...)`                — skills.md:74
- *   - `client.skills.findByName(...)`                — skills.md:79
- *   - `client.submitRun(config, options)` (2-arg)    — credentials.md,
- *                                                       run-config.md,
- *                                                       cleanup.md:10
- *
- * `packages/sdk/src/skill.ts:22-23` explicitly states *"There is no
- * `Skill.fromId(...)` and no `.upload(client)`"* — i.e. the doc/code
- * gap is acknowledged in the source comment, but the published docs
- * weren't updated. Every snippet that touches uploads is currently
- * broken; users following the README throw `TypeError: …upload is not
- * a function`.
+ * The README and `packages/sdk/docs/*.md` have drifted before by advertising
+ * removed or nonexistent helpers (`Skill.fromId(...)`, `uploadIfChanged(...)`,
+ * `client.skills.findByHash(...)`, two-arg `submitRun(...)`, etc.). The current
+ * surface intentionally supports `Skill.upload(client)`, so that method may be
+ * documented; the removed helpers must stay absent from docs.
  *
  * Locked invariant
  * ----------------

@@ -22,7 +22,7 @@ npm install @aexhq/sdk   # or: pnpm add @aexhq/sdk  /  yarn add @aexhq/sdk
 ## Example
 
 ```ts
-import { AgentExecutor, Skill, McpServer } from "@aexhq/sdk";
+import { AgentExecutor, RunModels, Skill, McpServer } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
@@ -33,7 +33,7 @@ const github = McpServer.remote({
 });
 
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Summarise Q1 revenue by region.",
   skills: [await Skill.fromPath("./skills/sheet-tools", { name: "sheet-tools" })],
   mcpServers: [github],
@@ -70,7 +70,7 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
 ## Guides
 
 - [Quickstart](packages/sdk/docs/quickstart.md) — install, auth, first run
-- [Skills](packages/sdk/docs/skills.md) — workspace + inline bundles, content-hash dedupe
+- [Skills](packages/sdk/docs/skills.md) — inline, local, and catalog bundles normalized to assets
 - [MCP servers](packages/sdk/docs/mcp.md) — remote servers, headers, workspace refs
 - [Run config](packages/sdk/docs/run-config.md) — plain credential-free run parameters
 - [Product capabilities and boundaries](packages/sdk/docs/product-boundaries.md) — what aex owns, inherits, and does not support
@@ -93,11 +93,12 @@ documentation sources are open in this repo.
 ## FAQ
 
 **Which providers are supported?**
-Anthropic, DeepSeek, OpenAI, Gemini, and Mistral today — **more
-coming.** Anthropic is the default provider; set `provider` for the
-others. Omit `runtime` or pass `runtime: "managed"`; every provider uses
-the managed runtime and the same `submitRun` shape / `RunnerEvent` stream.
-See the [generated capability matrix](packages/sdk/docs/provider-runtime-capabilities.md).
+Anthropic, DeepSeek, OpenAI, Gemini, and Mistral are accepted by the public
+submission schema. Anthropic and DeepSeek are live-verified; OpenAI, Gemini,
+and Mistral are accepted but live-unverified in the generated matrix. Anthropic
+is the default provider; set `provider` for the others. Omit `runtime` or pass
+`runtime: "managed"`; every provider uses the managed runtime and the same
+`submitRun` shape / `RunnerEvent` stream. See the [generated capability matrix](packages/sdk/docs/provider-runtime-capabilities.md).
 
 **How do provider keys work?**
 **BYOK.** Provider keys, MCP `Authorization` headers, and any

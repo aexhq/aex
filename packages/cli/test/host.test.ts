@@ -563,7 +563,7 @@ describe("aex download", () => {
 describe("aex run", () => {
   it("submits a run config loaded from --config and prints the run record", async () => {
     const runConfig = {
-      model: "claude-sonnet-test",
+      model: "claude-haiku-4-5",
       system: "be helpful",
       prompt: ["hi"],
       skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf", version: "v1" }],
@@ -602,7 +602,7 @@ describe("aex run", () => {
     expect(body.workspaceId).toBeUndefined();
     expect(body.idempotencyKey).toBe("idem-deterministic");
     const submission = body.submission as Record<string, unknown>;
-    expect(submission.model).toBe("claude-sonnet-test");
+    expect(submission.model).toBe("claude-haiku-4-5");
     expect(submission.prompt).toEqual(["hi"]);
     expect(submission.skills).toEqual([
       { kind: "provider", vendor: "anthropic", skillId: "pdf", version: "v1" }
@@ -628,7 +628,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "claude-sonnet-test",
+        "claude-haiku-4-5",
         "--prompt",
         "hello",
         "--mcp",
@@ -696,7 +696,7 @@ describe("aex run", () => {
 
   it("rejects when --anthropic-api-key is missing", async () => {
     const cap = makeHostIo({
-      argv: ["run", "--model", "m", "--prompt", "p", ...COMMON]
+      argv: ["run", "--model", "claude-haiku-4-5", "--prompt", "p", ...COMMON]
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
@@ -715,7 +715,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "m",
+        "claude-haiku-4-5",
         "--prompt",
         "x",
         "--anthropic-api-key",
@@ -754,7 +754,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "m",
+        "claude-haiku-4-5",
         "--prompt",
         "x",
         "--anthropic-api-key",
@@ -776,7 +776,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "m",
+        "claude-haiku-4-5",
         "--prompt",
         "x",
         "--mcp",
@@ -798,7 +798,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "m",
+        "claude-haiku-4-5",
         "--prompt",
         "x",
         "--mcp",
@@ -835,7 +835,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "m",
+        "claude-haiku-4-5",
         "--prompt",
         "x",
         "--mcp",
@@ -868,7 +868,7 @@ describe("aex run", () => {
       argv: [
         "run",
         "--model",
-        "m",
+        "claude-haiku-4-5",
         "--prompt",
         "@@alice please look at this",
         "--anthropic-api-key",

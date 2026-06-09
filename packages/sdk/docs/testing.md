@@ -23,7 +23,12 @@ pnpm run pack:sdk                              # SDK publish dry-run + public bo
 
 Unit tests are deterministic and may use fakes. Offline user tests install the
 packed or published SDK into clean temp projects and do not need provider
-credentials. Live user tests run against a hosted aex API and fail loudly
-when required env is missing: `AEX_API_URL`, `AEX_API_TOKEN`,
-`DEEPSEEK_API_KEY`, and exactly one of `AEX_USER_TEST_TARBALL` or
-`AEX_USER_TEST_VERSION`.
+credentials.
+
+When neither `AEX_USER_TEST_TARBALL` nor `AEX_USER_TEST_VERSION` is set, the
+user-test fixture packs the current workspace SDK into a tempdir and installs
+that artifact. CI or release validation can pin an explicit artifact with
+exactly one of `AEX_USER_TEST_TARBALL` or `AEX_USER_TEST_VERSION`.
+
+Live user tests run against a hosted aex API and fail loudly when required env
+is missing: `AEX_API_URL`, `AEX_API_TOKEN`, and `DEEPSEEK_API_KEY`.

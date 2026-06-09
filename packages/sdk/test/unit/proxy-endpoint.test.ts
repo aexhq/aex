@@ -64,7 +64,7 @@ describe("ProxyEndpoint", () => {
     const { fetch, calls } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       proxyEndpoints: [
         ProxyEndpoint.bearer({
@@ -131,7 +131,7 @@ describe("ProxyEndpoint", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await expect(
       client.submitRun({
-        model: "m",
+        model: "claude-haiku-4-5",
         prompt: "p",
         proxyEndpoints: [
           ProxyEndpoint.bearer({
@@ -169,7 +169,7 @@ describe("ProxyEndpoint", () => {
     const { fetch, calls } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       proxyEndpoints: [
         ProxyEndpoint.none({

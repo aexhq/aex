@@ -95,6 +95,7 @@ describe("typescript consumer", () => {
         RUN_PROVIDERS,
         RUNTIME_KINDS,
         RUNTIME_SIZES,
+        RunModels,
         RuntimeSizes,
         RuntimeValidationError,
         SecretString,
@@ -188,7 +189,7 @@ describe("typescript consumer", () => {
       const anthropicOptions = {
         provider: "anthropic",
         runtime: "managed",
-        model: "claude-haiku-4-5",
+        model: RunModels.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
         prompt: ["Read the attached file.", "Reply with a short acknowledgement."],
         skills: [inlineSkill],
@@ -217,7 +218,7 @@ describe("typescript consumer", () => {
       const managedOptions = {
         provider: "deepseek",
         runtime: "managed",
-        model: "deepseek-chat",
+        model: RunModels.DEEPSEEK_CHAT,
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
         builtins: [],
@@ -232,7 +233,7 @@ describe("typescript consumer", () => {
         provider,
         runtime,
         submission: {
-          model: "claude-haiku-4-5",
+          model: RunModels.CLAUDE_HAIKU_4_5,
           system: "Be precise.",
           prompt: ["hello"],
           skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" }],
@@ -299,6 +300,7 @@ describe("typescript consumer", () => {
 
       void RUN_PROVIDERS;
       void RUNTIME_SIZES;
+      void RunModels;
       void resources;
       void selectedRuntime;
       void managedUnsupportedFeatures;
@@ -377,6 +379,7 @@ describe("typescript consumer", () => {
         ProxyEndpoint,
         RUN_PROVIDERS,
         RUNTIME_KINDS,
+        RunModels,
         type RunProvider,
         type RuntimeKind,
         type RuntimeSize,
@@ -398,7 +401,7 @@ describe("typescript consumer", () => {
       const options = {
         provider,
         runtime,
-        model: "claude-haiku-4-5",
+        model: RunModels.CLAUDE_HAIKU_4_5,
         prompt: "hello",
         proxyEndpoints: [proxy],
         runtimeSize,

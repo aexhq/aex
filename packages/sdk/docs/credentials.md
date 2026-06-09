@@ -38,6 +38,7 @@ The platform's managed HTTP proxy is the agent-first alternative. The caller dec
 ```ts
 import {
   AgentExecutor,
+  RunModels,
   validateProxyAuth,
   buildPlatformAllowedHosts
 } from "@aexhq/sdk";
@@ -73,7 +74,7 @@ const proxyEndpointAuth = [
 validateProxyAuth(proxyEndpoints, proxyEndpointAuth);
 
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "…",
   proxyEndpoints,
   secrets: {
@@ -110,7 +111,7 @@ const proxyEndpoints = [
 ] as const;
 
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "…",
   proxyEndpoints,
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
@@ -146,4 +147,3 @@ const allowedHosts = buildPlatformAllowedHosts({
 ### Secrets are always explicit at the call site
 
 There is no `defaultSecrets` and no client-held secret state. Every `submitRun` call carries its full `secrets` bundle (one provider key + optional MCP credentials + optional `proxyEndpointAuth`). This is the agent-first invariant: the credentials being used on any given call are visible in the same line of code that submits the run.
-

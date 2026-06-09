@@ -28,6 +28,7 @@ import {
   type PlatformProxyEndpoint,
   type PlatformProxyEndpointAuth,
   type Run,
+  type RunModel,
   type RunEvent,
   type RunProvider,
   type RunUnit,
@@ -108,7 +109,11 @@ export interface SubmitRunOptions {
    * is no longer accepted.
    */
   readonly runtime?: RuntimeKind;
-  readonly model: string;
+  /**
+   * Closed public model id. Prefer {@link RunModels}, e.g.
+   * `RunModels.CLAUDE_HAIKU_4_5`.
+   */
+  readonly model: RunModel;
   readonly system?: string;
   readonly prompt: string | readonly string[];
   readonly skills?: readonly Skill[];

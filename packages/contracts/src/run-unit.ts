@@ -35,6 +35,7 @@ import type {
   PlatformEnvironment
 } from "./submission.js";
 import type { RuntimeSecurityProfileName } from "./runtime-security-profile.js";
+import { RunModels, parseRunModel } from "./models.js";
 import { PLATFORM_PACKAGE_ECOSYSTEMS } from "./submission.js";
 
 // ---------------------------------------------------------------------------
@@ -231,10 +232,10 @@ export interface RunUnit {
  * submission. Never throws on minor unknown keys so we can
  * forward-compat with worker-side enrichment.
  *
- * Returns a typed shape even for malformed snapshots — the worst case
- * is `{kind: "submission", submission: {model: "", ...}}` with empty
- * defaults — because the dashboard must still render *something* for a
- * buggy historical row rather than 500ing the whole detail page.
+ * Returns a typed shape even for malformed snapshots by falling back to the
+ * default public model and empty collection defaults, because the dashboard
+ * must still render *something* for a buggy historical row rather than 500ing
+ * the whole detail page.
  */
 export function parseRunUnitSubmission(input: unknown): RunUnitSubmission {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -255,7 +256,7 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
   const allowedDirs = toOptionalStringArray(outputsRaw.allowedDirs);
   const deniedDirs = toOptionalStringArray(outputsRaw.deniedDirs);
   const submission: PlatformSubmission = {
-    model: typeof submissionRaw.model === "string" ? submissionRaw.model : "",
+    model: coerceRunUnitModel(submissionRaw.model),
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
     prompt: toStringArray(submissionRaw.prompt),
     skills: toSkillRefArray(submissionRaw.skills),
@@ -293,7 +294,7 @@ function fallbackFlat(): RunUnitFlatSubmission {
   return {
     kind: "submission",
     submission: {
-      model: "",
+      model: RunModels.CLAUDE_HAIKU_4_5,
       prompt: [],
       skills: [],
       agentsMd: [],
@@ -311,6 +312,15 @@ function fallbackFlat(): RunUnitFlatSubmission {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function coerceRunUnitModel(value: unknown) {
+  if (typeof value !== "string") return RunModels.CLAUDE_HAIKU_4_5;
+  try {
+    return parseRunModel(value, "run unit submission.model");
+  } catch {
+    return RunModels.CLAUDE_HAIKU_4_5;
+  }
 }
 
 function isJsonRecord(value: unknown): boolean {

@@ -50,7 +50,7 @@ const submission = fc.record({
   workspaceId: nonEmptyString,
   idempotencyKey: nonEmptyString,
   submission: fc.record({
-    model: nonEmptyString,
+    model: fc.constant("claude-haiku-4-5"),
     system: fc.option(nonEmptyString, { nil: undefined }),
     prompt: fc.array(nonEmptyString, { minLength: 1, maxLength: 5 }),
     skills: fc.constant([] as never[]),
@@ -120,7 +120,7 @@ function makeValidSubmission(): PlatformRunSubmissionRequest {
     credentialMode: "byok",
     provider: "anthropic",
     submission: {
-      model: "claude-sonnet",
+      model: "claude-haiku-4-5",
       prompt: ["hello"],
       skills: [],
       agentsMd: [],

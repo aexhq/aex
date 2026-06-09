@@ -9,7 +9,8 @@ aex is a TypeScript-first SDK + CLI for running autonomous agent sessions across
 ```ts
 import {
   AgentExecutor,        // the only client class — submits durable runs to aex
-  Skill,                // workspace / provider / inline skill bundles
+  RunModels,            // closed public model id constants
+  Skill,                // local, URL, and catalog skill bundles normalized to assets
   McpServer,            // MCP server declarations (headers split into secrets server-side)
   ProxyEndpoint,        // per-run managed HTTP proxy endpoint
   AgentsMd,             // AGENTS.md / CLAUDE.md uploads
@@ -55,15 +56,15 @@ The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `ba
 ## Quickstart (SDK)
 
 ```ts
-import { AgentExecutor } from "@aexhq/sdk";
+import { AgentExecutor, RunModels } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({
-  apiToken: process.env.AEX_API_TOKEN!
+  apiToken: process.env.AEX_API_TOKEN!,
   // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   system: "You are a concise automation agent.",
   prompt: "Write a short answer about agent-first SDK design.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
@@ -87,9 +88,9 @@ Reusable, credential-free configs can be ordinary functions:
 ```ts
 function summarise(topic: string) {
   return {
-  model: "claude-haiku-4-5",
-  system: "You are a concise automation agent.",
-  prompt: `Write a short answer about ${topic}.`
+    model: RunModels.CLAUDE_HAIKU_4_5,
+    system: "You are a concise automation agent.",
+    prompt: `Write a short answer about ${topic}.`
   };
 }
 
@@ -127,7 +128,9 @@ aex run \
   --follow
 ```
 
-`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site.
+`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site. SDK code should use `RunModels`; config JSON is validated against the same `RUN_MODELS` allowlist.
+
+Runtime controls: omit `builtins` to use the default `["developer"]` toolkit, pass `builtins: []` to disable builtins for a pure-MCP run, use `outputMode: "stream"` for per-token assistant text, and prefer `RuntimeSizes` for `runtimeSize`.
 
 ## Test commands
 

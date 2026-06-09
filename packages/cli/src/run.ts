@@ -14,7 +14,7 @@
  *     - `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
  *     - `aex events <run-id> [--follow] [--timeout <dur>]`
  *     - `aex outputs <run-id>`
- *     - `aex download <run-id> [--out path]`
+ *     - `aex download <run-id> [--only outputs|events|metadata] [--out path]`
  *     - `aex cancel <run-id>`
  *     - `aex delete <run-id>`
  *     - `aex whoami`
@@ -152,7 +152,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex wait <run-id> [--timeout 8m] [--interval 2s] --api-token T\n");
   io.stdout("  aex events <run-id> [--follow] [--timeout 8m] --api-token T\n");
   io.stdout("  aex outputs <run-id> --api-token T\n");
-  io.stdout("  aex download <run-id> [--out path] --api-token T\n");
+  io.stdout("  aex download <run-id> [--only outputs|events|metadata] [--out path] --api-token T\n");
   io.stdout("  aex cancel <run-id> --api-token T\n");
   io.stdout("  aex delete <run-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");

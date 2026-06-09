@@ -9,8 +9,10 @@ Every run produces durable metadata (status, events, snapshots, cleanup state) a
 ## Quickstart
 
 ```ts
+import { RunModels } from "@aexhq/sdk";
+
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Produce a report and save it as a file.",
   secrets: { apiKey }
 });

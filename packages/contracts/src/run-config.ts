@@ -3,17 +3,11 @@
  *
  * Public composition concepts:
  *
- *   - `SkillRef` is the wire-level reference to a skill — either an
- *     `skl_*` id pointing at a workspace-uploaded bundle, a
- *     `{vendor, skillId, version}` reference to a provider built-in, or
- *     a `{slot, name, contentHash}` reference to per-run bytes attached
- *     as a multipart part on the submitRun call (and torn down at run
- *     terminal). The three shapes are discriminated by `kind` so
- *     consumers branch mechanically and providers can never accidentally
- *     be looked up in `skill_bundles`. Transient refs do NOT round-trip
- *     through JSON (bytes can't be serialised back); `parseRunRequestConfig`
- *     therefore rejects them while the BFF multipart submission parser
- *     accepts them.
+ *   - `SkillRef` is the wire-level reference to a skill. Public run
+ *     configs use storage-neutral `kind:"asset"` refs produced by the SDK
+ *     upload path or by workspace catalog records. Provider skill refs remain
+ *     in the parser for wire compatibility, but the managed runtime rejects
+ *     them at submission time.
  *
  *   - `McpServerRef` is the non-secret part of an MCP server declaration:
  *     `name` and `url`. Bearer / cookie / per-request headers travel in
@@ -42,6 +36,7 @@ import type {
   PlatformProxyEndpoint,
   PlatformEnvironment
 } from "./submission.js";
+import { parseRunModel, type RunModel } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
 
 // ---------------------------------------------------------------------------
@@ -78,10 +73,9 @@ export const SKILL_BUNDLE_LIMITS = {
   /** Compressed (.zip) ceiling. */
   maxCompressedBytes: 10 * 1024 * 1024,
   /**
-   * Hard ceiling for the direct-to-storage (presigned PUT) upload path, where
-   * bytes never transit the hosted API so its memory/request-payload limits no
-   * longer cap the bundle. Kept well under the object store's 5 GiB single-PUT
-   * limit; objects above this would need S3 multipart, which is out of scope.
+   * Hard ceiling for the direct-to-storage upload path. Bytes never transit the
+   * hosted API, so its memory/request-payload limits do not cap accepted
+   * bundles; objects above this product cap are rejected before upload.
    */
   maxBytes: 2 * 1024 * 1024 * 1024,
   /** Sum of uncompressed file sizes. */
@@ -749,7 +743,7 @@ function parseRunConfigMcpServerRef(input: unknown, path: string): RunConfigMcpS
  * into the normal `submitRun` request.
  */
 export interface RunRequestConfig {
-  readonly model: string;
+  readonly model: RunModel;
   readonly system?: string;
   readonly prompt: string | readonly string[];
   readonly skills?: readonly SkillRef[];
@@ -795,10 +789,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
       throw new Error(`run request config contains unexpected field: ${key}`);
     }
   }
-  const model = record.model;
-  if (typeof model !== "string" || model.length === 0) {
-    throw new Error("run request config model must be a non-empty string");
-  }
+  const model = parseRunModel(record.model, "run request config model");
   const system = record.system;
   if (system !== undefined && typeof system !== "string") {
     throw new Error("run request config system, when provided, must be a string");
@@ -903,7 +894,7 @@ function parseRunRequestConfigMcpServers(value: unknown): readonly RunConfigMcpS
  * the audit log don't have to re-handle two shapes.
  */
 export interface NormalisedRunRequestConfig {
-  readonly model: string;
+  readonly model: RunModel;
   readonly system?: string;
   readonly prompt: readonly string[];
   readonly skills: readonly SkillRef[];

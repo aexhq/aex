@@ -135,6 +135,11 @@ export {
   DEFAULT_CREDENTIAL_MODE,
   collectManagedUnsupportedFeatures,
   DEFAULT_RUN_PROVIDER,
+  RUN_MODELS,
+  RUN_MODELS_BY_PROVIDER,
+  RunModels,
+  isRunModel,
+  parseRunModel,
   RUN_PROVIDERS,
   RUNTIME_KINDS,
   RUNTIME_VALIDATION_CODES,
@@ -143,6 +148,7 @@ export {
 } from "@aexhq/contracts";
 export type {
   CredentialMode,
+  RunModel,
   RunProvider,
   RuntimeKind,
   RuntimeValidationCode

@@ -39,7 +39,7 @@ const baseSubmission = {
   workspaceId: "workspace-1",
   idempotencyKey: "idem-1",
   submission: {
-    model: "claude-sonnet-4-5-20250929",
+    model: "claude-haiku-4-5",
     prompt: "do the thing"
   },
   secrets: {
@@ -300,7 +300,7 @@ describe("run-config — validateSkillBundleManifest", () => {
 describe("run-config — parseRunRequestConfig", () => {
   it("preserves a string prompt verbatim (normalisation happens at submission time)", () => {
     const config = parseRunRequestConfig({
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: "do it",
       skills: [],
       mcpServers: []
@@ -310,7 +310,7 @@ describe("run-config — parseRunRequestConfig", () => {
 
   it("preserves a multi-part prompt array", () => {
     const config = parseRunRequestConfig({
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: ["first turn", "follow up"],
       skills: [],
       mcpServers: []
@@ -320,14 +320,14 @@ describe("run-config — parseRunRequestConfig", () => {
 
   it("rejects an empty string prompt at the run-config boundary", () => {
     expect(() =>
-      parseRunRequestConfig({ model: "claude-sonnet-4-5", prompt: "", skills: [], mcpServers: [] })
+      parseRunRequestConfig({ model: "claude-haiku-4-5", prompt: "", skills: [], mcpServers: [] })
     ).toThrow(/prompt/i);
   });
 
   it("rejects an empty string in a prompt array", () => {
     expect(() =>
       parseRunRequestConfig({
-        model: "claude-sonnet-4-5",
+        model: "claude-haiku-4-5",
         prompt: ["first", ""],
         skills: [],
         mcpServers: []
@@ -338,7 +338,7 @@ describe("run-config — parseRunRequestConfig", () => {
   it("rejects extra top-level fields", () => {
     expect(() =>
       parseRunRequestConfig({
-        model: "claude-sonnet-4-5",
+        model: "claude-haiku-4-5",
         prompt: "x",
         skills: [],
         mcpServers: [],
@@ -360,7 +360,7 @@ describe("run-config — parseRunRequestConfig", () => {
     ];
     const metadata = { ticket: "ANT-1" };
     const config = parseRunRequestConfig({
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: "x",
       skills: [],
       mcpServers: [],
@@ -376,7 +376,7 @@ describe("run-config — parseRunRequestConfig", () => {
   it("rejects removed cleanup config", () => {
     expect(() =>
       parseRunRequestConfig({
-        model: "claude-sonnet-4-5",
+        model: "claude-haiku-4-5",
         prompt: "x",
         cleanup: { session: "delete" }
       })
@@ -386,7 +386,7 @@ describe("run-config — parseRunRequestConfig", () => {
   it("rejects duplicate mcpServer names at the run-config boundary", () => {
     expect(() =>
       parseRunRequestConfig({
-        model: "claude-sonnet-4-5",
+        model: "claude-haiku-4-5",
         prompt: "x",
         skills: [],
         mcpServers: [
@@ -399,7 +399,7 @@ describe("run-config — parseRunRequestConfig", () => {
 
   it("accepts an asset skill and provider skill side by side", () => {
     const config = parseRunRequestConfig({
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: "x",
       skills: [goodAssetRef, goodProviderRef],
       mcpServers: []
@@ -414,7 +414,7 @@ describe("run-config — parseRunRequestConfig", () => {
 describe("run-config — normaliseRunRequestConfig", () => {
   it("splits MCP headers out of the public field into the secret bundle", () => {
     const config: RunRequestConfig = {
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: ["x"],
       skills: [],
       mcpServers: [
@@ -430,7 +430,7 @@ describe("run-config — normaliseRunRequestConfig", () => {
 
   it("returns an empty mcpServerSecrets array when no headers were provided", () => {
     const config: RunRequestConfig = {
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: "x",
       skills: [],
       mcpServers: [{ name: "noauth", url: "https://x" }]
@@ -442,7 +442,7 @@ describe("run-config — normaliseRunRequestConfig", () => {
 
   it("includes only entries whose run-config entry had headers in mcpServerSecrets", () => {
     const config: RunRequestConfig = {
-      model: "claude-sonnet-4-5",
+      model: "claude-haiku-4-5",
       prompt: "x",
       skills: [],
       mcpServers: [

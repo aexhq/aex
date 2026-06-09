@@ -6,9 +6,9 @@
  *
  *   1. `--config <path>` — plain run-request JSON:
  *      `{ model, system?, prompt, skills?, mcpServers?, environment?,
- *         proxyEndpoints?, metadata? }`. Skill entries use the
- *      workspace wire shape (`{ kind: "workspace", id }`). MCP entries
- *      may include `headers` — the CLI splits them into the
+ *         runtimeSize?, timeout?, proxyEndpoints?, metadata? }`. Skill
+ *      entries use storage-neutral asset refs (`{ kind: "asset", ... }`).
+ *      MCP entries may include `headers` — the CLI splits them into the
  *      `secrets.mcpServers` bag before posting.
  *
  *   2. Flat flags — for ad-hoc / scriptable invocations:
@@ -37,6 +37,7 @@ import {
   DEFAULT_RUN_PROVIDER,
   operations,
   parseRunRequestConfig,
+  RUN_MODELS,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
   RUNTIME_KINDS,
@@ -51,6 +52,7 @@ import {
   type PlatformProxyAuthValue,
   type PlatformProxyEndpoint,
   type PlatformProxyEndpointAuth,
+  type RunModel,
   type RunProvider,
   type RuntimeSize,
   type RuntimeKind,
@@ -258,6 +260,10 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       io.stderr("--model is required when --config is not provided\n");
       return USAGE_ERR;
     }
+    if (!(RUN_MODELS as readonly string[]).includes(modelFlag.value)) {
+      io.stderr(`--model must be one of: ${RUN_MODELS.join(", ")} (got: ${modelFlag.value})\n`);
+      return USAGE_ERR;
+    }
     if (promptFlags.values.length === 0) {
       io.stderr("--prompt is required (repeatable)\n");
       return USAGE_ERR;
@@ -285,7 +291,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     }
 
     runConfig = {
-      model: modelFlag.value,
+      model: modelFlag.value as RunModel,
       ...(resolvedSystem ? { system: resolvedSystem } : {}),
       prompt: resolvedPrompt,
       ...(mcpRefs.length > 0 ? { mcpServers: mcpRefs } : {}),

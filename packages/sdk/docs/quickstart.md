@@ -9,15 +9,15 @@ title: aex quickstart
 3. Submit the run with the agent's brief plus an inline `secrets` bundle. Wait for terminal status. Fetch outputs.
 
 ```ts
-import { AgentExecutor } from "@aexhq/sdk";
+import { AgentExecutor, RunModels } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({
-  apiToken: process.env.AEX_API_TOKEN!
+  apiToken: process.env.AEX_API_TOKEN!,
   // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Write a short answer about agent-first SDK design.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
@@ -32,8 +32,8 @@ For reusable, credential-free configs, use an ordinary function:
 ```ts
 function summarise(topic: string) {
   return {
-  model: "claude-haiku-4-5",
-  prompt: `Write a short answer about ${topic}.`
+    model: RunModels.CLAUDE_HAIKU_4_5,
+    prompt: `Write a short answer about ${topic}.`
   };
 }
 
@@ -54,7 +54,16 @@ aex run \
   --follow
 ```
 
-For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, proxyEndpoints?, metadata? }`). Both surfaces hit the same aex backend and operate on the same durable run records — pick whichever is most convenient.
+For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, proxyEndpoints?, metadata? }`). Both surfaces hit the same aex backend and operate on the same durable run records. The JSON `model` value is validated against `RUN_MODELS`.
+
+## Runtime controls
+
+`submitRun` also accepts per-run controls that are not secrets:
+
+- `runtimeSize` - a closed managed-runtime preset. Prefer `RuntimeSizes`, e.g. `RuntimeSizes.SHARED_2X_2GB`.
+- `timeout` - run deadline as a duration string such as `"30m"` or `"2h"`; bounded server-side.
+- `builtins` - managed-runtime builtin extensions. Omit it to use the default `["developer"]` toolkit. Pass `[]` for a pure-MCP run with no builtins.
+- `outputMode` - `"buffered"` by default; pass `"stream"` for per-token assistant text deltas.
 
 ## Where things go: customer → primitive mapping
 
@@ -93,7 +102,7 @@ async function submitWithRetry() {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await aex.submitRun({
-        model: "claude-haiku-4-5",
+        model: RunModels.CLAUDE_HAIKU_4_5,
         prompt: "...",
         idempotencyKey,
         secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RunModels } from "../src/models.js";
 import { parseRunUnitSubmission } from "../src/run-unit.js";
 
 const HASH_HEX = "a".repeat(64);
@@ -50,7 +51,7 @@ describe("parseRunUnitSubmission", () => {
       const parsed = parseRunUnitSubmission(garbage);
       expect(parsed.kind).toBe("submission");
       if (parsed.kind !== "submission") return;
-      expect(parsed.submission.model).toBe("");
+      expect(parsed.submission.model).toBe(RunModels.CLAUDE_HAIKU_4_5);
       expect(parsed.submission.prompt).toEqual([]);
       expect(parsed.submission.skills).toEqual([]);
       expect(parsed.submission.mcpServers).toEqual([]);

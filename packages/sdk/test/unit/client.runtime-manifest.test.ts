@@ -45,7 +45,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
     });
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const runId = await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       secrets: { apiKey: "k" },
       environment: { envVars: { BROLL_STORE: "/mnt/session/broll/store" } }
@@ -63,7 +63,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
     });
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const runId = await client.submitRun({
-      model: "m",
+      model: "claude-haiku-4-5",
       prompt: "p",
       secrets: { apiKey: "k" }
     });

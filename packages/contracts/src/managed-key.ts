@@ -1,4 +1,5 @@
 import type { RunProvider, RuntimeKind } from "./submission.js";
+import type { RunModel } from "./models.js";
 
 export const CREDENTIAL_MODES = ["byok", "managed"] as const;
 export type CredentialMode = (typeof CREDENTIAL_MODES)[number];
@@ -38,7 +39,7 @@ export interface ManagedKeyPolicyV1 {
   readonly billingRequired: true;
   readonly providers: readonly RunProvider[];
   readonly runtimes: readonly RuntimeKind[];
-  readonly models?: readonly string[];
+  readonly models?: readonly RunModel[];
   readonly features: ManagedKeyFeaturePolicyV1;
 }
 
@@ -197,7 +198,7 @@ export interface ManagedCredentialResolutionInput {
   readonly runId: string;
   readonly provider: RunProvider;
   readonly runtime: RuntimeKind;
-  readonly model: string;
+  readonly model: RunModel;
   readonly policy: ManagedKeyPolicyV1;
 }
 

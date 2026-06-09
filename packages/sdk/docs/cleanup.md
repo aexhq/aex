@@ -15,8 +15,10 @@ provider-session retention is not a supported run option, and the removed
 retention field is rejected if supplied.
 
 ```ts
+import { RunModels } from "@aexhq/sdk";
+
 const runId = await aex.submitRun({
-  model: "claude-haiku-4-5",
+  model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "...",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
