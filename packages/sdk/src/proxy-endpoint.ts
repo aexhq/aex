@@ -67,8 +67,6 @@ export interface ProxyEndpointCommonOptions {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
-  readonly perCallBudget?: number;
-  readonly responseByteBudget?: number;
 }
 
 export interface BearerProxyEndpointOptions extends ProxyEndpointCommonOptions {
@@ -121,7 +119,7 @@ export class ProxyEndpoint {
 
   /**
    * Keyless endpoint. Routes through the aex managed proxy for
-   * unified egress, audit, and budget enforcement, but the BFF injects
+   * unified egress and audit, but the BFF injects
    * no auth header or query parameter. Use for public APIs (Wikimedia
    * Commons, NASA Images, Library of Congress, NARA, GDELT, etc.).
    */
@@ -257,11 +255,7 @@ function buildCommonDeclaration(
     ...(options.responseMode ? { responseMode: options.responseMode } : {}),
     ...(options.maxRequestBytes !== undefined ? { maxRequestBytes: options.maxRequestBytes } : {}),
     ...(options.maxResponseBytes !== undefined ? { maxResponseBytes: options.maxResponseBytes } : {}),
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options.perCallBudget !== undefined ? { perCallBudget: options.perCallBudget } : {}),
-    ...(options.responseByteBudget !== undefined
-      ? { responseByteBudget: options.responseByteBudget }
-      : {})
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
   };
 }
 

@@ -17,8 +17,6 @@ import {
   PROXY_RESPONSE_MODE_HEADER,
   PROXY_RESPONSE_MODES,
   PROXY_RESP_MODE_HEADER,
-  PROXY_RESP_REMAINING_BYTES_HEADER,
-  PROXY_RESP_REMAINING_CALLS_HEADER,
   PROXY_RESP_STATUS_HEADER,
   PROXY_RESP_TRUNCATED_HEADER,
   PROXY_RESP_UPSTREAM_HEADERS_HEADER,
@@ -123,7 +121,7 @@ export async function printProxyHelp(io: CliIO): Promise<CliExitCode> {
     io.stdout("Declared endpoints:\n");
     for (const ep of manifest.endpoints) {
       io.stdout(
-        `  • ${ep.name}: ${ep.allowMethods.join(",")} ${ep.allowPathPrefixes.join(",")} (mode=${ep.responseMode}, budget=${ep.perCallBudget}/run)\n`
+        `  • ${ep.name}: ${ep.allowMethods.join(",")} ${ep.allowPathPrefixes.join(",")} (mode=${ep.responseMode})\n`
       );
     }
   }
@@ -311,14 +309,6 @@ async function readStreamedEnvelope(
   const effectiveResponseMode = (response.headers.get(PROXY_RESP_MODE_HEADER) ??
     "headers_only") as ProxyResponseMode;
   const upstreamStatus = Number.parseInt(response.headers.get(PROXY_RESP_STATUS_HEADER) ?? "0", 10);
-  const remainingCalls = Number.parseInt(
-    response.headers.get(PROXY_RESP_REMAINING_CALLS_HEADER) ?? "0",
-    10
-  );
-  const remainingResponseBytes = Number.parseInt(
-    response.headers.get(PROXY_RESP_REMAINING_BYTES_HEADER) ?? "0",
-    10
-  );
   let upstreamHeaders: Record<string, string> = {};
   const rawHeaders = response.headers.get(PROXY_RESP_UPSTREAM_HEADERS_HEADER);
   if (rawHeaders) {
@@ -344,8 +334,6 @@ async function readStreamedEnvelope(
     // isn't carried back); the effective mode is authoritative for the
     // agent and matches what v1 surfaced for an un-clamped call.
     modeClamped: false,
-    remainingCalls,
-    remainingResponseBytes,
     ...(effectiveResponseMode === "full" && bytes.byteLength > 0
       ? { upstreamBodyBase64: Buffer.from(bytes).toString("base64") }
       : {}),

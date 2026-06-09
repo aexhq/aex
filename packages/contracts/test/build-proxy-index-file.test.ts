@@ -60,9 +60,7 @@ describe("buildProxyIndexFile", () => {
       responseMode: PROXY_ENDPOINT_DEFAULTS.responseMode,
       maxRequestBytes: PROXY_ENDPOINT_DEFAULTS.maxRequestBytes,
       maxResponseBytes: PROXY_ENDPOINT_DEFAULTS.maxResponseBytes,
-      timeoutMs: PROXY_ENDPOINT_DEFAULTS.timeoutMs,
-      perCallBudget: PROXY_ENDPOINT_DEFAULTS.perCallBudget,
-      responseByteBudget: PROXY_ENDPOINT_DEFAULTS.responseByteBudget
+      timeoutMs: PROXY_ENDPOINT_DEFAULTS.timeoutMs
     });
   });
 
@@ -75,7 +73,7 @@ describe("buildProxyIndexFile", () => {
           ...minimalEndpoint,
           responseMode: "full",
           timeoutMs: 5_000,
-          perCallBudget: 3,
+          maxResponseBytes: 4096,
           allowHeaders: ["x-custom"]
         }
       ]
@@ -83,7 +81,7 @@ describe("buildProxyIndexFile", () => {
     const entry = file.endpoints[0]!;
     expect(entry.responseMode).toBe("full");
     expect(entry.timeoutMs).toBe(5_000);
-    expect(entry.perCallBudget).toBe(3);
+    expect(entry.maxResponseBytes).toBe(4096);
     expect(entry.allowHeaders).toEqual(["x-custom"]);
   });
 

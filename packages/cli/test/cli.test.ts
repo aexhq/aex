@@ -73,9 +73,7 @@ function manifestJson(opts: {
       responseMode: "headers_only",
       maxRequestBytes: 65536,
       maxResponseBytes: 65536,
-      timeoutMs: 10000,
-      perCallBudget: 60,
-      responseByteBudget: 1048576
+      timeoutMs: 10000
     }))
   });
 }
@@ -205,9 +203,7 @@ describe("aex proxy — successful call", () => {
       upstreamStatus: 200,
       upstreamHeaders: { "content-type": "application/json" },
       effectiveResponseMode: "headers_only",
-      modeClamped: false,
-      remainingCalls: 59,
-      remainingResponseBytes: 1000000
+      modeClamped: false
     };
     const cap = makeIo({
       argv: ["proxy", "stripe", "--method", "POST", "--path", "/v1/refunds"],
@@ -234,8 +230,6 @@ describe("aex proxy — successful call", () => {
     const body = JSON.parse(cap.stdout.trim());
     expect(body.upstreamStatus).toBe(200);
     expect(body.effectiveResponseMode).toBe("headers_only");
-    expect(body.remainingCalls).toBe(59);
-    expect(body.remainingResponseBytes).toBe(1000000);
     expect(body.upstreamHeaders).toEqual({ "content-type": "application/json" });
   });
 
@@ -256,8 +250,6 @@ describe("aex proxy — successful call", () => {
             "x-aex-proxy-status": "200",
             "x-aex-proxy-effective-mode": "full",
             "x-aex-proxy-truncated": "false",
-            "x-aex-proxy-remaining-calls": "59",
-            "x-aex-proxy-remaining-bytes": "999000",
             "x-aex-proxy-upstream-headers": JSON.stringify({ "content-type": "application/json" }),
             "content-type": "application/octet-stream"
           }
@@ -268,7 +260,6 @@ describe("aex proxy — successful call", () => {
     const body = JSON.parse(cap.stdout.trim());
     expect(body.upstreamStatus).toBe(200);
     expect(body.effectiveResponseMode).toBe("full");
-    expect(body.remainingCalls).toBe(59);
     expect(body.upstreamHeaders["content-type"]).toBe("application/json");
     // Body round-trips through the same base64 field v1 used.
     expect(Buffer.from(body.upstreamBodyBase64, "base64").toString("utf8")).toBe(upstreamPayload);
@@ -377,7 +368,6 @@ describe("aex proxy — error envelope", () => {
     { name: "bad_request", httpStatus: 400, errorCode: "bad_request" },
     { name: "endpoint_not_found", httpStatus: 404, errorCode: "endpoint_not_found" },
     { name: "rate_limited", httpStatus: 429, errorCode: "rate_limited" },
-    { name: "budget_exceeded", httpStatus: 429, errorCode: "budget_exceeded" },
     { name: "upstream_error", httpStatus: 502, errorCode: "upstream_error" },
     { name: "upstream_timeout", httpStatus: 504, errorCode: "upstream_timeout" },
     { name: "exceeded_cap", httpStatus: 502, errorCode: "exceeded_cap" },

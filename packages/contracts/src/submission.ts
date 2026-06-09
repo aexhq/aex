@@ -260,8 +260,6 @@ export interface PlatformProxyEndpoint {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
-  readonly perCallBudget?: number;
-  readonly responseByteBudget?: number;
 }
 
 export const SECRETS_KEY = "secrets";
@@ -517,9 +515,7 @@ function parseProxyEndpoint(input: unknown, path: string): PlatformProxyEndpoint
     "responseMode",
     "maxRequestBytes",
     "maxResponseBytes",
-    "timeoutMs",
-    "perCallBudget",
-    "responseByteBudget"
+    "timeoutMs"
   ]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
@@ -548,8 +544,6 @@ function parseProxyEndpoint(input: unknown, path: string): PlatformProxyEndpoint
   const maxRequestBytes = optionalPositiveInt(value.maxRequestBytes, `${path}.maxRequestBytes`);
   const maxResponseBytes = optionalPositiveInt(value.maxResponseBytes, `${path}.maxResponseBytes`);
   const timeoutMs = optionalPositiveInt(value.timeoutMs, `${path}.timeoutMs`);
-  const perCallBudget = optionalPositiveInt(value.perCallBudget, `${path}.perCallBudget`);
-  const responseByteBudget = optionalPositiveInt(value.responseByteBudget, `${path}.responseByteBudget`);
 
   return {
     name,
@@ -561,9 +555,7 @@ function parseProxyEndpoint(input: unknown, path: string): PlatformProxyEndpoint
     ...(responseMode ? { responseMode } : {}),
     ...(maxRequestBytes !== undefined ? { maxRequestBytes } : {}),
     ...(maxResponseBytes !== undefined ? { maxResponseBytes } : {}),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(perCallBudget !== undefined ? { perCallBudget } : {}),
-    ...(responseByteBudget !== undefined ? { responseByteBudget } : {})
+    ...(timeoutMs !== undefined ? { timeoutMs } : {})
   };
 }
 

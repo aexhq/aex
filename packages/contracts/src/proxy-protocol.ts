@@ -51,8 +51,6 @@ export const PROXY_RESP_MODE_HEADER = "x-aex-proxy-effective-mode";
  * without buffering). See the streaming byte-cap note in proxy-routes.ts.
  */
 export const PROXY_RESP_TRUNCATED_HEADER = "x-aex-proxy-truncated";
-export const PROXY_RESP_REMAINING_CALLS_HEADER = "x-aex-proxy-remaining-calls";
-export const PROXY_RESP_REMAINING_BYTES_HEADER = "x-aex-proxy-remaining-bytes";
 /** JSON object of lowercase upstream header names → values (mode-filtered). */
 export const PROXY_RESP_UPSTREAM_HEADERS_HEADER = "x-aex-proxy-upstream-headers";
 
@@ -115,7 +113,6 @@ export const PROXY_ERROR_CODES = [
   "endpoint_not_found",
   "policy_denied",
   "rate_limited",
-  "budget_exceeded",
   "ssrf_denied",
   "upstream_timeout",
   "upstream_error",
@@ -155,24 +152,29 @@ export interface ProxyIndexEntry {
   readonly maxRequestBytes: number;
   readonly maxResponseBytes: number;
   readonly timeoutMs: number;
-  readonly perCallBudget: number;
-  readonly responseByteBudget: number;
 }
 
 /**
- * Default caps for a proxy endpoint when the submission doesn't specify
- * one. Conservative on purpose. Lives in the protocol module (next to the
- * index-file shape) so {@link buildProxyIndexFile} can fill every optional
- * cap with a concrete value; the submission parser re-exports it.
+ * Default caps for a proxy endpoint when the submission doesn't specify one.
+ * Lives in the protocol module (next to the index-file shape) so
+ * {@link buildProxyIndexFile} can fill every optional cap with a concrete
+ * value; the submission parser re-exports it.
+ *
+ * `maxResponseBytes: 0` means UNLIMITED — the v2 path streams the upstream body
+ * unbuffered (O(1) memory regardless of size), so there is no cap to apply by
+ * default. A customer can opt into a per-response truncation cap by setting a
+ * positive value. There is no cumulative per-run call/byte budget: it needed a
+ * per-call counter on the hot path and only existed to bound memory, which
+ * streaming already does.
  */
 export const PROXY_ENDPOINT_DEFAULTS = {
   allowHeaders: [] as readonly string[],
   responseMode: "headers_only" as ProxyResponseMode,
   maxRequestBytes: 64 * 1024,
-  maxResponseBytes: 1024 * 1024,
-  timeoutMs: 10_000,
-  perCallBudget: 60,
-  responseByteBudget: 1024 * 1024
+  // Unlimited (0). The request body is buffered to enforce its cap, so that
+  // stays finite; the response is streamed, so it does not need one.
+  maxResponseBytes: 0,
+  timeoutMs: 10_000
 } as const;
 
 /**
@@ -191,8 +193,6 @@ export interface ProxyEndpointPolicy {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
-  readonly perCallBudget?: number;
-  readonly responseByteBudget?: number;
 }
 
 export interface BuildProxyIndexFileInput {
@@ -241,9 +241,7 @@ export function buildProxyIndexFile(input: BuildProxyIndexFileInput): ProxyIndex
         responseMode: e.responseMode ?? PROXY_ENDPOINT_DEFAULTS.responseMode,
         maxRequestBytes: e.maxRequestBytes ?? PROXY_ENDPOINT_DEFAULTS.maxRequestBytes,
         maxResponseBytes: e.maxResponseBytes ?? PROXY_ENDPOINT_DEFAULTS.maxResponseBytes,
-        timeoutMs: e.timeoutMs ?? PROXY_ENDPOINT_DEFAULTS.timeoutMs,
-        perCallBudget: e.perCallBudget ?? PROXY_ENDPOINT_DEFAULTS.perCallBudget,
-        responseByteBudget: e.responseByteBudget ?? PROXY_ENDPOINT_DEFAULTS.responseByteBudget
+        timeoutMs: e.timeoutMs ?? PROXY_ENDPOINT_DEFAULTS.timeoutMs
       })
     )
   };
@@ -257,7 +255,7 @@ export function buildProxyIndexFile(input: BuildProxyIndexFileInput): ProxyIndex
  *
  * The `none` variant declares an upstream that takes no auth (public
  * APIs like Wikimedia Commons or NASA Images). It still routes through
- * the proxy for unified egress, audit, and budget enforcement, but
+ * the proxy for unified egress and audit, but
  * carries no `proxyEndpointAuth[]` entry and the BFF injects no
  * header or query value.
  */
@@ -378,9 +376,6 @@ export interface ProxyResponseEnvelope {
    */
   readonly effectiveResponseMode: ProxyResponseMode;
   readonly modeClamped: boolean;
-  /** Remaining per-endpoint per-run budget after this call. */
-  readonly remainingCalls: number;
-  readonly remainingResponseBytes: number;
 }
 
 /**
@@ -412,7 +407,6 @@ export const PROXY_ERROR_HTTP_STATUS: Record<ProxyErrorCode, number> = {
   endpoint_not_found: 404,
   policy_denied: 403,
   rate_limited: 429,
-  budget_exceeded: 429,
   ssrf_denied: 403,
   upstream_timeout: 504,
   upstream_error: 502,
