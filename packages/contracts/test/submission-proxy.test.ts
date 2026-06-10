@@ -49,6 +49,53 @@ describe("submission proxy endpoints — policy contract", () => {
     expect(parsed.secrets.proxyEndpointAuth).toEqual([bearerAuth]);
   });
 
+  it("accepts and preserves a declared retry policy", () => {
+    const retry = {
+      maxAttempts: 4,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+      jitter: "none" as const,
+      retryOnStatuses: [429, 503],
+      retryOnMethods: ["GET", "POST"] as const,
+      respectRetryAfter: false
+    };
+    const parsed = parseRunSubmissionRequest({
+      ...baseSubmission,
+      proxyEndpoints: [{ ...bearerPolicy, retry }],
+      secrets: { ...baseSubmission.secrets, proxyEndpointAuth: [bearerAuth] }
+    });
+
+    expect(parsed.proxyEndpoints?.[0]?.retry).toEqual(retry);
+  });
+
+  it("rejects malformed retry policies", () => {
+    const cases: Array<{ readonly retry: unknown; readonly message: RegExp }> = [
+      { retry: null, message: /retry must be an object/ },
+      { retry: { maxAttempts: 0 }, message: /maxAttempts.*between 1 and 5/ },
+      { retry: { maxAttempts: 6 }, message: /maxAttempts.*between 1 and 5/ },
+      { retry: { initialDelayMs: 0 }, message: /initialDelayMs.*positive/ },
+      { retry: { initialDelayMs: 6000 }, message: /maxDelayMs.*initialDelayMs/ },
+      { retry: { maxDelayMs: 100 }, message: /maxDelayMs.*initialDelayMs/ },
+      { retry: { initialDelayMs: 1000, maxDelayMs: 100 }, message: /maxDelayMs.*initialDelayMs/ },
+      { retry: { jitter: "equal" }, message: /jitter.*one of/ },
+      { retry: { retryOnStatuses: [99] }, message: /status codes/ },
+      { retry: { retryOnStatuses: ["503"] }, message: /status codes/ },
+      { retry: { retryOnMethods: ["CONNECT"] }, message: /unsupported method/ },
+      { retry: { respectRetryAfter: "yes" }, message: /respectRetryAfter.*boolean/ },
+      { retry: { unexpected: true }, message: /unexpected.*not an allowed field/ }
+    ];
+
+    for (const { retry, message } of cases) {
+      expect(() =>
+        parseRunSubmissionRequest({
+          ...baseSubmission,
+          proxyEndpoints: [{ ...bearerPolicy, retry }],
+          secrets: { ...baseSubmission.secrets, proxyEndpointAuth: [bearerAuth] }
+        })
+      ).toThrow(message);
+    }
+  });
+
   it("accepts header, query, and basic auth shapes when policy and value agree", () => {
     const parsed = parseRunSubmissionRequest({
       ...baseSubmission,

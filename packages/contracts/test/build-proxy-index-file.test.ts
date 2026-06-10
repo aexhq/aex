@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildProxyIndexFile,
   PROXY_ENDPOINT_DEFAULTS,
+  PROXY_RETRY_POLICY_DEFAULTS,
   PROXY_PROTOCOL_VERSION,
   type ProxyEndpointPolicy
 } from "../src/proxy-protocol.js";
@@ -62,6 +63,7 @@ describe("buildProxyIndexFile", () => {
       maxResponseBytes: PROXY_ENDPOINT_DEFAULTS.maxResponseBytes,
       timeoutMs: PROXY_ENDPOINT_DEFAULTS.timeoutMs
     });
+    expect(entry).not.toHaveProperty("retry");
   });
 
   it("preserves explicit caps over defaults", () => {
@@ -83,6 +85,25 @@ describe("buildProxyIndexFile", () => {
     expect(entry.timeoutMs).toBe(5_000);
     expect(entry.maxResponseBytes).toBe(4096);
     expect(entry.allowHeaders).toEqual(["x-custom"]);
+  });
+
+  it("includes a resolved retry policy when supplied", () => {
+    const file = buildProxyIndexFile({
+      runId: RUN_ID,
+      proxyPublicBaseUrl: BASE,
+      endpoints: [
+        {
+          ...minimalEndpoint,
+          retry: { maxAttempts: 4, retryOnStatuses: [429], jitter: "none" }
+        }
+      ]
+    });
+    expect(file.endpoints[0]!.retry).toEqual({
+      ...PROXY_RETRY_POLICY_DEFAULTS,
+      maxAttempts: 4,
+      retryOnStatuses: [429],
+      jitter: "none"
+    });
   });
 
   it("never carries any secret/auth value in the serialized file", () => {

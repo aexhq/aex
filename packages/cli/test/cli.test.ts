@@ -56,7 +56,12 @@ function makeIo(opts: {
 }
 
 function manifestJson(opts: {
-  endpoints?: Array<{ name: string; allowMethods?: string[]; allowPathPrefixes?: string[] }>;
+  endpoints?: Array<{
+    name: string;
+    allowMethods?: string[];
+    allowPathPrefixes?: string[];
+    retry?: Record<string, unknown>;
+  }>;
   proxyBaseUrl?: string | null;
 }): string {
   return JSON.stringify({
@@ -73,7 +78,8 @@ function manifestJson(opts: {
       responseMode: "headers_only",
       maxRequestBytes: 65536,
       maxResponseBytes: 65536,
-      timeoutMs: 10000
+      timeoutMs: 10000,
+      ...(e.retry ? { retry: e.retry } : {})
     }))
   });
 }
@@ -115,6 +121,34 @@ describe("aex --help", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("stripe");
     expect(cap.stdout).toContain("internal");
+  });
+
+  it("shows declared retry policy for manifest endpoints", async () => {
+    const cap = makeIo({
+      argv: ["proxy", "--help"],
+      files: {
+        [AEX_INDEX_PATH]: manifestJson({
+          endpoints: [
+            {
+              name: "stripe",
+              retry: {
+                maxAttempts: 4,
+                initialDelayMs: 100,
+                maxDelayMs: 1000,
+                jitter: "none",
+                retryOnStatuses: [429, 503],
+                retryOnMethods: ["GET"],
+                respectRetryAfter: true
+              }
+            }
+          ]
+        })
+      }
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(cap.stdout).toContain("retry=4x GET 429/503");
+    expect(cap.stdout).toContain("delay=100-1000ms");
   });
 
   it("notes when no proxy endpoints were declared", async () => {

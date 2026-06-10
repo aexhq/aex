@@ -21,6 +21,7 @@ import {
   PROXY_RESP_TRUNCATED_HEADER,
   PROXY_RESP_UPSTREAM_HEADERS_HEADER,
   type ProxyErrorBody,
+  type ProxyIndexEntry,
   type ProxyIndexFile,
   type ProxyResponseEnvelope,
   type ProxyResponseMode
@@ -120,12 +121,19 @@ export async function printProxyHelp(io: CliIO): Promise<CliExitCode> {
   if (manifest && manifest.endpoints.length > 0) {
     io.stdout("Declared endpoints:\n");
     for (const ep of manifest.endpoints) {
-      io.stdout(
-        `  • ${ep.name}: ${ep.allowMethods.join(",")} ${ep.allowPathPrefixes.join(",")} (mode=${ep.responseMode})\n`
-      );
+      io.stdout(`  • ${formatProxyEndpointSummary(ep)}\n`);
     }
   }
   return SUCCESS;
+}
+
+export function formatProxyEndpointSummary(ep: ProxyIndexEntry): string {
+  const retry = ep.retry
+    ? `, retry=${ep.retry.maxAttempts}x ${ep.retry.retryOnMethods.join("/")} ` +
+      `${ep.retry.retryOnStatuses.join("/")} delay=${ep.retry.initialDelayMs}-${ep.retry.maxDelayMs}ms ` +
+      `jitter=${ep.retry.jitter}${ep.retry.respectRetryAfter ? " retry-after" : ""}`
+    : "";
+  return `${ep.name}: ${ep.allowMethods.join(",")} ${ep.allowPathPrefixes.join(",")} (mode=${ep.responseMode}${retry})`;
 }
 
 export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliExitCode> {

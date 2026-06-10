@@ -6,6 +6,7 @@ import {
   type PlatformProxyEndpointAuth,
   type ProxyAuthShape,
   type ProxyMethod,
+  type ProxyRetryPolicy,
   type ProxyResponseMode
 } from "@aexhq/contracts";
 
@@ -67,6 +68,8 @@ export interface ProxyEndpointCommonOptions {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
+  /** Opt-in retry policy for in-container calls to this endpoint. */
+  readonly retry?: ProxyRetryPolicy;
 }
 
 export interface BearerProxyEndpointOptions extends ProxyEndpointCommonOptions {
@@ -255,7 +258,8 @@ function buildCommonDeclaration(
     ...(options.responseMode ? { responseMode: options.responseMode } : {}),
     ...(options.maxRequestBytes !== undefined ? { maxRequestBytes: options.maxRequestBytes } : {}),
     ...(options.maxResponseBytes !== undefined ? { maxResponseBytes: options.maxResponseBytes } : {}),
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {})
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.retry !== undefined ? { retry: options.retry } : {})
   };
 }
 

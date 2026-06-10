@@ -17,12 +17,12 @@ Allowed fields:
 - `runtimeSize` - optional managed-runtime preset. Prefer `RuntimeSizes` in TypeScript.
 - `timeout` - optional run deadline duration string such as `"30m"` or `"2h"`.
 - `postHook` - optional post-agent verifier `{ command, timeout?, maxTurns?, maxChars? }`. It runs after a successful agent process; a failing or timed-out command is sent back to the agent for repair until `maxTurns` is exhausted. Empty `command` is treated as omitted.
-- `proxyEndpoints` - array of `PlatformProxyEndpoint`.
+- `proxyEndpoints` - array of `PlatformProxyEndpoint`; endpoint-level `retry` is allowed here and remains declaration-based.
 - `metadata` - non-secret structured metadata.
 
 `agentsMd`, `files`, `outputs`, `builtins`, and `outputMode` are top-level `submitRun` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission.
 
-Secrets never live in run config. Pass credentials through `submitRun({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI.
+Secrets never live in run config. Pass credentials through `submitRun({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
 
 ## Reuse in code
 

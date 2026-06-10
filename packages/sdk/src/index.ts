@@ -110,6 +110,7 @@ export type {
   PlatformRunSubmissionRequest,
   ProxyAuthShape,
   ProxyMethod,
+  ProxyRetryPolicy,
   ProxyResponseMode
 } from "@aexhq/contracts";
 

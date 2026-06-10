@@ -27,7 +27,7 @@
 import { RUN_PROVIDERS, type ProxyErrorBody } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
 import { runOutputsSyncCmd } from "./outputs-sync.js";
-import { printProxyHelp, runProxy, tryReadManifest } from "./proxy.js";
+import { formatProxyEndpointSummary, printProxyHelp, runProxy, tryReadManifest } from "./proxy.js";
 import {
   RUNTIME_ERR,
   SUCCESS,
@@ -129,9 +129,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
     } else {
       io.stdout("Declared proxy endpoints for this run:\n");
       for (const ep of manifest.endpoints) {
-        io.stdout(
-          `  • ${ep.name}  (${ep.allowMethods.join("/")} ${ep.allowPathPrefixes.join(",")}, mode=${ep.responseMode})\n`
-        );
+        io.stdout(`  • ${formatProxyEndpointSummary(ep)}\n`);
       }
     }
     io.stdout(`\nProtocol version: ${manifest.protocolVersion}\n`);

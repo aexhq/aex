@@ -72,7 +72,16 @@ describe("ProxyEndpoint", () => {
           baseUrl: "https://api.stripe.com",
           token: "sk_live_abc",
           allowMethods: ["GET"],
-          allowPathPrefixes: ["/v1/charges"]
+          allowPathPrefixes: ["/v1/charges"],
+          retry: {
+            maxAttempts: 4,
+            initialDelayMs: 100,
+            maxDelayMs: 1000,
+            jitter: "none",
+            retryOnStatuses: [429, 503],
+            retryOnMethods: ["GET"],
+            respectRetryAfter: false
+          }
         })
       ],
       secrets: { apiKey: "k" },
@@ -85,7 +94,16 @@ describe("ProxyEndpoint", () => {
         baseUrl: "https://api.stripe.com",
         authShape: { type: "bearer" },
         allowMethods: ["GET"],
-        allowPathPrefixes: ["/v1/charges"]
+        allowPathPrefixes: ["/v1/charges"],
+        retry: {
+          maxAttempts: 4,
+          initialDelayMs: 100,
+          maxDelayMs: 1000,
+          jitter: "none",
+          retryOnStatuses: [429, 503],
+          retryOnMethods: ["GET"],
+          respectRetryAfter: false
+        }
       }
     ]);
     const secrets = body.secrets as Record<string, unknown>;

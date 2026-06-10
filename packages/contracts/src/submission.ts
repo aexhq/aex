@@ -3,10 +3,13 @@ import {
   authShapeQueryName,
   PROXY_ALLOWED_METHODS,
   PROXY_ENDPOINT_DEFAULTS,
+  PROXY_RETRY_JITTERS,
+  PROXY_RETRY_POLICY_DEFAULTS,
   PROXY_RESPONSE_MODES,
   type ProxyAuthShape,
   type ProxyAuthType,
   type ProxyMethod,
+  type ProxyRetryPolicy,
   type ProxyResponseMode
 } from "./proxy-protocol.js";
 
@@ -270,6 +273,7 @@ export interface PlatformProxyEndpoint {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
+  readonly retry?: ProxyRetryPolicy;
 }
 
 export const SECRETS_KEY = "secrets";
@@ -525,7 +529,8 @@ function parseProxyEndpoint(input: unknown, path: string): PlatformProxyEndpoint
     "responseMode",
     "maxRequestBytes",
     "maxResponseBytes",
-    "timeoutMs"
+    "timeoutMs",
+    "retry"
   ]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
@@ -554,6 +559,7 @@ function parseProxyEndpoint(input: unknown, path: string): PlatformProxyEndpoint
   const maxRequestBytes = optionalPositiveInt(value.maxRequestBytes, `${path}.maxRequestBytes`);
   const maxResponseBytes = optionalPositiveInt(value.maxResponseBytes, `${path}.maxResponseBytes`);
   const timeoutMs = optionalPositiveInt(value.timeoutMs, `${path}.timeoutMs`);
+  const retry = parseProxyRetryPolicy(value.retry, `${path}.retry`);
 
   return {
     name,
@@ -565,8 +571,98 @@ function parseProxyEndpoint(input: unknown, path: string): PlatformProxyEndpoint
     ...(responseMode ? { responseMode } : {}),
     ...(maxRequestBytes !== undefined ? { maxRequestBytes } : {}),
     ...(maxResponseBytes !== undefined ? { maxResponseBytes } : {}),
-    ...(timeoutMs !== undefined ? { timeoutMs } : {})
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(retry !== undefined ? { retry } : {})
   };
+}
+
+export function parseProxyRetryPolicy(input: unknown, field: string): ProxyRetryPolicy | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  const value = requireRecord(input, field);
+  const allowed = new Set([
+    "maxAttempts",
+    "initialDelayMs",
+    "maxDelayMs",
+    "jitter",
+    "retryOnStatuses",
+    "retryOnMethods",
+    "respectRetryAfter"
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`${field}.${key} is not an allowed field`);
+    }
+  }
+
+  const maxAttempts = parseOptionalBoundedInt(value.maxAttempts, `${field}.maxAttempts`, 1, 5);
+  const initialDelayMs = optionalPositiveInt(value.initialDelayMs, `${field}.initialDelayMs`);
+  const maxDelayMs = optionalPositiveInt(value.maxDelayMs, `${field}.maxDelayMs`);
+  const effectiveInitialDelayMs =
+    initialDelayMs ?? PROXY_RETRY_POLICY_DEFAULTS.initialDelayMs;
+  const effectiveMaxDelayMs =
+    maxDelayMs ?? PROXY_RETRY_POLICY_DEFAULTS.maxDelayMs;
+  if (effectiveMaxDelayMs < effectiveInitialDelayMs) {
+    throw new Error(`${field}.maxDelayMs must be greater than or equal to ${field}.initialDelayMs`);
+  }
+  const jitter = optionalEnum(value.jitter, `${field}.jitter`, PROXY_RETRY_JITTERS);
+  const retryOnStatuses = parseProxyRetryStatuses(value.retryOnStatuses, `${field}.retryOnStatuses`);
+  const retryOnMethods = parseProxyRetryMethods(value.retryOnMethods, `${field}.retryOnMethods`);
+  const respectRetryAfter = parseOptionalBoolean(value.respectRetryAfter, `${field}.respectRetryAfter`);
+
+  return {
+    ...(maxAttempts !== undefined ? { maxAttempts } : {}),
+    ...(initialDelayMs !== undefined ? { initialDelayMs } : {}),
+    ...(maxDelayMs !== undefined ? { maxDelayMs } : {}),
+    ...(jitter !== undefined ? { jitter } : {}),
+    ...(retryOnStatuses !== undefined ? { retryOnStatuses } : {}),
+    ...(retryOnMethods !== undefined ? { retryOnMethods } : {}),
+    ...(respectRetryAfter !== undefined ? { respectRetryAfter } : {})
+  };
+}
+
+function parseProxyRetryStatuses(input: unknown, field: string): readonly number[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(input)) {
+    throw new Error(`${field} must be an array of HTTP status codes`);
+  }
+  const seen = new Set<number>();
+  for (const entry of input) {
+    if (
+      typeof entry !== "number" ||
+      !Number.isSafeInteger(entry) ||
+      entry < 100 ||
+      entry > 599
+    ) {
+      throw new Error(`${field} entries must be HTTP status codes between 100 and 599`);
+    }
+    seen.add(entry);
+  }
+  return Array.from(seen);
+}
+
+function parseProxyRetryMethods(input: unknown, field: string): readonly ProxyMethod[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(input)) {
+    throw new Error(`${field} must be an array of HTTP methods`);
+  }
+  const seen = new Set<ProxyMethod>();
+  for (const entry of input) {
+    if (typeof entry !== "string") {
+      throw new Error(`${field} entries must be strings`);
+    }
+    const upper = entry.toUpperCase() as ProxyMethod;
+    if (!PROXY_ALLOWED_METHODS.includes(upper)) {
+      throw new Error(`${field} contains unsupported method: ${entry}`);
+    }
+    seen.add(upper);
+  }
+  return Array.from(seen);
 }
 
 function parseProxyBaseUrl(input: unknown, field: string): string {
@@ -1020,6 +1116,36 @@ export function optionalPositiveInt(input: unknown, field: string): number | und
   }
   if (typeof input !== "number" || !Number.isSafeInteger(input) || input <= 0) {
     throw new Error(`${field} must be a positive safe integer`);
+  }
+  return input;
+}
+
+function parseOptionalBoundedInt(
+  input: unknown,
+  field: string,
+  min: number,
+  max: number
+): number | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (
+    typeof input !== "number" ||
+    !Number.isSafeInteger(input) ||
+    input < min ||
+    input > max
+  ) {
+    throw new Error(`${field} must be a safe integer between ${min} and ${max}`);
+  }
+  return input;
+}
+
+function parseOptionalBoolean(input: unknown, field: string): boolean | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "boolean") {
+    throw new Error(`${field} must be a boolean`);
   }
   return input;
 }

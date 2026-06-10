@@ -82,6 +82,44 @@ export type ProxyMethod = (typeof PROXY_ALLOWED_METHODS)[number];
 export const PROXY_RESPONSE_MODES = ["status_only", "headers_only", "full"] as const;
 export type ProxyResponseMode = (typeof PROXY_RESPONSE_MODES)[number];
 
+export const PROXY_RETRY_JITTERS = ["full", "none"] as const;
+export type ProxyRetryJitter = (typeof PROXY_RETRY_JITTERS)[number];
+
+export interface ProxyRetryPolicy {
+  /** Total attempts, including the initial request. */
+  readonly maxAttempts?: number;
+  readonly initialDelayMs?: number;
+  readonly maxDelayMs?: number;
+  readonly jitter?: ProxyRetryJitter;
+  readonly retryOnStatuses?: readonly number[];
+  readonly retryOnMethods?: readonly ProxyMethod[];
+  readonly respectRetryAfter?: boolean;
+}
+
+export type ResolvedProxyRetryPolicy = Required<ProxyRetryPolicy>;
+
+export const PROXY_RETRY_POLICY_DEFAULTS: ResolvedProxyRetryPolicy = {
+  maxAttempts: 3,
+  initialDelayMs: 250,
+  maxDelayMs: 5000,
+  jitter: "full",
+  retryOnStatuses: [408, 425, 429, 500, 502, 503, 504],
+  retryOnMethods: ["GET", "HEAD"],
+  respectRetryAfter: true
+} as const;
+
+export function resolveProxyRetryPolicy(policy: ProxyRetryPolicy): ResolvedProxyRetryPolicy {
+  return {
+    maxAttempts: policy.maxAttempts ?? PROXY_RETRY_POLICY_DEFAULTS.maxAttempts,
+    initialDelayMs: policy.initialDelayMs ?? PROXY_RETRY_POLICY_DEFAULTS.initialDelayMs,
+    maxDelayMs: policy.maxDelayMs ?? PROXY_RETRY_POLICY_DEFAULTS.maxDelayMs,
+    jitter: policy.jitter ?? PROXY_RETRY_POLICY_DEFAULTS.jitter,
+    retryOnStatuses: policy.retryOnStatuses ?? PROXY_RETRY_POLICY_DEFAULTS.retryOnStatuses,
+    retryOnMethods: policy.retryOnMethods ?? PROXY_RETRY_POLICY_DEFAULTS.retryOnMethods,
+    respectRetryAfter: policy.respectRetryAfter ?? PROXY_RETRY_POLICY_DEFAULTS.respectRetryAfter
+  };
+}
+
 /**
  * Narrowing order: a request may only narrow below the policy ceiling.
  * `status_only` is narrowest, `full` is widest. The BFF computes
@@ -152,6 +190,7 @@ export interface ProxyIndexEntry {
   readonly maxRequestBytes: number;
   readonly maxResponseBytes: number;
   readonly timeoutMs: number;
+  readonly retry?: ResolvedProxyRetryPolicy;
 }
 
 /**
@@ -193,6 +232,7 @@ export interface ProxyEndpointPolicy {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
+  readonly retry?: ProxyRetryPolicy;
 }
 
 export interface BuildProxyIndexFileInput {
@@ -241,7 +281,8 @@ export function buildProxyIndexFile(input: BuildProxyIndexFileInput): ProxyIndex
         responseMode: e.responseMode ?? PROXY_ENDPOINT_DEFAULTS.responseMode,
         maxRequestBytes: e.maxRequestBytes ?? PROXY_ENDPOINT_DEFAULTS.maxRequestBytes,
         maxResponseBytes: e.maxResponseBytes ?? PROXY_ENDPOINT_DEFAULTS.maxResponseBytes,
-        timeoutMs: e.timeoutMs ?? PROXY_ENDPOINT_DEFAULTS.timeoutMs
+        timeoutMs: e.timeoutMs ?? PROXY_ENDPOINT_DEFAULTS.timeoutMs,
+        ...(e.retry !== undefined ? { retry: resolveProxyRetryPolicy(e.retry) } : {})
       })
     )
   };
