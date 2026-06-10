@@ -1074,23 +1074,22 @@ export interface PlatformSubmission {
   readonly outputs?: PlatformOutputCaptureConfig;
   /**
    * Optional override for the managed-runtime builtin extensions enabled
-   * inside the runner container. Each entry is the bare extension name
-   * accepted by the selected runtime. The platform
-   * default is `["developer"]` which gives the agent shell + write +
-   * edit + tree tools (bash, grep via shell, file read via shell or
-   * editor, file edit). To opt in to more tools (e.g. web search via
-   * the `computercontroller` extension), pass the full list. To opt
-   * out of all builtins (pure-MCP setup), pass an empty array.
+   * inside the runner container. Each entry is one of the closed
+   * {@link BUILTINS} set (prefer the {@link Builtins} symbol
+   * const). The platform default is `["developer"]` which gives the agent
+   * shell + write + edit + tree tools (bash, grep via shell, file read via
+   * shell or editor, file edit). To opt in to more tools (e.g. web fetch via
+   * the `computercontroller` extension), pass the full list. To opt out of
+   * all builtins (pure-MCP setup), pass an empty array.
    *
    * Validation:
-   *   - Each entry matches /^[a-z][a-z0-9_-]{0,63}$/ (managed-runtime
-   *     builtin naming convention).
+   *   - Each entry must be a member of {@link BUILTINS}.
    *   - Max 16 entries.
    *   - Deduplicated.
    *
    * The dispatcher accepts and persists it for snapshot fidelity.
    */
-  readonly builtins?: readonly string[];
+  readonly builtins?: readonly Builtin[];
   /**
    * Assistant-output granularity. `buffered` (the default) emits one event per
    * assistant message; `stream` emits the agent's per-token text deltas as they
@@ -1464,10 +1463,42 @@ function parseOutputMode(input: unknown): OutputMode | undefined {
   return input as OutputMode;
 }
 
-const BUILTIN_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+/**
+ * Managed-runtime builtin extensions — the closed set the managed runtime
+ * accepts. Closed so an invalid name is a compile error via {@link Builtins},
+ * not a silent runtime no-op. `developer` is the platform default when
+ * `builtins` is omitted; pass an empty array to disable all builtins
+ * (pure-MCP setup).
+ */
+export const BUILTINS = [
+  "developer",
+  "computercontroller",
+  "memory",
+  "autovisualiser",
+  "tutorial"
+] as const;
+export type Builtin = (typeof BUILTINS)[number];
+
+/**
+ * Symbol-style accessors for the closed builtin set, e.g.
+ * `Builtins.COMPUTER_CONTROLLER`.
+ */
+export const Builtins = {
+  /** Shell (bash + UNIX tools incl. grep), write, edit, tree. The default. */
+  DEVELOPER: "developer",
+  /** Web fetch/scrape, scripting, general computer-control tools. */
+  COMPUTER_CONTROLLER: "computercontroller",
+  /** Cross-session preference memory. */
+  MEMORY: "memory",
+  /** Inline data-visualisation rendering. */
+  AUTOVISUALISER: "autovisualiser",
+  /** Interactive guided tutorials. */
+  TUTORIAL: "tutorial"
+} as const satisfies Readonly<Record<string, Builtin>>;
+
 const MAX_BUILTINS = 16;
 
-function parseBuiltins(input: unknown): readonly string[] | undefined {
+function parseBuiltins(input: unknown): readonly Builtin[] | undefined {
   if (input === undefined || input === null) return undefined;
   if (!Array.isArray(input)) {
     throw new Error("submission.builtins must be an array of strings");
@@ -1476,20 +1507,21 @@ function parseBuiltins(input: unknown): readonly string[] | undefined {
     throw new Error(`submission.builtins exceeds the max of ${MAX_BUILTINS} entries`);
   }
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: Builtin[] = [];
   for (let i = 0; i < input.length; i++) {
     const v = input[i];
     if (typeof v !== "string") {
       throw new Error(`submission.builtins[${i}] must be a string`);
     }
-    if (!BUILTIN_NAME_PATTERN.test(v)) {
+    if (!(BUILTINS as readonly string[]).includes(v)) {
       throw new Error(
-        `submission.builtins[${i}] (${JSON.stringify(v)}) is not a valid managed-runtime builtin name; expected /^[a-z][a-z0-9_-]{0,63}$/`
+        `submission.builtins[${i}] (${JSON.stringify(v)}) is not a managed-runtime builtin; ` +
+          `expected one of: ${BUILTINS.join(", ")}`
       );
     }
     if (seen.has(v)) continue; // dedupe silently
     seen.add(v);
-    out.push(v);
+    out.push(v as Builtin);
   }
   return out;
 }

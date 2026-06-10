@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentsMd, AgentExecutor, File as AexFile, McpServer, Skill } from "../../src/index.js";
+import { AgentsMd, AgentExecutor, File as AexFile, McpServer, Models, Skill } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly url: string;
@@ -175,6 +175,37 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const body = calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("deepseek");
     expect(body.secrets).toEqual({ apiKey: "sk-ds-test" });
+  });
+
+  it("derives provider from model when provider is omitted", async () => {
+    const cases = [
+      [Models.CLAUDE_HAIKU_4_5, "anthropic"],
+      [Models.GPT_4_1, "openai"],
+      [Models.GEMINI_2_5_FLASH, "gemini"],
+      [Models.MISTRAL_LARGE_LATEST, "mistral"],
+      [Models.DEEPSEEK_V4_FLASH, "deepseek"],
+      [Models.DEEPSEEK_V4_PRO, "deepseek"]
+    ] as const;
+    for (const [model, expectedProvider] of cases) {
+      const { fetch, calls } = makeStubFetch();
+      const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+      await client.submitRun({ model, prompt: "p", secrets: { apiKey: "sk-x" } });
+      const body = calls[0]!.body as Record<string, unknown>;
+      expect(body.provider, `model ${model}`).toBe(expectedProvider);
+    }
+  });
+
+  it("throws when an explicit provider conflicts with the model", async () => {
+    const { fetch } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await expect(
+      client.submitRun({
+        provider: "anthropic",
+        model: "gpt-4.1",
+        prompt: "p",
+        secrets: { apiKey: "sk-x" }
+      })
+    ).rejects.toThrow(/does not match model "gpt-4\.1" \(expected "openai"\)/);
   });
 
   it("forwards postHook on the top-level submission wire shape", async () => {

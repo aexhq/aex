@@ -7,10 +7,15 @@ import {
   RuntimeValidationError,
   collectManagedUnsupportedFeatures,
   DEFAULT_RUN_PROVIDER,
+  Models,
   RUN_MODELS,
+  RUN_MODELS_BY_PROVIDER,
   RunModels,
+  BUILTINS,
+  Builtins,
   RUN_PROVIDERS,
   parseRunSubmissionRequest,
+  providerForModel,
   selectRuntime,
   type ManagedKeyPolicyV1,
   type PlatformRunSubmissionRequest,
@@ -269,7 +274,10 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "claude-haiku-4-5",
       "claude-3-5-haiku-latest",
       "claude-3-5-sonnet-latest",
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
       "deepseek-chat",
+      "deepseek-reasoner",
       "gpt-4.1",
       "gpt-4o-mini",
       "gemini-2.0-flash",
@@ -283,8 +291,79 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
     expect([...RUN_PROVIDERS]).toEqual(["anthropic", "deepseek", "openai", "gemini", "mistral"]);
   });
 
+  it("BUILTINS is the closed managed-runtime builtin set", () => {
+    expect([...BUILTINS]).toEqual([
+      "developer",
+      "computercontroller",
+      "memory",
+      "autovisualiser",
+      "tutorial"
+    ]);
+  });
+
   it("RUNTIME_KINDS exposes only managed", () => {
     expect([...RUNTIME_KINDS]).toEqual(["managed"]);
+  });
+});
+
+describe("providerForModel", () => {
+  it("resolves every RUN_MODEL to its declared provider", () => {
+    for (const [provider, models] of Object.entries(RUN_MODELS_BY_PROVIDER)) {
+      for (const model of models) {
+        expect(providerForModel(model), model).toBe(provider);
+      }
+    }
+  });
+
+  it("maps the new DeepSeek v4 ids to deepseek", () => {
+    expect(providerForModel(Models.DEEPSEEK_V4_FLASH)).toBe("deepseek");
+    expect(providerForModel(Models.DEEPSEEK_V4_PRO)).toBe("deepseek");
+  });
+
+  it("returns undefined for an unknown model string", () => {
+    expect(providerForModel("not-a-model")).toBeUndefined();
+  });
+});
+
+describe("submission parser - builtins (closed set)", () => {
+  it("accepts every member of BUILTINS", () => {
+    const base = baseRequest();
+    const parsed = parseRunSubmissionRequest({
+      ...base,
+      submission: { ...base.submission, builtins: [...BUILTINS] }
+    });
+    expect(parsed.submission.builtins).toEqual([...BUILTINS]);
+  });
+
+  it("accepts an empty array (disable all builtins)", () => {
+    const base = baseRequest();
+    const parsed = parseRunSubmissionRequest({
+      ...base,
+      submission: { ...base.submission, builtins: [] }
+    });
+    expect(parsed.submission.builtins).toEqual([]);
+  });
+
+  it("rejects a builtin outside the closed set with an enumeration", () => {
+    const base = baseRequest();
+    expect(() =>
+      parseRunSubmissionRequest({
+        ...base,
+        submission: { ...base.submission, builtins: ["developr"] }
+      })
+    ).toThrow(/is not a managed-runtime builtin; expected one of: developer, computercontroller/);
+  });
+
+  it("dedupes repeated builtins", () => {
+    const base = baseRequest();
+    const parsed = parseRunSubmissionRequest({
+      ...base,
+      submission: {
+        ...base.submission,
+        builtins: [Builtins.DEVELOPER, Builtins.DEVELOPER, Builtins.MEMORY]
+      }
+    });
+    expect(parsed.submission.builtins).toEqual(["developer", "memory"]);
   });
 });
 

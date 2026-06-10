@@ -8,6 +8,7 @@ import {
   isRunSettled,
   operations,
   parseCredentialMode,
+  providerForModel,
   streamCoordinatorEvents,
   type AexEvent,
   type AgentsMdRecord,
@@ -33,6 +34,7 @@ import {
   type RunEvent,
   type RunProvider,
   type RunUnit,
+  type Builtin,
   type RuntimeSize,
   type RuntimeKind,
   type SignedOutputLink,
@@ -98,10 +100,11 @@ export interface SubmitRunOptions {
    */
   readonly credentialMode?: CredentialMode;
   /**
-   * Provider selector. Optional — defaults to
-   * {@link DEFAULT_RUN_PROVIDER} (`"anthropic"`). Selects which upstream
-   * model route the managed provider-proxy uses; the BYOK key for it is
-   * supplied as `secrets.apiKey`.
+   * Provider selector. Normally OMITTED — the provider is a pure function of
+   * `model` and is derived automatically, so the model alone determines which
+   * upstream the managed provider-proxy routes to (the BYOK key for it is
+   * supplied as `secrets.apiKey`). Pass this only to be explicit; if supplied
+   * it MUST match the model's provider or `submitRun` throws.
    */
   readonly provider?: RunProvider;
   /**
@@ -111,8 +114,9 @@ export interface SubmitRunOptions {
    */
   readonly runtime?: RuntimeKind;
   /**
-   * Closed public model id. Prefer {@link RunModels}, e.g.
-   * `RunModels.CLAUDE_HAIKU_4_5`.
+   * Closed public model id. Prefer the {@link Models} symbol const, e.g.
+   * `Models.CLAUDE_HAIKU_4_5`. The model fully determines the upstream
+   * `provider`, so you never pass `provider` alongside it.
    */
   readonly model: RunModel;
   readonly system?: string;
@@ -159,20 +163,23 @@ export interface SubmitRunOptions {
   };
   /**
    * Override the managed runtime builtin extensions enabled inside the runner.
+   * Each entry is one of the closed {@link Builtin} set — prefer the
+   * {@link Builtins} symbol const so a typo is a compile error.
    *
-   * - Omitted (default): the runner enables `["developer"]` which gives
-   *   the agent `shell`, `write`, `edit`, and `tree` tools (bash, grep
-   *   via shell, file read via shell or editor, file edit).
+   * - Omitted (default): the runner enables `[Builtins.DEVELOPER]`
+   *   which gives the agent `shell`, `write`, `edit`, and `tree` tools (bash,
+   *   grep via shell, file read via shell or editor, file edit).
    * - Empty array: the agent runs with zero builtin extensions —
    *   useful for pure-MCP setups where every tool comes from a
    *   submitted `mcpServers` entry.
-   * - Custom list: e.g. `["developer", "computercontroller"]` to add
-   *   web search alongside the default shell/edit toolkit.
+   * - Custom list: e.g.
+   *   `[Builtins.DEVELOPER, Builtins.COMPUTER_CONTROLLER]` to add
+   *   web fetch/scrape alongside the default shell/edit toolkit.
    *
-   * Validation: each entry matches `/^[a-z][a-z0-9_-]{0,63}$/`, max 16
+   * Validation: each entry must be a member of {@link Builtins}, max 16
    * entries, deduplicated server-side.
    */
-  readonly builtins?: readonly string[];
+  readonly builtins?: readonly Builtin[];
   /**
    * Assistant-output granularity. `"buffered"` (default) delivers one event per
    * assistant message; `"stream"` delivers per-token text deltas for live
@@ -508,7 +515,18 @@ export class AgentExecutor {
     if (!options || typeof options !== "object") {
       throw new Error("AgentExecutor.submitRun: options is required");
     }
-    const provider: RunProvider = options.provider ?? DEFAULT_RUN_PROVIDER;
+    // The model fully determines the upstream provider; derive it so callers
+    // never pass `provider`. `providerForModel` returns undefined for an
+    // unknown model string (the model check below then rejects it). An
+    // explicit provider is allowed but must agree with the model.
+    const derivedProvider = providerForModel(options.model);
+    if (options.provider && derivedProvider && options.provider !== derivedProvider) {
+      throw new Error(
+        `AgentExecutor.submitRun: provider ${JSON.stringify(options.provider)} does not match ` +
+          `model ${JSON.stringify(options.model)} (expected ${JSON.stringify(derivedProvider)})`
+      );
+    }
+    const provider: RunProvider = options.provider ?? derivedProvider ?? DEFAULT_RUN_PROVIDER;
     const credentialMode = parseCredentialMode(options.credentialMode);
     if (credentialMode === "managed") {
       throw new AexError(
