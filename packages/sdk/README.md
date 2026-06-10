@@ -128,9 +128,9 @@ aex run \
   --follow
 ```
 
-`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site. SDK code should use `RunModels`; config JSON is validated against the same `RUN_MODELS` allowlist.
+`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, postHook?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site. SDK code should use `RunModels`; config JSON is validated against the same `RUN_MODELS` allowlist.
 
-Runtime controls: omit `builtins` to use the default `["developer"]` toolkit, pass `builtins: []` to disable builtins for a pure-MCP run, use `outputMode: "stream"` for per-token assistant text, and prefer `RuntimeSizes` for `runtimeSize`.
+Runtime controls: omit `builtins` to use the default `["developer"]` toolkit, pass `builtins: []` to disable builtins for a pure-MCP run, use `outputMode: "stream"` for per-token assistant text, prefer `RuntimeSizes` for `runtimeSize`, and use `postHook` to run a verifier command after the agent exits successfully.
 
 ## Test commands
 

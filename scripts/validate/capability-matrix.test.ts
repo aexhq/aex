@@ -11,6 +11,7 @@ import {
   type RunProvider,
   type RuntimeKind
 } from "../../packages/contracts/src/submission.js";
+import { RUN_MODELS_BY_PROVIDER } from "../../packages/contracts/src/models.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
   PROVIDER_SUPPORT_STATUSES,
@@ -44,7 +45,7 @@ function dispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
     credentialMode: "byok",
     provider,
     submission: {
-      model: "capability-matrix-model",
+      model: RUN_MODELS_BY_PROVIDER[provider][0],
       prompt: ["capability matrix runtime probe"],
       skills: [],
       agentsMd: [],

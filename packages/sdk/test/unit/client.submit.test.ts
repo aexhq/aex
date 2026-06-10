@@ -177,6 +177,46 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     expect(body.secrets).toEqual({ apiKey: "sk-ds-test" });
   });
 
+  it("forwards postHook on the top-level submission wire shape", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submitRun({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      postHook: {
+        command: "pnpm test",
+        timeout: "2m",
+        maxTurns: 3,
+        maxChars: null
+      },
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-post-hook"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.postHook).toEqual({
+      command: "pnpm test",
+      timeout: "2m",
+      maxTurns: 3,
+      maxChars: null
+    });
+  });
+
+  it("omits postHook when the command is empty", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submitRun({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      postHook: { command: " " },
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-empty-post-hook"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.postHook).toBeUndefined();
+  });
+
   it("rejects empty prompts", async () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });

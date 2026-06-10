@@ -58,9 +58,12 @@ export interface SdkRunResult {
   readonly status: string;
   readonly runtime: string | null;
   readonly provider: string | null;
+  readonly terminalKind: string | null;
+  readonly terminalData: Record<string, unknown> | null;
   readonly assistantText: string;
   readonly toolResultText: string;
   readonly eventKinds: readonly string[];
+  readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
   readonly outputCount: number;
 }
 
@@ -96,14 +99,26 @@ const toolResultText = events
   .filter((e) => e.type === "TOOL_CALL_RESULT")
   .map((e) => JSON.stringify(e && e.data !== undefined ? e.data : ""))
   .join(" ");
+const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+const streamErrors = events
+  .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
+  .map((e) => {
+    if (e.data && e.data.value && typeof e.data.value === "object" && !Array.isArray(e.data.value)) {
+      return e.data.value;
+    }
+    return e.data && typeof e.data === "object" ? e.data : { unknown: true };
+  });
 process.stdout.write(JSON.stringify({
   runId: runId,
   status: run ? run.status : "(none)",
   runtime: run ? (run.runtime ?? null) : null,
   provider: run ? (run.provider ?? null) : null,
+  terminalKind: terminal ? terminal.type : null,
+  terminalData: terminal ? terminal.data : null,
   assistantText: text,
   toolResultText,
   eventKinds: events.map((e) => e.type),
+  streamErrors,
   outputCount: Array.isArray(outputs) ? outputs.length : 0
 }));
 `;

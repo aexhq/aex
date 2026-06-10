@@ -27,6 +27,7 @@ import {
   type PlatformMcpServerSecret,
   type PlatformProxyEndpoint,
   type PlatformProxyEndpointAuth,
+  type PlatformPostHookInput,
   type Run,
   type RunModel,
   type RunEvent,
@@ -133,6 +134,12 @@ export interface SubmitRunOptions {
    * [1m, 6h]; omit for the 1h default. Applies to both runtimes.
    */
   readonly timeout?: string;
+  /**
+   * Command to run after the agent process exits successfully. A non-zero exit
+   * or timeout is sent back to the model as a repair prompt until `maxTurns`
+   * is exhausted. Empty commands are treated as omitted.
+   */
+  readonly postHook?: PlatformPostHookInput;
   readonly proxyEndpoints?: readonly ProxyEndpoint[];
   /**
    * Output capture policy for the run's output files.
@@ -596,6 +603,7 @@ export class AgentExecutor {
       ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {})
     };
 
+    const postHook = postHookForWire(options.postHook);
     const request: PlatformRunSubmissionInput = {
       idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey(),
       // Always include `provider` on the wire so dashboard / proxy
@@ -611,6 +619,7 @@ export class AgentExecutor {
       submission,
       ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
+      ...(postHook ? { postHook } : {}),
       secrets,
       ...(proxyEndpointDeclarations.length > 0
         ? { proxyEndpoints: proxyEndpointDeclarations }
@@ -965,6 +974,13 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
     }
   }
   return [...input];
+}
+
+function postHookForWire(input: PlatformPostHookInput | undefined): PlatformPostHookInput | undefined {
+  if (input === undefined || typeof input.command !== "string" || input.command.trim().length === 0) {
+    return undefined;
+  }
+  return input;
 }
 
 /**

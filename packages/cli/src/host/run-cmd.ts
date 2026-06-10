@@ -6,7 +6,7 @@
  *
  *   1. `--config <path>` — plain run-request JSON:
  *      `{ model, system?, prompt, skills?, mcpServers?, environment?,
- *         runtimeSize?, timeout?, proxyEndpoints?, metadata? }`. Skill
+ *         runtimeSize?, timeout?, postHook?, proxyEndpoints?, metadata? }`. Skill
  *      entries use storage-neutral asset refs (`{ kind: "asset", ... }`).
  *      MCP entries may include `headers` — the CLI splits them into the
  *      `secrets.mcpServers` bag before posting.
@@ -410,6 +410,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       : runConfig.timeout
         ? { timeout: runConfig.timeout }
         : {}),
+    ...(runConfig.postHook ? { postHook: runConfig.postHook } : {}),
     ...(proxyEndpoints.length > 0 ? { proxyEndpoints } : {})
   };
 

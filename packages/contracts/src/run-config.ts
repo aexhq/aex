@@ -38,6 +38,7 @@ import type {
 } from "./submission.js";
 import { parseRunModel, type RunModel } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
+import { parsePostHook, type PlatformPostHookInput } from "./post-hook.js";
 
 // ---------------------------------------------------------------------------
 // Skill ID + name format
@@ -753,6 +754,8 @@ export interface RunRequestConfig {
   readonly runtimeSize?: RuntimeSize;
   /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
   readonly timeout?: string;
+  /** Post-agent-run verifier command. Empty command is treated as omitted. */
+  readonly postHook?: PlatformPostHookInput;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
@@ -781,6 +784,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "environment",
     "runtimeSize",
     "timeout",
+    "postHook",
     "proxyEndpoints",
     "metadata"
   ]);
@@ -797,6 +801,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
   const prompt = parseRunRequestConfigPrompt(record.prompt);
   const skills = parseRunRequestConfigSkills(record.skills);
   const mcpServers = parseRunRequestConfigMcpServers(record.mcpServers);
+  const postHook = parsePostHook(record.postHook, "run request config postHook");
   return {
     model,
     ...(system !== undefined ? { system } : {}),
@@ -815,6 +820,9 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
       : {}),
     ...(record.timeout !== undefined
       ? { timeout: record.timeout as NonNullable<RunRequestConfig["timeout"]> }
+      : {}),
+    ...(postHook !== undefined
+      ? { postHook: record.postHook as NonNullable<RunRequestConfig["postHook"]> }
       : {}),
     ...(record.proxyEndpoints !== undefined
       ? { proxyEndpoints: record.proxyEndpoints as NonNullable<RunRequestConfig["proxyEndpoints"]> }
@@ -902,6 +910,7 @@ export interface NormalisedRunRequestConfig {
   readonly environment?: PlatformEnvironment;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
+  readonly postHook?: PlatformPostHookInput;
   /**
    * MCP servers whose run-config entry carried `headers`. Keyed by the `name`
    * that appears in `mcpServers` so the BFF can pair them up.
@@ -934,6 +943,7 @@ export function normaliseRunRequestConfig(config: RunRequestConfig): NormalisedR
     ...(config.environment !== undefined ? { environment: config.environment } : {}),
     ...(config.proxyEndpoints !== undefined ? { proxyEndpoints: config.proxyEndpoints } : {}),
     ...(config.metadata !== undefined ? { metadata: config.metadata } : {}),
+    ...(config.postHook !== undefined ? { postHook: config.postHook } : {}),
     mcpServerSecrets
   };
 }

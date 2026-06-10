@@ -7,7 +7,7 @@ title: Skills
 A skill is executable or instructional content that is mounted into a run before
 the first agent turn. Every accepted skill ends up as a storage-neutral
 `kind:"asset"` reference in the run submission, and the hosted platform snapshots
-that asset into the run's R2 prefix before dispatch.
+that asset into the run's object-storage prefix before dispatch.
 
 There are three sources for skill bytes:
 
@@ -32,8 +32,8 @@ an aex asset instead.
 
 ## Materialization
 
-For each run, the platform copies referenced skill assets into that run's R2
-directory (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
+For each run, the platform copies referenced skill assets into that run's
+object-storage directory (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
 workspace under `skills/<name>/`.
 
 A bundle's `SKILL.md` is composed into the agent's instructions, so the agent is
@@ -46,9 +46,9 @@ The platform also mounts the `aex` CLI and a per-run manifest into every run.
 Skills call managed HTTP proxy endpoints through the mounted CLI
 (`aex proxy ...`); see `credentials.md` for the policy and auth model.
 
-Run-scoped R2 copies are part of the run record and are removed by run deletion
+Run-scoped asset copies are part of the run record and are removed by run deletion
 or retention cleanup. Catalog assets are separate workspace records: deleting a
-catalog skill hard-deletes its metadata and removes the shared R2 object only
+catalog skill hard-deletes its metadata and removes the shared asset object only
 when no other catalog row still references those bytes. Existing run snapshots
 keep their run-scoped copy.
 
@@ -75,11 +75,11 @@ Before it posts `/runs`, the SDK uploads each draft through the asset upload
 flow:
 
 1. `POST /assets/presign` checks for a dedup hit and, when needed, returns a
-   signed R2 upload URL.
-2. The SDK PUTs bytes directly to R2 with the signed checksum headers.
+   signed upload URL.
+2. The SDK PUTs bytes directly to object storage with the signed checksum headers.
 3. `POST /assets/finalize` confirms the object exists.
 
-When direct R2 upload credentials are not configured, small bundles fall back to
+When direct upload credentials are not configured, small bundles fall back to
 the buffered `/assets` upload path. The runner re-verifies the content hash when
 it downloads the asset.
 
@@ -123,7 +123,7 @@ submitted.
 
 ## Workspace Catalog
 
-Catalog skills are workspace records backed by the same content-addressed R2
+Catalog skills are workspace records backed by the same content-addressed
 assets. Use them when a team wants a named, listed skill record:
 
 ```ts

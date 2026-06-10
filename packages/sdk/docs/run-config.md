@@ -16,10 +16,11 @@ Allowed fields:
 - `environment` - `{ networking?, packages?, envVars? }`. `envVars` are merged into the in-container `RUNTIME.env` / `RUNTIME.json` mounts.
 - `runtimeSize` - optional managed-runtime preset. Prefer `RuntimeSizes` in TypeScript.
 - `timeout` - optional run deadline duration string such as `"30m"` or `"2h"`.
+- `postHook` - optional post-agent verifier `{ command, timeout?, maxTurns?, maxChars? }`. It runs after a successful agent process; a failing or timed-out command is sent back to the agent for repair until `maxTurns` is exhausted. Empty `command` is treated as omitted.
 - `proxyEndpoints` - array of `PlatformProxyEndpoint`.
 - `metadata` - non-secret structured metadata.
 
-`agentsMd`, `files`, `outputs`, `builtins`, and `outputMode` are top-level `submitRun` options, not run-config fields. They carry bytes, capture behavior, or runtime execution controls that belong on a concrete run submission.
+`agentsMd`, `files`, `outputs`, `builtins`, and `outputMode` are top-level `submitRun` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission.
 
 Secrets never live in run config. Pass credentials through `submitRun({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI.
 
@@ -54,4 +55,4 @@ aex run --config ./run.json \
   --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 
-...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--runtime-size`, `--run-timeout`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`). The two modes are mutually exclusive.
+...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--runtime-size`, `--run-timeout`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`). The two modes are mutually exclusive. `postHook` is available through `--config`; there are no standalone hook flags.

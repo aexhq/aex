@@ -50,7 +50,7 @@ await aex.download(runId, { to: "./run.zip" });
 ```
 
 Same run request from the CLI: `aex run --config run.json` accepts
-the same run-config fields (`{ model, prompt, skills, mcpServers, ... }`);
+the same run-config fields (`{ model, prompt, skills, mcpServers, postHook, ... }`);
 `aex events <run-id> --follow` streams, and
 `aex wait <run-id> [--timeout 8m]` blocks until the run finishes.
 

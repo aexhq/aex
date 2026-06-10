@@ -12,6 +12,7 @@ import {
   type RunProvider,
   type RuntimeKind
 } from "../packages/contracts/src/submission.js";
+import { RUN_MODELS_BY_PROVIDER } from "../packages/contracts/src/models.js";
 import {
   PROVIDER_SUPPORT_STATUSES,
   PROVIDER_PUBLIC_SUPPORT,
@@ -74,7 +75,7 @@ function buildDispatcherProbe(provider: RunProvider): PlatformRunSubmissionReque
     credentialMode: "byok",
     provider,
     submission: {
-      model: "capability-matrix-model",
+      model: RUN_MODELS_BY_PROVIDER[provider][0],
       prompt: ["capability matrix runtime probe"],
       skills: [],
       agentsMd: [],
@@ -228,7 +229,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "### Managed unsupported features",
     "",
-    "Provider-hosted skill refs (a `kind:\"provider\"` skill ref) are rejected because new runs dispatch to the managed runtime. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into the run's R2 directory.",
+    "Provider-hosted skill refs (a `kind:\"provider\"` skill ref) are rejected because new runs dispatch to the managed runtime. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into the run's object-storage directory.",
     "",
     "Notes:",
     "",

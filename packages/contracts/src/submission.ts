@@ -24,6 +24,11 @@ import type {
 } from "./run-config.js";
 import { parseRunTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import {
+  parsePostHook,
+  type PlatformPostHook,
+  type PlatformPostHookInput
+} from "./post-hook.js";
+import {
   assertRunModelMatchesProvider,
   parseRunModel,
   type RunModel
@@ -1161,6 +1166,13 @@ export interface PlatformRunSubmissionRequest {
    * terminal wait window and self-kill deadline.
    */
   readonly timeoutMs?: number;
+  /**
+   * Optional post-agent-run verifier. Parsed from the public `postHook`
+   * duration/string shape into fixed runner budgets. The runner executes it
+   * after a successful agent process and sends failures back through the model
+   * for repair until this budget is exhausted.
+   */
+  readonly postHook?: PlatformPostHook;
 }
 
 /**
@@ -1178,7 +1190,7 @@ export interface PlatformRunSubmissionRequest {
  */
 export type PlatformRunSubmissionInput = Omit<
   PlatformRunSubmissionRequest,
-  "workspaceId" | "credentialMode" | "provider" | "runtime" | "timeoutMs"
+  "workspaceId" | "credentialMode" | "provider" | "runtime" | "timeoutMs" | "postHook"
 > & {
   readonly workspaceId?: string;
   readonly credentialMode?: CredentialMode;
@@ -1195,6 +1207,7 @@ export type PlatformRunSubmissionInput = Omit<
    * {@link PlatformRunSubmissionRequest.timeoutMs}. Absent ⇒ 1h default.
    */
   readonly timeout?: string;
+  readonly postHook?: PlatformPostHookInput;
 };
 
 export interface ParseRunSubmissionOptions {
@@ -1215,6 +1228,7 @@ export function parseRunSubmissionRequest(
     "submission",
     "runtimeSize",
     "timeout",
+    "postHook",
     "proxyEndpoints",
     SECRETS_KEY
   ]);
@@ -1248,6 +1262,7 @@ export function parseRunSubmissionRequest(
   }
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
+  const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
   enforceCredentialSecretPolicy(credentialMode, secrets);
@@ -1307,6 +1322,7 @@ export function parseRunSubmissionRequest(
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(postHook !== undefined ? { postHook } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
     secrets
   };

@@ -54,7 +54,7 @@ aex run \
   --follow
 ```
 
-For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, proxyEndpoints?, metadata? }`). Both surfaces hit the same aex backend and operate on the same durable run records. The JSON `model` value is validated against `RUN_MODELS`.
+For a config-file flow, pass `--config <path>` with a run-config JSON file for a single run request (`{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, postHook?, proxyEndpoints?, metadata? }`). Both surfaces hit the same aex backend and operate on the same durable run records. The JSON `model` value is validated against `RUN_MODELS`.
 
 ## Runtime controls
 
@@ -62,6 +62,7 @@ For a config-file flow, pass `--config <path>` with a run-config JSON file for a
 
 - `runtimeSize` - a closed managed-runtime preset. Prefer `RuntimeSizes`, e.g. `RuntimeSizes.SHARED_2X_2GB`.
 - `timeout` - run deadline as a duration string such as `"30m"` or `"2h"`; bounded server-side.
+- `postHook` - optional post-agent verifier, e.g. `{ command: "pnpm test", timeout: "5m", maxTurns: 3, maxChars: 12000 }`. It runs after the agent process exits successfully; failures are sent back to the agent for repair until `maxTurns` is exhausted. Empty `command` is treated as omitted.
 - `builtins` - managed-runtime builtin extensions. Omit it to use the default `["developer"]` toolkit. Pass `[]` for a pure-MCP run with no builtins.
 - `outputMode` - `"buffered"` by default; pass `"stream"` for per-token assistant text deltas.
 

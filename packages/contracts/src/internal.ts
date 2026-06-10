@@ -5,4 +5,5 @@
 // NOT add this to the package `index`; consumers reach it via the explicit
 // `@aexhq/contracts/internal` subpath.
 export * from "./models.js";
+export * from "./post-hook.js";
 export * from "./submission.js";
