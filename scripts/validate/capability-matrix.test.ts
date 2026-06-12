@@ -71,7 +71,8 @@ describe("provider/runtime capability matrix generation", () => {
       "deepseek",
       "openai",
       "gemini",
-      "mistral"
+      "mistral",
+      "openrouter"
     ]);
     expect(rendered).toContain(
       "| [Anthropic](#anthropic) | `anthropic` | supported | [Credentials](credentials.md); [Events](events.md) |"
@@ -110,7 +111,7 @@ describe("provider/runtime capability matrix generation", () => {
   });
 
   it("does not promote accepted-but-not-live-proven managed providers to supported", () => {
-    for (const provider of ["openai", "gemini", "mistral"] as const) {
+    for (const provider of ["openai", "gemini", "mistral", "openrouter"] as const) {
       const row = buildCapabilityMatrixRows().find((candidate) => candidate.provider === provider);
       expect(row?.managedRuntime.status).toBe("live-unverified");
       expect(row?.publicStatus).toBe("live-unverified" satisfies ProviderSupportStatus);
