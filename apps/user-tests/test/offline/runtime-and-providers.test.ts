@@ -60,7 +60,7 @@ describe("managed runtime + widened providers (published surface)", () => {
       hasError: boolean;
       validationCodes: string[];
     };
-    expect(out.providers).toEqual(["anthropic", "deepseek", "openai", "gemini", "mistral"]);
+    expect(out.providers).toEqual(["anthropic", "deepseek", "openai", "gemini", "mistral", "openrouter"]);
     expect(out.runtimes).toEqual(["managed"]);
     expect(out.defaultProvider).toBe("anthropic");
     expect(out.hasSelectRuntime).toBe(true);
