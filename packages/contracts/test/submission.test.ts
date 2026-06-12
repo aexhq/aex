@@ -13,6 +13,7 @@ import {
   RunModels,
   BUILTINS,
   Builtins,
+  Providers,
   RUN_PROVIDERS,
   parseRunSubmissionRequest,
   providerForModel,
@@ -35,7 +36,8 @@ function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: Runtim
     deepseek: RunModels.DEEPSEEK_CHAT,
     openai: RunModels.GPT_4_1,
     gemini: RunModels.GEMINI_2_5_FLASH,
-    mistral: RunModels.MISTRAL_LARGE_LATEST
+    mistral: RunModels.MISTRAL_LARGE_LATEST,
+    openrouter: RunModels.OPENROUTER_GPT_4O_MINI
   }[provider];
   return {
     workspaceId: "workspace-1",
@@ -283,12 +285,25 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "gemini-2.0-flash",
       "gemini-2.5-flash",
       "mistral-large-latest",
-      "mistral-small-latest"
+      "mistral-small-latest",
+      "openai/gpt-4o-mini",
+      "google/gemini-2.0-flash-001"
     ]);
   });
 
   it("RUN_PROVIDERS is the v1 set", () => {
-    expect([...RUN_PROVIDERS]).toEqual(["anthropic", "deepseek", "openai", "gemini", "mistral"]);
+    expect([...RUN_PROVIDERS]).toEqual([
+      "anthropic",
+      "deepseek",
+      "openai",
+      "gemini",
+      "mistral",
+      "openrouter"
+    ]);
+  });
+
+  it("Providers mirrors RUN_PROVIDERS exactly (no drift)", () => {
+    expect(Object.values(Providers)).toEqual([...RUN_PROVIDERS]);
   });
 
   it("BUILTINS is the closed managed-runtime builtin set", () => {

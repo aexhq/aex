@@ -150,6 +150,7 @@ export {
   providerForModel,
   isRunModel,
   parseRunModel,
+  Providers,
   RUN_PROVIDERS,
   RUNTIME_KINDS,
   RUNTIME_VALIDATION_CODES,

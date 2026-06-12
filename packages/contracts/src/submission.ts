@@ -182,10 +182,38 @@ export const RUN_PROVIDERS = [
   "deepseek",
   "openai",
   "gemini",
-  "mistral"
+  "mistral",
+  "openrouter"
 ] as const;
 export type RunProvider = (typeof RUN_PROVIDERS)[number];
 export const DEFAULT_RUN_PROVIDER: RunProvider = "anthropic";
+
+/**
+ * Symbol-style accessors for the closed provider set. Prefer these over raw
+ * strings so an invalid token is a compile error, not a runtime 400 — e.g.
+ * `Providers.DEEPSEEK`. The same model id can route through different upstream
+ * providers (official vs OpenRouter, etc.), so `provider` is a first-class
+ * submission field; name it explicitly with one of these constants rather than
+ * relying on the model alone to determine routing.
+ *
+ * Every value mirrors {@link RUN_PROVIDERS} exactly; a unit test asserts
+ * `Object.values(Providers)` deep-equals `RUN_PROVIDERS` so the two can never
+ * drift.
+ */
+export const Providers = {
+  /** Anthropic — Claude models. */
+  ANTHROPIC: "anthropic",
+  /** DeepSeek. */
+  DEEPSEEK: "deepseek",
+  /** OpenAI — GPT models. */
+  OPENAI: "openai",
+  /** Google Gemini. */
+  GEMINI: "gemini",
+  /** Mistral. */
+  MISTRAL: "mistral",
+  /** OpenRouter — OpenAI-compatible aggregator routing to many upstream models. */
+  OPENROUTER: "openrouter"
+} as const satisfies Readonly<Record<string, RunProvider>>;
 
 /**
  * Customer-facing runtime selector. Optional on the wire; absent resolves

@@ -132,6 +132,16 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     runtimeEvidence: {
       managed: COMMON_EVIDENCE
     }
+  },
+  openrouter: {
+    displayName: "OpenRouter",
+    status: "live-unverified",
+    docsAnchor: "openrouter",
+    docs: COMMON_DOCS,
+    evidence: COMMON_EVIDENCE,
+    runtimeEvidence: {
+      managed: COMMON_EVIDENCE
+    }
   }
 } as const satisfies Readonly<Record<RunProvider, ProviderPublicSupport>>;
 

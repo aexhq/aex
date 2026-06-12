@@ -100,11 +100,17 @@ export interface SubmitRunOptions {
    */
   readonly credentialMode?: CredentialMode;
   /**
-   * Provider selector. Normally OMITTED — the provider is a pure function of
-   * `model` and is derived automatically, so the model alone determines which
-   * upstream the managed provider-proxy routes to (the BYOK key for it is
-   * supplied as `secrets.apiKey`). Pass this only to be explicit; if supplied
-   * it MUST match the model's provider or `submitRun` throws.
+   * Upstream provider selector. Prefer naming it explicitly with the
+   * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. The
+   * same model id can route through different providers, so `provider` is a
+   * first-class field — pass it alongside `model` rather than letting the model
+   * alone decide routing. The BYOK key for the selected provider is supplied as
+   * `secrets.apiKey`.
+   *
+   * Optional today: when omitted it is derived from `model` (each currently
+   * supported model maps to a single provider), so existing call sites keep
+   * working. If supplied it MUST match the model's provider or `submitRun`
+   * throws.
    */
   readonly provider?: RunProvider;
   /**
@@ -115,8 +121,8 @@ export interface SubmitRunOptions {
   readonly runtime?: RuntimeKind;
   /**
    * Closed public model id. Prefer the {@link Models} symbol const, e.g.
-   * `Models.CLAUDE_HAIKU_4_5`. The model fully determines the upstream
-   * `provider`, so you never pass `provider` alongside it.
+   * `Models.CLAUDE_HAIKU_4_5`. Pair it with an explicit {@link Providers} value
+   * on `provider`; if `provider` is omitted it is derived from this model.
    */
   readonly model: RunModel;
   readonly system?: string;
