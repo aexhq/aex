@@ -287,6 +287,7 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "mistral-large-latest",
       "mistral-small-latest",
       "openai/gpt-4o-mini",
+      "openai/gpt-4o",
       "google/gemini-2.0-flash-001"
     ]);
   });

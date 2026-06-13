@@ -23,6 +23,7 @@ export const RUN_MODELS = [
   "mistral-large-latest",
   "mistral-small-latest",
   "openai/gpt-4o-mini",
+  "openai/gpt-4o",
   "google/gemini-2.0-flash-001"
 ] as const;
 
@@ -73,6 +74,8 @@ export const Models = {
   MISTRAL_SMALL_LATEST: "mistral-small-latest",
   /** GPT-4o mini via OpenRouter (provider-prefixed) — cheap, tool-obedient. */
   OPENROUTER_GPT_4O_MINI: "openai/gpt-4o-mini",
+  /** GPT-4o via OpenRouter (provider-prefixed) — stronger, tool-obedient. */
+  OPENROUTER_GPT_4O: "openai/gpt-4o",
   /** Gemini 2.0 Flash via OpenRouter (provider-prefixed) — cheap, tool-obedient. */
   OPENROUTER_GEMINI_2_0_FLASH: "google/gemini-2.0-flash-001"
 } as const satisfies Readonly<Record<string, RunModel>>;
@@ -98,7 +101,11 @@ export const RUN_MODELS_BY_PROVIDER = {
   openai: [Models.GPT_4_1, Models.GPT_4O_MINI],
   gemini: [Models.GEMINI_2_0_FLASH, Models.GEMINI_2_5_FLASH],
   mistral: [Models.MISTRAL_LARGE_LATEST, Models.MISTRAL_SMALL_LATEST],
-  openrouter: [Models.OPENROUTER_GPT_4O_MINI, Models.OPENROUTER_GEMINI_2_0_FLASH]
+  openrouter: [
+    Models.OPENROUTER_GPT_4O_MINI,
+    Models.OPENROUTER_GPT_4O,
+    Models.OPENROUTER_GEMINI_2_0_FLASH
+  ]
 } as const satisfies Readonly<Record<RunProvider, readonly RunModel[]>>;
 
 /**
