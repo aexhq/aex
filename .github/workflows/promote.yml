@@ -44,9 +44,14 @@ jobs:
 
       - name: Promote each package to latest
         # Same NPM_TOKEN (publish rights cover `npm dist-tag add`). Dependency
-        # order is irrelevant for a re-tag, but kept for consistency. `npm dist-tag
-        # add` fails if the version was never published, so a typo can't silently
-        # mis-tag latest.
+        # order is irrelevant for a re-tag, but kept for consistency.
+        #
+        # A release cycle may bump only the packages that changed (e.g. an
+        # sdk-only change ships contracts+sdk while conformance+cli stay on their
+        # prior version). So we promote ONLY the packages that actually published
+        # `version`, and skip the rest — each keeps whatever `latest` it had.
+        # The typo guard is preserved by failing if ZERO packages had `version`:
+        # a bogus version mis-tags nothing AND is loud, instead of silently no-op.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -56,8 +61,18 @@ jobs:
             exit 1
           fi
           version="${{ inputs.version }}"
+          promoted=0
           for pkg in @aexhq/contracts @aexhq/conformance @aexhq/cli @aexhq/sdk; do
-            echo "promoting $pkg@$version -> latest"
-            npm dist-tag add "$pkg@$version" latest
+            if npm view "$pkg@$version" version >/dev/null 2>&1; then
+              echo "promoting $pkg@$version -> latest"
+              npm dist-tag add "$pkg@$version" latest
+              promoted=$((promoted + 1))
+            else
+              echo "skipping $pkg — $version was never published (unchanged this cycle)"
+            fi
           done
-          echo "Promoted @aexhq/{contracts,conformance,cli,sdk}@$version to latest."
+          if [ "$promoted" -eq 0 ]; then
+            echo "::error::No @aexhq/* package has version $version published — nothing promoted (check the version input)."
+            exit 1
+          fi
+          echo "Promoted $promoted package(s) at $version to latest."
