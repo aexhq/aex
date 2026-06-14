@@ -1998,15 +1998,15 @@ export class RuntimeValidationError extends Error {
 
 /**
  * Walk the parsed submission and collect features that the active managed
- * runtime cannot serve. Provider-hosted skill refs (`Skill.provider(...)`) are
+ * runtime cannot serve. Provider-hosted skill refs (`kind:"provider"`) are
  * rejected now that new submissions only dispatch through managed runs.
  */
 export function collectManagedUnsupportedFeatures(req: PlatformRunSubmissionRequest): string[] {
   const features: string[] = [];
   for (const skill of req.submission.skills) {
     if (skill.kind === "provider") {
-      const versionSuffix = skill.version ? `, "${skill.version}"` : "";
-      features.push(`Skill.provider("${skill.vendor}", "${skill.skillId}"${versionSuffix})`);
+      const versionSuffix = skill.version ? `@${skill.version}` : "";
+      features.push(`provider skill "${skill.vendor}/${skill.skillId}${versionSuffix}" (kind:"provider")`);
     }
   }
   return features;

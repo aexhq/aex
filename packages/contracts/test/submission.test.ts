@@ -229,7 +229,7 @@ describe("managed runtime unsupported features", () => {
     }
     expect(captured).toBeInstanceOf(RuntimeValidationError);
     expect((captured as RuntimeValidationError).code).toBe("feature_runtime_mismatch");
-    expect((captured as RuntimeValidationError).message).toMatch(/Skill\.provider\("anthropic", "pdf"\)/);
+    expect((captured as RuntimeValidationError).message).toMatch(/provider skill "anthropic\/pdf" \(kind:"provider"\)/);
     expect((captured as RuntimeValidationError).message).not.toMatch(/switch to runtime/);
   });
 
@@ -264,7 +264,7 @@ describe("managed runtime unsupported features", () => {
       }
     };
     expect(collectManagedUnsupportedFeatures(direct)).toEqual([
-      `Skill.provider("anthropic", "pdf", "2024-09")`
+      `provider skill "anthropic/pdf@2024-09" (kind:"provider")`
     ]);
     expect(() => selectRuntime(direct)).toThrowError(RuntimeValidationError);
   });
