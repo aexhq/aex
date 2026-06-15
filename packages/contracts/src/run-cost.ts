@@ -213,7 +213,8 @@ export interface RunCostManagedKeyBudgetTelemetry {
  * authoritative actuals. Deliberately carries NO rate-card version or unit
  * rates — the platform's public-safe convention treats `rateCard`/`margin` as
  * private tokens (run-cost.test.ts privateCostFieldPattern), so the version the
- * figure was derived under stays internal (the raw-usage R2 export records it).
+ * figure was derived under stays internal (recorded only in the platform's
+ * internal raw-usage export).
  */
 export const RUN_COST_BASIS_STATUSES = ["estimated", "reconciled"] as const;
 export type RunCostBasisStatus = (typeof RUN_COST_BASIS_STATUSES)[number];
