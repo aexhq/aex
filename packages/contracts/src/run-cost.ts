@@ -207,6 +207,22 @@ export interface RunCostManagedKeyBudgetTelemetry {
   readonly releasedCreditUnits?: number;
 }
 
+/**
+ * The basis for a {@link RunCostTelemetry.billedCostUsd}: an honest marker of
+ * whether the figure is a settle-time ESTIMATE or has been RECONCILED against
+ * authoritative actuals. Deliberately carries NO rate-card version or unit
+ * rates — the platform's public-safe convention treats `rateCard`/`margin` as
+ * private tokens (run-cost.test.ts privateCostFieldPattern), so the version the
+ * figure was derived under stays internal (the raw-usage R2 export records it).
+ */
+export const RUN_COST_BASIS_STATUSES = ["estimated", "reconciled"] as const;
+export type RunCostBasisStatus = (typeof RUN_COST_BASIS_STATUSES)[number];
+
+export interface RunCostBasis {
+  readonly currency: "USD";
+  readonly status: RunCostBasisStatus;
+}
+
 export interface RunCostTelemetry {
   readonly schemaVersion: typeof RUN_COST_TELEMETRY_SCHEMA_VERSION;
   readonly runId?: string;
@@ -223,6 +239,18 @@ export interface RunCostTelemetry {
   readonly storage?: RunCostStorageTelemetry;
   readonly proxy?: RunCostProxyTelemetry;
   readonly managedKey?: RunCostManagedKeyBudgetTelemetry;
+  /**
+   * Customer-facing AEX cost of serving this run, USD — a REPORTED ESTIMATE,
+   * not a charge (telemetry/showback only; no invoicing or credit deduction).
+   * = rawCostUsd × marginMultiplier (margin currently a global 1.0). EXCLUDES
+   * the customer's BYOK provider spend. The raw (pre-margin) figure is kept
+   * internal and never appears on this public-safe shape. A plain number, so it
+   * passes the run-record public-safe archive scan. Absent when the run incurred
+   * no priced AEX usage.
+   */
+  readonly billedCostUsd?: number;
+  /** Currency + estimate/reconciled basis for {@link billedCostUsd}. */
+  readonly costBasis?: RunCostBasis;
 }
 
 export type RunCostTelemetryInput = Omit<RunCostTelemetry, "schemaVersion">;
@@ -298,7 +326,9 @@ export function buildRunCostTelemetry(input: RunCostTelemetryInput): RunCostTele
     ...(input.providerUsage ? { providerUsage: input.providerUsage.map(normalizeProviderUsage) } : {}),
     ...(input.storage ? { storage: normalizeStorage(input.storage) } : {}),
     ...(input.proxy ? { proxy: normalizeProxy(input.proxy) } : {}),
-    ...(input.managedKey ? { managedKey: normalizeManagedKey(input.managedKey) } : {})
+    ...(input.managedKey ? { managedKey: normalizeManagedKey(input.managedKey) } : {}),
+    ...(input.billedCostUsd !== undefined ? { billedCostUsd: nonNegativeFinite(input.billedCostUsd, "billedCostUsd") } : {}),
+    ...(input.costBasis ? { costBasis: normalizeCostBasis(input.costBasis) } : {})
   });
 }
 
@@ -484,6 +514,11 @@ export function mergeRunCostTelemetry(
   const storage = sumStorage(base.storage, patch.storage);
   const proxy = sumProxy(base.proxy, patch.proxy);
   const managedKey = mergeManagedKey(base.managedKey, patch.managedKey);
+  // Derived cost fields are LAST-WRITER-WINS (a re-derivation supersedes the
+  // prior estimate), not summed — they are projections of the whole sample set,
+  // not additive metrics.
+  const billedCostUsd = patch.billedCostUsd ?? base.billedCostUsd;
+  const costBasis = patch.costBasis ?? base.costBasis;
   if (runId) merged.runId = runId;
   if (provider) merged.provider = provider;
   if (runtime) merged.runtime = runtime;
@@ -498,6 +533,8 @@ export function mergeRunCostTelemetry(
   if (storage) merged.storage = storage;
   if (proxy) merged.proxy = proxy;
   if (managedKey) merged.managedKey = managedKey;
+  if (billedCostUsd !== undefined) merged.billedCostUsd = billedCostUsd;
+  if (costBasis) merged.costBasis = costBasis;
   return buildRunCostTelemetry(merged);
 }
 
@@ -641,6 +678,19 @@ function normalizeSummaryStatus(input: RunCostSummaryStatus): RunCostSummaryStat
     throw new Error(`run cost telemetry status ${String(input)} is not supported`);
   }
   return input;
+}
+
+function normalizeCostBasis(input: RunCostBasis): RunCostBasis {
+  if (!input || typeof input !== "object") {
+    throw new Error("run cost basis must be an object");
+  }
+  if (input.currency !== "USD") {
+    throw new Error(`run cost basis currency ${String(input.currency)} is not supported`);
+  }
+  if (!isStringIn(input.status, RUN_COST_BASIS_STATUSES)) {
+    throw new Error(`run cost basis status ${String(input.status)} is not supported`);
+  }
+  return Object.freeze({ currency: "USD", status: input.status });
 }
 
 function addProviderUsage(
