@@ -101,8 +101,8 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           apiToken
         });
 
-        // Submit a DeepSeek run. The SDK's submitRun returns the run id.
-        const runId = await client.submitRun({
+        // Submit a DeepSeek run. The SDK's submit returns the run id.
+        const runId = await client.submit({
           provider: "deepseek",
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},

@@ -126,11 +126,11 @@ process.stdout.write(JSON.stringify({
 /**
  * Assemble a full runner script. `setup` (optional) runs first and may
  * `await` (e.g. AgentsMd.fromContent); `submit` is the object literal /
- * expression passed to `client.submitRun(...)` and must assign nothing —
- * the helper wraps it as `const runId = await client.submitRun(<submit>);`.
+ * expression passed to `client.submit(...)` and must assign nothing —
+ * the helper wraps it as `const runId = await client.submit(<submit>);`.
  */
 export function sdkRunnerScript(parts: { readonly setup?: string; readonly submit: string }): string {
-  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst runId = await client.submitRun(${parts.submit});\n${TAIL}`;
+  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst runId = await client.submit(${parts.submit});\n${TAIL}`;
 }
 
 /** Write + run a runner script in the install dir; parse the result JSON. */

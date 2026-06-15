@@ -16,7 +16,7 @@ import { AgentExecutor, RunModels } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Summarise Q1 revenue by region.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
@@ -29,7 +29,7 @@ await aex.download(runId, { to: "./run.zip" });
 
 What you get:
 
-- **One multi-provider surface.** The same `submitRun` shape and event stream
+- **One multi-provider surface.** The same `submit` shape and event stream
   for Anthropic, DeepSeek, OpenAI, Gemini, and Mistral. Anthropic and DeepSeek
   are live-verified; OpenAI, Gemini, and Mistral are accepted but not yet
   live-verified — see the

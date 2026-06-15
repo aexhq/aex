@@ -48,7 +48,7 @@ and `3` when `--timeout` elapses first (a `--timeout` on `events --follow` /
 `run --follow` uses the same exit-`3` convention). Durations accept `ms`/`s`/`m`/`h`
 suffixes or a bare millisecond integer.
 
-Both surfaces observe the same events. A subscriber attached after `submitRun()` returns replays the events it missed, then continues live.
+Both surfaces observe the same events. A subscriber attached after `submit()` returns replays the events it missed, then continues live.
 
 ## Terminal events vs. the run record
 
@@ -90,7 +90,7 @@ run's last stream event, immediately after the durable record commits.
 
 ## Event shape
 
-Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submitRun`.
+Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submit`.
 
 ## Typed helpers
 

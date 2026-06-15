@@ -1,40 +1,56 @@
 import type { RunProvider } from "./submission.js";
 
 /**
- * Closed set of model ids accepted by the public run-submission schema.
+ * Source of truth for the closed model set: each canonical model id maps to the
+ * upstream providers that can serve it and the **provider-native** model string
+ * each one expects.
  *
- * The provider-proxy still sends the model id through to the selected upstream
- * provider, but callers cannot submit arbitrary strings. Additions belong here
- * first so SDK types, CLI validation, docs examples, and platform parsing move
- * together.
+ * `Models.*` / `RUN_MODELS` are aex's own **canonical, provider-neutral**
+ * identifiers — they are NOT the strings sent to a provider. The platform
+ * translates a `(canonical model, provider)` pair to the native id via
+ * {@link resolveProviderModelId} when it builds the run's session manifest. The
+ * same canonical model can therefore be served by more than one provider (e.g.
+ * `gpt-4o-mini` via `openai` *or* `openrouter`), with a different native string
+ * per provider.
+ *
+ * Ordering matters: the **first** provider listed for a model is its default
+ * (see {@link providerForModel}) — list the native vendor before `openrouter`.
+ * Additions belong here first so SDK types, CLI validation, docs examples, and
+ * platform parsing all move together.
  */
-export const RUN_MODELS = [
-  "claude-haiku-4-5",
-  "claude-3-5-haiku-latest",
-  "claude-3-5-sonnet-latest",
-  "deepseek-v4-flash",
-  "deepseek-v4-pro",
-  "deepseek-chat",
-  "deepseek-reasoner",
-  "gpt-4.1",
-  "gpt-4o-mini",
-  "gemini-2.0-flash",
-  "gemini-2.5-flash",
-  "mistral-large-latest",
-  "mistral-small-latest",
-  "openai/gpt-4o-mini",
-  "openai/gpt-4o",
-  "google/gemini-2.0-flash-001"
-] as const;
+export const MODEL_PROVIDER_IDS = {
+  "claude-haiku-4-5": { anthropic: "claude-haiku-4-5" },
+  "claude-3-5-haiku-latest": { anthropic: "claude-3-5-haiku-latest" },
+  "claude-3-5-sonnet-latest": { anthropic: "claude-3-5-sonnet-latest" },
+  "deepseek-v4-flash": { deepseek: "deepseek-v4-flash" },
+  "deepseek-v4-pro": { deepseek: "deepseek-v4-pro" },
+  "deepseek-chat": { deepseek: "deepseek-chat" },
+  "deepseek-reasoner": { deepseek: "deepseek-reasoner" },
+  "gpt-4.1": { openai: "gpt-4.1" },
+  "gpt-4o-mini": { openai: "gpt-4o-mini", openrouter: "openai/gpt-4o-mini" },
+  "gpt-4o": { openrouter: "openai/gpt-4o" },
+  "gemini-2.0-flash": { gemini: "gemini-2.0-flash", openrouter: "google/gemini-2.0-flash-001" },
+  "gemini-2.5-flash": { gemini: "gemini-2.5-flash" },
+  "mistral-large-latest": { mistral: "mistral-large-latest" },
+  "mistral-small-latest": { mistral: "mistral-small-latest" }
+} as const satisfies Readonly<Record<string, Partial<Record<RunProvider, string>>>>;
 
-export type RunModel = (typeof RUN_MODELS)[number];
+/**
+ * Closed set of canonical model ids accepted by the public run-submission
+ * schema. Derived from {@link MODEL_PROVIDER_IDS} so the two never drift.
+ */
+export type RunModel = keyof typeof MODEL_PROVIDER_IDS;
+
+export const RUN_MODELS = Object.keys(MODEL_PROVIDER_IDS) as readonly RunModel[];
 
 /**
  * Symbol-style accessors for the closed model set. Prefer these over raw
  * strings so an invalid token is a compile error, not a runtime 400 — e.g.
- * `Models.CLAUDE_HAIKU_4_5`. The upstream provider is a pure function of the
- * model ({@link providerForModel}), so picking a model fully determines
- * routing; callers never pass `provider` separately.
+ * `Models.CLAUDE_HAIKU_4_5`. These are aex's **canonical** ids, not the native
+ * strings sent upstream; the platform translates them per provider (see
+ * {@link MODEL_PROVIDER_IDS} / {@link resolveProviderModelId}). When a model is
+ * served by more than one provider, pair it with an explicit {@link Providers}
+ * value; otherwise the single (default) provider is used.
  */
 export const Models = {
   /** Claude Haiku 4.5 — Anthropic. */
@@ -62,22 +78,18 @@ export const Models = {
   DEEPSEEK_REASONER: "deepseek-reasoner",
   /** GPT-4.1 — OpenAI. */
   GPT_4_1: "gpt-4.1",
-  /** GPT-4o mini — OpenAI. */
+  /** GPT-4o mini — OpenAI, or via OpenRouter (`provider: Providers.OPENROUTER`). */
   GPT_4O_MINI: "gpt-4o-mini",
-  /** Gemini 2.0 Flash — Gemini. */
+  /** GPT-4o — via OpenRouter (`provider: Providers.OPENROUTER`). */
+  GPT_4O: "gpt-4o",
+  /** Gemini 2.0 Flash — Gemini, or via OpenRouter (`provider: Providers.OPENROUTER`). */
   GEMINI_2_0_FLASH: "gemini-2.0-flash",
   /** Gemini 2.5 Flash — Gemini. */
   GEMINI_2_5_FLASH: "gemini-2.5-flash",
   /** Mistral Large (latest) — Mistral. */
   MISTRAL_LARGE_LATEST: "mistral-large-latest",
   /** Mistral Small (latest) — Mistral. */
-  MISTRAL_SMALL_LATEST: "mistral-small-latest",
-  /** GPT-4o mini via OpenRouter (provider-prefixed) — cheap, tool-obedient. */
-  OPENROUTER_GPT_4O_MINI: "openai/gpt-4o-mini",
-  /** GPT-4o via OpenRouter (provider-prefixed) — stronger, tool-obedient. */
-  OPENROUTER_GPT_4O: "openai/gpt-4o",
-  /** Gemini 2.0 Flash via OpenRouter (provider-prefixed) — cheap, tool-obedient. */
-  OPENROUTER_GEMINI_2_0_FLASH: "google/gemini-2.0-flash-001"
+  MISTRAL_SMALL_LATEST: "mistral-small-latest"
 } as const satisfies Readonly<Record<string, RunModel>>;
 
 /**
@@ -86,54 +98,72 @@ export const Models = {
  */
 export const RunModels = Models;
 
-export const RUN_MODELS_BY_PROVIDER = {
-  anthropic: [
-    Models.CLAUDE_HAIKU_4_5,
-    Models.CLAUDE_3_5_HAIKU_LATEST,
-    Models.CLAUDE_3_5_SONNET_LATEST
-  ],
-  deepseek: [
-    Models.DEEPSEEK_V4_FLASH,
-    Models.DEEPSEEK_V4_PRO,
-    Models.DEEPSEEK_CHAT,
-    Models.DEEPSEEK_REASONER
-  ],
-  openai: [Models.GPT_4_1, Models.GPT_4O_MINI],
-  gemini: [Models.GEMINI_2_0_FLASH, Models.GEMINI_2_5_FLASH],
-  mistral: [Models.MISTRAL_LARGE_LATEST, Models.MISTRAL_SMALL_LATEST],
-  openrouter: [
-    Models.OPENROUTER_GPT_4O_MINI,
-    Models.OPENROUTER_GPT_4O,
-    Models.OPENROUTER_GEMINI_2_0_FLASH
-  ]
-} as const satisfies Readonly<Record<RunProvider, readonly RunModel[]>>;
+/**
+ * Per-model provider lists, in declaration order. Derived from
+ * {@link MODEL_PROVIDER_IDS} so the two never drift.
+ */
+const PROVIDERS_BY_MODEL: Readonly<Record<RunModel, readonly RunProvider[]>> = (() => {
+  const map = {} as Record<RunModel, readonly RunProvider[]>;
+  for (const [model, providers] of Object.entries(MODEL_PROVIDER_IDS) as readonly [
+    RunModel,
+    Partial<Record<RunProvider, string>>
+  ][]) {
+    map[model] = Object.keys(providers) as RunProvider[];
+  }
+  return map;
+})();
 
 /**
- * Reverse index: every model id → its single upstream provider. Derived from
- * {@link RUN_MODELS_BY_PROVIDER} so the two never drift; each model appears
- * under exactly one provider.
+ * Provider → canonical models that provider can serve. Derived from
+ * {@link MODEL_PROVIDER_IDS}; every provider currently serves at least one
+ * model, so all {@link RunProvider} keys are present.
  */
-const PROVIDER_BY_MODEL: Readonly<Record<RunModel, RunProvider>> = (() => {
-  const map = {} as Record<RunModel, RunProvider>;
-  for (const [provider, models] of Object.entries(RUN_MODELS_BY_PROVIDER) as readonly [
-    RunProvider,
-    readonly RunModel[]
+export const RUN_MODELS_BY_PROVIDER: Readonly<Record<RunProvider, readonly RunModel[]>> = (() => {
+  const map = {} as Record<RunProvider, RunModel[]>;
+  for (const [model, providers] of Object.entries(MODEL_PROVIDER_IDS) as readonly [
+    RunModel,
+    Partial<Record<RunProvider, string>>
   ][]) {
-    for (const model of models) {
-      map[model] = provider;
+    for (const provider of Object.keys(providers) as RunProvider[]) {
+      (map[provider] ??= []).push(model);
     }
   }
   return map;
 })();
 
 /**
- * Resolve the upstream provider for a model id. Returns `undefined` when the
- * input is not a known {@link RunModel} (so the SDK can fall back to the
- * default and let the server reject the model). Total over the closed model
- * set, so any `RunModel` resolves.
+ * All upstream providers that can serve a model id, in declaration order.
+ * Returns `[]` for an unknown model.
+ */
+export function providersForModel(model: string): readonly RunProvider[] {
+  return PROVIDERS_BY_MODEL[model as RunModel] ?? [];
+}
+
+/**
+ * The default upstream provider for a model id — the first provider declared
+ * for it in {@link MODEL_PROVIDER_IDS}. Returns `undefined` when the input is
+ * not a known {@link RunModel} (so the SDK can fall back to the default and let
+ * the server reject the model).
  */
 export function providerForModel(model: string): RunProvider | undefined {
-  return PROVIDER_BY_MODEL[model as RunModel];
+  return providersForModel(model)[0];
+}
+
+/**
+ * Translate a canonical model id + provider into the provider-native model
+ * string the upstream API expects (e.g. `("gpt-4o-mini", "openrouter")` →
+ * `"openai/gpt-4o-mini"`). Throws when the provider does not serve the model.
+ */
+export function resolveProviderModelId(model: string, provider: RunProvider): string {
+  const entry = MODEL_PROVIDER_IDS[model as RunModel] as Partial<Record<RunProvider, string>> | undefined;
+  const native = entry?.[provider];
+  if (native === undefined) {
+    throw new Error(
+      `resolveProviderModelId: model ${JSON.stringify(model)} is not available for provider ${JSON.stringify(provider)}; ` +
+        `available: ${providersForModel(model).join(", ") || "(none)"}`
+    );
+  }
+  return native;
 }
 
 export function isRunModel(input: unknown): input is RunModel {
@@ -152,10 +182,11 @@ export function assertRunModelMatchesProvider(
   model: RunModel,
   field = "submission.model"
 ): void {
-  if (!(RUN_MODELS_BY_PROVIDER[provider] as readonly RunModel[]).includes(model)) {
+  const providers = providersForModel(model);
+  if (!providers.includes(provider)) {
     throw new Error(
       `${field} ${JSON.stringify(model)} is not supported for provider ${provider}; ` +
-        `expected one of: ${RUN_MODELS_BY_PROVIDER[provider].join(", ")}`
+        `expected one of: ${providers.join(", ")}`
     );
   }
 }

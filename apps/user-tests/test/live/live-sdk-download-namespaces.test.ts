@@ -101,7 +101,7 @@ function buildScript(cell: Cell, marker: string): string {
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       provider: "deepseek",
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(deepseekModel)},

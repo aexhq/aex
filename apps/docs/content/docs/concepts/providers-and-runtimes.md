@@ -21,7 +21,7 @@ The optional `runtime` field accepts only `"managed"`; omitting it also uses the
 ```ts
 import { RunModels } from "@aexhq/sdk";
 
-await aex.submitRun({
+await aex.submit({
   provider: "openai",
   model: RunModels.GPT_4_1,
   prompt: "Summarise the attached files.",

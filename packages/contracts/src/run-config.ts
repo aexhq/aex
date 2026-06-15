@@ -741,7 +741,7 @@ function parseRunConfigMcpServerRef(input: unknown, path: string): RunConfigMcpS
 /**
  * Plain JSON accepted by `aex run --config <path>`. This is not a
  * platform object; it is only the non-secret run parameters that the CLI folds
- * into the normal `submitRun` request.
+ * into the normal `submit` request.
  */
 export interface RunRequestConfig {
   readonly model: RunModel;

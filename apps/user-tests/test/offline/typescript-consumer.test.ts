@@ -275,7 +275,7 @@ describe("typescript consumer", () => {
         baseUrl: "https://example.invalid",
         fetch: fetchFake
       });
-      const runIdPromise: Promise<string> = client.submitRun(anthropicOptions);
+      const runIdPromise: Promise<string> = client.submit(anthropicOptions);
       const runPromise: Promise<Run> = client.getRun("run_type_surface");
       const eventsPromise: Promise<readonly RunEvent[]> = client.listEvents("run_type_surface");
       const outputsPromise: Promise<readonly Output[]> = client.outputs("run_type_surface");

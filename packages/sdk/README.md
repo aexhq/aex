@@ -63,7 +63,7 @@ const aex = new AgentExecutor({
   // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   system: "You are a concise automation agent.",
   prompt: "Write a short answer about agent-first SDK design.",
@@ -94,7 +94,7 @@ function summarise(topic: string) {
   };
 }
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   ...summarise("agent-first SDK design"),
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });

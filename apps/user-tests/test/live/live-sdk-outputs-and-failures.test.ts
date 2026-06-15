@@ -112,7 +112,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       provider: ${JSON.stringify(cell.provider)},
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},
@@ -334,7 +334,7 @@ function buildCorruptedSkillScript(): string {
 
     if (skillRef) {
       try {
-        runId = await client.submitRun({
+        runId = await client.submit({
           provider: "deepseek",
           runtime: "managed",
           model: ${JSON.stringify(deepseekModel)},
@@ -410,7 +410,7 @@ function buildIncompatibleRuntimeScript(): string {
     let errorMessage = null;
 
     try {
-      const runId = await client.submitRun({
+      const runId = await client.submit({
         provider: "deepseek",
         runtime: "native",
         model: "deepseek-chat",

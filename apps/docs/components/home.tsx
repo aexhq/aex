@@ -1,6 +1,6 @@
 const example = `import { RunModels } from "@aexhq/sdk";
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   provider: "anthropic",
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save outputs.",

@@ -44,7 +44,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
       }
     });
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       secrets: { apiKey: "k" },
@@ -62,7 +62,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
       getBody: { id: "run_no_manifest", status: "queued" }
     });
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       secrets: { apiKey: "k" }

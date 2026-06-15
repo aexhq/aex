@@ -16,7 +16,7 @@ const aex = new AgentExecutor({
   // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
 });
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Write a short answer about agent-first SDK design.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
@@ -37,7 +37,7 @@ function summarise(topic: string) {
   };
 }
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   ...summarise("agent-first SDK design"),
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
@@ -58,7 +58,7 @@ For a config-file flow, pass `--config <path>` with a run-config JSON file for a
 
 ## Runtime controls
 
-`submitRun` also accepts per-run controls that are not secrets:
+`submit` also accepts per-run controls that are not secrets:
 
 - `runtimeSize` - a closed managed-runtime preset. Prefer `RuntimeSizes`, e.g. `RuntimeSizes.SHARED_2X_2GB`.
 - `timeout` - run deadline as a duration string such as `"30m"` or `"2h"`; bounded server-side.
@@ -75,7 +75,7 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 | Non-secret paths or config (`BROLL_STORE`, mode flags) | `environment.envVars` | Mounted as `RUNTIME.env` / `RUNTIME.json`; `__KEY__` substitution in agent-facing markdown; echoed back as `run.runtimeManifest.envVars` |
 | Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; aex proxy injects them on outbound calls. The key never enters the container. |
 | MCP server credentials | `secrets.mcpServers` | Held in run-scoped custody, attached per run |
-| Provider API key | `secrets.apiKey` | Required on every `submitRun`; held in run-scoped custody. Carries the BYOK key for the selected `provider` |
+| Provider API key | `secrets.apiKey` | Required on every `submit`; held in run-scoped custody. Carries the BYOK key for the selected `provider` |
 | Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Materialized under `files/<f_id>/<name>` in the run workspace by default and described in the agent-facing instructions |
 | Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Mounted under `skills/<name>/`; the bundle's `SKILL.md` is composed into the agent's instructions |
 | Agent instructions file | `AgentsMd.fromPath('./AGENTS.md')` | Prepended as the first user turn |
@@ -84,7 +84,7 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 
 ## Safe retries with `idempotencyKey`
 
-Every `submitRun` call carries an `idempotencyKey`. When omitted the SDK auto-generates a UUID per call. Supplying your own key makes retries deterministic:
+Every `submit` call carries an `idempotencyKey`. When omitted the SDK auto-generates a UUID per call. Supplying your own key makes retries deterministic:
 
 | Submit shape | Server response |
 | --- | --- |
@@ -102,7 +102,7 @@ const idempotencyKey = crypto.randomUUID();
 async function submitWithRetry() {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      return await aex.submitRun({
+      return await aex.submit({
         model: RunModels.CLAUDE_HAIKU_4_5,
         prompt: "...",
         idempotencyKey,
@@ -113,7 +113,7 @@ async function submitWithRetry() {
       throw err;
     }
   }
-  throw new Error("submitRun failed after retries");
+  throw new Error("submit failed after retries");
 }
 ```
 

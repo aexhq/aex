@@ -12,7 +12,7 @@ per-provider integration to maintain.
 
 ## The wedge
 
-- **One multi-provider surface.** The same `submitRun` shape, the same typed
+- **One multi-provider surface.** The same `submit` shape, the same typed
   event stream, and the same SDK/CLI verbs work across Anthropic, DeepSeek,
   OpenAI, Gemini, and Mistral. Switching providers is a field change, not a
   rewrite.

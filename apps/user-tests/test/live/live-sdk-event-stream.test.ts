@@ -4,7 +4,7 @@
  * Exercises the unified event coordinator end-to-end through the installed
  * SDK, the way a user listening to a run would:
  *
- *   1. submitRun (DeepSeek Managed)
+ *   1. submit (DeepSeek Managed)
  *   2. LISTEN live over the coordinator WebSocket via `client.streamEnvelopes(runId)`
  *      (ticket broker → coordinator WS, exactly-once cursor resume).
  *   3. SNAPSHOT the same log via `client.listEvents()`.
@@ -74,7 +74,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         const model = process.env.MODEL;
 
         const client = new AgentExecutor({ baseUrl, apiToken });
-        const runId = await client.submitRun({
+        const runId = await client.submit({
           provider: "deepseek",
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},

@@ -214,7 +214,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     submitOpts.skills = [skillAlpha, skillBeta];
     submitOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
-    const runId = await client.submitRun(submitOpts);
+    const runId = await client.submit(submitOpts);
 
     const deadline = Date.now() + ${spec.pollDeadlineMs};
     let run = null;

@@ -16,6 +16,7 @@ export type {
   OutputFilePathSelector,
   OutputFileSelector,
   StreamEventsOptions,
+  SubmitOptions,
   SubmitRunOptions,
   WaitForRunOptions
 } from "./client.js";
@@ -145,9 +146,12 @@ export {
   DEFAULT_RUN_PROVIDER,
   RUN_MODELS,
   RUN_MODELS_BY_PROVIDER,
+  MODEL_PROVIDER_IDS,
   Models,
   RunModels,
   providerForModel,
+  providersForModel,
+  resolveProviderModelId,
   isRunModel,
   parseRunModel,
   Providers,

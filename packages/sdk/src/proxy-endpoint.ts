@@ -27,7 +27,7 @@ import {
  * Wire-format unchanged: the SDK splits each `ProxyEndpoint` instance
  * into a `PlatformProxyEndpoint` (the non-secret declaration) plus a
  * `PlatformProxyEndpointAuth` entry (the per-request secret) at
- * `submitRun` time, exactly the way `McpServer` already splits
+ * `submit` time, exactly the way `McpServer` already splits
  * `headers` into `secrets.mcpServers`.
  *
  * Five named constructors:
@@ -178,7 +178,7 @@ export class ProxyEndpoint {
 /**
  * Split a list of `ProxyEndpoint` instances into the public declarations
  * (`proxyEndpoints[]`) and the per-request auth bundle
- * (`secrets.proxyEndpointAuth[]`). Mirrors the way `submitRun` already
+ * (`secrets.proxyEndpointAuth[]`). Mirrors the way `submit` already
  * splits `McpServer.headers` into `secrets.mcpServers[]`.
  *
  * Throws on duplicate endpoint names — names are the cross-reference

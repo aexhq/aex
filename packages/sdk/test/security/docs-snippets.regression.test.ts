@@ -7,7 +7,7 @@
  * -----
  * The README and `packages/sdk/docs/*.md` have drifted before by advertising
  * removed or nonexistent helpers (`Skill.fromId(...)`, `uploadIfChanged(...)`,
- * `client.skills.findByHash(...)`, two-arg `submitRun(...)`, etc.). The current
+ * `client.skills.findByHash(...)`, two-arg `submit(...)`, etc.). The current
  * surface intentionally supports `Skill.upload(client)`, so that method may be
  * documented; the removed helpers must stay absent from docs.
  *
@@ -115,15 +115,15 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
         present: hasKey(AgentExecutor.prototype, "skills"),
         method: "AgentExecutor.prototype.skills.findByName"
       },
-      // 2-arg submitRun(config, opts)
+      // 2-arg submit(config, opts)
       {
         doc: "credentials.md",
-        needle: /(?:client|aex)\.submitRun\((?:config|template),/,
-        // The signature is `submitRun(options)`; a 2-arg shape would
+        needle: /(?:client|aex)\.submit\((?:config|template),/,
+        // The signature is `submit(options)`; a 2-arg shape would
         // accept run config as the first positional. We probe by calling
         // length on the function.
-        present: AgentExecutor.prototype.submitRun.length >= 2,
-        method: "AgentExecutor.prototype.submitRun(config, options)"
+        present: AgentExecutor.prototype.submit.length >= 2,
+        method: "AgentExecutor.prototype.submit(config, options)"
       }
     ];
 
@@ -171,7 +171,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       { name: "RunRef type", needle: /\bRunRef\b/ },
       { name: "ref.runId", needle: /\bref\.runId\b/ },
       { name: "ref method", needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadEvents|downloadMetadata|cancel|delete)\s*\(/ },
-      { name: "const ref submitRun", needle: /\bconst\s+ref\s*=\s*await\s+(?:client|aex)\.submitRun\(/ }
+      { name: "const ref submit", needle: /\bconst\s+ref\s*=\s*await\s+(?:client|aex)\.submit\(/ }
     ];
     const failures: string[] = [];
     for (const doc of publishedDocFiles()) {

@@ -9,7 +9,7 @@ A run is an immutable request to execute an agent task. The call site supplies t
 ```ts
 import { RunModels } from "@aexhq/sdk";
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   provider: "anthropic",
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save it as a file.",

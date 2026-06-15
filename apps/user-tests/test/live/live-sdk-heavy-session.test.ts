@@ -288,7 +288,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       idempotencyKey: "heavy-${spec.runtime}-${spec.provider}-" + Date.now()
     };
 
-    const runId = await client.submitRun(submitOpts);
+    const runId = await client.submit(submitOpts);
 
     // Block on the SDK's own terminal-wait instead of a
     // hand-rolled poll: it covers every terminal status — including

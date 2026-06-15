@@ -9,7 +9,7 @@ aex is BYOK. Every run supplies exactly one provider key matching the selected `
 ```ts
 import { RunModels } from "@aexhq/sdk";
 
-await aex.submitRun({
+await aex.submit({
   provider: "mistral",
   model: RunModels.MISTRAL_LARGE_LATEST,
   prompt: "Compare the docs and return a short changelog.",

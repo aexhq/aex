@@ -94,7 +94,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
   return { fetch: stub, calls };
 }
 
-describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
+describe("AgentExecutor.submit (flat surface, wire shape)", () => {
   it("builds the flat submission and routes MCP headers into secrets", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({
@@ -103,7 +103,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
       fetch
     });
 
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       model: "claude-haiku-4-5",
       system: "You are tidy.",
       prompt: "do work",
@@ -153,18 +153,18 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
         secrets: { apiKey: "" }
       })
-    ).rejects.toThrow(/AgentExecutor\.submitRun: secrets\.apiKey is required/);
+    ).rejects.toThrow(/AgentExecutor\.submit: secrets\.apiKey is required/);
   });
 
   it("submits DeepSeek provider runs with a flat apiKey", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submitRun({
+    await client.submit({
       provider: "deepseek",
       model: "deepseek-chat",
       prompt: "p",
@@ -189,29 +189,46 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     for (const [model, expectedProvider] of cases) {
       const { fetch, calls } = makeStubFetch();
       const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-      await client.submitRun({ model, prompt: "p", secrets: { apiKey: "sk-x" } });
+      await client.submit({ model, prompt: "p", secrets: { apiKey: "sk-x" } });
       const body = calls[0]!.body as Record<string, unknown>;
       expect(body.provider, `model ${model}`).toBe(expectedProvider);
     }
   });
 
-  it("throws when an explicit provider conflicts with the model", async () => {
+  it("throws when an explicit provider does not serve the model", async () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         provider: "anthropic",
         model: "gpt-4.1",
         prompt: "p",
         secrets: { apiKey: "sk-x" }
       })
-    ).rejects.toThrow(/does not match model "gpt-4\.1" \(expected "openai"\)/);
+    ).rejects.toThrow(/is not available for model "gpt-4\.1" \(supported: openai\)/);
+  });
+
+  it("accepts a non-default provider for a multi-provider model", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    // gpt-4o-mini is served by openai (default) and openrouter; the canonical
+    // model id is sent on the wire untranslated — the platform maps it to the
+    // provider-native id (openrouter → "openai/gpt-4o-mini").
+    await client.submit({
+      provider: "openrouter",
+      model: Models.GPT_4O_MINI,
+      prompt: "p",
+      secrets: { apiKey: "sk-or-test" }
+    });
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.provider).toBe("openrouter");
+    expect((body.submission as Record<string, unknown>).model).toBe("gpt-4o-mini");
   });
 
   it("forwards postHook on the top-level submission wire shape", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       postHook: {
@@ -236,7 +253,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
   it("omits postHook when the command is empty", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       postHook: { command: " " },
@@ -252,7 +269,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         model: "claude-haiku-4-5",
         prompt: "",
         secrets: { apiKey: "k" }
@@ -263,7 +280,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
   it("accepts prompt arrays", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: ["one", "two"],
       secrets: { apiKey: "k" },
@@ -277,7 +294,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
         mcpServers: [
@@ -301,7 +318,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
         skills: [{ kind: "workspace", id: "skl_x" } as unknown as Skill],
@@ -314,7 +331,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       agentsMd: [draft],
@@ -357,7 +374,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const agentsMdHash = agentsMd.ref.kind === "draft" ? agentsMd.ref.contentHash : "";
     const fileHash = file.ref.kind === "draft" ? file.ref.contentHash : "";
 
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       skills: [skill],
@@ -418,7 +435,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const assetCallsBefore = calls.filter((c) => c.url.includes("/assets")).length;
     expect(assetCallsBefore).toBeGreaterThan(0);
 
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       skills: [uploaded],
@@ -449,7 +466,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const draft = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
     const draftHex = draft.ref.kind === "draft" ? draft.ref.contentHash.slice("sha256:".length) : "";
 
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       skills: [draft],
@@ -477,7 +494,7 @@ describe("AgentExecutor.submitRun (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
         agentsMd: [{ kind: "workspace_agentsmd", id: "amd_x" } as unknown as AgentsMd],

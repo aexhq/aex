@@ -8,7 +8,7 @@ import {
   isRunSettled,
   operations,
   parseCredentialMode,
-  providerForModel,
+  providersForModel,
   streamCoordinatorEvents,
   type AexEvent,
   type AgentsMdRecord,
@@ -91,7 +91,7 @@ export interface AgentExecutorOptions {
  * `idempotencyKey` is auto-generated when omitted; pass one explicitly
  * if you want client-driven retry safety across process restarts.
  */
-export interface SubmitRunOptions {
+export interface SubmitOptions {
   /**
    * Credential source for upstream provider access. Omitted defaults to
    * `"byok"`, which requires `secrets.apiKey`.
@@ -109,7 +109,7 @@ export interface SubmitRunOptions {
    *
    * Optional today: when omitted it is derived from `model` (each currently
    * supported model maps to a single provider), so existing call sites keep
-   * working. If supplied it MUST match the model's provider or `submitRun`
+   * working. If supplied it MUST match the model's provider or `submit`
    * throws.
    */
   readonly provider?: RunProvider;
@@ -197,6 +197,9 @@ export interface SubmitRunOptions {
   readonly signal?: AbortSignal;
 }
 
+/** @deprecated Renamed to {@link SubmitOptions}. Kept for one release. */
+export type SubmitRunOptions = SubmitOptions;
+
 export interface StreamEventsOptions {
   /** Poll interval in ms for the `RunEvent` snapshot loop. Default 1000. */
   readonly intervalMs?: number;
@@ -248,7 +251,7 @@ export interface OutputDownloadOptions {
  * Workspace skill admin operations exposed under `client.skills`.
  *
  * New run submissions usually use `Skill.fromFiles(...)` or
- * `Skill.fromPath(...)` directly inside `submitRun`; the SDK materializes
+ * `Skill.fromPath(...)` directly inside `submit`; the SDK materializes
  * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
  * surface for workspace skill records and the internal transport used by the
  * legacy CLI upload command.
@@ -317,7 +320,7 @@ export class SkillsClient {
  * Workspace AgentsMd admin operations exposed under `client.agentsMd`.
  *
  * New run submissions usually use `AgentsMd.fromContent(...)` or
- * `AgentsMd.fromPath(...)` directly inside `submitRun`; the SDK
+ * `AgentsMd.fromPath(...)` directly inside `submit`; the SDK
  * materializes those bytes to the hosted asset store before the run lands. This namespace is
  * the read/delete surface for persisted AgentsMd records plus an internal
  * upload transport retained for legacy callers.
@@ -357,7 +360,7 @@ export class AgentsMdClient {
  * Workspace File admin operations exposed under `client.files`.
  *
  * New run submissions usually use `File.fromPath(...)` or
- * `File.fromBytes(...)` directly inside `submitRun`; the SDK materializes
+ * `File.fromBytes(...)` directly inside `submit`; the SDK materializes
  * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
  * surface for persisted file records plus an internal upload transport
  * retained for legacy callers.
@@ -493,11 +496,11 @@ export class AgentExecutor {
    * resolve a subsequent `getRun`/`listOutputs` is guaranteed consistent (it
    * polls `getRun` via {@link waitForRun}, NOT the RUN_FINISHED event, which the
    * runner emits before the platform commits the record). For long-running flows
-   * that need live events, prefer `submitRun` + `streamEnvelopes(runId, {
-   * settleConsistent: true })`, or `submitRun` + `stream(runId)` + `wait(runId)`.
+   * that need live events, prefer `submit` + `streamEnvelopes(runId, {
+   * settleConsistent: true })`, or `submit` + `stream(runId)` + `wait(runId)`.
    */
-  async run(options: SubmitRunOptions): Promise<Run> {
-    const runId = await this.submitRun(options);
+  async run(options: SubmitOptions): Promise<Run> {
+    const runId = await this.submit(options);
     return this.waitForRun(runId, options.signal ? { signal: options.signal } : {});
   }
 
@@ -517,40 +520,45 @@ export class AgentExecutor {
    * deduped by content hash, and referenced in the submission as plain
    * `{ kind:"asset" }` refs — identical to a pre-staged `.upload(client)`.
    */
-  async submitRun(options: SubmitRunOptions): Promise<string> {
+  async submit(options: SubmitOptions): Promise<string> {
     if (!options || typeof options !== "object") {
-      throw new Error("AgentExecutor.submitRun: options is required");
+      throw new Error("AgentExecutor.submit: options is required");
     }
-    // The model fully determines the upstream provider; derive it so callers
-    // never pass `provider`. `providerForModel` returns undefined for an
-    // unknown model string (the model check below then rejects it). An
-    // explicit provider is allowed but must agree with the model.
-    const derivedProvider = providerForModel(options.model);
-    if (options.provider && derivedProvider && options.provider !== derivedProvider) {
+    // A model maps to one or more upstream providers (see MODEL_PROVIDER_IDS).
+    // `providersForModel` returns the supported providers in priority order, or
+    // `[]` for an unknown model string (the model check below then rejects it).
+    // An explicit provider is allowed but must be one that serves the model;
+    // when omitted the model's default (first-listed) provider is used.
+    const supportedProviders = providersForModel(options.model);
+    if (
+      options.provider &&
+      supportedProviders.length > 0 &&
+      !supportedProviders.includes(options.provider)
+    ) {
       throw new Error(
-        `AgentExecutor.submitRun: provider ${JSON.stringify(options.provider)} does not match ` +
-          `model ${JSON.stringify(options.model)} (expected ${JSON.stringify(derivedProvider)})`
+        `AgentExecutor.submit: provider ${JSON.stringify(options.provider)} is not available for ` +
+          `model ${JSON.stringify(options.model)} (supported: ${supportedProviders.join(", ")})`
       );
     }
-    const provider: RunProvider = options.provider ?? derivedProvider ?? DEFAULT_RUN_PROVIDER;
+    const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
     const credentialMode = parseCredentialMode(options.credentialMode);
     if (credentialMode === "managed") {
       throw new AexError(
         "CREDENTIAL_INVALID",
-        "AgentExecutor.submitRun: credentialMode \"managed\" is not available without a private managed-key implementation"
+        "AgentExecutor.submit: credentialMode \"managed\" is not available without a private managed-key implementation"
       );
     }
     if (!options.secrets) {
-      throw new Error("AgentExecutor.submitRun: secrets is required");
+      throw new Error("AgentExecutor.submit: secrets is required");
     }
     // The BYOK provider key (for the selected `provider`) is required. The
     // shared parser re-runs this check on the server; failing early here
     // gives the caller a synchronous error before any network call.
     if (typeof options.secrets.apiKey !== "string" || !options.secrets.apiKey) {
-      throw new Error("AgentExecutor.submitRun: secrets.apiKey is required");
+      throw new Error("AgentExecutor.submit: secrets.apiKey is required");
     }
     if (typeof options.model !== "string" || !options.model) {
-      throw new Error("AgentExecutor.submitRun: model is required");
+      throw new Error("AgentExecutor.submit: model is required");
     }
     const prompt = normalisePrompt(options.prompt);
     const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
@@ -569,7 +577,7 @@ export class AgentExecutor {
     ) {
       throw new AexError(
         "RUNTIME_UNSUPPORTED",
-        `AgentExecutor.submitRun: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
+        `AgentExecutor.submit: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
           `(got ${JSON.stringify(options.runtime)})`
       );
     }
@@ -985,16 +993,16 @@ function generateIdempotencyKey(): string {
 function normalisePrompt(input: string | readonly string[]): readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new Error("AgentExecutor.submitRun: prompt must be a non-empty string");
+      throw new Error("AgentExecutor.submit: prompt must be a non-empty string");
     }
     return [input];
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new Error("AgentExecutor.submitRun: prompt must be a non-empty string or string array");
+    throw new Error("AgentExecutor.submit: prompt must be a non-empty string or string array");
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new Error("AgentExecutor.submitRun: prompt segments must be non-empty strings");
+      throw new Error("AgentExecutor.submit: prompt segments must be non-empty strings");
     }
   }
   return [...input];
@@ -1026,16 +1034,16 @@ async function prepareSkills(
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
-      throw new Error(`AgentExecutor.submitRun: skills[${i}] must be a Skill instance`);
+      throw new Error(`AgentExecutor.submit: skills[${i}] must be a Skill instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submitRun: skills[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AgentExecutor.submit: skills[${i}] was already consumed by a prior submit`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submitRun: skills[${i}] is draft but has no bytes`);
+        throw new Error(`AgentExecutor.submit: skills[${i}] is draft but has no bytes`);
       }
       const uploaded = await uploader({
         bytes: bundle.bytes,
@@ -1064,16 +1072,16 @@ async function prepareAgentsMd(
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
-      throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] must be an AgentsMd instance`);
+      throw new Error(`AgentExecutor.submit: agentsMd[${i}] must be an AgentsMd instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AgentExecutor.submit: agentsMd[${i}] was already consumed by a prior submit`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submitRun: agentsMd[${i}] is draft but has no bytes`);
+        throw new Error(`AgentExecutor.submit: agentsMd[${i}] is draft but has no bytes`);
       }
       const uploaded = await uploader({
         bytes: bundle.bytes,
@@ -1101,16 +1109,16 @@ async function prepareFiles(
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
-      throw new Error(`AgentExecutor.submitRun: files[${i}] must be a File instance`);
+      throw new Error(`AgentExecutor.submit: files[${i}] must be a File instance`);
     }
     if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submitRun: files[${i}] was already consumed by a prior submitRun`);
+      throw new Error(`AgentExecutor.submit: files[${i}] was already consumed by a prior submit`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submitRun: files[${i}] is draft but has no bytes`);
+        throw new Error(`AgentExecutor.submit: files[${i}] is draft but has no bytes`);
       }
       const uploaded = await uploader({
         bytes: bundle.bytes,
@@ -1141,7 +1149,7 @@ async function prepareFiles(
 function getSubmittedRunId(response: { readonly id?: string; readonly runId?: string }): string {
   const id = response.id ?? response.runId;
   if (typeof id !== "string" || id.length === 0) {
-    throw new Error("AgentExecutor.submitRun: submit response did not include a run id");
+    throw new Error("AgentExecutor.submit: submit response did not include a run id");
   }
   return id;
 }
@@ -1162,7 +1170,7 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new Error(`AgentExecutor.submitRun: mcpServers[${i}] must be an McpServer instance`);
+      throw new Error(`AgentExecutor.submit: mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
@@ -1170,7 +1178,7 @@ function mergeMcpServers(
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
         throw new Error(
-          `AgentExecutor.submitRun: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
+          `AgentExecutor.submit: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
         );
       }
       secretByName.set(secret.name, secret);
@@ -1203,7 +1211,7 @@ function mergeProxyEndpointAuth(
     const existing = byName.get(entry.name);
     if (existing && existing.value.type !== entry.value.type) {
       throw new Error(
-        `AgentExecutor.submitRun: proxyEndpoint "${entry.name}" auth type conflicts ` +
+        `AgentExecutor.submit: proxyEndpoint "${entry.name}" auth type conflicts ` +
           `with secrets.proxyEndpointAuth (instance=${entry.value.type}, secrets=${existing.value.type})`
       );
     }

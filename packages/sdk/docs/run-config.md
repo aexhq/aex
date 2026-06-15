@@ -4,7 +4,7 @@ title: Run configuration
 
 # Run configuration
 
-A run config is the credential-free subset of a `submitRun` request that you can keep in code or load from a JSON file. It is not a platform object, saved definition, DSL, trigger, or persistent agent profile. aex only stores the immutable run record created when you submit.
+A run config is the credential-free subset of a `submit` request that you can keep in code or load from a JSON file. It is not a platform object, saved definition, DSL, trigger, or persistent agent profile. aex only stores the immutable run record created when you submit.
 
 Allowed fields:
 
@@ -20,9 +20,9 @@ Allowed fields:
 - `proxyEndpoints` - array of `PlatformProxyEndpoint`; endpoint-level `retry` is allowed here and remains declaration-based.
 - `metadata` - non-secret structured metadata.
 
-`agentsMd`, `files`, `outputs`, `builtins`, and `outputMode` are top-level `submitRun` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission.
+`agentsMd`, `files`, `outputs`, `builtins`, and `outputMode` are top-level `submit` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission.
 
-Secrets never live in run config. Pass credentials through `submitRun({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
+Secrets never live in run config. Pass credentials through `submit({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
 
 ## Reuse in code
 
@@ -39,7 +39,7 @@ function summarise(topic: string) {
   };
 }
 
-await aex.submitRun({
+await aex.submit({
   ...summarise("agent-first SDK design"),
   secrets: { apiKey }
 });

@@ -9,7 +9,7 @@ import { fetchSkillArchive } from "./fetch-archive.js";
 import { readDirectoryAsFiles } from "./node-fs.js";
 
 /**
- * One `Skill` class for skill bytes. `client.submitRun` materializes the bytes
+ * One `Skill` class for skill bytes. `client.submit` materializes the bytes
  * as an uploaded asset before the run lands; the wire ref becomes
  * `kind:"asset"`.
  *
@@ -45,7 +45,7 @@ export class Skill {
   /**
    * The wire-level reference. Returns the SDK-private draft shape for
    * un-materialized skills (kind:"draft", with name + contentHash).
-   * `client.submitRun` walks these and uploads them before the run
+   * `client.submit` walks these and uploads them before the run
    * lands.
    */
   get ref(): AssetRef | DraftSkillRef {
@@ -65,7 +65,7 @@ export class Skill {
    * Build a draft Skill from an inline files map. The SDK validates
    * basic safety (no path traversal, size caps, has `SKILL.md`),
    * deterministically zips the bundle, and computes the
-   * `sha256:<hex>` content hash. `client.submitRun` materializes
+   * `sha256:<hex>` content hash. `client.submit` materializes
    * these before the run lands.
    */
   static async fromFiles(args: { readonly name: string; readonly files: SkillFiles }): Promise<Skill> {
@@ -105,7 +105,7 @@ export class Skill {
    *
    * The archive must contain `SKILL.md` at its root, or inside a single
    * top-level folder (which is stripped). The signed URL only needs to be valid
-   * for this call; `client.submitRun` snapshots the bytes into the run.
+   * for this call; `client.submit` snapshots the bytes into the run.
    *
    * Universal (Node 18+ / browser): requires a global `fetch`, or pass one.
    */
@@ -142,7 +142,7 @@ export class Skill {
    * `Skill` record returned by `client.skills.list()` / `.get()`:
    *
    *   const [s] = await client.skills.list();
-   *   await client.submitRun({ ..., skills: [Skill.fromCatalog(s)] });
+   *   await client.submit({ ..., skills: [Skill.fromCatalog(s)] });
    *
    * The record must be `ready` (it has a content hash). Unlike the draft
    * builders this performs no upload — the bytes already live in the catalog.
@@ -166,9 +166,9 @@ export class Skill {
   }
 
   /**
-   * Internal: yield the draft's bytes + metadata so `client.submitRun`
+   * Internal: yield the draft's bytes + metadata so `client.submit`
    * can upload the asset. After this returns, the Skill is marked consumed
-   * so a second submitRun call against the same instance throws
+   * so a second submit call against the same instance throws
    * (avoid silently re-uploading; explicit re-construction is the
    * supported retry pattern).
    *
@@ -177,8 +177,8 @@ export class Skill {
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
     if (this.#consumed) {
       throw new Error(
-        "Skill: cannot reuse a consumed Skill in submitRun. Build a fresh Skill via " +
-          "Skill.fromPath(...) / Skill.fromFiles(...) per submitRun call."
+        "Skill: cannot reuse a consumed Skill in submit. Build a fresh Skill via " +
+          "Skill.fromPath(...) / Skill.fromFiles(...) per submit call."
       );
     }
     if (this.#ref.kind !== "draft" || !this.#inlineBytes) {
@@ -222,7 +222,7 @@ export class Skill {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "Skill: draft Skills cannot be JSON-serialised — they only become wire refs when " +
-        "client.submitRun uploads the bytes as an asset."
+        "client.submit uploads the bytes as an asset."
       );
     }
     return this.#ref;
@@ -231,7 +231,7 @@ export class Skill {
 
 /**
  * SDK-internal draft skill marker. Never reaches the wire; the
- * materialize step inside `client.submitRun` converts these to
+ * materialize step inside `client.submit` converts these to
  * `kind:"asset"` refs.
  */
 export interface DraftSkillRef {

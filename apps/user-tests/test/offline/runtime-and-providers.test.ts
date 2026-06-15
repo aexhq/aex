@@ -89,14 +89,14 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ anthropic: "managed", deepseek: "managed" });
   });
 
-  it("AgentExecutor.submitRun rejects runtime:'native' without an HTTP call", async () => {
+  it("AgentExecutor.submit rejects runtime:'native' without an HTTP call", async () => {
     const script = `
       const { AgentExecutor, AexError } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       try {
-        await client.submitRun({
+        await client.submit({
           provider: "anthropic",
           runtime: "native",
           model: "claude-haiku-4-5",
@@ -160,7 +160,7 @@ describe("managed runtime + widened providers (published surface)", () => {
     });
   });
 
-  it("AgentExecutor.submitRun forwards the optional runtime field on the wire", async () => {
+  it("AgentExecutor.submit forwards the optional runtime field on the wire", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
       const requests = [];
@@ -178,7 +178,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         }), { status: 202, headers: { "content-type": "application/json" } });
       };
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      await client.submitRun({
+      await client.submit({
         provider: "anthropic",
         runtime: "managed",
         model: "claude-haiku-4-5",
@@ -211,7 +211,7 @@ describe("managed runtime + widened providers (published surface)", () => {
     expect(out.hasSecrets).toBe(true);
   });
 
-  it("AgentExecutor.submitRun omits runtime from the wire when the caller doesn't supply it", async () => {
+  it("AgentExecutor.submit omits runtime from the wire when the caller doesn't supply it", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
       const requests = [];
@@ -229,7 +229,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         }), { status: 202, headers: { "content-type": "application/json" } });
       };
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      await client.submitRun({
+      await client.submit({
         provider: "anthropic",
         model: "claude-haiku-4-5",
         prompt: "hi",

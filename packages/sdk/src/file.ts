@@ -11,9 +11,9 @@ import { zipSync } from "fflate";
  *
  *   const settings = await File.fromPath("./settings.json");
  *   const dataset = await File.fromPath("./data/");
- *   await client.submitRun({ files: [settings, dataset], ... });
+ *   await client.submit({ files: [settings, dataset], ... });
  *
- * `client.submitRun` materializes the bytes to the hosted asset store before
+ * `client.submit` materializes the bytes to the hosted asset store before
  * the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
  * same bytes are deduped.
  */
@@ -106,7 +106,7 @@ export class File {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.submitRun` can upload it as an asset.
+   * `client.submit` can upload it as an asset.
    */
   _takeDraftBundle(): {
     name: string;
@@ -116,8 +116,8 @@ export class File {
   } | undefined {
     if (this.#consumed) {
       throw new Error(
-        "File: cannot reuse a consumed File in submitRun. Build a fresh File via " +
-          "File.fromPath(...) / File.fromBytes(...) per submitRun call."
+        "File: cannot reuse a consumed File in submit. Build a fresh File via " +
+          "File.fromPath(...) / File.fromBytes(...) per submit call."
       );
     }
     if (this.#ref.kind !== "draft" || !this.#bytes) {
@@ -136,7 +136,7 @@ export class File {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "File: draft Files cannot be JSON-serialised — they only become wire refs when " +
-        "client.submitRun uploads the bytes as an asset."
+        "client.submit uploads the bytes as an asset."
       );
     }
     return this.#ref;

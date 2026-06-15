@@ -113,7 +113,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       provider: ${JSON.stringify(cell.provider)},
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},

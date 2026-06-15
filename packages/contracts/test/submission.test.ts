@@ -17,6 +17,10 @@ import {
   RUN_PROVIDERS,
   parseRunSubmissionRequest,
   providerForModel,
+  providersForModel,
+  resolveProviderModelId,
+  assertRunModelMatchesProvider,
+  MODEL_PROVIDER_IDS,
   selectRuntime,
   type ManagedKeyPolicyV1,
   type PlatformRunSubmissionRequest,
@@ -37,7 +41,7 @@ function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: Runtim
     openai: RunModels.GPT_4_1,
     gemini: RunModels.GEMINI_2_5_FLASH,
     mistral: RunModels.MISTRAL_LARGE_LATEST,
-    openrouter: RunModels.OPENROUTER_GPT_4O_MINI
+    openrouter: RunModels.GPT_4O_MINI
   }[provider];
   return {
     workspaceId: "workspace-1",
@@ -282,13 +286,11 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "deepseek-reasoner",
       "gpt-4.1",
       "gpt-4o-mini",
+      "gpt-4o",
       "gemini-2.0-flash",
       "gemini-2.5-flash",
       "mistral-large-latest",
-      "mistral-small-latest",
-      "openai/gpt-4o-mini",
-      "openai/gpt-4o",
-      "google/gemini-2.0-flash-001"
+      "mistral-small-latest"
     ]);
   });
 
@@ -322,13 +324,27 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
   });
 });
 
-describe("providerForModel", () => {
-  it("resolves every RUN_MODEL to its declared provider", () => {
+describe("providerForModel / providersForModel", () => {
+  it("RUN_MODELS_BY_PROVIDER and MODEL_PROVIDER_IDS agree", () => {
     for (const [provider, models] of Object.entries(RUN_MODELS_BY_PROVIDER)) {
       for (const model of models) {
-        expect(providerForModel(model), model).toBe(provider);
+        expect(providersForModel(model), model).toContain(provider);
       }
     }
+  });
+
+  it("providerForModel returns the first declared (default) provider", () => {
+    for (const model of RUN_MODELS) {
+      const declared = Object.keys(MODEL_PROVIDER_IDS[model]);
+      expect(providerForModel(model), model).toBe(declared[0]);
+    }
+  });
+
+  it("exposes every provider that can serve a multi-provider model", () => {
+    expect(providersForModel(Models.GPT_4O_MINI)).toEqual(["openai", "openrouter"]);
+    expect(providerForModel(Models.GPT_4O_MINI)).toBe("openai");
+    expect(providersForModel(Models.GEMINI_2_0_FLASH)).toEqual(["gemini", "openrouter"]);
+    expect(providersForModel(Models.GPT_4O)).toEqual(["openrouter"]);
   });
 
   it("maps the new DeepSeek v4 ids to deepseek", () => {
@@ -336,8 +352,34 @@ describe("providerForModel", () => {
     expect(providerForModel(Models.DEEPSEEK_V4_PRO)).toBe("deepseek");
   });
 
-  it("returns undefined for an unknown model string", () => {
+  it("returns undefined / empty for an unknown model string", () => {
     expect(providerForModel("not-a-model")).toBeUndefined();
+    expect(providersForModel("not-a-model")).toEqual([]);
+  });
+});
+
+describe("resolveProviderModelId", () => {
+  it("translates a canonical id to the provider-native string", () => {
+    expect(resolveProviderModelId(Models.GPT_4O_MINI, "openai")).toBe("gpt-4o-mini");
+    expect(resolveProviderModelId(Models.GPT_4O_MINI, "openrouter")).toBe("openai/gpt-4o-mini");
+    expect(resolveProviderModelId(Models.GEMINI_2_0_FLASH, "openrouter")).toBe("google/gemini-2.0-flash-001");
+    expect(resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "anthropic")).toBe("claude-haiku-4-5");
+  });
+
+  it("throws when the provider does not serve the model", () => {
+    expect(() => resolveProviderModelId(Models.GPT_4O_MINI, "anthropic")).toThrow(/not available for provider/);
+    expect(() => resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "openrouter")).toThrow(/not available for provider/);
+  });
+});
+
+describe("assertRunModelMatchesProvider", () => {
+  it("accepts any provider that serves the model", () => {
+    expect(() => assertRunModelMatchesProvider("openai", Models.GPT_4O_MINI)).not.toThrow();
+    expect(() => assertRunModelMatchesProvider("openrouter", Models.GPT_4O_MINI)).not.toThrow();
+  });
+
+  it("rejects a provider that does not serve the model", () => {
+    expect(() => assertRunModelMatchesProvider("anthropic", Models.GPT_4O_MINI)).toThrow(/not supported for provider/);
   });
 });
 

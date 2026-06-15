@@ -73,7 +73,7 @@ describe("AgentExecutor.getRunUnit", () => {
       });
     };
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       model: "claude-haiku-4-5",
       prompt: "hi",
       secrets: { apiKey: "sk-test" }

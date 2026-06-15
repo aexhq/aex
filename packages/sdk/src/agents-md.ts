@@ -9,9 +9,9 @@ import { strToU8, zipSync } from "fflate";
  * behaviour).
  *
  *   const rules = await AgentsMd.fromContent("# Be helpful", { name: "rules" });
- *   await client.submitRun({ agentsMd: [rules], ... });
+ *   await client.submit({ agentsMd: [rules], ... });
  *
- * `client.submitRun` materializes the bytes to the hosted asset store before
+ * `client.submit` materializes the bytes to the hosted asset store before
  * the run lands. Asset deduplication handles repeated uploads automatically.
  */
 export class AgentsMd {
@@ -62,13 +62,13 @@ export class AgentsMd {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.submitRun` can upload it as an asset.
+   * `client.submit` can upload it as an asset.
    */
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
     if (this.#consumed) {
       throw new Error(
-        "AgentsMd: cannot reuse a consumed AgentsMd in submitRun. Build a fresh one " +
-          "via AgentsMd.fromContent(...) / AgentsMd.fromPath(...) per submitRun call."
+        "AgentsMd: cannot reuse a consumed AgentsMd in submit. Build a fresh one " +
+          "via AgentsMd.fromContent(...) / AgentsMd.fromPath(...) per submit call."
       );
     }
     if (this.#ref.kind !== "draft" || !this.#zipBytes) {
@@ -86,7 +86,7 @@ export class AgentsMd {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "AgentsMd: draft AgentsMd cannot be JSON-serialised — it only becomes a wire " +
-          "ref when client.submitRun uploads the bytes as an asset."
+          "ref when client.submit uploads the bytes as an asset."
       );
     }
     return this.#ref;

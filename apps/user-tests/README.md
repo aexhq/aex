@@ -81,7 +81,7 @@ broad feature-surface matrix, because those are the provider keys provisioned
 for the public live workflow.
 
 Each test installs the packed tarball into a tempdir, spawns
-`AgentExecutor.submitRun({ provider, ... })`, polls `getRun`,
+`AgentExecutor.submit({ provider, ... })`, polls `getRun`,
 `listEvents`, and `listOutputs`, and asserts the user's probe
 string round-trips through a real upstream LLM call.
 

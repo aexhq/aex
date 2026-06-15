@@ -94,7 +94,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           apiToken
         });
 
-        const runId = await client.submitRun({
+        const runId = await client.submit({
           provider: "anthropic",
           runtime: "managed",
           model,

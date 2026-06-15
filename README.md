@@ -32,7 +32,7 @@ const github = McpServer.remote({
   headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN!}` },
 });
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Summarise Q1 revenue by region.",
   skills: [await Skill.fromPath("./skills/sheet-tools", { name: "sheet-tools" })],
@@ -58,7 +58,7 @@ the same run-config fields (`{ model, prompt, skills, mcpServers, postHook, ... 
 
 - **Skills, MCP servers, AGENTS.md, files** are first-class. Pass
   per-run bundles inline with `Skill.fromPath(...)` /
-  `Skill.fromFiles(...)`; `aex.submitRun` materializes the bytes to
+  `Skill.fromFiles(...)`; `aex.submit` materializes the bytes to
   content-addressable, workspace-scoped asset storage before the run lands,
   so the same bytes are a no-op upload on subsequent runs. MCP servers
   can be remote or workspace-registered.
@@ -98,7 +98,7 @@ submission schema. Anthropic and DeepSeek are live-verified; OpenAI, Gemini,
 and Mistral are accepted but live-unverified in the generated matrix. Anthropic
 is the default provider; set `provider` for the others. Omit `runtime` or pass
 `runtime: "managed"`; every provider uses the managed runtime and the same
-`submitRun` shape / `RunnerEvent` stream. See the [generated capability matrix](packages/sdk/docs/provider-runtime-capabilities.md).
+`submit` shape / `RunnerEvent` stream. See the [generated capability matrix](packages/sdk/docs/provider-runtime-capabilities.md).
 
 **How do provider keys work?**
 **BYOK.** Provider keys, MCP `Authorization` headers, and any

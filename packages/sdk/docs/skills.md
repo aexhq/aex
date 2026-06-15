@@ -12,7 +12,7 @@ that asset into the run's object-storage prefix before dispatch.
 There are three sources for skill bytes:
 
 - **Inline/local draft:** `Skill.fromFiles(...)`, `Skill.fromPath(...)`, or
-  `Skill.fromUrl(...)` builds a draft in the SDK process. `submitRun` uploads
+  `Skill.fromUrl(...)` builds a draft in the SDK process. `submit` uploads
   it before posting `/runs`.
 - **Pre-uploaded workspace asset:** call `await draft.upload(aex)` and reuse the
   returned materialized `Skill`, or pass an existing `kind:"asset"` ref from a
@@ -63,7 +63,7 @@ import { AgentExecutor, RunModels, Skill } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken });
 
-await aex.submitRun({
+await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [await Skill.fromPath("./skills/rules", { name: "rules" })],
@@ -92,7 +92,7 @@ multiple submissions, upload the draft explicitly:
 const draft = await Skill.fromFiles({ name: "rules", files });
 const uploaded = await draft.upload(aex);
 
-await aex.submitRun({
+await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [uploaded],
@@ -129,7 +129,7 @@ assets. Use them when a team wants a named, listed skill record:
 ```ts
 const [record] = await aex.skills.list();
 
-await aex.submitRun({
+await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [Skill.fromCatalog(record)],

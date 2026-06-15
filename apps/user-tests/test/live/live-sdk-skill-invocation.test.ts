@@ -157,7 +157,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       files: { "SKILL.md": ${JSON.stringify(betaSkill)} }
     });
 
-    const runId = await client.submitRun({
+    const runId = await client.submit({
       provider: ${JSON.stringify(cell.provider)},
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},

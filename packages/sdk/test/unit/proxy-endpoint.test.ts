@@ -60,10 +60,10 @@ describe("ProxyEndpoint", () => {
     expect(query.auth).toEqual({ name: "weather", value: { type: "query", value: "wk" } });
   });
 
-  it("submitRun splits ProxyEndpoint instances into declaration + secrets bag", async () => {
+  it("submit splits ProxyEndpoint instances into declaration + secrets bag", async () => {
     const { fetch, calls } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       proxyEndpoints: [
@@ -144,11 +144,11 @@ describe("ProxyEndpoint", () => {
     ).toThrow(/auth header/);
   });
 
-  it("rejects duplicate endpoint names within one submitRun call", async () => {
+  it("rejects duplicate endpoint names within one submit call", async () => {
     const { fetch } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await expect(
-      client.submitRun({
+      client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
         proxyEndpoints: [
@@ -183,10 +183,10 @@ describe("ProxyEndpoint", () => {
     expect(ep.auth).toBeNull();
   });
 
-  it("submitRun omits keyless endpoints from secrets.proxyEndpointAuth", async () => {
+  it("submit omits keyless endpoints from secrets.proxyEndpointAuth", async () => {
     const { fetch, calls } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
-    await client.submitRun({
+    await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
       proxyEndpoints: [

@@ -6,7 +6,7 @@ title: Credentials
 
 aex does not store provider keys or MCP credential values across runs.
 
-The caller passes a workspace-scoped SDK token and the provider key inline on every `submitRun` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
+The caller passes a workspace-scoped SDK token and the provider key inline on every `submit` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
 
 A run targets exactly one provider (selected by `provider`, default `anthropic`), so the key is a single flat field:
 
@@ -80,7 +80,7 @@ const proxyEndpointAuth = [
 // Fail fast at submission time when policy and auth disagree.
 validateProxyAuth(proxyEndpoints, proxyEndpointAuth);
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "…",
   proxyEndpoints,
@@ -119,7 +119,7 @@ const proxyEndpoints = [
   }
 ] as const;
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "…",
   proxyEndpoints,
@@ -155,4 +155,4 @@ const allowedHosts = buildPlatformAllowedHosts({
 
 ### Secrets are always explicit at the call site
 
-There is no `defaultSecrets` and no client-held secret state. Every `submitRun` call carries its full `secrets` bundle (one provider key + optional MCP credentials + optional `proxyEndpointAuth`). This is the agent-first invariant: the credentials being used on any given call are visible in the same line of code that submits the run.
+There is no `defaultSecrets` and no client-held secret state. Every `submit` call carries its full `secrets` bundle (one provider key + optional MCP credentials + optional `proxyEndpointAuth`). This is the agent-first invariant: the credentials being used on any given call are visible in the same line of code that submits the run.

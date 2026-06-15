@@ -11,7 +11,7 @@ Every run produces durable metadata (status, events, snapshots, cleanup state) a
 ```ts
 import { RunModels } from "@aexhq/sdk";
 
-const runId = await aex.submitRun({
+const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Produce a report and save it as a file.",
   secrets: { apiKey }
@@ -90,7 +90,7 @@ console.log(looseReport.byteLength);
 ## `outputs.allowedDirs` — override capture roots
 
 ```ts
-aex.submitRun({
+aex.submit({
   /* ... */,
   outputs: {
     allowedDirs: ["/workspace/reports", "/workspace/state"]
@@ -115,7 +115,7 @@ Runtime notes:
 ## `outputs.deniedDirs` — subtract noise
 
 ```ts
-aex.submitRun({
+aex.submit({
   /* ... */,
   outputs: {
     deniedDirs: ["node_modules", "/var/cache", "*.tmp"]
