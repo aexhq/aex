@@ -75,7 +75,7 @@ function buildDispatcherProbe(provider: RunProvider): PlatformRunSubmissionReque
     credentialMode: "byok",
     provider,
     submission: {
-      model: RUN_MODELS_BY_PROVIDER[provider][0],
+      model: RUN_MODELS_BY_PROVIDER[provider][0]!,
       prompt: ["capability matrix runtime probe"],
       skills: [],
       agentsMd: [],
