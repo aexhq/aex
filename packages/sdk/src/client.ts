@@ -208,6 +208,14 @@ export interface SubmitOptions {
   readonly outputMode?: OutputMode;
   readonly secrets: PlatformInlineSecrets;
   readonly idempotencyKey?: string;
+  /**
+   * Lineage parent (agent-session §9). When set, the server admits this run as
+   * a CHILD of `parentRunId` (same workspace required), enforcing the
+   * max-subagent-depth + per-root concurrency caps and persisting the lineage.
+   * The depth is always derived server-side from the parent row — clients name
+   * the parent, never the depth.
+   */
+  readonly parentRunId?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -754,6 +762,7 @@ export class AgentExecutor {
       ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(postHook ? { postHook } : {}),
+      ...(options.parentRunId ? { parentRunId: options.parentRunId } : {}),
       secrets,
       ...(proxyEndpointDeclarations.length > 0
         ? { proxyEndpoints: proxyEndpointDeclarations }

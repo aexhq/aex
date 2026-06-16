@@ -1422,6 +1422,15 @@ export interface PlatformRunSubmissionRequest {
    * for repair until this budget is exhausted.
    */
   readonly postHook?: PlatformPostHook;
+  /**
+   * Lineage parent (agent-session §9). When present the server admits this
+   * run as a CHILD of `parentRunId`: it walks the parent's lineage, enforces
+   * the max-subagent-depth + per-root concurrency caps, and persists
+   * `parent_run_id` + a server-derived `depth`. The client may name a parent
+   * but NEVER the depth — depth is computed server-side from the parent row,
+   * so a forged value cannot bypass the cap.
+   */
+  readonly parentRunId?: string;
 }
 
 /**
@@ -1479,6 +1488,7 @@ export function parseRunSubmissionRequest(
     "timeout",
     "postHook",
     "proxyEndpoints",
+    "parentRunId",
     SECRETS_KEY
   ]);
   for (const key of Object.keys(value)) {
@@ -1511,6 +1521,9 @@ export function parseRunSubmissionRequest(
   }
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
+  // Lineage parent only. `depth` is NEVER accepted from the wire — the server
+  // derives it from the parent row (a forged depth must not bypass the cap).
+  const parentRunId = optionalString(value.parentRunId, "submission.parentRunId");
   const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
@@ -1575,6 +1588,7 @@ export function parseRunSubmissionRequest(
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(postHook !== undefined ? { postHook } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
+    ...(parentRunId !== undefined ? { parentRunId } : {}),
     secrets
   };
 }
