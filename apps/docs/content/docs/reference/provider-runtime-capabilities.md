@@ -8,7 +8,7 @@ Generated from `packages/contracts/src/provider-support.ts`; runtime cells are d
 
 Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.
 
-Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`). Runtime selectors: `managed`.
+Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`), [Doubao (China)](#doubao-cn) (`doubao-cn`). Runtime selectors: `managed`.
 
 All new submissions run on the managed runtime. Public support facts are listed separately from runtime dispatch facts.
 
@@ -23,6 +23,9 @@ Status vocabulary: `supported`, `live-unverified`, `rejected`.
 | [OpenAI](#openai) | `openai` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | [Gemini](#gemini) | `gemini` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | [Mistral](#mistral) | `mistral` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+| [OpenRouter](#openrouter) | `openrouter` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+| [Doubao](#doubao) | `doubao` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+| [Doubao (China)](#doubao-cn) | `doubao-cn` | live-unverified | [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 
 ## Runtime routing
 
@@ -33,6 +36,9 @@ Status vocabulary: `supported`, `live-unverified`, `rejected`.
 | `openai` | no | `managed` | [live-unverified](#openai) |
 | `gemini` | no | `managed` | [live-unverified](#gemini) |
 | `mistral` | no | `managed` | [live-unverified](#mistral) |
+| `openrouter` | no | `managed` | [live-unverified](#openrouter) |
+| `doubao` | no | `managed` | [live-unverified](#doubao) |
+| `doubao-cn` | no | `managed` | [live-unverified](#doubao-cn) |
 
 ## Runtime cell evidence
 
@@ -43,6 +49,9 @@ Status vocabulary: `supported`, `live-unverified`, `rejected`.
 | `openai` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | `gemini` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | `mistral` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+| `openrouter` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+| `doubao` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
+| `doubao-cn` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 
 ## Validation errors
 
@@ -97,6 +106,30 @@ Notes:
 ### Mistral
 
 - Wire provider: `mistral`
+- Public status: live-unverified
+- Auto route: `managed`
+- Docs: [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/)
+- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
+
+### OpenRouter
+
+- Wire provider: `openrouter`
+- Public status: live-unverified
+- Auto route: `managed`
+- Docs: [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/)
+- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
+
+### Doubao
+
+- Wire provider: `doubao`
+- Public status: live-unverified
+- Auto route: `managed`
+- Docs: [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/)
+- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Runtime support validator](https://github.com/aexhq/aex/blob/main/packages/contracts/test/runtime-support.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
+
+### Doubao (China)
+
+- Wire provider: `doubao-cn`
 - Public status: live-unverified
 - Auto route: `managed`
 - Docs: [Credentials](/docs/guides/credentials/); [Events](/docs/guides/events/)

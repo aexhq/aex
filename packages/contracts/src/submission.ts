@@ -183,7 +183,9 @@ export const RUN_PROVIDERS = [
   "openai",
   "gemini",
   "mistral",
-  "openrouter"
+  "openrouter",
+  "doubao",
+  "doubao-cn"
 ] as const;
 export type RunProvider = (typeof RUN_PROVIDERS)[number];
 export const DEFAULT_RUN_PROVIDER: RunProvider = "anthropic";
@@ -212,7 +214,11 @@ export const Providers = {
   /** Mistral. */
   MISTRAL: "mistral",
   /** OpenRouter — OpenAI-compatible aggregator routing to many upstream models. */
-  OPENROUTER: "openrouter"
+  OPENROUTER: "openrouter",
+  /** Doubao (ByteDance) via the official international BytePlus ModelArk gateway. */
+  DOUBAO: "doubao",
+  /** Doubao (ByteDance) via the official China Volcengine Ark gateway. */
+  DOUBAO_CN: "doubao-cn"
 } as const satisfies Readonly<Record<string, RunProvider>>;
 
 /**

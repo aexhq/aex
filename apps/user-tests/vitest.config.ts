@@ -12,11 +12,18 @@ export default defineConfig({
     testTimeout: 180_000,
     hookTimeout: 180_000,
     include: ["test/**/*.test.ts"],
-    // The heavy full-feature long session is a SEPARATE explicit gate
-    // (own `test:user:heavy` script + vitest.heavy.config.ts) that runs
-    // only AFTER the rest of the user-tests pass. Keep it out of the
-    // default `test:user` sweep so it never runs implicitly.
-    exclude: ["**/node_modules/**", "test/live/live-sdk-heavy-session.test.ts"],
+    // Two suites are SEPARATE explicit gates kept out of the default
+    // `test:user` sweep so they never run implicitly:
+    //   - the heavy full-feature long session (own `test:user:heavy` +
+    //     vitest.heavy.config.ts), run only AFTER the rest pass;
+    //   - the per-provider correctness round-trips under test/live/providers/
+    //     (own `test:user:providers` + vitest.providers.config.ts), run only
+    //     on demand so the extra-provider matrix never piles spend on push.
+    exclude: [
+      "**/node_modules/**",
+      "test/live/live-sdk-heavy-session.test.ts",
+      "test/live/providers/**"
+    ],
     // Each scenario spawns its own child processes (npm install, tsc,
     // node) with cwd in an install tempdir and drives a live run.
     // Unbounded parallelism multiplies disk usage and piles concurrent

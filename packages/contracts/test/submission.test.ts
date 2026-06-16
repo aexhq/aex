@@ -41,7 +41,9 @@ function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: Runtim
     openai: RunModels.GPT_4_1,
     gemini: RunModels.GEMINI_2_5_FLASH,
     mistral: RunModels.MISTRAL_LARGE_LATEST,
-    openrouter: RunModels.GPT_4O_MINI
+    openrouter: RunModels.GPT_4O_MINI,
+    doubao: RunModels.DOUBAO_SEED_PRO,
+    "doubao-cn": RunModels.DOUBAO_SEED_FLASH
   }[provider];
   return {
     workspaceId: "workspace-1",
@@ -290,7 +292,9 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "gemini-2.0-flash",
       "gemini-2.5-flash",
       "mistral-large-latest",
-      "mistral-small-latest"
+      "mistral-small-latest",
+      "doubao-seed-pro",
+      "doubao-seed-flash"
     ]);
   });
 
@@ -301,7 +305,9 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "openai",
       "gemini",
       "mistral",
-      "openrouter"
+      "openrouter",
+      "doubao",
+      "doubao-cn"
     ]);
   });
 
@@ -352,6 +358,12 @@ describe("providerForModel / providersForModel", () => {
     expect(providerForModel(Models.DEEPSEEK_V4_PRO)).toBe("deepseek");
   });
 
+  it("serves Doubao models from both Ark gateways (international default)", () => {
+    expect(providersForModel(Models.DOUBAO_SEED_PRO)).toEqual(["doubao", "doubao-cn"]);
+    expect(providersForModel(Models.DOUBAO_SEED_FLASH)).toEqual(["doubao", "doubao-cn"]);
+    expect(providerForModel(Models.DOUBAO_SEED_PRO)).toBe("doubao");
+  });
+
   it("returns undefined / empty for an unknown model string", () => {
     expect(providerForModel("not-a-model")).toBeUndefined();
     expect(providersForModel("not-a-model")).toEqual([]);
@@ -364,6 +376,8 @@ describe("resolveProviderModelId", () => {
     expect(resolveProviderModelId(Models.GPT_4O_MINI, "openrouter")).toBe("openai/gpt-4o-mini");
     expect(resolveProviderModelId(Models.GEMINI_2_0_FLASH, "openrouter")).toBe("google/gemini-2.0-flash-001");
     expect(resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "anthropic")).toBe("claude-haiku-4-5");
+    expect(resolveProviderModelId(Models.DOUBAO_SEED_PRO, "doubao")).toBe("doubao-seed-1-8-251228");
+    expect(resolveProviderModelId(Models.DOUBAO_SEED_FLASH, "doubao-cn")).toBe("doubao-seed-1-6-flash-250828");
   });
 
   it("throws when the provider does not serve the model", () => {

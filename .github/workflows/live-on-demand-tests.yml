@@ -1,4 +1,18 @@
-name: Live User Tests
+name: Live On-Demand Tests
+
+# Consolidated, manually-dispatched pipeline for the OPTIONAL, expensive live
+# suites that are deliberately kept out of the default Live User Tests sweep.
+# One trigger runs them all:
+#   1. Per-provider correctness matrix (apps/user-tests/test/live/providers/) —
+#      one minimal round-trip per extra provider (doubao, future
+#      openai/gemini/mistral/openrouter); each self-skips when its key is unset.
+#   2. Heavy full-feature long session (test:user:heavy) — one maximal-submission
+#      DeepSeek-managed run exercising the entire feature surface.
+#
+# Feature depth on the two wire shapes (openai-chat via DeepSeek,
+# anthropic-messages via Anthropic) is covered on every dispatch by the default
+# Live User Tests workflow; this pipeline exists so the costly extras run only
+# when you ask for them, never on push.
 
 on:
   workflow_dispatch:
@@ -17,15 +31,15 @@ on:
         type: string
 
 concurrency:
-  group: live-user-tests
+  group: live-on-demand-tests
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  live-user-tests:
-    name: Live user tests
+  live-on-demand-tests:
+    name: Live on-demand tests
     runs-on: ubuntu-latest
     environment: live-user-tests
     timeout-minutes: 240
@@ -70,7 +84,24 @@ jobs:
             echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Live user tests
+      - name: Per-provider correctness tests
+        env:
+          AEX_API_URL: ${{ vars.AEX_API_URL }}
+          AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          # One key env per extra provider. Each test self-skips when its key is
+          # empty, so add a provider's secret here when you want this dispatch to
+          # exercise it (future: OPENAI_API_KEY, GEMINI_API_KEY, etc.).
+          DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
+          AEX_USER_TEST_DOUBAO_MODEL: ${{ vars.AEX_USER_TEST_DOUBAO_MODEL }}
+          AEX_USER_TEST_DOUBAO_PROVIDER: ${{ vars.AEX_USER_TEST_DOUBAO_PROVIDER }}
+          AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
+          AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
+        run: pnpm run test:user:providers
+
+      - name: Heavy full-feature long session
+        # Run even if the provider step failed, so one dispatch yields the full
+        # signal from both suites (only skip if the job was cancelled).
+        if: ${{ !cancelled() }}
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
@@ -80,9 +111,4 @@ jobs:
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
           AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
-        run: pnpm run test:user
-
-      # The expensive, optional suites (heavy full-feature session +
-      # per-provider correctness matrix) are NOT run here — they live in the
-      # manually-dispatched .github/workflows/live-on-demand-tests.yml so one
-      # trigger runs them all without piling spend onto the default sweep.
+        run: pnpm run test:user:heavy

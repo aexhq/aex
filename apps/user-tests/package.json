@@ -11,6 +11,8 @@
     "test:user:offline": "vitest run --config vitest.config.ts --maxWorkers 1 --minWorkers 1 test/offline",
     "pretest:user:heavy": "pnpm --filter @aexhq/conformance run build",
     "test:user:heavy": "vitest run --config vitest.heavy.config.ts",
+    "pretest:user:providers": "pnpm --filter @aexhq/conformance run build",
+    "test:user:providers": "vitest run --config vitest.providers.config.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

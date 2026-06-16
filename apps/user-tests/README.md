@@ -135,6 +135,35 @@ Required env is identical to the comprehensive scenario
 `AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
-CI: it runs as a **hard gate** when the manual
-`.github/workflows/live-user-tests.yml` workflow is dispatched with
-`run_heavy=true`.
+CI: it runs via the consolidated on-demand pipeline (see below), not the
+default sweep.
+
+## Per-provider correctness suite
+
+`test/live/providers/` holds one minimal round-trip per **extra** provider
+(`live-sdk-doubao.test.ts`, and future openai/gemini/mistral/openrouter). Each
+proves only that the provider's adapter/routing/registry wiring reaches its
+real upstream and returns a valid response — feature depth is already covered
+on the two wire shapes by the DeepSeek (openai-chat) and Anthropic
+(anthropic-messages) workhorse suites, so a wire-shape-equivalent provider
+needs only this connectivity check, not the full scenario matrix.
+
+Each file self-skips when its provider key is absent (e.g. `DOUBAO_API_KEY`),
+so a run only pays for whichever keys are provisioned. The suite is **excluded**
+from the default `test:user` sweep (see `vitest.config.ts`) and runs via its
+own config:
+
+```bash
+pnpm --filter @aexhq/user-tests run test:user:providers
+```
+
+## Consolidated on-demand pipeline
+
+Both optional, expensive suites above — the heavy full-feature session and the
+per-provider correctness matrix — are kept out of the default sweep and run
+together from a single manual trigger:
+`.github/workflows/live-on-demand-tests.yml`. One dispatch runs
+`test:user:providers` then `test:user:heavy`; the heavy step runs even if a
+provider check failed, so you get the full signal from one trigger. The default
+`live-user-tests.yml` workflow is purely the always-on workhorse sweep
+(DeepSeek + Anthropic) and no longer carries a `run_heavy` toggle.

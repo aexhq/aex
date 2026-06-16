@@ -8,7 +8,7 @@ Generated from `packages/contracts/src/provider-support.ts`; runtime cells are d
 
 Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.
 
-Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`). Runtime selectors: `managed`.
+Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`), [Doubao (China)](#doubao-cn) (`doubao-cn`). Runtime selectors: `managed`.
 
 All new submissions run on the managed runtime. Public support facts are listed separately from runtime dispatch facts.
 
@@ -24,6 +24,8 @@ Status vocabulary: `supported`, `live-unverified`, `rejected`.
 | [Gemini](#gemini) | `gemini` | live-unverified | [Credentials](credentials.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 | [Mistral](#mistral) | `mistral` | live-unverified | [Credentials](credentials.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 | [OpenRouter](#openrouter) | `openrouter` | live-unverified | [Credentials](credentials.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| [Doubao](#doubao) | `doubao` | live-unverified | [Credentials](credentials.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| [Doubao (China)](#doubao-cn) | `doubao-cn` | live-unverified | [Credentials](credentials.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 
 ## Runtime routing
 
@@ -35,6 +37,8 @@ Status vocabulary: `supported`, `live-unverified`, `rejected`.
 | `gemini` | no | `managed` | [live-unverified](#gemini) |
 | `mistral` | no | `managed` | [live-unverified](#mistral) |
 | `openrouter` | no | `managed` | [live-unverified](#openrouter) |
+| `doubao` | no | `managed` | [live-unverified](#doubao) |
+| `doubao-cn` | no | `managed` | [live-unverified](#doubao-cn) |
 
 ## Runtime cell evidence
 
@@ -46,6 +50,8 @@ Status vocabulary: `supported`, `live-unverified`, `rejected`.
 | `gemini` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 | `mistral` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 | `openrouter` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| `doubao` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
+| `doubao-cn` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 
 ## Validation errors
 
@@ -108,6 +114,22 @@ Notes:
 ### OpenRouter
 
 - Wire provider: `openrouter`
+- Public status: live-unverified
+- Auto route: `managed`
+- Docs: [Credentials](credentials.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
+
+### Doubao
+
+- Wire provider: `doubao`
+- Public status: live-unverified
+- Auto route: `managed`
+- Docs: [Credentials](credentials.md); [Events](events.md)
+- Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Runtime support validator](../../contracts/test/runtime-support.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts)
+
+### Doubao (China)
+
+- Wire provider: `doubao-cn`
 - Public status: live-unverified
 - Auto route: `managed`
 - Docs: [Credentials](credentials.md); [Events](events.md)

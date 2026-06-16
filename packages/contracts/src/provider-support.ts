@@ -142,6 +142,34 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     runtimeEvidence: {
       managed: COMMON_EVIDENCE
     }
+  },
+  // Doubao (ByteDance) via the official Ark API — international BytePlus gateway.
+  // Wired + parser/routing-verified but not yet proven against a live BytePlus
+  // account, so `live-unverified`. Promote to `supported` (and swap COMMON_EVIDENCE
+  // for a DOUBAO_MANAGED_EVIDENCE pointer to live-sdk-doubao.test.ts) once the
+  // live run passes.
+  doubao: {
+    displayName: "Doubao",
+    status: "live-unverified",
+    docsAnchor: "doubao",
+    docs: COMMON_DOCS,
+    evidence: COMMON_EVIDENCE,
+    runtimeEvidence: {
+      managed: COMMON_EVIDENCE
+    }
+  },
+  // Doubao (ByteDance) via the official Ark API — China Volcengine gateway.
+  // Same wiring as `doubao`; additionally gated on CF Worker egress reaching the
+  // Beijing host (see apps/egress-probe). `live-unverified` until proven live.
+  "doubao-cn": {
+    displayName: "Doubao (China)",
+    status: "live-unverified",
+    docsAnchor: "doubao-cn",
+    docs: COMMON_DOCS,
+    evidence: COMMON_EVIDENCE,
+    runtimeEvidence: {
+      managed: COMMON_EVIDENCE
+    }
   }
 } as const satisfies Readonly<Record<RunProvider, ProviderPublicSupport>>;
 
