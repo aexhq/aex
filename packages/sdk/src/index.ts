@@ -8,7 +8,7 @@
  * from `@aexhq/contracts`.
  */
 
-export { AgentsMdClient, AgentExecutor, FilesClient, SkillsClient } from "./client.js";
+export { AgentsMdClient, AgentExecutor, FilesClient, SecretsClient, SkillsClient } from "./client.js";
 export type {
   AgentExecutorOptions,
   OutputDownloadOptions,
@@ -27,6 +27,8 @@ export { AgentsMd } from "./agents-md.js";
 export { File } from "./file.js";
 export { McpServer } from "./mcp-server.js";
 export { ProxyEndpoint } from "./proxy-endpoint.js";
+export { Secret } from "./secret.js";
+export type { SecretEnvSubmissionEntry } from "./secret.js";
 export type {
   BearerProxyEndpointOptions,
   BasicProxyEndpointOptions,
@@ -89,6 +91,8 @@ export type {
   RunEvent,
   RuntimeManifest,
   RuntimeProvider,
+  SecretRecord,
+  SecretReveal,
   SignedOutputLink,
   Skill as SkillRecord,
   UsageSummary,

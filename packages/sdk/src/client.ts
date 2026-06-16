@@ -5,6 +5,7 @@ import {
   HttpClient,
   RUNTIME_KINDS,
   RunStateError,
+  SecretString,
   isRunSettled,
   operations,
   parseCredentialMode,
@@ -33,6 +34,8 @@ import {
   type RunModel,
   type RunEvent,
   type RunProvider,
+  type SecretRecord,
+  type SecretReveal,
   type RunUnit,
   type Builtin,
   type RuntimeSize,
@@ -48,6 +51,7 @@ import { uploadAsset, type AssetFetch, type UploadedAsset } from "./asset-upload
 import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
+import { Secret, splitSecretEnv } from "./secret.js";
 import { Skill } from "./skill.js";
 
 export interface AgentExecutorOptions {
@@ -131,6 +135,16 @@ export interface SubmitOptions {
   readonly agentsMd?: readonly AgentsMd[];
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
+  /**
+   * Env-var secrets, keyed by env name. Each value is a {@link Secret}:
+   * `Secret.value(v)` (ephemeral per-run — vaulted at submit, deleted at the
+   * run's terminal) or `Secret.ref(handle)` (a persisted workspace secret,
+   * resolved server-side). The SDK splits these into value-free declarations on
+   * the hashed submission and ephemeral values into the vaulted secrets channel,
+   * so a value never enters the run snapshot or the idempotency hash. The
+   * runtime injects each as the named env var.
+   */
+  readonly secretEnv?: Readonly<Record<string, Secret>>;
   readonly environment?: PlatformEnvironmentInput;
   readonly metadata?: PlatformSubmission["metadata"];
   /**
@@ -394,6 +408,76 @@ export class FilesClient {
 }
 
 /**
+ * Workspace secret management exposed under `client.secrets`, mirroring
+ * `client.skills` / `client.files`.
+ *
+ * Lifecycle parity with assets/skills: a `Secret.value(...)` is per-run and
+ * gone at terminal; `set` (or promoting an ephemeral via `secret.upload`)
+ * persists a named, searchable workspace secret you can `get` (metadata),
+ * `reveal` (audited value), `rotate`, `list`, and `delete`. The identity is the
+ * `name`; the value rotates under that stable name.
+ *
+ * Values are write-only: `set`/`rotate` send the value in the request BODY (never
+ * the URL); `get`/`list` return metadata only; `reveal` is the explicit audited
+ * value read.
+ */
+export class SecretsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  /** Create a named workspace secret. Accepts a raw string or a `SecretString`. */
+  set(args: { readonly name: string; readonly value: string | SecretString }): Promise<SecretRecord> {
+    return operations.createSecret(this.#http, { name: args.name, value: unwrapSecretValue(args.value) });
+  }
+
+  /** List workspace secret metadata (searchable by name). Never returns values. */
+  list(): Promise<readonly SecretRecord[]> {
+    return operations.listSecrets(this.#http);
+  }
+
+  /** Metadata for one workspace secret by name. Never returns the value. */
+  get(name: string): Promise<SecretRecord> {
+    return operations.getSecret(this.#http, name);
+  }
+
+  /** Audited value read — the only path that returns a workspace secret value. */
+  reveal(name: string): Promise<SecretReveal> {
+    return operations.revealSecret(this.#http, name);
+  }
+
+  /** Replace the value of an existing workspace secret; bumps its version. */
+  rotate(args: { readonly name: string; readonly value: string | SecretString }): Promise<SecretRecord> {
+    return operations.rotateSecret(this.#http, { name: args.name, value: unwrapSecretValue(args.value) });
+  }
+
+  delete(name: string): Promise<void> {
+    return operations.deleteSecret(this.#http, name);
+  }
+
+  /**
+   * Internal: create a workspace secret from an ephemeral `Secret.value(...)`
+   * being promoted via `secret.upload(client, { name })`. NOT part of the
+   * public API — callers use `set`.
+   */
+  async _createWorkspaceSecret(args: { readonly name: string; readonly value: string }): Promise<{ readonly name: string }> {
+    const record = await operations.createSecret(this.#http, args);
+    return { name: record.name };
+  }
+}
+
+/** Accept a raw string or a `SecretString`; return the raw value for the wire. */
+function unwrapSecretValue(value: string | SecretString): string {
+  const raw = value instanceof SecretString ? value.unwrap() : value;
+  if (typeof raw !== "string" || !raw) {
+    throw new Error("secrets: value must be a non-empty string");
+  }
+  return raw;
+}
+
+/**
  * Unified user-facing client for the aex platform. The same class
  * powers the published `@aexhq/sdk` SDK and (under the hood) every host-side
  * subcommand of the in-container `aex` CLI. All operations talk to
@@ -411,6 +495,7 @@ export class AgentExecutor {
   readonly skills: SkillsClient;
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
+  readonly secrets: SecretsClient;
 
   constructor(options: AgentExecutorOptions) {
     if (!options.apiToken) {
@@ -431,6 +516,7 @@ export class AgentExecutor {
     this.skills = new SkillsClient(this.#http);
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
+    this.secrets = new SecretsClient(this.#http);
   }
 
   /**
@@ -468,6 +554,16 @@ export class AgentExecutor {
    */
   async _uploadFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<FileRecord> {
     return this.files._uploadFile(args);
+  }
+
+  /**
+   * Internal: satisfies the `SecretUploader` surface so a
+   * `Secret.value(...).upload(client, { name })` promotes an ephemeral secret
+   * into the workspace store. Forwarded to `SecretsClient._createWorkspaceSecret`.
+   * NOT part of the public API.
+   */
+  async _createWorkspaceSecret(args: { readonly name: string; readonly value: string }): Promise<{ readonly name: string }> {
+    return this.secrets._createWorkspaceSecret(args);
   }
 
   /**
@@ -567,6 +663,10 @@ export class AgentExecutor {
       proxyEndpointAuthFromInstances,
       options.secrets.proxyEndpointAuth ?? []
     );
+    // Split secretEnv into value-free declarations (hashed submission) and
+    // ephemeral values (vaulted secrets channel), mirroring the proxy split.
+    const { declarations: secretEnvDeclarations, values: envSecretValues } =
+      splitSecretEnv(options.secretEnv);
 
     // Validate the runtime selector before any network I/O — inline drafts
     // are uploaded below, so an invalid runtime must reject first rather than
@@ -610,6 +710,7 @@ export class AgentExecutor {
       // shape matches McpServerRef. The cast acknowledges that the
       // SDK is producing pre-resolution wire input here.
       mcpServers: submissionMcpServers as readonly McpServerRef[],
+      ...(Object.keys(secretEnvDeclarations).length > 0 ? { secretEnv: secretEnvDeclarations } : {}),
       // `options.environment.packages` carry the customer wire shape
       // (`{name:"pip:pandas"}`); the shared parser resolves the ecosystem
       // prefix into PlatformPackage. The cast acknowledges the SDK is
@@ -632,7 +733,8 @@ export class AgentExecutor {
     const secrets: PlatformInlineSecrets = {
       ...options.secrets,
       ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
-      ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {})
+      ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {}),
+      ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
     };
 
     const postHook = postHookForWire(options.postHook);

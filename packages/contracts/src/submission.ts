@@ -278,6 +278,15 @@ export interface PlatformInlineSecrets {
   readonly apiKey?: string;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
   readonly proxyEndpointAuth?: readonly PlatformProxyEndpointAuth[];
+  /**
+   * Per-run env-var secret VALUES, keyed by env name. Each entry pairs with a
+   * `submission.secretEnv[<envName>] = { ephemeral: true }` declaration. Lives
+   * in the secrets channel so it is vaulted and excluded from the idempotency
+   * hash; the runtime injects it as the named env var and it is deleted at the
+   * run's terminal. Workspace `{ ref }` bindings resolve server-side and never
+   * appear here.
+   */
+  readonly envSecrets?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -305,6 +314,21 @@ export interface PlatformProxyEndpoint {
 }
 
 export const SECRETS_KEY = "secrets";
+
+/** POSIX-style env var name a `secretEnv` entry binds to (e.g. `SERPER_API_KEY`). */
+export const SECRET_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+/** Workspace secret handle a `secretEnv` ref points at (and the name `secret.upload` persists to). */
+export const SECRET_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * One `submission.secretEnv` entry — VALUE-FREE, so it rides the (hashed)
+ * submission safely. `{ ref }` resolves a workspace secret server-side;
+ * `{ ephemeral: true }` pairs with a `secrets.envSecrets[<envName>]` value
+ * (per-run, vaulted, deleted at the run's terminal).
+ */
+export type PlatformSecretEnvEntry =
+  | { readonly ref: string }
+  | { readonly ephemeral: true };
 
 export const PROXY_ENDPOINT_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,62}$/;
 export const RESERVED_PROXY_ENDPOINT_NAMES = new Set(["proxy", "aex", "internal", "admin"]);
@@ -882,9 +906,52 @@ export function crossValidateProxyEndpointsAndAuth(
   }
 }
 
+/**
+ * Cross-check `submission.secretEnv` declarations against `secrets.envSecrets`
+ * values. Mirrors {@link crossValidateProxyEndpointsAndAuth}:
+ *
+ *  - `{ ephemeral: true }` MUST have a matching `secrets.envSecrets` value.
+ *  - `{ ref }` MUST NOT supply a value (the value lives in the workspace store).
+ *  - every `secrets.envSecrets` value MUST have a matching `{ ephemeral: true }`
+ *    declaration (no orphan values that would never be injected).
+ */
+export function crossValidateSecretEnvAndValues(
+  secretEnv: Readonly<Record<string, PlatformSecretEnvEntry>> | undefined,
+  envSecrets: Readonly<Record<string, string>> | undefined
+): void {
+  const declarations = secretEnv ?? {};
+  const values = envSecrets ?? {};
+
+  for (const [envName, entry] of Object.entries(declarations)) {
+    const hasValue = Object.prototype.hasOwnProperty.call(values, envName);
+    if ("ref" in entry) {
+      if (hasValue) {
+        throw new Error(
+          `submission.secretEnv[${envName}] is a workspace ref and must not supply a value in secrets.envSecrets[${envName}]; the value resolves server-side`
+        );
+      }
+      continue;
+    }
+    if (!hasValue) {
+      throw new Error(
+        `submission.secretEnv[${envName}] is ephemeral but has no matching secrets.envSecrets[${envName}] value`
+      );
+    }
+  }
+
+  for (const envName of Object.keys(values)) {
+    const entry = declarations[envName];
+    if (!entry || !("ephemeral" in entry)) {
+      throw new Error(
+        `secrets.envSecrets[${envName}] has no matching submission.secretEnv[${envName}] ephemeral declaration`
+      );
+    }
+  }
+}
+
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   const value = requireRecord(input, "secrets");
-  const allowedTopLevel = new Set<string>(["apiKey", "mcpServers", "proxyEndpointAuth"]);
+  const allowedTopLevel = new Set<string>(["apiKey", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
   for (const key of Object.keys(value)) {
     if (key.startsWith("__aex_")) {
       // Platform-internal namespace (e.g. __aex_proxy_token). The BFF
@@ -905,12 +972,32 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
     value.apiKey !== undefined ? requireString(value.apiKey, "secrets.apiKey") : undefined;
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
   const proxyEndpointAuth = parseProxyEndpointAuth(value.proxyEndpointAuth);
+  const envSecrets = parseEnvSecrets(value.envSecrets);
 
   return {
     ...(apiKey !== undefined ? { apiKey } : {}),
     ...(mcpServers ? { mcpServers } : {}),
-    ...(proxyEndpointAuth ? { proxyEndpointAuth } : {})
+    ...(proxyEndpointAuth ? { proxyEndpointAuth } : {}),
+    ...(envSecrets ? { envSecrets } : {})
   };
+}
+
+function parseEnvSecrets(input: unknown): Readonly<Record<string, string>> | undefined {
+  if (input === undefined || input === null) return undefined;
+  const value = requireRecord(input, "secrets.envSecrets");
+  const out: Record<string, string> = {};
+  for (const [envName, entry] of Object.entries(value)) {
+    if (!SECRET_ENV_NAME_PATTERN.test(envName)) {
+      throw new Error(
+        `secrets.envSecrets key "${envName}" must be a valid env var name matching ${SECRET_ENV_NAME_PATTERN.source}`
+      );
+    }
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new Error(`secrets.envSecrets.${envName} must be a non-empty string`);
+    }
+    out[envName] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseMcpServerSecrets(input: unknown): readonly PlatformMcpServerSecret[] | undefined {
@@ -1217,6 +1304,15 @@ export interface PlatformSubmission {
   readonly agentsMd: readonly AgentsMdRef[];
   readonly files: readonly FileRef[];
   readonly mcpServers: readonly McpServerRef[];
+  /**
+   * Env-var secret bindings — VALUE-FREE declarations keyed by env name. Each
+   * value is `{ ref }` (resolve a workspace secret server-side) or
+   * `{ ephemeral: true }` (value supplied in `secrets.envSecrets`, vaulted and
+   * deleted at terminal). The runtime injects the resolved value as the named
+   * env var. Lifecycle parity with skills/files: per-run by default, persisted
+   * only when promoted to the workspace store.
+   */
+  readonly secretEnv?: Readonly<Record<string, PlatformSecretEnvEntry>>;
   readonly environment?: PlatformEnvironment;
   readonly securityProfile?: RuntimeSecurityProfileName;
   readonly metadata?: Record<string, JsonValue>;
@@ -1425,6 +1521,8 @@ export function parseRunSubmissionRequest(
   const submission = parseSubmission(value.submission);
   assertRunModelMatchesProvider(provider, submission.model);
 
+  crossValidateSecretEnvAndValues(submission.secretEnv, secrets.envSecrets);
+
   // mcpServers names must agree across the submission half and the
   // secrets half — every secrets.mcpServers[i].name MUST resolve to a
   // submission.mcpServers entry (no orphan secrets) AND the URL must
@@ -1543,6 +1641,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     "agentsMd",
     "files",
     "mcpServers",
+    "secretEnv",
     "environment",
     "securityProfile",
     "metadata",
@@ -1563,6 +1662,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   const agentsMd = parseAgentsMd(value.agentsMd);
   const files = parseFiles(value.files);
   const mcpServers = parseMcpServers(value.mcpServers);
+  const secretEnv = parseSecretEnv(value.secretEnv);
   const environment = parseEnvironment(value.environment);
   const securityProfile = parseRuntimeSecurityProfile(value.securityProfile);
   const metadata = optionalJsonRecord(value.metadata, "submission.metadata");
@@ -1579,6 +1679,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     agentsMd,
     files,
     mcpServers,
+    ...(secretEnv ? { secretEnv } : {}),
     ...(environment ? { environment } : {}),
     ...(securityProfile ? { securityProfile } : {}),
     ...(metadata ? { metadata } : {}),
@@ -1587,6 +1688,40 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     ...(outputMode !== undefined ? { outputMode } : {}),
     ...(platform ? { platform } : {})
   };
+}
+
+function parseSecretEnv(
+  input: unknown
+): Readonly<Record<string, PlatformSecretEnvEntry>> | undefined {
+  if (input === undefined || input === null) return undefined;
+  const value = requireRecord(input, "submission.secretEnv");
+  const out: Record<string, PlatformSecretEnvEntry> = {};
+  for (const [envName, entry] of Object.entries(value)) {
+    if (!SECRET_ENV_NAME_PATTERN.test(envName)) {
+      throw new Error(
+        `submission.secretEnv key "${envName}" must be a valid env var name matching ${SECRET_ENV_NAME_PATTERN.source}`
+      );
+    }
+    const path = `submission.secretEnv.${envName}`;
+    const record = requireRecord(entry, path);
+    const keys = Object.keys(record);
+    if (keys.length !== 1 || (!("ref" in record) && !("ephemeral" in record))) {
+      throw new Error(`${path} must be exactly one of { ref } or { ephemeral: true }`);
+    }
+    if ("ref" in record) {
+      const handle = requireString(record.ref, `${path}.ref`);
+      if (!SECRET_HANDLE_PATTERN.test(handle)) {
+        throw new Error(`${path}.ref handle must match ${SECRET_HANDLE_PATTERN.source}`);
+      }
+      out[envName] = { ref: handle };
+    } else {
+      if (record.ephemeral !== true) {
+        throw new Error(`${path}.ephemeral must be the literal true`);
+      }
+      out[envName] = { ephemeral: true };
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parsePlatformConfig(input: unknown): PlatformInjectionConfig | undefined {

@@ -19,6 +19,8 @@ import type {
   OutputFileSelector,
   Run,
   RunEvent,
+  SecretRecord,
+  SecretReveal,
   SignedOutputLink,
   Skill,
   WhoAmI
@@ -790,6 +792,77 @@ function unwrapFile(result: { readonly file: FileRecord } | FileRecord): FileRec
     return (result as { readonly file: FileRecord }).file;
   }
   return result as FileRecord;
+}
+
+// ===========================================================================
+// Workspace secret operations
+//
+// Value-bearing requests (create/rotate) carry the value in the JSON BODY,
+// never the URL/query, so it never lands in logs or the request line. Reads
+// split by sensitivity: `getSecret`/`listSecrets` return METADATA only;
+// `revealSecret` is the audited value read (POST so it's a logged action).
+// ===========================================================================
+
+/** Create a named workspace secret. The value travels in the body. */
+export async function createSecret(
+  http: HttpClient,
+  args: { readonly name: string; readonly value: string }
+): Promise<SecretRecord> {
+  const result = await http.request<{ readonly secret: SecretRecord } | SecretRecord>("/api/secrets", {
+    method: "POST",
+    body: JSON.stringify({ name: args.name, value: args.value })
+  });
+  return unwrapSecret(result);
+}
+
+export async function listSecrets(http: HttpClient): Promise<readonly SecretRecord[]> {
+  const result = await http.request<
+    { readonly secrets: readonly SecretRecord[] } | readonly SecretRecord[]
+  >("/api/secrets");
+  if (Array.isArray(result)) {
+    return result;
+  }
+  return (result as { readonly secrets: readonly SecretRecord[] }).secrets;
+}
+
+/** Metadata for one workspace secret by name. Never returns the value. */
+export async function getSecret(http: HttpClient, name: string): Promise<SecretRecord> {
+  const result = await http.request<{ readonly secret: SecretRecord } | SecretRecord>(
+    `/api/secrets/${encodeURIComponent(name)}`
+  );
+  return unwrapSecret(result);
+}
+
+/** Audited value read — the only path that returns a workspace secret value. */
+export async function revealSecret(http: HttpClient, name: string): Promise<SecretReveal> {
+  return http.request<SecretReveal>(`/api/secrets/${encodeURIComponent(name)}/reveal`, {
+    method: "POST"
+  });
+}
+
+/** Replace the value of an existing workspace secret; bumps its version. */
+export async function rotateSecret(
+  http: HttpClient,
+  args: { readonly name: string; readonly value: string }
+): Promise<SecretRecord> {
+  const result = await http.request<{ readonly secret: SecretRecord } | SecretRecord>(
+    `/api/secrets/${encodeURIComponent(args.name)}/rotate`,
+    { method: "POST", body: JSON.stringify({ value: args.value }) }
+  );
+  return unwrapSecret(result);
+}
+
+export async function deleteSecret(http: HttpClient, name: string): Promise<void> {
+  await http.request<unknown>(`/api/secrets/${encodeURIComponent(name)}`, {
+    method: "DELETE"
+  });
+}
+
+function unwrapSecret(result: { readonly secret: SecretRecord } | SecretRecord): SecretRecord {
+  if (result && typeof result === "object" && "secret" in (result as object)) {
+    return (result as { readonly secret: SecretRecord }).secret;
+  }
+  return result as SecretRecord;
 }
 
 function unwrapSkill(result: { readonly skill: Skill } | Skill): Skill {

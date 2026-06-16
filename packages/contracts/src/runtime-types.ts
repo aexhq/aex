@@ -225,3 +225,37 @@ export interface FileRecord {
   readonly [key: string]: unknown;
 }
 
+/**
+ * Wire-level record for a workspace secret as returned by the BFF.
+ *
+ * Workspace secrets share the lifecycle SEMANTIC of skills/files: a
+ * `Secret.value(...)` is per-run and gone at terminal; PROMOTING it (or
+ * `aex.secrets.set`) persists a named, searchable workspace secret. The
+ * identity is the `name` (the handle a `Secret.ref` points at); the value
+ * rotates under that stable name, bumping `version`.
+ *
+ * This record is METADATA ONLY — it never carries the secret value. The value
+ * is write-only on create/rotate and readable solely via the audited
+ * {@link SecretReveal} path.
+ */
+export interface SecretRecord {
+  readonly id: string;
+  readonly name: string;
+  readonly version: number;
+  readonly state: "ready";
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+  readonly deletedAt?: string | null;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Value-bearing result of an audited `aex.secrets.reveal`. The ONLY wire shape
+ * that carries a workspace secret value back to the caller. Reveal is a logged
+ * action (POST, not GET) so a value read is always attributable.
+ */
+export interface SecretReveal {
+  readonly name: string;
+  readonly value: string;
+}
+
