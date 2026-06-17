@@ -761,7 +761,16 @@ const forbiddenStringPatterns: readonly {
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
-    regex: /\b(?:machine|session|agent|file|skill|env|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
+    // `<keyword><sep><id>` opaque handles (`session_a1B2c3D4e5`, `file_9f8e7d…`).
+    // The keyword set overlaps ordinary English (agent/file/skill/resource/…), so
+    // the bare shape also matched documentation prose that simply chains those
+    // words with `_`/`-` (`agent_decision_failure`, `file_grounded`,
+    // `session_handoff_contract`, `agent-judgment` — read straight out of a
+    // skill-pack doc in tool-result text). The `accept` predicate keeps the shape
+    // but requires the id segment to look minted rather than spelled — i.e. carry
+    // a digit — so genuine handles stay flagged while dictionary-word prose does not.
+    regex: /\b(?:machine|session|agent|file|skill|env|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i,
+    accept: isMintedResourceHandle
   },
   {
     reason: "high_entropy_token",
@@ -804,6 +813,21 @@ function isHighEntropySecretRun(run: string): boolean {
     return false;
   }
   return highEntropyShannonBits(run) >= 3.0;
+}
+
+/**
+ * Decide whether a `<keyword><sep><id>` shape-match is a genuinely minted private
+ * handle rather than dictionary-word prose. The id segment (everything after the
+ * first `_`/`-`/`:`) must carry a digit — the property that separates a minted
+ * opaque handle (`session_a1B2c3D4e5`, `file_9f8e7d6c5b4a`, `machine_1234567890`)
+ * from a chain of English words (`agent_decision_failure`, `file_grounded`). This
+ * mirrors `isHighEntropySecretRun`'s letter+digit requirement: a prefixless secret
+ * blob and a minted handle both carry digits; prose does not.
+ */
+function isMintedResourceHandle(match: string): boolean {
+  const separatorIndex = match.search(/[_:-]/);
+  const id = match.slice(separatorIndex + 1);
+  return /\d/.test(id);
 }
 
 function highEntropyCharClassCount(value: string): number {
