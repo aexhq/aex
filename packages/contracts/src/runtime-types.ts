@@ -16,7 +16,24 @@ export interface Run {
   readonly createdAt?: string;
   readonly updatedAt?: string;
   readonly terminalAt?: string | null;
+  /**
+   * The run's EXECUTION start (ISO-8601) — when the agent actually began
+   * running, distinct from {@link createdAt} (submission/accept time). Present
+   * from the moment the run starts executing and throughout its live duration;
+   * absent before it starts and after the run's live object is torn down (a
+   * terminal run also carries {@link terminalAt} and {@link costTelemetry}
+   * durations).
+   */
+  readonly startedAt?: string;
   readonly errorMessage?: string | null;
+  /**
+   * Aggregate token usage. NOTE: mid-run this is NOT populated — detailed
+   * token counts live ONLY in the per-turn `aex.usage` CUSTOM events on the
+   * event stream until the run settles. To follow token/cost progress while a
+   * run executes, decode the event stream with `summarizeRunTrace(events)`
+   * (its `usage` totals the `aex.usage` events). Settled cost/usage rides
+   * {@link costTelemetry}.
+   */
   readonly usage?: UsageSummary;
   readonly costTelemetry?: import("./run-cost.js").RunCostTelemetry;
   readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;

@@ -10,6 +10,7 @@ export * from "./event-envelope.js";
 export * from "./connection-ticket.js";
 export * from "./event-stream-client.js";
 export * from "./run-unit.js";
+export * from "./run-trace.js";
 export * from "./runtime-manifest.js";
 export * from "./runtime-security-profile.js";
 export * from "./run-record.js";
