@@ -69,8 +69,8 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     const m = buildRuntimeManifest({
       provider: "anthropic",
       files: [
-        { kind: "asset", assetId: "asset_x", name: "subtitles" },
-        { kind: "asset", assetId: "asset_y", name: "dataset", mountPath: "/workspace/input" }
+        { name: "subtitles" }, // no mountPath → default
+        { name: "dataset", mountPath: "/workspace/input" }
       ]
     });
     expect(m.mountedFiles).toEqual([
