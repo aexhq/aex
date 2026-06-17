@@ -2096,9 +2096,8 @@ function parseFiles(input: unknown): readonly FileRef[] {
       throw new Error(`submission.files duplicate assetId: ${fields.assetId}`);
     }
     seenAssetId.add(fields.assetId);
-    if (fields.mountPath !== undefined && !fields.mountPath.startsWith("/")) {
-      throw new Error(`${path}.mountPath must start with '/' if provided`);
-    }
+    // mountPath is validated as an absolute container directory by
+    // parseAssetRefFields → assertValidMountPath (above), so no extra check here.
     return fields.mountPath !== undefined
       ? { kind: "asset", assetId: fields.assetId, name: fields.name, mountPath: fields.mountPath }
       : { kind: "asset", assetId: fields.assetId, name: fields.name };

@@ -149,14 +149,57 @@ export function isAgentsMdAssetRef(ref: AgentsMdRef): ref is AssetRef {
 }
 
 // ---------------------------------------------------------------------------
-// File refs — third SDK concept. Uploaded assets can carry a requested mount
-// path for the managed runtime.
+// File refs — third SDK concept. Uploaded assets carry the DIRECTORY the
+// managed runtime unzips them into (`mountPath`), and the real on-disk
+// `filename` to preserve inside that directory.
 // ---------------------------------------------------------------------------
 
 export type FileRef = AssetRef;
 
 export function isFileAssetRef(ref: FileRef): ref is AssetRef {
   return ref.kind === "asset";
+}
+
+/**
+ * The default mount DIRECTORY a `File` unzips into when the caller does not set
+ * `mountPath`. `/workspace` is also the agent's default working directory, so a
+ * file handed with no `mountPath` lands directly in the agent's cwd (e.g.
+ * `/workspace/source-video-subtitles.srt`).
+ */
+export const DEFAULT_FILE_MOUNT_PATH = "/workspace";
+
+/**
+ * A `mountPath` is an ABSOLUTE container directory under the workspace. It must
+ * start with `/`, contain no `..`/`.` traversal or NUL/backslash, and stay
+ * within {@link MOUNT_PATH_MAX_LENGTH}. The managed runtime rebases it under the
+ * workspace root, so a path outside `/workspace` is clamped there — the pattern
+ * just rejects obviously-malformed input at the SDK/BFF boundary. A trailing
+ * slash is allowed (it is a directory) but not required.
+ */
+export const MOUNT_PATH_PATTERN = /^\/(?:[^/\0\\]+\/?)*$/;
+export const MOUNT_PATH_MAX_LENGTH = 512;
+
+/**
+ * Validate a `File.mountPath` (an absolute container directory). Shared by the
+ * SDK `File` builders and the BFF asset-ref parser so both reject the same
+ * malformed input. Throws with `field` context on failure.
+ */
+export function assertValidMountPath(value: string, field: string): void {
+  if (value.length === 0 || value.length > MOUNT_PATH_MAX_LENGTH) {
+    throw new Error(`${field} must be 1..${MOUNT_PATH_MAX_LENGTH} chars`);
+  }
+  if (!value.startsWith("/")) {
+    throw new Error(`${field} must be an absolute path starting with '/'`);
+  }
+  if (value.includes("\0") || value.includes("\\")) {
+    throw new Error(`${field} must not contain NUL or backslash`);
+  }
+  if (value.split("/").some((seg) => seg === "..")) {
+    throw new Error(`${field} must not contain '..' traversal segments`);
+  }
+  if (!MOUNT_PATH_PATTERN.test(value)) {
+    throw new Error(`${field} must match ${MOUNT_PATH_PATTERN.source}`);
+  }
 }
 
 /**
@@ -228,8 +271,11 @@ export function parseAssetRefFields(
     throw new Error(`${path}.name must be a non-empty string (<= 128 chars)`);
   }
   const mountPath = record.mountPath;
-  if (mountPath !== undefined && (typeof mountPath !== "string" || mountPath.length === 0)) {
-    throw new Error(`${path}.mountPath, when provided, must be a non-empty string`);
+  if (mountPath !== undefined) {
+    if (typeof mountPath !== "string") {
+      throw new Error(`${path}.mountPath, when provided, must be a string`);
+    }
+    assertValidMountPath(mountPath, `${path}.mountPath`);
   }
   return {
     kind: "asset",

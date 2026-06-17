@@ -65,6 +65,24 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     expect(Object.isFrozen(m.envVars)).toBe(true);
   });
 
+  it("surfaces each File's resolved mount directory; defaults to /workspace", () => {
+    const m = buildRuntimeManifest({
+      provider: "anthropic",
+      files: [
+        { kind: "asset", assetId: "asset_x", name: "subtitles" },
+        { kind: "asset", assetId: "asset_y", name: "dataset", mountPath: "/workspace/input" }
+      ]
+    });
+    expect(m.mountedFiles).toEqual([
+      { name: "subtitles", mountPath: "/workspace" },
+      { name: "dataset", mountPath: "/workspace/input" }
+    ]);
+  });
+
+  it("mountedFiles is an empty array when the run carried no files", () => {
+    expect(buildRuntimeManifest({ provider: "anthropic" }).mountedFiles).toEqual([]);
+  });
+
   it("throws for an unknown provider", () => {
     expect(() => buildRuntimeManifest({ provider: "openai" as never })).toThrow(
       /Unknown runtime provider: openai/

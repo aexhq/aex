@@ -1,17 +1,25 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { FileRef } from "@aexhq/contracts";
+import { DEFAULT_FILE_MOUNT_PATH, assertValidMountPath } from "@aexhq/contracts";
 import { hashSkillBundle } from "./bundle.js";
 import { zipSync } from "fflate";
 
 /**
  * File — arbitrary bytes (single file or zipped folder) delivered to
- * the agent as a mounted runtime resource. The managed runtime receives the
- * snapshotted bytes during workspace materialization.
+ * the agent as a mounted runtime resource. The managed runtime UNZIPS the
+ * snapshotted bytes into the `mountPath` DIRECTORY during workspace
+ * materialization, preserving the real filename + extension.
  *
  *   const settings = await File.fromPath("./settings.json");
  *   const dataset = await File.fromPath("./data/");
  *   await client.submit({ files: [settings, dataset], ... });
+ *
+ * `mountPath` is the absolute container directory the file unzips into; it
+ * defaults to `/workspace` (the agent's default working directory), so a file
+ * handed with no `mountPath` lands directly in the agent's cwd — a single file
+ * `subtitles.srt` becomes `/workspace/subtitles.srt`, a folder lands its entries
+ * under `/workspace/`. The resolved path is surfaced back on the Run record.
  *
  * `client.submit` materializes the bytes to the hosted asset store before
  * the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
@@ -40,66 +48,80 @@ export class File {
   }
 
   /**
-   * Build a draft File from raw bytes. The bytes are wrapped in a
-   * single-entry canonical zip so storage stays uniform across all
-   * file uploads.
+   * Build a draft File from raw bytes. `name` is the REAL filename (with its
+   * extension, e.g. `"subtitles.srt"`) — it is preserved as the single zip
+   * entry so the agent finds it at `<mountPath>/<name>` after unzip. The bytes
+   * are wrapped in a single-entry canonical zip so storage stays uniform across
+   * all file uploads. `mountPath` is the absolute container directory the file
+   * unzips into; it defaults to `/workspace`.
    */
   static async fromBytes(args: {
     readonly name: string;
     readonly bytes: Uint8Array;
     readonly mountPath?: string;
   }): Promise<File> {
-    if (!args || typeof args.name !== "string" || !WORKSPACE_NAME_RE.test(args.name)) {
-      throw new Error(`File.fromBytes: name must match ${WORKSPACE_NAME_RE.source}`);
+    if (!args || typeof args.name !== "string") {
+      throw new Error("File.fromBytes: name must be a string");
+    }
+    const filename = sanitiseFilename(args.name);
+    if (filename === undefined) {
+      throw new Error(
+        `File.fromBytes: name ${JSON.stringify(args.name)} is not a valid filename ` +
+          "(no '/', '\\\\', NUL, or path traversal; 1..255 chars)"
+      );
     }
     if (!(args.bytes instanceof Uint8Array) || args.bytes.byteLength === 0) {
       throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
     }
+    const mountPath = resolveMountPath(args.mountPath, "File.fromBytes");
     const zip = zipSync(
-      { [args.name]: [args.bytes, { mtime: ZIP_EPOCH }] },
+      { [filename]: [args.bytes, { mtime: ZIP_EPOCH }] },
       { level: 6 }
     );
     const contentHash = await hashSkillBundle(zip);
     const ref: DraftFileRef = {
       kind: "draft",
-      name: args.name,
+      name: slugFromFilename(filename),
       contentHash,
-      ...(args.mountPath ? { mountPath: args.mountPath } : {})
+      mountPath
     };
     return new File(ref, zip);
   }
 
   /**
-   * Read a local file or directory and build a draft File. Directories
-   * walk recursively into a canonical zip (sorted paths, deterministic
-   * mtime). Name is inferred from the basename when not supplied.
+   * Read a local file or directory and build a draft File. A single file
+   * preserves its real basename (with extension) as the sole zip entry, so the
+   * agent finds it at `<mountPath>/<basename>` after unzip. Directories walk
+   * recursively into a canonical zip (sorted relative paths, deterministic
+   * mtime), landing each entry under `<mountPath>/`. `mountPath` defaults to
+   * `/workspace`. The optional `name` is only the storage slug (dedup label);
+   * it never affects the on-disk filename.
    */
   static async fromPath(
     path: string,
     args?: { readonly name?: string; readonly mountPath?: string }
   ): Promise<File> {
     const stats = await stat(path);
-    const inferredName = args?.name ?? inferNameFromPath(path);
-    if (!WORKSPACE_NAME_RE.test(inferredName)) {
-      throw new Error(
-        `File.fromPath: inferred name ${JSON.stringify(inferredName)} does not match ${WORKSPACE_NAME_RE.source}; ` +
-          `pass an explicit name via args.name`
-      );
-    }
+    const mountPath = resolveMountPath(args?.mountPath, "File.fromPath");
+    // `name` is only the storage slug (dedup label), never the on-disk filename.
+    // Slugify a provided name so the stored slug stays DNS-clean; derive from the
+    // basename when omitted.
+    const slug = args?.name !== undefined ? slugFromFilename(args.name) : inferNameFromPath(path);
     let zip: Uint8Array;
     if (stats.isDirectory()) {
       zip = await buildDirZip(path);
     } else {
       const bytes = await readFile(path);
-      const filename = path.replace(/\\/g, "/").split("/").at(-1) ?? inferredName;
+      const basename = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").at(-1) ?? "";
+      const filename = sanitiseFilename(basename) ?? `${slug}`;
       zip = zipSync({ [filename]: [bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
     }
     const contentHash = await hashSkillBundle(zip);
     const ref: DraftFileRef = {
       kind: "draft",
-      name: inferredName,
+      name: slug,
       contentHash,
-      ...(args?.mountPath ? { mountPath: args.mountPath } : {})
+      mountPath
     };
     return new File(ref, zip);
   }
@@ -112,7 +134,7 @@ export class File {
     name: string;
     contentHash: string;
     bytes: Uint8Array;
-    mountPath?: string;
+    mountPath: string;
   } | undefined {
     if (this.#consumed) {
       throw new Error(
@@ -128,7 +150,7 @@ export class File {
       name: this.#ref.name,
       contentHash: this.#ref.contentHash,
       bytes: this.#bytes,
-      ...(this.#ref.mountPath ? { mountPath: this.#ref.mountPath } : {})
+      mountPath: this.#ref.mountPath
     };
   }
 
@@ -147,19 +169,56 @@ export interface DraftFileRef {
   readonly kind: "draft";
   readonly name: string;
   readonly contentHash: string;
-  readonly mountPath?: string;
+  /** Absolute container directory the file unzips into (always set; defaults to /workspace). */
+  readonly mountPath: string;
 }
 
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 const WORKSPACE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
 
+/**
+ * Resolve + validate a caller-supplied `mountPath`, defaulting to `/workspace`.
+ * Shares {@link assertValidMountPath} with the contracts parser so the SDK and
+ * the BFF reject the same malformed paths.
+ */
+function resolveMountPath(mountPath: string | undefined, fn: string): string {
+  if (mountPath === undefined) return DEFAULT_FILE_MOUNT_PATH;
+  if (typeof mountPath !== "string") {
+    throw new Error(`${fn}: mountPath must be a string`);
+  }
+  assertValidMountPath(mountPath, `${fn}: mountPath`);
+  return mountPath;
+}
+
+/**
+ * Validate a real on-disk filename (a single path SEGMENT — no separators,
+ * traversal, NUL, or control chars; 1..255 bytes). Returns the trimmed name, or
+ * `undefined` when it cannot be a filename. Used to preserve the real filename +
+ * extension inside the single-entry zip.
+ */
+function sanitiseFilename(name: string): string | undefined {
+  const trimmed = name.trim();
+  if (trimmed.length === 0 || trimmed.length > 255) return undefined;
+  if (trimmed === "." || trimmed === "..") return undefined;
+  if (/[/\\]/.test(trimmed)) return undefined;
+  // Reject NUL + C0/C1/DEL control chars (filename must stay a printable segment).
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function slugFromFilename(filename: string): string {
+  const stem = filename.replace(/\.[^.]+$/, "").toLowerCase();
+  const slug = stem.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (slug.length >= 2 && WORKSPACE_NAME_RE.test(slug)) return slug;
+  if (slug.length === 1) return `f-${slug}`;
+  return `file-${Date.now().toString(36)}`;
+}
+
 function inferNameFromPath(path: string): string {
   const normalised = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const base = normalised.split("/").at(-1) ?? "";
-  const stem = base.replace(/\.[^.]+$/, "").toLowerCase();
-  const slug = stem.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  if (slug.length >= 2 && WORKSPACE_NAME_RE.test(slug)) return slug;
-  return `file-${Date.now().toString(36)}`;
+  return slugFromFilename(base);
 }
 
 async function buildDirZip(dirPath: string): Promise<Uint8Array> {

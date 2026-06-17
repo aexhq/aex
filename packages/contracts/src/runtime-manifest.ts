@@ -64,6 +64,22 @@ export interface RuntimeManifest {
    * resolves against this exact map.
    */
   readonly envVars: Readonly<Record<string, string>>;
+  /**
+   * The resolved in-container mount DIRECTORY of each submitted `File`, so the
+   * caller can learn where a handed file landed. `mountPath` is the validated
+   * directory the archive unzipped into (the SDK default is `/workspace`); a
+   * single file lands at `<mountPath>/<realFilename>`, a folder lands its entries
+   * under `<mountPath>/`. Empty when the run carried no files.
+   */
+  readonly mountedFiles: readonly MountedFileManifest[];
+}
+
+/** One submitted `File`'s resolved mount directory (surfaced on the Run record). */
+export interface MountedFileManifest {
+  /** The file's storage slug (`FileRef.name`). */
+  readonly name: string;
+  /** Absolute container directory the file unzipped into (defaults to `/workspace`). */
+  readonly mountPath: string;
 }
 
 /**
@@ -106,6 +122,12 @@ export interface BuildRuntimeManifestInput {
    * (or a future bypass) can't poison the manifest.
    */
   readonly customerEnvVars?: Readonly<Record<string, string>> | undefined;
+  /**
+   * The validated submission's `files` refs. Each resolves to one
+   * {@link MountedFileManifest} entry surfacing the resolved mount directory
+   * (the SDK default is `/workspace`). Absent / non-array ⇒ no mounted files.
+   */
+  readonly files?: readonly { readonly name?: unknown; readonly mountPath?: unknown }[] | undefined;
 }
 
 /**
@@ -115,6 +137,14 @@ export interface BuildRuntimeManifestInput {
  * need the submission parser.
  */
 const AEX_PREFIX = "AEX_";
+
+/**
+ * Default mount DIRECTORY for a `File` with no explicit `mountPath`. Mirrors
+ * `DEFAULT_FILE_MOUNT_PATH` in `run-config.ts`; duplicated here so this module
+ * stays self-contained (tree-shakeable) — the same reason {@link AEX_PREFIX}
+ * is inlined rather than imported from the submission parser.
+ */
+const DEFAULT_FILE_MOUNT_PATH = "/workspace";
 
 /**
  * Build the runtime manifest for a single submission. Pure function:
@@ -145,6 +175,13 @@ export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeM
     customerEnvVars[key] = value;
   }
   const envVars = Object.freeze({ ...aexEnvVars, ...customerEnvVars });
+  const mountedFiles: MountedFileManifest[] = [];
+  for (const f of Array.isArray(input.files) ? input.files : []) {
+    if (typeof f.name !== "string" || f.name.length === 0) continue;
+    const mountPath =
+      typeof f.mountPath === "string" && f.mountPath.length > 0 ? f.mountPath : DEFAULT_FILE_MOUNT_PATH;
+    mountedFiles.push(Object.freeze({ name: f.name, mountPath }));
+  }
   return Object.freeze({
     provider: input.provider,
     skillsRoot: paths.skillsRoot,
@@ -155,6 +192,7 @@ export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeM
     readme: paths.readme,
     runtimeJson: paths.runtimeJson,
     runtimeEnv: paths.runtimeEnv,
-    envVars
+    envVars,
+    mountedFiles: Object.freeze(mountedFiles)
   });
 }

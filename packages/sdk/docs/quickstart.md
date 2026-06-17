@@ -76,11 +76,28 @@ Every kind of thing you want to ship at run time has exactly one right primitive
 | Upstream HTTPS API keys (TMDB, Brave, Tavily, …) | `ProxyEndpoint` | Credentials live server-side; aex proxy injects them on outbound calls. The key never enters the container. |
 | MCP server credentials | `secrets.mcpServers` | Held in run-scoped custody, attached per run |
 | Provider API key | `secrets.apiKey` | Required on every `submit`; held in run-scoped custody. Carries the BYOK key for the selected `provider` |
-| Non-secret reference data folders (transcripts, persona docs, PDFs) | `File.fromPath('./customer-folder/')` | Materialized under `files/<f_id>/<name>` in the run workspace by default and described in the agent-facing instructions |
+| Non-secret reference data files or folders (transcripts, persona docs, PDFs) | `File.fromPath('./subtitles.srt')` / `File.fromPath('./customer-folder/')` | Unzipped into the `mountPath` directory (default `/workspace`, the agent's cwd), preserving the real filename + extension — e.g. `/workspace/subtitles.srt`. See [Files: where they land](#files-where-they-land). |
 | Executable skill code (a `.pyz` wrapper, scripts, prompts) | `Skill.fromPath('./skills/my-skill/')` | Mounted under `skills/<name>/`; the bundle's `SKILL.md` is composed into the agent's instructions |
 | Agent instructions file | `AgentsMd.fromPath('./AGENTS.md')` | Prepended as the first user turn |
 
 `Skill`, `AgentsMd`, and `File` values are materialized for the run before the first agent turn. `environment.envVars` values surface in runtime metadata and can be referenced by `__KEY__` placeholders in agent-facing markdown.
+
+### Files: where they land
+
+A `File` is uploaded as a content-addressed archive and **unzipped on the runtime into a directory**, preserving the real filename + extension — the agent sees the actual file, never a `.zip` to unpack.
+
+- **`mountPath` is the directory the archive unzips into.** It must be an absolute container path (`/...`, no `..` traversal). It defaults to **`/workspace`**, which is also the agent's default working directory — so a file handed with no `mountPath` lands directly in the agent's cwd.
+- **A single file keeps its real basename.** `File.fromPath('./source-video-subtitles.srt')` lands at `/workspace/source-video-subtitles.srt` (not a slug, not a `.zip`). `File.fromBytes({ name: 'data.csv', bytes })` lands at `/workspace/data.csv` — `name` is the real filename here.
+- **A folder lands its entries under the mount directory.** `File.fromPath('./repo/', { mountPath: '/workspace/repo' })` puts each file at `/workspace/repo/<relative-path>`.
+- **The resolved mount directory is surfaced back on the run.** Read `run.runtimeManifest.mountedFiles` (an array of `{ name, mountPath }`) to learn where each handed file landed.
+
+```ts
+const subtitles = await File.fromPath('./source-video-subtitles.srt'); // → /workspace/source-video-subtitles.srt
+const dataset = await File.fromPath('./data/', { mountPath: '/workspace/input' }); // → /workspace/input/<files>
+const run = await client.submit({ model, prompt, files: [subtitles, dataset], secrets: { apiKey } });
+const resolved = (await client.getRun(run.id)).runtimeManifest?.mountedFiles;
+// [{ name: 'source-video-subtitles', mountPath: '/workspace' }, { name: 'data', mountPath: '/workspace/input' }]
+```
 
 ## Safe retries with `idempotencyKey`
 

@@ -1236,20 +1236,12 @@ async function prepareFiles(
         hash: bundle.contentHash,
         contentType: "application/zip"
       });
-      refs.push(
-        bundle.mountPath !== undefined
-          ? {
-              kind: "asset",
-              assetId: uploaded.assetId,
-              name: bundle.name,
-              mountPath: bundle.mountPath
-            }
-          : {
-              kind: "asset",
-              assetId: uploaded.assetId,
-              name: bundle.name
-            }
-      );
+      refs.push({
+        kind: "asset",
+        assetId: uploaded.assetId,
+        name: bundle.name,
+        mountPath: bundle.mountPath
+      });
       continue;
     }
     refs.push(ref);

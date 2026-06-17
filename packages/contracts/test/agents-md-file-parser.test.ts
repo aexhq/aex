@@ -82,7 +82,14 @@ describe("parseRunSubmissionRequest — files[] (asset refs)", () => {
     const bad = { ...VALID_ASSET, mountPath: "relative/path" };
     expect(() =>
       parseRunSubmissionRequest(baseRequest({ files: [bad] }))
-    ).toThrow(/mountPath must start with '\/'/);
+    ).toThrow(/mountPath must be an absolute path starting with '\/'/);
+  });
+
+  it("rejects mountPath with '..' traversal", () => {
+    const bad = { ...VALID_ASSET, mountPath: "/workspace/../etc" };
+    expect(() =>
+      parseRunSubmissionRequest(baseRequest({ files: [bad] }))
+    ).toThrow(/mountPath must not contain '\.\.' traversal/);
   });
 
   it("rejects any kind other than 'asset'", () => {
