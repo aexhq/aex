@@ -704,7 +704,7 @@ function scanStringValue(
   findings: CustodyRedactionFinding[]
 ): void {
   for (const pattern of forbiddenStringPatterns) {
-    if (pattern.regex.test(value)) {
+    if (matchesForbiddenPattern(pattern, value)) {
       findings.push(Object.freeze({
         path,
         reason: pattern.reason,
@@ -714,14 +714,47 @@ function scanStringValue(
   }
 }
 
+/**
+ * A pattern fires on a value if its `regex` matches AND — when the pattern
+ * carries an `accept` predicate — at least one matched run is accepted by it.
+ * The predicate lets a shape-matched run be VETOED per-match (the entropy
+ * catch-all uses it to skip content-addressed hashes and low-entropy slugs that
+ * its coarse regex would otherwise flag); shape-only patterns have no predicate.
+ */
+function matchesForbiddenPattern(
+  pattern: { readonly regex: RegExp; readonly accept?: (match: string) => boolean },
+  value: string
+): boolean {
+  if (!pattern.accept) {
+    return pattern.regex.test(value);
+  }
+  const scan = pattern.regex.global ? pattern.regex : new RegExp(pattern.regex.source, `${pattern.regex.flags}g`);
+  scan.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = scan.exec(value)) !== null) {
+    if (pattern.accept(match[0])) {
+      return true;
+    }
+    if (match.index === scan.lastIndex) {
+      scan.lastIndex++;
+    }
+  }
+  return false;
+}
+
 const forbiddenStringPatterns: readonly {
   readonly reason: Exclude<CustodyRedactionReason, "forbidden_field_name">;
   readonly regex: RegExp;
+  readonly accept?: (match: string) => boolean;
 }[] = Object.freeze([
   { reason: "bearer_token", regex: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
   {
     reason: "provider_key",
-    regex: /\b(?:sk-(?:ant|proj|live|test|deepseek|openai)|xox[baprs]-|AIza)[A-Za-z0-9_-]{8,}/i
+    // Prefixed provider keys (`sk-…`, Slack `xox*-…`, Google `AIza…`). The bare
+    // `sk-` body is intentionally generic so an unrecognised vendor's `sk-` key
+    // (e.g. DeepSeek `sk-<hex>`, OpenRouter `sk-or-…`) is still caught by shape,
+    // not left to the narrowed entropy catch-all below.
+    regex: /\b(?:sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{8,})/i
   },
   { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
   { reason: "object_store_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
@@ -730,8 +763,72 @@ const forbiddenStringPatterns: readonly {
     reason: "private_resource_handle",
     regex: /\b(?:machine|session|agent|file|skill|env|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
   },
-  { reason: "high_entropy_token", regex: /\b(?=[A-Za-z0-9_-]{40,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{40,}\b/ }
+  {
+    reason: "high_entropy_token",
+    // Catch-all for an unrecognised opaque secret blob. The candidate run
+    // EXCLUDES `_` (so `SCREAMING_SNAKE` env names and `slug_with_words` URL
+    // segments split instead of fusing into a phantom 40-char run — the live
+    // false positive was `ted_season_2_peacock_official_discussion_thread` in
+    // web-search result text and a fetched URL), and the `accept` predicate
+    // vetoes content-addressed hashes (md5/sha1/sha256 digests — the platform's
+    // OWN asset filenames) and low-entropy / single-class runs so only genuine
+    // opaque secrets remain. Slash-bearing secrets (signed URLs, connection
+    // strings, `Bearer …`) are covered by the named patterns above.
+    regex: /\b[A-Za-z0-9-]{40,}\b/,
+    accept: isHighEntropySecretRun
+  }
 ]);
+
+/** A content-addressed hash (md5/sha1/sha256 hex digest) — the platform's own
+ * asset filenames and content references. Exempt from the entropy catch-all so
+ * a captured output named after its sha256 (or a hash echoed in tool-result
+ * text) is not misclassified as a leaked secret. */
+const CONTENT_HASH_RUN = /^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i;
+
+/**
+ * Decide whether a coarse `[A-Za-z0-9-]{40,}` run is a genuine opaque secret.
+ * Rejects content-addressed hashes, then requires both character-class
+ * diversity (≥2 of lower/upper/digit) and high Shannon entropy — the property
+ * that separates an opaque key blob from a long dictionary-ish identifier. A
+ * real prefixless secret (base64url/alnum-mixed) clears both gates; a hash, a
+ * hyphenated slug, or a single-class run does not.
+ */
+function isHighEntropySecretRun(run: string): boolean {
+  if (CONTENT_HASH_RUN.test(run)) {
+    return false;
+  }
+  if (!/[A-Za-z]/.test(run) || !/\d/.test(run)) {
+    return false;
+  }
+  if (highEntropyCharClassCount(run) < 2) {
+    return false;
+  }
+  return highEntropyShannonBits(run) >= 3.0;
+}
+
+function highEntropyCharClassCount(value: string): number {
+  let count = 0;
+  if (/[a-z]/.test(value)) count++;
+  if (/[A-Z]/.test(value)) count++;
+  if (/[0-9]/.test(value)) count++;
+  return count;
+}
+
+function highEntropyShannonBits(value: string): number {
+  if (value.length === 0) {
+    return 0;
+  }
+  const counts = new Map<string, number>();
+  for (const char of value) {
+    counts.set(char, (counts.get(char) ?? 0) + 1);
+  }
+  let bits = 0;
+  for (const count of counts.values()) {
+    const p = count / value.length;
+    bits -= p * Math.log2(p);
+  }
+  return bits;
+}
 
 function isForbiddenCustodyFieldName(key: string): boolean {
   return /^(apiKey|secretValue|bearerHash|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|responseBody|privateResourceHandle|resourceHandle|rawBody)$/i.test(

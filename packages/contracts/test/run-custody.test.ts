@@ -197,6 +197,51 @@ describe("run custody manifest contract", () => {
     expect(scanCustodyPayloadForSensitiveValues(stored)).toEqual([]);
   });
 
+  it("does NOT flag content-addressed hashes, URLs, /workspace paths, or tool-result text (over-masking fix)", () => {
+    const sha256 = "abf1471e1a247d1839f66d723e15b46456ea30926d36a7a37a2e12bdb4787deb";
+    // 2 KB of legit web-search result text (the broll false-positive class):
+    // long underscore-joined URL slugs + prose, NOT a secret.
+    const searchText =
+      "1. Watch ted Season 2, Episode 4: The Mom's Bombed Rom-Com\n" +
+      "https://www.reddit.com/r/television/comments/1rma2ro/ted_season_2_peacock_official_discussion_thread/\n" +
+      "ted, The Mom's Bombed Rom-Com. Season 2, Episode 4. Blaire's rom-com movie marathon annoys Matty.\n".repeat(20);
+
+    const survivors: ReadonlyArray<readonly [string, unknown]> = [
+      ["sha256 content hash", sha256],
+      ["sha256 asset filename path", `/workspace/files/asset_${sha256}/source-video-subtitles-srt`],
+      ["manifest filename field", { files: [{ path: `outputs/${sha256}`, filename: sha256 }], outputs: [{ filename: sha256 }] }],
+      ["canonical uuid", "9728bf4e-9711-4e6f-9152-15d6a9c70578"],
+      ["normal https url", "https://www.reddit.com/r/television/comments/1rma2ro/ted_season_2_peacock_official_discussion_thread/"],
+      ["web_fetch url argument", { data: { arguments: { url: "https://en.wikipedia.org/wiki/Norah_Jones?oldid=123456789" } } }],
+      ["2KB search-result text block", { data: { content: [{ type: "text", text: searchText }] } }]
+    ];
+
+    for (const [name, payload] of survivors) {
+      expect(scanCustodyPayloadForSensitiveValues(payload), name).toEqual([]);
+    }
+  });
+
+  it("STILL flags real provider keys, bearers, and opaque secret blobs (no weakening)", () => {
+    const sk = scanCustodyPayloadForSensitiveValues("sk-1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d");
+    expect(sk.map((f) => f.reason)).toContain("provider_key"); // bare DeepSeek-style sk- key
+
+    const skAnt = scanCustodyPayloadForSensitiveValues("sk-ant-api03-aBcD1234efGh5678ijKlmnop");
+    expect(skAnt.map((f) => f.reason)).toContain("provider_key");
+
+    const blob = scanCustodyPayloadForSensitiveValues("Zx9Kq2Lp7Vn4Rt6Wy8Ub3Mc5Ad1Ef0Gh2Ij4Kl6mnopQRstuv99");
+    expect(blob.map((f) => f.reason)).toContain("high_entropy_token"); // opaque alnum-mixed secret
+
+    // The catch-all still fires when a content-hash-LENGTH-mismatched opaque run
+    // (here 50 chars, not a 32/40/64 digest) is alnum-mixed and high-entropy —
+    // the exemption is strictly the canonical hash lengths, nothing longer.
+    const nonHashBlob = scanCustodyPayloadForSensitiveValues("aGVsbG8td29ybGQtMTIzNDU2Nzg5MEFCQ0RFRkdISUpLTE1OT1A");
+    expect(nonHashBlob.map((f) => f.reason)).toContain("high_entropy_token");
+
+    // Regression for the existing keyword/handle patterns (untouched by the fix).
+    const handle = scanCustodyPayloadForSensitiveValues("session_1234567890abcdef");
+    expect(handle.map((f) => f.reason)).toContain("private_resource_handle");
+  });
+
   it("builds an indefinite-retention tombstone with only identity, counts, statuses, and timestamps", () => {
     const manifest = buildCustodyManifest({
       generatedAt: "2026-06-02T10:05:01.000Z",
