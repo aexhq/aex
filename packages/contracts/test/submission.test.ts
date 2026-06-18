@@ -282,6 +282,7 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "claude-haiku-4-5",
       "claude-3-5-haiku-latest",
       "claude-3-5-sonnet-latest",
+      "claude-sonnet-4-6",
       "deepseek-v4-flash",
       "deepseek-v4-pro",
       "deepseek-chat",

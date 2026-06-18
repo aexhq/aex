@@ -22,6 +22,7 @@ export const MODEL_PROVIDER_IDS = {
   "claude-haiku-4-5": { anthropic: "claude-haiku-4-5" },
   "claude-3-5-haiku-latest": { anthropic: "claude-3-5-haiku-latest" },
   "claude-3-5-sonnet-latest": { anthropic: "claude-3-5-sonnet-latest" },
+  "claude-sonnet-4-6": { anthropic: "claude-sonnet-4-6" },
   "deepseek-v4-flash": { deepseek: "deepseek-v4-flash" },
   "deepseek-v4-pro": { deepseek: "deepseek-v4-pro" },
   "deepseek-chat": { deepseek: "deepseek-chat" },
@@ -73,6 +74,8 @@ export const Models = {
   CLAUDE_3_5_HAIKU_LATEST: "claude-3-5-haiku-latest",
   /** Claude 3.5 Sonnet (latest) — Anthropic. */
   CLAUDE_3_5_SONNET_LATEST: "claude-3-5-sonnet-latest",
+  /** Claude Sonnet 4.6 — Anthropic (1M context, reasoning-capable). */
+  CLAUDE_SONNET_4_6: "claude-sonnet-4-6",
   /** DeepSeek V4 Flash — DeepSeek (non-thinking, fast). */
   DEEPSEEK_V4_FLASH: "deepseek-v4-flash",
   /** DeepSeek V4 Pro — DeepSeek (reasoning-heavy). */
