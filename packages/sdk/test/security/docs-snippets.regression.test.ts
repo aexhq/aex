@@ -141,11 +141,9 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     expect(missing).toEqual([]);
   });
 
-  it("AgentsMd.fromPath and File.fromPath actually exist (referenced in quickstart.md)", () => {
-    // Smoke check the AgentsMd / File static factories used in
-    // quickstart.md:69-71 ("File.fromPath('./customer-folder/')",
-    // "AgentsMd.fromPath('./AGENTS.md')"). If they don't exist, every
-    // quickstart copy-paste throws TypeError.
+  it("AgentsMd.fromPath and File.fromPath actually exist when referenced in public docs", () => {
+    // Smoke check the AgentsMd / File static factories used by the public
+    // composition docs. If they don't exist, every copy-paste throws TypeError.
     // The previous shape was `if (/X\.fromPath\(/.test(quickstart))
     // expect(...)` — a silent-skip when the doc gets rewritten or
     // grep'd differently. These are PUBLIC API contracts whose existence
@@ -153,16 +151,16 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     // If a future API change removes fromPath, both the docs AND the test
     // can be deleted in the same PR (the doc-drift test below already
     // enforces "documented APIs must exist").
-    const quickstart = readDoc("quickstart.md");
     const hasStatic = (cls: object, key: string): boolean =>
       typeof (cls as unknown as Record<string, unknown>)[key] === "function";
     expect(hasStatic(AexFile, "fromPath")).toBe(true);
     expect(hasStatic(AgentsMd, "fromPath")).toBe(true);
-    // Sanity: quickstart still references at least one of them (so this
-    // file remains relevant). If the doc stops referencing fromPath
-    // entirely, the inverse case must be considered explicitly.
+    // Sanity: published docs still reference at least one of them (so this
+    // file remains relevant). If docs stop referencing fromPath entirely, the
+    // inverse case must be considered explicitly.
+    const docs = publishedDocFiles();
     expect(
-      /File\.fromPath\(/.test(quickstart) || /AgentsMd\.fromPath\(/.test(quickstart)
+      docs.some((doc) => /File\.fromPath\(/.test(doc.content) || /AgentsMd\.fromPath\(/.test(doc.content))
     ).toBe(true);
   });
 
