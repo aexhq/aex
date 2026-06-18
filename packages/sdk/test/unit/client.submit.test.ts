@@ -167,7 +167,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
-      secrets: { apiKey: "sk-x" },
+      secrets: { apiKey: "k" },
       outputs: {
         captureTimeoutMs: 120000,
         maxFileBytes: 1_000_000_000_000,
