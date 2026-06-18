@@ -800,7 +800,7 @@ function unwrapFile(result: { readonly file: FileRecord } | FileRecord): FileRec
 // Value-bearing requests (create/rotate) carry the value in the JSON BODY,
 // never the URL/query, so it never lands in logs or the request line. Reads
 // split by sensitivity: `getSecret`/`listSecrets` return METADATA only;
-// `revealSecret` is the audited value read (POST so it's a logged action).
+// `getSecretValue` is the audited value read (POST so it's a logged action).
 // ===========================================================================
 
 /** Create a named workspace secret. The value travels in the body. */
@@ -833,7 +833,14 @@ export async function getSecret(http: HttpClient, name: string): Promise<SecretR
   return unwrapSecret(result);
 }
 
-/** Audited value read — the only path that returns a workspace secret value. */
+/** Audited value read — the preferred path that returns a workspace secret value. */
+export async function getSecretValue(http: HttpClient, name: string): Promise<SecretReveal> {
+  return http.request<SecretReveal>(`/api/secrets/${encodeURIComponent(name)}/get_value`, {
+    method: "POST"
+  });
+}
+
+/** Audited value read — compatibility alias for the older reveal route. */
 export async function revealSecret(http: HttpClient, name: string): Promise<SecretReveal> {
   return http.request<SecretReveal>(`/api/secrets/${encodeURIComponent(name)}/reveal`, {
     method: "POST"

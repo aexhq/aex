@@ -59,6 +59,13 @@ export const SKILL_ID_PATTERN = /^skl_[A-Za-z0-9_-]{8,128}$/;
  */
 export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
 
+/**
+ * Provider-safe submitted tool name. Tool names share the same lowercase
+ * kebab/underscore envelope as skills. Submission parsing rejects `__`
+ * because SessionDO reserves that separator for MCP namespace routing.
+ */
+export const TOOL_NAME_PATTERN = SKILL_NAME_PATTERN;
+
 // ---------------------------------------------------------------------------
 // Skill bundle limits (uploaded bundles)
 // ---------------------------------------------------------------------------
@@ -108,6 +115,21 @@ export interface AssetRef {
   readonly assetId: string;
   readonly name: string;
   readonly mountPath?: string;
+}
+
+type ToolJsonPrimitive = string | number | boolean | null;
+type ToolJsonValue = ToolJsonPrimitive | ToolJsonValue[] | { readonly [key: string]: ToolJsonValue };
+export type ToolInputSchema = { readonly [key: string]: ToolJsonValue };
+
+/**
+ * User-supplied executable tool bundle. The bytes are addressed by the same
+ * content-addressed asset ref used by Skills/Files, while the provider-visible
+ * manifest rides as value-free metadata on the submission.
+ */
+export interface ToolRef extends AssetRef {
+  readonly description: string;
+  readonly input_schema: ToolInputSchema;
+  readonly entry: string;
 }
 
 export interface ProviderSkillRef {

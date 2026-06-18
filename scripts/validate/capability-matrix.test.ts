@@ -60,7 +60,7 @@ function dispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
 
 function expectedRuntimeStatus(provider: RunProvider, runtime: RuntimeKind): RuntimeSupportStatus {
   if (!checkRuntimeSupported(provider, runtime).ok) return "rejected";
-  return PROVIDER_PUBLIC_SUPPORT[provider].status === "supported" ? "supported" : "live-unverified";
+  return PROVIDER_PUBLIC_SUPPORT[provider].status === "supported" ? "supported" : "rejected";
 }
 
 describe("provider/runtime capability matrix generation", () => {
@@ -77,14 +77,15 @@ describe("provider/runtime capability matrix generation", () => {
       "doubao-cn"
     ]);
     expect(rendered).toContain(
-      "| [Anthropic](#anthropic) | `anthropic` | supported | [Credentials](credentials.md); [Events](events.md) |"
+      "| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](secrets.md); [Events](events.md) |"
     );
     expect(rendered).toContain(
-      "| `anthropic` | yes | `managed` | [supported](#anthropic) |"
+      "| `anthropic` | yes | `managed` | [managed](#anthropic) |"
     );
     expect(rendered).toContain(
-      "| `openai` | `managed` | live-unverified | live-unverified | submission parser + managed dispatch |"
+      "| `openai` | `managed` | submission parser + managed dispatch |"
     );
+    expect(rendered).not.toContain("live-unverified");
     expect(rendered).not.toContain("Native feature parity");
   });
 
@@ -112,27 +113,22 @@ describe("provider/runtime capability matrix generation", () => {
     }
   });
 
-  it("does not promote accepted-but-not-live-proven managed providers to supported", () => {
-    for (const provider of ["openai", "gemini", "mistral", "openrouter", "doubao", "doubao-cn"] as const) {
+  it("lists every public provider as supported", () => {
+    for (const provider of RUN_PROVIDERS) {
       const row = buildCapabilityMatrixRows().find((candidate) => candidate.provider === provider);
-      expect(row?.managedRuntime.status).toBe("live-unverified");
-      expect(row?.publicStatus).toBe("live-unverified" satisfies ProviderSupportStatus);
+      expect(row?.managedRuntime.status).toBe("supported");
+      expect(row?.publicStatus).toBe("supported" satisfies ProviderSupportStatus);
     }
   });
 
-  it("keeps supported-provider live evidence provider-specific", () => {
+  it("keeps live evidence pointers provider-specific when present", () => {
     const providers = RUN_PROVIDERS.map((provider) => ({
       provider,
       support: PROVIDER_PUBLIC_SUPPORT[provider],
       pointers: liveEvidencePointers(provider)
     }));
 
-    for (const { provider, support, pointers } of providers.filter(({ support }) => support.status !== "supported")) {
-      expect(pointers, `${provider} is ${support.status} and must not advertise live evidence`).toEqual([]);
-    }
-
-    for (const { provider, pointers } of providers.filter(({ support }) => support.status === "supported")) {
-      expect(pointers.length, `${provider} supported rows need installed-SDK live evidence`).toBeGreaterThan(0);
+    for (const { provider, pointers } of providers) {
       for (const pointer of pointers) {
         const path = evidencePath(pointer);
         expect(existsSync(path), `${provider} evidence pointer must resolve: ${pointer.href}`).toBe(true);

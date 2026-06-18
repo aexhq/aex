@@ -7,7 +7,7 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       title: (
         <span className="ant-nav-title">
-          <span className="ant-logo-mark">ap</span>
+          <span className="ant-logo-mark">aex</span>
           <span>aex</span>
         </span>
       )

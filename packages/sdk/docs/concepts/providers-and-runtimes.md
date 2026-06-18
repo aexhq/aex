@@ -50,4 +50,4 @@ aex run \
 
 Events, outputs, cleanup, and downloads use the same SDK and CLI surface for
 every provider. For the exact supported model list, use the generated
-[provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/).
+[provider/runtime capability matrix](../provider-runtime-capabilities.md).

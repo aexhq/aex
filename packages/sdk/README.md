@@ -2,163 +2,74 @@
 title: aex
 ---
 
-# aex
+# @aexhq/sdk
 
-aex is a TypeScript-first SDK + CLI for running autonomous agent sessions across providers through the managed aex service. Everything an agent or human needs is reachable through **one** import and **one** binary.
+aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
 
-```ts
-import {
-  AgentExecutor,        // the only client class — submits durable runs to aex
-  RunModels,            // closed public model id constants
-  Skill,                // local, URL, and catalog skill bundles normalized to assets
-  McpServer,            // MCP server declarations (headers split into secrets server-side)
-  ProxyEndpoint,        // per-run managed HTTP proxy endpoint
-  AgentsMd,             // AGENTS.md / CLAUDE.md uploads
-  File,                 // arbitrary workspace files mounted into the session
-  validateProxyAuth     // helper that fails fast on policy/auth mismatch
-} from "@aexhq/sdk";
-```
+The package ships:
+
+- `AgentExecutor` for submit, run, wait, stream, inspect, download, cancel, and delete.
+- Typed run primitives: `Models`, `Providers`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
+- A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, whoami, and skills operations.
+
+## Install
 
 ```bash
-aex run     --config ./run.json --api-token ant_… \
-                --anthropic-api-key sk-ant-… --follow
-aex status  <run-id>             --api-token …
-aex wait    <run-id> [--timeout 8m] [--interval 2s] --api-token …
-aex events  <run-id> [--follow] [--timeout 8m]  --api-token …
-aex outputs <run-id>             --api-token …
-aex download <run-id> [--only outputs|events|metadata] [--out path] --api-token …
-aex cancel  <run-id>             --api-token …
-aex delete  <run-id>             --api-token …
-aex whoami                       --api-token …
-aex skills  <upload|list|get|delete> [flags] --api-token …
-aex delete-asset <assetId|hash>  --api-token …
+npm install @aexhq/sdk
 ```
 
-The SDK class and the CLI are backed by the same public `@aexhq/contracts` operations module — any read or write you can do through one, you can do through the other, against the same durable run records. The same npm package also ships the in-container `aex` CLI as its `bin` entry; managed runs mount that CLI inside the runner so skills can call `aex proxy …` against the per-run manifest. See [product capabilities and boundaries](docs/product-boundaries.md).
-
-The aex URL defaults to `https://api.aex.dev`. Set `--aex-url` on the CLI or `baseUrl` on `AgentExecutor` for local, staging, or hosted aex API planes. This is not a supported self-host deployment claim. The workspace is derived server-side from your API token (1:1 binding), so there is no `--workspace` flag and no `workspaceId` option.
-
-## Product boundaries
-
-- Multi-provider via the managed runtime. The published surface is the same
-  regardless of provider:
-  - omit `runtime` or pass `runtime: "managed"`; every provider uses the
-    managed runtime and BYOK provider-proxy.
-  - `provider: "anthropic" | "deepseek" | "openai" | "gemini" | "mistral"`.
-  - See [provider/runtime capabilities](docs/provider-runtime-capabilities.md)
-    for the generated matrix.
-- BYO provider key + MCP credentials + skill references — passed inline on every submission and held in run-scoped custody, with cleanup/revocation attempted at terminal. Cross-provider keys are rejected loudly at submission time.
-- Workspace is the tenant boundary. Workspace identity is derived server-side from the API token (1:1 binding); the SDK / CLI never name it.
-- No SDK-side storage of provider keys, MCP credentials, or output file contents.
-- Cleanup runs by default for tracked runtime resources.
-- Product boundaries are explicit: see [product capabilities and boundaries](docs/product-boundaries.md) for what aex owns, inherits, and does not support.
-
-## Quickstart (SDK)
+## First Run
 
 ```ts
-import { AgentExecutor, RunModels } from "@aexhq/sdk";
+import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({
-  apiToken: process.env.AEX_API_TOKEN!,
-  // baseUrl defaults to https://api.aex.dev - set it for local or staging planes.
+  apiToken: process.env.AEX_API_TOKEN!
 });
 
 const runId = await aex.submit({
-  model: RunModels.CLAUDE_HAIKU_4_5,
-  system: "You are a concise automation agent.",
-  prompt: "Write a short answer about agent-first SDK design.",
+  provider: Providers.ANTHROPIC,
+  model: Models.CLAUDE_HAIKU_4_5,
+  prompt: "Write the report and save outputs.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
+
+for await (const event of aex.stream(runId)) {
+  console.log(event.type);
+}
 
 const run = await aex.wait(runId);
 console.log(run.status);
 
-for (const output of await aex.outputs(runId)) {
-  console.log(output.id, output.filename);
-}
-
-const report = await aex.downloadOutput(runId, { path: "report.txt", match: "suffix" });
-console.log(new TextDecoder().decode(report));
-
-await aex.downloadOutputs(runId, { to: "./outputs.zip" });
+await aex.download(runId, { to: "./run.zip" });
 ```
 
-Reusable, credential-free configs can be ordinary functions:
-
-```ts
-function summarise(topic: string) {
-  return {
-    model: RunModels.CLAUDE_HAIKU_4_5,
-    system: "You are a concise automation agent.",
-    prompt: `Write a short answer about ${topic}.`
-  };
-}
-
-const runId = await aex.submit({
-  ...summarise("agent-first SDK design"),
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
-});
-```
-
-Stream events live with `aex.stream(runId)`:
-
-```ts
-for await (const event of aex.stream(runId)) {
-  if (event.type === "TEXT_MESSAGE_CONTENT") {
-    // typed event helpers live under `aex`'s event guard exports.
-  }
-}
-```
-
-The same flow from the CLI (two equivalent forms):
+The same request can run from the CLI:
 
 ```bash
 aex run \
   --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
-  --system "You are a concise automation agent." \
-  --prompt "Write a short answer about agent-first SDK design." \
-  --follow
-
-aex run \
-  --api-token "$AEX_API_TOKEN" \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --config ./run.json \
+  --prompt "Write the report and save outputs." \
   --follow
 ```
 
-`--config` accepts a plain run-config JSON file for a single run request: `{ model, system?, prompt, skills?, mcpServers?, environment?, runtimeSize?, timeout?, postHook?, proxyEndpoints?, metadata? }`. There is no saved-definition product or interpolation DSL — build the JSON at the call site. SDK code should use `RunModels`; config JSON is validated against the same `RUN_MODELS` allowlist.
+## Feature Areas
 
-Runtime controls: omit `builtins` to use the default `["developer"]` toolkit, pass `builtins: []` to disable builtins for a pure-MCP run, use `outputMode: "stream"` for per-token assistant text, prefer `RuntimeSizes` for `runtimeSize`, and use `postHook` to run a verifier command after the agent exits successfully.
+- **Agent runtime:** managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, background command, and post-hook repair tools.
+- **Durable infrastructure:** run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+- **Agent composition:** skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
+- **Subagents:** typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
+- **Models and providers:** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
+- **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK secrets, scoped proxy auth, redaction, and output modes.
 
-## Test commands
-
-```text
-pnpm test                # unit (deterministic; uses fakes/snapshots)
-pnpm test:user:offline   # clean install of packed/published SDK, no live API
-pnpm test:user           # live hosted API user tests
-pnpm test:user:heavy     # explicit heavy live canary
-```
-
-User tests auto-pack the current SDK when no artifact env is set. CI can pin a
-specific artifact with exactly one of `AEX_USER_TEST_TARBALL` or
-`AEX_USER_TEST_VERSION`; live runs also need `AEX_API_URL`,
-`AEX_API_TOKEN`, and `DEEPSEEK_API_KEY`.
-
-## Guides
+## Docs
 
 - [Quickstart](docs/quickstart.md)
-- [Run config](docs/run-config.md)
-- [Run record](docs/run-record.md)
-- [Product capabilities and boundaries](docs/product-boundaries.md)
+- [Run configuration](docs/run-config.md)
+- [Agent tools](docs/concepts/agent-tools.md)
+- [Composition](docs/concepts/composition.md)
+- [Secrets](docs/secrets.md)
+- [Limits](docs/limits.md)
 - [Provider/runtime capabilities](docs/provider-runtime-capabilities.md)
-- [Credentials](docs/credentials.md)
-- [MCP](docs/mcp.md)
-- [Skills](docs/skills.md)
-- [Outputs](docs/outputs.md)
-- [Events](docs/events.md)
-- [Cleanup](docs/cleanup.md)
-- [Testing](docs/testing.md)
-- [Release](docs/release.md)
-

@@ -1,5 +1,5 @@
 import { zipSync, type Zippable } from "fflate";
-import { SKILL_BUNDLE_LIMITS, validateSkillBundleEntry } from "@aexhq/contracts";
+import { SKILL_BUNDLE_LIMITS, validateSkillBundleEntry, type ToolInputSchema } from "@aexhq/contracts";
 
 /**
  * In-memory skill bundle: a flat path -> bytes map and the
@@ -91,6 +91,84 @@ export function bundleSkillFiles(files: SkillFiles): BundledSkill {
   }
 
   return { zip, fileCount: entries.length, compressedSize: zip.byteLength };
+}
+
+export interface BundledTool {
+  readonly zip: Uint8Array;
+  readonly fileCount: number;
+  readonly compressedSize: number;
+}
+
+export interface ToolBundleManifest {
+  readonly name: string;
+  readonly description: string;
+  readonly input_schema: ToolInputSchema;
+  readonly entry: string;
+}
+
+export function bundleToolFiles(
+  files: SkillFiles,
+  manifest: ToolBundleManifest
+): BundledTool {
+  if (!files || typeof files !== "object") {
+    throw new Error("Tool files map is required");
+  }
+  const entries = Object.entries(files);
+  if (entries.length === 0) {
+    throw new Error("Tool files map cannot be empty");
+  }
+  if (entries.length > SKILL_BUNDLE_LIMITS.maxFiles) {
+    throw new Error(`Tool bundle exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit (got ${entries.length})`);
+  }
+
+  const collected = new Map<string, Uint8Array>();
+  let totalDecompressed = 0;
+  let hasEntry = false;
+  const entryPath = validateSkillBundleEntry({ path: manifest.entry, size: 0 }).path;
+
+  for (const [rawPath, contents] of entries) {
+    const bytes = typeof contents === "string" ? TEXT.encode(contents) : contents;
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error(`Tool file "${rawPath}" must be a string or Uint8Array`);
+    }
+    const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
+    totalDecompressed += bytes.byteLength;
+    if (totalDecompressed > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
+      throw new Error(
+        `Tool bundle exceeds decompressed cap of ${SKILL_BUNDLE_LIMITS.maxDecompressedBytes} bytes`
+      );
+    }
+    if (collected.has(entry.path)) {
+      throw new Error(`Tool bundle contains duplicate path: ${entry.path}`);
+    }
+    if (entry.path === entryPath) hasEntry = true;
+    collected.set(entry.path, bytes);
+  }
+
+  if (!hasEntry) {
+    throw new Error(`Tool bundle entry "${entryPath}" must exist in files`);
+  }
+
+  const manifestBytes = TEXT.encode(`${JSON.stringify(manifest, null, 2)}\n`);
+  if (collected.has("tool.json")) {
+    throw new Error('Tool bundle files must not include reserved "tool.json"; pass manifest fields to Tool.fromFiles instead');
+  }
+  collected.set("tool.json", manifestBytes);
+
+  const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const zippable: Zippable = {};
+  for (const [path, bytes] of sorted) {
+    zippable[path] = [bytes, { mtime: ZIP_EPOCH }];
+  }
+
+  const zip = zipSync(zippable, { level: 6 });
+  if (zip.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
+    throw new Error(
+      `Tool bundle exceeds compressed cap of ${SKILL_BUNDLE_LIMITS.maxCompressedBytes} bytes (got ${zip.byteLength})`
+    );
+  }
+
+  return { zip, fileCount: collected.size, compressedSize: zip.byteLength };
 }
 
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));

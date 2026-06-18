@@ -1,46 +1,59 @@
 ---
-title: Overview
-description: TypeScript SDK and CLI docs for the serverless control plane for autonomous agent sessions.
-icon: BookOpenText
+title: "Overview"
+description: "aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI."
 ---
 
-aex is the serverless control plane for autonomous agent sessions. Declare
-the agent's environment — model, prompt, skills, MCP servers, files, and
-optional output-capture roots — submit it, and get back a typed event stream
-plus captured outputs.
+# aex
 
-One submission shape works across every supported provider:
+aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
+
+Submit typed runs, stream durable events, capture outputs, and compose agents with skills, files, MCP, proxy endpoints, and subagents across the managed runtime.
+
+## Feature areas
+
+- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, background command, and post-hook repair tools.
+- **Durable infrastructure.** Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+- **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
+- **Subagents.** Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
+- **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
+- **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK secrets, scoped proxy auth, redaction, and output modes.
+
+## First run
+
+### TypeScript
 
 ```ts
-import { AgentExecutor, RunModels } from "@aexhq/sdk";
+import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const runId = await aex.submit({
-  model: RunModels.CLAUDE_HAIKU_4_5,
-  prompt: "Summarise Q1 revenue by region.",
+  provider: Providers.ANTHROPIC,
+  model: Models.CLAUDE_HAIKU_4_5,
+  prompt: "Write the report and save outputs.",
   secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
 });
 
 for await (const event of aex.stream(runId)) console.log(event.type);
-const run = await aex.wait(runId);
+await aex.wait(runId);
 await aex.download(runId, { to: "./run.zip" });
 ```
 
-What you get:
+### CLI
 
-- **One multi-provider surface.** The same `submit` shape and event stream
-  for Anthropic, DeepSeek, OpenAI, Gemini, and Mistral. Anthropic and DeepSeek
-  are live-verified; OpenAI, Gemini, and Mistral are accepted but not yet
-  live-verified — see the
-  [provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)
-  for per-provider status.
-- **BYOK custody.** Provider keys travel inline per run, are held in
-  run-scoped custody, and are excluded from idempotency hashing.
-- **An ordered, durable event stream.** Every run emits one typed event
-  shape, recorded after secret redaction and readable live or after the fact.
-- **Cleanup by default.** Tracked runtime resources are reclaimed at terminal,
-  with `cleanupStatus` surfacing anything that could not complete.
+```bash
+aex run \
+  --api-token "$AEX_API_TOKEN" \
+  --anthropic-api-key "$ANTHROPIC_API_KEY" \
+  --model claude-haiku-4-5 \
+  --prompt "Write the report and save outputs." \
+  --follow
+```
 
-New here? Read [Why aex / how it compares](/docs/why-aex/), then run the
-[Quickstart](/docs/guides/quickstart/).
+## Next
+
+- [Quickstart](/docs/guides/quickstart/)
+- [Features](/docs/features/)
+- [Agent tools](/docs/concepts/agent-tools/)
+- [Composition](/docs/concepts/composition/)
+- [Provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)

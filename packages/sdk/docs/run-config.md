@@ -22,7 +22,7 @@ Allowed fields:
 
 `agentsMd`, `files`, `outputs`, `builtins`, and `outputMode` are top-level `submit` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission.
 
-Secrets never live in run config. Pass credentials through `submit({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
+Secrets never live in run config. Pass credentials through `submit({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Secrets](secrets.md) for secret lifecycles and [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
 
 ## Reuse in code
 

@@ -14,7 +14,6 @@ import {
 } from "../packages/contracts/src/submission.js";
 import { RUN_MODELS_BY_PROVIDER } from "../packages/contracts/src/models.js";
 import {
-  PROVIDER_SUPPORT_STATUSES,
   PROVIDER_PUBLIC_SUPPORT,
   RUNTIME_VALIDATION_SUPPORT,
   type ProviderPublicSupport,
@@ -58,7 +57,7 @@ function runtimeCell(provider: RunProvider, runtime: RuntimeKind, support: Provi
     };
   }
 
-  const status = support.status === "supported" ? "supported" : "live-unverified";
+  const status = support.status === "supported" ? "supported" : "rejected";
   return {
     status,
     ownership: status,
@@ -118,7 +117,11 @@ function renderProviderLink(row: CapabilityMatrixRow): string {
 }
 
 function renderRuntimeCell(cell: RuntimeCapabilityCell): string {
-  return `[${cell.status}](#${cell.docsAnchor})`;
+  return `[managed](#${cell.docsAnchor})`;
+}
+
+function renderSupportedModels(provider: RunProvider): string {
+  return RUN_MODELS_BY_PROVIDER[provider].map((model) => `\`${model}\``).join(", ");
 }
 
 export function renderProviderRuntimeCapabilityMarkdown(
@@ -135,19 +138,17 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "# Provider runtime capabilities",
     "",
-    "Generated from `packages/contracts/src/provider-support.ts`; runtime cells are derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.",
+    "Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`; runtime routing is derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.",
     "",
     "Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.",
     "",
     `Providers: ${providerList}. Runtime selectors: ${runtimeList}.`,
     "",
-    "All new submissions run on the managed runtime. Public support facts are listed separately from runtime dispatch facts.",
+    "All new submissions run on the managed runtime. Public support is expressed as supported providers and supported model ids.",
     "",
-    `Status vocabulary: ${PROVIDER_SUPPORT_STATUSES.map((status) => `\`${status}\``).join(", ")}.`,
+    "## Supported models",
     "",
-    "## Public support",
-    "",
-    "| Provider | Wire value | Status | Docs | Evidence |",
+    "| Provider | Selector | Supported models | Docs | Evidence |",
     "| --- | --- | --- | --- | --- |"
   ];
 
@@ -156,7 +157,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
       [
         `| ${renderProviderLink(row)}`,
         `\`${row.provider}\``,
-        row.publicStatus,
+        renderSupportedModels(row.provider),
         renderPointerLinks(row.docs),
         `${renderPointerLinks(row.evidence)} |`
       ].join(" | ")
@@ -167,7 +168,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "## Runtime routing",
     "",
-    "| Provider | Default provider | Auto route | `runtime: \"managed\"` |",
+    "| Provider | Default provider | Auto route | Runtime selector |",
     "| --- | --- | --- | --- |"
   );
 
@@ -184,10 +185,10 @@ export function renderProviderRuntimeCapabilityMarkdown(
 
   lines.push(
     "",
-    "## Runtime cell evidence",
+    "## Runtime evidence",
     "",
-    "| Provider | Runtime | Status | Ownership | Enforcement path | Evidence |",
-    "| --- | --- | --- | --- | --- | --- |"
+    "| Provider | Runtime | Enforcement path | Evidence |",
+    "| --- | --- | --- | --- |"
   );
 
   for (const row of rows) {
@@ -197,8 +198,6 @@ export function renderProviderRuntimeCapabilityMarkdown(
         [
           `| \`${row.provider}\``,
           `\`${runtime}\``,
-          cell.status,
-          cell.ownership,
           cell.enforcement,
           `${renderPointerLinks(cell.evidence)} |`
         ].join(" | ")
@@ -233,9 +232,9 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "Notes:",
     "",
-    "- Public status describes provider availability on the SDK surface. Runtime routing describes how a validated submission is dispatched.",
+    "- Supported models are the public SDK model ids accepted for each provider.",
+    "- Runtime routing describes how a validated submission is dispatched.",
     "- `runtime: \"native\"` is not a runtime selector; the submission parser rejects it as an invalid enum value.",
-    "- `live-unverified` means the shape is accepted by code but does not yet have equal live user-test evidence.",
     "",
     "## Provider anchors",
     ""
@@ -246,7 +245,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
       `### ${row.displayName}`,
       "",
       `- Wire provider: \`${row.provider}\``,
-      `- Public status: ${row.publicStatus}`,
+      `- Supported models: ${renderSupportedModels(row.provider)}`,
       `- Auto route: \`${row.autoRoute}\``,
       `- Docs: ${renderPointerLinks(row.docs)}`,
       `- Evidence: ${renderPointerLinks(row.evidence)}`,

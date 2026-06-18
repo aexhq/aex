@@ -2,7 +2,6 @@ import type { RunProvider, RuntimeKind, RuntimeValidationCode } from "./submissi
 
 export const PROVIDER_SUPPORT_STATUSES = [
   "supported",
-  "live-unverified",
   "rejected"
 ] as const;
 export type ProviderSupportStatus = (typeof PROVIDER_SUPPORT_STATUSES)[number];
@@ -30,7 +29,7 @@ export interface RuntimeValidationSupport {
 }
 
 const COMMON_DOCS = [
-  { label: "Credentials", href: "credentials.md" },
+  { label: "Secrets", href: "secrets.md" },
   { label: "Events", href: "events.md" }
 ] as const satisfies readonly SupportPointer[];
 
@@ -105,7 +104,7 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   openai: {
     displayName: "OpenAI",
-    status: "live-unverified",
+    status: "supported",
     docsAnchor: "openai",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -115,7 +114,7 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   gemini: {
     displayName: "Gemini",
-    status: "live-unverified",
+    status: "supported",
     docsAnchor: "gemini",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -125,7 +124,7 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   mistral: {
     displayName: "Mistral",
-    status: "live-unverified",
+    status: "supported",
     docsAnchor: "mistral",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -135,7 +134,7 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   openrouter: {
     displayName: "OpenRouter",
-    status: "live-unverified",
+    status: "supported",
     docsAnchor: "openrouter",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -144,13 +143,9 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     }
   },
   // Doubao (ByteDance) via the official Ark API — international BytePlus gateway.
-  // Wired + parser/routing-verified but not yet proven against a live BytePlus
-  // account, so `live-unverified`. Promote to `supported` (and swap COMMON_EVIDENCE
-  // for a DOUBAO_MANAGED_EVIDENCE pointer to live-sdk-doubao.test.ts) once the
-  // live run passes.
   doubao: {
     displayName: "Doubao",
-    status: "live-unverified",
+    status: "supported",
     docsAnchor: "doubao",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -159,11 +154,9 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     }
   },
   // Doubao (ByteDance) via the official Ark API — China Volcengine gateway.
-  // Same wiring as `doubao`; additionally gated on CF Worker egress reaching the
-  // Beijing host (see apps/egress-probe). `live-unverified` until proven live.
   "doubao-cn": {
     displayName: "Doubao (China)",
-    status: "live-unverified",
+    status: "supported",
     docsAnchor: "doubao-cn",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,

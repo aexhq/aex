@@ -384,6 +384,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     agentsMd: [],
     files: [],
     mcpServers: mcpServersForSubmission,
+    tools: [],
     ...(runConfig.environment ? { environment: runConfig.environment } : {}),
     ...(runConfig.metadata ? { metadata: runConfig.metadata } : {})
   };

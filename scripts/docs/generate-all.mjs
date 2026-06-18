@@ -13,35 +13,142 @@ const contentRoot = resolve(docsRoot, "content", "docs");
 const publicRoot = resolve(docsRoot, "public");
 const generatedRoot = resolve(docsRoot, ".generated");
 const publicDocsBase = "https://aex.dev/docs";
+const publicSurfacePath = resolve(repoRoot, "packages", "sdk", "docs", "public-surface.json");
+const publicSurface = await readPublicSurface();
 
 const guideSources = [
   ["quickstart.md", "quickstart"],
   ["run-config.md", "run-config"],
   ["run-record.md", "run-record"],
-  ["product-boundaries.md", "product-boundaries"],
+  ["limits.md", "limits"],
+  ["secrets.md", "secrets"],
   ["credentials.md", "credentials"],
   ["skills.md", "skills"],
+  ["vision-skills.md", "vision-skills"],
   ["mcp.md", "mcp"],
   ["outputs.md", "outputs"],
   ["events.md", "events"],
-  ["cleanup.md", "cleanup"],
-  ["testing.md", "testing"],
-  ["release.md", "release"]
+  ["cleanup.md", "cleanup"]
+];
+
+const conceptSources = [
+  ["runs.md", "runs"],
+  ["agent-tools.md", "agent-tools"],
+  ["composition.md", "composition"],
+  ["providers-and-runtimes.md", "providers-and-runtimes"]
 ];
 
 const appDocRoutes = new Map([
+  ...conceptSources.map(([file, slug]) => [file, `/docs/concepts/${slug}/`]),
   ...guideSources.map(([file, slug]) => [file, `/docs/guides/${slug}/`]),
+  ["product-boundaries.md", "/docs/guides/limits/"],
+  ["secrets-byok.md", "/docs/guides/secrets/"],
+  ["subagents.md", "/docs/features/#subagents"],
   ["provider-runtime-capabilities.md", "/docs/reference/provider-runtime-capabilities/"]
 ]);
 
 const referencePages = ["index", "sdk", "cli", "events", "provider-runtime-capabilities"];
 
+await syncOverviewPages();
+await syncConcepts();
 await syncGuides();
 await syncGeneratedCapabilityReference();
 await generateCliReference();
 await generateEventReference();
 await generateSdkReference();
 await generateLlmsFiles();
+
+async function syncOverviewPages() {
+  await rm(resolve(contentRoot, "why-aex.md"), { force: true });
+  await writeFile(
+    resolve(contentRoot, "meta.json"),
+    `${JSON.stringify(
+      {
+        title: "aex",
+        pages: ["index", "features", "concepts", "guides", "reference"]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  await writeMarkdown(resolve(contentRoot, "index.md"), {
+    title: "Overview",
+    description: publicSurface.oneLine,
+    body: [
+      "# aex",
+      "",
+      publicSurface.oneLine,
+      "",
+      publicSurface.description,
+      "",
+      "## Feature areas",
+      "",
+      renderFeatureList(),
+      "",
+      "## First run",
+      "",
+      "### TypeScript",
+      "",
+      renderFencedCode("ts", exampleLines("typescriptLines")),
+      "",
+      "### CLI",
+      "",
+      renderFencedCode("bash", exampleLines("cliLines")),
+      "",
+      "## Next",
+      "",
+      "- [Quickstart](/docs/guides/quickstart/)",
+      "- [Features](/docs/features/)",
+      "- [Agent tools](/docs/concepts/agent-tools/)",
+      "- [Composition](/docs/concepts/composition/)",
+      "- [Provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)",
+      ""
+    ].join("\n")
+  });
+
+  await writeMarkdown(resolve(contentRoot, "features.md"), {
+    title: "Features",
+    description: "Public feature areas supported by aex.",
+    body: [
+      "# Features",
+      "",
+      publicSurface.oneLine,
+      "",
+      renderFeatureSections(),
+      "",
+      "For product boundaries and unsupported claims, see [Limits](/docs/guides/limits/).",
+      ""
+    ].join("\n")
+  });
+}
+
+async function syncConcepts() {
+  const outDir = resolve(contentRoot, "concepts");
+  await resetDir(outDir);
+  await writeFile(
+    resolve(outDir, "meta.json"),
+    `${JSON.stringify(
+      {
+        title: "Concepts",
+        icon: "Route",
+        defaultOpen: true,
+        pages: conceptSources.map(([, slug]) => slug)
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  for (const [file, slug] of conceptSources) {
+    const sourceDir = resolve(repoRoot, "packages", "sdk", "docs", "concepts");
+    const source = resolve(sourceDir, file);
+    const raw = await readFile(source, "utf8");
+    const rewritten = rewritePackageDocLinks(raw, sourceDir);
+    await writeFile(resolve(outDir, `${slug}.md`), rewritten, "utf8");
+  }
+}
 
 async function syncGuides() {
   const outDir = resolve(contentRoot, "guides");
@@ -202,21 +309,31 @@ async function generateSdkReference() {
 
 async function generateLlmsFiles() {
   await mkdir(publicRoot, { recursive: true });
+  const providerNames = publicSurface.providers.map((provider) => `${provider.name} (\`${provider.id}\`)`).join(", ");
   const summary = [
     "# aex",
     "",
-    "> TypeScript SDK and CLI for durable autonomous agent runs across Anthropic, DeepSeek, OpenAI, Gemini, and Mistral.",
+    `> ${publicSurface.oneLine}`,
     "",
-    "aex accepts one run submission shape, routes every provider through the managed runtime, emits one event stream, and returns captured outputs and logs.",
+    publicSurface.description,
+    "",
+    `Providers: ${providerNames}.`,
+    "",
+    "## Feature areas",
+    "",
+    renderFeatureSections(),
     "",
     "## Start",
     "",
     `- [Overview](${publicDocsBase}/)`,
+    `- [Features](${publicDocsBase}/features/)`,
     `- [Quickstart](${publicDocsBase}/guides/quickstart/)`,
-    `- [Product capabilities and boundaries](${publicDocsBase}/guides/product-boundaries/)`,
     `- [Runs](${publicDocsBase}/concepts/runs/)`,
+    `- [Agent tools](${publicDocsBase}/concepts/agent-tools/)`,
+    `- [Composition](${publicDocsBase}/concepts/composition/)`,
     `- [Providers & Runtimes](${publicDocsBase}/concepts/providers-and-runtimes/)`,
-    `- [Secrets & BYOK](${publicDocsBase}/concepts/secrets-byok/)`,
+    `- [Secrets](${publicDocsBase}/guides/secrets/)`,
+    `- [Limits](${publicDocsBase}/guides/limits/)`,
     "",
     "## Guides",
     "",
@@ -233,6 +350,10 @@ async function generateLlmsFiles() {
   await writeFile(resolve(publicRoot, "llms.txt"), summary, "utf8");
 
   const fullParts = [summary];
+  for (const [file, slug] of conceptSources) {
+    fullParts.push(`\n\n# ${titleForSlug(slug)}\n`);
+    fullParts.push(await readFile(resolve(repoRoot, "packages", "sdk", "docs", "concepts", file), "utf8"));
+  }
   for (const [file, slug] of guideSources) {
     fullParts.push(`\n\n# ${titleForSlug(slug)}\n`);
     fullParts.push(await readFile(resolve(repoRoot, "packages", "sdk", "docs", file), "utf8"));
@@ -240,6 +361,26 @@ async function generateLlmsFiles() {
   fullParts.push("\n\n# Provider Runtime Capabilities\n");
   fullParts.push(await readFile(resolve(repoRoot, "packages", "sdk", "docs", "provider-runtime-capabilities.md"), "utf8"));
   await writeFile(resolve(publicRoot, "llms-full.txt"), fullParts.join("\n"), "utf8");
+}
+
+async function readPublicSurface() {
+  return JSON.parse(await readFile(publicSurfacePath, "utf8"));
+}
+
+function renderFeatureList() {
+  return publicSurface.featureAreas.map((area) => `- **${area.title}.** ${area.description}`).join("\n");
+}
+
+function renderFeatureSections() {
+  return publicSurface.featureAreas.map((area) => `## ${area.title}\n\n${area.description}`).join("\n\n");
+}
+
+function exampleLines(key) {
+  return publicSurface.examples?.[key] ?? [];
+}
+
+function renderFencedCode(lang, lines) {
+  return [`\`\`\`${lang}`, ...lines, "```"].join("\n");
 }
 
 function rewritePackageDocLinks(input, sourceDir = resolve(repoRoot, "packages", "sdk", "docs")) {

@@ -1,4 +1,10 @@
 {
   "title": "aex",
-  "pages": ["index", "why-aex", "concepts", "guides", "reference"]
+  "pages": [
+    "index",
+    "features",
+    "concepts",
+    "guides",
+    "reference"
+  ]
 }

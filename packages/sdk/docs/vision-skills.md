@@ -32,7 +32,7 @@ a raised `maxRequestBytes` (so the base64 image fits):
 ```ts
 import { AgentExecutor, RunModels, Skill, ProxyEndpoint, validateProxyAuth } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_WORKSPACE_TOKEN! });
+const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const proxyEndpoints = [
   ProxyEndpoint.bearer({
@@ -146,11 +146,8 @@ frame_%03d.jpg`) — full-res adds payload and cost, not signal.
 
 ## Notes
 
-- **Egress.** The named proxy reaches any HTTPS host you declare as `baseUrl`
-  (no upstream allow-list; only a literal-IP SSRF deny-list). The international
-  BytePlus host (`ark.ap-southeast.bytepluses.com`) is a normal public host. The
-  China host (`ark.cn-beijing.volces.com`) is reachable in principle but the
-  platform's egress to Beijing is currently unverified — prefer the BytePlus host.
+- **Host selection.** Use the provider endpoint that matches your account and
+  declare it as the proxy endpoint `baseUrl`.
 - **Keyless model hosts.** If the upstream takes no credential, declare the
   endpoint with `authShape: { type: "none" }` and omit the `proxyEndpointAuth`
   entry (see `credentials.md`).

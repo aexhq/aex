@@ -43,6 +43,7 @@ import {
   type SignedOutputLink,
   type Skill as SkillRecord,
   type SkillRef,
+  type ToolRef,
   type WhoAmI,
   TERMINAL_RUN_STATUSES
 } from "@aexhq/contracts";
@@ -53,6 +54,7 @@ import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
 import { Secret, splitSecretEnv } from "./secret.js";
 import { Skill } from "./skill.js";
+import { Tool } from "./tool.js";
 
 export interface AgentExecutorOptions {
   /** Workspace-scoped SDK API token. */
@@ -132,6 +134,7 @@ export interface SubmitOptions {
   readonly system?: string;
   readonly prompt: string | readonly string[];
   readonly skills?: readonly Skill[];
+  readonly tools?: readonly Tool[];
   readonly agentsMd?: readonly AgentsMd[];
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
@@ -426,11 +429,11 @@ export class FilesClient {
  * Lifecycle parity with assets/skills: a `Secret.value(...)` is per-run and
  * gone at terminal; `set` (or promoting an ephemeral via `secret.upload`)
  * persists a named, searchable workspace secret you can `get` (metadata),
- * `reveal` (audited value), `rotate`, `list`, and `delete`. The identity is the
+ * `get_value` (audited value), `rotate`, `list`, and `delete`. The identity is the
  * `name`; the value rotates under that stable name.
  *
  * Values are write-only: `set`/`rotate` send the value in the request BODY (never
- * the URL); `get`/`list` return metadata only; `reveal` is the explicit audited
+ * the URL); `get`/`list` return metadata only; `get_value` is the explicit audited
  * value read.
  */
 export class SecretsClient {
@@ -455,7 +458,12 @@ export class SecretsClient {
     return operations.getSecret(this.#http, name);
   }
 
-  /** Audited value read — the only path that returns a workspace secret value. */
+  /** Audited value read — the preferred path that returns a workspace secret value. */
+  get_value(name: string): Promise<SecretReveal> {
+    return operations.getSecretValue(this.#http, name);
+  }
+
+  /** Compatibility alias for callers still using the older verb. */
   reveal(name: string): Promise<SecretReveal> {
     return operations.revealSecret(this.#http, name);
   }
@@ -694,12 +702,13 @@ export class AgentExecutor {
       );
     }
 
-    // Walk Skill / AgentsMd / File instances. Inline drafts are eagerly
+    // Walk Skill / Tool / AgentsMd / File instances. Inline drafts are eagerly
     // uploaded to the content-addressable asset store here (before POST /runs)
     // and referenced as plain `kind:"asset"` refs. Already-materialized asset
     // refs pass through unchanged.
     const uploader: AssetUploader = (args) => this._uploadAsset(args);
     const preparedSkills = await prepareSkills(options.skills ?? [], uploader);
+    const preparedTools = await prepareTools(options.tools ?? [], uploader);
     const preparedAgentsMd = await prepareAgentsMd(options.agentsMd ?? [], uploader);
     const preparedFiles = await prepareFiles(options.files ?? [], uploader);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
@@ -713,6 +722,7 @@ export class AgentExecutor {
       ...(options.system ? { system: options.system } : {}),
       prompt,
       skills: preparedSkills,
+      tools: preparedTools,
       agentsMd: preparedAgentsMd,
       files: preparedFiles,
       // submissionMcpServers may contain workspace refs of the shape
@@ -1195,6 +1205,38 @@ async function prepareSkills(
       continue;
     }
     // Already-materialized asset ref.
+    refs.push(ref);
+  }
+  return refs;
+}
+
+async function prepareTools(
+  tools: readonly Tool[],
+  uploader: AssetUploader
+): Promise<readonly ToolRef[]> {
+  const refs: ToolRef[] = [];
+  for (let i = 0; i < tools.length; i++) {
+    const entry = tools[i];
+    if (!(entry instanceof Tool)) {
+      throw new Error(`AgentExecutor.submit: tools[${i}] must be a Tool instance`);
+    }
+    if (entry.isConsumed) {
+      throw new Error(`AgentExecutor.submit: tools[${i}] was already consumed by a prior submit`);
+    }
+    const ref = entry.ref;
+    if (ref.kind === "draft") {
+      const bundle = entry._takeDraftBundle();
+      if (!bundle) {
+        throw new Error(`AgentExecutor.submit: tools[${i}] is draft but has no bytes`);
+      }
+      const uploaded = await uploader({
+        bytes: bundle.bytes,
+        hash: bundle.contentHash,
+        contentType: "application/zip"
+      });
+      refs.push({ ...bundle.ref, assetId: uploaded.assetId });
+      continue;
+    }
     refs.push(ref);
   }
   return refs;

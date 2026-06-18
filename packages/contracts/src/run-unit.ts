@@ -267,6 +267,7 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
     agentsMd: [],
     files: [],
     mcpServers: toMcpServerRefArray(submissionRaw.mcpServers),
+    tools: [],
     ...(parseEnvironment(submissionRaw.environment)
       ? { environment: parseEnvironment(submissionRaw.environment) as PlatformEnvironment }
       : {}),
@@ -316,7 +317,8 @@ function fallbackFlat(): RunUnitFlatSubmission {
       skills: [],
       agentsMd: [],
       files: [],
-      mcpServers: []
+      mcpServers: [],
+      tools: []
     }
   };
 }

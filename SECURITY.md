@@ -40,5 +40,5 @@ remain subject to the selected provider account's policies. Reports related to
 secret leakage, persistence beyond a run, or cross-tenant secret exposure are
 high-priority.
 
-Credential handling behavior is documented in `packages/sdk/docs/credentials.md`
-and `packages/sdk/docs/product-boundaries.md`.
+Credential handling behavior is documented in `packages/sdk/docs/secrets.md`,
+`packages/sdk/docs/credentials.md`, and `packages/sdk/docs/limits.md`.

@@ -23,6 +23,7 @@ export type {
 
 // Composition primitives
 export { Skill } from "./skill.js";
+export { Tool } from "./tool.js";
 export { AgentsMd } from "./agents-md.js";
 export { File } from "./file.js";
 export { McpServer } from "./mcp-server.js";
@@ -37,7 +38,7 @@ export type {
   QueryProxyEndpointOptions
 } from "./proxy-endpoint.js";
 export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
-export type { BundledSkill, SkillFiles } from "./bundle.js";
+export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "./bundle.js";
 
 // Errors
 export {
@@ -67,7 +68,9 @@ export type {
   McpServerRef,
   SkillBundleEntry,
   SkillBundleManifest,
-  SkillRef
+  SkillRef,
+  ToolInputSchema,
+  ToolRef
 } from "@aexhq/contracts";
 
 // Runtime types

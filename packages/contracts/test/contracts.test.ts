@@ -163,6 +163,79 @@ describe("platform run submission schema", () => {
     expect(parsed.secrets.mcpServers?.[0]?.url).toBe("https://mcp.example.test");
   });
 
+  it("accepts user tools as value-free asset refs", () => {
+    const parsed = parseRunSubmissionRequest({
+      workspaceId: "ws_123",
+      idempotencyKey: "idem-tool",
+      submission: {
+        model: "claude-haiku-4-5",
+        prompt: "use the lookup tool",
+        skills: [],
+        agentsMd: [],
+        files: [],
+        tools: [
+          {
+            kind: "asset",
+            assetId: `asset_${"a".repeat(64)}`,
+            name: "calendar_lookup",
+            description: "Looks up calendar availability.",
+            input_schema: {
+              type: "object",
+              properties: { start: { type: "string" } },
+              required: ["start"]
+            },
+            entry: "index.js"
+          }
+        ],
+        mcpServers: []
+      },
+      secrets: baseSecrets
+    });
+
+    expect(parsed.submission.tools).toEqual([
+      {
+        kind: "asset",
+        assetId: `asset_${"a".repeat(64)}`,
+        name: "calendar_lookup",
+        description: "Looks up calendar availability.",
+        input_schema: {
+          type: "object",
+          properties: { start: { type: "string" } },
+          required: ["start"]
+        },
+        entry: "index.js"
+      }
+    ]);
+  });
+
+  it("rejects user tool names that collide with MCP namespace routing", () => {
+    expect(() =>
+      parseRunSubmissionRequest({
+        workspaceId: "ws_123",
+        idempotencyKey: "idem-tool",
+        submission: {
+          model: "claude-haiku-4-5",
+          prompt: "use the lookup tool",
+          skills: [],
+          agentsMd: [],
+          files: [],
+          tools: [
+            {
+              kind: "asset",
+              assetId: `asset_${"a".repeat(64)}`,
+              name: "calendar__lookup",
+              description: "Looks up calendar availability.",
+              input_schema: { type: "object", properties: {}, required: [] },
+              entry: "index.js"
+            }
+          ],
+          mcpServers: []
+        },
+        secrets: baseSecrets
+      })
+    ).toThrow(/must not contain "__"/);
+  });
+
   it("rejects stdio-shaped MCP servers with the canonical remote-only error", () => {
     const expected =
       "stdio MCP servers are not supported by Aex. Aex supports remote MCP servers over HTTP/SSE only.";

@@ -33,7 +33,7 @@ body {
 
 .ant-logo-mark {
   display: inline-grid;
-  width: 1.75rem;
+  width: 2.15rem;
   height: 1.75rem;
   place-items: center;
   border: 1px solid color-mix(in oklab, hsl(var(--fd-primary)) 52%, transparent);
@@ -52,10 +52,7 @@ body {
 }
 
 .ant-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
-  gap: 1.25rem;
-  align-items: stretch;
+  display: block;
   padding: 1rem 0 1.75rem;
 }
 
@@ -118,8 +115,7 @@ body {
   color: hsl(var(--fd-foreground));
 }
 
-.ant-command-panel {
-  align-self: center;
+.ant-sample {
   overflow: hidden;
   border: 1px solid hsl(var(--fd-border));
   border-radius: 8px;
@@ -127,7 +123,7 @@ body {
   box-shadow: 0 18px 60px rgb(0 0 0 / 0.18);
 }
 
-.ant-command-panel header {
+.ant-sample > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -138,7 +134,49 @@ body {
   font-size: 0.78rem;
 }
 
-.ant-command-panel pre {
+.ant-sample h2 {
+  margin: 0;
+  color: hsl(var(--fd-foreground));
+  font-size: 0.92rem;
+  letter-spacing: 0;
+}
+
+.ant-sample a {
+  color: hsl(var(--fd-primary));
+  text-decoration: none;
+}
+
+.ant-code-tabs {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  align-items: start;
+}
+
+.ant-tab-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ant-tab-label {
+  min-height: 2.4rem;
+  padding: 0.72rem 0.95rem 0;
+  border-right: 1px solid hsl(var(--fd-border));
+  border-bottom: 1px solid hsl(var(--fd-border));
+  color: hsl(var(--fd-muted-foreground));
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.ant-tab-input:checked + .ant-tab-label {
+  border-bottom-color: transparent;
+  color: hsl(var(--fd-foreground));
+}
+
+.ant-code-panel {
+  display: none;
+  grid-column: 1 / -1;
   margin: 0;
   padding: 1rem;
   overflow-x: auto;
@@ -148,7 +186,20 @@ body {
   line-height: 1.7;
 }
 
-.prose .ant-command-panel code {
+.ant-code-panel-ts {
+  min-height: 20.25rem;
+}
+
+.ant-code-panel-cli {
+  min-height: 9rem;
+}
+
+#ant-home-ts:checked ~ .ant-code-panel-ts,
+#ant-home-cli:checked ~ .ant-code-panel-cli {
+  display: block;
+}
+
+.prose .ant-code-panel code {
   padding: 0;
   border: 0;
   background: transparent;
@@ -198,31 +249,7 @@ body {
   text-decoration-line: none !important;
 }
 
-.ant-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1.1rem 0 0;
-}
-
-.ant-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.85rem;
-  padding: 0 0.62rem;
-  border: 1px solid hsl(var(--fd-border));
-  border-radius: 999px;
-  background: hsl(var(--fd-muted) / 0.42);
-  color: hsl(var(--fd-muted-foreground));
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.75rem;
-}
-
 @media (max-width: 860px) {
-  .ant-hero {
-    grid-template-columns: 1fr;
-  }
-
   .ant-hero h1 {
     font-size: 2.3rem;
   }

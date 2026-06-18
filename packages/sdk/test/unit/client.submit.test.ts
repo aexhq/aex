@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentsMd, AgentExecutor, File as AexFile, McpServer, Models, Skill } from "../../src/index.js";
+import { AgentsMd, AgentExecutor, File as AexFile, McpServer, Models, Skill, Tool } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly url: string;
@@ -184,6 +184,50 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       maxTotalBytes: 1_000_000_000_000,
       maxFiles: 50_000
     });
+  });
+
+  it("uploads draft tools and includes value-free tool refs in the submission", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const tool = await Tool.fromFiles({
+      name: "calendar_lookup",
+      description: "Looks up calendar availability.",
+      inputSchema: {
+        type: "object",
+        properties: { start: { type: "string" } },
+        required: ["start"]
+      },
+      entry: "index.js",
+      files: {
+        "index.js": "export default async function ({ input }) { return { content: [{ type: 'text', text: input.start }] }; }\n"
+      }
+    });
+
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      tools: [tool],
+      secrets: { apiKey: "k" }
+    });
+
+    const submitCall = calls.find((call) => call.url === "https://x/api/runs")!;
+    const body = submitCall.body as Record<string, unknown>;
+    const submission = body.submission as Record<string, unknown>;
+    expect(submission.tools).toEqual([
+      {
+        kind: "asset",
+        assetId: expect.stringMatching(/^asset_[0-9a-f]{64}$/),
+        name: "calendar_lookup",
+        description: "Looks up calendar availability.",
+        input_schema: {
+          type: "object",
+          properties: { start: { type: "string" } },
+          required: ["start"]
+        },
+        entry: "index.js"
+      }
+    ]);
+    expect(tool.isConsumed).toBe(true);
   });
 
   it("submits DeepSeek provider runs with a flat apiKey", async () => {

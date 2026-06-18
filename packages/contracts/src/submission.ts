@@ -18,12 +18,20 @@ import {
 // existing `@aexhq/contracts` consumers of `PROXY_ENDPOINT_DEFAULTS` are
 // unaffected by the move.
 export { PROXY_ENDPOINT_DEFAULTS };
-import { parseAssetRefFields, parseMcpServerRef, parseSkillRef } from "./run-config.js";
+import {
+  TOOL_NAME_PATTERN,
+  normaliseSkillBundlePath,
+  parseAssetRefFields,
+  parseMcpServerRef,
+  parseSkillRef
+} from "./run-config.js";
 import type {
   AgentsMdRef,
   FileRef,
   McpServerRef,
-  SkillRef
+  SkillRef,
+  ToolInputSchema,
+  ToolRef
 } from "./run-config.js";
 import { parseRunTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import {
@@ -1307,6 +1315,7 @@ export interface PlatformSubmission {
   readonly system?: string;
   readonly prompt: readonly string[];
   readonly skills: readonly SkillRef[];
+  readonly tools?: readonly ToolRef[];
   readonly agentsMd: readonly AgentsMdRef[];
   readonly files: readonly FileRef[];
   readonly mcpServers: readonly McpServerRef[];
@@ -1669,6 +1678,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     "system",
     "prompt",
     "skills",
+    "tools",
     "agentsMd",
     "files",
     "mcpServers",
@@ -1690,6 +1700,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
   const skills = parseSkills(value.skills);
+  const tools = parseTools(value.tools);
   const agentsMd = parseAgentsMd(value.agentsMd);
   const files = parseFiles(value.files);
   const mcpServers = parseMcpServers(value.mcpServers);
@@ -1707,6 +1718,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     ...(system ? { system } : {}),
     prompt,
     skills,
+    tools,
     agentsMd,
     files,
     mcpServers,
@@ -2089,6 +2101,76 @@ function parseSkills(input: unknown): readonly SkillRef[] {
       seenAssetId.add(ref.assetId);
     }
     return ref;
+  });
+}
+
+function parseTools(input: unknown): readonly ToolRef[] {
+  if (input === undefined) {
+    return [];
+  }
+  if (!Array.isArray(input)) {
+    throw new Error("submission.tools must be an array of ToolRef objects");
+  }
+  const seenNames = new Set<string>();
+  const seenAssetIds = new Set<string>();
+  return input.map((item, index): ToolRef => {
+    const path = `submission.tools[${index}]`;
+    const raw = requireRecord(item, path);
+    for (const key of Object.keys(raw)) {
+      if (
+        key !== "kind" &&
+        key !== "assetId" &&
+        key !== "name" &&
+        key !== "description" &&
+        key !== "input_schema" &&
+        key !== "entry"
+      ) {
+        throw new Error(
+          `${path}.${key} is not an allowed field for ToolRef; permitted: kind, assetId, name, description, input_schema, entry`
+        );
+      }
+    }
+    if (raw.kind !== "asset") {
+      throw new Error(`${path}.kind must be 'asset' (got ${JSON.stringify(raw.kind)})`);
+    }
+    const fields = parseAssetRefFields(
+      { kind: raw.kind, assetId: raw.assetId, name: raw.name },
+      path
+    );
+    if (!TOOL_NAME_PATTERN.test(fields.name)) {
+      throw new Error(`${path}.name must match ${TOOL_NAME_PATTERN.source}`);
+    }
+    if (fields.name.includes("__")) {
+      throw new Error(`${path}.name must not contain "__"; that separator is reserved for MCP tools`);
+    }
+    if (seenNames.has(fields.name)) {
+      throw new Error(`submission.tools duplicate name: ${fields.name}`);
+    }
+    seenNames.add(fields.name);
+    if (seenAssetIds.has(fields.assetId)) {
+      throw new Error(`submission.tools duplicate assetId: ${fields.assetId}`);
+    }
+    seenAssetIds.add(fields.assetId);
+    const description = requireString(raw.description, `${path}.description`);
+    if (description.trim().length === 0 || description.length > 2048) {
+      throw new Error(`${path}.description must be non-empty and <= 2048 chars`);
+    }
+    const inputSchema = requireRecord(raw.input_schema, `${path}.input_schema`);
+    if (!isJsonValue(inputSchema)) {
+      throw new Error(`${path}.input_schema must be JSON-serializable`);
+    }
+    if (inputSchema.type !== "object") {
+      throw new Error(`${path}.input_schema.type must be "object"`);
+    }
+    const entry = normaliseSkillBundlePath(requireString(raw.entry, `${path}.entry`));
+    return {
+      kind: "asset",
+      assetId: fields.assetId,
+      name: fields.name,
+      description,
+      input_schema: inputSchema as ToolInputSchema,
+      entry
+    };
   });
 }
 

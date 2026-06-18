@@ -4,7 +4,9 @@ title: Credentials
 
 # Credentials
 
-aex does not store provider keys or MCP credential values across runs.
+aex treats provider keys, MCP credentials, and proxy endpoint auth as per-run
+credentials. Reusable env secrets are documented separately in
+[Secrets](secrets.md).
 
 The caller passes a workspace-scoped SDK token and the provider key inline on every `submit` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
 

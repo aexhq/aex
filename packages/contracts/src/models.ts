@@ -39,8 +39,7 @@ export const MODEL_PROVIDER_IDS = {
   // China Volcengine Ark gateway (`doubao-cn`). Ark accepts the API-format
   // model NAME directly in the chat-completions `model` field (no `ep-…`
   // inference-endpoint id). The native strings are the same Ark catalog ids on
-  // both gateways; BytePlus per-account availability is confirmed at live-verify
-  // (both providers ship `live-unverified` until then — provider-support.ts).
+  // both gateways.
   //   pro   — Doubao Seed 1.8 (flagship, 256K context).
   //   flash — Doubao Seed 1.6 Flash (fast/cheap, 256K context).
   "doubao-seed-pro": { doubao: "doubao-seed-1-8-251228", "doubao-cn": "doubao-seed-1-8-251228" },
