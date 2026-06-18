@@ -94,7 +94,7 @@ export interface ProviderEvent {
 
 /**
  * One captured output file as the dashboard reports it. Use
- * `createOutputLink` to get a short-lived signed URL for download.
+ * `outputLink` / `createOutputLink` to get a temporary direct URL for download.
  */
 export interface Output {
   readonly id: string;
@@ -106,6 +106,36 @@ export interface Output {
 }
 
 export type OutputFilePathMatch = "exact" | "suffix";
+
+export type OutputFileType =
+  | "text"
+  | "json"
+  | "image"
+  | "audio"
+  | "video"
+  | "pdf"
+  | "archive"
+  | "binary"
+  | "unknown";
+
+export interface OutputQuery {
+  /** Exact normalized output path. Leading `/` and `outputs/` are ignored. */
+  readonly path?: string;
+  /** Basename match. A RegExp is tested against the basename only. */
+  readonly filename?: string | RegExp;
+  /**
+   * Directory prefix. Leading `/` and `outputs/` are ignored.
+   * `recursive` defaults to true.
+   */
+  readonly dir?: string;
+  readonly recursive?: boolean;
+  /** File extension, with or without a leading dot. Case-insensitive. */
+  readonly extension?: string;
+  /** Exact content type or a prefix wildcard such as `image/*`. */
+  readonly contentType?: string;
+  /** High-level type inferred from content type first, then extension. */
+  readonly type?: OutputFileType;
+}
 
 export interface OutputFilePathSelector {
   readonly path: string;
@@ -123,11 +153,23 @@ export interface OutputFileDownload {
   readonly bytes: Uint8Array;
 }
 
-export interface SignedOutputLink {
+export type OutputLinkExpiresIn = number | "15m" | "1h" | "1d";
+
+export interface OutputLinkOptions {
+  /** Seconds or one of the documented presets. Defaults to `"1h"`. */
+  readonly expiresIn?: OutputLinkExpiresIn;
+}
+
+export interface OutputLink {
   readonly url: string;
   readonly expiresAt?: string;
+  readonly expiresInSeconds?: number;
+  readonly output?: Output;
   readonly [key: string]: unknown;
 }
+
+/** @deprecated Renamed to {@link OutputLink}. */
+export type SignedOutputLink = OutputLink;
 
 export interface WhoAmI {
   readonly principalType: "api_token" | "user";

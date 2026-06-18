@@ -88,6 +88,18 @@ run's last stream event, immediately after the durable record commits.
 `settleConsistent` ends the stream on it; on a raw stream, detect it with
 `isRunSettled(event)`.
 
+## Temporary event archive links
+
+For terminal runs, `eventArchiveLink(runId, options?)` returns a temporary direct URL to `events.jsonl`, the same redacted customer-visible event export used by `downloadEvents(runId)`.
+
+```ts
+const link = await aex.eventArchiveLink(runId, { expiresIn: "1h" });
+const response = await fetch(link.url);
+const jsonl = await response.text();
+```
+
+`expiresIn` accepts seconds or `"15m"`, `"1h"`, or `"1d"`; the default is `"1h"`. The URL is a reusable bearer URL until it expires, so treat it like a short-lived secret. Internal runtime, host, and provider diagnostics are not included in this export.
+
 ## Event shape
 
 Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submit`.

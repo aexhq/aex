@@ -21,6 +21,10 @@ import {
   type FileRef,
   type McpServerRef,
   type Output,
+  type OutputFileType,
+  type OutputLink,
+  type OutputLinkOptions,
+  type OutputQuery,
   type OutputMode,
   type PlatformEnvironmentInput,
   type PlatformRunSubmissionInput,
@@ -40,7 +44,6 @@ import {
   type Builtin,
   type RuntimeSize,
   type RuntimeKind,
-  type SignedOutputLink,
   type Skill as SkillRecord,
   type SkillRef,
   type ToolRef,
@@ -271,6 +274,8 @@ export interface OutputFileIdSelector {
 }
 
 export type OutputFileSelector = Output | OutputFileIdSelector | OutputFilePathSelector;
+
+export type OutputLinkSelector = string | OutputFileSelector | OutputQuery;
 
 export interface OutputDownloadOptions {
   readonly to?: string;
@@ -905,17 +910,38 @@ export class AgentExecutor {
     return this.waitForRun(runId, options);
   }
 
-  listOutputs(runId: string): Promise<readonly Output[]> {
-    return operations.listOutputs(this.#http, runId);
+  listOutputs(runId: string, query?: OutputQuery): Promise<readonly Output[]> {
+    return operations.listOutputs(this.#http, runId, query);
   }
 
   /** Short alias for `listOutputs`. */
-  outputs(runId: string): Promise<readonly Output[]> {
-    return this.listOutputs(runId);
+  outputs(runId: string, query?: OutputQuery): Promise<readonly Output[]> {
+    return this.listOutputs(runId, query);
   }
 
-  createOutputLink(runId: string, outputId: string): Promise<SignedOutputLink> {
-    return operations.createOutputLink(this.#http, runId, outputId);
+  findOutputs(runId: string, query: OutputQuery): Promise<readonly Output[]> {
+    return operations.findOutputs(this.#http, runId, query);
+  }
+
+  findOutput(runId: string, query: OutputQuery): Promise<Output | null> {
+    return operations.findOutput(this.#http, runId, query);
+  }
+
+  outputLink(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink> {
+    return operations.outputLink(this.#http, runId, selectorOrQuery, options);
+  }
+
+  createOutputLink(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink> {
+    return this.outputLink(runId, selectorOrQuery, options);
+  }
+
+  async fetchOutput(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<Response> {
+    const link = await this.outputLink(runId, selectorOrQuery, options);
+    return (this.#fetch ?? fetch)(link.url);
+  }
+
+  eventArchiveLink(runId: string, options?: OutputLinkOptions): Promise<OutputLink> {
+    return operations.eventArchiveLink(this.#http, runId, options);
   }
 
   /**
@@ -1389,4 +1415,4 @@ function mergeProxyEndpointAuth(
 // Side-channel re-exports keep the proxy wire types reachable from
 // `import type { … } from "aex/client"` without forcing consumers
 // to learn an additional entry point.
-export type { PlatformProxyEndpoint, PlatformProxyEndpointAuth };
+export type { OutputFileType, OutputLink, OutputLinkOptions, OutputQuery, PlatformProxyEndpoint, PlatformProxyEndpointAuth };

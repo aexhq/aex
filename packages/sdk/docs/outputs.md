@@ -77,6 +77,64 @@ const looseReport = await aex.downloadOutput(runId, { path: "report.txt", match:
 console.log(looseReport.byteLength);
 ```
 
+## Finding outputs
+
+`listOutputs(runId, query?)` and its alias `outputs(runId, query?)` can filter the captured output list client-side. Use `findOutputs` when you want discovery to be explicit, or `findOutput` when exactly one file is expected:
+
+```ts
+const images = await aex.findOutputs(runId, { type: "image" });
+const jsonReports = await aex.outputs(runId, {
+  dir: "reports",
+  extension: ".json"
+});
+
+const report = await aex.findOutput(runId, {
+  filename: "summary.json",
+  contentType: "application/json"
+});
+if (report) {
+  const bytes = await aex.downloadOutput(runId, report);
+}
+```
+
+Query fields compose with AND semantics:
+
+| Field | Match |
+| --- | --- |
+| `path` | Exact normalized output path. Leading `/` and `outputs/` are ignored. |
+| `filename` | Basename match, as a string or `RegExp`. |
+| `dir` / `recursive` | Directory prefix. `recursive` defaults to `true`; set `false` for direct children only. |
+| `extension` | Case-insensitive extension, with or without a leading dot. |
+| `contentType` | Exact content type or a prefix wildcard such as `image/*`. |
+| `type` | High-level type: `text`, `json`, `image`, `audio`, `video`, `pdf`, `archive`, `binary`, or `unknown`. |
+
+`findOutput` returns `null` when nothing matches and throws `RunStateError` when the query matches more than one output.
+
+## Temporary output links
+
+Use `outputLink(runId, selectorOrQuery, options?)` when another process, browser, media tag, or downloader needs a direct artifact URL instead of bytes buffered through the SDK. `createOutputLink` remains as the compatibility name.
+
+```ts
+const link = await aex.outputLink(
+  runId,
+  { path: "reports/summary.json" },
+  { expiresIn: "15m" }
+);
+
+console.log(link.url, link.expiresAt);
+```
+
+Selectors can be an output id, an `Output` object, a path selector, or an `OutputQuery`. `expiresIn` accepts seconds or `"15m"`, `"1h"`, or `"1d"`; the default is `"1h"`.
+
+The returned URL is a reusable bearer URL until it expires. Anyone who has it can read that artifact during the TTL. aex does not promise one-time use or early revocation for these direct artifact URLs.
+
+For large files, `fetchOutput` mints the same temporary URL and returns the `Response` from fetching it directly, without adding the SDK API token to that second request:
+
+```ts
+const response = await aex.fetchOutput(runId, { type: "video", filename: /clip\.mp4$/ });
+const stream = response.body;
+```
+
 ## Lifecycle behaviour
 
 `download()` works at any run state — it reads whatever the public endpoints currently expose, so the zip reflects the run as of the call:

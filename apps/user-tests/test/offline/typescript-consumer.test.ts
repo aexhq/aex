@@ -113,6 +113,9 @@ describe("typescript consumer", () => {
         type InlineSecrets,
         type McpServerSecret,
         type Output,
+        type OutputLink,
+        type OutputLinkOptions,
+        type OutputQuery,
         type OutputFileSelector,
         type PlatformProxyEndpoint,
         type PlatformRunSubmissionRequest,
@@ -259,6 +262,8 @@ describe("typescript consumer", () => {
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
       const outputSelector: OutputFileSelector = { path: "report.txt", match: "suffix" };
+      const outputQuery: OutputQuery = { dir: "reports", extension: ".json", type: "json" };
+      const outputLinkOptions: OutputLinkOptions = { expiresIn: "15m" };
       const waitOpts: WaitForRunOptions = { intervalMs: 100, timeoutMs: 1_000 };
 
       const fetchFake = async () =>
@@ -279,6 +284,12 @@ describe("typescript consumer", () => {
       const runPromise: Promise<Run> = client.getRun("run_type_surface");
       const eventsPromise: Promise<readonly RunEvent[]> = client.listEvents("run_type_surface");
       const outputsPromise: Promise<readonly Output[]> = client.outputs("run_type_surface");
+      const foundOutputsPromise: Promise<readonly Output[]> = client.findOutputs("run_type_surface", outputQuery);
+      const foundOutputPromise: Promise<Output | null> = client.findOutput("run_type_surface", outputQuery);
+      const outputLinkPromise: Promise<OutputLink> = client.outputLink("run_type_surface", outputQuery, outputLinkOptions);
+      const compatLinkPromise: Promise<OutputLink> = client.createOutputLink("run_type_surface", outputSelector);
+      const fetchOutputPromise: Promise<Response> = client.fetchOutput("run_type_surface", { filename: "report.json" });
+      const eventArchiveLinkPromise: Promise<OutputLink> = client.eventArchiveLink("run_type_surface", { expiresIn: "1h" });
       const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
 
       const errors = [
@@ -316,6 +327,12 @@ describe("typescript consumer", () => {
       void runPromise;
       void eventsPromise;
       void outputsPromise;
+      void foundOutputsPromise;
+      void foundOutputPromise;
+      void outputLinkPromise;
+      void compatLinkPromise;
+      void fetchOutputPromise;
+      void eventArchiveLinkPromise;
       void downloadPromise;
       void errors;
       void redacted;

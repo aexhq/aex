@@ -73,6 +73,89 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
+  it("outputLink resolves queries with Authorization: Bearer and sends the TTL body", async () => {
+    const calls: Array<RecordedCall & { readonly body?: string }> = [];
+    const stub: typeof fetch = async (input, init) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url,
+        authorization: headers.get("authorization"),
+        ...(typeof init?.body === "string" ? { body: init.body } : {})
+      });
+      if (url.endsWith("/api/runs/run-1/outputs")) {
+        return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(JSON.stringify({ url: "https://objects.example/result.txt" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    };
+    const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+
+    const link = await client.outputLink("run-1", { filename: "result.txt" }, { expiresIn: "15m" });
+
+    expect(link).toMatchObject({
+      url: "https://objects.example/result.txt",
+      expiresInSeconds: 900,
+      output: { id: "abc", filename: "reports/result.txt" }
+    });
+    expect(calls.map((c) => c.url)).toEqual([
+      `${BASE}/api/runs/run-1/outputs`,
+      `${BASE}/api/runs/run-1/outputs/abc/link`
+    ]);
+    expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
+    expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 900 });
+  });
+
+  it("fetchOutput fetches the temporary direct URL without the SDK Authorization header", async () => {
+    const calls: RecordedCall[] = [];
+    const directUrl = "https://objects.example/result.txt?X-Amz-Signature=abc";
+    const stub: typeof fetch = async (input, init) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const headers = new Headers(init?.headers);
+      calls.push({ url, authorization: headers.get("authorization") });
+      if (url.endsWith("/api/runs/run-1/outputs")) {
+        return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "result.txt" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/api/runs/run-1/outputs/abc/link")) {
+        return new Response(JSON.stringify({ url: directUrl }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response("direct-bytes", { status: 200, headers: { "content-type": "text/plain" } });
+    };
+    const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+
+    const response = await client.fetchOutput("run-1", { filename: "result.txt" });
+
+    expect(await response.text()).toBe("direct-bytes");
+    expect(calls.map((c) => c.url)).toEqual([
+      `${BASE}/api/runs/run-1/outputs`,
+      `${BASE}/api/runs/run-1/outputs/abc/link`,
+      directUrl
+    ]);
+    expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(calls[1]!.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(calls[2]!.authorization).toBeNull();
+  });
+
+  it("eventArchiveLink sends Authorization: Bearer (POST /events/link)", async () => {
+    const { client, calls } = recordingClient({ url: "https://objects.example/events.jsonl" });
+    await client.eventArchiveLink("run-1");
+    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/events/link`);
+    expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
   it("downloadOutput by id sends Authorization: Bearer to the gated download route", async () => {
     const { client, calls } = recordingClient("hello", "text/plain");
     const bytes = await client.downloadOutput("run-1", { id: "abc" });
