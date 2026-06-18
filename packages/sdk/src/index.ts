@@ -191,8 +191,8 @@ export {
 } from "@aexhq/contracts";
 
 // Typed `listEvents` decoders — correlate TOOL_CALL_START/RESULT into tool-call
-// traces, sum the per-turn `aex.usage` events into a UsageSummary, and decode
-// assistant text, so consumers don't hand-roll the `data.id` correlation.
+// traces, tolerate historical/internal `aex.usage` records when present, and
+// decode assistant text, so consumers don't hand-roll the `data.id` correlation.
 export {
   decodeAssistantText,
   decodeToolCalls,

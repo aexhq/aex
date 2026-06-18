@@ -13,9 +13,10 @@
  * a result with no matching start surfaces as an orphan (never dropped silently),
  * and timing falls back gracefully when a `recordedAt` is absent.
  *
- * Pairs with {@link Run.usage}: while a run executes `Run.usage` is empty — the
- * per-turn token counts live ONLY in the `aex.usage` CUSTOM events — so
- * {@link summarizeRunUsage} reconstructs the running total from the same stream.
+ * `summarizeRunUsage` remains tolerant of historical/internal `aex.usage`
+ * CUSTOM records when a caller has them, but the normal public `listEvents`
+ * stream is not the live usage-reporting surface. Settled provider/runtime
+ * usage is exposed through the run's `costTelemetry`.
  */
 
 import type { UsageSummary } from "./runtime-types.js";
@@ -153,8 +154,9 @@ export function decodeToolCalls(events: readonly TraceEvent[]): readonly ToolCal
 }
 
 /**
- * Sum the per-turn `aex.usage` CUSTOM events into one {@link UsageSummary} —
- * the running token total a customer otherwise hand-sums while watching a run.
+ * Sum any `aex.usage` CUSTOM events present in the supplied stream into one
+ * {@link UsageSummary}. This is mainly for historical/internal event arrays;
+ * current public reads expose settled provider usage through cost telemetry.
  * `totalTokens` is the sum of input + output tokens. Pure.
  */
 export function summarizeRunUsage(events: readonly TraceEvent[]): UsageSummary {

@@ -27,12 +27,11 @@ export interface Run {
   readonly startedAt?: string;
   readonly errorMessage?: string | null;
   /**
-   * Aggregate token usage. NOTE: mid-run this is NOT populated — detailed
-   * token counts live ONLY in the per-turn `aex.usage` CUSTOM events on the
-   * event stream until the run settles. To follow token/cost progress while a
-   * run executes, decode the event stream with `summarizeRunTrace(events)`
-   * (its `usage` totals the `aex.usage` events). Settled cost/usage rides
-   * {@link costTelemetry}.
+   * Aggregate token usage when a deployment chooses to expose it on the run
+   * record. Mid-run this is not populated. Settled provider/runtime usage is
+   * exposed through {@link costTelemetry}; per-turn usage breadcrumbs, when a
+   * deployment records them internally, are not part of the normal public event
+   * stream.
    */
   readonly usage?: UsageSummary;
   readonly costTelemetry?: import("./run-cost.js").RunCostTelemetry;
