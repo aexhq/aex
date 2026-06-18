@@ -840,13 +840,6 @@ export async function getSecretValue(http: HttpClient, name: string): Promise<Se
   });
 }
 
-/** Audited value read — compatibility alias for the older reveal route. */
-export async function revealSecret(http: HttpClient, name: string): Promise<SecretReveal> {
-  return http.request<SecretReveal>(`/api/secrets/${encodeURIComponent(name)}/reveal`, {
-    method: "POST"
-  });
-}
-
 /** Replace the value of an existing workspace secret; bumps its version. */
 export async function rotateSecret(
   http: HttpClient,

@@ -84,14 +84,14 @@ const secrets = await aex.secrets.list();
 const metadata = await aex.secrets.get("serper-api-key");
 ```
 
-## Reveal A Secret Value
+## Get A Secret Value
 
-Use `reveal` only when the value is intentionally needed outside a run. It is
+Use `get_value` only when the value is intentionally needed outside a run. It is
 the explicit audited value-read path.
 
 ```ts
-const revealed = await aex.secrets.reveal("serper-api-key");
-console.log(revealed.value);
+const secretValue = await aex.secrets.get_value("serper-api-key");
+console.log(secretValue.value);
 ```
 
 ## Inject A Workspace Secret Into A Run

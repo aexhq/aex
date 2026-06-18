@@ -98,13 +98,6 @@ describe("aex.secrets management client", () => {
     expect(calls[0]!.url).toBe("https://x/api/secrets/serper/get_value");
   });
 
-  it("reveal: remains a compatibility alias for the older route", async () => {
-    const { client: c, calls } = client(() => json({ name: "serper", value: "sk-live-XYZ" }));
-    await c.secrets.reveal("serper");
-    expect(calls[0]!.method).toBe("POST");
-    expect(calls[0]!.url).toBe("https://x/api/secrets/serper/reveal");
-  });
-
   it("rotate: replaces the value (value in body)", async () => {
     const { client: c, calls } = client(() => json({ secret: { ...REC, version: 2 } }));
     const rec = await c.secrets.rotate({ name: "serper", value: "sk-new-1" });

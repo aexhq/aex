@@ -266,12 +266,11 @@ export interface SecretRecord {
 }
 
 /**
- * Value-bearing result of an audited `aex.secrets.reveal`. The ONLY wire shape
- * that carries a workspace secret value back to the caller. Reveal is a logged
+ * Value-bearing result of an audited `aex.secrets.get_value`. The ONLY wire shape
+ * that carries a workspace secret value back to the caller. Value read is a logged
  * action (POST, not GET) so a value read is always attributable.
  */
 export interface SecretReveal {
   readonly name: string;
   readonly value: string;
 }
-

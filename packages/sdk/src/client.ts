@@ -463,11 +463,6 @@ export class SecretsClient {
     return operations.getSecretValue(this.#http, name);
   }
 
-  /** Compatibility alias for callers still using the older verb. */
-  reveal(name: string): Promise<SecretReveal> {
-    return operations.revealSecret(this.#http, name);
-  }
-
   /** Replace the value of an existing workspace secret; bumps its version. */
   rotate(args: { readonly name: string; readonly value: string | SecretString }): Promise<SecretRecord> {
     return operations.rotateSecret(this.#http, { name: args.name, value: unwrapSecretValue(args.value) });
