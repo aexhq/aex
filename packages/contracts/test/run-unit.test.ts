@@ -24,7 +24,14 @@ describe("parseRunUnitSubmission", () => {
           packages: [{ name: "node", version: "22" }]
         },
         metadata: { team: "platform" },
-        outputs: { allowedDirs: ["/workspace/out"], deniedDirs: ["node_modules"] }
+        outputs: {
+          allowedDirs: ["/workspace/out"],
+          deniedDirs: ["node_modules"],
+          captureTimeoutMs: 60000,
+          maxFileBytes: 1234,
+          maxTotalBytes: 5678,
+          maxFiles: 9
+        }
       }
     };
 
@@ -43,6 +50,10 @@ describe("parseRunUnitSubmission", () => {
     expect(parsed.submission.metadata).toEqual({ team: "platform" });
     expect(parsed.submission.outputs?.allowedDirs).toEqual(["/workspace/out"]);
     expect(parsed.submission.outputs?.deniedDirs).toEqual(["node_modules"]);
+    expect(parsed.submission.outputs?.captureTimeoutMs).toBe(60000);
+    expect(parsed.submission.outputs?.maxFileBytes).toBe(1234);
+    expect(parsed.submission.outputs?.maxTotalBytes).toBe(5678);
+    expect(parsed.submission.outputs?.maxFiles).toBe(9);
     expect("cleanup" in parsed).toBe(false);
   });
 

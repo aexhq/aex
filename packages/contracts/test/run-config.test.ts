@@ -695,6 +695,46 @@ describe("run-config — parseRunSubmissionRequest", () => {
     expect(parsed.submission.outputs).toBeUndefined();
   });
 
+  it("accepts output capture limits and clamps capture timeout to the platform maximum", () => {
+    const parsed = parseRunSubmissionRequest({
+      ...baseSubmission,
+      submission: {
+        ...baseSubmission.submission,
+        outputs: {
+          captureTimeoutMs: 24 * 60 * 60 * 1000,
+          maxFileBytes: 1_000_000_000_000,
+          maxTotalBytes: 1_000_000_000_000,
+          maxFiles: 50_000
+        }
+      }
+    });
+    expect(parsed.submission.outputs).toEqual({
+      captureTimeoutMs: 6 * 60 * 60 * 1000,
+      maxFileBytes: 1_000_000_000_000,
+      maxTotalBytes: 1_000_000_000_000,
+      maxFiles: 50_000
+    });
+  });
+
+  it("rejects non-positive and non-integer output capture limits", () => {
+    for (const [field, value] of [
+      ["captureTimeoutMs", 0],
+      ["maxFileBytes", -1],
+      ["maxTotalBytes", 1.5],
+      ["maxFiles", "50"]
+    ] as const) {
+      expect(() =>
+        parseRunSubmissionRequest({
+          ...baseSubmission,
+          submission: {
+            ...baseSubmission.submission,
+            outputs: { [field]: value }
+          }
+        })
+      ).toThrow(new RegExp(`submission\\.outputs\\.${field} must be a positive integer`));
+    }
+  });
+
   it("rejects outputs.allowedDirs entries that are not absolute paths", () => {
     expect(() =>
       parseRunSubmissionRequest({

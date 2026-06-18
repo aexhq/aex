@@ -255,6 +255,10 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
   const outputsRaw = isRecord(submissionRaw.outputs) ? submissionRaw.outputs : {};
   const allowedDirs = toOptionalStringArray(outputsRaw.allowedDirs);
   const deniedDirs = toOptionalStringArray(outputsRaw.deniedDirs);
+  const captureTimeoutMs = toOptionalPositiveInteger(outputsRaw.captureTimeoutMs);
+  const maxFileBytes = toOptionalPositiveInteger(outputsRaw.maxFileBytes);
+  const maxTotalBytes = toOptionalPositiveInteger(outputsRaw.maxTotalBytes);
+  const maxFiles = toOptionalPositiveInteger(outputsRaw.maxFiles);
   const submission: PlatformSubmission = {
     model: coerceRunUnitModel(submissionRaw.model),
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
@@ -270,11 +274,20 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
       ? { securityProfile: parseSecurityProfile(submissionRaw.securityProfile) as RuntimeSecurityProfileName }
       : {}),
     ...(isJsonRecord(submissionRaw.metadata) ? { metadata: submissionRaw.metadata as Record<string, JsonValue> } : {}),
-    ...(allowedDirs || deniedDirs
+    ...(allowedDirs ||
+    deniedDirs ||
+    captureTimeoutMs !== undefined ||
+    maxFileBytes !== undefined ||
+    maxTotalBytes !== undefined ||
+    maxFiles !== undefined
       ? {
           outputs: {
             ...(allowedDirs ? { allowedDirs } : {}),
-            ...(deniedDirs ? { deniedDirs } : {})
+            ...(deniedDirs ? { deniedDirs } : {}),
+            ...(captureTimeoutMs !== undefined ? { captureTimeoutMs } : {}),
+            ...(maxFileBytes !== undefined ? { maxFileBytes } : {}),
+            ...(maxTotalBytes !== undefined ? { maxTotalBytes } : {}),
+            ...(maxFiles !== undefined ? { maxFiles } : {})
           }
         }
       : {})
@@ -288,6 +301,10 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
 
 function parseSecurityProfile(value: unknown): RuntimeSecurityProfileName | undefined {
   return value === "strict" || value === "standard" || value === "developer" ? value : undefined;
+}
+
+function toOptionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function fallbackFlat(): RunUnitFlatSubmission {

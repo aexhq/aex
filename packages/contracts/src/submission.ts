@@ -1378,6 +1378,17 @@ export interface PlatformOutputCaptureConfig {
    * platform-mandatory denies always apply and cannot be re-included.
    */
   readonly deniedDirs?: readonly string[];
+  /**
+   * Maximum time the platform may spend capturing outputs after the agent exits.
+   * Positive integer milliseconds; values above the platform maximum are clamped.
+   */
+  readonly captureTimeoutMs?: number;
+  /** Maximum size of a single captured file in bytes. Positive integer. */
+  readonly maxFileBytes?: number;
+  /** Maximum total captured output bytes for the run. Positive integer. */
+  readonly maxTotalBytes?: number;
+  /** Maximum number of captured files for the run. Positive integer. */
+  readonly maxFiles?: number;
 }
 
 export interface PlatformInjectionConfig {
@@ -1853,13 +1864,14 @@ const MAX_OUTPUT_DIRS = 32;
  * the field.
  */
 const MAX_OUTPUT_DIR_BYTES = 512;
+const MAX_OUTPUT_CAPTURE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 function parseOutputs(input: unknown): PlatformOutputCaptureConfig | undefined {
   if (input === undefined || input === null) {
     return undefined;
   }
   const value = requireRecord(input, "submission.outputs");
-  const allowed = new Set(["allowedDirs", "deniedDirs"]);
+  const allowed = new Set(["allowedDirs", "deniedDirs", "captureTimeoutMs", "maxFileBytes", "maxTotalBytes", "maxFiles"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw new Error(`submission.outputs.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
@@ -1867,13 +1879,41 @@ function parseOutputs(input: unknown): PlatformOutputCaptureConfig | undefined {
   }
   const allowedDirs = parseOutputAllowedDirs(value.allowedDirs);
   const deniedDirs = parseOutputDeniedDirs(value.deniedDirs);
-  if (!allowedDirs && !deniedDirs) {
+  const captureTimeoutMs = parseOutputPositiveInteger(value.captureTimeoutMs, "submission.outputs.captureTimeoutMs", {
+    max: MAX_OUTPUT_CAPTURE_TIMEOUT_MS,
+    clamp: true
+  });
+  const maxFileBytes = parseOutputPositiveInteger(value.maxFileBytes, "submission.outputs.maxFileBytes");
+  const maxTotalBytes = parseOutputPositiveInteger(value.maxTotalBytes, "submission.outputs.maxTotalBytes");
+  const maxFiles = parseOutputPositiveInteger(value.maxFiles, "submission.outputs.maxFiles");
+  if (!allowedDirs && !deniedDirs && captureTimeoutMs === undefined && maxFileBytes === undefined && maxTotalBytes === undefined && maxFiles === undefined) {
     return undefined;
   }
   return {
     ...(allowedDirs ? { allowedDirs } : {}),
-    ...(deniedDirs ? { deniedDirs } : {})
+    ...(deniedDirs ? { deniedDirs } : {}),
+    ...(captureTimeoutMs !== undefined ? { captureTimeoutMs } : {}),
+    ...(maxFileBytes !== undefined ? { maxFileBytes } : {}),
+    ...(maxTotalBytes !== undefined ? { maxTotalBytes } : {}),
+    ...(maxFiles !== undefined ? { maxFiles } : {})
   };
+}
+
+function parseOutputPositiveInteger(
+  input: unknown,
+  field: string,
+  options: { readonly max?: number; readonly clamp?: boolean } = {}
+): number | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "number" || !Number.isInteger(input) || input <= 0) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  if (options.max !== undefined && input > options.max) {
+    return options.clamp ? options.max : input;
+  }
+  return input;
 }
 
 function parseOutputAllowedDirs(input: unknown): readonly string[] | undefined {

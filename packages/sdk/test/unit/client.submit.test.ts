@@ -161,6 +161,31 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     ).rejects.toThrow(/AgentExecutor\.submit: secrets\.apiKey is required/);
   });
 
+  it("serializes outputs when only capture overrides are supplied", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      secrets: { apiKey: "sk-x" },
+      outputs: {
+        captureTimeoutMs: 120000,
+        maxFileBytes: 1_000_000_000_000,
+        maxTotalBytes: 1_000_000_000_000,
+        maxFiles: 50_000
+      }
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    const submission = body.submission as Record<string, unknown>;
+    expect(submission.outputs).toEqual({
+      captureTimeoutMs: 120000,
+      maxFileBytes: 1_000_000_000_000,
+      maxTotalBytes: 1_000_000_000_000,
+      maxFiles: 50_000
+    });
+  });
+
   it("submits DeepSeek provider runs with a flat apiKey", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });

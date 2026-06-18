@@ -180,6 +180,10 @@ export interface SubmitOptions {
   readonly outputs?: {
     readonly allowedDirs?: readonly string[];
     readonly deniedDirs?: readonly string[];
+    readonly captureTimeoutMs?: number;
+    readonly maxFileBytes?: number;
+    readonly maxTotalBytes?: number;
+    readonly maxFiles?: number;
   };
   /**
    * Override the managed runtime builtin extensions enabled inside the runner.
@@ -702,6 +706,7 @@ export class AgentExecutor {
       options.mcpServers ?? [],
       options.secrets.mcpServers ?? []
     );
+    const outputCapture = outputsForWire(options.outputs);
 
     const submission: PlatformSubmission = {
       model: options.model,
@@ -727,10 +732,7 @@ export class AgentExecutor {
         ? { environment: options.environment as NonNullable<PlatformSubmission["environment"]> }
         : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
-      ...(options.outputs &&
-      ((options.outputs.allowedDirs?.length ?? 0) > 0 || (options.outputs.deniedDirs?.length ?? 0) > 0)
-        ? { outputs: options.outputs }
-        : {}),
+      ...(outputCapture ? { outputs: outputCapture } : {}),
       // Pass-through `builtins` verbatim — including an empty array,
       // which is the "disable all builtins" signal. Distinguish from
       // omitted (default applies) via `!== undefined`.
@@ -1124,6 +1126,30 @@ function postHookForWire(input: PlatformPostHookInput | undefined): PlatformPost
     return undefined;
   }
   return input;
+}
+
+function outputsForWire(outputs: SubmitOptions["outputs"]): PlatformSubmission["outputs"] | undefined {
+  if (outputs === undefined) {
+    return undefined;
+  }
+  const allowedDirs = outputs.allowedDirs?.filter((dir) => dir.length > 0);
+  const deniedDirs = outputs.deniedDirs?.filter((dir) => dir.length > 0);
+  const hasNumericOverride =
+    outputs.captureTimeoutMs !== undefined ||
+    outputs.maxFileBytes !== undefined ||
+    outputs.maxTotalBytes !== undefined ||
+    outputs.maxFiles !== undefined;
+  if ((allowedDirs?.length ?? 0) === 0 && (deniedDirs?.length ?? 0) === 0 && !hasNumericOverride) {
+    return undefined;
+  }
+  return {
+    ...(allowedDirs && allowedDirs.length > 0 ? { allowedDirs } : {}),
+    ...(deniedDirs && deniedDirs.length > 0 ? { deniedDirs } : {}),
+    ...(outputs.captureTimeoutMs !== undefined ? { captureTimeoutMs: outputs.captureTimeoutMs } : {}),
+    ...(outputs.maxFileBytes !== undefined ? { maxFileBytes: outputs.maxFileBytes } : {}),
+    ...(outputs.maxTotalBytes !== undefined ? { maxTotalBytes: outputs.maxTotalBytes } : {}),
+    ...(outputs.maxFiles !== undefined ? { maxFiles: outputs.maxFiles } : {})
+  };
 }
 
 /**
