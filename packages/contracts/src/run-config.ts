@@ -79,13 +79,13 @@ export const TOOL_NAME_PATTERN = SKILL_NAME_PATTERN;
  */
 export const SKILL_BUNDLE_LIMITS = {
   /** Compressed (.zip) ceiling. */
-  maxCompressedBytes: 10 * 1024 * 1024,
+  maxCompressedBytes: 10 * 1024 * 1024 * 1024,
   /**
    * Hard ceiling for the direct-to-storage upload path. Bytes never transit the
    * hosted API, so its memory/request-payload limits do not cap accepted
    * bundles; objects above this product cap are rejected before upload.
    */
-  maxBytes: 2 * 1024 * 1024 * 1024,
+  maxBytes: 10 * 1024 * 1024 * 1024,
   /** Sum of uncompressed file sizes. */
   maxDecompressedBytes: 50 * 1024 * 1024,
   /** Number of regular file entries (directories don't count). */
