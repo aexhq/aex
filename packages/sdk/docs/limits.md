@@ -11,6 +11,15 @@ For what the product supports, see [Features](https://aex.dev/docs/features/).
 For the current provider/model set, see the generated
 [provider/runtime capability matrix](provider-runtime-capabilities.md).
 
+## Current Defaults
+
+| Area | Default |
+| --- | --- |
+| Workspace storage | 50 GiB per workspace for captured outputs and workspace artifacts. aex-maintainer admin workspaces may be unlimited for internal dogfooding; this is not a customer entitlement. |
+| Proxy request body | 10 MiB per proxy endpoint unless the endpoint declares a different `maxRequestBytes`. |
+| Proxy timeout | 5 minutes per proxy endpoint unless the endpoint declares a different `timeoutMs`. |
+| Proxy telemetry | Proxy calls emit report-only usage telemetry for call count, failed calls, request bytes, response bytes when known, and duration. Public proxy pricing is not shipped unless documented later. |
+
 ## Product Boundaries
 
 | Area | Boundary |
@@ -24,7 +33,7 @@ For the current provider/model set, see the generated
 | Human review | Runs execute after submission. Cancellation is available, but aex does not pause a run for platform-mediated approval or interactive clarification. |
 | Agent identity | The durable product primitive is the run record. Persistent agent profiles, stateful memory, reusable sessions, and saved agent definitions are out of scope. |
 | Deployment | The supported product is the hosted aex service plus the SDK and CLI. Alternate `baseUrl` values are for local, staging, or hosted aex API planes, not a self-host product promise. |
-| Cost | BYOK provider-token charges accrue to the customer's provider account. Managed-key billing, free trials, billing-grade cost telemetry, and public pricing documents are not shipped unless documented later. |
+| Cost | BYOK provider-token charges accrue to the customer's provider account. aex records report-only telemetry for runtime, storage, and proxy usage; free trials, billing-grade invoices, and public pricing documents are not shipped unless documented later. |
 
 ## Provider Policy Links
 

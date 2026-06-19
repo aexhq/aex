@@ -13,7 +13,7 @@ Allowed fields:
 - `system` - optional system message.
 - `skills` - array of storage-neutral `kind:"asset"` refs. Config files cannot carry local draft bytes; use `Skill.fromPath(...)` / `Skill.fromFiles(...)` in SDK code first, or reference an existing asset/catalog skill.
 - `mcpServers` - array of `McpServerRef`; headers are split into `secrets.mcpServers` server-side.
-- `environment` - `{ networking?, packages?, envVars? }`. `envVars` are merged into the in-container `RUNTIME.env` / `RUNTIME.json` mounts.
+- `environment` - `{ networking?, packages?, envVars? }`. Networking is open by default; set `networking.mode` to `limited` only when you want an allowlist. `envVars` are merged into the in-container `RUNTIME.env` / `RUNTIME.json` mounts.
 - `runtimeSize` - optional managed-runtime preset. Prefer `RuntimeSizes` in TypeScript.
 - `timeout` - optional run deadline duration string such as `"30m"` or `"2h"`.
 - `postHook` - optional post-agent verifier `{ command, timeout?, maxTurns?, maxChars? }`. It runs after a successful agent process; a failing or timed-out command is sent back to the agent for repair until `maxTurns` is exhausted. Empty `command` is treated as omitted.

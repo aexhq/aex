@@ -912,7 +912,7 @@ export async function findSkillByName(http: HttpClient, name: string): Promise<S
 }
 
 // ===========================================================================
-// AgentsMd (workspace_files kind='agentsmd') operations
+// AgentsMd upload helpers. Launch submissions use content-addressed asset refs.
 // ===========================================================================
 
 /**
@@ -974,7 +974,7 @@ function unwrapAgentsMd(
 }
 
 // ===========================================================================
-// File (workspace_files kind='file') operations
+// File upload helpers. Launch submissions use content-addressed asset refs.
 // ===========================================================================
 
 /**

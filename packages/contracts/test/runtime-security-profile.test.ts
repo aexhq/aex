@@ -37,7 +37,7 @@ describe("runtime security profiles", () => {
 
   it("defaults omitted profile policy to standard", () => {
     expect(resolveRuntimeSecurityProfile(undefined).name).toBe("standard");
-    expect(resolveRuntimeSecurityProfile(undefined).defaultNetworkingMode).toBe("limited");
+    expect(resolveRuntimeSecurityProfile(undefined).defaultNetworkingMode).toBe("open");
   });
 
   it("keeps the profile as an additive submission snapshot field", () => {

@@ -18,8 +18,6 @@ export type RunDeletionCandidateStatus = (typeof RUN_DELETION_CANDIDATE_STATUSES
 
 export const RUN_DELETION_BLOCKERS = [
   "non_terminal",
-  "already_deleted",
-  "concurrent_delete",
   "retention_policy_disabled",
   "unexpired",
   "held",
@@ -101,8 +99,6 @@ export interface RunDeletionCandidateRunV1 {
   readonly status: RunStatus | string;
   readonly createdAt?: string;
   readonly terminalAt?: string;
-  readonly pendingDeleteAt?: string;
-  readonly deletedAt?: string;
   readonly held?: boolean;
   readonly retentionExempt?: boolean;
   readonly unresolvedCleanup?: boolean;
@@ -144,8 +140,6 @@ export interface RunDeletionManifestRunV1 {
   readonly createdAt?: string;
   readonly terminalAt?: string;
   readonly eligibleAt?: string;
-  readonly pendingDeleteAt?: string;
-  readonly deletedAt?: string;
 }
 
 export interface RunDeletionManifestRequestV1 {
@@ -522,8 +516,6 @@ function normalizeCandidateRun(input: RunDeletionCandidateRunV1): RunDeletionCan
     status: assertSafeMetadataString(input.status, "run.status"),
     ...(input.createdAt ? { createdAt: assertTimestamp(input.createdAt, "run.createdAt") } : {}),
     ...(input.terminalAt ? { terminalAt: assertTimestamp(input.terminalAt, "run.terminalAt") } : {}),
-    ...(input.pendingDeleteAt ? { pendingDeleteAt: assertTimestamp(input.pendingDeleteAt, "run.pendingDeleteAt") } : {}),
-    ...(input.deletedAt ? { deletedAt: assertTimestamp(input.deletedAt, "run.deletedAt") } : {}),
     ...(input.held !== undefined ? { held: input.held } : {}),
     ...(input.retentionExempt !== undefined ? { retentionExempt: input.retentionExempt } : {}),
     ...(input.unresolvedCleanup !== undefined ? { unresolvedCleanup: input.unresolvedCleanup } : {}),
@@ -542,9 +534,7 @@ function normalizeManifestRun(
     status: run.status,
     ...(run.createdAt ? { createdAt: run.createdAt } : {}),
     ...(run.terminalAt ? { terminalAt: run.terminalAt } : {}),
-    ...(eligibleAt ? { eligibleAt: assertTimestamp(eligibleAt, "run.eligibleAt") } : {}),
-    ...(run.pendingDeleteAt ? { pendingDeleteAt: run.pendingDeleteAt } : {}),
-    ...(run.deletedAt ? { deletedAt: run.deletedAt } : {})
+    ...(eligibleAt ? { eligibleAt: assertTimestamp(eligibleAt, "run.eligibleAt") } : {})
   });
 }
 
@@ -637,11 +627,7 @@ function addRunBlockers(
   run: RunDeletionCandidateRunV1,
   observedAt: string
 ): void {
-  if (run.status === "deleted") {
-    blockers.push(blocker("already_deleted", observedAt));
-  } else if (run.status === "pending_delete" || run.pendingDeleteAt) {
-    blockers.push(blocker("concurrent_delete", observedAt));
-  } else if (!isTerminalStatusLike(run.status)) {
+  if (!isTerminalStatusLike(run.status)) {
     blockers.push(blocker("non_terminal", observedAt));
   }
 

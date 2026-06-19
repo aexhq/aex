@@ -124,25 +124,23 @@ upstream = json.loads(base64.b64decode(envelope["upstreamBodyBase64"]).decode())
 content = upstream["choices"][0]["message"]["content"]  # the model's JSON answer
 ```
 
-The key is injected by the BFF on the outbound call; it never appears on disk in
+The key is injected by the hosted proxy on the outbound call; it never appears on disk in
 the container or in the model's context.
 
-## `maxRequestBytes` is required for image POSTs
+## `maxRequestBytes` and timeout defaults
 
-The per-endpoint `maxRequestBytes` default is **1 MiB**. A base64 data-URL image
-is ~1.33x the raw bytes, so a ~480px JPEG (~40-150 KB raw) becomes ~55-200 KB in
-the request — within the default, but only just. **Set `maxRequestBytes`
-explicitly** (a couple of MB) whenever you POST images so a higher-res frame or a
-larger prompt does not trip the cap. If a body does exceed the cap, the proxy
-rejects it before any upstream call with an explicit error naming the observed
-size, the configured cap, and how to raise it:
+The per-endpoint `maxRequestBytes` default is **10 MiB** and the default timeout
+is **5 minutes**. That fits typical base64 image/model POSTs without extra
+configuration. If a body does exceed the cap, the proxy rejects it before any
+upstream call with an explicit error naming the observed size, the configured
+cap, and how to raise it:
 
 > request body is 2400000 bytes, which exceeds this endpoint's maxRequestBytes
-> (1048576). Raise the per-endpoint maxRequestBytes in the proxy endpoint policy …
+> (10485760). Raise the per-endpoint maxRequestBytes in the proxy endpoint policy …
 
-Two ways to stay under the cap: raise `maxRequestBytes`, and/or scale frames to
-~480px wide before captioning (`ffmpeg -i source.mp4 -vf fps=1,scale=480:-1
-frame_%03d.jpg`) — full-res adds payload and cost, not signal.
+Two ways to stay under the cap: raise `maxRequestBytes`, and/or scale frames
+before captioning (`ffmpeg -i source.mp4 -vf fps=1,scale=960:-1 frame_%03d.jpg`)
+so full-res frames do not add payload and model cost without useful signal.
 
 ## Notes
 

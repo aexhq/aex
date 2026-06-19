@@ -14,7 +14,7 @@ describe("platform status contracts", () => {
     expect(isTerminalRunStatus("cleanup_failed")).toBe(true);
     expect(isTerminalRunStatus("provider_running")).toBe(false);
     expect(getRunStatusKind("queued")).toBe("active");
-    expect(getRunStatusKind("pending_delete")).toBe("terminal");
+    expect(getRunStatusKind("cleanup_failed")).toBe("terminal");
   });
 
   it("RUN_TERMINAL_OUTCOMES is exactly the four funnel write-outcomes", () => {

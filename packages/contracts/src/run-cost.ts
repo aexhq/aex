@@ -1,5 +1,4 @@
-import type { CredentialMode } from "./managed-key.js";
-import type { RunProvider, RuntimeKind } from "./submission.js";
+import type { CredentialMode, RunProvider, RuntimeKind } from "./submission.js";
 
 export const RUN_COST_TELEMETRY_SCHEMA_VERSION = 1;
 export const RUN_USAGE_SAMPLE_SCHEMA_VERSION = 1;
@@ -35,9 +34,6 @@ export const RUN_USAGE_SAMPLE_SOURCE_TYPES = [
   "runtime-job",
   "provider-session",
   "storage-accrual",
-  "billing-reservation",
-  "billing-settlement",
-  "billing-release",
   "manual-adjustment"
 ] as const;
 
@@ -71,10 +67,7 @@ export const RUN_USAGE_SAMPLE_METRICS = [
   "proxy.failed_call_count",
   "proxy.request_bytes",
   "proxy.response_bytes",
-  "proxy.duration_ms",
-  "managed_key.reserved_credit_units",
-  "managed_key.charged_credit_units",
-  "managed_key.released_credit_units"
+  "proxy.duration_ms"
 ] as const;
 
 export type RunUsageSampleMetric = (typeof RUN_USAGE_SAMPLE_METRICS)[number];
@@ -107,10 +100,7 @@ const RUN_USAGE_SAMPLE_METRIC_UNITS = {
   "proxy.failed_call_count": "count",
   "proxy.request_bytes": "byte",
   "proxy.response_bytes": "byte",
-  "proxy.duration_ms": "millisecond",
-  "managed_key.reserved_credit_units": "credit_unit",
-  "managed_key.charged_credit_units": "credit_unit",
-  "managed_key.released_credit_units": "credit_unit"
+  "proxy.duration_ms": "millisecond"
 } satisfies Record<RunUsageSampleMetric, RunUsageSampleUnit>;
 
 export interface RunUsageSampleSource {
@@ -200,13 +190,6 @@ export interface RunCostProxyTelemetry {
   readonly durationMs?: number;
 }
 
-export interface RunCostManagedKeyBudgetTelemetry {
-  readonly credentialMode?: CredentialMode;
-  readonly reservedCreditUnits?: number;
-  readonly chargedCreditUnits?: number;
-  readonly releasedCreditUnits?: number;
-}
-
 /**
  * The basis for a {@link RunCostTelemetry.billedCostUsd}: an honest marker of
  * whether the figure is a settle-time ESTIMATE or has been RECONCILED against
@@ -239,7 +222,6 @@ export interface RunCostTelemetry {
   readonly providerUsage?: readonly RunCostProviderUsage[];
   readonly storage?: RunCostStorageTelemetry;
   readonly proxy?: RunCostProxyTelemetry;
-  readonly managedKey?: RunCostManagedKeyBudgetTelemetry;
   /**
    * Customer-facing AEX cost of serving this run, USD — a REPORTED ESTIMATE,
    * not a charge (telemetry/showback only; no invoicing or credit deduction).
@@ -327,7 +309,6 @@ export function buildRunCostTelemetry(input: RunCostTelemetryInput): RunCostTele
     ...(input.providerUsage ? { providerUsage: input.providerUsage.map(normalizeProviderUsage) } : {}),
     ...(input.storage ? { storage: normalizeStorage(input.storage) } : {}),
     ...(input.proxy ? { proxy: normalizeProxy(input.proxy) } : {}),
-    ...(input.managedKey ? { managedKey: normalizeManagedKey(input.managedKey) } : {}),
     ...(input.billedCostUsd !== undefined ? { billedCostUsd: nonNegativeFinite(input.billedCostUsd, "billedCostUsd") } : {}),
     ...(input.costBasis ? { costBasis: normalizeCostBasis(input.costBasis) } : {})
   });
@@ -352,10 +333,8 @@ export function buildRunCostTelemetryFromUsageSamples(
   const capture: Partial<Omit<RunCostCaptureTelemetry, "attempted" | "failureReasons">> = {};
   const storage: Partial<Record<keyof RunCostStorageTelemetry, number>> = {};
   const proxy: Partial<Record<keyof RunCostProxyTelemetry, number>> = {};
-  const managedKey: Partial<Record<"reservedCreditUnits" | "chargedCreditUnits" | "releasedCreditUnits", number>> = {};
   const providerUsage = new Map<string, MutableProviderUsage>();
   let captureAttempted = false;
-  let managedKeyCredentialMode: CredentialMode | undefined;
 
   for (const sample of samples) {
     switch (sample.metric) {
@@ -446,18 +425,6 @@ export function buildRunCostTelemetryFromUsageSamples(
       case "proxy.duration_ms":
         addDraftNumber(proxy, "durationMs", sample.quantity);
         break;
-      case "managed_key.reserved_credit_units":
-        managedKeyCredentialMode = sample.credentialMode ?? managedKeyCredentialMode;
-        addDraftNumber(managedKey, "reservedCreditUnits", sample.quantity);
-        break;
-      case "managed_key.charged_credit_units":
-        managedKeyCredentialMode = sample.credentialMode ?? managedKeyCredentialMode;
-        addDraftNumber(managedKey, "chargedCreditUnits", sample.quantity);
-        break;
-      case "managed_key.released_credit_units":
-        managedKeyCredentialMode = sample.credentialMode ?? managedKeyCredentialMode;
-        addDraftNumber(managedKey, "releasedCreditUnits", sample.quantity);
-        break;
     }
   }
 
@@ -472,12 +439,6 @@ export function buildRunCostTelemetryFromUsageSamples(
   }
   if (Object.keys(storage).length > 0) telemetry.storage = storage;
   if (Object.keys(proxy).length > 0) telemetry.proxy = proxy;
-  if (Object.keys(managedKey).length > 0 || managedKeyCredentialMode) {
-    telemetry.managedKey = {
-      ...(managedKeyCredentialMode ? { credentialMode: managedKeyCredentialMode } : {}),
-      ...managedKey
-    };
-  }
 
   return buildRunCostTelemetry(telemetry);
 }
@@ -514,7 +475,6 @@ export function mergeRunCostTelemetry(
   const providerUsage = [...(base.providerUsage ?? []), ...(patch.providerUsage ?? [])];
   const storage = sumStorage(base.storage, patch.storage);
   const proxy = sumProxy(base.proxy, patch.proxy);
-  const managedKey = mergeManagedKey(base.managedKey, patch.managedKey);
   // Derived cost fields are LAST-WRITER-WINS (a re-derivation supersedes the
   // prior estimate), not summed — they are projections of the whole sample set,
   // not additive metrics.
@@ -533,7 +493,6 @@ export function mergeRunCostTelemetry(
   if (providerUsage.length > 0) merged.providerUsage = providerUsage;
   if (storage) merged.storage = storage;
   if (proxy) merged.proxy = proxy;
-  if (managedKey) merged.managedKey = managedKey;
   if (billedCostUsd !== undefined) merged.billedCostUsd = billedCostUsd;
   if (costBasis) merged.costBasis = costBasis;
   return buildRunCostTelemetry(merged);
@@ -615,17 +574,6 @@ function normalizeProxy(input: RunCostProxyTelemetry): RunCostProxyTelemetry {
     requestBytes: input.requestBytes,
     responseBytes: input.responseBytes,
     durationMs: input.durationMs
-  });
-}
-
-function normalizeManagedKey(input: RunCostManagedKeyBudgetTelemetry): RunCostManagedKeyBudgetTelemetry {
-  return Object.freeze({
-    ...(input.credentialMode ? { credentialMode: input.credentialMode } : {}),
-    ...freezeOptionalNumbers<"reservedCreditUnits" | "chargedCreditUnits" | "releasedCreditUnits">({
-      reservedCreditUnits: input.reservedCreditUnits,
-      chargedCreditUnits: input.chargedCreditUnits,
-      releasedCreditUnits: input.releasedCreditUnits
-    })
   });
 }
 
@@ -847,22 +795,6 @@ function mergeCapture(
     failedFiles: (base?.failedFiles ?? 0) + (next?.failedFiles ?? 0),
     totalBytes: (base?.totalBytes ?? 0) + (next?.totalBytes ?? 0),
     ...(failureReasons.length > 0 ? { failureReasons } : {})
-  });
-}
-
-function mergeManagedKey(
-  base: RunCostManagedKeyBudgetTelemetry | undefined,
-  next: RunCostManagedKeyBudgetTelemetry | undefined
-): RunCostManagedKeyBudgetTelemetry | undefined {
-  if (!base && !next) {
-    return undefined;
-  }
-  const credentialMode = next?.credentialMode ?? base?.credentialMode;
-  return normalizeManagedKey({
-    ...(credentialMode ? { credentialMode } : {}),
-    reservedCreditUnits: (base?.reservedCreditUnits ?? 0) + (next?.reservedCreditUnits ?? 0),
-    chargedCreditUnits: (base?.chargedCreditUnits ?? 0) + (next?.chargedCreditUnits ?? 0),
-    releasedCreditUnits: (base?.releasedCreditUnits ?? 0) + (next?.releasedCreditUnits ?? 0)
   });
 }
 

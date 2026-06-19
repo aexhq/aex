@@ -158,7 +158,7 @@ export const ASSET_ID_PATTERN = /^asset_[A-Za-z0-9_-]{8,128}$/;
 
 // ---------------------------------------------------------------------------
 // AgentsMd refs — the second of the three SDK concepts.
-// Stored on `workspace_files` with kind='agentsmd', `amd_*` ids.
+// Submitted as content-addressed `asset_<hash>` refs.
 // Attach mechanism: prepended as the first user message in the
 // session (matches Claude Code's CLAUDE.md behaviour).
 // AgentsMd is prepended as run-scoped instruction context.
@@ -312,10 +312,10 @@ export function parseAssetRefFields(
 // ---------------------------------------------------------------------------
 
 /**
- * Manifest entry persisted in `skill_bundles.manifest` and
- * `run_skill_snapshots.manifest`. `path` is forward-slash, relative,
- * normalised. `mode` is the stored POSIX mode (sanitised, NOT the user's
- * filesystem mode) — see `SKILL_BUNDLE_LIMITS.defaultFileMode`.
+ * Manifest entry persisted in `skill_bundles.manifest` and in run-owned
+ * snapshots. `path` is forward-slash, relative, normalised. `mode` is the
+ * stored POSIX mode (sanitised, NOT the user's filesystem mode) — see
+ * `SKILL_BUNDLE_LIMITS.defaultFileMode`.
  */
 export interface SkillBundleEntry {
   readonly path: string;
@@ -644,11 +644,10 @@ export function rejectStdioMcpShape(record: Record<string, unknown>): void {
 /**
  * Reasons an IP-literal host should be refused. Returns null when the
  * literal is a routable public address (or not an IP literal at all — name
- * resolution is the caller's concern). This in-package copy of the
- * numeric-range deny-list is kept byte-identical to
- * platform/packages/shared/src/blueprint.ts by the contract-parity gate, so
- * the shared MCP parser, the Worker BYOK proxy handlers, and
- * `submission.parseProxyBaseUrl` all classify the same bytes.
+ * resolution is the caller's concern). This numeric-range deny-list is kept
+ * in parity across the public contract parser and platform shared parser so
+ * the MCP parser, BYOK proxy handlers, and `submission.parseProxyBaseUrl`
+ * classify the same bytes.
  *
  * `host` is the already-bracket-stripped, lowercased hostname.
  *

@@ -102,7 +102,7 @@ node /mnt/session/uploads/aex/aex proxy stripe \
   --response-mode headers_only
 ```
 
-The CLI reads the per-run bearer from `/mnt/session/uploads/aex/run-token`, attaches the `X-Aex-Proxy-Protocol` header, and the BFF injects the bearer/header/query/basic credential before dispatching the outbound call. Only the response (subject to `responseMode` and `maxResponseBytes`) reaches the container. `--response-mode` can only narrow below the policy ceiling.
+The CLI reads the per-run bearer from `/mnt/session/uploads/aex/run-token`, attaches the `X-Aex-Proxy-Protocol` header, and the hosted proxy injects the bearer/header/query/basic credential before dispatching the outbound call. Only the response (subject to `responseMode` and `maxResponseBytes`) reaches the container. `--response-mode` can only narrow below the policy ceiling.
 
 Retries are declaration-based. Add `retry` to the endpoint policy when safe for that upstream; runs without `retry` keep single-attempt behavior. `maxAttempts` counts the initial request, and defaults apply only when `retry` is present: `maxAttempts: 3`, `initialDelayMs: 250`, `maxDelayMs: 5000`, `jitter: "full"`, `retryOnStatuses: [408, 425, 429, 500, 502, 503, 504]`, `retryOnMethods: ["GET", "HEAD"]`, and `respectRetryAfter: true`. There are no per-call `aex proxy` retry flags.
 
@@ -129,7 +129,7 @@ const runId = await aex.submit({
 });
 ```
 
-The keyless endpoint still routes through the aex managed proxy: every call is allow-listed, audited, and redacted. The BFF injects no `Authorization` header and no query-string credential. Shipping a `proxyEndpointAuth` entry for a `none`-shape endpoint is rejected at submission time. Equivalent class-based form:
+The keyless endpoint still routes through the aex managed proxy: every call is allow-listed, audited, and redacted. The hosted proxy injects no `Authorization` header and no query-string credential. Shipping a `proxyEndpointAuth` entry for a `none`-shape endpoint is rejected at submission time. Equivalent class-based form:
 
 ```ts
 import { ProxyEndpoint } from "@aexhq/sdk";
@@ -146,7 +146,9 @@ ProxyEndpoint.none({
 
 ### Networking
 
-When a run uses `limited` networking, the platform host must appear in `allowed_hosts`. The worker injects it automatically; for advance validation use:
+Networking is open by default. When a run explicitly uses `limited` networking,
+the platform host must appear in `allowed_hosts`. aex injects it
+automatically; for advance validation use:
 
 ```ts
 const allowedHosts = buildPlatformAllowedHosts({

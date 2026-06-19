@@ -1,13 +1,10 @@
-import type { CredentialMode } from "./managed-key.js";
 import type { RunStatus } from "./status.js";
-import type { RunProvider, RuntimeKind } from "./submission.js";
+import type { CredentialMode, RunProvider, RuntimeKind } from "./submission.js";
 
 export const CUSTODY_MANIFEST_SCHEMA_VERSION = 1;
-export const CUSTODY_TOMBSTONE_SCHEMA_VERSION = 1;
 export const CUSTODY_REDACTION_SCANNER_VERSION = 1;
 
 export const CUSTODY_MANIFEST_KIND = "aex.custody_manifest.v1";
-export const CUSTODY_TOMBSTONE_KIND = "aex.custody_tombstone.v1";
 export const CUSTODY_MANIFEST_CONTENT_TYPE = "application/json; charset=utf-8";
 export const CUSTODY_MANIFEST_RUN_REL_PATH = "metadata/custody.json";
 
@@ -112,23 +109,6 @@ export const CUSTODY_MANIFEST_EXCLUDED_VALUE_CLASSES = [
 ] as const;
 export type CustodyManifestExcludedValueClass =
   (typeof CUSTODY_MANIFEST_EXCLUDED_VALUE_CLASSES)[number];
-
-export const CUSTODY_TOMBSTONE_MANIFEST_STATUSES = [
-  "written",
-  "not_written",
-  "write_failed",
-  "purged"
-] as const;
-export type CustodyTombstoneManifestStatus =
-  (typeof CUSTODY_TOMBSTONE_MANIFEST_STATUSES)[number];
-
-export const CUSTODY_TOMBSTONE_DELETION_STATUSES = [
-  "not_deleted",
-  "pending_delete",
-  "deleted"
-] as const;
-export type CustodyTombstoneDeletionStatus =
-  (typeof CUSTODY_TOMBSTONE_DELETION_STATUSES)[number];
 
 export interface CustodyManifestRunV1 {
   readonly runId: string;
@@ -251,55 +231,6 @@ export interface CustodyManifestInput {
   readonly secrets?: readonly CustodyManifestSecretClassInput[];
   readonly resources?: readonly CustodyManifestResourceClassInput[];
   readonly cleanup?: CustodyManifestCleanupInput;
-}
-
-export interface CustodyTombstoneRunV1 {
-  readonly runId: string;
-  readonly workspaceId: string;
-  readonly terminalStatus: RunStatus | string;
-  readonly terminalAt?: string;
-}
-
-export interface CustodyTombstoneManifestV1 {
-  readonly schemaVersion: typeof CUSTODY_MANIFEST_SCHEMA_VERSION;
-  readonly status: CustodyTombstoneManifestStatus;
-  readonly generatedAt?: string;
-  readonly finalizedAt?: string;
-  readonly tombstonedAt: string;
-}
-
-export interface CustodyTombstoneDeletionV1 {
-  readonly status: CustodyTombstoneDeletionStatus;
-  readonly pendingAt?: string;
-  readonly deletedAt?: string;
-}
-
-export interface CustodyTombstoneRetentionV1 {
-  readonly defaultPolicy: "retain_indefinitely";
-  readonly userAction: "purge_or_anonymize_later";
-}
-
-export interface CustodyTombstoneV1 {
-  readonly schemaVersion: typeof CUSTODY_TOMBSTONE_SCHEMA_VERSION;
-  readonly kind: typeof CUSTODY_TOMBSTONE_KIND;
-  readonly run: CustodyTombstoneRunV1;
-  readonly manifest: CustodyTombstoneManifestV1;
-  readonly summary: CustodyManifestSummaryV1;
-  readonly deletion: CustodyTombstoneDeletionV1;
-  readonly retention: CustodyTombstoneRetentionV1;
-}
-
-export interface CustodyTombstoneInput {
-  readonly run: CustodyTombstoneRunV1;
-  readonly manifest: Omit<CustodyTombstoneManifestV1, "schemaVersion">;
-  readonly summary: CustodyManifestSummaryV1;
-  readonly deletion?: CustodyTombstoneDeletionV1;
-}
-
-export interface CustodyTombstoneFromManifestInput {
-  readonly manifestStatus?: CustodyTombstoneManifestStatus;
-  readonly tombstonedAt: string;
-  readonly deletion?: CustodyTombstoneDeletionV1;
 }
 
 export interface CustodyManifestWriteObject {
@@ -432,45 +363,6 @@ export function buildCustodyManifest(input: CustodyManifestInput): CustodyManife
   }) satisfies CustodyManifestV1;
   assertPublicSafeCustodyPayload(manifest);
   return manifest;
-}
-
-export function buildCustodyTombstone(input: CustodyTombstoneInput): CustodyTombstoneV1 {
-  const tombstone = Object.freeze({
-    schemaVersion: CUSTODY_TOMBSTONE_SCHEMA_VERSION,
-    kind: CUSTODY_TOMBSTONE_KIND,
-    run: normalizeTombstoneRun(input.run),
-    manifest: normalizeTombstoneManifest(input.manifest),
-    summary: normalizeSummary(input.summary),
-    deletion: normalizeTombstoneDeletion(input.deletion ?? { status: "not_deleted" }),
-    retention: Object.freeze({
-      defaultPolicy: "retain_indefinitely" as const,
-      userAction: "purge_or_anonymize_later" as const
-    })
-  }) satisfies CustodyTombstoneV1;
-  assertPublicSafeCustodyPayload(tombstone);
-  return tombstone;
-}
-
-export function buildCustodyTombstoneFromManifest(
-  manifest: CustodyManifestV1,
-  input: CustodyTombstoneFromManifestInput
-): CustodyTombstoneV1 {
-  return buildCustodyTombstone({
-    run: {
-      runId: manifest.run.runId,
-      workspaceId: manifest.run.workspaceId,
-      terminalStatus: manifest.run.terminalStatus,
-      ...(manifest.run.terminalAt ? { terminalAt: manifest.run.terminalAt } : {})
-    },
-    manifest: {
-      status: input.manifestStatus ?? "written",
-      generatedAt: manifest.generatedAt,
-      ...(manifest.finalizedAt ? { finalizedAt: manifest.finalizedAt } : {}),
-      tombstonedAt: input.tombstonedAt
-    },
-    summary: manifest.summary,
-    ...(input.deletion ? { deletion: input.deletion } : {})
-  });
 }
 
 export function scanCustodyPayloadForSensitiveValues(input: unknown): readonly CustodyRedactionFinding[] {
@@ -644,35 +536,6 @@ function normalizeSummary(input: CustodyManifestSummaryV1): CustodyManifestSumma
   });
 }
 
-function normalizeTombstoneRun(input: CustodyTombstoneRunV1): CustodyTombstoneRunV1 {
-  return Object.freeze({
-    runId: assertSafeIdentifier(input.runId, "tombstone.run.runId"),
-    workspaceId: assertSafeIdentifier(input.workspaceId, "tombstone.run.workspaceId"),
-    terminalStatus: assertSafeMetadataString(input.terminalStatus, "tombstone.run.terminalStatus"),
-    ...(input.terminalAt ? { terminalAt: assertTimestamp(input.terminalAt, "tombstone.run.terminalAt") } : {})
-  });
-}
-
-function normalizeTombstoneManifest(
-  input: Omit<CustodyTombstoneManifestV1, "schemaVersion">
-): CustodyTombstoneManifestV1 {
-  return Object.freeze({
-    schemaVersion: CUSTODY_MANIFEST_SCHEMA_VERSION,
-    status: input.status,
-    ...(input.generatedAt ? { generatedAt: assertTimestamp(input.generatedAt, "tombstone.manifest.generatedAt") } : {}),
-    ...(input.finalizedAt ? { finalizedAt: assertTimestamp(input.finalizedAt, "tombstone.manifest.finalizedAt") } : {}),
-    tombstonedAt: assertTimestamp(input.tombstonedAt, "tombstone.manifest.tombstonedAt")
-  });
-}
-
-function normalizeTombstoneDeletion(input: CustodyTombstoneDeletionV1): CustodyTombstoneDeletionV1 {
-  return Object.freeze({
-    status: input.status,
-    ...(input.pendingAt ? { pendingAt: assertTimestamp(input.pendingAt, "tombstone.deletion.pendingAt") } : {}),
-    ...(input.deletedAt ? { deletedAt: assertTimestamp(input.deletedAt, "tombstone.deletion.deletedAt") } : {})
-  });
-}
-
 function visitCustodyValue(
   input: unknown,
   path: string,
@@ -762,13 +625,9 @@ const forbiddenStringPatterns: readonly {
   {
     reason: "private_resource_handle",
     // `<keyword><sep><id>` opaque handles (`session_a1B2c3D4e5`, `file_9f8e7d…`).
-    // The keyword set overlaps ordinary English (agent/file/skill/resource/…), so
-    // the bare shape also matched documentation prose that simply chains those
-    // words with `_`/`-` (`agent_decision_failure`, `file_grounded`,
-    // `session_handoff_contract`, `agent-judgment` — read straight out of a
-    // skill-pack doc in tool-result text). The `accept` predicate keeps the shape
-    // but requires the id segment to look minted rather than spelled — i.e. carry
-    // a digit — so genuine handles stay flagged while dictionary-word prose does not.
+    // The keyword set overlaps ordinary prose, so require the id segment to
+    // carry a digit. That keeps genuine minted handles flagged while avoiding
+    // dictionary-word chains such as `agent_decision_failure`.
     regex: /\b(?:machine|session|agent|file|skill|env|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i,
     accept: isMintedResourceHandle
   },
@@ -815,15 +674,6 @@ function isHighEntropySecretRun(run: string): boolean {
   return highEntropyShannonBits(run) >= 3.0;
 }
 
-/**
- * Decide whether a `<keyword><sep><id>` shape-match is a genuinely minted private
- * handle rather than dictionary-word prose. The id segment (everything after the
- * first `_`/`-`/`:`) must carry a digit — the property that separates a minted
- * opaque handle (`session_a1B2c3D4e5`, `file_9f8e7d6c5b4a`, `machine_1234567890`)
- * from a chain of English words (`agent_decision_failure`, `file_grounded`). This
- * mirrors `isHighEntropySecretRun`'s letter+digit requirement: a prefixless secret
- * blob and a minted handle both carry digits; prose does not.
- */
 function isMintedResourceHandle(match: string): boolean {
   const separatorIndex = match.search(/[_:-]/);
   const id = match.slice(separatorIndex + 1);

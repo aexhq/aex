@@ -16,13 +16,13 @@ describe("user-test install artifact resolution", () => {
 
   it("uses AEX_USER_TEST_VERSION when set", async () => {
     const spec = await resolveInstallSpec({
-      env: { AEX_USER_TEST_VERSION: "0.13.3" },
+      env: { AEX_USER_TEST_VERSION: "1.2.3" },
       packLocalSdk: async () => {
         throw new Error("local pack must not run for explicit version");
       }
     });
 
-    expect(spec).toEqual({ spec: "@aexhq/sdk@0.13.3", source: "registry" });
+    expect(spec).toEqual({ spec: "@aexhq/sdk@1.2.3", source: "registry" });
   });
 
   it("rejects when tarball and version are both set", async () => {
@@ -30,7 +30,7 @@ describe("user-test install artifact resolution", () => {
       resolveInstallSpec({
         env: {
           AEX_USER_TEST_TARBALL: "/tmp/aexhq-sdk-0.0.0.tgz",
-          AEX_USER_TEST_VERSION: "0.13.3"
+          AEX_USER_TEST_VERSION: "1.2.3"
         }
       })
     ).rejects.toThrow(/mutually exclusive/);
@@ -51,13 +51,13 @@ describe("user-test install artifact resolution", () => {
       env: {},
       packLocalSdk: async () => {
         packCalls++;
-        return "/tmp/aex-local/aexhq-sdk-0.13.3.tgz";
+        return "/tmp/aex-local/aexhq-sdk-1.2.3.tgz";
       }
     });
 
     expect(packCalls).toBe(1);
     expect(spec).toEqual({
-      spec: "/tmp/aex-local/aexhq-sdk-0.13.3.tgz",
+      spec: "/tmp/aex-local/aexhq-sdk-1.2.3.tgz",
       source: "local-pack"
     });
   });

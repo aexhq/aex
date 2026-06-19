@@ -204,16 +204,23 @@ export interface ProxyIndexEntry {
  * default. A customer can opt into a per-response truncation cap by setting a
  * positive value. There is no cumulative per-run call/byte budget: it needed a
  * per-call counter on the hot path and only existed to bound memory, which
- * streaming already does.
+ * streaming already does. The platform records named-proxy request bytes,
+ * response bytes, attempts, and retries as run-log usage telemetry only; no
+ * pricing/charging model is derived here.
  */
 export const PROXY_ENDPOINT_DEFAULTS = {
   allowHeaders: [] as readonly string[],
   responseMode: "headers_only" as ProxyResponseMode,
-  maxRequestBytes: 64 * 1024,
+  // 10 MiB. The body is buffered into the Worker to enforce this cap, while the
+  // launch default fits practical multimodal/tool POSTs without every endpoint
+  // needing an override.
+  maxRequestBytes: 10 * 1024 * 1024,
   // Unlimited (0). The request body is buffered to enforce its cap, so that
   // stays finite; the response is streamed, so it does not need one.
   maxResponseBytes: 0,
-  timeoutMs: 10_000
+  // 5 minutes. Long-running upstream tool/model calls should not fail under a
+  // development-oriented 10s ceiling; endpoints can still set a smaller value.
+  timeoutMs: 5 * 60 * 1000
 } as const;
 
 /**

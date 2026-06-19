@@ -19,8 +19,7 @@
  * `test:user:providers` (see vitest.providers.config.ts and the manually
  * dispatched .github/workflows/live-on-demand-tests.yml, which runs every
  * optional suite in one trigger), so the per-provider matrix never piles spend
- * onto every push. It is also the evidence that flips
- * the `doubao` provider from `live-unverified` to `supported`
+ * onto every push. It is also the live provider evidence for `doubao`
  * (provider-support.ts). Defaults to the cheap Seed 1.6 Flash tier and the
  * international BytePlus gateway; set AEX_USER_TEST_DOUBAO_PROVIDER=doubao-cn to
  * exercise the China Volcengine gateway instead.
@@ -50,11 +49,10 @@ function requireEnv(name: string): string {
   return value;
 }
 
-// Doubao ships `live-unverified`, so unlike the DeepSeek workhorse (which
-// throws on a missing key — that secret is a hard contract for the default
-// sweep) this self-skips when DOUBAO_API_KEY is absent. The on-demand
-// live-on-demand-tests workflow provisions the key and runs this; a green run
-// is the evidence to promote `doubao` to `supported` (provider-support.ts).
+// Doubao's provider evidence lives in the on-demand provider suite, so unlike
+// the DeepSeek workhorse (which throws on a missing key — that secret is a hard
+// contract for the default sweep) this self-skips when DOUBAO_API_KEY is absent.
+// The live-on-demand-tests workflow provisions the key and runs this scenario.
 const doubaoKey = process.env["DOUBAO_API_KEY"] ?? "";
 const model = process.env["AEX_USER_TEST_DOUBAO_MODEL"] ?? "doubao-seed-flash";
 const provider = process.env["AEX_USER_TEST_DOUBAO_PROVIDER"] ?? "doubao";

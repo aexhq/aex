@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SIDE_EFFECT_AUDIT_ACTIONS,
   SIDE_EFFECT_AUDIT_KIND,
   SIDE_EFFECT_AUDIT_SCHEMA_VERSION,
   SideEffectAuditRedactionError,
@@ -134,6 +135,31 @@ describe("side-effect audit contract", () => {
     ).toThrow(/runId must be an opaque identifier/);
   });
 
+  it("builds API-token deletion audit events", () => {
+    expect(SIDE_EFFECT_AUDIT_ACTIONS).toContain("api_token.deleted");
+
+    const event = buildSideEffectAuditEvent({
+      workspaceId: "workspace-11111111",
+      action: "api_token.deleted",
+      outcome: "succeeded",
+      observedAt: "2026-06-02T12:00:00.000Z",
+      actor,
+      target: { type: "api_token", id: "api-token-11111111" },
+      metadata: {
+        status: { status: "deleted" },
+        timestamps: { deletedAt: "2026-06-02T12:00:00.000Z" }
+      }
+    });
+
+    expect(event).toMatchObject({
+      action: "api_token.deleted",
+      outcome: "succeeded",
+      target: { type: "api_token", id: "api-token-11111111" },
+      metadata: { status: { status: "deleted" } }
+    });
+    expect(scanSideEffectAuditPayloadForSensitiveValues(event)).toEqual([]);
+  });
+
   it("rejects headers, bodies, raw URLs, raw paths, provider details, secret values, and private handles", () => {
     const cases: readonly [string, unknown, string][] = [
       ["headers", { headers: { authorization: "Bearer runner-token-1234567890" } }, "forbidden_field_name"],
@@ -182,8 +208,7 @@ describe("side-effect audit contract", () => {
           failedObjectCount: 0
         },
         timestamps: {
-          deletedAt: "2026-06-02T12:00:00.000Z",
-          tombstonedAt: "2026-06-02T11:59:59.000Z"
+          deletedAt: "2026-06-02T12:00:00.000Z"
         }
       },
       "run.delete.completed"
@@ -197,8 +222,7 @@ describe("side-effect audit contract", () => {
         failedObjectCount: 0
       },
       timestamps: {
-        deletedAt: "2026-06-02T12:00:00.000Z",
-        tombstonedAt: "2026-06-02T11:59:59.000Z"
+        deletedAt: "2026-06-02T12:00:00.000Z"
       }
     });
     expect(metadata).not.toHaveProperty("dimensions");
@@ -223,7 +247,7 @@ describe("side-effect audit contract", () => {
       observedAt: "2026-06-02T12:00:00.000Z",
       actor,
       metadata: {
-        status: { status: "pending_delete" },
+        status: { status: "delete_requested" },
         timestamps: { observedAt: "2026-06-02T12:00:00.000Z" }
       }
     });
@@ -240,8 +264,7 @@ describe("side-effect audit contract", () => {
           failedObjectCount: 0
         },
         timestamps: {
-          deletedAt: "2026-06-02T12:00:04.000Z",
-          tombstonedAt: "2026-06-02T12:00:05.000Z"
+          deletedAt: "2026-06-02T12:00:04.000Z"
         }
       }
     });

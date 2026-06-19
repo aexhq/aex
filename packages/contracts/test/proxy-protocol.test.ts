@@ -5,6 +5,7 @@ import {
   PROXY_RESPONSE_MODES,
   PROXY_ERROR_CODES,
   PROXY_ERROR_HTTP_STATUS,
+  PROXY_ENDPOINT_DEFAULTS,
   PROXY_STRIPPED_INBOUND_HEADERS,
   authShapeHeaderName,
   authShapeQueryName,
@@ -34,6 +35,20 @@ describe("proxy protocol version", () => {
 
   it("orders response modes from narrowest to widest", () => {
     expect(PROXY_RESPONSE_MODES).toEqual(["status_only", "headers_only", "full"]);
+  });
+});
+
+describe("PROXY_ENDPOINT_DEFAULTS", () => {
+  it("defaults maxRequestBytes to 10 MiB for launch-sized multimodal POSTs", () => {
+    expect(PROXY_ENDPOINT_DEFAULTS.maxRequestBytes).toBe(10 * 1024 * 1024);
+  });
+
+  it("keeps maxResponseBytes unlimited (0) — streamed, not byte-budgeted", () => {
+    expect(PROXY_ENDPOINT_DEFAULTS.maxResponseBytes).toBe(0);
+  });
+
+  it("defaults timeoutMs to 5 minutes for long upstream calls", () => {
+    expect(PROXY_ENDPOINT_DEFAULTS.timeoutMs).toBe(5 * 60 * 1000);
   });
 });
 

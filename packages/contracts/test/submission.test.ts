@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  BLOCKED_MANAGED_KEY_FEATURE_POLICY_V1,
+  DEFAULT_BUILTINS,
   DEFAULT_CREDENTIAL_MODE,
-  ManagedKeyUnavailableError,
   RUNTIME_KINDS,
   RuntimeValidationError,
   collectManagedUnsupportedFeatures,
@@ -22,7 +21,6 @@ import {
   assertRunModelMatchesProvider,
   MODEL_PROVIDER_IDS,
   selectRuntime,
-  type ManagedKeyPolicyV1,
   type PlatformRunSubmissionRequest,
   type RunProvider,
   type RuntimeKind
@@ -61,20 +59,6 @@ function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: Runtim
     secrets: { apiKey: `sk-${provider}-test` }
   };
 }
-
-const injectedManagedKeyPolicy = {
-  schemaVersion: 1,
-  credentialMode: "managed",
-  launchStage: "pilot",
-  privateImplementationAvailable: true,
-  billingRequired: true,
-  providers: ["anthropic"],
-  runtimes: ["managed"],
-  models: [RunModels.CLAUDE_HAIKU_4_5],
-  features: {
-    ...BLOCKED_MANAGED_KEY_FEATURE_POLICY_V1
-  }
-} satisfies ManagedKeyPolicyV1;
 
 describe("submission parser - providers and secrets", () => {
   it("accepts every provider in RUN_PROVIDERS", () => {
@@ -128,43 +112,21 @@ describe("submission parser - providers and secrets", () => {
     expect(JSON.parse(JSON.stringify(parsed))).toHaveProperty("credentialMode", "byok");
   });
 
-  it("rejects managed-key credential mode until the service is available", () => {
+  it("accepts explicit BYOK credential mode", () => {
+    const parsed = parseRunSubmissionRequest({
+      ...baseRequest(),
+      credentialMode: "byok"
+    });
+    expect(parsed.credentialMode).toBe("byok");
+  });
+
+  it("rejects managed as an unknown credential mode", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseRequest(),
         credentialMode: "managed"
       })
-    ).toThrow(ManagedKeyUnavailableError);
-  });
-
-  it("accepts managed-key mode only through an injected policy seam and does not require provider secrets", () => {
-    const { secrets: _providerSecret, ...req } = baseRequest({
-      provider: "anthropic",
-      runtime: "managed"
-    });
-    const parsed = parseRunSubmissionRequest(
-      {
-        ...req,
-        credentialMode: "managed",
-        secrets: {}
-      },
-      { managedKeyPolicy: injectedManagedKeyPolicy }
-    );
-
-    expect(parsed.credentialMode).toBe("managed");
-    expect(parsed.secrets).toEqual({});
-  });
-
-  it("rejects a caller-supplied apiKey in managed-key mode", () => {
-    expect(() =>
-      parseRunSubmissionRequest(
-        {
-          ...baseRequest({ provider: "anthropic", runtime: "managed" }),
-          credentialMode: "managed"
-        },
-        { managedKeyPolicy: injectedManagedKeyPolicy }
-      )
-    ).toThrow(/secrets\.apiKey is not allowed when credentialMode is managed/);
+    ).toThrow(/credentialMode must be one of: byok/);
   });
 
   it.each(["deepseek", "openai", "gemini", "mistral"] as const)(
@@ -318,12 +280,35 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
 
   it("BUILTINS is the closed managed-runtime builtin set", () => {
     expect([...BUILTINS]).toEqual([
+      "web_search",
+      "web_fetch",
+      "read",
+      "edit",
+      "glob",
+      "grep",
+      "head",
+      "tail",
+      "notebook",
       "developer",
       "computercontroller",
       "memory",
       "autovisualiser",
       "tutorial"
     ]);
+  });
+
+  it("DEFAULT_BUILTINS is the DX-first non-notebook default", () => {
+    expect([...DEFAULT_BUILTINS]).toEqual([
+      "web_search",
+      "web_fetch",
+      "read",
+      "edit",
+      "glob",
+      "grep",
+      "head",
+      "tail"
+    ]);
+    expect(DEFAULT_BUILTINS).not.toContain("notebook");
   });
 
   it("RUNTIME_KINDS exposes only managed", () => {
@@ -424,7 +409,7 @@ describe("submission parser - builtins (closed set)", () => {
         ...base,
         submission: { ...base.submission, builtins: ["developr"] }
       })
-    ).toThrow(/is not a managed-runtime builtin; expected one of: developer, computercontroller/);
+    ).toThrow(/is not a managed-runtime builtin; expected one of: web_search, web_fetch, read/);
   });
 
   it("dedupes repeated builtins", () => {
@@ -433,10 +418,22 @@ describe("submission parser - builtins (closed set)", () => {
       ...base,
       submission: {
         ...base.submission,
-        builtins: [Builtins.DEVELOPER, Builtins.DEVELOPER, Builtins.MEMORY]
+        builtins: [Builtins.WEB_SEARCH, Builtins.WEB_SEARCH, Builtins.NOTEBOOK]
       }
     });
-    expect(parsed.submission.builtins).toEqual(["developer", "memory"]);
+    expect(parsed.submission.builtins).toEqual(["web_search", "notebook"]);
+  });
+
+  it("keeps legacy aggregate builtin names accepted for existing callers", () => {
+    const base = baseRequest();
+    const parsed = parseRunSubmissionRequest({
+      ...base,
+      submission: {
+        ...base.submission,
+        builtins: [Builtins.DEVELOPER, Builtins.COMPUTER_CONTROLLER]
+      }
+    });
+    expect(parsed.submission.builtins).toEqual(["developer", "computercontroller"]);
   });
 });
 

@@ -155,8 +155,8 @@ export interface RunUnitProxyCallPage {
 
 /**
  * Workspace skill bundle pinned at submission. `liveSkillId` is `null`
- * when the corresponding `skill_bundles` row has been soft-deleted —
- * the UI uses that to render a tombstoned link.
+ * when the corresponding `skill_bundles` row no longer exists after a
+ * hard delete; run snapshots keep the submitted metadata.
  */
 export interface RunUnitSkillSnapshot {
   readonly skillId: string;

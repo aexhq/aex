@@ -7,7 +7,7 @@ title: Skills
 A skill is executable or instructional content that is mounted into a run before
 the first agent turn. Every accepted skill ends up as a storage-neutral
 `kind:"asset"` reference in the run submission, and the hosted platform snapshots
-that asset into the run's object-storage prefix before dispatch.
+that asset into durable run asset storage before dispatch.
 
 There are three sources for skill bytes:
 
@@ -32,8 +32,8 @@ an aex asset instead.
 
 ## Materialization
 
-For each run, the platform copies referenced skill assets into that run's
-object-storage directory (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
+For each run, the platform copies referenced skill assets into durable run asset
+storage (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
 workspace under `skills/<name>/`.
 
 A bundle's `SKILL.md` is composed into the agent's instructions, so the agent is

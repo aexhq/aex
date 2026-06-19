@@ -17,7 +17,7 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
 }
 
 describe("AgentExecutor.submit — client-side runtime validation", () => {
-  it("throws AexError(CREDENTIAL_INVALID) for managed-key mode without an HTTP call", async () => {
+  it("rejects unknown credential modes without an HTTP call", async () => {
     const rec = recordingFetch();
     const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
@@ -26,8 +26,8 @@ describe("AgentExecutor.submit — client-side runtime validation", () => {
         credentialMode: "managed",
         model: "claude-haiku-4-5",
         prompt: "hi"
-      } as Parameters<AgentExecutor["submit"]>[0])
-    ).rejects.toMatchObject({ name: "AexError", code: "CREDENTIAL_INVALID" });
+      } as unknown as Parameters<AgentExecutor["submit"]>[0])
+    ).rejects.toThrow(/credentialMode must be one of: byok/);
 
     expect(rec.calls).toHaveLength(0);
   });

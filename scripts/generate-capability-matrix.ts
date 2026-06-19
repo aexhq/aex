@@ -17,17 +17,12 @@ import {
   PROVIDER_PUBLIC_SUPPORT,
   RUNTIME_VALIDATION_SUPPORT,
   type ProviderPublicSupport,
-  type ProviderSupportStatus,
   type SupportPointer
 } from "../packages/contracts/src/provider-support.js";
 
 export const CAPABILITY_MATRIX_PATH = "packages/sdk/docs/provider-runtime-capabilities.md";
 
-export type RuntimeSupportStatus = ProviderSupportStatus;
-
 export interface RuntimeCapabilityCell {
-  readonly status: RuntimeSupportStatus;
-  readonly ownership: ProviderSupportStatus;
   readonly enforcement: string;
   readonly docsAnchor: string;
   readonly evidence: readonly SupportPointer[];
@@ -36,7 +31,6 @@ export interface RuntimeCapabilityCell {
 export interface CapabilityMatrixRow {
   readonly provider: RunProvider;
   readonly displayName: string;
-  readonly publicStatus: ProviderSupportStatus;
   readonly docsAnchor: string;
   readonly docs: readonly SupportPointer[];
   readonly evidence: readonly SupportPointer[];
@@ -46,21 +40,11 @@ export interface CapabilityMatrixRow {
 }
 
 function runtimeCell(provider: RunProvider, runtime: RuntimeKind, support: ProviderPublicSupport): RuntimeCapabilityCell {
-  const supported = checkRuntimeSupported(provider, runtime).ok;
-  if (!supported) {
-    return {
-      status: "rejected",
-      ownership: "rejected",
-      enforcement: "checkRuntimeSupported",
-      docsAnchor: support.docsAnchor,
-      evidence: support.evidence
-    };
+  if (!checkRuntimeSupported(provider, runtime).ok) {
+    throw new Error(`runtime ${runtime} is not supported for provider ${provider}`);
   }
 
-  const status = support.status === "supported" ? "supported" : "rejected";
   return {
-    status,
-    ownership: status,
     enforcement: "submission parser + managed dispatch",
     docsAnchor: support.docsAnchor,
     evidence: support.runtimeEvidence[runtime] ?? support.evidence
@@ -97,7 +81,6 @@ export function buildCapabilityMatrixRows(): CapabilityMatrixRow[] {
     return {
       provider,
       displayName: publicSupport.displayName,
-      publicStatus: publicSupport.status,
       docsAnchor: publicSupport.docsAnchor,
       docs: publicSupport.docs,
       evidence: publicSupport.evidence,
@@ -228,7 +211,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "### Managed unsupported features",
     "",
-    "Provider-hosted skill refs (a `kind:\"provider\"` skill ref) are rejected because new runs dispatch to the managed runtime. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into the run's object-storage directory.",
+    "Provider-hosted skill refs (a `kind:\"provider\"` skill ref) are rejected because new runs dispatch to the managed runtime. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into durable run asset storage.",
     "",
     "Notes:",
     "",

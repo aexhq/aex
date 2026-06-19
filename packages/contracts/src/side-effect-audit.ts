@@ -1,5 +1,4 @@
-import type { CredentialMode } from "./managed-key.js";
-import type { RunProvider, RuntimeKind } from "./submission.js";
+import type { CredentialMode, RunProvider, RuntimeKind } from "./submission.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
@@ -26,11 +25,10 @@ export const SIDE_EFFECT_AUDIT_ACTIONS = [
   "custody.transition.recorded",
   "runtime.cleanup.completed",
   "runtime.cleanup.failed",
-  "managed_key.quota.denied",
   "terminal_redrive.attempted",
   "terminal_redrive.completed",
   "api_token.created",
-  "api_token.revoked",
+  "api_token.deleted",
   "api_token.used"
 ] as const;
 export type SideEffectAuditAction = (typeof SIDE_EFFECT_AUDIT_ACTIONS)[number];
@@ -77,7 +75,6 @@ export const SIDE_EFFECT_AUDIT_TARGET_TYPES = [
   "custody_transition",
   "cleanup",
   "deletion",
-  "managed_key_gate",
   "terminal_redrive",
   "api_token"
 ] as const;
@@ -124,7 +121,6 @@ export const SIDE_EFFECT_AUDIT_TIMESTAMP_NAMES = [
   "observedAt",
   "decidedAt",
   "deletedAt",
-  "tombstonedAt",
   "terminalAt",
   "expiresAt"
 ] as const;

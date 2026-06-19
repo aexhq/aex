@@ -14,15 +14,12 @@ import {
 import { RUN_MODELS_BY_PROVIDER } from "../../packages/contracts/src/models.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
-  PROVIDER_SUPPORT_STATUSES,
-  type SupportPointer,
-  type ProviderSupportStatus
+  type SupportPointer
 } from "../../packages/contracts/src/provider-support.js";
 import {
   CAPABILITY_MATRIX_PATH,
   buildCapabilityMatrixRows,
   checkCapabilityMatrix,
-  type RuntimeSupportStatus,
   renderProviderRuntimeCapabilityMarkdown
 } from "../generate-capability-matrix.js";
 
@@ -58,11 +55,6 @@ function dispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
   };
 }
 
-function expectedRuntimeStatus(provider: RunProvider, runtime: RuntimeKind): RuntimeSupportStatus {
-  if (!checkRuntimeSupported(provider, runtime).ok) return "rejected";
-  return PROVIDER_PUBLIC_SUPPORT[provider].status === "supported" ? "supported" : "rejected";
-}
-
 describe("provider/runtime capability matrix generation", () => {
   it("renders one deterministic managed-runtime row for every provider", () => {
     const rendered = renderProviderRuntimeCapabilityMarkdown();
@@ -93,7 +85,6 @@ describe("provider/runtime capability matrix generation", () => {
     const anchors = new Set<string>();
     for (const provider of RUN_PROVIDERS) {
       const support = PROVIDER_PUBLIC_SUPPORT[provider];
-      expect(PROVIDER_SUPPORT_STATUSES).toContain(support.status);
       expect(support.docsAnchor).toMatch(/^[a-z0-9-]+$/);
       expect(anchors.has(support.docsAnchor)).toBe(false);
       anchors.add(support.docsAnchor);
@@ -102,22 +93,32 @@ describe("provider/runtime capability matrix generation", () => {
     }
   });
 
-  it("keeps every managed runtime cell documented with status, anchor, enforcement, and evidence", () => {
+  it("keeps the public registry and generated rows supported-only", () => {
+    for (const provider of RUN_PROVIDERS) {
+      expect(PROVIDER_PUBLIC_SUPPORT[provider]).not.toHaveProperty("status");
+    }
+
+    for (const row of buildCapabilityMatrixRows()) {
+      expect(row).not.toHaveProperty("publicStatus");
+      expect(row.managedRuntime).not.toHaveProperty("status");
+      expect(row.managedRuntime).not.toHaveProperty("ownership");
+    }
+  });
+
+  it("keeps every managed runtime cell documented with anchor, enforcement, and evidence", () => {
     for (const row of buildCapabilityMatrixRows()) {
       const cell = row.managedRuntime;
-      expect(PROVIDER_SUPPORT_STATUSES).toContain(cell.status);
-      expect(PROVIDER_SUPPORT_STATUSES).toContain(cell.ownership);
       expect(cell.docsAnchor).toBe(row.docsAnchor);
       expect(cell.enforcement.length).toBeGreaterThan(0);
       expect(cell.evidence.length).toBeGreaterThan(0);
     }
   });
 
-  it("lists every public provider as supported", () => {
+  it("lists every public provider as a supported managed-runtime row", () => {
     for (const provider of RUN_PROVIDERS) {
       const row = buildCapabilityMatrixRows().find((candidate) => candidate.provider === provider);
-      expect(row?.managedRuntime.status).toBe("supported");
-      expect(row?.publicStatus).toBe("supported" satisfies ProviderSupportStatus);
+      expect(row).toBeDefined();
+      expect(row?.managedRuntime.enforcement).toBe("submission parser + managed dispatch");
     }
   });
 
@@ -141,7 +142,7 @@ describe("provider/runtime capability matrix generation", () => {
   it("derives routing cells from checkRuntimeSupported and selectRuntime", () => {
     expect([...RUNTIME_KINDS]).toEqual(["managed"]);
     for (const row of buildCapabilityMatrixRows()) {
-      expect(row.managedRuntime.status).toBe(expectedRuntimeStatus(row.provider, "managed"));
+      expect(checkRuntimeSupported(row.provider, "managed").ok).toBe(true);
       expect(row.autoRoute).toBe(selectRuntime(dispatcherProbe(row.provider)));
       expect(row.autoRoute).toBe("managed");
     }

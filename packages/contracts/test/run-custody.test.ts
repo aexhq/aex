@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   CUSTODY_MANIFEST_SCHEMA_VERSION,
-  CUSTODY_TOMBSTONE_SCHEMA_VERSION,
   CustodyManifestRedactionError,
   FakeCustodyManifestObjectStore,
   buildCustodyManifest,
-  buildCustodyTombstoneFromManifest,
   createCustodyManifestWriter,
   custodyManifestObjectKey,
   scanCustodyPayloadForSensitiveValues
@@ -272,71 +270,5 @@ describe("run custody manifest contract", () => {
         "private_resource_handle"
       );
     }
-  });
-
-  it("builds an indefinite-retention tombstone with only identity, counts, statuses, and timestamps", () => {
-    const manifest = buildCustodyManifest({
-      generatedAt: "2026-06-02T10:05:01.000Z",
-      finalizedAt: "2026-06-02T10:05:02.000Z",
-      run: baseRun,
-      secrets: [
-        {
-          class: "provider_api_key",
-          present: true,
-          exposures: [{ surface: "aex_vault", access: "stored", status: "revoked" }],
-          disposition: { status: "destroyed", decidedAt: "2026-06-02T10:05:01.000Z" }
-        }
-      ],
-      resources: [
-        {
-          class: "run_output",
-          count: 2,
-          exposures: [{ surface: "run_artifact_store", access: "stored", status: "retained" }],
-          disposition: { status: "retained_by_policy", decidedAt: "2026-06-02T10:05:02.000Z" }
-        }
-      ]
-    });
-
-    const tombstone = buildCustodyTombstoneFromManifest(manifest, {
-      manifestStatus: "purged",
-      tombstonedAt: "2026-06-02T10:06:00.000Z",
-      deletion: {
-        status: "deleted",
-        pendingAt: "2026-06-02T10:05:30.000Z",
-        deletedAt: "2026-06-02T10:06:00.000Z"
-      }
-    });
-
-    expect(tombstone.schemaVersion).toBe(CUSTODY_TOMBSTONE_SCHEMA_VERSION);
-    expect(tombstone).toMatchObject({
-      run: {
-        runId: "run-11111111",
-        workspaceId: "workspace-11111111",
-        terminalStatus: "succeeded",
-        terminalAt: "2026-06-02T10:05:00.000Z"
-      },
-      manifest: {
-        schemaVersion: CUSTODY_MANIFEST_SCHEMA_VERSION,
-        status: "purged",
-        tombstonedAt: "2026-06-02T10:06:00.000Z"
-      },
-      retention: {
-        defaultPolicy: "retain_indefinitely",
-        userAction: "purge_or_anonymize_later"
-      }
-    });
-    expect(tombstone.summary).toMatchObject({
-      secretClassCount: 1,
-      resourceClassCount: 1,
-      exposureCount: 2,
-      retainedCount: 1
-    });
-
-    const serialized = JSON.stringify(tombstone);
-    expect(serialized).not.toContain("anthropic");
-    expect(serialized).not.toContain("native");
-    expect(serialized).not.toContain("provider_api_key");
-    expect(serialized).not.toContain("run_artifact_store");
-    expect(scanCustodyPayloadForSensitiveValues(tombstone)).toEqual([]);
   });
 });

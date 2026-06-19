@@ -1,11 +1,5 @@
 import type { RunProvider, RuntimeKind, RuntimeValidationCode } from "./submission.js";
 
-export const PROVIDER_SUPPORT_STATUSES = [
-  "supported",
-  "rejected"
-] as const;
-export type ProviderSupportStatus = (typeof PROVIDER_SUPPORT_STATUSES)[number];
-
 export interface SupportPointer {
   readonly label: string;
   /** Markdown href, relative to `packages/sdk/docs/provider-runtime-capabilities.md`. */
@@ -14,7 +8,6 @@ export interface SupportPointer {
 
 export interface ProviderPublicSupport {
   readonly displayName: string;
-  readonly status: ProviderSupportStatus;
   readonly docsAnchor: string;
   readonly docs: readonly SupportPointer[];
   readonly evidence: readonly SupportPointer[];
@@ -78,13 +71,12 @@ export const RUNTIME_VALIDATION_SUPPORT = {
 
 /**
  * Public provider support facts for generated SDK docs. Keep this metadata
- * public-facing only: provider names, support status, docs anchors, and
- * evidence pointers.
+ * public-facing only: provider names, docs anchors, and evidence pointers.
+ * Inclusion in this registry means the provider is supported.
  */
 export const PROVIDER_PUBLIC_SUPPORT = {
   anthropic: {
     displayName: "Anthropic",
-    status: "supported",
     docsAnchor: "anthropic",
     docs: COMMON_DOCS,
     evidence: [...COMMON_EVIDENCE, ...ANTHROPIC_MANAGED_EVIDENCE],
@@ -94,7 +86,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   deepseek: {
     displayName: "DeepSeek",
-    status: "supported",
     docsAnchor: "deepseek",
     docs: COMMON_DOCS,
     evidence: [...COMMON_EVIDENCE, ...DEEPSEEK_MANAGED_EVIDENCE],
@@ -104,7 +95,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   openai: {
     displayName: "OpenAI",
-    status: "supported",
     docsAnchor: "openai",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -114,7 +104,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   gemini: {
     displayName: "Gemini",
-    status: "supported",
     docsAnchor: "gemini",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -124,7 +113,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   mistral: {
     displayName: "Mistral",
-    status: "supported",
     docsAnchor: "mistral",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -134,7 +122,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   },
   openrouter: {
     displayName: "OpenRouter",
-    status: "supported",
     docsAnchor: "openrouter",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -145,7 +132,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   // Doubao (ByteDance) via the official Ark API — international BytePlus gateway.
   doubao: {
     displayName: "Doubao",
-    status: "supported",
     docsAnchor: "doubao",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
@@ -156,7 +142,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
   // Doubao (ByteDance) via the official Ark API — China Volcengine gateway.
   "doubao-cn": {
     displayName: "Doubao (China)",
-    status: "supported",
     docsAnchor: "doubao-cn",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,

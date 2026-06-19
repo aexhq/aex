@@ -104,8 +104,6 @@ export interface SubmitOptions {
   /**
    * Credential source for upstream provider access. Omitted defaults to
    * `"byok"`, which requires `secrets.apiKey`.
-   * `"managed"` is reserved for paid managed-key mode and currently fails
-   * closed until the hosted private implementation is wired.
    */
   readonly credentialMode?: CredentialMode;
   /**
@@ -192,19 +190,17 @@ export interface SubmitOptions {
     readonly maxFiles?: number;
   };
   /**
-   * Override the managed runtime builtin extensions enabled inside the runner.
+   * Override the managed runtime builtins enabled inside the runner.
    * Each entry is one of the closed {@link Builtin} set — prefer the
    * {@link Builtins} symbol const so a typo is a compile error.
    *
-   * - Omitted (default): the runner enables `[Builtins.DEVELOPER]`
-   *   which gives the agent `shell`, `write`, `edit`, and `tree` tools (bash,
-   *   grep via shell, file read via shell or editor, file edit).
-   * - Empty array: the agent runs with zero builtin extensions —
-   *   useful for pure-MCP setups where every tool comes from a
-   *   submitted `mcpServers` entry.
-   * - Custom list: e.g.
-   *   `[Builtins.DEVELOPER, Builtins.COMPUTER_CONTROLLER]` to add
-   *   web fetch/scrape alongside the default shell/edit toolkit.
+   * - Omitted (default): the runner enables `DEFAULT_BUILTINS`
+   *   (`web_search`, `web_fetch`, `read`, `edit`, `glob`, `grep`, `head`,
+   *   `tail`).
+   * - Empty array: the agent runs with zero builtins — useful for pure-MCP
+   *   setups where every tool comes from a submitted `mcpServers` entry.
+   * - Custom list: narrows or extends the surface, e.g.
+   *   `[Builtins.WEB_SEARCH, Builtins.NOTEBOOK]`.
    *
    * Validation: each entry must be a member of {@link Builtins}, max 16
    * entries, deduplicated server-side.
@@ -658,12 +654,6 @@ export class AgentExecutor {
     }
     const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
     const credentialMode = parseCredentialMode(options.credentialMode);
-    if (credentialMode === "managed") {
-      throw new AexError(
-        "CREDENTIAL_INVALID",
-        "AgentExecutor.submit: credentialMode \"managed\" is not available without a private managed-key implementation"
-      );
-    }
     if (!options.secrets) {
       throw new Error("AgentExecutor.submit: secrets is required");
     }

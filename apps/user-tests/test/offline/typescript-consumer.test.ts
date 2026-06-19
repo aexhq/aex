@@ -84,8 +84,11 @@ describe("typescript consumer", () => {
         AexApiError,
         AgentExecutor,
         AexError,
+        BUILTINS,
+        Builtins,
         CleanupError,
         CredentialValidationError,
+        DEFAULT_BUILTINS,
         DEFAULT_RUNTIME_SIZE,
         DEFAULT_RUN_PROVIDER,
         File,
@@ -110,6 +113,7 @@ describe("typescript consumer", () => {
         selectRuntime,
         validateProxyAuth,
         type AgentsMdRef,
+        type Builtin,
         type InlineSecrets,
         type McpServerSecret,
         type Output,
@@ -142,6 +146,8 @@ describe("typescript consumer", () => {
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
       const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_2GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
+      const explicitBuiltin: Builtin = Builtins.WEB_FETCH;
+      const everyBuiltin: readonly Builtin[] = BUILTINS;
       const method: ProxyMethod = "GET";
       const responseMode: ProxyResponseMode = "headers_only";
       const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
@@ -201,7 +207,7 @@ describe("typescript consumer", () => {
         mcpServers: [mcp, workspaceMcp],
         proxyEndpoints: [proxy, publicProxy],
         outputs: { allowedDirs: ["/workspace/outputs"] },
-        builtins: ["developer"],
+        builtins: [...DEFAULT_BUILTINS, Builtins.NOTEBOOK],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
           packages: [{ name: "apt:jq" }],
@@ -246,7 +252,7 @@ describe("typescript consumer", () => {
           environment: { envVars: { USER_SURFACE_TEST: "1" } },
           metadata: { surface: "root" },
           outputs: { allowedDirs: ["/workspace/outputs"] },
-          builtins: ["developer"]
+          builtins: [Builtins.WEB_SEARCH, explicitBuiltin, Builtins.READ, Builtins.EDIT]
         },
         secrets: anthropicSecrets,
         proxyEndpoints: [proxy.declaration],
@@ -258,6 +264,7 @@ describe("typescript consumer", () => {
       const managedUnsupportedFeatures: string[] = collectManagedUnsupportedFeatures(wireRequest);
       const validationCode: RuntimeValidationCode = "feature_runtime_mismatch";
       const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
+      const builtinCount: number = everyBuiltin.length;
       const skillRef: SkillRef = inlineSkill.ref as SkillRef;
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
@@ -317,6 +324,7 @@ describe("typescript consumer", () => {
       void managedUnsupportedFeatures;
       void validationCode;
       void platformEndpoint;
+      void builtinCount;
       void skillRef;
       void agentsRef;
       void manifest;

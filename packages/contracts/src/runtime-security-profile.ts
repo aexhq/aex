@@ -37,7 +37,7 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
     }),
     standard: Object.freeze({
       name: "standard",
-      defaultNetworkingMode: "limited",
+      defaultNetworkingMode: "open",
       allowOpenNetworking: true,
       allowRuntimePackages: true,
       allowCustomerEnvVars: true,

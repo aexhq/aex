@@ -29,7 +29,7 @@ publish.
    publishes `@aexhq/sdk@<version>` under the `canary` tag — `latest` is
    untouched, so `npm install @aexhq/sdk` users are unaffected.
 5. Run the platform release against the canary: in **aex-platform**, dispatch
-   `deploy.yml` with `sdk_version=<version>` (threads `AEX_USER_TEST_SDK_VERSION`
+   `deploy.yml` with `sdk_version=<version>` (threads `AEX_USER_TEST_VERSION`
    into the suite). The local plane gates prod, and both planes' user-tests run
    against `@aexhq/sdk@<version>`.
 6. On a green platform release, run the **Promote** workflow

@@ -64,12 +64,6 @@ describe("run cost telemetry", () => {
         requestBytes: 128,
         responseBytes: 256,
         durationMs: 40
-      },
-      managedKey: {
-        credentialMode: "managed",
-        reservedCreditUnits: 2,
-        chargedCreditUnits: 1,
-        releasedCreditUnits: 1
       }
     });
 
@@ -82,7 +76,6 @@ describe("run cost telemetry", () => {
     expect(telemetry.providerUsage?.[0]?.sourceSampleIds).toEqual(["usage-sample-1"]);
     expect(telemetry.storage?.storedBytes).toBe(4096);
     expect(telemetry.proxy?.responseBytes).toBe(256);
-    expect(telemetry.managedKey?.chargedCreditUnits).toBe(1);
     expect(JSON.parse(JSON.stringify(telemetry))).toEqual(telemetry);
   });
 
@@ -193,18 +186,11 @@ describe("run cost telemetry", () => {
           metric: "proxy.response_bytes",
           quantity: 256,
           source: { type: "proxy-call", id: "proxy_1" }
-        },
-        {
-          sampleId: "usage-managed-reservation",
-          metric: "managed_key.reserved_credit_units",
-          quantity: 3,
-          credentialMode: "managed",
-          source: { type: "billing-reservation", id: "reservation_1" }
         }
       ]
     });
 
-    expect(telemetry.sourceSummary?.sampleCount).toBe(10);
+    expect(telemetry.sourceSummary?.sampleCount).toBe(9);
     expect(telemetry.sourceSummary?.metrics).toContain("provider.total_tokens");
     expect(telemetry.sourceSummary?.sourceTypes).toContain("proxy-call");
     expect(telemetry.providerUsage?.[0]).toMatchObject({
@@ -224,7 +210,6 @@ describe("run cost telemetry", () => {
     expect(telemetry.storage?.storedBytes).toBe(4096);
     expect(telemetry.proxy?.calls).toBe(1);
     expect(telemetry.proxy?.responseBytes).toBe(256);
-    expect(telemetry.managedKey?.reservedCreditUnits).toBe(3);
 
     expect(JSON.stringify(telemetry)).not.toMatch(privateCostFieldPattern);
   });
@@ -281,13 +266,7 @@ describe("run cost telemetry", () => {
           providerAccountId: "acct_private",
           marginBasisPoints: 2000
         } as never
-      ],
-      managedKey: {
-        credentialMode: "managed",
-        reservedCreditUnits: 1,
-        privateReservationRate: "private-rate",
-        systemKeyHandle: "system-key-private"
-      } as never
+      ]
     } as never);
 
     expect(telemetry).not.toHaveProperty("privateRateCardVersion");
@@ -299,8 +278,7 @@ describe("run cost telemetry", () => {
     expect(telemetry.providerUsage?.[0]).not.toHaveProperty("rateCardVersion");
     expect(telemetry.providerUsage?.[0]).not.toHaveProperty("providerAccountId");
     expect(telemetry.providerUsage?.[0]).not.toHaveProperty("marginBasisPoints");
-    expect(telemetry.managedKey).not.toHaveProperty("privateReservationRate");
-    expect(telemetry.managedKey).not.toHaveProperty("systemKeyHandle");
+    expect(telemetry).not.toHaveProperty("managedKey");
     expect(JSON.stringify(telemetry)).not.toMatch(privateCostFieldPattern);
   });
 
@@ -328,18 +306,6 @@ describe("run cost telemetry", () => {
           marginBasisPoints: 2000,
           systemKeyId: "system-key-private",
           reconciliationBatchId: "recon-private"
-        } as never,
-        {
-          sampleId: "usage-managed-settlement",
-          metric: "managed_key.charged_credit_units",
-          quantity: 1,
-          credentialMode: "managed",
-          source: {
-            type: "billing-settlement",
-            id: "settlement-public-id",
-            calculatorTraceId: "calculator-private",
-            ledgerCursor: "ledger-private"
-          }
         } as never
       ]
     });
@@ -349,10 +315,7 @@ describe("run cost telemetry", () => {
       totalTokens: 35,
       sourceSampleIds: ["usage-provider-total"]
     });
-    expect(telemetry.managedKey).toEqual({
-      credentialMode: "managed",
-      chargedCreditUnits: 1
-    });
+    expect(telemetry).not.toHaveProperty("managedKey");
     expect(JSON.stringify(telemetry)).not.toMatch(privateCostFieldPattern);
   });
 });

@@ -18,7 +18,6 @@ export * from "./run-cost.js";
 export * from "./run-custody.js";
 export * from "./run-retention.js";
 export * from "./side-effect-audit.js";
-export * from "./managed-key.js";
 export * from "./stable.js";
 export * from "./sdk-secrets.js";
 export * from "./sdk-errors.js";

@@ -133,11 +133,10 @@ describe("run retention and deletion contract", () => {
     });
   });
 
-  it("records blockers for non-terminal, held, exempt, unresolved, and pending-delete runs", () => {
+  it("records blockers for non-terminal, held, exempt, and unresolved runs", () => {
     const candidate = evaluateRunDeletionCandidate({
       run: {
         ...terminalRun,
-        status: "pending_delete",
         held: true,
         retentionExempt: true,
         unresolvedCleanup: true,
@@ -149,7 +148,6 @@ describe("run retention and deletion contract", () => {
 
     expect(candidate.status).toBe("blocked");
     expect(candidate.blockers.map((entry) => entry.code)).toEqual([
-      "concurrent_delete",
       "held",
       "retention_exempt",
       "unresolved_cleanup",

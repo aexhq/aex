@@ -9,7 +9,7 @@ aex is an agent execution platform for launching autonomous agents from a simple
 
 ## Agent runtime
 
-Managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, background command, and post-hook repair tools.
+Managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, optional notebook tools, and post-hook repair.
 
 ## Durable infrastructure
 

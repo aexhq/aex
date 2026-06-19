@@ -48,12 +48,6 @@ import {
   parseRuntimeSecurityProfile,
   type RuntimeSecurityProfileName
 } from "./runtime-security-profile.js";
-import {
-  assertManagedKeyAdmissionAllowed,
-  parseCredentialMode,
-  type CredentialMode,
-  type ManagedKeyPolicyV1
-} from "./managed-key.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
@@ -237,6 +231,32 @@ export const Providers = {
 export const RUNTIME_KINDS = ["managed"] as const;
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
 
+/**
+ * Credential source for upstream provider access. Launch accepts only BYOK:
+ * callers may omit `credentialMode` or pass `"byok"`. Other strings, including
+ * `"managed"`, are invalid submission values rather than reserved product
+ * promises.
+ */
+export const CREDENTIAL_MODES = ["byok"] as const;
+export type CredentialMode = (typeof CREDENTIAL_MODES)[number];
+export const DEFAULT_CREDENTIAL_MODE: CredentialMode = "byok";
+
+export function parseCredentialMode(input: unknown): CredentialMode {
+  if (input === undefined) {
+    return DEFAULT_CREDENTIAL_MODE;
+  }
+  if (typeof input !== "string" || !(CREDENTIAL_MODES as readonly string[]).includes(input)) {
+    throw new Error(
+      `credentialMode must be one of: ${CREDENTIAL_MODES.join(", ")} (got ${JSON.stringify(input)})`
+    );
+  }
+  return input as CredentialMode;
+}
+
+export function credentialModeOrDefault(input: CredentialMode | undefined): CredentialMode {
+  return input ?? DEFAULT_CREDENTIAL_MODE;
+}
+
 /** Outcome of the centralized runtime-support check. */
 export interface RuntimeSupportCheck {
   readonly ok: boolean;
@@ -282,11 +302,10 @@ export type PlatformProxyAuthValue =
 
 /**
  * Per-run inline secrets bundle. `apiKey` is the BYOK provider key for the
- * run's selected `provider` (required in `"byok"` credential mode, rejected
- * in `"managed"` mode). A run targets exactly one provider, so the key is a
- * single flat field rather than a per-provider block. `mcpServers` and
- * `proxyEndpointAuth` are cross-provider (an MCP credential is the same
- * secret whichever model is driving the MCP client).
+ * run's selected `provider`. A run targets exactly one provider, so the key is
+ * a single flat field rather than a per-provider block. `mcpServers` and
+ * `proxyEndpointAuth` are cross-provider (an MCP credential is the same secret
+ * whichever model is driving the MCP client).
  */
 export interface PlatformInlineSecrets {
   readonly apiKey?: string;
@@ -1306,9 +1325,9 @@ function isJsonValue(input: unknown): input is JsonValue {
  * only the non-secret half; bearer headers travel in
  * `secrets.mcpServers` keyed by `name`.
  *
- * `skills` is a list of `SkillRef`s — workspace refs point at
- * `skill_bundles.id` (validated by the BFF before acceptance and pinned
- * into `run_skill_snapshots`), provider refs pass through unchanged.
+ * `skills` is a list of `SkillRef`s. Launch workspace skills use
+ * content-addressed asset refs; run submission snapshots the bytes into the
+ * run-owned prefix before dispatch.
  */
 export interface PlatformSubmission {
   readonly model: RunModel;
@@ -1338,14 +1357,14 @@ export interface PlatformSubmission {
    */
   readonly outputs?: PlatformOutputCaptureConfig;
   /**
-   * Optional override for the managed-runtime builtin extensions enabled
-   * inside the runner container. Each entry is one of the closed
-   * {@link BUILTINS} set (prefer the {@link Builtins} symbol
-   * const). The platform default is `["developer"]` which gives the agent
-   * shell + write + edit + tree tools (bash, grep via shell, file read via
-   * shell or editor, file edit). To opt in to more tools (e.g. web fetch via
-   * the `computercontroller` extension), pass the full list. To opt out of
-   * all builtins (pure-MCP setup), pass an empty array.
+   * Optional override for the managed-runtime builtins enabled inside the
+   * runner container. Each entry is one of the closed {@link BUILTINS} set
+   * (prefer the {@link Builtins} symbol const).
+   *
+   * Omit the field for {@link DEFAULT_BUILTINS}: web search, web fetch,
+   * file read/edit, glob, grep, head, and tail. Pass an empty array to opt out
+   * of all builtins for pure-MCP runs. Pass a custom list to narrow or extend
+   * the tool surface, for example `[Builtins.WEB_SEARCH, Builtins.NOTEBOOK]`.
    *
    * Validation:
    *   - Each entry must be a member of {@link BUILTINS}.
@@ -1409,9 +1428,7 @@ export interface PlatformRunSubmissionRequest {
   readonly idempotencyKey: string;
   /**
    * Credential source for upstream provider access. Omitted means
-   * `"byok"` for compatibility with the current production path.
-   * `"managed"` is a public contract value but remains fail-closed until
-   * credential resolution and billing admission are available.
+   * `"byok"`; launch does not accept managed provider credentials.
    */
   readonly credentialMode: CredentialMode;
   /**
@@ -1494,9 +1511,7 @@ export type PlatformRunSubmissionInput = Omit<
   readonly postHook?: PlatformPostHookInput;
 };
 
-export interface ParseRunSubmissionOptions {
-  readonly managedKeyPolicy?: ManagedKeyPolicyV1;
-}
+export interface ParseRunSubmissionOptions {}
 
 export function parseRunSubmissionRequest(
   input: unknown,
@@ -1537,9 +1552,7 @@ export function parseRunSubmissionRequest(
   const provider = parseRunProvider(value.provider);
   const runtime = parseRuntimeKind(value.runtime);
   const credentialMode = parseCredentialMode(value.credentialMode);
-  if (credentialMode === "managed") {
-    assertManagedKeyAdmissionAllowed(options.managedKeyPolicy);
-  }
+  void options;
   // Cross-field validation via the centralized runtime-support validator.
   const runtimeSupport = checkRuntimeSupported(provider, runtime);
   if (!runtimeSupport.ok) {
@@ -1644,28 +1657,15 @@ export function parseRunProvider(input: unknown): RunProvider {
 }
 
 /**
- * Cross-check the supplied secrets bundle against the credential mode.
- *
- *  - `"byok"`: `secrets.apiKey` (the provider key for the run's `provider`)
- *    MUST be present.
- *  - `"managed"`: `secrets.apiKey` MUST be absent — provider access is
- *    resolved by the managed-key policy, not a caller-supplied key.
- *  - MCP / proxy endpoint auth carry across providers and are not
- *    checked here.
+ * Cross-check the supplied secrets bundle against the credential mode. BYOK
+ * requires `secrets.apiKey` (the provider key for the run's `provider`). MCP /
+ * proxy endpoint auth carry across providers and are not checked here.
  */
 export function enforceCredentialSecretPolicy(
   credentialMode: CredentialMode,
   secrets: PlatformInlineSecrets
 ): void {
-  if (credentialMode === "managed") {
-    if (secrets.apiKey !== undefined) {
-      throw new Error(
-        `secrets.apiKey is not allowed when credentialMode is managed; provider access is resolved by the managed-key policy`
-      );
-    }
-    return;
-  }
-
+  void credentialMode;
   if (!secrets.apiKey) {
     throw new Error(`secrets.apiKey is required when credentialMode is byok`);
   }
@@ -1796,13 +1796,23 @@ function parseOutputMode(input: unknown): OutputMode | undefined {
 }
 
 /**
- * Managed-runtime builtin extensions — the closed set the managed runtime
- * accepts. Closed so an invalid name is a compile error via {@link Builtins},
- * not a silent runtime no-op. `developer` is the platform default when
- * `builtins` is omitted; pass an empty array to disable all builtins
- * (pure-MCP setup).
+ * Managed-runtime builtins — the closed set the managed runtime accepts.
+ * Closed so an invalid name is a compile error via {@link Builtins}, not a
+ * silent runtime no-op.
+ *
+ * The first entries are the recommended concrete builtins. The legacy aggregate
+ * extension names remain accepted for existing callers, but are not the default.
  */
 export const BUILTINS = [
+  "web_search",
+  "web_fetch",
+  "read",
+  "edit",
+  "glob",
+  "grep",
+  "head",
+  "tail",
+  "notebook",
   "developer",
   "computercontroller",
   "memory",
@@ -1812,19 +1822,52 @@ export const BUILTINS = [
 export type Builtin = (typeof BUILTINS)[number];
 
 /**
+ * DX-first managed-runtime defaults. Omitted `builtins` resolves to this list.
+ * Notebook support remains opt-in through {@link Builtins.NOTEBOOK}.
+ */
+export const DEFAULT_BUILTINS = [
+  "web_search",
+  "web_fetch",
+  "read",
+  "edit",
+  "glob",
+  "grep",
+  "head",
+  "tail"
+] as const satisfies readonly Builtin[];
+
+/**
  * Symbol-style accessors for the closed builtin set, e.g.
- * `Builtins.COMPUTER_CONTROLLER`.
+ * `Builtins.WEB_SEARCH`.
  */
 export const Builtins = {
-  /** Shell (bash + UNIX tools incl. grep), write, edit, tree. The default. */
+  /** Managed web search. Included in {@link DEFAULT_BUILTINS}. */
+  WEB_SEARCH: "web_search",
+  /** Fetch a URL and return readable text. Included in {@link DEFAULT_BUILTINS}. */
+  WEB_FETCH: "web_fetch",
+  /** Read files. Included in {@link DEFAULT_BUILTINS}. */
+  READ: "read",
+  /** Create/modify files. Included in {@link DEFAULT_BUILTINS}. */
+  EDIT: "edit",
+  /** Search paths by glob. Included in {@link DEFAULT_BUILTINS}. */
+  GLOB: "glob",
+  /** Search file contents. Included in {@link DEFAULT_BUILTINS}. */
+  GREP: "grep",
+  /** Read the first lines of a file. Included in {@link DEFAULT_BUILTINS}. */
+  HEAD: "head",
+  /** Read the last lines of a file. Included in {@link DEFAULT_BUILTINS}. */
+  TAIL: "tail",
+  /** Jupyter notebook editing. Optional; not in {@link DEFAULT_BUILTINS}. */
+  NOTEBOOK: "notebook",
+  /** Legacy aggregate: shell/filesystem/navigation/web/notebook tools. */
   DEVELOPER: "developer",
-  /** Web fetch/scrape, scripting, general computer-control tools. */
+  /** Legacy aggregate alias retained for existing callers. */
   COMPUTER_CONTROLLER: "computercontroller",
-  /** Cross-session preference memory. */
+  /** Legacy aggregate alias retained for existing callers. */
   MEMORY: "memory",
-  /** Inline data-visualisation rendering. */
+  /** Legacy aggregate alias retained for existing callers. */
   AUTOVISUALISER: "autovisualiser",
-  /** Interactive guided tutorials. */
+  /** Legacy aggregate alias retained for existing callers. */
   TUTORIAL: "tutorial"
 } as const satisfies Readonly<Record<string, Builtin>>;
 

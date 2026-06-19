@@ -14,9 +14,7 @@ export const RUN_STATUSES = [
   "failed",
   "timed_out",
   "cancelled",
-  "cleanup_failed",
-  "pending_delete",
-  "deleted"
+  "cleanup_failed"
 ] as const;
 
 export type RunStatus = typeof RUN_STATUSES[number];
@@ -28,9 +26,7 @@ export const TERMINAL_RUN_STATUSES = [
   "failed",
   "timed_out",
   "cancelled",
-  "cleanup_failed",
-  "pending_delete",
-  "deleted"
+  "cleanup_failed"
 ] as const satisfies readonly RunStatus[];
 
 const terminalRunStatuses = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
@@ -43,8 +39,7 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
  * The closed set of terminal OUTCOMES the run-lifecycle funnel writes via
  * `markRunTerminal` (and that a `run/terminal` event carries). This is a
  * STRICT SUBSET of {@link TERMINAL_RUN_STATUSES}: the read-terminal set also
- * includes the post-terminal housekeeping states (`cleanup_failed`,
- * `pending_delete`, `deleted`) which the funnel never writes as an outcome.
+ * includes `cleanup_failed`, which the funnel never writes as an outcome.
  * The worker's `TerminalRunStatus` and the workflow `TerminalOutcome` both
  * derive from this so the four call sites can't drift.
  */

@@ -141,11 +141,11 @@ export {
 } from "@aexhq/contracts";
 export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
-// Managed-runtime builtin extensions — the closed builtin set.
+// Managed-runtime builtins — the default and closed builtin sets.
 // Prefer the `Builtins` symbol const (e.g.
-// `Builtins.COMPUTER_CONTROLLER`) so an invalid token is a compile
+// `Builtins.WEB_SEARCH`) so an invalid token is a compile
 // error, not a runtime 400.
-export { BUILTINS, Builtins } from "@aexhq/contracts";
+export { DEFAULT_BUILTINS, BUILTINS, Builtins } from "@aexhq/contracts";
 export type { Builtin } from "@aexhq/contracts";
 
 // Provider + runtime dispatch surface. Agents and SDK consumers

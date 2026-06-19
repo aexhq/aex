@@ -57,7 +57,7 @@ aex run \
 
 ## Feature Areas
 
-- **Agent runtime:** managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, background command, and post-hook repair tools.
+- **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, optional notebook tools, and post-hook repair.
 - **Durable infrastructure:** run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition:** skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
 - **Subagents:** typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.

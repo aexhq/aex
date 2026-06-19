@@ -11,7 +11,7 @@ Submit typed runs, stream durable events, capture outputs, and compose agents wi
 
 ## Feature areas
 
-- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, background command, and post-hook repair tools.
+- **Agent runtime.** Managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, optional notebook tools, and post-hook repair.
 - **Durable infrastructure.** Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.

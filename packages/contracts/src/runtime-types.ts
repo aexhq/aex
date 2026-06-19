@@ -182,15 +182,16 @@ export interface WhoAmI {
    * Surfaced so consumers (e.g. broll's app-side admission gate) can
    * decide whether to keep their own gate or rely on platform headers.
    * All fields optional — older BFFs may omit. Numbers are concrete
-   * snapshots at the time of the `whoami` call.
+   * snapshots at the time of the `whoami` call; `null` means no app-visible
+   * cap is applied for that field.
    */
   readonly caps?: {
     /** Token-bucket cap on POST /api/runs per minute, per workspace. */
     readonly runSubmitPerMinute?: number;
     /** Hard cap on concurrent non-terminal runs the workspace may hold. */
     readonly maxConcurrentRuns?: number;
-    /** Storage cap (bytes) on captured output objects, workspace-wide. */
-    readonly storageCapBytes?: number;
+    /** Storage cap (bytes) on captured output objects, workspace-wide. `null` means unlimited. */
+    readonly storageCapBytes?: number | null;
     /** Current captured-output usage in bytes. */
     readonly storageUsedBytes?: number;
     /**
@@ -208,8 +209,8 @@ export interface WhoAmI {
  * Workspace skill bundle as the dashboard BFF returns it. Mirrors a row
  * of `skill_bundles` joined with its computed manifest. `state` is the
  * upload lifecycle (`pending` -> `ready`); only `ready` rows are
- * referenceable from a run. `deletedAt` is the soft-delete tombstone
- * (`null` for live bundles).
+ * referenceable from a run. Delete is hard; historical runs keep their
+ * submit-time snapshots rather than depending on this row.
  *
  * See the public architecture notes and server-side persistence schema for
  * the authoritative shape.
@@ -230,7 +231,6 @@ export interface Skill {
   readonly createdAt?: string;
   readonly updatedAt?: string;
   readonly finalizedAt?: string | null;
-  readonly deletedAt?: string | null;
   readonly [key: string]: unknown;
 }
 
@@ -254,7 +254,6 @@ export interface AgentsMdRecord {
   readonly createdAt?: string;
   readonly updatedAt?: string;
   readonly finalizedAt?: string | null;
-  readonly deletedAt?: string | null;
   readonly [key: string]: unknown;
 }
 
@@ -279,7 +278,6 @@ export interface FileRecord {
   readonly createdAt?: string;
   readonly updatedAt?: string;
   readonly finalizedAt?: string | null;
-  readonly deletedAt?: string | null;
   readonly [key: string]: unknown;
 }
 
