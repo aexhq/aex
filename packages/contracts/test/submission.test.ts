@@ -288,6 +288,7 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "grep",
       "head",
       "tail",
+      "bash",
       "notebook",
       "developer",
       "computercontroller",
@@ -306,7 +307,8 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
       "glob",
       "grep",
       "head",
-      "tail"
+      "tail",
+      "bash"
     ]);
     expect(DEFAULT_BUILTINS).not.toContain("notebook");
   });

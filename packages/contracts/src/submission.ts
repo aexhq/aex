@@ -1812,6 +1812,7 @@ export const BUILTINS = [
   "grep",
   "head",
   "tail",
+  "bash",
   "notebook",
   "developer",
   "computercontroller",
@@ -1833,7 +1834,8 @@ export const DEFAULT_BUILTINS = [
   "glob",
   "grep",
   "head",
-  "tail"
+  "tail",
+  "bash"
 ] as const satisfies readonly Builtin[];
 
 /**
@@ -1857,6 +1859,8 @@ export const Builtins = {
   HEAD: "head",
   /** Read the last lines of a file. Included in {@link DEFAULT_BUILTINS}. */
   TAIL: "tail",
+  /** Shell command execution. Included in {@link DEFAULT_BUILTINS}. */
+  BASH: "bash",
   /** Jupyter notebook editing. Optional; not in {@link DEFAULT_BUILTINS}. */
   NOTEBOOK: "notebook",
   /** Legacy aggregate: shell/filesystem/navigation/web/notebook tools. */
