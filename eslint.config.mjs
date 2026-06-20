@@ -31,6 +31,9 @@ export default tseslint.config(
       "**/.wrangler/**",
       "**/coverage/**",
       "**/.cache/**",
+      // CI checks out the private platform repo here only for contract parity.
+      // It is not public repo source and must not enter public lint scope.
+      "_platform/**",
       // Skipped/sample / template files committed for offline tests.
       "**/test/fixtures/**",
       // Self-test fixture for the rules themselves — intentionally trips
