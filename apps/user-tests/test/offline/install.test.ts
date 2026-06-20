@@ -14,8 +14,71 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
+
+type InstalledStreamEvent = {
+  readonly specversion: "1.0";
+  readonly id: string;
+  readonly source: string;
+  readonly type: string;
+  readonly subject: string;
+  readonly time: string;
+  readonly sequence: number;
+  readonly data: Record<string, unknown>;
+};
+
+type InstalledStreamModule = {
+  readonly streamCoordinatorEvents: (opts: {
+    readonly wsUrl: string;
+    readonly from?: number;
+    readonly fetchTicket: () => Promise<string>;
+    readonly webSocketFactory: (url: string) => InstalledFakeWebSocket;
+  }) => AsyncGenerator<InstalledStreamEvent, void, void>;
+};
+
+class InstalledFakeWebSocket {
+  readonly url: string;
+  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
+  closed = false;
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
+    (this.#listeners[type] ??= []).push(cb);
+  }
+
+  close(): void {
+    this.closed = true;
+    this.#emit("close", {});
+  }
+
+  message(event: InstalledStreamEvent): void {
+    this.#emit("message", { data: JSON.stringify(event) });
+  }
+
+  #emit(type: string, ev: { data?: unknown }): void {
+    for (const cb of this.#listeners[type] ?? []) cb(ev);
+  }
+}
+
+const streamEvent = (sequence: number, type = "TEXT_MESSAGE_CONTENT"): InstalledStreamEvent => ({
+  specversion: "1.0",
+  id: `r:${sequence}`,
+  source: "agent",
+  type,
+  subject: "r",
+  time: new Date(sequence).toISOString(),
+  sequence,
+  data: {}
+});
+
+const flushTasks = async (n = 4): Promise<void> => {
+  for (let i = 0; i < n; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
 
 describe("install shape", () => {
   let install: InstallResult;
@@ -140,6 +203,31 @@ describe("install shape", () => {
           `Move them to devDependencies and bundle/inline their dist into the SDK build.`
       ).toEqual([]);
     }
+  });
+
+  it("ships an inlined event stream client that preserves existing WebSocket query parameters", async () => {
+    let ws: InstalledFakeWebSocket | undefined;
+    const modulePath = pathToFileURL(join(install.aexDir, "dist", "_contracts", "event-stream-client.js")).href;
+    const { streamCoordinatorEvents } = (await import(modulePath)) as InstalledStreamModule;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://coordinator.example/runs/r/subscribe?region=lhr",
+      from: 0,
+      fetchTicket: async () => "ticket+with?chars",
+      webSocketFactory: (url) => (ws = new InstalledFakeWebSocket(url))
+    });
+    const consume = (async () => {
+      for await (const event of gen) {
+        void event;
+        break;
+      }
+    })();
+
+    await flushTasks();
+    expect(ws?.url).toBe(
+      "wss://coordinator.example/runs/r/subscribe?region=lhr&ticket=ticket%2Bwith%3Fchars&from=0"
+    );
+    ws?.message(streamEvent(0, "RUN_FINISHED"));
+    await consume;
   });
 
 });
