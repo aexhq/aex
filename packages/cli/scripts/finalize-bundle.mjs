@@ -1,7 +1,7 @@
 // Finalize the CLI bundle:
 //   1. esbuild bundles dist/cli.js (the tsc-built entrypoint) and its
 //      workspace deps into a single ESM file.
-//   2. Prepend the Node shebang.
+//   2. Prepend the Bun shebang.
 //   3. Write to dist/cli.mjs so the `bin` field works on Unix and the
 //      ESM extension is unambiguous.
 //   4. Compute a sha256 digest and write a sibling cli.mjs.sha256
@@ -26,11 +26,14 @@ const digestPath = resolve(distDir, "cli.mjs.sha256");
 const result = await build({
   entryPoints: [inputPath],
   bundle: true,
+  // Bun executes Node-compatible ESM and built-ins, so esbuild's node
+  // platform remains the most compatible resolver for npm packages.
   platform: "node",
   format: "esm",
-  target: "node20",
+  target: "es2022",
   write: false,
-  // Mark node built-ins external; we only bundle our own + workspace deps.
+  // Mark Node-compatible built-ins external; we only bundle our own +
+  // workspace deps.
   external: [
     "node:*",
     "fs",
@@ -54,7 +57,7 @@ if (result.outputFiles.length !== 1) {
 }
 const bundled = result.outputFiles[0].text;
 
-const shebang = "#!/usr/bin/env node\n";
+const shebang = "#!/usr/bin/env bun\n";
 const final = shebang + bundled;
 await writeFile(outputPath, final, "utf8");
 

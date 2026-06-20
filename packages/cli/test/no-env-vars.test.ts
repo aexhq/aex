@@ -24,6 +24,11 @@ describe("CLI bundle: no env-var-driven code paths", () => {
     expect(existsSync(digestPath)).toBe(true);
   });
 
+  it("uses the Bun runtime shebang", () => {
+    const text = readFileSync(bundlePath, "utf8");
+    expect(text.startsWith("#!/usr/bin/env bun\n")).toBe(true);
+  });
+
   it("contains zero process.env.AEX_* references", () => {
     const text = readFileSync(bundlePath, "utf8");
     const matches = text.match(/process\.env\.AEX_[A-Z0-9_]+/g) ?? [];

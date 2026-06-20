@@ -26,15 +26,15 @@
     "examples"
   ],
   "scripts": {
-    "build": "node ./scripts/clean-dist.mjs && pnpm --filter @aexhq/contracts run build && pnpm --filter @aexhq/cli run build && tsc -p tsconfig.build.json && node ./scripts/bundle-cli.mjs && node ./scripts/inline-contracts.mjs",
+    "build": "bun ./scripts/clean-dist.mjs && bun run --cwd ../.. --filter @aexhq/contracts build && bun run --cwd ../.. --filter @aexhq/cli build && tsc -p tsconfig.build.json && bun ./scripts/bundle-cli.mjs && bun ./scripts/inline-contracts.mjs",
     "lint": "tsc --noEmit",
-    "test": "pnpm test:unit",
+    "test": "bun run test:unit",
     "test:unit": "vitest run test/unit",
     "test:security": "vitest run test/security",
     "test:property": "vitest run --passWithNoTests property",
     "test:coverage": "vitest run --coverage test/unit",
-    "prepack": "pnpm run build",
-    "publish:dry-run": "pnpm publish --dry-run --no-git-checks"
+    "prepack": "bun run build",
+    "publish:dry-run": "bun publish --dry-run"
   },
   "devDependencies": {
     "@aexhq/contracts": "workspace:*"

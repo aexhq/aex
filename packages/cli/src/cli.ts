@@ -1,6 +1,6 @@
 /**
  * aex CLI entrypoint. Wires the real IO surface and calls
- * {@link runCli}. The shipped bundle has a `#!/usr/bin/env node` line
+ * {@link runCli}. The shipped bundle has a `#!/usr/bin/env bun` line
  * prepended by `scripts/finalize-bundle.mjs`.
  *
  * NO `process.env.AEX_*` reads here — paths to the manifest and

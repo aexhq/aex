@@ -54,7 +54,7 @@ export type { CliExitCode } from "./host/common.js";
  * so the entrypoint can simply `await runCli(io)`.
  */
 export async function runCli(io: CliIO): Promise<void> {
-  const args = io.argv.slice(2); // skip node + script
+  const args = io.argv.slice(2); // skip runtime + script
   try {
     const exit = await dispatch(io, args);
     io.exit(exit.code);

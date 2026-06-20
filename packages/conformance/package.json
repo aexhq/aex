@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "pretest": "pnpm run build",
+    "pretest": "bun run build",
     "test:unit": "vitest run"
   },
   "devDependencies": {
