@@ -16,6 +16,7 @@ const ignoredDirs = new Set([
   "coverage",
   ".next",
   ".generated",
+  "_platform",
   ".source",
   ".wrangler",
   "out",

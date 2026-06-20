@@ -19,6 +19,7 @@ coverage/
 
 .vercel
 .wrangler/
+_platform/
 
 # Local SDK playground (inlined keys — never commit)
 scripts/aex-sample.ts
