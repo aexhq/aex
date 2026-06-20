@@ -4,7 +4,7 @@
  * installed `aex` SDK end-to-end
  * (SDK → /runs → runtime → events), the real customer surface.
  *
- * Each test installs the SDK (install fixture), then runs a small node script
+ * Each test installs the SDK (install fixture), then runs a small Bun script
  * IN the install dir that builds a submission via the SDK's classes
  * (AgentExecutor/AgentsMd/ProxyEndpoint/…), submits, polls to terminal, and
  * prints a standard result JSON which the test asserts on.
@@ -17,7 +17,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 export interface UserEnv {
   readonly apiBase: string;
@@ -158,7 +158,7 @@ export async function runSdkScript(
       : ["HOME", "TMPDIR", "LANG", "LC_ALL"];
   for (const k of carry) if (process.env[k]) passEnv[k] = process.env[k]!;
 
-  const child = await runCommand(process.execPath, [scriptPath], {
+  const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs: opts.timeoutMs ?? 5 * 60 * 1000,
     env: passEnv

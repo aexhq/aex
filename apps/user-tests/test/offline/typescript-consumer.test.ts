@@ -17,25 +17,22 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-
-const IS_WINDOWS = process.platform === "win32";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("typescript consumer", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    // Isolated: this scenario mutates the tree (npm-installs typescript +
+    // Isolated: this scenario mutates the tree (installs typescript +
     // @types/node and writes fixed-name consumer sources), so it must not
     // share the read-only per-worker install.
     install = await installAex({ isolated: true });
     // Add TypeScript + Node declarations to the same install tempdir.
     // The SDK is a Node package and its public declarations reference
     // node:* modules, so strict consumers need the matching type package.
-    const npm = IS_WINDOWS ? "npm.cmd" : "npm";
     const result = await runCommand(
-      npm,
-      ["install", "typescript@5.8.3", "@types/node@20", "--no-audit", "--no-fund", "--ignore-scripts"],
+      getBunCommand(),
+      ["install", "typescript@5.8.3", "@types/node@20", "--ignore-scripts", "--no-progress"],
       { cwd: install.installDir, timeoutMs: 120_000 }
     );
     if (result.exitCode !== 0) {
@@ -48,8 +45,7 @@ describe("typescript consumer", () => {
   });
 
   async function runTsc(projectFile: string): Promise<void> {
-    const tscBin = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "tsc.cmd" : "tsc");
-    const result = await runCommand(tscBin, ["--noEmit", "-p", projectFile], {
+    const result = await runCommand(getBunCommand(), ["run", "tsc", "--noEmit", "-p", projectFile], {
       cwd: install.installDir,
       timeoutMs: 120_000
     });

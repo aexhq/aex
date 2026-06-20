@@ -24,7 +24,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { expectStructuredError } from "@aexhq/conformance";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -239,7 +239,7 @@ async function runOutputCell(cell: Cell, installDir: string): Promise<OutputCase
     AEX_API_TOKEN: apiToken,
     [cell.keyEnvName]: cell.keyValue
   });
-  const child = await runCommand(process.execPath, [scriptPath], {
+  const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
     timeoutMs: 8 * 60_000,
     env: passEnv
@@ -529,7 +529,7 @@ async function runFailureCase(
     AEX_API_TOKEN: apiToken,
     DEEPSEEK_KEY_SUBMIT: deepseekKey
   });
-  const child = await runCommand(process.execPath, [scriptPath], {
+  const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
     timeoutMs: 5 * 60_000,
     env: passEnv

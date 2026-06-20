@@ -38,37 +38,33 @@ jobs:
           path: _platform
           persist-credentials: false
 
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: "22"
-          cache: pnpm
+          bun-version: "1.3.14"
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: bun ci
 
       # Fails on any platform<->public contract divergence not recorded in
       # scripts/cicd/contract-parity-baseline.json. SKIPS when the platform
       # tree wasn't checked out (forks / missing PAT).
       - name: Contract parity
-        run: pnpm run contracts:parity:check
+        run: bun run contracts:parity:check
         env:
           AEX_PLATFORM_DIR: ${{ github.workspace }}/_platform
 
       - name: Lint
-        run: pnpm lint
+        run: bun run lint
 
       - name: Test
-        run: pnpm test
+        run: bun run test
 
       - name: Offline user tests
-        run: pnpm run test:user:offline
+        run: bun run test:user:offline
 
       - name: Docs build
-        run: pnpm run docs:build
+        run: bun run docs:build
 
       - name: Pack SDK
-        run: pnpm run pack:sdk
+        run: bun run pack:sdk

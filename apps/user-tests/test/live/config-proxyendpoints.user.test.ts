@@ -41,7 +41,7 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
           model: MODEL_DEEPSEEK,
           prompt: [
             "Using the shell, run this exact one-liner and reply with its exact final stdout line, no prose:",
-            "if test -f /mnt/session/uploads/aex/index.json; then printf 'INDEX_PRESENT '; else printf 'INDEX_MISSING '; fi; if node /mnt/session/uploads/aex/aex proxy httpbin --path /get >/tmp/aex-proxy-response.json 2>/tmp/aex-proxy-error.txt; then printf 'PROXY_OK\\\\n'; else printf 'PROXY_ERR\\\\n'; fi"
+            "if test -f /mnt/session/uploads/aex/index.json; then printf 'INDEX_PRESENT '; else printf 'INDEX_MISSING '; fi; if bun /mnt/session/uploads/aex/aex proxy httpbin --path /get >/tmp/aex-proxy-response.json 2>/tmp/aex-proxy-error.txt; then printf 'PROXY_OK\\\\n'; else printf 'PROXY_ERR\\\\n'; fi"
           ],
           proxyEndpoints: [
             ProxyEndpoint.none({

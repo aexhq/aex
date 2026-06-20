@@ -93,10 +93,10 @@ const runId = await aex.submit({
 });
 ```
 
-Inside the run container, every session has the platform CLI mounted at `/mnt/session/uploads/aex/aex` (a Node ESM bundle) and a manifest at `/mnt/session/uploads/aex/index.json` describing the declared endpoints. The skill invokes the CLI through `node` (the mount has no execute permission so direct invocation fails with `bad interpreter: Permission denied`):
+Inside the run container, every session has the platform CLI mounted at `/mnt/session/uploads/aex/aex` (a Bun-compatible ESM bundle) and a manifest at `/mnt/session/uploads/aex/index.json` describing the declared endpoints. The skill invokes the CLI through `bun` (the mount has no execute permission so direct invocation fails with `bad interpreter: Permission denied`):
 
 ```bash
-node /mnt/session/uploads/aex/aex proxy stripe \
+bun /mnt/session/uploads/aex/aex proxy stripe \
   --method GET \
   --path /v1/charges/ch_123 \
   --response-mode headers_only
@@ -142,7 +142,7 @@ ProxyEndpoint.none({
 });
 ```
 
-`node /mnt/session/uploads/aex/aex --help` reads endpoint details from `/mnt/session/uploads/aex/index.json`. Runs that do not declare any `proxyEndpoints` still have the CLI and an empty manifest mounted, so agents never need to introspect whether the surface exists.
+`bun /mnt/session/uploads/aex/aex --help` reads endpoint details from `/mnt/session/uploads/aex/index.json`. Runs that do not declare any `proxyEndpoints` still have the CLI and an empty manifest mounted, so agents never need to introspect whether the surface exists.
 
 ### Networking
 

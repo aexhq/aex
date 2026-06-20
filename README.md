@@ -1,7 +1,5 @@
 # aex
 
-[![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
-
 **Agent Executor.** aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
 
 ## Features
@@ -16,7 +14,7 @@
 ## Install
 
 ```bash
-npm install @aexhq/sdk
+bun add @aexhq/sdk
 ```
 
 ## First Run

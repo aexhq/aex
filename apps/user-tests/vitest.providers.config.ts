@@ -5,7 +5,7 @@ loadLocalEnv();
 
 /**
  * Dedicated config for the on-demand per-provider correctness suite
- * (`pnpm test:user:providers`). Each file under test/live/providers/ is a
+ * (`bun run test:user:providers`). Each file under test/live/providers/ is a
  * single minimal round-trip that proves one extra provider's
  * adapter/routing/registry wiring reaches its real upstream — feature depth is
  * already covered on the two wire shapes (openai-chat via DeepSeek,

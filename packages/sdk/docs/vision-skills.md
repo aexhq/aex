@@ -94,7 +94,7 @@ request_body = {
 ```
 
 Write the body to a file and hand it to the mounted CLI with `--data @<file>`
-(the mount has no execute bit, so invoke through `node`; see `credentials.md`):
+(the mount has no execute bit, so invoke through `bun`; see `credentials.md`):
 
 ```python
 import subprocess
@@ -102,7 +102,7 @@ body_path = "/workspace/.aex/_ark_request.json"
 open(body_path, "w").write(json.dumps(request_body))
 
 result = subprocess.run(
-    ["node", "/mnt/session/uploads/aex/aex", "proxy", "doubao-ark",
+    ["bun", "/mnt/session/uploads/aex/aex", "proxy", "doubao-ark",
      "--method", "POST",
      "--path", "/api/v3/chat/completions",
      "--header", "content-type=application/json",

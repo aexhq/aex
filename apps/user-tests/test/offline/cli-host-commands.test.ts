@@ -2,7 +2,7 @@
  * Installed CLI host-command coverage.
  *
  * This is the blackbox layer for the commands users run after
- * `npm install @aexhq/sdk`: spawn the installed `aex` binary from a clean
+ * `bun add @aexhq/sdk`: spawn the installed `aex` binary from a clean
  * temp install and point it at a local fake API. Unit tests cover the same
  * verbs through an injected fetch; this file catches packaging, bin wiring,
  * auth header, URL, and public wire-shape drift in the shipped artifact.
@@ -12,9 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { strToU8, unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-
-const IS_WINDOWS = process.platform === "win32";
+import { getAexBinPath, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 interface CapturedRequest {
   readonly method: string;
@@ -135,7 +133,7 @@ describe("installed CLI host commands", () => {
   beforeAll(async () => {
     install = await installAex();
     api = await startFakeApi();
-    binPath = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "aex.cmd" : "aex");
+    binPath = getAexBinPath(install.installDir);
   });
 
   afterAll(async () => {

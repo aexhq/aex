@@ -46,7 +46,7 @@ export interface RuntimeManifest {
   readonly filesRoot: string;
   /** Parent dir of non-SKILL.md asset mounts: `<assetsRoot>/<skl_id>/<rel-path>`. */
   readonly assetsRoot: string;
-  /** Absolute path of the in-container aex runtime bridge (invoke via `node`). */
+  /** Absolute path of the in-container aex runtime bridge (invoke via `bun`). */
   readonly aexCli: string;
   /** Absolute path of the per-run proxy-endpoints manifest. */
   readonly indexJson: string;

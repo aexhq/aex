@@ -37,7 +37,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -87,9 +87,9 @@ describeLive("live api.aex.dev via installed SDK — Doubao round-trip on manage
   it(
     "submits via SDK, waits for terminal, fetches events + outputs, asserts a real Doubao response landed in the event log",
     async () => {
-      // Drive the SDK from a child Node process whose cwd is the install
+      // Drive the SDK from a child Bun process whose cwd is the install
       // tempdir, so `import "@aexhq/sdk"` resolves to the installed tarball —
-      // not the monorepo's pnpm symlink.
+      // not the monorepo workspace symlink.
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
         import { AgentExecutor } from "@aexhq/sdk";
@@ -188,7 +188,7 @@ describeLive("live api.aex.dev via installed SDK — Doubao round-trip on manage
         }
       }
 
-      const child = await runCommand(process.execPath, [scriptPath], {
+      const child = await runCommand(getBunCommand(), [scriptPath], {
         cwd: install.installDir,
         timeoutMs: 10 * 60 * 1000,
         env: passEnv

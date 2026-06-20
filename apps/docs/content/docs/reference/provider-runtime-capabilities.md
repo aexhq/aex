@@ -6,7 +6,7 @@ title: Provider runtime capabilities
 
 Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`; runtime routing is derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.
 
-Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.
+Regenerate with `bun run capabilities:generate`; check with `bun run capabilities:check`.
 
 Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`), [Doubao (China)](#doubao-cn) (`doubao-cn`). Runtime selectors: `managed`.
 
