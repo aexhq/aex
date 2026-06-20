@@ -22,7 +22,7 @@ jobs:
       HAS_PLATFORM_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN != '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Best-effort checkout of the private platform repo so the contract
       # parity gate can run. The gate SKIPS (does not fail) when this checkout
@@ -30,7 +30,7 @@ jobs:
       # it only enforces on trusted runs where AEX_PLATFORM_DIR is populated.
       - name: Checkout platform (for contract parity)
         if: ${{ env.HAS_PLATFORM_TOKEN == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         continue-on-error: true
         with:
           repository: aexhq/aex-platform
