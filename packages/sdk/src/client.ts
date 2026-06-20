@@ -38,6 +38,7 @@ import {
   type Run,
   type RunModel,
   type RunEvent,
+  type RunWebhookDelivery,
   type RunProvider,
   type RunRegion,
   type SecretRecord,
@@ -230,6 +231,15 @@ export interface SubmitOptions {
    * the parent, never the depth.
    */
   readonly parentRunId?: string;
+  /**
+   * Optional per-run callback URL. The platform delivers exactly the terminal
+   * `run.finished` event to `webhook.url` at the settle-consistent barrier,
+   * signed Standard-Webhooks style (verify with {@link verifyAexWebhook}). The
+   * URL must be https. It rides alongside `idempotencyKey` and never enters the
+   * idempotency hash, so re-submitting the same key with a different callback
+   * URL does not 409 (the URL is bound at first accept only).
+   */
+  readonly webhook?: { readonly url: string };
   readonly signal?: AbortSignal;
 }
 
@@ -784,6 +794,10 @@ export class AgentExecutor {
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(postHook ? { postHook } : {}),
       ...(options.parentRunId ? { parentRunId: options.parentRunId } : {}),
+      // Operational/delivery concern — sibling of idempotencyKey, NOT part of
+      // the hashed brief. The idempotency key here is randomly generated, so
+      // including the field has no effect on dedup.
+      ...(options.webhook ? { webhook: options.webhook } : {}),
       secrets,
       ...(proxyEndpointDeclarations.length > 0
         ? { proxyEndpoints: proxyEndpointDeclarations }
@@ -1000,6 +1014,22 @@ export class AgentExecutor {
   /** Short alias for `deleteRun`. */
   delete(runId: string): Promise<void> {
     return this.deleteRun(runId);
+  }
+
+  /**
+   * List a run's webhook delivery attempts (the per-run delivery ledger).
+   * Empty when the run carried no `webhook` or has not yet terminated.
+   */
+  getRunWebhookDeliveries(runId: string): Promise<readonly RunWebhookDelivery[]> {
+    return operations.getRunWebhookDeliveries(this.#http, runId);
+  }
+
+  /**
+   * Manually re-trigger a run's webhook delivery: re-sends the frozen payload
+   * with the SAME `webhook-id` so the consumer dedupes.
+   */
+  redeliverRunWebhook(runId: string, deliveryId: string): Promise<void> {
+    return operations.redeliverRunWebhook(this.#http, runId, deliveryId);
   }
 
   /**

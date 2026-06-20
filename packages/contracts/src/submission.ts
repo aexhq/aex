@@ -1498,6 +1498,20 @@ export interface PlatformRunSubmissionRequest {
    * so a forged value cannot bypass the cap.
    */
   readonly parentRunId?: string;
+  /**
+   * Optional per-run callback URL. The platform delivers exactly the terminal
+   * `run.finished` event to this URL at the settle-consistent barrier, signed
+   * Standard-Webhooks style. It is a sibling of {@link idempotencyKey} /
+   * {@link parentRunId} — an operational/delivery concern, NOT part of the
+   * hashed submission brief, so the same idempotency key with a different
+   * callback URL never 409s and the field never enters `request_hash`.
+   */
+  readonly webhook?: RunWebhookSpec;
+}
+
+/** Per-run webhook callback. v1: terminal-only; the URL must be https. */
+export interface RunWebhookSpec {
+  readonly url: string;
 }
 
 /**
@@ -1560,6 +1574,7 @@ export function parseRunSubmissionRequest(
     "postHook",
     "proxyEndpoints",
     "parentRunId",
+    "webhook",
     SECRETS_KEY
   ]);
   for (const key of Object.keys(value)) {
@@ -1594,6 +1609,7 @@ export function parseRunSubmissionRequest(
   // Lineage parent only. `depth` is NEVER accepted from the wire — the server
   // derives it from the parent row (a forged depth must not bypass the cap).
   const parentRunId = optionalString(value.parentRunId, "submission.parentRunId");
+  const webhook = parseRunWebhook(value.webhook);
   const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
@@ -1661,8 +1677,44 @@ export function parseRunSubmissionRequest(
     ...(postHook !== undefined ? { postHook } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
     ...(parentRunId !== undefined ? { parentRunId } : {}),
+    ...(webhook !== undefined ? { webhook } : {}),
     secrets
   };
+}
+
+/**
+ * Parse + SSRF-shape-validate the optional per-run `webhook`. The URL must be
+ * https with no userinfo (a `user:pass@host` URL is rejected — credentials must
+ * not ride in a callback URL). Unknown subfields are rejected so the strict
+ * top-level allow-list extends to the nested object. Returns `undefined` when
+ * absent. Delivery-time re-resolution + IP-deny checks live server-side; this
+ * is the submit-time shape gate.
+ */
+export function parseRunWebhook(input: unknown): RunWebhookSpec | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  const value = requireRecord(input, "webhook");
+  const allowed = new Set(["url"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`webhook.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
+    }
+  }
+  const url = requireString(value.url, "webhook.url");
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`webhook.url must be a valid absolute URL (got ${JSON.stringify(url)})`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`webhook.url must use https (got ${parsed.protocol.replace(/:$/, "")})`);
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error("webhook.url must not contain userinfo (user:pass@host)");
+  }
+  return { url };
 }
 
 export function parseRunRegion(input: unknown): RunRegion | undefined {

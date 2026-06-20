@@ -11,6 +11,7 @@
  *   Host (manifest absent):
  *     - `aex run --config <run.json> [flags]`
  *     - `aex status <run-id>`
+ *     - `aex deliveries <run-id>`
  *     - `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
  *     - `aex events <run-id> [--follow] [--timeout <dur>]`
  *     - `aex outputs <run-id>`
@@ -42,6 +43,7 @@ import {
   runRunCmd,
   runSkillsCmd,
   runStatusCmd,
+  runDeliveriesCmd,
   runWaitCmd,
   runWhoamiCmd
 } from "./host/index.js";
@@ -82,6 +84,8 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runSkillsCmd(io, rest);
     case "status":
       return runStatusCmd(io, rest);
+    case "deliveries":
+      return runDeliveriesCmd(io, rest);
     case "wait":
       return runWaitCmd(io, rest);
     case "events":
@@ -147,6 +151,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex skills get <skill-id> --api-token T\n");
   io.stdout("  aex skills delete <skill-id> --api-token T\n");
   io.stdout("  aex status <run-id> --api-token T\n");
+  io.stdout("  aex deliveries <run-id> --api-token T\n");
   io.stdout("  aex wait <run-id> [--timeout 8m] [--interval 2s] --api-token T\n");
   io.stdout("  aex events <run-id> [--follow] [--timeout 8m] --api-token T\n");
   io.stdout("  aex outputs <run-id> --api-token T\n");
@@ -179,6 +184,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --runtime-size <size>       managed runtime preset\n");
   io.stdout("  --run-timeout <dur>         Server-side run deadline (e.g. 1h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");
+  io.stdout("  --webhook <url>             Optional per-run callback URL (https); receives the terminal run.finished event\n");
   io.stdout("  --follow                    Poll events to stdout until the run terminates\n");
   io.stdout("  --timeout <dur>             With --follow: give up after this long (e.g. 8m, 30s, 500ms); exit code 3\n");
   return SUCCESS;
