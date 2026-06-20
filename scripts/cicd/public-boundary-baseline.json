@@ -80,7 +80,8 @@
       "./sse.js",
       "./stable.js",
       "./status.js",
-      "./submission.js"
+      "./submission.js",
+      "./webhook-verify.js"
     ],
     "contractsBarrelExportSpecifiers": [
       "./proxy-protocol.js",
@@ -112,7 +113,8 @@
       "./run-artifacts.js",
       "./operations.js",
       "./proxy-validation.js",
-      "./sse.js"
+      "./sse.js",
+      "./webhook-verify.js"
     ]
   }
 }

@@ -97,6 +97,8 @@ export type {
   RunRecordSubmissionSnapshotV1,
   RunRecordV1,
   RunEvent,
+  RunWebhookDelivery,
+  RunWebhookDeliveryStatus,
   RuntimeManifest,
   RuntimeProvider,
   SecretRecord,
@@ -121,6 +123,7 @@ export type {
   PlatformProxyAuthValue as ProxyAuthValue,
   PlatformEnvironment as RunEnvironment,
   PlatformRunSubmissionRequest,
+  RunWebhookSpec,
   ProxyAuthShape,
   ProxyMethod,
   ProxyRetryPolicy,
@@ -219,3 +222,8 @@ export type {
 
 // Secret utilities
 export { SecretString, redactSecrets } from "@aexhq/contracts";
+
+// Webhook verification — customers verify inbound run webhooks (Standard
+// Webhooks scheme) with `verifyAexWebhook(...)`, no extra dependency needed.
+export { verifyAexWebhook } from "@aexhq/contracts";
+export type { VerifyAexWebhookInput } from "@aexhq/contracts";

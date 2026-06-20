@@ -347,6 +347,35 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     });
   });
 
+  it("includes webhook on the top-level request body when supplied", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      webhook: { url: "https://hooks.example.com/aex" },
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-webhook"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.webhook).toEqual({ url: "https://hooks.example.com/aex" });
+  });
+
+  it("omits webhook from the request body when not supplied", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      secrets: { apiKey: "k" },
+      idempotencyKey: "idem-no-webhook"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect("webhook" in body).toBe(false);
+  });
+
   it("omits postHook when the command is empty", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });

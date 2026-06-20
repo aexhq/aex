@@ -179,6 +179,41 @@ describe("aex status", () => {
   });
 });
 
+describe("aex deliveries", () => {
+  it("GETs the webhook-deliveries endpoint and prints the array as JSON", async () => {
+    const rows = [
+      {
+        id: "wd-1",
+        eventType: "run.finished",
+        status: "delivered",
+        attemptCount: 1,
+        lastStatusCode: 200,
+        createdAt: "2026-06-21T00:00:00.000Z"
+      }
+    ];
+    const cap = makeHostIo({
+      argv: ["deliveries", "run-42", ...COMMON],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ deliveries: rows }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(cap.calls[0]!.url).toBe("https://dash.example/api/runs/run-42/webhook-deliveries");
+    expect(cap.calls[0]!.init.method ?? "GET").toBe("GET");
+    expect(JSON.parse(cap.stdout)).toEqual(rows);
+  });
+
+  it("requires exactly one run-id positional", async () => {
+    const cap = makeHostIo({ argv: ["deliveries", ...COMMON] });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("usage: aex deliveries");
+  });
+});
+
 describe("aex events", () => {
   it("lists events as NDJSON", async () => {
     const cap = makeHostIo({
@@ -704,6 +739,34 @@ describe("aex run", () => {
     const body = cap.calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("deepseek");
     expect(body.secrets).toEqual({ apiKey: "sk-ds-1" });
+  });
+
+  it("threads --webhook into the request body as webhook.url", async () => {
+    const cap = makeHostIo({
+      argv: [
+        "run",
+        "--model",
+        "claude-haiku-4-5",
+        "--prompt",
+        "hello",
+        "--webhook",
+        "https://hooks.example.com/aex",
+        "--anthropic-api-key",
+        "sk-ant-1",
+        "--idempotency-key",
+        "idem-webhook",
+        ...COMMON
+      ],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ id: "r-webhook", status: "queued" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    const body = cap.calls[0]!.body as Record<string, unknown>;
+    expect(body.webhook).toEqual({ url: "https://hooks.example.com/aex" });
   });
 
   it("rejects when --anthropic-api-key is missing", async () => {

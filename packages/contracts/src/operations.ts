@@ -23,6 +23,7 @@ import type {
   OutputQuery,
   Run,
   RunEvent,
+  RunWebhookDelivery,
   SecretRecord,
   SecretReveal,
   Skill,
@@ -263,6 +264,39 @@ export async function deleteRun(http: HttpClient, runId: string): Promise<void> 
   await http.request<unknown>(
     `/api/runs/${encodeURIComponent(runId)}`,
     { method: "DELETE" }
+  );
+}
+
+/**
+ * List a run's webhook delivery attempts (the per-run delivery ledger). Returns
+ * the rows surfaced by `GET /api/runs/:id/webhook-deliveries`; an empty array
+ * means the run carried no `webhook` or has not reached a terminal state yet.
+ */
+export async function getRunWebhookDeliveries(
+  http: HttpClient,
+  runId: string
+): Promise<readonly RunWebhookDelivery[]> {
+  const result = await http.request<
+    { readonly deliveries: readonly RunWebhookDelivery[] } | readonly RunWebhookDelivery[]
+  >(`/api/runs/${encodeURIComponent(runId)}/webhook-deliveries`);
+  return Array.isArray(result)
+    ? result
+    : (result as { readonly deliveries: readonly RunWebhookDelivery[] }).deliveries;
+}
+
+/**
+ * Manually re-trigger a run's webhook delivery: resets the row to `pending` and
+ * re-sends the frozen payload with the SAME `webhook-id` so the consumer
+ * dedupes. Idempotent from the caller's view.
+ */
+export async function redeliverRunWebhook(
+  http: HttpClient,
+  runId: string,
+  deliveryId: string
+): Promise<void> {
+  await http.request<unknown>(
+    `/api/runs/${encodeURIComponent(runId)}/webhook-deliveries/${encodeURIComponent(deliveryId)}/redeliver`,
+    { method: "POST" }
   );
 }
 

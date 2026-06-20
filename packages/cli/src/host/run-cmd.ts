@@ -162,6 +162,13 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   if (idempotency.error) { io.stderr(`${idempotency.error}\n`); return USAGE_ERR; }
   rest = idempotency.remaining;
 
+  // `--webhook <url>` sets an optional per-run callback URL. The shape
+  // (https-only, no userinfo) is re-validated by the shared parser server-side;
+  // here we only pass it through.
+  const webhookFlag = takeFlagValue(rest, "--webhook");
+  if (webhookFlag.error) { io.stderr(`${webhookFlag.error}\n`); return USAGE_ERR; }
+  rest = webhookFlag.remaining;
+
   // `--runtime-size` selects a managed runtime size from the closed preset set.
   const runtimeSizeFlag = takeFlagValue(rest, "--runtime-size");
   if (runtimeSizeFlag.error) { io.stderr(`${runtimeSizeFlag.error}\n`); return USAGE_ERR; }
@@ -428,6 +435,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
         ? { timeout: runConfig.timeout }
         : {}),
     ...(runConfig.postHook ? { postHook: runConfig.postHook } : {}),
+    ...(webhookFlag.value ? { webhook: { url: webhookFlag.value } } : {}),
     ...(proxyEndpoints.length > 0 ? { proxyEndpoints } : {})
   };
 

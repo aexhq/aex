@@ -80,6 +80,32 @@ export interface RunEvent {
   readonly [key: string]: unknown;
 }
 
+/** Status of a per-run webhook delivery. Terminal: delivered/exhausted/invalid. */
+export type RunWebhookDeliveryStatus =
+  | "pending"
+  | "delivering"
+  | "retrying"
+  | "delivered"
+  | "exhausted"
+  | "invalid";
+
+/**
+ * One row of a run's webhook delivery ledger, as returned by
+ * `GET /api/runs/:id/webhook-deliveries`. `id` is the stable `webhook-id`
+ * header the consumer dedupes on across retries; the optional fields are
+ * populated only once a delivery attempt has been made.
+ */
+export interface RunWebhookDelivery {
+  readonly id: string;
+  readonly eventType: string;
+  readonly status: RunWebhookDeliveryStatus;
+  readonly attemptCount: number;
+  readonly lastStatusCode?: number;
+  readonly lastError?: string;
+  readonly nextAttemptAt?: string;
+  readonly createdAt: string;
+}
+
 /**
  * Provider-emitted event payload. Provider-specific fields are passed through
  * structurally so historical events and managed-runner events can be displayed
