@@ -126,7 +126,7 @@ interface SkillBundleBuild {
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
-  if (!subtle) throw new Error("aex skills upload: globalThis.crypto.subtle is required (Node 18+)");
+  if (!subtle) throw new Error("aex skills upload: globalThis.crypto.subtle is required (Bun or Node 18+)");
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   const digest = await subtle.digest("SHA-256", copy.buffer);

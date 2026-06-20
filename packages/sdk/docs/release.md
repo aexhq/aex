@@ -4,17 +4,13 @@ title: Release
 
 # Release
 
-The repository is Bun-first. Build, test, docs, package validation, and user
-tests run through Bun.
+The repository is Bun-first. Build, test, docs, package validation, user tests,
+and SDK packaging run through Bun. Registry publication uses npm on the
+Bun-packed SDK tarball so npm provenance and dist-tag controls stay explicit.
 
-npm publication is intentionally deferred after the Bun migration. The
-`release.yml` and `promote.yml` workflows fail closed with a deferred-publish
-message until package staging, provenance, and dist-tag promotion are
-revalidated for the new toolchain.
+## Package gate
 
-## Current package gate
-
-Before cutting a publish path, validate the package locally and in CI:
+Before publishing, validate the package locally and in CI:
 
 ```text
 bun ci
@@ -29,21 +25,28 @@ bun run pack:sdk
 boundary gate. Offline user tests install the packed SDK into a clean Bun
 project and exercise the SDK and CLI from that install tree.
 
-## Deferred publish path
+## Publish
 
-When publication is reintroduced, the release workflow must explicitly solve
-these items before it is enabled:
+The manual `.github/workflows/release.yml` workflow:
 
-- Package staging for `workspace:*` dependencies.
-- Provenance or a chosen replacement attestation path.
-- Publish order for `@aexhq/contracts`, `@aexhq/conformance`, `@aexhq/cli`, and
-  `@aexhq/sdk`.
-- Post-publish user tests against the exact published version.
-- Dist-tag promotion for canary-to-latest flows.
+- Installs with `bun ci`.
+- Runs lint, unit/security, offline user tests, docs build, and `pack:sdk`.
+- Refuses to publish if `@aexhq/sdk@<package version>` already exists.
+- Packs `packages/sdk` with `bun pm pack`.
+- Publishes that tarball with npm provenance to the selected dist-tag
+  (`canary` by default).
+- Waits for npm visibility.
+- Runs live user tests against the exact published version.
 
-Do not enable a publish workflow by swapping in `bun publish` alone. The
-workflow must prove that the published artifacts match the Bun-validated
-tarballs and that clean Bun consumers can install and run them.
+Publish canary first for release validation. Promote the same immutable version
+only after the downstream platform release gate is green.
+
+## Promote
+
+The manual `.github/workflows/promote.yml` workflow assigns an npm dist-tag to
+an already-published `@aexhq/sdk` version, usually `latest` after canary and
+platform validation. It requires npm write credentials and does not rebuild or
+republish the package.
 
 ## What ships in the tarball
 
@@ -66,6 +69,6 @@ access:
 
 ## Rollback
 
-Until publication is reintroduced, rollback is a normal source revert. Once
-npm publication returns, version numbers should be treated as immutable and bad
-releases should be fixed by publishing a higher version.
+Published version numbers are immutable. Bad releases are fixed by publishing a
+higher version and moving dist-tags forward; source rollback alone does not
+remove an npm artifact.

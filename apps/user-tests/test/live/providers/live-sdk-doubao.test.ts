@@ -28,7 +28,7 @@
  *   AEX_API_URL              live api.aex.dev URL
  *   DOUBAO_API_KEY           customer's Ark (BytePlus/Volcengine) API key
  *   AEX_USER_TEST_TARBALL          path to a packed aex tgz
- *     OR AEX_USER_TEST_VERSION     published version on npm
+ *     OR AEX_USER_TEST_VERSION     published package version
  *
  * Optional:
  *   AEX_USER_TEST_DOUBAO_MODEL      default "doubao-seed-flash"
@@ -71,6 +71,18 @@ interface LiveResult {
   readonly outputCount: number;
   readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
   readonly leakedDoubaoKey: boolean;
+}
+
+function liveFailureDiagnostic(result: LiveResult): string {
+  const safe = {
+    ...result,
+    assistantTextJoined:
+      result.assistantTextJoined.length > 1000
+        ? result.assistantTextJoined.slice(0, 1000) + "...[truncated]"
+        : result.assistantTextJoined
+  };
+  const serialized = JSON.stringify(safe, null, 2);
+  return doubaoKey ? serialized.split(doubaoKey).join("[REDACTED_DOUBAO_KEY]") : serialized;
 }
 
 describeLive("live api.aex.dev via installed SDK — Doubao round-trip on managed runtime", () => {
@@ -202,25 +214,26 @@ describeLive("live api.aex.dev via installed SDK — Doubao round-trip on manage
       const result = JSON.parse(child.stdout.trim()) as LiveResult;
 
       // ---- assertions ----
+      const diagnostic = liveFailureDiagnostic(result);
 
-      expect(result.runStatus).toBe("succeeded");
-      expect(result.terminalKind).toBe("RUN_FINISHED");
-      expect(result.eventKinds).toContain("RUN_STARTED");
-      expect(result.eventKinds).toContain("RUN_FINISHED");
-      expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
-      expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.assistantTextJoined.length).toBeGreaterThan(0);
+      expect(result.runStatus, diagnostic).toBe("succeeded");
+      expect(result.terminalKind, diagnostic).toBe("RUN_FINISHED");
+      expect(result.eventKinds, diagnostic).toContain("RUN_STARTED");
+      expect(result.eventKinds, diagnostic).toContain("RUN_FINISHED");
+      expect(result.eventKinds.indexOf("RUN_STARTED"), diagnostic).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
+      expect(result.assistantTextEventCount, diagnostic).toBeGreaterThan(0);
+      expect(result.assistantTextJoined.length, diagnostic).toBeGreaterThan(0);
       // The managed runtime stream fragments responses across content blocks,
       // so strip whitespace before checking probe presence.
       const normalized = result.assistantTextJoined.replace(/\s+/g, "");
-      expect(normalized).toContain(result.probe);
+      expect(normalized, diagnostic).toContain(result.probe);
 
       const terminal = result.terminalData ?? {};
-      expect(terminal["reason"]).toBe("complete");
+      expect(terminal["reason"], diagnostic).toBe("complete");
 
       // The customer's Ark key MUST NOT appear anywhere in the SDK-visible
       // response surface.
-      expect(result.leakedDoubaoKey).toBe(false);
+      expect(result.leakedDoubaoKey, diagnostic).toBe(false);
     },
     11 * 60 * 1000
   );

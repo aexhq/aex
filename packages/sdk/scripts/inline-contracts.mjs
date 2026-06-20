@@ -1,5 +1,5 @@
 // Inline `@aexhq/contracts` into the SDK's `dist/` so the published
-// `aex` npm tarball is fully self-contained.
+// SDK tarball is fully self-contained.
 //
 // Why this script exists
 // ----------------------
@@ -22,9 +22,8 @@
 //      leaked — that means we'd ship another broken tarball.
 //
 // Pair this with keeping `@aexhq/contracts` in devDependencies in
-// packages/sdk/package.json — npm strips devDependencies from the
-// published tarball, so the rewritten dist has zero external workspace
-// references at install time.
+// packages/sdk/package.json. Consumer installs do not install devDependencies,
+// so the rewritten dist has zero external workspace references at install time.
 //
 // Idempotency: safe to run multiple times. The _contracts/ directory is
 // removed before each copy, and the rewrite is a no-op on already

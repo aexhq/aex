@@ -18,7 +18,6 @@ not promise), see [Limits](limits.md).
 
 Each row is tagged with its **source**:
 
-- **Cloudflare** — imposed by the underlying platform; aex cannot change it.
 - **aex policy** — an aex platform ceiling, the same for every workspace.
 - **Workspace default** — a per-workspace value with a configurable override.
 
@@ -105,5 +104,5 @@ Default values; each is overridable per-plane via the matching
 | Proxy request body | 10 MiB | aex policy | Per-endpoint via `maxRequestBytes` | [`REQUEST_PROXY_DEFAULT_MAX_REQUEST_BYTES`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L499) |
 | Proxy response body | `0` = unlimited (streamed unbuffered) | aex policy | Per-endpoint via `maxResponseBytes` | [`REQUEST_PROXY_DEFAULT_MAX_RESPONSE_BYTES`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L509) |
 | Proxy upstream timeout | 5 minutes | aex policy | Per-endpoint via `timeoutMs` | [`REQUEST_PROXY_DEFAULT_TIMEOUT_MS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L519) |
-| Signed-URL (presigned R2 PUT/GET) TTL | 300 seconds | aex policy | Per-call via `expiresSeconds` | [`REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L539) |
+| Signed output URL TTL | 300 seconds | aex policy | Per-call via `expiresSeconds` | [`REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L539) |
 | Event-stream connection ticket TTL | 60 seconds | aex policy | Per-mint via `ttlMs` | [`REQUEST_TICKET_DEFAULT_TTL_MS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L549) |

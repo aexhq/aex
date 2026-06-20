@@ -55,7 +55,7 @@
     },
     "packages/cli": {
       "name": "@aexhq/cli",
-      "version": "0.25.2",
+      "version": "0.26.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },
@@ -69,7 +69,7 @@
     },
     "packages/conformance": {
       "name": "@aexhq/conformance",
-      "version": "0.25.2",
+      "version": "0.26.0",
       "devDependencies": {
         "@types/node": "22.15.3",
         "typescript": "5.8.3",
@@ -78,14 +78,14 @@
     },
     "packages/contracts": {
       "name": "@aexhq/contracts",
-      "version": "0.25.2",
+      "version": "0.26.0",
       "dependencies": {
         "fflate": "0.8.2",
       },
     },
     "packages/sdk": {
       "name": "@aexhq/sdk",
-      "version": "0.25.2",
+      "version": "0.26.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },

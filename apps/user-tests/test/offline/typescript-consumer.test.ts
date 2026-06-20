@@ -28,8 +28,8 @@ describe("typescript consumer", () => {
     // share the read-only per-worker install.
     install = await installAex({ isolated: true });
     // Add TypeScript + Node declarations to the same install tempdir.
-    // The SDK is a Node package and its public declarations reference
-    // node:* modules, so strict consumers need the matching type package.
+    // The SDK's public declarations reference node:* modules, so strict
+    // TypeScript consumers need the matching type package.
     const result = await runCommand(
       getBunCommand(),
       ["install", "typescript@5.8.3", "@types/node@20", "--ignore-scripts", "--no-progress"],

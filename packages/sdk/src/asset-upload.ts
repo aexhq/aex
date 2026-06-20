@@ -205,7 +205,7 @@ async function uploadAssetBuffered(args: UploadAssetArgs, actualHex: string): Pr
 
 /**
  * Compute SHA-256 over `bytes` and return the lowercase hex digest.
- * Uses Web Crypto when available (Node 18+ / browser); the SDK already
+ * Uses Web Crypto when available (Bun / Node 18+ / browser); the SDK already
  * requires Web Crypto for `hashSkillBundle`.
  */
 async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
@@ -213,7 +213,7 @@ async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
   if (!subtle) {
     throw new Error(
       "uploadAsset: globalThis.crypto.subtle is not available; " +
-        "Node 18+ or a Web-Crypto-capable runtime is required"
+        "Bun, Node 18+, or a Web-Crypto-capable runtime is required"
     );
   }
   const copy = new Uint8Array(bytes.byteLength);

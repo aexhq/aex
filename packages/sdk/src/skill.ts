@@ -87,7 +87,7 @@ export class Skill {
 
   /**
    * Read a local directory and build a draft Skill. Symlinks and
-   * non-regular files are skipped. Node-only.
+   * non-regular files are skipped. Bun/Node filesystem runtimes only.
    */
   static async fromPath(rootDir: string, args: { readonly name: string }): Promise<Skill> {
     const files = await readDirectoryAsFiles(rootDir);
@@ -107,7 +107,7 @@ export class Skill {
    * top-level folder (which is stripped). The signed URL only needs to be valid
    * for this call; `client.submit` snapshots the bytes into the run.
    *
-   * Universal (Node 18+ / browser): requires a global `fetch`, or pass one.
+   * Universal (Bun / Node 18+ / browser): requires a global `fetch`, or pass one.
    */
   static async fromUrl(
     url: string,

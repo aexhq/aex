@@ -54,7 +54,7 @@ export class AgentsMd {
     return new AgentsMd(ref, zip);
   }
 
-  /** Node-only convenience: read a markdown file from disk. */
+  /** Bun/Node filesystem convenience: read a markdown file from disk. */
   static async fromPath(path: string, args: { readonly name: string }): Promise<AgentsMd> {
     const content = await readFile(path, "utf8");
     return AgentsMd.fromContent(content, args);

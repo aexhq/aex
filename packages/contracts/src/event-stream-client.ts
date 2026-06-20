@@ -13,8 +13,8 @@
  * whole run): compose {@link filterStream} with the envelope guards, and
  * {@link mapStream} with {@link toAGUI}, on top of this stream.
  *
- * The WebSocket is injectable so the SDK/CLI use the Node/global `WebSocket`
- * (Node 22+ ships it; no dependency) and tests drive a fake.
+ * The WebSocket is injectable so the SDK/CLI use the global `WebSocket`
+ * (Bun and Node 22+ ship it; no dependency) and tests drive a fake.
  */
 
 import type { AexEvent } from "./event-envelope.js";

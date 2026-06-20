@@ -20,7 +20,7 @@
  *   AEX_API_TOKEN            workspace API token
  *   ANTHROPIC_API_KEY        customer's Anthropic API key
  *   AEX_USER_TEST_TARBALL          path to packed aex tgz
- *     OR AEX_USER_TEST_VERSION     published version on npm
+ *     OR AEX_USER_TEST_VERSION     published package version
  *
  * Optional:
  *   AEX_USER_TEST_ANTHROPIC_MODEL  default "claude-haiku-4-5"

@@ -43,7 +43,7 @@ export async function fetchSkillArchive(
   if (typeof fetchImpl !== "function") {
     throw new Error(
       "Skill.fromUrl: global fetch is unavailable; pass args.fetch " +
-        "(Node 18+ or a fetch-capable runtime is required)"
+        "(Bun, Node 18+, or a fetch-capable runtime is required)"
     );
   }
 
@@ -202,7 +202,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   if (!subtle) {
     throw new Error(
       "Skill.fromUrl: globalThis.crypto.subtle is unavailable; " +
-        "Node 18+ or a Web-Crypto-capable runtime is required"
+        "Bun, Node 18+, or a Web-Crypto-capable runtime is required"
     );
   }
   const copy = new Uint8Array(bytes.byteLength);

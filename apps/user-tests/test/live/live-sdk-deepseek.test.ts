@@ -16,7 +16,7 @@
  *   AEX_API_URL              live api.aex.dev URL
  *   DEEPSEEK_API_KEY     customer's DeepSeek API key
  *   AEX_USER_TEST_TARBALL          path to a packed aex tgz
- *     OR AEX_USER_TEST_VERSION     published version on npm
+ *     OR AEX_USER_TEST_VERSION     published package version
  *
  * Optional:
  *   AEX_USER_TEST_DEEPSEEK_MODEL            default "deepseek-chat"

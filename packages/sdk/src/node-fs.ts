@@ -9,8 +9,8 @@ import type { SkillFiles } from "./bundle.js";
  * we use `lstat` semantics). Paths are normalised to forward-slash
  * relative form so they can flow into `bundleSkillFiles` directly.
  *
- * Node-only. Browser callers should use `bundleSkillFiles` with a
- * pre-built files map instead.
+ * Bun/Node filesystem runtimes only. Browser callers should use
+ * `bundleSkillFiles` with a pre-built files map instead.
  */
 export async function readDirectoryAsFiles(rootDir: string): Promise<SkillFiles> {
   if (typeof rootDir !== "string" || !rootDir) {

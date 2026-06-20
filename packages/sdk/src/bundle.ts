@@ -178,14 +178,14 @@ const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
  * `Skill.fromFiles` / `Skill.fromPath` to populate the
  * `InlineSkillRef.contentHash` field. The hash is advisory — the BFF
  * recomputes server-side after re-canonicalising the zip; a mismatch is
- * rejected. Web-Crypto-only so the SDK works in Node, edge runtimes,
+ * rejected. Web-Crypto-only so the SDK works in Bun, Node, edge runtimes,
  * and browsers without polyfills.
  */
 export async function hashSkillBundle(zipBytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
   if (!subtle) {
     throw new Error(
-      "hashSkillBundle: globalThis.crypto.subtle is not available; Node 18+ or a Web-Crypto-capable runtime is required"
+      "hashSkillBundle: globalThis.crypto.subtle is not available; Bun, Node 18+, or a Web-Crypto-capable runtime is required"
     );
   }
   // crypto.subtle.digest expects a BufferSource. Pass a freshly-sliced

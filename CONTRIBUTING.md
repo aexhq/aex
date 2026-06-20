@@ -48,7 +48,7 @@ pack checks.
 | Workflow | Scope |
 | --- | --- |
 | [`CI`](.github/workflows/ci.yml) | main-push/manual lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
-| [`Release`](.github/workflows/release.yml) | deferred npm publish placeholder; fails closed until the publish path is revalidated |
+| [`Release`](.github/workflows/release.yml) | deferred registry publish placeholder; fails closed until the publish path is revalidated |
 | [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 
 Releases are manual and currently deferred. Re-enable the

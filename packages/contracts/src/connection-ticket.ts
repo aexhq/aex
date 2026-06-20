@@ -1,7 +1,7 @@
 /**
  * Connection tickets for the event-coordinator WebSocket handshake.
  *
- * A browser/Node WebSocket handshake cannot carry an Authorization header,
+ * A browser/runtime WebSocket handshake cannot carry an Authorization header,
  * so a subscriber first obtains a short-lived ticket from an authenticated
  * HTTP endpoint, then presents it as a `?ticket=` query parameter on the WS
  * upgrade. The ticket is an HMAC over `${runId}.${channel}.${exp}` keyed by
@@ -10,7 +10,7 @@
  *
  * This lives in shared so the coordinator (which verifies) and the API
  * hosted API's ticket broker (which mints, on behalf of a workspace token) use
- * ONE implementation. Pure Web Crypto — identical under Node and workerd.
+ * ONE implementation. Pure Web Crypto — identical under Bun, Node, and workerd.
  */
 
 const DEFAULT_TICKET_TTL_MS = 60_000;

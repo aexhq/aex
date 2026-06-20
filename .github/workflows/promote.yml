@@ -4,9 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Deferred until the Bun-first npm publish/promote path is implemented.
+        description: Published @aexhq/sdk version to promote.
         required: true
         type: string
+      npm_dist_tag:
+        description: npm dist-tag to assign.
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
+          - canary
 
 concurrency:
   group: promote-aex
@@ -16,12 +25,32 @@ permissions:
   contents: read
 
 jobs:
-  deferred:
-    name: npm promote deferred
+  promote:
+    name: Promote @aexhq/sdk
     runs-on: ubuntu-latest
     steps:
-      - name: Explain deferred promote path
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Assert version exists on npm
+        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"
+
+      - name: Add npm dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+        shell: bash
         run: |
-          echo "::error::npm dist-tag promotion is intentionally deferred for the Bun-first migration."
-          echo "Reintroduce this workflow with the dedicated publish path once npm release support is revalidated."
-          exit 1
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is required for npm dist-tag promotion." >&2
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+          npm dist-tag add "@aexhq/sdk@${{ inputs.version }}" "${NPM_DIST_TAG}" --registry https://registry.npmjs.org
+          npm dist-tag ls @aexhq/sdk --registry https://registry.npmjs.org

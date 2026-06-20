@@ -1,10 +1,9 @@
 # @aexhq/user-tests
 
 Layer-4 test workspace. Exercises a clean install of the current **packed
-tarball** (local/offline default, CI, and manual live workflow runs) or a
-future **published artifact** once the deferred publish path is re-enabled,
-the way a real user or AI agent would on day one of
-`bun add @aexhq/sdk`.
+tarball** (local/offline default, CI, and manual live workflow runs) or the
+exact **published artifact** selected by release workflows, the way a real user
+or AI agent would on day one of `bun add @aexhq/sdk`.
 
 This workspace deliberately has **no `workspace:*` dependencies on
 `@aexhq/sdk` or other `@aexhq/*` packages**. Every scenario spawns a child process whose
@@ -26,7 +25,7 @@ CI can still pin the artifact under test by providing **exactly one** of:
 | Env | Source under test |
 |---|---|
 | `AEX_USER_TEST_TARBALL` | absolute path to a Bun-packed tarball |
-| `AEX_USER_TEST_VERSION` | published package version, e.g. `0.12.3` (when the deferred publish path is re-enabled) |
+| `AEX_USER_TEST_VERSION` | published package version, e.g. `0.26.0` |
 
 Then:
 
@@ -47,19 +46,19 @@ script; because these are named `test:user*`, that gate never runs them
 by default. That matters: they fail loudly when the artifact-under-test
 env is unset (by design), so pulling them into the default gate would
 break it for everyone. They run only via explicit invocation here and
-from `.github/workflows/ci.yml`, the deferred `.github/workflows/release.yml`, and
+from `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and
 `.github/workflows/live-user-tests.yml`.
 
 Explicit artifact inputs are strict: setting both variables, an invalid version,
 or a missing tarball path is a **hard error**, never a silent skip. The
-future post-publish gate must stay pinned to the exact published version
-through `AEX_USER_TEST_VERSION`.
+post-publish gates must stay pinned to the exact published version through
+`AEX_USER_TEST_VERSION`.
 
 ## CI prerequisites
 
-CI runs the offline scenarios after the unit gate. The release workflow is
-currently deferred until the Bun-first publish path is revalidated. Neither
-path needs a provider key.
+CI runs the offline scenarios after the unit gate. The release workflow runs the
+offline scenarios before publish and the live scenarios against the exact
+published version after npm visibility. The offline path needs no provider key.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
 the configured hosted API. They require:

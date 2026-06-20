@@ -45,7 +45,7 @@
  *   AEX_API_TOKEN               workspace API token
  *   DEEPSEEK_API_KEY                customer DeepSeek API key
  *   AEX_USER_TEST_TARBALL            packed SDK tarball
- *     OR AEX_USER_TEST_VERSION       published version on npm
+ *     OR AEX_USER_TEST_VERSION       published package version
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

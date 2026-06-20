@@ -26,14 +26,13 @@ const digestPath = resolve(distDir, "cli.mjs.sha256");
 const result = await build({
   entryPoints: [inputPath],
   bundle: true,
-  // Bun executes Node-compatible ESM and built-ins, so esbuild's node
-  // platform remains the most compatible resolver for npm packages.
+  // Bun runs the ESM output and built-ins, so esbuild's node platform remains
+  // the most compatible resolver for package dependencies.
   platform: "node",
   format: "esm",
   target: "es2022",
   write: false,
-  // Mark Node-compatible built-ins external; we only bundle our own +
-  // workspace deps.
+  // Mark runtime built-ins external; we only bundle our own workspace deps.
   external: [
     "node:*",
     "fs",
