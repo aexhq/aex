@@ -199,7 +199,7 @@ function checkSdkBunPack() {
   const packDir = mkdtempSync(resolve(tmpdir(), "aex-sdk-pack-"));
   let files;
   try {
-    const result = spawnSync("bun", ["pm", "pack", "--destination", packDir, "--ignore-scripts", "--quiet"], {
+    const result = spawnSync(process.execPath, ["pm", "pack", "--destination", packDir, "--ignore-scripts", "--quiet"], {
       cwd: pkgDir,
       encoding: "utf8",
       shell: process.platform === "win32"

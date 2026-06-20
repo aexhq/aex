@@ -34,7 +34,7 @@ export default tseslint.config(
       // Skipped/sample / template files committed for offline tests.
       "**/test/fixtures/**",
       // Self-test fixture for the rules themselves — intentionally trips
-      // every rule; verified through `pnpm run lint:tests:verify`. Ignored
+      // every rule; verified through `bun run lint:tests:verify`. Ignored
       // from the normal lint so the main pipeline stays green.
       "tools/eslint-plugin-aex/__verify_rules.test.ts"
     ]

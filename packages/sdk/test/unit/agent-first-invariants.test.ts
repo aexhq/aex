@@ -15,7 +15,7 @@ const SKIP_DIR_NAMES = new Set([
   ".git",
   ".vercel",
   "db-status-out",
-  ".pnpm-store",
+  ".bun",
   "tmp"
 ]);
 
@@ -76,7 +76,7 @@ function relPosix(abs: string): string {
  */
 describe("agent-first invariants (workspace-wide)", () => {
   it("forbids subpath imports of the aex package", () => {
-    // The `@aexhq/sdk` npm package exposes exactly one entry point. Subpath
+    // The `@aexhq/sdk` package exposes exactly one entry point. Subpath
     // imports (`aex/proxy`, `aex/core`, ...) would create
     // multiple surfaces an agent has to track. The package's
     // package.json#exports field is also locked down in

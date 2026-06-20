@@ -1,11 +1,11 @@
 // Self-test fixture for the aex ESLint rules. Lives next to the plugin
 // so it ships with the rules. NOT a Vitest test — runs as a fixture-style
-// lint smoke (`pnpm run lint:tests` will fail with EXACTLY the four
+// lint smoke (`bun run lint:tests` will fail with EXACTLY the four
 // expected aex/* violations on this file). The verification script
 // at the bottom of this comment block runs it programmatically; manual
 // re-introduction here serves the same purpose for ad-hoc verification.
 //
-// To use: `pnpm run lint:tests:verify` — see package.json.
+// To use: `bun run lint:tests:verify` — see package.json.
 //
 // Each block below intentionally trips one rule. If a rule stops
 // catching the pattern (e.g. after a refactor), the verify command's

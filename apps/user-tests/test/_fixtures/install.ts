@@ -27,7 +27,7 @@
 import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -337,11 +337,13 @@ export async function runCommand(
   const timeoutMs = options.timeoutMs ?? 60_000;
   const { timeoutMs: _omit, ...spawnOptions } = options;
   void _omit;
+  const env = withBunOnPath(spawnOptions.env);
   return await new Promise<RunResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     const child = spawn(command, args as string[], {
       ...spawnOptions,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32"
     });
@@ -367,7 +369,29 @@ export async function runCommand(
 }
 
 export function getBunCommand(): string {
-  return process.env.AEX_USER_TEST_BUN ?? process.env.BUN ?? (process.platform === "win32" ? "bun.exe" : "bun");
+  if (process.env.AEX_USER_TEST_BUN) return process.env.AEX_USER_TEST_BUN;
+  if (process.env.BUN) return process.env.BUN;
+  if ("bun" in process.versions) return process.execPath;
+
+  const bunInstall = process.env.BUN_INSTALL;
+  const candidates = [
+    bunInstall ? join(bunInstall, "bin", process.platform === "win32" ? "bun.exe" : "bun") : undefined,
+    join(homedir(), ".bun", "bin", process.platform === "win32" ? "bun.exe" : "bun")
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+
+  return process.platform === "win32" ? "bun.exe" : "bun";
+}
+
+function withBunOnPath(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  const next = { ...process.env, ...env };
+  const pathKey = Object.keys(next).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const bunDir = dirname(getBunCommand());
+  const currentPath = next[pathKey] ?? "";
+  next[pathKey] = currentPath.length > 0 ? `${bunDir}${process.platform === "win32" ? ";" : ":"}${currentPath}` : bunDir;
+  return next;
 }
 
 export function getAexBinPath(installDir: string): string {

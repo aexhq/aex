@@ -25,7 +25,7 @@ function makeIo(opts: {
     io: undefined as unknown as CliIO
   };
   const io: CliIO = {
-    argv: ["node", "/aex/aex", ...opts.argv],
+    argv: ["bun", "/aex/aex", ...opts.argv],
     readFile: async (path) => {
       if (!(path in files)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       return files[path]!;

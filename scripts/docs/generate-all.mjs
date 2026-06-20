@@ -266,10 +266,10 @@ async function generateSdkReference() {
   await resetDir(resolve(contentRoot, "reference", "sdk"));
   await mkdir(generatedRoot, { recursive: true });
   const jsonPath = resolve(generatedRoot, "sdk-typedoc.json");
-  await runPnpm([
-    "--dir",
+  await runBun([
+    "run",
+    "--cwd",
     resolve(repoRoot, "apps", "docs"),
-    "exec",
     "typedoc",
     "--json",
     toPosixPath(jsonPath),

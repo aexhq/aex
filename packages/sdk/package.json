@@ -34,13 +34,13 @@
     "test:property": "vitest run --passWithNoTests property",
     "test:coverage": "vitest run --coverage test/unit",
     "prepack": "bun run build",
-    "publish:dry-run": "bun publish --dry-run"
+    "pack:dry-run": "bun pm pack --dry-run --ignore-scripts"
   },
   "devDependencies": {
     "@aexhq/contracts": "workspace:*"
   },
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.3.14"
   },
   "dependencies": {
     "fflate": "0.8.2"

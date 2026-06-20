@@ -61,7 +61,7 @@ function makeHostIo(opts: {
   const writes = opts.writes ?? new Map<string, Uint8Array>();
 
   const io: CliIO = {
-    argv: ["node", "/aex/aex", ...opts.argv],
+    argv: ["bun", "/aex/aex", ...opts.argv],
     readFile: async (path) => {
       if (!(path in files)) {
         throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
@@ -575,7 +575,7 @@ describe("aex run", () => {
         }
       ],
       postHook: {
-        command: "pnpm test",
+        command: "bun test",
         timeout: "2m",
         maxTurns: 2,
         maxChars: 2048
@@ -608,7 +608,7 @@ describe("aex run", () => {
     expect(body.workspaceId).toBeUndefined();
     expect(body.idempotencyKey).toBe("idem-deterministic");
     expect(body.postHook).toEqual({
-      command: "pnpm test",
+      command: "bun test",
       timeout: "2m",
       maxTurns: 2,
       maxChars: 2048

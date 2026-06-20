@@ -14,7 +14,7 @@ const cliBundlePath = resolve(sdkRoot, "..", "cli", "dist", "cli.mjs");
 /**
  * Lock the agent-first surface invariant on the SHIPPED artifact level.
  *
- * The published `@aexhq/sdk` npm package must expose exactly one binary
+ * The published `@aexhq/sdk` package must expose exactly one binary
  * — `aex` — pointing at a real ESM bundle inside its own dist
  * directory. If `bin` ever goes missing, the worker mounts no CLI in
  * the run container and the entire agent-first surface decision

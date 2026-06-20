@@ -16,7 +16,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, type InstallResult } from "../_fixtures/install.js";
+import { getAexBinPath, installAex, type InstallResult } from "../_fixtures/install.js";
 
 type InstalledStreamEvent = {
   readonly specversion: "1.0";
@@ -145,15 +145,11 @@ describe("install shape", () => {
     const executableEntryPoint =
       process.platform === "win32"
         ? (() => {
-            const cmdShimPath = join(install.installDir, "node_modules", ".bin", "aex.cmd");
-            const cmdShimExists = existsSync(cmdShimPath);
-            const cmdShim = cmdShimExists ? readFileSync(cmdShimPath, "utf8").replace(/\\/g, "/") : "";
+            const binPath = getAexBinPath(install.installDir);
             return {
               kind: "windows" as const,
-              cmdShimPath,
-              cmdShimExists,
-              cmdShimInvokesBun: /\bbun(?:\.exe)?\b/i.test(cmdShim),
-              cmdShimTargetsCli: /@aexhq\/sdk\/dist\/cli\.mjs/.test(cmdShim),
+              binPath,
+              binExists: existsSync(binPath)
             };
           })()
         : (() => {
@@ -168,9 +164,7 @@ describe("install shape", () => {
       process.platform === "win32"
         ? {
             kind: "windows",
-            cmdShimExists: true,
-            cmdShimInvokesBun: true,
-            cmdShimTargetsCli: true,
+            binExists: true,
           }
         : {
             kind: "posix",

@@ -397,14 +397,14 @@ describe("run-config — parseRunRequestConfig", () => {
       model: "claude-haiku-4-5",
       prompt: "x",
       postHook: {
-        command: "pnpm test",
+        command: "bun test",
         timeout: "2m",
         maxTurns: 3,
         maxChars: 1000
       }
     });
     expect(config.postHook).toEqual({
-      command: "pnpm test",
+      command: "bun test",
       timeout: "2m",
       maxTurns: 3,
       maxChars: 1000
@@ -425,14 +425,14 @@ describe("run-config — parseRunRequestConfig", () => {
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
         prompt: "x",
-        postHook: { command: "pnpm test", maxTurns: -1 }
+        postHook: { command: "bun test", maxTurns: -1 }
       })
     ).toThrow(/postHook\.maxTurns/);
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
         prompt: "x",
-        postHook: { command: "pnpm test", extra: true }
+        postHook: { command: "bun test", extra: true }
       })
     ).toThrow(/postHook\.extra/);
   });
@@ -526,7 +526,7 @@ describe("run-config — normaliseRunRequestConfig", () => {
     const config: RunRequestConfig = {
       model: "claude-haiku-4-5",
       prompt: "x",
-      postHook: { command: "pnpm test", timeout: "1m", maxTurns: 1, maxChars: null }
+      postHook: { command: "bun test", timeout: "1m", maxTurns: 1, maxChars: null }
     };
     expect(normaliseRunRequestConfig(config).postHook).toEqual(config.postHook);
   });

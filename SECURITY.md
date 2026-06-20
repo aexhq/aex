@@ -17,7 +17,7 @@ up a private channel.
 
 In scope:
 
-- The published `@aexhq/sdk` npm package (SDK + bundled CLI).
+- The published `@aexhq/sdk` package (SDK + bundled CLI).
 - Public `@aexhq/contracts` and `@aexhq/conformance` packages.
 - Hosted aex control-plane vulnerabilities that affect SDK/CLI users.
 
