@@ -84,8 +84,12 @@ function requireFinalHookResult(summary: Record<string, unknown>, result: SdkRun
   return finalResult;
 }
 
-function postHookFailures(result: SdkRunResult): ReadonlyArray<Record<string, unknown>> {
-  return result.streamErrors.filter((event) => event["type"] === "post_agent_run_hook_failed");
+function postHookFailures(summary: Record<string, unknown>, result: SdkRunResult): ReadonlyArray<Record<string, unknown>> {
+  const failures = summary["failures"];
+  if (!Array.isArray(failures)) {
+    throw new Error(`terminalData.postHook.failures is missing\n\n${dumpResult(result)}`);
+  }
+  return failures.map((failure) => asRecord(failure) ?? {});
 }
 
 let install: InstallResult;
@@ -121,7 +125,7 @@ describe("user/SDK: postHook verifies managed runs after agent completion", () =
       const finalResult = requireFinalHookResult(summary, result);
       expect(finalResult["exitCode"], dump()).toBe(0);
       expect(finalResult["timedOut"], dump()).toBe(false);
-      expect(postHookFailures(result), dump()).toHaveLength(0);
+      expect(postHookFailures(summary, result), dump()).toHaveLength(0);
     },
     8 * 60_000
   );
@@ -150,11 +154,11 @@ describe("user/SDK: postHook verifies managed runs after agent completion", () =
       const finalResult = requireFinalHookResult(summary, result);
       expect(finalResult["exitCode"], dump()).toBe(0);
 
-      const failures = postHookFailures(result);
+      const failures = postHookFailures(summary, result);
       expect(failures, dump()).toHaveLength(1);
       expect(failures[0]?.["attempt"], dump()).toBe(1);
       const output = asRecord(failures[0]?.["output"]);
-      expect(output?.["stdout"], dump()).toContain("retry-first-failure");
+      expect(output?.["text"], dump()).toContain("retry-first-failure");
       expect(output?.["truncated"], dump()).toBe(false);
     },
     12 * 60_000
@@ -165,7 +169,7 @@ describe("user/SDK: postHook verifies managed runs after agent completion", () =
     async () => {
       const result = await runCase(install, {
         id: "maxchars",
-        command: "printf ABCDEFGHIJ; printf KLMNOPQRST >&2; exit 1",
+        command: "printf ABCDEFGHIJ; exit 1",
         timeout: "45s",
         maxTurns: 0,
         maxChars: 4
@@ -173,7 +177,8 @@ describe("user/SDK: postHook verifies managed runs after agent completion", () =
       const dump = (): string => dumpResult(result);
 
       expect(result.status, dump()).toBe("failed");
-      expect(result.terminalData?.["reason"], dump()).toBe("post_hook_failed");
+      expect(result.terminalData?.["reason"], dump()).toBe("failed");
+      expect(result.terminalData?.["failureClass"], dump()).toBe("post_hook_failed");
 
       const summary = requirePostHookSummary(result);
       expect(summary["attempts"], dump()).toBe(1);
@@ -181,7 +186,7 @@ describe("user/SDK: postHook verifies managed runs after agent completion", () =
       const finalResult = requireFinalHookResult(summary, result);
       expect(finalResult["exitCode"], dump()).toBe(1);
 
-      const failures = postHookFailures(result);
+      const failures = postHookFailures(summary, result);
       expect(failures, dump()).toHaveLength(1);
       const failure = failures[0]!;
       const hook = asRecord(failure["hook"]);
@@ -190,8 +195,7 @@ describe("user/SDK: postHook verifies managed runs after agent completion", () =
 
       expect(hook?.["timeoutMs"], dump()).toBe(45_000);
       expect(hookResult?.["exitCode"], dump()).toBe(1);
-      expect(output?.["stdout"], dump()).toBe("ABCD");
-      expect(output?.["stderr"], dump()).toBe("KLMN");
+      expect(output?.["text"], dump()).toBe("ABCD");
       expect(output?.["truncated"], dump()).toBe(true);
     },
     8 * 60_000

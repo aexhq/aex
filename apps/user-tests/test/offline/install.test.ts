@@ -7,12 +7,12 @@
  *     exports, bin).
  *   - Ships dist/cli.mjs with a Node shebang.
  *   - Ships dist/cli.mjs.sha256 that matches the actual cli.mjs content.
- *   - On POSIX has the executable bit on cli.mjs.
+ *   - Has a platform executable entry point: POSIX execute bit or Windows shim.
  *
  * This scenario would have caught the 0.2.0 missing-bin regression.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
@@ -78,12 +78,43 @@ describe("install shape", () => {
     expect(actualHex).toBe(expectedHex);
   });
 
-  it.skipIf(process.platform === "win32")("dist/cli.mjs is executable on POSIX", () => {
+  it("dist/cli.mjs has a platform executable entry point", () => {
     const cliPath = join(install.aexDir, "dist", "cli.mjs");
-    const mode = statSync(cliPath).mode & 0o777;
-    // We only insist on owner-execute (0o100). npm install can strip group/world
-    // bits depending on umask.
-    expect(mode & 0o100).toBe(0o100);
+    const executableEntryPoint =
+      process.platform === "win32"
+        ? (() => {
+            const cmdShimPath = join(install.installDir, "node_modules", ".bin", "aex.cmd");
+            const cmdShimExists = existsSync(cmdShimPath);
+            const cmdShim = cmdShimExists ? readFileSync(cmdShimPath, "utf8").replace(/\\/g, "/") : "";
+            return {
+              kind: "windows" as const,
+              cmdShimPath,
+              cmdShimExists,
+              cmdShimInvokesNode: /\bnode(?:\.exe)?\b/i.test(cmdShim),
+              cmdShimTargetsCli: /@aexhq\/sdk\/dist\/cli\.mjs/.test(cmdShim),
+            };
+          })()
+        : (() => {
+            const mode = statSync(cliPath).mode & 0o777;
+            return {
+              kind: "posix" as const,
+              ownerExecutable: (mode & 0o100) === 0o100,
+            };
+          })();
+
+    expect(executableEntryPoint).toMatchObject(
+      process.platform === "win32"
+        ? {
+            kind: "windows",
+            cmdShimExists: true,
+            cmdShimInvokesNode: true,
+            cmdShimTargetsCli: true,
+          }
+        : {
+            kind: "posix",
+            ownerExecutable: true,
+          }
+    );
   });
 
   it("declares no @aexhq/* runtime dependencies (single-tarball invariant)", () => {

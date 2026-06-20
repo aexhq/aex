@@ -25,6 +25,10 @@ Allowed fields:
 
 Secrets never live in run config. Pass credentials through `submit({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Secrets](secrets.md) for secret lifecycles and [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
 
+When a run uses `postHook`, the terminal event includes `data.postHook` with
+attempt counts, the final hook result, and capped failure output. A hook that
+exhausts `maxTurns` fails the run with `data.failureClass: "post_hook_failed"`.
+
 ## Reuse in code
 
 Use an ordinary function when you want reusable typed parameters. aex does not store or execute this function; it only receives the run parameters you submit.

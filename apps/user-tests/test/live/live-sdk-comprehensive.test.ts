@@ -27,7 +27,7 @@
  *   - The run reached `succeeded`.
  *   - The event log starts with `runtime_started` and ends with
  *     `runtime_terminal` (The managed runtime actually spawned and exited cleanly).
- *   - Every submitted skill produced a `skill_loaded_marker`
+ *   - Every submitted skill produced a `skill_loaded`
  *     notification (proves materialization of all skills).
  *   - At least one `assistant_text` event landed (The managed runtime generated a
  *     real reply via the BYOK provider-proxy).
@@ -79,6 +79,7 @@ interface CaseResult {
   readonly eventKinds: readonly string[];
   readonly notificationKinds: readonly string[];
   readonly skillLoadedNames: readonly string[];
+  readonly skillLoadedEventSummaries: ReadonlyArray<Record<string, unknown>>;
   readonly assistantTextJoined: string;
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
@@ -232,10 +233,40 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     const outputs = await client.listOutputs(runId);
 
     // CUSTOM envelopes nest the original payload under data.value.
+    function customName(e) {
+      return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
+    }
+    function customValue(e) {
+      const value = e && e.data ? e.data.value : null;
+      return value && typeof value === "object" ? value : {};
+    }
+    function skillLoadedName(e) {
+      const value = customValue(e);
+      if (
+        customName(e) === "aex.skill_loaded" ||
+        value.kind === "skill_loaded" ||
+        value.kind === "skill_loaded_marker"
+      ) {
+        const name = value.name || value.skillId;
+        return typeof name === "string" ? name : null;
+      }
+      return null;
+    }
+    function skillLoadedSummary(e) {
+      const value = customValue(e);
+      return {
+        customName: customName(e),
+        kind: typeof value.kind === "string" ? value.kind : null,
+        name: typeof value.name === "string" ? value.name : null,
+        skillId: typeof value.skillId === "string" ? value.skillId : null
+      };
+    }
     const notifications = events.filter((e) => e.type === "CUSTOM");
-    const notificationKinds = notifications.map((n) => (n.data && n.data.value && n.data.value.kind) || "(unknown)");
-    const skillLoaded = notifications.filter((n) => (n.data && n.data.value && n.data.value.kind) === "skill_loaded_marker");
-    const skillLoadedNames = skillLoaded.map((n) => (n.data && n.data.value && n.data.value.name) || null).filter(Boolean);
+    const notificationKinds = notifications.map((n) => customValue(n).kind || "(unknown)");
+    const skillLoadedEventSummaries = notifications
+      .filter((n) => skillLoadedName(n))
+      .map(skillLoadedSummary);
+    const skillLoadedNames = notifications.map(skillLoadedName).filter(Boolean);
 
     const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
     const assistantTextJoined = assistantTextEvents
@@ -276,6 +307,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       eventKinds: events.map((e) => e.type),
       notificationKinds,
       skillLoadedNames,
+      skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
       terminalKind: terminal ? terminal.type : null,
@@ -355,6 +387,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
     lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
     lines.push(`notificationKinds=[${result.notificationKinds.join(", ")}]`);
     lines.push(`skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`);
+    lines.push(`skillLoadedEventSummaries=${JSON.stringify(result.skillLoadedEventSummaries)}`);
     if (result.streamErrors.length > 0) {
       lines.push(`streamErrors:`);
       for (const se of result.streamErrors) {

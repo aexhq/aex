@@ -66,6 +66,7 @@ interface CaseResult {
   readonly eventCount: number;
   readonly eventKinds: readonly string[];
   readonly skillLoadedNames: readonly string[];
+  readonly skillLoadedEventSummaries: ReadonlyArray<Record<string, unknown>>;
   readonly assistantTextJoined: string;
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
@@ -111,17 +112,19 @@ function buildScript(cell: Cell, uniqueToken: string): string {
   // it is already random per-run.
   const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
   const alphaName = `ack-alpha-${nameSuffix}`;
-  const betaName = `weather-beta-${nameSuffix}`;
+  const betaName = "weather-beta-control";
   const alphaSkill =
     `---\n` +
     `name: ${alphaName}\n` +
     `description: Acknowledge SHIBBOLETH with the canonical token reply.\n` +
     `---\n` +
     `# Acknowledgement protocol\n\n` +
+    `This is the ONLY skill that defines the acknowledgement token. ` +
     `When the user message contains the literal token \`SHIBBOLETH\`, ` +
-    `you MUST reply with exactly one line:\n\n` +
+    `you MUST reply with exactly this one line, copied verbatim, and nothing else:\n\n` +
     `skill-ack ${uniqueToken}\n\n` +
     `Do not include any other text in your reply. Do not explain. ` +
+    `Do not translate, summarize, or alter the token. ` +
     `Reply with that single line only.`;
 
   // SKILL.md for beta — distractor with unrelated content. If the model
@@ -138,7 +141,13 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     `Never mention shibboleths, tokens, or acknowledgements.`;
 
   const prompt =
-    `SHIBBOLETH. Please reply per the acknowledgement protocol.`;
+    `SHIBBOLETH. Use the mounted acknowledgement-protocol skill named ${alphaName}. ` +
+    `Copy its \`skill-ack\` line verbatim and reply with that single line only. ` +
+    `Do not use the weather skill.`;
+  const system =
+    `This run verifies mounted skill behavior. If the user asks for the ` +
+    `acknowledgement protocol, rely on the mounted skill named ${alphaName} and ` +
+    `copy its canonical reply line exactly. Do not answer from general memory.`;
 
   return `
     import { AgentExecutor, Skill } from "@aexhq/sdk";
@@ -161,6 +170,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       provider: ${JSON.stringify(cell.provider)},
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},
+      system: ${JSON.stringify(system)},
       prompt: ${JSON.stringify(prompt)},
       skills: [alpha, beta],
       secrets: { apiKey: process.env.${cell.keyEnvName} },
@@ -181,21 +191,41 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 
     const events = await client.listEvents(runId);
 
-    // The managed runtime emits a skill_loaded_marker notification (with the skill's name in
-    // data.name). Also collect aex.skill_loaded for compatibility with
-    // older event payloads.
     // CUSTOM envelopes nest the original payload under data.value, keyed by
     // data.name (aex.notification / aex.skill_loaded / aex.stream_error).
+    function customName(e) {
+      return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
+    }
+    function customValue(e) {
+      const value = e && e.data ? e.data.value : null;
+      return value && typeof value === "object" ? value : {};
+    }
+    function skillLoadedName(e) {
+      const value = customValue(e);
+      if (
+        customName(e) === "aex.skill_loaded" ||
+        value.kind === "skill_loaded" ||
+        value.kind === "skill_loaded_marker"
+      ) {
+        const name = value.name || value.skillId;
+        return typeof name === "string" ? name : null;
+      }
+      return null;
+    }
+    function skillLoadedSummary(e) {
+      const value = customValue(e);
+      return {
+        customName: customName(e),
+        kind: typeof value.kind === "string" ? value.kind : null,
+        name: typeof value.name === "string" ? value.name : null,
+        skillId: typeof value.skillId === "string" ? value.skillId : null
+      };
+    }
     const customEvents = events.filter((e) => e.type === "CUSTOM");
-    const markerNames = customEvents
-      .filter((n) => n.data && n.data.value && n.data.value.kind === "skill_loaded_marker")
-      .map((n) => (n.data && n.data.value && n.data.value.name) || null)
-      .filter(Boolean);
-    const skillLoadedEventNames = customEvents
-      .filter((e) => e.data && e.data.name === "aex.skill_loaded")
-      .map((e) => (e.data.value && (e.data.value.name || e.data.value.skillId)) || null)
-      .filter(Boolean);
-    const skillLoadedNames = [...markerNames, ...skillLoadedEventNames];
+    const skillLoadedEventSummaries = customEvents
+      .filter((n) => skillLoadedName(n))
+      .map(skillLoadedSummary);
+    const skillLoadedNames = customEvents.map(skillLoadedName).filter(Boolean);
 
     const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
     const assistantTextJoined = assistantTextEvents
@@ -218,6 +248,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       eventCount: events.length,
       eventKinds: events.map((e) => e.type),
       skillLoadedNames,
+      skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
       terminalKind: terminal ? terminal.type : null,
@@ -238,6 +269,7 @@ function dumpResult(cell: Cell, result: CaseResult): string {
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
   lines.push(`skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`);
+  lines.push(`skillLoadedEventSummaries=${JSON.stringify(result.skillLoadedEventSummaries)}`);
   if (result.streamErrors.length > 0) {
     lines.push(`streamErrors:`);
     for (const se of result.streamErrors) {
@@ -290,6 +322,8 @@ describe("live skill invocation — agent actually follows skill content", () =>
       const uniqueToken = "XKCD-927-" + Math.random().toString(36).slice(2, 10).toUpperCase();
       const result = await runCell(cell, install.installDir, uniqueToken);
       const dump = (): string => dumpResult(cell, result);
+      const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
+      const expectedSkillPrefixes = [`ack-alpha-${nameSuffix}`, "weather-beta-control"];
 
       expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe(cell.runtime);
@@ -306,6 +340,13 @@ describe("live skill invocation — agent actually follows skill content", () =>
       const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
       if (terminalReason !== "complete") {
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
+      }
+
+      expect(result.skillLoadedNames.length, dump()).toBeGreaterThanOrEqual(2);
+      for (const prefix of expectedSkillPrefixes) {
+        if (!result.skillLoadedNames.some((n) => n.startsWith(prefix))) {
+          throw new Error(`skill "${prefix}" produced no skill_loaded event\n\n${dump()}`);
+        }
       }
 
       // The MODEL actually applied alpha's content — the per-case unique

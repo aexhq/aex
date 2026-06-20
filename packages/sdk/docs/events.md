@@ -104,6 +104,12 @@ const jsonl = await response.text();
 
 Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submit`.
 
+Runs submitted with `postHook` include a `postHook` summary on the terminal event
+data. The summary records `attempts`, `repairTurns`, `finalResult`, and a
+`failures` array with capped hook output. If the hook exhausts `maxTurns`, the
+terminal event is `RUN_ERROR` with `data.reason: "failed"` and
+`data.failureClass: "post_hook_failed"`.
+
 ## Typed helpers
 
 The package exports conservative type guards that narrow normalized aex event envelopes:

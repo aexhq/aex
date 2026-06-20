@@ -49,7 +49,7 @@
  *     in packages/contracts/src/event-envelope.ts — the single source of
  *     truth this list is kept in sync with.
  *   - the agent actually used tools (TOOL_CALL_START/RESULT counts > 0).
- *   - all 3 submitted skills produced a `skill_loaded_marker` (every
+ *   - all 3 submitted skills produced a `skill_loaded` notification (every
  *     skill materialized into the container).
  *   - system + AGENTS.md + prompt probes all round-trip in the reply
  *     (composeInstructions carried all three channels into the recipe).
@@ -243,7 +243,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     });
 
     // SKILL.md starts with YAML frontmatter so each test skill is
-    // self-describing and produces a stable skill_loaded_marker name.
+    // self-describing and produces a stable skill_loaded name.
     const skillAlpha = await Skill.fromFiles({
       name: "heavy-alpha-${spec.runtime}",
       files: { "SKILL.md": "---\\nname: heavy-alpha-${spec.runtime}\\ndescription: Complete every numbered step the user lists, in order.\\n---\\n# alpha\\nComplete every numbered step the user lists, in order." }
@@ -307,10 +307,28 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     const outputs = await client.listOutputs(runId);
 
     // CUSTOM envelopes nest the original payload under data.value.
+    function customName(e) {
+      return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
+    }
+    function customValue(e) {
+      const value = e && e.data ? e.data.value : null;
+      return value && typeof value === "object" ? value : {};
+    }
+    function skillLoadedName(e) {
+      const value = customValue(e);
+      if (
+        customName(e) === "aex.skill_loaded" ||
+        value.kind === "skill_loaded" ||
+        value.kind === "skill_loaded_marker"
+      ) {
+        const name = value.name || value.skillId;
+        return typeof name === "string" ? name : null;
+      }
+      return null;
+    }
     const notifications = events.filter((e) => e.type === "CUSTOM");
-    const notificationKinds = notifications.map((n) => (n.data && n.data.value && n.data.value.kind) || "(unknown)");
-    const skillLoaded = notifications.filter((n) => (n.data && n.data.value && n.data.value.kind) === "skill_loaded_marker");
-    const skillLoadedNames = skillLoaded.map((n) => (n.data && n.data.value && n.data.value.name) || null).filter(Boolean);
+    const notificationKinds = notifications.map((n) => customValue(n).kind || "(unknown)");
+    const skillLoadedNames = notifications.map(skillLoadedName).filter(Boolean);
 
     const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
     const assistantTextJoined = assistantTextEvents
@@ -473,7 +491,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
 
   // Full event vocabulary: every type aex emits on success is
   // present. Forced by the submission (text reply, ls + write tool
-  // calls, skill_loaded_marker CUSTOM notifications).
+  // calls, skill_loaded CUSTOM notifications).
   for (const type of EXPECTED_SUCCESS_EVENT_TYPES) {
     if (!result.eventTypeSet.includes(type)) {
       throw new Error(`expected event type "${type}" was not observed\n\n${dump()}`);
@@ -490,7 +508,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.skillLoadedNames.length, dump()).toBeGreaterThanOrEqual(3);
   for (const prefix of expectedSkillPrefixes) {
     if (!result.skillLoadedNames.some((n) => n.startsWith(prefix))) {
-      throw new Error(`skill "${prefix}" produced no skill_loaded_marker\n\n${dump()}`);
+      throw new Error(`skill "${prefix}" produced no skill_loaded\n\n${dump()}`);
     }
   }
 

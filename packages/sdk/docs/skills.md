@@ -36,11 +36,12 @@ For each run, the platform copies referenced skill assets into durable run asset
 storage (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
 workspace under `skills/<name>/`.
 
-A bundle's `SKILL.md` is composed into the agent's instructions, so the agent is
-told the skill exists and what it does without needing to discover it. Bundles
-without `SKILL.md` are still mounted as files at `skills/<name>/`, but nothing
-prompts the agent to read them; reference them explicitly from the prompt or
-your `AGENTS.md`.
+A bundle's `SKILL.md` is mounted at `skills/<name>/SKILL.md`, and the agent's
+instructions list each mounted skill with that path. The full skill body stays
+on disk, so prompts or `AGENTS.md` guidance that rely on a skill should tell the
+agent when to read or use it. Bundles without `SKILL.md` are still mounted as
+files at `skills/<name>/`, but nothing prompts the agent to read them; reference
+them explicitly from the prompt or your `AGENTS.md`.
 
 The platform also mounts the `aex` CLI and a per-run manifest into every run.
 Skills call managed HTTP proxy endpoints through the mounted CLI

@@ -15,6 +15,7 @@ Managed runs expose a DX-first default builtin set to the agent. Omit
 - `grep`
 - `head`
 - `tail`
+- `bash`
 
 Pass `builtins: []` for a pure-MCP run with no builtins. Pass a custom list to
 narrow or extend the surface, for example adding the optional `notebook`
@@ -25,6 +26,7 @@ builtin. MCP-derived tools and subagent tools are separate surfaces.
 - `read` and `edit` expose file read/create/patch tools.
 - `grep` and `glob` search file contents and paths.
 - `head` and `tail` read bounded file slices.
+- `bash` runs shell commands in the run sandbox.
 - `web_fetch` fetches a URL and returns readable text.
 - `web_search` performs managed web search without requiring a caller-supplied
   search key.
