@@ -11,7 +11,7 @@
  * redaction) behaves as expected under a maximal submission.
  *
  * Runs as an explicit gate AFTER the rest of the live user-tests pass
- * (own pnpm script `test:user:heavy` + own vitest config), so it is
+ * (own Bun script `test:user:heavy` + own vitest config), so it is
  * never swept into the default `test:user` run. Wired into
  * live-user-tests.yml as the manual canary.
  *
@@ -71,7 +71,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -421,7 +421,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
     DEEPSEEK_KEY: deepseekKey
   });
 
-  const child = await runCommand(process.execPath, [scriptPath], {
+  const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
     timeoutMs: spec.timeoutMs,
     env: passEnv

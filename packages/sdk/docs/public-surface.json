@@ -3,7 +3,7 @@
   "productName": "Agent Executor",
   "oneLine": "aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.",
   "description": "Submit typed runs, stream durable events, capture outputs, and compose agents with skills, files, MCP, proxy endpoints, and subagents across the managed runtime.",
-  "installCommand": "npm install @aexhq/sdk",
+  "installCommand": "bun add @aexhq/sdk",
   "examples": {
     "typescriptLines": [
       "import { AgentExecutor, Models, Providers } from \"@aexhq/sdk\";",

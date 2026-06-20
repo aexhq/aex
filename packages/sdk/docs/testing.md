@@ -12,17 +12,17 @@ reading or changing implementation.
 Workspace-wide commands:
 
 ```text
-pnpm lint                                      # typecheck/build prerequisites + lint
-pnpm test                                      # unit, all packages, deterministic
-pnpm test:user:offline                         # clean install of packed/published SDK, no live API
-pnpm test:user                                 # live hosted API user tests
-pnpm test:user:heavy                           # explicit heavy live canary
-pnpm run docs:build                            # generated docs + Next build
-pnpm run pack:sdk                              # SDK publish dry-run + public boundary check
+bun run lint                                      # typecheck/build prerequisites + lint
+bun run test                                      # unit, all packages, deterministic
+bun run test:user:offline                         # clean Bun install of packed/published SDK, no live API
+bun run test:user                                 # live hosted API user tests
+bun run test:user:heavy                           # explicit heavy live canary
+bun run docs:build                                # generated docs + Next build
+bun run pack:sdk                                  # SDK pack dry-run + public boundary check
 ```
 
 Unit tests are deterministic and may use fakes. Offline user tests install the
-packed or published SDK into clean temp projects and do not need provider
+packed or published SDK into clean Bun temp projects and do not need provider
 credentials.
 
 When neither `AEX_USER_TEST_TARBALL` nor `AEX_USER_TEST_VERSION` is set, the

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -123,7 +123,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`; runtime routing is derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.",
     "",
-    "Regenerate with `pnpm capabilities:generate`; check with `pnpm capabilities:check`.",
+    "Regenerate with `bun run capabilities:generate`; check with `bun run capabilities:check`.",
     "",
     `Providers: ${providerList}. Runtime selectors: ${runtimeList}.`,
     "",
@@ -247,7 +247,7 @@ export function checkCapabilityMatrix(current: string, expected: string): { read
   if (normalizeGeneratedMarkdown(current) === normalizeGeneratedMarkdown(expected)) return { ok: true };
   return {
     ok: false,
-    message: `${CAPABILITY_MATRIX_PATH} is stale; run pnpm capabilities:generate`
+      message: `${CAPABILITY_MATRIX_PATH} is stale; run bun run capabilities:generate`
   };
 }
 

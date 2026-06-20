@@ -9,14 +9,14 @@
  *   - Subpath imports such as `@aexhq/sdk/platform` or `@aexhq/sdk/proxy`
  *     fail with ERR_PACKAGE_PATH_NOT_EXPORTED.
  *
- * Every assertion runs in a child Node process whose cwd is the install
+ * Every assertion runs in a child Bun process whose cwd is the install
  * tempdir, so resolution goes through the installed `node_modules/@aexhq/sdk`
- * and NOT the monorepo's pnpm symlink.
+ * and NOT the monorepo workspace symlink.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("sdk imports", () => {
   let install: InstallResult;
@@ -32,7 +32,7 @@ describe("sdk imports", () => {
   async function runChild(script: string, file: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const path = join(install.installDir, file);
     writeFileSync(path, script);
-    return await runCommand(process.execPath, [path], { cwd: install.installDir, timeoutMs: 30_000 });
+    return await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
   it("await import(\"@aexhq/sdk\") resolves and exports the canonical names", async () => {

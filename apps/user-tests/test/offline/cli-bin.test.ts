@@ -1,9 +1,9 @@
 /**
  * Scenario 2: cli-bin.test.ts
  *
- * The agent-first promise: `npm install @aexhq/sdk` puts a working
+ * The agent-first promise: `bun add @aexhq/sdk` puts a working
  * `aex` executable in node_modules/.bin. This scenario verifies:
- *   - The bin symlink (or .cmd shim on Windows) resolves.
+ *   - The bin symlink/shim resolves.
  *   - `aex --help` exits 0 and prints the canonical usage banner.
  *   - `aex proxy --help` exits 0 even with no manifest mounted.
  *   - `aex proxy <name>` without a manifest exits non-zero AND emits
@@ -14,9 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-
-const IS_WINDOWS = process.platform === "win32";
+import { getAexBinPath, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("cli bin", () => {
   let install: InstallResult;
@@ -25,9 +23,7 @@ describe("cli bin", () => {
 
   beforeAll(async () => {
     install = await installAex();
-    // node_modules/.bin/aex (POSIX symlink) or .cmd shim on Windows.
-    const binDir = join(install.installDir, "node_modules", ".bin");
-    binPath = join(binDir, IS_WINDOWS ? "aex.cmd" : "aex");
+    binPath = getAexBinPath(install.installDir);
     cliMjsPath = join(install.aexDir, "dist", "cli.mjs");
   });
 

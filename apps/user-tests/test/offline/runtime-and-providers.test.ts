@@ -2,21 +2,21 @@
  * Scenario 5: runtime-and-providers.test.ts
  *
  * Locks the managed-runtime + widened-provider surface as it appears
- * inside a clean `npm install @aexhq/sdk` tempdir — the same way a real
+ * inside a clean `bun add @aexhq/sdk` tempdir — the same way a real
  * user / AI agent sees the package. Catches regressions where:
  *   - SDK drops the `runtime?` option from SubmitRunOptions
  *   - SDK silently rejects providers in RUN_PROVIDERS
  *   - Server-side validation (selectRuntime) stops being importable
  *   - RuntimeValidationError code values shift
  *
- * Every assertion runs in a child Node process whose cwd is the
+ * Every assertion runs in a child Bun process whose cwd is the
  * install tempdir, so resolution goes through the installed
- * `node_modules/@aexhq/sdk` and NOT the monorepo's pnpm symlink.
+ * `node_modules/@aexhq/sdk` and NOT the monorepo workspace symlink.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("managed runtime + widened providers (published surface)", () => {
   let install: InstallResult;
@@ -32,7 +32,7 @@ describe("managed runtime + widened providers (published surface)", () => {
   async function runChild(script: string, file: string) {
     const path = join(install.installDir, file);
     writeFileSync(path, script);
-    return runCommand(process.execPath, [path], { cwd: install.installDir, timeoutMs: 30_000 });
+    return runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
   it("exports the v1 provider set + RUNTIME_KINDS + selectRuntime", async () => {

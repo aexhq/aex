@@ -8,17 +8,17 @@
  *      install that tarball.
  *   2. Creates a fresh tempdir.
  *   3. Materializes a minimal package.json there.
- *   4. Runs `npm install <tarball|@aexhq/sdk@version>` against it.
+ *   4. Runs `bun install <tarball|@aexhq/sdk@version>` against it.
  *   5. Returns paths for the install so scenarios can spawn child
  *      processes with cwd = installDir.
  *
  * Cleanup is the test's responsibility (typically in afterAll).
  *
  * Install reuse: `installAex()` returns a per-worker SHARED install by
- * default. The tree is read-only after npm install — every read-only
+ * default. The tree is read-only after Bun install — every read-only
  * scenario only drops UNIQUELY-named sibling scripts and reads
  * node_modules — so all such scenarios in a worker reuse ONE install
- * instead of each paying a redundant `npm install`. Scenarios that
+ * instead of each paying a redundant `bun install`. Scenarios that
  * MUTATE the tree (install extra packages, write fixed-name sources —
  * e.g. the TS consumer scenario) must pass `{ isolated: true }` to get
  * their own clean tree. The shared tree is removed once at process exit;
@@ -32,7 +32,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface InstallResult {
-  /** Absolute path to the install tempdir (npm install was run here). */
+  /** Absolute path to the install tempdir (Bun install was run here). */
   readonly installDir: string;
   /** `node_modules/@aexhq/sdk` inside the install tempdir. */
   readonly aexDir: string;
@@ -40,7 +40,7 @@ export interface InstallResult {
   readonly aexPackageJson: AexPackageJson;
   /** Resolved version of aex that was installed. */
   readonly resolvedVersion: string;
-  /** Spec passed to npm install (tarball path or `@aexhq/sdk@<version>`). */
+  /** Spec passed to Bun install (tarball path or `@aexhq/sdk@<version>`). */
   readonly installSpec: string;
   /** Source kind for diagnostics. */
   readonly source: "tarball" | "registry" | "local-pack";
@@ -97,7 +97,7 @@ let localSdkPackPromise: Promise<string> | null = null;
 /**
  * Resolve which artifact the runner is testing.
  * Exported separately so the diagnostic header can print it before
- * actually running npm install.
+ * actually running Bun install.
  */
 export async function resolveInstallSpec(
   options: ResolveInstallSpecOptions = {}
@@ -179,12 +179,12 @@ function registerSharedExitCleanup(): void {
 
 /**
  * Install the resolved aex artifact into a fresh tempdir.
- * Throws if npm exits non-zero or installs the wrong version.
+ * Throws if Bun exits non-zero or installs the wrong version.
  */
 async function installAexIsolated(options: InstallOptions = {}): Promise<InstallResult> {
   const { spec, source } = await resolveInstallSpec();
   const installDir = mkdtempSync(join(tmpdir(), "aex-user-test-"));
-  // Minimal host package.json so npm install doesn't complain.
+  // Minimal host package.json so Bun install has a host project.
   const hostPkg = {
     name: "aex-user-test-host",
     version: "0.0.0",
@@ -193,14 +193,14 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
   };
   writeFileSync(join(installDir, "package.json"), JSON.stringify(hostPkg, null, 2));
 
-  const args = ["install", spec, "--no-audit", "--no-fund", "--ignore-scripts"];
+  const args = ["install", spec, "--ignore-scripts", "--no-progress"];
   if (options.registryUrl) {
     args.push("--registry", options.registryUrl);
   }
 
   const timeoutMs = options.timeoutMs ?? 120_000;
   try {
-    await runNpm(args, { cwd: installDir }, timeoutMs);
+    await runBun(args, { cwd: installDir }, timeoutMs);
   } catch (error) {
     rmSync(installDir, { recursive: true, force: true });
     throw error;
@@ -265,15 +265,14 @@ function packCurrentSdkOnce(): Promise<string> {
 async function packCurrentSdk(): Promise<string> {
   return await withPackLock(async () => {
     const packDir = mkdtempSync(join(tmpdir(), "aex-user-test-sdk-pack-"));
-    const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
     try {
-      await runCommand(pnpm, ["--filter", "@aexhq/sdk", "pack", "--pack-destination", packDir], {
-        cwd: repoRoot,
+      await runCommand(getBunCommand(), ["pm", "pack", "--destination", packDir], {
+        cwd: join(repoRoot, "packages", "sdk"),
         timeoutMs: 180_000
       }).then((result) => {
         if (result.exitCode !== 0) {
           throw new Error(
-            `pnpm --filter @aexhq/sdk pack exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
+            `bun pm pack --destination ${packDir} exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
           );
         }
       });
@@ -367,12 +366,25 @@ export async function runCommand(
   });
 }
 
-async function runNpm(args: readonly string[], options: SpawnOptions, timeoutMs: number): Promise<void> {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = await runCommand(npm, args, { ...options, timeoutMs });
+export function getBunCommand(): string {
+  return process.env.AEX_USER_TEST_BUN ?? process.env.BUN ?? (process.platform === "win32" ? "bun.exe" : "bun");
+}
+
+export function getAexBinPath(installDir: string): string {
+  const binDir = join(installDir, "node_modules", ".bin");
+  const candidates = process.platform === "win32" ? ["aex.exe", "aex.cmd", "aex"] : ["aex"];
+  for (const candidate of candidates) {
+    const path = join(binDir, candidate);
+    if (existsSync(path)) return path;
+  }
+  return join(binDir, candidates[0]!);
+}
+
+async function runBun(args: readonly string[], options: SpawnOptions, timeoutMs: number): Promise<void> {
+  const result = await runCommand(getBunCommand(), args, { ...options, timeoutMs });
   if (result.exitCode !== 0) {
     throw new Error(
-      `npm ${args.join(" ")} exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
+      `bun ${args.join(" ")} exited with code ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
     );
   }
 }

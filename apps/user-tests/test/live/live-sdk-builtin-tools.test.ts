@@ -20,7 +20,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -205,7 +205,7 @@ async function runCell(cell: Cell, mode: "positive" | "negative", installDir: st
     [cell.keyEnvName]: cell.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });
-  const child = await runCommand(process.execPath, [scriptPath], {
+  const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: installDir,
     timeoutMs: 7 * 60_000,
     env: passEnv

@@ -125,9 +125,9 @@ def _post_via_proxy(request_body: dict[str, Any]) -> dict[str, Any]:
     body_path = Path("/workspace/.aex/_ark_request.json")
     body_path.parent.mkdir(parents=True, exist_ok=True)
     body_path.write_text(json.dumps(request_body), encoding="utf-8")
-    # The mount has no execute bit, so invoke through node (credentials.md).
+    # The mount has no execute bit, so invoke through bun (credentials.md).
     result = subprocess.run(
-        ["node", AEX_CLI, "proxy", PROXY_ENDPOINT,
+        ["bun", AEX_CLI, "proxy", PROXY_ENDPOINT,
          "--method", "POST",
          "--path", ARK_PATH,
          "--header", "content-type=application/json",

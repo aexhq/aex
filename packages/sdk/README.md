@@ -15,7 +15,7 @@ The package ships:
 ## Install
 
 ```bash
-npm install @aexhq/sdk
+bun add @aexhq/sdk
 ```
 
 ## First Run

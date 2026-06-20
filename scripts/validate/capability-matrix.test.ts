@@ -158,7 +158,7 @@ describe("provider/runtime capability matrix generation", () => {
     expect(checkCapabilityMatrix(expected, expected)).toEqual({ ok: true });
     expect(checkCapabilityMatrix("stale\n", expected)).toEqual({
       ok: false,
-      message: `${CAPABILITY_MATRIX_PATH} is stale; run pnpm capabilities:generate`
+      message: `${CAPABILITY_MATRIX_PATH} is stale; run bun run capabilities:generate`
     });
   });
 

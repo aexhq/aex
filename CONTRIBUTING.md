@@ -15,7 +15,7 @@ SDK, CLI, contracts, conformance helpers, user-test harness, and docs source.
 ## Setup
 
 ```bash
-pnpm install
+bun install
 ```
 
 Use the package scripts in `package.json` for build, lint, test, docs, and SDK
@@ -26,9 +26,9 @@ pack checks.
 1. Fork and create a topic branch off `main`. Branch naming is
    informal — `fix/x`, `feat/x`, `docs/x` is fine.
 2. Keep commits focused. Don't bundle unrelated changes into one PR.
-3. Before pushing, run the relevant public-safe gates locally: `pnpm lint`,
-   `pnpm test`, `pnpm run test:user:offline`, `pnpm run docs:build`, and
-   `pnpm run pack:sdk`.
+3. Before pushing, run the relevant public-safe gates locally: `bun run lint`,
+   `bun run test`, `bun run test:user:offline`, `bun run docs:build`, and
+   `bun run pack:sdk`.
 4. Open a PR against `main`. [`CI`](.github/workflows/ci.yml)
    runs the static/type/unit/offline user-test/docs/package gates after merge
    to `main` or manual dispatch.
@@ -48,12 +48,12 @@ pack checks.
 | Workflow | Scope |
 | --- | --- |
 | [`CI`](.github/workflows/ci.yml) | main-push/manual lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
-| [`Release`](.github/workflows/release.yml) | manual protected npm publish plus post-publish offline user tests |
+| [`Release`](.github/workflows/release.yml) | deferred npm publish placeholder; fails closed until the publish path is revalidated |
 | [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 
-Releases are manual. SDK releases are driven by bumping
-`packages/sdk/package.json#version` and `packages/sdk/src/version.ts`, then
-running the [`Release`](.github/workflows/release.yml) workflow from `main`.
+Releases are manual and currently deferred. Re-enable the
+[`Release`](.github/workflows/release.yml) workflow only after the Bun-first
+package staging, provenance, and publish path has been revalidated.
 
 ## What reviewers look for
 
