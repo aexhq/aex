@@ -13,7 +13,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
-import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
+import { observedRunText, requireUserEnv, runDiagnostics, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
 
@@ -33,8 +33,9 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
           runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
-            "Without installing anything, run \`which jq\` via the shell;",
-            "reply with the path, or JQ_MISSING if absent."
+            "Use the bash tool exactly once to run this command without installing anything:",
+            "\`command -v jq || echo JQ_MISSING\`",
+            "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }] },
           secrets: { apiKey: DEEPSEEK_KEY },
@@ -49,10 +50,9 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
 
       expect(result.runtime).toBe("managed");
       expect(result.status).toBe("succeeded");
-      const text = dense(result.assistantText);
-      // Pre-installed: the agent found the binary without installing it.
-      expect(text).not.toContain("JQ_MISSING");
-      expect(text).toContain("/usr/bin/jq");
+      const text = observedRunText(result);
+      // Pre-installed: the shell result found the binary without installing it.
+      expect(text, runDiagnostics(result)).toContain("/usr/bin/jq");
     },
     10 * 60_000
   );
@@ -69,9 +69,9 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
           runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
-            "Without installing anything, run BOTH of these via the shell and report each result:",
-            "1) \`which jq\` — reply with the path, or JQ_MISSING if absent.",
-            "2) \`python3 -c \\"import cowsay; print('PIP_OK')\\"\` — reply with its output, or PIP_MISSING if the import fails."
+            "Use the bash tool exactly once to run this command without installing anything:",
+            "\`command -v jq || echo JQ_MISSING; python3 -c \\"import cowsay; print('PIP_OK')\\" || echo PIP_MISSING\`",
+            "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
           secrets: { apiKey: DEEPSEEK_KEY },
@@ -86,13 +86,11 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
 
       expect(result.runtime).toBe("managed");
       expect(result.status).toBe("succeeded");
-      const text = dense(result.assistantText);
-      // apt: jq pre-installed system-wide by the ROOT entrypoint.
-      expect(text).not.toContain("JQ_MISSING");
-      expect(text).toContain("/usr/bin/jq");
+      const text = observedRunText(result);
+      // apt: jq pre-installed system-wide by the runtime setup path.
+      expect(text, runDiagnostics(result)).toContain("/usr/bin/jq");
       // pip: the python module imports without the agent installing it.
-      expect(text).not.toContain("PIP_MISSING");
-      expect(text).toContain("PIP_OK");
+      expect(text, runDiagnostics(result)).toContain("PIP_OK");
     },
     10 * 60_000
   );

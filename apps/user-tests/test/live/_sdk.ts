@@ -53,6 +53,25 @@ export function dense(s: string): string {
   return s.replace(/\s+/g, "");
 }
 
+export function observedRunText(result: SdkRunResult): string {
+  return dense([result.assistantText, result.toolResultText].join(" "));
+}
+
+export function runDiagnostics(result: SdkRunResult): string {
+  return [
+    `runId=${result.runId}`,
+    `status=${result.status}`,
+    `runtime=${result.runtime ?? "(none)"}`,
+    `provider=${result.provider ?? "(none)"}`,
+    `terminalKind=${result.terminalKind ?? "(none)"}`,
+    `events=[${result.eventKinds.join(", ")}]`,
+    `assistantText=${JSON.stringify(result.assistantText).slice(0, 500)}`,
+    `toolResultText=${JSON.stringify(result.toolResultText).slice(0, 500)}`,
+    `streamErrors=${JSON.stringify(result.streamErrors).slice(0, 500)}`,
+    `outputCount=${result.outputCount}`
+  ].join("\n");
+}
+
 export interface SdkRunResult {
   readonly runId: string;
   readonly status: string;

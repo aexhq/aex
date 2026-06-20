@@ -31,4 +31,5 @@ that artifact. CI or release validation can pin an explicit artifact with
 exactly one of `AEX_USER_TEST_TARBALL` or `AEX_USER_TEST_VERSION`.
 
 Live user tests run against a hosted aex API and fail loudly when required env
-is missing: `AEX_API_URL`, `AEX_API_TOKEN`, and `DEEPSEEK_API_KEY`.
+is missing: `AEX_API_URL`, `AEX_API_TOKEN`, `ANTHROPIC_API_KEY`, and
+`DEEPSEEK_API_KEY`.
