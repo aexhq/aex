@@ -25,7 +25,7 @@
  *
  * Optional (both modes):
  *   --region <region>             product placement token (lhr, iad, sfo, bom); omitted infers/falls back
- *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-2gb); default shared-1x-512mb
+ *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-2gb); default shared-1x-128mb
  *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
  *   --idempotency-key <key>        defaults to a fresh UUID
  *   --proxy-endpoint '<json>'      PlatformProxyEndpoint JSON (repeatable)

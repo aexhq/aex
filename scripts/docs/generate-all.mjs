@@ -21,6 +21,8 @@ const guideSources = [
   ["run-config.md", "run-config"],
   ["run-record.md", "run-record"],
   ["limits.md", "limits"],
+  ["defaults.md", "defaults"],
+  ["limits-and-quotas.md", "limits-and-quotas"],
   ["secrets.md", "secrets"],
   ["credentials.md", "credentials"],
   ["skills.md", "skills"],

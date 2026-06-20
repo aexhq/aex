@@ -34,8 +34,8 @@ describe("runtime size presets", () => {
   it.each(RUNTIME_SIZES)("%s is a valid product preset", (size) => {
     const { cpus, memoryMb } = RUNTIME_SIZE_PRESETS[size];
     expect([1, 2, 4, 8]).toContain(cpus);
-    expect(memoryMb % 256).toBe(0);
-    expect(memoryMb).toBeGreaterThanOrEqual(256 * cpus);
+    expect(memoryMb % 128).toBe(0);
+    expect(memoryMb).toBeGreaterThanOrEqual(128 * cpus);
     expect(memoryMb).toBeLessThanOrEqual(2048 * cpus);
   });
 
@@ -58,8 +58,8 @@ describe("RuntimeSizes symbol const stays in lockstep with presets", () => {
 
 describe("default runtime size", () => {
   it("resolves to the current default runtime resource preset", () => {
-    expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.SHARED_1X_512MB);
-    expect(runtimeResources(DEFAULT_RUNTIME_SIZE)).toEqual({ cpus: 1, memoryMb: 512 });
+    expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.SHARED_1X_128MB);
+    expect(runtimeResources(DEFAULT_RUNTIME_SIZE)).toEqual({ cpus: 1, memoryMb: 128 });
   });
 });
 

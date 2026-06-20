@@ -16,6 +16,7 @@ export interface RuntimeResources {
  * Tokens intentionally remain stable product presets.
  */
 export const RUNTIME_SIZE_PRESETS = {
+  "shared-1x-128mb": { cpus: 1, memoryMb: 128 },
   "shared-1x-256mb": { cpus: 1, memoryMb: 256 },
   "shared-1x-512mb": { cpus: 1, memoryMb: 512 },
   "shared-1x-1gb": { cpus: 1, memoryMb: 1024 },
@@ -41,13 +42,14 @@ export type RuntimeSize = keyof typeof RUNTIME_SIZE_PRESETS;
 export const RUNTIME_SIZES = Object.keys(RUNTIME_SIZE_PRESETS) as readonly RuntimeSize[];
 
 /** Default when `runtimeSize` is omitted. */
-export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "shared-1x-512mb";
+export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "shared-1x-128mb";
 
 /**
  * Symbol-style accessors for TS callers. `RuntimeSizes.SHARED_2X_2GB`
  * resolves to the wire token `"shared-2x-2gb"`.
  */
 export const RuntimeSizes = {
+  SHARED_1X_128MB: "shared-1x-128mb",
   SHARED_1X_256MB: "shared-1x-256mb",
   SHARED_1X_512MB: "shared-1x-512mb",
   SHARED_1X_1GB: "shared-1x-1gb",
