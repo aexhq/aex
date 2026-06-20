@@ -48,6 +48,17 @@ interface StreamResult {
   readonly manifestEventCount: number;
   readonly manifestChunks: number;
   readonly leakedKey: boolean;
+  readonly manifestAttempts: readonly ManifestAttempt[];
+}
+
+interface ManifestAttempt {
+  readonly attempt: number;
+  readonly phase: "ticket" | "manifest" | "parse";
+  readonly status?: number;
+  readonly eventCount?: number;
+  readonly chunks?: number;
+  readonly url?: string;
+  readonly error?: string;
 }
 
 describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + download archive", () => {
@@ -121,6 +132,23 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           }
         }
 
+        function buildCoordinatorManifestUrl(wsUrl, ticket) {
+          const url = new URL(wsUrl);
+          if (!url.pathname.endsWith("/subscribe")) {
+            throw new Error("coordinator wsUrl path is not a subscribe endpoint: " + url.pathname);
+          }
+          url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+          url.pathname = url.pathname.replace(/\\/subscribe$/, "/manifest");
+          url.searchParams.set("ticket", ticket);
+          return url;
+        }
+
+        function withoutTicket(url) {
+          const redacted = new URL(url.toString());
+          redacted.searchParams.delete("ticket");
+          return redacted.toString();
+        }
+
         // 2. Snapshot the same log + final status. Postgres \`mark-terminal\`
         //    lands AFTER the terminal WS broadcast, so poll for terminal
         //    status before reading (avoids a pre-terminal status race).
@@ -136,6 +164,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         //    manifest is written by a later workflow step (complete-coordinator)
         //    after terminal, so retry briefly until it's populated.
         let manifest = null;
+        const manifestAttempts = [];
         for (let attempt = 0; attempt < 5 && !manifest; attempt++) {
           if (attempt > 0) await new Promise((r) => setTimeout(r, 2000));
           try {
@@ -143,14 +172,38 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
               method: "POST",
               headers: { authorization: "Bearer " + apiToken }
             }, 8000);
-            if (!tRes.ok) continue;
+            if (!tRes.ok) {
+              manifestAttempts.push({ attempt, phase: "ticket", status: tRes.status });
+              continue;
+            }
             const grant = await tRes.json();
-            const manifestUrl = grant.wsUrl.replace(/^ws/, "http").replace(/\\/subscribe$/, "/manifest");
-            const mRes = await fetchBounded(manifestUrl + "?ticket=" + encodeURIComponent(grant.ticket), undefined, 8000);
-            if (!mRes.ok) continue;
+            const manifestUrl = buildCoordinatorManifestUrl(grant.wsUrl, grant.ticket);
+            const redactedUrl = withoutTicket(manifestUrl);
+            const mRes = await fetchBounded(manifestUrl.toString(), undefined, 8000);
+            if (!mRes.ok) {
+              manifestAttempts.push({ attempt, phase: "manifest", status: mRes.status, url: redactedUrl });
+              continue;
+            }
             const m = await mRes.json();
-            if (m && (m.eventCount ?? 0) > 0) manifest = m;
-          } catch (e) { /* manifest best-effort — retry */ }
+            if (m && (m.eventCount ?? 0) > 0) {
+              manifest = m;
+            } else {
+              manifestAttempts.push({
+                attempt,
+                phase: "parse",
+                status: mRes.status,
+                eventCount: m?.eventCount,
+                chunks: Array.isArray(m?.chunks) ? m.chunks.length : undefined,
+                url: redactedUrl
+              });
+            }
+          } catch (e) {
+            manifestAttempts.push({
+              attempt,
+              phase: "manifest",
+              error: e instanceof Error ? e.message : String(e)
+            });
+          }
         }
 
         const serialized = JSON.stringify({ run, snapshot, manifest });
@@ -161,7 +214,8 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           snapshotTypes: [...new Set(snapshot.map((e) => e.type))],
           manifestEventCount: manifest ? (manifest.eventCount ?? -1) : -1,
           manifestChunks: manifest && Array.isArray(manifest.chunks) ? manifest.chunks.length : -1,
-          leakedKey: serialized.includes(deepseekKey)
+          leakedKey: serialized.includes(deepseekKey),
+          manifestAttempts
         }));
         // Force exit: an abandoned WS phase may leave an open socket that
         // would otherwise keep Node alive until the outer SIGKILL. We have
@@ -203,10 +257,13 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
       expect(result.snapshotTypes).toContain("RUN_STARTED");
       expect(result.snapshotTypes).toContain("TEXT_MESSAGE_CONTENT");
       expect(result.snapshotTypes).toContain("RUN_FINISHED");
+      expect(result.leakedKey).toBe(false);
+      if (result.manifestEventCount <= 0 || result.manifestChunks < 1) {
+        throw new Error(`event archive manifest unavailable: ${JSON.stringify(result.manifestAttempts)}`);
+      }
       // Durable archive is downloadable and records the events.
       expect(result.manifestEventCount).toBeGreaterThan(0);
       expect(result.manifestChunks).toBeGreaterThanOrEqual(1);
-      expect(result.leakedKey).toBe(false);
     },
     4 * 60 * 1000
   );
