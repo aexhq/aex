@@ -72,6 +72,27 @@ describe("streamCoordinatorEvents — live fanout", () => {
     expect(received).toEqual([0, 1, 2]);
     expect(ws!.closed).toBe(true);
   });
+
+  it("preserves existing WebSocket URL query parameters", async () => {
+    let ws: FakeWebSocket | undefined;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/runs/r/subscribe?region=iad",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url))
+    });
+    const consume = (async () => {
+      for await (const event of gen) {
+        void event;
+        break;
+      }
+    })();
+
+    await flush();
+    expect(ws!.url).toBe("wss://co/runs/r/subscribe?region=iad&ticket=tkt&from=0");
+    ws!.message(evt(0, "RUN_FINISHED"));
+    await consume;
+  });
 });
 
 describe("streamCoordinatorEvents — settle-consistent terminal predicate", () => {

@@ -224,6 +224,23 @@ export const Providers = {
 } as const satisfies Readonly<Record<string, RunProvider>>;
 
 /**
+ * Product placement tokens accepted on run submission. These are not exact
+ * city guarantees: the hosted platform maps each token to the configured
+ * database, object store, Durable Object, and sandbox backing available for
+ * that product region.
+ */
+export const RUN_REGIONS = ["lhr", "iad", "sfo", "bom"] as const;
+export type RunRegion = (typeof RUN_REGIONS)[number];
+
+/** Symbol-style accessors for the closed run-region set. */
+export const RunRegions = {
+  LHR: "lhr",
+  IAD: "iad",
+  SFO: "sfo",
+  BOM: "bom"
+} as const satisfies Readonly<Record<string, RunRegion>>;
+
+/**
  * Customer-facing runtime selector. Optional on the wire; absent resolves
  * to the same managed runtime as `"managed"`. `"native"` is no longer an
  * accepted submission value and fails schema validation.
@@ -1443,6 +1460,13 @@ export interface PlatformRunSubmissionRequest {
    * `parseRunSubmissionRequest`.
    */
   readonly runtime?: RuntimeKind;
+  /**
+   * Optional product placement token requested by the caller. Omitted means
+   * the hosted platform infers a configured region from request geography and
+   * falls back to its default region. Accepted tokens do not promise exact
+   * city-level placement.
+   */
+  readonly region?: RunRegion;
   readonly submission: PlatformSubmission;
   readonly secrets: PlatformInlineSecrets;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
@@ -1491,7 +1515,7 @@ export interface PlatformRunSubmissionRequest {
  */
 export type PlatformRunSubmissionInput = Omit<
   PlatformRunSubmissionRequest,
-  "workspaceId" | "credentialMode" | "provider" | "runtime" | "timeoutMs" | "postHook"
+  "workspaceId" | "credentialMode" | "provider" | "runtime" | "region" | "timeoutMs" | "postHook"
 > & {
   readonly workspaceId?: string;
   readonly credentialMode?: CredentialMode;
@@ -1502,6 +1526,11 @@ export type PlatformRunSubmissionInput = Omit<
    * accepted.
    */
   readonly runtime?: RuntimeKind;
+  /**
+   * Optional product placement token. Invalid explicit values are rejected;
+   * omission lets the platform infer/fallback.
+   */
+  readonly region?: RunRegion;
   /**
    * Run deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
    * Parsed + bounded to [1m, 6h] server-side into
@@ -1524,6 +1553,7 @@ export function parseRunSubmissionRequest(
     "credentialMode",
     "provider",
     "runtime",
+    "region",
     "submission",
     "runtimeSize",
     "timeout",
@@ -1551,6 +1581,7 @@ export function parseRunSubmissionRequest(
   }
   const provider = parseRunProvider(value.provider);
   const runtime = parseRuntimeKind(value.runtime);
+  const region = parseRunRegion(value.region);
   const credentialMode = parseCredentialMode(value.credentialMode);
   void options;
   // Cross-field validation via the centralized runtime-support validator.
@@ -1604,6 +1635,7 @@ export function parseRunSubmissionRequest(
     credentialMode,
     provider,
     ...(runtime ? { runtime } : {}),
+    ...(region ? { region } : {}),
     submission,
     secrets
   };
@@ -1622,6 +1654,7 @@ export function parseRunSubmissionRequest(
     credentialMode,
     provider,
     ...(runtime ? { runtime } : {}),
+    ...(region ? { region } : {}),
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -1630,6 +1663,18 @@ export function parseRunSubmissionRequest(
     ...(parentRunId !== undefined ? { parentRunId } : {}),
     secrets
   };
+}
+
+export function parseRunRegion(input: unknown): RunRegion | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "string" || !(RUN_REGIONS as readonly string[]).includes(input)) {
+    throw new Error(
+      `region must be one of: ${RUN_REGIONS.join(", ")} (got ${JSON.stringify(input)})`
+    );
+  }
+  return input as RunRegion;
 }
 
 export function parseRuntimeKind(input: unknown): RuntimeKind | undefined {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BUILTINS,
   DEFAULT_CREDENTIAL_MODE,
+  RUN_REGIONS,
   RUNTIME_KINDS,
   RuntimeValidationError,
   collectManagedUnsupportedFeatures,
@@ -13,7 +14,9 @@ import {
   BUILTINS,
   Builtins,
   Providers,
+  RunRegions,
   RUN_PROVIDERS,
+  parseRunRegion,
   parseRunSubmissionRequest,
   providerForModel,
   providersForModel,
@@ -23,6 +26,7 @@ import {
   selectRuntime,
   type PlatformRunSubmissionRequest,
   type RunProvider,
+  type RunRegion,
   type RuntimeKind
 } from "../src/index.js";
 
@@ -31,7 +35,9 @@ function assetRef(name: string, seed = 1) {
   return { kind: "asset" as const, assetId: `asset_${hex}`, name };
 }
 
-function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind }> = {}) {
+function baseRequest(
+  overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind; region: RunRegion }> = {}
+) {
   const provider = overrides.provider ?? "anthropic";
   const model = {
     anthropic: RunModels.CLAUDE_HAIKU_4_5,
@@ -48,6 +54,7 @@ function baseRequest(overrides: Partial<{ provider: RunProvider; runtime: Runtim
     idempotencyKey: "idem-1",
     provider,
     ...(overrides.runtime !== undefined ? { runtime: overrides.runtime } : {}),
+    ...(overrides.region !== undefined ? { region: overrides.region } : {}),
     submission: {
       model,
       prompt: ["hello"],
@@ -148,6 +155,30 @@ describe("submission parser - providers and secrets", () => {
       })
     ).toThrow(
       /secrets\.openai is not an allowed field; permitted: apiKey, mcpServers, proxyEndpointAuth/
+    );
+  });
+});
+
+describe("submission parser - run regions", () => {
+  it("exports the first public region tokens and symbol accessors", () => {
+    expect([...RUN_REGIONS]).toEqual(["lhr", "iad", "sfo", "bom"]);
+    expect(Object.values(RunRegions)).toEqual([...RUN_REGIONS]);
+  });
+
+  it("parses explicit region tokens", () => {
+    expect(parseRunRegion("iad")).toBe("iad");
+    expect(parseRunRegion(undefined)).toBeUndefined();
+    expect(() => parseRunRegion("mars")).toThrow(/region must be one of: lhr, iad, sfo, bom/);
+  });
+
+  it("preserves an explicit top-level region and omits absent region", () => {
+    expect(parseRunSubmissionRequest(baseRequest({ region: "iad" })).region).toBe("iad");
+    expect(parseRunSubmissionRequest(baseRequest()).region).toBeUndefined();
+  });
+
+  it("rejects an invalid explicit region", () => {
+    expect(() => parseRunSubmissionRequest({ ...baseRequest(), region: "ams" })).toThrow(
+      /region must be one of: lhr, iad, sfo, bom/
     );
   });
 });

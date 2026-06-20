@@ -3,6 +3,7 @@ import {
   DEFAULT_CREDENTIAL_MODE,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
+  RUN_REGIONS,
   RUNTIME_KINDS,
   RunStateError,
   SecretString,
@@ -38,6 +39,7 @@ import {
   type RunModel,
   type RunEvent,
   type RunProvider,
+  type RunRegion,
   type SecretRecord,
   type SecretReveal,
   type RunUnit,
@@ -126,6 +128,12 @@ export interface SubmitOptions {
    * is no longer accepted.
    */
   readonly runtime?: RuntimeKind;
+  /**
+   * Optional hosted-platform placement token for this run. These are product
+   * region tokens, not exact city guarantees; omit to let the platform infer a
+   * configured region and fall back when no hint matches.
+   */
+  readonly region?: RunRegion;
   /**
    * Closed public model id. Prefer the {@link Models} symbol const, e.g.
    * `Models.CLAUDE_HAIKU_4_5`. Pair it with an explicit {@link Providers} value
@@ -691,6 +699,16 @@ export class AgentExecutor {
           `(got ${JSON.stringify(options.runtime)})`
       );
     }
+    if (
+      options.region !== undefined &&
+      !(RUN_REGIONS as readonly string[]).includes(options.region)
+    ) {
+      throw new AexError(
+        "RUN_CONFIG_INVALID",
+        `AgentExecutor.submit: region must be one of: ${RUN_REGIONS.join(", ")} ` +
+          `(got ${JSON.stringify(options.region)})`
+      );
+    }
 
     // Walk Skill / Tool / AgentsMd / File instances. Inline drafts are eagerly
     // uploaded to the content-addressable asset store here (before POST /runs)
@@ -760,6 +778,7 @@ export class AgentExecutor {
       // dispatcher auto-route. Only emit it when the caller asked for
       // a specific runtime so the wire shape stays minimal.
       ...(options.runtime ? { runtime: options.runtime } : {}),
+      ...(options.region ? { region: options.region } : {}),
       submission,
       ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),

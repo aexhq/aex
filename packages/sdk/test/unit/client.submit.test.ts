@@ -161,6 +161,34 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     ).rejects.toThrow(/AgentExecutor\.submit: secrets\.apiKey is required/);
   });
 
+  it("forwards an explicit region as a top-level submit field", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      region: "iad",
+      secrets: { apiKey: "k" }
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.region).toBe("iad");
+  });
+
+  it("rejects invalid explicit regions before posting", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await expect(
+      client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "p",
+        region: "ams",
+        secrets: { apiKey: "k" }
+      } as never)
+    ).rejects.toThrow(/AgentExecutor\.submit: region must be one of: lhr, iad, sfo, bom/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("serializes outputs when only capture overrides are supplied", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });

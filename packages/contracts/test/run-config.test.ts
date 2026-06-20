@@ -373,6 +373,25 @@ describe("run-config — parseRunRequestConfig", () => {
     expect(config.metadata).toEqual(metadata);
   });
 
+  it("accepts an optional region token", () => {
+    const config = parseRunRequestConfig({
+      model: "claude-haiku-4-5",
+      prompt: "x",
+      region: "iad"
+    });
+    expect(config.region).toBe("iad");
+  });
+
+  it("rejects an invalid region token", () => {
+    expect(() =>
+      parseRunRequestConfig({
+        model: "claude-haiku-4-5",
+        prompt: "x",
+        region: "ams"
+      })
+    ).toThrow(/region must be one of: lhr, iad, sfo, bom/);
+  });
+
   it("accepts postHook config and preserves the public wire shape", () => {
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",

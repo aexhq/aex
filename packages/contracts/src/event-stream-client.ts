@@ -66,8 +66,10 @@ export async function* streamCoordinatorEvents(
 
   while (!done && !opts.signal?.aborted) {
     const ticket = await opts.fetchTicket();
-    const url = `${opts.wsUrl}?ticket=${encodeURIComponent(ticket)}&from=${cursor + 1}`;
-    const ws = makeWs(url);
+    const url = new URL(opts.wsUrl);
+    url.searchParams.set("ticket", ticket);
+    url.searchParams.set("from", String(cursor + 1));
+    const ws = makeWs(url.toString());
 
     const queue: AexEvent[] = [];
     let closed = false;

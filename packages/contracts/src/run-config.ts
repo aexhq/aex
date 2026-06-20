@@ -31,10 +31,12 @@
  * boundary.
  */
 
-import type {
-  JsonValue,
-  PlatformProxyEndpoint,
-  PlatformEnvironment
+import {
+  parseRunRegion,
+  type JsonValue,
+  type PlatformProxyEndpoint,
+  type PlatformEnvironment,
+  type RunRegion,
 } from "./submission.js";
 import { parseRunModel, type RunModel } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
@@ -819,6 +821,8 @@ export interface RunRequestConfig {
   readonly environment?: PlatformEnvironment;
   /** Managed runtime size preset (see {@link RuntimeSize}). */
   readonly runtimeSize?: RuntimeSize;
+  /** Product placement token. Omitted lets the hosted platform infer/fallback. */
+  readonly region?: RunRegion;
   /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
   readonly timeout?: string;
   /** Post-agent-run verifier command. Empty command is treated as omitted. */
@@ -850,6 +854,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "mcpServers",
     "environment",
     "runtimeSize",
+    "region",
     "timeout",
     "postHook",
     "proxyEndpoints",
@@ -868,6 +873,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
   const prompt = parseRunRequestConfigPrompt(record.prompt);
   const skills = parseRunRequestConfigSkills(record.skills);
   const mcpServers = parseRunRequestConfigMcpServers(record.mcpServers);
+  const region = parseRunRegion(record.region);
   const postHook = parsePostHook(record.postHook, "run request config postHook");
   return {
     model,
@@ -885,6 +891,7 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     ...(record.runtimeSize !== undefined
       ? { runtimeSize: record.runtimeSize as NonNullable<RunRequestConfig["runtimeSize"]> }
       : {}),
+    ...(region !== undefined ? { region } : {}),
     ...(record.timeout !== undefined
       ? { timeout: record.timeout as NonNullable<RunRequestConfig["timeout"]> }
       : {}),

@@ -96,8 +96,10 @@ describe("typescript consumer", () => {
         ProviderError,
         ProxyEndpoint,
         RUN_PROVIDERS,
+        RUN_REGIONS,
         RUNTIME_KINDS,
         RUNTIME_SIZES,
+        RunRegions,
         RunModels,
         RuntimeSizes,
         RuntimeValidationError,
@@ -131,6 +133,7 @@ describe("typescript consumer", () => {
         type Run,
         type RunEvent,
         type RunProvider,
+        type RunRegion,
         type RuntimeResources,
         type RuntimeSize,
         type RuntimeKind,
@@ -144,6 +147,7 @@ describe("typescript consumer", () => {
 
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
+      const region: RunRegion = RunRegions.IAD;
       const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_2GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
       const explicitBuiltin: Builtin = Builtins.WEB_FETCH;
@@ -214,6 +218,7 @@ describe("typescript consumer", () => {
           envVars: { USER_SURFACE_TEST: "1" }
         },
         metadata: { suite: "typescript-consumer", runtime: "managed" },
+        region,
         runtimeSize,
         timeout: "15m",
         secrets: {
@@ -241,6 +246,7 @@ describe("typescript consumer", () => {
         credentialMode: "byok",
         provider,
         runtime,
+        region,
         submission: {
           model: RunModels.CLAUDE_HAIKU_4_5,
           system: "Be precise.",
@@ -265,6 +271,7 @@ describe("typescript consumer", () => {
       const validationCode: RuntimeValidationCode = "feature_runtime_mismatch";
       const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
       const builtinCount: number = everyBuiltin.length;
+      const regionCount: number = RUN_REGIONS.length;
       const skillRef: SkillRef = inlineSkill.ref as SkillRef;
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
@@ -317,14 +324,17 @@ describe("typescript consumer", () => {
       ];
 
       void RUN_PROVIDERS;
+      void RUN_REGIONS;
       void RUNTIME_SIZES;
       void RunModels;
+      void region;
       void resources;
       void selectedRuntime;
       void managedUnsupportedFeatures;
       void validationCode;
       void platformEndpoint;
       void builtinCount;
+      void regionCount;
       void skillRef;
       void agentsRef;
       void manifest;
