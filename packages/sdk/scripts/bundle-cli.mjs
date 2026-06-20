@@ -40,7 +40,7 @@ if (!(await fileExists(sourceBundle))) {
   throw new Error(
     `Missing CLI bundle at ${sourceBundle}. ` +
       `Build @aexhq/cli before packing the SDK ` +
-      `(e.g. \`pnpm --filter @aexhq/cli run build\`).`
+      `(e.g. \`bun run --cwd ../.. --filter @aexhq/cli build\`).`
   );
 }
 

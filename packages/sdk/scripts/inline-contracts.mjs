@@ -57,7 +57,7 @@ if (!(await fileExists(contractsIndex))) {
   throw new Error(
     `Missing @aexhq/contracts dist at ${contractsIndex}. ` +
       `Build the contracts package before packing the SDK ` +
-      `(e.g. \`pnpm --filter @aexhq/contracts run build\`).`
+      `(e.g. \`bun run --cwd ../.. --filter @aexhq/contracts build\`).`
   );
 }
 

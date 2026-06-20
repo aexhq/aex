@@ -28,17 +28,17 @@ describe("aex package: CLI bin surface", () => {
     expect(bin.aex).toBe("./dist/cli.mjs");
   });
 
-  it("ships a bundled CLI in dist after pnpm build", () => {
+  it("ships a bundled CLI in dist after bun build", () => {
     // The SDK's build script copies @aexhq/cli's bundle into its own
-    // dist. If you see this fail locally, run `pnpm --filter @aexhq/sdk
-    // run build` (or the workspace `pnpm build`) first.
+    // dist. If you see this fail locally, run
+    // `bun run --cwd ../.. --filter @aexhq/sdk build` first.
     expect(existsSync(cliBundlePath)).toBe(true);
     expect(existsSync(sdkBundlePath)).toBe(true);
   });
 
   it("bundles a byte-identical copy of the @aexhq/cli artifact", () => {
-    // No silent skip: a missing bundle must fail loudly (run `pnpm
-    // --filter @aexhq/sdk run build` first). The presence test above
+    // No silent skip: a missing bundle must fail loudly (run
+    // `bun run --cwd ../.. --filter @aexhq/sdk build` first). The presence test above
     // documents the same build hint on its own failure path.
     expect(existsSync(sdkBundlePath)).toBe(true);
     expect(existsSync(cliBundlePath)).toBe(true);

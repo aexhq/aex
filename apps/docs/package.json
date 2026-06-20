@@ -16,15 +16,15 @@
     "react-dom": "19.2.6"
   },
   "scripts": {
-    "generate": "node ../../scripts/docs/generate-all.mjs",
-    "predev": "pnpm run generate",
+    "generate": "bun ../../scripts/docs/generate-all.mjs",
+    "predev": "bun run generate",
     "dev": "next dev",
-    "prebuild": "pnpm run generate",
+    "prebuild": "bun run generate",
     "build": "next build",
-    "prepreview": "pnpm run generate",
+    "prepreview": "bun run generate",
     "preview": "next start",
     "source": "fumadocs-mdx",
-    "prelint": "pnpm run generate && pnpm run source",
+    "prelint": "bun run generate && bun run source",
     "lint": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
