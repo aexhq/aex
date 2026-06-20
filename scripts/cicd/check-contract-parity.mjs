@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Cross-repo contract parity gate.
  *
@@ -22,7 +22,7 @@
  * out, so public-only CI and forks without the platform PAT still pass; it
  * only enforces when both trees are present.
  *
- * Run `node scripts/cicd/check-contract-parity.mjs --update` after an
+ * Run `bun scripts/cicd/check-contract-parity.mjs --update` after an
  * intentional, reviewed divergence to refresh the baseline.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -161,7 +161,7 @@ if (unexplained.length > 0) {
       unexplained.map((e) => `  - [${e.scope}] (${e.side}-only) ${e.lineHash}`).join("\n") +
       "\n\nPort the platform change into public, or — if the divergence is " +
       "intentional public-only surface or tracked-temporary — run " +
-      "`node scripts/cicd/check-contract-parity.mjs --update` and fill in the " +
+      "`bun scripts/cicd/check-contract-parity.mjs --update` and fill in the " +
       "`why` for each new baseline entry.\n"
   );
   process.exit(1);
@@ -175,7 +175,7 @@ if (stale.length > 0) {
     `contract-parity FAILED: ${stale.length} baseline entr${stale.length === 1 ? "y is" : "ies are"} stale ` +
       `(the divergence is gone — trim the baseline):\n` +
       stale.map((e) => `  - [${e.scope}] (${e.side}-only) ${e.lineHash ?? lineHash(e.line ?? "")}`).join("\n") +
-      "\n\nRun `node scripts/cicd/check-contract-parity.mjs --update` to refresh.\n"
+      "\n\nRun `bun scripts/cicd/check-contract-parity.mjs --update` to refresh.\n"
   );
   process.exit(1);
 }

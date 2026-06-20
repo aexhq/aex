@@ -1,8 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const baselinePath = resolve(repoRoot, "scripts", "cicd", "public-boundary-baseline.json");
@@ -14,7 +16,7 @@ checkContractsInlineBaseline();
 checkPublicImportDirection();
 checkPublicDeploymentClaims();
 checkPublicSurfaceLanguage();
-checkSdkPackDryRun();
+checkSdkBunPack();
 
 if (failures.length > 0) {
   console.error("public-boundary: failed");
@@ -25,7 +27,7 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "public-boundary: checked SDK exports/deps, SDK pack dry-run, public import direction, " +
+  "public-boundary: checked SDK exports/deps, SDK Bun pack, public import direction, " +
     "public surface language, and public deployment claims."
 );
 console.log("public-boundary: contracts inline baseline contains only curated public contract modules.");
@@ -192,29 +194,36 @@ function checkPublicSurfaceLanguage() {
   }
 }
 
-function checkSdkPackDryRun() {
+function checkSdkBunPack() {
   const pkgDir = resolve(repoRoot, baseline.sdkPackage.dir);
-  const result = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-    cwd: pkgDir,
-    encoding: "utf8",
-    shell: process.platform === "win32"
-  });
+  const packDir = mkdtempSync(resolve(tmpdir(), "aex-sdk-pack-"));
+  let files;
+  try {
+    const result = spawnSync(process.execPath, ["pm", "pack", "--destination", packDir, "--ignore-scripts", "--quiet"], {
+      cwd: pkgDir,
+      encoding: "utf8",
+      shell: process.platform === "win32"
+    });
 
-  if (result.status !== 0) {
-    failures.push(
-      `npm pack --dry-run --json --ignore-scripts failed in ${baseline.sdkPackage.dir}:\n` +
-        `${result.stderr || result.stdout}`
-    );
-    return;
+    if (result.status !== 0) {
+      failures.push(
+        `bun pm pack --destination ${packDir} --ignore-scripts failed in ${baseline.sdkPackage.dir}:\n` +
+          `${result.stderr || result.stdout}`
+      );
+      return;
+    }
+
+    const tarballs = readdirSync(packDir).filter((name) => name.endsWith(".tgz"));
+    if (tarballs.length !== 1) {
+      failures.push(`bun pm pack produced ${tarballs.length} tarballs in ${packDir}; expected exactly one`);
+      return;
+    }
+
+    files = listTarballFiles(resolve(packDir, tarballs[0])).map(normalizePackPath);
+  } finally {
+    rmSync(packDir, { recursive: true, force: true });
   }
 
-  const pack = parseNpmPackJson(result.stdout);
-  if (!pack) {
-    failures.push("could not parse npm pack --dry-run JSON output for packages/sdk");
-    return;
-  }
-
-  const files = pack.files.map((file) => normalizePackPath(file.path));
   const allowedPrefixes = baseline.sdkPackage.allowedPackedPathPrefixes;
   const forbiddenPatterns = baseline.sdkPackage.forbiddenPackedPathPatterns.map((pattern) => new RegExp(pattern));
   const pathOffenders = [];
@@ -227,14 +236,14 @@ function checkSdkPackDryRun() {
     }
   }
   if (pathOffenders.length > 0) {
-    failures.push(`SDK npm pack path leak(s):\n${pathOffenders.map((o) => `  ${o}`).join("\n")}`);
+    failures.push(`SDK Bun pack path leak(s):\n${pathOffenders.map((o) => `  ${o}`).join("\n")}`);
   }
 
   const missingBuiltFiles = ["dist/index.js", "dist/index.d.ts", "dist/cli.mjs"].filter((required) => !files.includes(required));
   if (missingBuiltFiles.length > 0) {
     failures.push(
-      `SDK npm pack dry-run is missing built file(s): ${missingBuiltFiles.join(", ")}. ` +
-        "Run pnpm --filter @aexhq/sdk run build before the boundary check."
+      `SDK Bun pack is missing built file(s): ${missingBuiltFiles.join(", ")}. ` +
+        "Run bun run --filter @aexhq/sdk build before the boundary check."
     );
     return;
   }
@@ -360,18 +369,37 @@ function packedSurfacePatterns() {
   ];
 }
 
-function parseNpmPackJson(stdout) {
-  const trimmed = stdout.trim();
-  const start = trimmed.indexOf("[");
-  const end = trimmed.lastIndexOf("]");
-  if (start < 0 || end < start) return undefined;
-  const parsed = JSON.parse(trimmed.slice(start, end + 1));
-  return Array.isArray(parsed) ? parsed[0] : undefined;
-}
-
 function normalizePackPath(path) {
   const normalized = path.split("\\").join("/");
   return normalized.startsWith("package/") ? normalized.slice("package/".length) : normalized;
+}
+
+function listTarballFiles(path) {
+  const tar = gunzipSync(readFileSync(path));
+  const files = [];
+  for (let offset = 0; offset + 512 <= tar.length; ) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+
+    const name = readTarString(header, 0, 100);
+    const prefix = readTarString(header, 345, 155);
+    const sizeText = readTarString(header, 124, 12).trim();
+    const size = sizeText.length > 0 ? Number.parseInt(sizeText, 8) : 0;
+    const type = String.fromCharCode(header[156] || 0);
+    const fullName = prefix ? `${prefix}/${name}` : name;
+    if (fullName && type !== "5" && type !== "x" && type !== "g") {
+      files.push(fullName);
+    }
+
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return files;
+}
+
+function readTarString(buffer, start, length) {
+  const bytes = buffer.subarray(start, start + length);
+  const end = bytes.indexOf(0);
+  return Buffer.from(bytes.subarray(0, end < 0 ? bytes.length : end)).toString("utf8");
 }
 
 function readJson(path) {

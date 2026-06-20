@@ -9,14 +9,14 @@
  *   - Subpath imports such as `@aexhq/sdk/platform` or `@aexhq/sdk/proxy`
  *     fail with ERR_PACKAGE_PATH_NOT_EXPORTED.
  *
- * Every assertion runs in a child Node process whose cwd is the install
+ * Every assertion runs in a child Bun process whose cwd is the install
  * tempdir, so resolution goes through the installed `node_modules/@aexhq/sdk`
- * and NOT the monorepo's pnpm symlink.
+ * and NOT the monorepo workspace symlink.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("sdk imports", () => {
   let install: InstallResult;
@@ -32,7 +32,7 @@ describe("sdk imports", () => {
   async function runChild(script: string, file: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const path = join(install.installDir, file);
     writeFileSync(path, script);
-    return await runCommand(process.execPath, [path], { cwd: install.installDir, timeoutMs: 30_000 });
+    return await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
   it("await import(\"@aexhq/sdk\") resolves and exports the canonical names", async () => {
@@ -99,16 +99,13 @@ describe("sdk imports", () => {
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as { ok: boolean; code?: string; message?: string };
     expect(result.ok).toBe(false);
-    // The package's "exports" map has no `require` condition, so Node
-    // rejects at the export-resolution layer with ERR_PACKAGE_PATH_NOT_EXPORTED
-    // (not ERR_REQUIRE_ESM, which fires later in the pipeline). Either
-    // code communicates the same contract: @aexhq/sdk is ESM-only via the
-    // root entry. Accept both for forward-compat with future Node
-    // resolver changes.
-    expect(["ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_REQUIRE_ESM"]).toContain(result.code);
+    // Bun reports this as MODULE_NOT_FOUND, while Node ESM loaders may report
+    // export-map or ESM-only codes. The contract is that the CJS surface does
+    // not resolve.
+    expect(["MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_REQUIRE_ESM"]).toContain(result.code);
   });
 
-  it("subpath imports fail with ERR_PACKAGE_PATH_NOT_EXPORTED", async () => {
+  it("subpath imports do not resolve", async () => {
     const script = `
       const probes = ["@aexhq/sdk/platform", "@aexhq/sdk/proxy", "@aexhq/sdk/cli"];
       const out = {};
@@ -128,7 +125,7 @@ describe("sdk imports", () => {
     for (const spec of ["@aexhq/sdk/platform", "@aexhq/sdk/proxy", "@aexhq/sdk/cli"]) {
       expect(result[spec]).toBeDefined();
       expect(result[spec]!.ok).toBe(false);
-      expect(result[spec]!.code).toBe("ERR_PACKAGE_PATH_NOT_EXPORTED");
+      expect(["ERR_MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED"]).toContain(result[spec]!.code);
     }
   });
 });

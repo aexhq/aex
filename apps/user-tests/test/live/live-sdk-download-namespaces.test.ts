@@ -22,7 +22,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -172,7 +172,7 @@ describe("live: run-artifact public outputs + download verbs", () => {
         const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
         const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
         writeFileSync(scriptPath, buildScript(cell, marker));
-        const child = await runCommand(process.execPath, [scriptPath], {
+        const child = await runCommand(getBunCommand(), [scriptPath], {
           cwd: install.installDir,
           timeoutMs: 8 * 60_000,
           env: buildPassEnv({

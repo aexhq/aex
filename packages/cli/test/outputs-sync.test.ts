@@ -13,7 +13,7 @@ function makeIo(opts: {
 } {
   const state = { stdout: "", stderr: "" };
   const io: CliIO = {
-    argv: ["node", "/aex/aex", "outputs", "sync"],
+    argv: ["bun", "/aex/aex", "outputs", "sync"],
     readFile: async (path) => {
       if (path === "/mnt/session/uploads/aex/index.json" && opts.inContainer) return "{}";
       const err = Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });

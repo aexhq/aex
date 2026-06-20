@@ -24,8 +24,8 @@ export default defineConfig({
       "test/live/live-sdk-heavy-session.test.ts",
       "test/live/providers/**"
     ],
-    // Each scenario spawns its own child processes (npm install, tsc,
-    // node) with cwd in an install tempdir and drives a live run.
+    // Each scenario spawns its own child processes (bun install, tsc,
+    // bun) with cwd in an install tempdir and drives a live run.
     // Unbounded parallelism multiplies disk usage and piles concurrent
     // live-run spend + managed runtime pressure, so cap at 2 files at once.
     // This keeps the default live workflow below provider/runtime pressure

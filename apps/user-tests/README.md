@@ -1,10 +1,10 @@
 # @aexhq/user-tests
 
 Layer-4 test workspace. Exercises a clean install of the current **packed
-tarball** (local/offline default, CI, and the release pre-publish gate)
-or the **published artifact** (release post-publish checks and manual live
-workflow runs) the way a real user or AI agent would on day one of
-`npm install @aexhq/sdk`.
+tarball** (local/offline default, CI, and manual live workflow runs) or a
+future **published artifact** once the deferred publish path is re-enabled,
+the way a real user or AI agent would on day one of
+`bun add @aexhq/sdk`.
 
 This workspace deliberately has **no `workspace:*` dependencies on
 `@aexhq/sdk` or other `@aexhq/*` packages**. Every scenario spawns a child process whose
@@ -25,42 +25,41 @@ CI can still pin the artifact under test by providing **exactly one** of:
 
 | Env | Source under test |
 |---|---|
-| `AEX_USER_TEST_TARBALL` | absolute path to a `pnpm pack` tarball (pre-publish) |
-| `AEX_USER_TEST_VERSION` | published npm version, e.g. `0.12.3` (post-publish) |
+| `AEX_USER_TEST_TARBALL` | absolute path to a Bun-packed tarball |
+| `AEX_USER_TEST_VERSION` | published package version, e.g. `0.12.3` (when the deferred publish path is re-enabled) |
 
 Then:
 
 ```bash
 # Offline scenarios (install / cli-bin / sdk-imports / typescript-consumer)
-pnpm --filter @aexhq/user-tests run test:user:offline
+bun run --filter @aexhq/user-tests test:user:offline
 
 # Full suite incl. the live siblings (requires the live target vars below)
-pnpm --filter @aexhq/user-tests run test:user
+bun run --filter @aexhq/user-tests test:user
 # or from the repo root:
-pnpm test:user
+bun run test:user
 ```
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
-`test:unit` — on purpose. The root unit gate (`pnpm test:unit`) is a
+`test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
 workspace-recursive runner that invokes every package's `test:unit`
 script; because these are named `test:user*`, that gate never runs them
 by default. That matters: they fail loudly when the artifact-under-test
 env is unset (by design), so pulling them into the default gate would
 break it for everyone. They run only via explicit invocation here and
-from `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and
+from `.github/workflows/ci.yml`, the deferred `.github/workflows/release.yml`, and
 `.github/workflows/live-user-tests.yml`.
 
 Explicit artifact inputs are strict: setting both variables, an invalid version,
 or a missing tarball path is a **hard error**, never a silent skip. The
-post-publish gate stays pinned to the exact published version through
-`AEX_USER_TEST_VERSION`.
+future post-publish gate must stay pinned to the exact published version
+through `AEX_USER_TEST_VERSION`.
 
 ## CI prerequisites
 
-CI runs the offline scenarios after the unit gate. The release workflow
-runs the same offline scenarios against the packed tarball before publish and
-against the published npm version after publish. Neither path needs a provider
-key.
+CI runs the offline scenarios after the unit gate. The release workflow is
+currently deferred until the Bun-first publish path is revalidated. Neither
+path needs a provider key.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
 the configured hosted API. They require:
@@ -74,7 +73,7 @@ the configured hosted API. They require:
 
 ## Live SDK siblings (2026 rebuild)
 
-The `test/live/live-sdk-*.test.ts` files exercise the published tarball
+The `test/live/live-sdk-*.test.ts` files exercise the packed tarball
 end-to-end against the configured hosted API. Current CI coverage is
 Anthropic-managed for the default-provider proof and DeepSeek-managed for the
 broad feature-surface matrix, because those are the provider keys provisioned
@@ -127,7 +126,7 @@ It is **excluded** from the default `test:user` sweep (see
 `vitest.config.ts`) and runs only via its own entrypoint + config:
 
 ```bash
-pnpm --filter @aexhq/user-tests run test:user:heavy   # or: pnpm test:user:heavy
+bun run --filter @aexhq/user-tests test:user:heavy   # or: bun run test:user:heavy
 ```
 
 Required env is identical to the comprehensive scenario
@@ -154,7 +153,7 @@ from the default `test:user` sweep (see `vitest.config.ts`) and runs via its
 own config:
 
 ```bash
-pnpm --filter @aexhq/user-tests run test:user:providers
+bun run --filter @aexhq/user-tests test:user:providers
 ```
 
 ## Consolidated on-demand pipeline

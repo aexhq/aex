@@ -1,9 +1,9 @@
 // Copy the @aexhq/cli ESM bundle (and its sha256 sidecar) into the
-// SDK's dist directory so that the published `@aexhq/sdk` npm package's
+// SDK's dist directory so that the published `@aexhq/sdk` package's
 // `bin: aex` entry resolves to a real artifact at install time.
 //
 // The CLI is built from `packages/cli` (a workspace package) so
-// the agent-first invariant — "one npm package, one CLI binary" — holds
+// the agent-first invariant — "one package, one CLI binary" — holds
 // mechanically: subscribers run `npm i aex` and immediately get
 // both the SDK import and the `aex` executable. The worker uses the
 // same bundle in-container at /aex/aex.
@@ -40,7 +40,7 @@ if (!(await fileExists(sourceBundle))) {
   throw new Error(
     `Missing CLI bundle at ${sourceBundle}. ` +
       `Build @aexhq/cli before packing the SDK ` +
-      `(e.g. \`pnpm --filter @aexhq/cli run build\`).`
+      `(e.g. \`bun run --cwd ../.. --filter @aexhq/cli build\`).`
   );
 }
 

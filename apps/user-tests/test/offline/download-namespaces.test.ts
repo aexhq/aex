@@ -21,9 +21,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-
-const IS_WINDOWS = process.platform === "win32";
+import { getAexBinPath, getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 describe("download namespaces surface (offline)", () => {
   let install: InstallResult;
@@ -31,7 +29,7 @@ describe("download namespaces surface (offline)", () => {
 
   beforeAll(async () => {
     install = await installAex();
-    binPath = join(install.installDir, "node_modules", ".bin", IS_WINDOWS ? "aex.cmd" : "aex");
+    binPath = getAexBinPath(install.installDir);
   });
 
   afterAll(() => {
@@ -52,7 +50,7 @@ describe("download namespaces surface (offline)", () => {
     `;
     const path = join(install.installDir, "download-verbs.mjs");
     writeFileSync(path, script);
-    const child = await runCommand(process.execPath, [path], { cwd: install.installDir, timeoutMs: 30_000 });
+    const child = await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, string>;
     for (const v of ["download", "downloadOutputs", "downloadEvents", "downloadMetadata"]) {
@@ -115,7 +113,7 @@ describe("download namespaces surface (offline)", () => {
     `;
     const path = join(install.installDir, "download-public-archive.mjs");
     writeFileSync(path, script);
-    const child = await runCommand(process.execPath, [path], { cwd: install.installDir, timeoutMs: 30_000 });
+    const child = await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
     expect(child.exitCode, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout) as {
       readonly calls: readonly string[];

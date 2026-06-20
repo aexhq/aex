@@ -329,7 +329,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       postHook: {
-        command: "pnpm test",
+        command: "bun test",
         timeout: "2m",
         maxTurns: 3,
         maxChars: null
@@ -340,7 +340,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
 
     const body = calls[0]!.body as Record<string, unknown>;
     expect(body.postHook).toEqual({
-      command: "pnpm test",
+      command: "bun test",
       timeout: "2m",
       maxTurns: 3,
       maxChars: null

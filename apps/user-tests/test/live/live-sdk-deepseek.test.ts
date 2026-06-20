@@ -31,7 +31,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -81,9 +81,9 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
   it(
     "submits via SDK, waits for terminal, fetches events + outputs, asserts a real DeepSeek response landed in the event log",
     async () => {
-      // Drive the SDK from a child Node process whose cwd is the
+      // Drive the SDK from a child Bun process whose cwd is the
       // install tempdir, so `import "aex"` resolves to the
-      // installed tarball — not the monorepo's pnpm symlink.
+      // installed tarball — not the monorepo workspace symlink.
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
         import { AgentExecutor } from "@aexhq/sdk";
@@ -189,7 +189,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         }
       }
 
-      const child = await runCommand(process.execPath, [scriptPath], {
+      const child = await runCommand(getBunCommand(), [scriptPath], {
         cwd: install.installDir,
         timeoutMs: 10 * 60 * 1000,
         env: passEnv

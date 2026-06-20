@@ -2,10 +2,10 @@
  * Scenario 1: install.test.ts
  *
  * Lock the published package's *shape*. A real user / AI agent who runs
- * `npm install @aexhq/sdk` should land in a tree that:
+ * `bun add @aexhq/sdk` should land in a tree that:
  *   - Has a sensible package.json (name, version, type, main, types,
  *     exports, bin).
- *   - Ships dist/cli.mjs with a Node shebang.
+ *   - Ships dist/cli.mjs with a Bun shebang.
  *   - Ships dist/cli.mjs.sha256 that matches the actual cli.mjs content.
  *   - Has a platform executable entry point: POSIX execute bit or Windows shim.
  *
@@ -16,7 +16,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installAex, type InstallResult } from "../_fixtures/install.js";
+import { getAexBinPath, installAex, type InstallResult } from "../_fixtures/install.js";
 
 type InstalledStreamEvent = {
   readonly specversion: "1.0";
@@ -91,15 +91,14 @@ describe("install shape", () => {
     install?.cleanup();
   });
 
-  it("npm install produced node_modules/@aexhq/sdk/package.json with the canonical shape", () => {
+  it("bun install produced node_modules/@aexhq/sdk/package.json with the canonical shape", () => {
     const pkg = install.aexPackageJson;
     expect(pkg.name).toBe("@aexhq/sdk");
     expect(pkg.version).toBe(install.resolvedVersion);
     expect(pkg.type).toBe("module");
     expect(pkg.main).toBe("./dist/index.js");
     expect(pkg.types).toBe("./dist/index.d.ts");
-    // engines.node must require >=20 — the worker container assumes this.
-    expect(pkg.engines).toEqual(expect.objectContaining({ node: expect.stringMatching(/>=\s*20/) }));
+    expect(pkg.engines).toEqual(expect.objectContaining({ bun: expect.stringMatching(/>=\s*1\.3\.14/) }));
   });
 
   it("declares a single `aex` bin pointing at dist/cli.mjs", () => {
@@ -120,13 +119,13 @@ describe("install shape", () => {
     expect(root).not.toHaveProperty("require");
   });
 
-  it("ships dist/cli.mjs with a Node shebang", () => {
+  it("ships dist/cli.mjs with a Bun shebang", () => {
     const cliPath = join(install.aexDir, "dist", "cli.mjs");
     const bytes = readFileSync(cliPath);
     expect(bytes.length).toBeGreaterThan(1024);
     // Shebang is the first line; CRLF tolerant.
     const head = bytes.toString("utf8", 0, 64);
-    expect(head).toMatch(/^#!\/usr\/bin\/env node\r?\n/);
+    expect(head).toMatch(/^#!\/usr\/bin\/env bun\r?\n/);
   });
 
   it("dist/cli.mjs.sha256 matches the actual cli.mjs content", () => {
@@ -146,15 +145,11 @@ describe("install shape", () => {
     const executableEntryPoint =
       process.platform === "win32"
         ? (() => {
-            const cmdShimPath = join(install.installDir, "node_modules", ".bin", "aex.cmd");
-            const cmdShimExists = existsSync(cmdShimPath);
-            const cmdShim = cmdShimExists ? readFileSync(cmdShimPath, "utf8").replace(/\\/g, "/") : "";
+            const binPath = getAexBinPath(install.installDir);
             return {
               kind: "windows" as const,
-              cmdShimPath,
-              cmdShimExists,
-              cmdShimInvokesNode: /\bnode(?:\.exe)?\b/i.test(cmdShim),
-              cmdShimTargetsCli: /@aexhq\/sdk\/dist\/cli\.mjs/.test(cmdShim),
+              binPath,
+              binExists: existsSync(binPath)
             };
           })()
         : (() => {
@@ -169,9 +164,7 @@ describe("install shape", () => {
       process.platform === "win32"
         ? {
             kind: "windows",
-            cmdShimExists: true,
-            cmdShimInvokesNode: true,
-            cmdShimTargetsCli: true,
+            binExists: true,
           }
         : {
             kind: "posix",
@@ -182,11 +175,11 @@ describe("install shape", () => {
 
   it("declares no @aexhq/* runtime dependencies (single-tarball invariant)", () => {
     // Workspace-internal build packages like @aexhq/contracts and @aexhq/cli are
-    // NEVER published to npm. If any of them leak into the published
+    // NEVER published as runtime package dependencies. If any of them leak into the published
     // package.json under `dependencies` or `peerDependencies`, then
-    // `npm install @aexhq/sdk` will 404 at install time. The SDK build inlines
+    // `bun add @aexhq/sdk` can fail at install time. The SDK build inlines
     // @aexhq/contracts into dist/_contracts/ and keeps it in devDependencies so
-    // pnpm pack strips it. This guard locks that contract in.
+    // Bun packing strips it. This guard locks that contract in.
     const pkg = install.aexPackageJson as {
       dependencies?: Record<string, string>;
       peerDependencies?: Record<string, string>;

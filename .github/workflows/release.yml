@@ -4,10 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       npm_dist_tag:
-        description: >-
-          npm dist-tag to publish under. Use `canary` for a release that the
-          platform suite will validate before promotion; `promote.yml` then
-          moves the SAME version to `latest` (re-tag, never re-publish).
+        description: Deferred until the Bun-first publish path is implemented.
         required: true
         default: canary
         type: choice
@@ -24,137 +21,12 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Publish @aexhq/sdk
+  deferred:
+    name: npm publish deferred
     runs-on: ubuntu-latest
-    environment: npm-release
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          registry-url: https://registry.npmjs.org
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Read SDK version
-        id: version
+      - name: Explain deferred release path
         run: |
-          version="$(node -p "require('./packages/sdk/package.json').version")"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing @aexhq/sdk@$version"
-
-      - name: Ensure npm versions are available
-        run: |
-          set -euo pipefail
-          for pkg in @aexhq/sdk @aexhq/cli @aexhq/contracts @aexhq/conformance; do
-            node scripts/cicd/assert-npm-version-available.mjs "$pkg" "${{ steps.version.outputs.version }}"
-          done
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Test
-        run: pnpm test
-
-      - name: Docs build
-        run: pnpm run docs:build
-
-      - name: Pack SDK tarball
-        id: pack
-        run: |
-          pack_dir="$RUNNER_TEMP/aex-pack"
-          mkdir -p "$pack_dir"
-          pnpm --filter @aexhq/sdk pack --pack-destination "$pack_dir"
-          tarball="$(find "$pack_dir" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
-          if [ -z "$tarball" ]; then
-            echo "No @aexhq/sdk tarball was produced." >&2
-            exit 1
-          fi
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-
-      - name: Offline user tests against tarball
-        env:
-          AEX_USER_TEST_TARBALL: ${{ steps.pack.outputs.tarball }}
-        run: pnpm run test:user:offline
-
-      - name: Final npm version check
-        run: node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
-
-      # Same gate CI runs (ci.yml -> pack:sdk). Fails closed before publish so a
-      # private-impl / substrate / billing leak can never reach npm.
-      - name: Public-boundary leak gate
-        run: pnpm run pack:sdk
-
-      - name: Publish to npm (token + provenance)
-        # Auth uses NPM_TOKEN (granular, publish rights for the four packages).
-        # Trusted publishing (tokenless OIDC) can't be used for the first release
-        # because @aexhq/cli, @aexhq/contracts, and @aexhq/conformance do
-        # not yet exist on npm and a trusted publisher can only be configured for
-        # an existing package. `--provenance` is independent of trusted publishing
-        # and still produces a signed attestation (this repo is public + has
-        # id-token: write). pnpm publish rewrites each package's `workspace:*`
-        # deps to concrete versions. Dependency order so a consumer resolving a
-        # just-published package finds its deps. Migrate to tokenless trusted
-        # publishing once all four packages exist on npm.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
-          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
-        run: |
-          set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN not set in the npm-release environment — required to publish (3 of the 4 packages are new, so tokenless trusted publishing is not yet possible)."
-            exit 1
-          fi
-          for pkg in @aexhq/contracts @aexhq/conformance @aexhq/cli @aexhq/sdk; do
-            echo "publishing $pkg under tag $NPM_DIST_TAG"
-            pnpm --filter "$pkg" publish --provenance --no-git-checks --access public --tag "$NPM_DIST_TAG"
-          done
-
-  post-publish-user-tests:
-    name: Post-publish offline user tests (${{ matrix.os }})
-    needs: publish
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Wait for npm registry
-        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ needs.publish.outputs.version }}"
-
-      - name: Offline user tests against published package
-        env:
-          AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
-        run: pnpm run test:user:offline
+          echo "::error::npm publish/provenance is intentionally deferred for the Bun-first migration."
+          echo "Implement a dedicated publish workflow once package staging, provenance, and dist-tag promotion are revalidated."
+          exit 1

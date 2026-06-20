@@ -499,10 +499,10 @@ describe("submission parser - postHook", () => {
   it("accepts postHook.command and applies defaults", () => {
     const parsed = parseRunSubmissionRequest({
       ...baseRequest(),
-      postHook: { command: "pnpm test" }
+      postHook: { command: "bun test" }
     });
     expect(parsed.postHook).toEqual({
-      command: "pnpm test",
+      command: "bun test",
       timeoutMs: 300_000,
       maxTurns: 10,
       maxChars: null

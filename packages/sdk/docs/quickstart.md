@@ -7,7 +7,7 @@ title: Quickstart
 ## 1. Install
 
 ```bash
-npm install @aexhq/sdk
+bun add @aexhq/sdk
 ```
 
 ## 2. Submit a run

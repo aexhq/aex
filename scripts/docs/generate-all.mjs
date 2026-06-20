@@ -201,8 +201,8 @@ async function syncGeneratedCapabilityReference() {
 async function generateCliReference() {
   const cli = resolve(repoRoot, "packages", "sdk", "dist", "cli.mjs");
   if (!existsSync(cli) || (await latestSourceMtime()) > (await mtimeMs(cli))) {
-    await runPnpm(["--filter", "@aexhq/contracts", "run", "build"]);
-    await runPnpm(["--filter", "@aexhq/sdk", "run", "build"]);
+    await runBun(["run", "--filter", "@aexhq/contracts", "build"]);
+    await runBun(["run", "--filter", "@aexhq/sdk", "build"]);
   }
   const { stdout } = await execFileAsync(process.execPath, [cli, "--help"], {
     cwd: repoRoot,
@@ -266,10 +266,10 @@ async function generateSdkReference() {
   await resetDir(resolve(contentRoot, "reference", "sdk"));
   await mkdir(generatedRoot, { recursive: true });
   const jsonPath = resolve(generatedRoot, "sdk-typedoc.json");
-  await runPnpm([
-    "--dir",
+  await runBun([
+    "run",
+    "--cwd",
     resolve(repoRoot, "apps", "docs"),
-    "exec",
     "typedoc",
     "--json",
     toPosixPath(jsonPath),
@@ -528,10 +528,8 @@ async function resetDir(path) {
   await mkdir(path, { recursive: true });
 }
 
-async function runPnpm(args) {
-  const command = process.platform === "win32" ? "cmd.exe" : "pnpm";
-  const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm", ...args] : args;
-  await execFileAsync(command, commandArgs, {
+async function runBun(args) {
+  await execFileAsync(process.execPath, args, {
     cwd: repoRoot,
     maxBuffer: 20 * 1024 * 1024
   });

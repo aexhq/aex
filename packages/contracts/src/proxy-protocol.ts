@@ -1,5 +1,5 @@
 // Wire format between the in-container runtime bridge (mounted at
-// `/mnt/session/uploads/aex/aex`, invoked through `node`) and
+// `/mnt/session/uploads/aex/aex`, invoked through `bun`) and
 // the Worker-owned named proxy route
 // (`POST /api/runs/:runId/proxy/:endpointName`).
 //
