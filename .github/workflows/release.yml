@@ -25,11 +25,12 @@ jobs:
   publish:
     name: Publish @aexhq/sdk
     runs-on: ubuntu-latest
+    environment: npm-release
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -37,9 +38,13 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11.17.0 && npm --version
 
       - name: Install
         run: bun ci
@@ -91,9 +96,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN is required in the npm-release environment for token-based npm publish. Configure npm trusted publishing before removing this token path."
+            exit 1
           fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
           npm publish "${{ steps.pack.outputs.tarball }}" \
             --registry https://registry.npmjs.org \
             --access public \
@@ -111,7 +118,7 @@ jobs:
     timeout-minutes: 240
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

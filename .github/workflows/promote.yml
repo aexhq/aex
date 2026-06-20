@@ -28,14 +28,16 @@ jobs:
   promote:
     name: Promote @aexhq/sdk
     runs-on: ubuntu-latest
+    environment: npm-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
 
       - name: Assert version exists on npm
         run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"
@@ -48,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is required for npm dist-tag promotion." >&2
+            echo "NPM_TOKEN is required in the npm-release environment for npm dist-tag promotion." >&2
             exit 1
           fi
           printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"

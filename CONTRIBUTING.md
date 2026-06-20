@@ -48,12 +48,12 @@ pack checks.
 | Workflow | Scope |
 | --- | --- |
 | [`CI`](.github/workflows/ci.yml) | main-push/manual lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
-| [`Release`](.github/workflows/release.yml) | deferred registry publish placeholder; fails closed until the publish path is revalidated |
+| [`Release`](.github/workflows/release.yml) | manual SDK publish to npm, then live user tests against the exact published version |
 | [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 
-Releases are manual and currently deferred. Re-enable the
-[`Release`](.github/workflows/release.yml) workflow only after the Bun-first
-package staging, provenance, and publish path has been revalidated.
+Releases are manual. The publish and promote workflows run in the `npm-release`
+GitHub Environment and require its `NPM_TOKEN` secret until npm trusted
+publishing is configured for the package and workflow.
 
 ## What reviewers look for
 

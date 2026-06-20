@@ -33,20 +33,39 @@ The manual `.github/workflows/release.yml` workflow:
 - Runs lint, unit/security, offline user tests, docs build, and `pack:sdk`.
 - Refuses to publish if `@aexhq/sdk@<package version>` already exists.
 - Packs `packages/sdk` with `bun pm pack`.
-- Publishes that tarball with npm provenance to the selected dist-tag
-  (`canary` by default).
+- Runs the publish job in the `npm-release` GitHub Environment and requires its
+  `NPM_TOKEN` secret.
+- Publishes the tarball with npm provenance to the selected dist-tag (`canary`
+  by default).
 - Waits for npm visibility.
 - Runs live user tests against the exact published version.
 
 Publish canary first for release validation. Promote the same immutable version
 only after the downstream platform release gate is green.
 
+## npm credentials
+
+The current release path uses a GitHub environment secret:
+
+- Environment: `npm-release`
+- Secret name: `NPM_TOKEN`
+
+The workflow intentionally fails before `npm publish` if that token is absent.
+Do not remove the `environment: npm-release` binding unless the package has been
+migrated to npm trusted publishing.
+
+Trusted publishing is the target credential model, but it is a separate npm
+package setting, not just a workflow permission. Before removing `NPM_TOKEN`,
+configure the npm trusted publisher for `aexhq/aex`, workflow file
+`release.yml`, and environment `npm-release`, then run the workflow with an npm
+CLI version that supports OIDC trusted publishing.
+
 ## Promote
 
 The manual `.github/workflows/promote.yml` workflow assigns an npm dist-tag to
 an already-published `@aexhq/sdk` version, usually `latest` after canary and
-platform validation. It requires npm write credentials and does not rebuild or
-republish the package.
+platform validation. It also runs in `npm-release`, requires `NPM_TOKEN`, and
+does not rebuild or republish the package.
 
 ## What ships in the tarball
 
