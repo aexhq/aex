@@ -20,7 +20,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
-import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js";
+import { dense, requireUserEnv, runDiagnostics, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
 
@@ -65,28 +65,33 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
       expect(result.runtime).toBe("managed");
       // The run SUCCEEDS — declaring a proxy endpoint must not break the run;
       // the agent just reports what it found.
-      expect(result.status).toBe("succeeded");
+      expect(result.status, runDiagnostics(result)).toBe("succeeded");
 
       const shellEvidence = dense(`${result.toolResultText} ${result.assistantText}`);
 
       // Assert the shell result, not only the assistant's final prose. The model
       // can summarize only the proxy token even when the shell printed both.
-      expect(shellEvidence, `INDEX_PRESENT missing from shell evidence: ${shellEvidence}`).toContain(
-        "INDEX_PRESENT"
-      );
       expect(
         shellEvidence,
-        `INDEX_MISSING reported while proxy should require the manifest: ${shellEvidence}`
+        `INDEX_PRESENT missing from shell evidence: ${shellEvidence}\n\n${runDiagnostics(result)}`
+      ).toContain("INDEX_PRESENT");
+      expect(
+        shellEvidence,
+        `INDEX_MISSING reported while proxy should require the manifest: ${shellEvidence}\n\n${runDiagnostics(result)}`
       ).not.toContain("INDEX_MISSING");
 
       // scope: the actual proxy round-trip is served by the API Worker-owned
       // named proxy route at ${AEX_PROXY_PUBLIC_BASE_URL}/api/runs/:id/proxy.
       // Every plane that runs this user test is configured enough to prove the
       // real customer path, not just the mounted bridge files.
-      expect(shellEvidence, `PROXY_OK missing for configured proxy plane: ${shellEvidence}`).toContain("PROXY_OK");
-      expect(shellEvidence, `PROXY_ERR present for configured proxy plane: ${shellEvidence}`).not.toContain(
-        "PROXY_ERR"
-      );
+      expect(
+        shellEvidence,
+        `PROXY_OK missing for configured proxy plane: ${shellEvidence}\n\n${runDiagnostics(result)}`
+      ).toContain("PROXY_OK");
+      expect(
+        shellEvidence,
+        `PROXY_ERR present for configured proxy plane: ${shellEvidence}\n\n${runDiagnostics(result)}`
+      ).not.toContain("PROXY_ERR");
     },
     10 * 60_000
   );
