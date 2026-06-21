@@ -67,6 +67,7 @@ jobs:
               exit 1
             fi
             bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION"
+            bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "$PACKAGE_VERSION"
             echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           else
             pack_dir="$RUNNER_TEMP/aex-pack"

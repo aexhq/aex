@@ -39,8 +39,16 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
       - name: Assert version exists on npm
         run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"
+
+      - name: Assert version installs with Bun
+        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ inputs.version }}"
 
       - name: Add npm dist-tag
         env:
