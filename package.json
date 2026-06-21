@@ -25,7 +25,7 @@
     "docs:generate": "bun run --filter @aexhq/docs generate",
     "docs:build": "bun run --filter @aexhq/docs build",
     "docs:check": "bun run --filter @aexhq/docs lint",
-    "contracts:boundary:check": "bun scripts/cicd/check-public-boundary.mjs",
+    "contracts:boundary:check": "bun scripts/with-generated-dist-lock.mjs bun scripts/cicd/check-public-boundary.mjs",
     "pack:sdk": "bun run --filter @aexhq/sdk build && bun run --filter @aexhq/sdk pack:dry-run && bun run contracts:boundary:check"
   },
   "devDependencies": {
