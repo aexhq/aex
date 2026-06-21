@@ -63,7 +63,7 @@ function baseRequest(
       files: [],
       mcpServers: []
     },
-    secrets: { apiKey: `sk-${provider}-test` }
+    secrets: { apiKeys: { [provider]: `sk-${provider}-test` } }
   };
 }
 
@@ -106,7 +106,7 @@ describe("submission parser - providers and secrets", () => {
     const { provider: _drop, ...rest } = baseRequest();
     const parsed = parseRunSubmissionRequest({
       ...rest,
-      secrets: { apiKey: "sk-ant-default" }
+      secrets: { apiKeys: { anthropic: "sk-ant-default" } }
     });
     expect(DEFAULT_RUN_PROVIDER).toBe("anthropic");
     expect(parsed.provider).toBe("anthropic");
@@ -137,7 +137,7 @@ describe("submission parser - providers and secrets", () => {
   });
 
   it.each(["deepseek", "openai", "gemini", "mistral"] as const)(
-    "requires secrets.apiKey when provider is %s",
+    "requires a BYOK provider key when provider is %s",
     (provider) => {
       const req = baseRequest({ provider });
       expect(() =>
@@ -146,7 +146,7 @@ describe("submission parser - providers and secrets", () => {
     }
   );
 
-  it("rejects unknown sibling keys inside the flat secrets bundle", () => {
+  it("rejects unknown sibling keys inside the secrets bundle", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
       parseRunSubmissionRequest({
@@ -154,8 +154,31 @@ describe("submission parser - providers and secrets", () => {
         secrets: { ...req.secrets, openai: { apiKey: "sk-openai-x" } }
       })
     ).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKey, mcpServers, proxyEndpointAuth/
+      /secrets\.openai is not an allowed field; permitted: apiKey, apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
     );
+  });
+
+  it("rejects an unknown provider key inside apiKeys", () => {
+    const req = baseRequest({ provider: "anthropic" });
+    expect(() =>
+      parseRunSubmissionRequest({ ...req, secrets: { apiKeys: { bogus: "sk-x" } } })
+    ).toThrow(/secrets\.apiKeys\["bogus"\] is not a known provider/);
+  });
+
+  it("rejects a non-string apiKeys value", () => {
+    const req = baseRequest({ provider: "anthropic" });
+    expect(() =>
+      parseRunSubmissionRequest({ ...req, secrets: { apiKeys: { anthropic: 123 } } })
+    ).toThrow(/secrets\.apiKeys\["anthropic"\] must be a non-empty string/);
+  });
+
+  it("accepts and preserves multiple provider keys for cross-provider subagents", () => {
+    const req = baseRequest({ provider: "deepseek" });
+    const parsed = parseRunSubmissionRequest({
+      ...req,
+      secrets: { apiKeys: { deepseek: "sk-ds", anthropic: "sk-ant" } }
+    });
+    expect(parsed.secrets.apiKeys).toEqual({ deepseek: "sk-ds", anthropic: "sk-ant" });
   });
 });
 

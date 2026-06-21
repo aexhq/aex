@@ -84,12 +84,12 @@ describe("managed runtime + widened providers (published surface)", () => {
       const base = {
         workspaceId: "ws", idempotencyKey: "id", provider: "anthropic",
         submission: { model: "claude-haiku-4-5", prompt: ["hi"], skills: [], agentsMd: [], files: [], mcpServers: [] },
-        secrets: { apiKey: "sk-ant-test-1" }
+        secrets: { apiKey: "sk-ant-test-1"  }
       };
       const a = selectRuntime(base);
       const b = selectRuntime({
         ...base, provider: "deepseek",
-        secrets: { apiKey: "sk-d-test" }
+        secrets: { apiKey: "sk-d-test"  }
       });
       console.log(JSON.stringify({ anthropic: a, deepseek: b }));
     `;
@@ -110,7 +110,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           runtime: "native",
           model: "claude-haiku-4-5",
           prompt: "hi",
-          secrets: { apiKey: "sk-ant-test" }
+          secrets: { apiKey: "sk-ant-test"  }
         });
         console.log(JSON.stringify({ caught: false }));
       } catch (err) {
@@ -145,7 +145,7 @@ describe("managed runtime + widened providers (published surface)", () => {
           skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" }],
           agentsMd: [], files: [], mcpServers: []
         },
-        secrets: { apiKey: "sk-ant-test-1" }
+        secrets: { apiKey: "sk-ant-test-1"  }
       };
       try {
         selectRuntime(req);
@@ -192,7 +192,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         runtime: "managed",
         model: "claude-haiku-4-5",
         prompt: "test",
-        secrets: { apiKey: "sk-ant-test-12345" }
+        secrets: { apiKey: "sk-ant-test-12345"  }
       });
       const submitBody = JSON.parse(requests[0].body);
       console.log(JSON.stringify({
@@ -242,7 +242,7 @@ describe("managed runtime + widened providers (published surface)", () => {
         provider: "anthropic",
         model: "claude-haiku-4-5",
         prompt: "hi",
-        secrets: { apiKey: "sk-ant-test-12345" }
+        secrets: { apiKey: "sk-ant-test-12345"  }
       });
       const body = JSON.parse(requests[0].body);
       console.log(JSON.stringify({ hasRuntime: "runtime" in body }));

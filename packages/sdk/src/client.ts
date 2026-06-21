@@ -96,9 +96,11 @@ export interface AgentExecutorOptions {
  *     secret is bundled into the constructor and split into
  *     `secrets.proxyEndpointAuth` server-side; the public submission
  *     only carries the declaration (`{ name, baseUrl, authShape, … }`).
- *   - `secrets.apiKey` — REQUIRED: the provider key for the selected
- *     `provider`. The platform never holds a long-lived provider key on
- *     your behalf.
+ *   - `secrets.apiKey` or `secrets.apiKeys[provider]` — REQUIRED: the provider
+ *     key for the selected provider. `apiKeys` MAY carry keys for additional
+ *     providers so subagents spawned with a different-family model can use them
+ *     (the child inherits the parent's keys server-side). The platform never
+ *     holds a long-lived provider key on your behalf.
  *
  * `idempotencyKey` is auto-generated when omitted; pass one explicitly
  * if you want client-driven retry safety across process restarts.
@@ -106,7 +108,8 @@ export interface AgentExecutorOptions {
 export interface SubmitOptions {
   /**
    * Credential source for upstream provider access. Omitted defaults to
-   * `"byok"`, which requires `secrets.apiKey`.
+   * `"byok"`, which requires `secrets.apiKey` or
+   * `secrets.apiKeys[provider]`.
    */
   readonly credentialMode?: CredentialMode;
   /**
@@ -115,7 +118,7 @@ export interface SubmitOptions {
    * same model id can route through different providers, so `provider` is a
    * first-class field — pass it alongside `model` rather than letting the model
    * alone decide routing. The BYOK key for the selected provider is supplied as
-   * `secrets.apiKey`.
+   * `secrets.apiKey` or `secrets.apiKeys[provider]`.
    *
    * Optional today: when omitted it is derived from `model` (each currently
    * supported model maps to a single provider), so existing call sites keep
@@ -678,7 +681,8 @@ export class AgentExecutor {
     // The BYOK provider key (for the selected `provider`) is required. The
     // shared parser re-runs this check on the server; failing early here
     // gives the caller a synchronous error before any network call.
-    if (typeof options.secrets.apiKey !== "string" || !options.secrets.apiKey) {
+    const selectedProviderKey = options.secrets.apiKeys?.[provider] ?? options.secrets.apiKey;
+    if (typeof selectedProviderKey !== "string" || !selectedProviderKey) {
       throw new Error("AgentExecutor.submit: secrets.apiKey is required");
     }
     if (typeof options.model !== "string" || !options.model) {

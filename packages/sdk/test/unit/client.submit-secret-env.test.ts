@@ -37,7 +37,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
 function submitWith(secretEnv: Record<string, Secret>) {
   const { fetch, calls } = makeStubFetch();
   const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-  return { client, calls, run: () => client.submit({ model: "claude-haiku-4-5", prompt: "p", secrets: { apiKey: "sk-x" }, secretEnv }) };
+  return { client, calls, run: () => client.submit({ model: "claude-haiku-4-5", prompt: "p", secrets: { apiKeys: { anthropic: "sk-x" } }, secretEnv }) };
 }
 
 describe("submit() secretEnv split", () => {
@@ -88,7 +88,7 @@ describe("submit() secretEnv split", () => {
   it("omits both fields when secretEnv is not provided", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({ model: "claude-haiku-4-5", prompt: "p", secrets: { apiKey: "sk-x" } });
+    await client.submit({ model: "claude-haiku-4-5", prompt: "p", secrets: { apiKeys: { anthropic: "sk-x" } } });
     const body = calls[0]!.body as Record<string, unknown>;
     expect("secretEnv" in (body.submission as object)).toBe(false);
     expect("envSecrets" in (body.secrets as object)).toBe(false);
@@ -106,7 +106,7 @@ describe("submit() secretEnv split", () => {
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
-        secrets: { apiKey: "sk-x" },
+        secrets: { apiKeys: { anthropic: "sk-x" } },
         secretEnv: { SERPER_API_KEY: "sk-x" as unknown as Secret }
       })
     ).rejects.toThrow(/must be a Secret/);

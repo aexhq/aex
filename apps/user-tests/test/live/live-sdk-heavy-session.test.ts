@@ -284,7 +284,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       builtins: ["developer"],
       environment: { envVars: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.runtime}-${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.runtime}-${spec.provider}" },
-      secrets: { apiKey: process.env.${spec.keyEnvName} },
+      secrets: { apiKey: process.env.${spec.keyEnvName}  },
       idempotencyKey: "heavy-${spec.runtime}-${spec.provider}-" + Date.now()
     };
 

@@ -29,7 +29,7 @@ function baseRequest(overrides: { agentsMd?: unknown[]; files?: unknown[] } = {}
       files: overrides.files ?? [],
       mcpServers: []
     },
-    secrets: { apiKey: "sk-ant-test" }
+    secrets: { apiKeys: { anthropic: "sk-ant-test" } }
   };
 }
 

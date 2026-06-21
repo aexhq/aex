@@ -107,7 +107,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-deepseek-" + Date.now(),
-          secrets: { apiKey: deepseekKey }
+          secrets: { apiKey: deepseekKey  }
         });
 
         // Real managed-runtime runs take longer than smoke mode — managed runtime

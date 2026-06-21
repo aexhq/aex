@@ -37,7 +37,7 @@ describe("platform status contracts", () => {
 });
 
 describe("platform run submission schema", () => {
-  const baseSecrets = { apiKey: "sk-ant-test" } as const;
+  const baseSecrets = { apiKeys: { anthropic: "sk-ant-test" } } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
     prompt: ["say hello"],
@@ -58,20 +58,20 @@ describe("platform run submission schema", () => {
     expect(parsed.provider).toBe("anthropic");
     expect(parsed.submission.prompt).toEqual(["say hello"]);
     expect(parsed.submission.metadata?.topic).toBe("platform");
-    expect(parsed.secrets.apiKey).toBe("sk-ant-test");
+    expect(parsed.secrets.apiKeys?.anthropic).toBe("sk-ant-test");
   });
 
-  it("accepts DeepSeek as an explicit provider with a flat apiKey", () => {
+  it("accepts DeepSeek as an explicit provider with per-provider apiKeys", () => {
     const parsed = parseRunSubmissionRequest({
       provider: "deepseek",
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: { ...baseSubmission, model: "deepseek-chat" },
-      secrets: { apiKey: "sk-deepseek-test" }
+      secrets: { apiKeys: { deepseek: "sk-deepseek-test" } }
     });
 
     expect(parsed.provider).toBe("deepseek");
-    expect(parsed.secrets.apiKey).toBe("sk-deepseek-test");
+    expect(parsed.secrets.apiKeys?.deepseek).toBe("sk-deepseek-test");
   });
 
   it("rejects the removed cleanup policy field", () => {
@@ -137,13 +137,13 @@ describe("platform run submission schema", () => {
     })).toThrow(/secrets/);
   });
 
-  it("requires secrets.apiKey", () => {
+  it("requires a non-empty secrets.apiKeys value", () => {
     expect(() => parseRunSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { apiKey: "" }
-    })).toThrow(/secrets\.apiKey must be a non-empty string/);
+      secrets: { apiKeys: { anthropic: "" } }
+    })).toThrow(/secrets\.apiKeys\["anthropic"\] must be a non-empty string/);
   });
 
   it("accepts mcpServers inside the secrets block", () => {
@@ -154,8 +154,7 @@ describe("platform run submission schema", () => {
         ...baseSubmission,
         mcpServers: [{ name: "files", url: "https://mcp.example.test" }]
       },
-      secrets: {
-        apiKey: "sk-ant-test",
+      secrets: { apiKeys: { anthropic: "sk-ant-test" } ,
         mcpServers: [{ name: "files", url: "https://mcp.example.test", headers: { authorization: "Bearer x" } }]
       }
     });
@@ -266,9 +265,9 @@ describe("platform run submission schema", () => {
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
-      secrets: { apiKey: "sk-ant-test", openai: { apiKey: "x" } }
+      secrets: { apiKeys: { anthropic: "sk-ant-test" } , openai: { apiKey: "x" } }
     })).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKey, mcpServers, proxyEndpointAuth/
+      /secrets\.openai is not an allowed field; permitted: apiKey, apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
     );
   });
 
@@ -303,7 +302,7 @@ describe("environment.packages ecosystem parsing", () => {
   const base = {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
-    secrets: { apiKey: "sk-ant-test" }
+    secrets: { apiKeys: { anthropic: "sk-ant-test" } }
   } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",

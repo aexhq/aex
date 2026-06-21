@@ -100,7 +100,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-anthropic-mgd-" + Date.now(),
-          secrets: { apiKey: anthropicKey }
+          secrets: { apiKey: anthropicKey  }
         });
 
         const deadline = Date.now() + 8 * 60 * 1000;

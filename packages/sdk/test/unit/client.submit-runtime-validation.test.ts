@@ -42,7 +42,7 @@ describe("AgentExecutor.submit — client-side runtime validation", () => {
         runtime: "native",
         model: "deepseek-chat",
         prompt: "hi",
-        secrets: { apiKey: "sk-x" }
+        secrets: { apiKeys: { deepseek: "sk-x" } }
       } as unknown as Parameters<AgentExecutor["submit"]>[0])
     ).rejects.toMatchObject({ name: "AexError", code: "RUNTIME_UNSUPPORTED" });
 
@@ -60,7 +60,7 @@ describe("AgentExecutor.submit — client-side runtime validation", () => {
         runtime: "native",
         model: "deepseek-chat",
         prompt: "hi",
-        secrets: { apiKey: "sk-x" }
+        secrets: { apiKeys: { deepseek: "sk-x" } }
       } as unknown as Parameters<AgentExecutor["submit"]>[0]);
     } catch (e) {
       caught = e;

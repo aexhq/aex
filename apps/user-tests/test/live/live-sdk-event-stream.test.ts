@@ -90,7 +90,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-event-stream-" + Date.now(),
-          secrets: { apiKey: deepseekKey }
+          secrets: { apiKey: deepseekKey  }
         });
 
         // 1. Listen live over the coordinator WebSocket (exactly-once,

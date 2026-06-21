@@ -10,13 +10,31 @@ credentials. Reusable env secrets are documented separately in
 
 The caller passes a workspace-scoped SDK token and the provider key inline on every `submit` call. aex holds the bundle in run-scoped custody for the run lifecycle and attempts terminal cleanup/revocation for the aex-controlled references. MCP credentials and proxy endpoint auth values travel the same way.
 
-A run targets exactly one provider (selected by `provider`, default `anthropic`), so the key is a single flat field:
+A run selects one upstream `provider` (default `anthropic`) and must carry a BYOK
+key for it. Keys are supplied per-provider so a run can also hold keys for the
+**other** providers its subagents may use:
 
 | Field | Required secret |
 | --- | --- |
-| Provider API key | `secrets.apiKey` |
+| Provider API keys | `secrets.apiKeys` (keyed by provider) |
 
-The same `secrets.apiKey` carries the BYOK key for whichever `provider` the run selects.
+```ts
+// The run's own provider key, plus extra keys its subagents can use.
+secrets: {
+  apiKeys: {
+    anthropic: process.env.ANTHROPIC_API_KEY!, // the run's provider
+    deepseek: process.env.DEEPSEEK_API_KEY!     // for a cross-provider subagent
+  }
+}
+```
+
+A `subagent` spawned with a different-family model **inherits the parent's keys
+server-side** from the run's vaulted bundle — the keys never transit the
+container. If the parent holds no key for the child's provider, the child submit
+is rejected with `parent_missing_provider_key`.
+
+The flat `secrets.apiKey` is still accepted as a back-compat shorthand for the
+run's own provider key (equivalent to `apiKeys[provider]`).
 
 MCP credential types:
 

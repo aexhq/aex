@@ -40,7 +40,7 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
             "If the file or the variable is missing, reply with exactly: CANARY_UNSET"
           ],
           environment: { envVars: { CANARY_VALUE: ${JSON.stringify(canary)} } },
-          secrets: { apiKey: DEEPSEEK_KEY },
+          secrets: { apiKey: DEEPSEEK_KEY  },
           idempotencyKey: "user-envvars-deepseek-managed-a-" + Date.now()
         }`
       });

@@ -76,7 +76,7 @@ describe("AgentExecutor.getRunUnit", () => {
     const runId = await client.submit({
       model: "claude-haiku-4-5",
       prompt: "hi",
-      secrets: { apiKey: "sk-test" }
+      secrets: { apiKeys: { anthropic: "sk-test" } }
     });
     const unit = await client.getUnit(runId);
     expect(unit.id).toBe("run-1");

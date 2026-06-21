@@ -43,7 +43,7 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
             "Reply with ONLY the two tokens separated by a space."
           ],
           environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
-          secrets: { apiKey: DEEPSEEK_KEY },
+          secrets: { apiKey: DEEPSEEK_KEY  },
           idempotencyKey: "user-networking-" + Date.now()
         }`
       });

@@ -38,7 +38,7 @@ function buildScript(spec: PostHookCase): string {
       prompt: "Reply with exactly: post hook ready.",
       builtins: [],
       postHook: ${postHookLiteral(spec)},
-      secrets: { apiKey: DEEPSEEK_KEY },
+      secrets: { apiKey: DEEPSEEK_KEY  },
       idempotencyKey: "user-posthook-${spec.id}-" + Date.now()
     }`
   });

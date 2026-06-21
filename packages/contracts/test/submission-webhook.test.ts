@@ -14,7 +14,7 @@ function baseRequest() {
       files: [],
       mcpServers: []
     },
-    secrets: { apiKey: "sk-anthropic-test" }
+    secrets: { apiKeys: { anthropic: "sk-anthropic-test" } }
   };
 }
 

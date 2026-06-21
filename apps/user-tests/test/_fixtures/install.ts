@@ -92,6 +92,7 @@ const packLockDir = join(
   tmpdir(),
   `aex-user-test-sdk-pack-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`
 );
+const generatedDistLockScript = join(repoRoot, "scripts", "with-generated-dist-lock.mjs");
 let localSdkPackPromise: Promise<string> | null = null;
 
 /**
@@ -266,7 +267,7 @@ async function packCurrentSdk(): Promise<string> {
   return await withPackLock(async () => {
     const packDir = mkdtempSync(join(tmpdir(), "aex-user-test-sdk-pack-"));
     try {
-      await runCommand(getBunCommand(), ["pm", "pack", "--destination", packDir], {
+      await runCommand(getBunCommand(), [generatedDistLockScript, "bun", "pm", "pack", "--destination", packDir], {
         cwd: join(repoRoot, "packages", "sdk"),
         timeoutMs: 180_000
       }).then((result) => {

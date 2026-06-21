@@ -208,7 +208,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       prompt: ${JSON.stringify(promptText)},
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
-      secrets: { apiKey: process.env.${spec.keyEnvName} },
+      secrets: { apiKey: process.env.${spec.keyEnvName}  },
       idempotencyKey: "comprehensive-${spec.runtime}-${spec.provider}-" + Date.now()
     };
     submitOpts.runtime = "managed";

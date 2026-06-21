@@ -112,10 +112,11 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   }
 
   // Provider key flag handling: each provider in RUN_PROVIDERS has its
-  // own `--<provider>-api-key` flag. Exactly the flag matching the
-  // selected provider must be supplied; every other provider's flag
-  // must be absent (mirrors the secrets-coupling rule the parser
-  // re-enforces server-side).
+  // own `--<provider>-api-key` flag. The flag matching the selected
+  // provider MUST be supplied; additional providers' flags MAY be supplied
+  // so subagents spawned with a different-family model can use them (the
+  // child inherits the parent's keys server-side). All collected keys ride
+  // in `secrets.apiKeys`.
   const providerKeyValues: Partial<Record<RunProvider, string>> = {};
   for (const p of RUN_PROVIDERS) {
     const flag = takeFlagValue(rest, `--${p}-api-key`);
@@ -126,13 +127,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   if (!providerKeyValues[provider]) {
     io.stderr(`--${provider}-api-key is required when --provider is ${provider} (the platform does not store provider keys on your behalf)\n`);
     return USAGE_ERR;
-  }
-  for (const p of RUN_PROVIDERS) {
-    if (p === provider) continue;
-    if (providerKeyValues[p] !== undefined) {
-      io.stderr(`--${p}-api-key is not allowed when --provider is ${provider}\n`);
-      return USAGE_ERR;
-    }
   }
 
   // Optional runtime selector. Validate the value against the wire enum
@@ -407,8 +401,10 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     ...(runConfig.metadata ? { metadata: runConfig.metadata } : {})
   };
 
+  const hasAdditionalProviderKeys = Object.keys(providerKeyValues).some((p) => p !== provider);
   const secrets: PlatformInlineSecrets = {
     apiKey: providerKeyValues[provider] as string,
+    ...(hasAdditionalProviderKeys ? { apiKeys: providerKeyValues } : {}),
     ...(mcpServerSecrets.length > 0 ? { mcpServers: mcpServerSecrets } : {}),
     ...(proxyAuth.length > 0 ? { proxyEndpointAuth: proxyAuth } : {})
   };

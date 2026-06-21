@@ -232,7 +232,7 @@ describe("typescript consumer", () => {
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
         builtins: [],
-        secrets: { apiKey: "sk-deepseek-type-surface" },
+        secrets: { apiKey: "sk-deepseek-type-surface"  },
         idempotencyKey: "type-surface-managed"
       } satisfies SubmitRunOptions;
 
@@ -436,7 +436,7 @@ describe("typescript consumer", () => {
         prompt: "hello",
         proxyEndpoints: [proxy],
         runtimeSize,
-        secrets: { apiKey: "sk-ant-bundler" }
+        secrets: { apiKey: "sk-ant-bundler"  }
       } satisfies SubmitRunOptions;
 
       const client = new AgentExecutor({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });

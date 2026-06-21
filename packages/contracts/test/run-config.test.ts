@@ -42,9 +42,7 @@ const baseSubmission = {
     model: "claude-haiku-4-5",
     prompt: "do the thing"
   },
-  secrets: {
-    apiKey: "sk-ant-x"
-  }
+  secrets: { apiKeys: { anthropic: "sk-ant-x" } }
 } as const;
 
 describe("run-config — id and name patterns", () => {
@@ -540,7 +538,7 @@ describe("run-config — parseRunSubmissionRequest", () => {
     expect(parsed.submission.prompt).toEqual(["do the thing"]);
     expect(parsed.submission.skills).toEqual([]);
     expect(parsed.submission.mcpServers).toEqual([]);
-    expect(parsed.secrets.apiKey).toBe("sk-ant-x");
+    expect(parsed.secrets.apiKeys?.anthropic).toBe("sk-ant-x");
   });
 
   it("normalises a string prompt into an array on the wire", () => {

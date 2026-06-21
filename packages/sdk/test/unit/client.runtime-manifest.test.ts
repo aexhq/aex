@@ -47,7 +47,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
     const runId = await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       environment: { envVars: { BROLL_STORE: "/mnt/session/broll/store" } }
     });
     expect(runId).toBe("run_with_manifest");
@@ -65,7 +65,7 @@ describe("Run.runtimeManifest — read from the run record", () => {
     const runId = await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
-      secrets: { apiKey: "k" }
+      secrets: { apiKeys: { anthropic: "k" } }
     });
     expect(runId).toBe("run_no_manifest");
     const run = await client.getRun(runId);

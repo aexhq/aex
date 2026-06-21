@@ -24,7 +24,7 @@ const base = {
     files: [],
     mcpServers: []
   },
-  secrets: { apiKey: "sk-ant-test" }
+  secrets: { apiKeys: { anthropic: "sk-ant-test" } }
 } as const;
 
 describe("submission.secretEnv / secrets.envSecrets — contract", () => {

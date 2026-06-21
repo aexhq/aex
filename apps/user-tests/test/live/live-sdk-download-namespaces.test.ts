@@ -108,7 +108,7 @@ function buildScript(cell: Cell, marker: string): string {
       prompt: ${JSON.stringify(prompt)},
       builtins: ["developer"],
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
-      secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT },
+      secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT  },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     });
 

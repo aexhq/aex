@@ -318,14 +318,23 @@ export type PlatformProxyAuthValue =
   | { readonly type: "query"; readonly value: string };
 
 /**
- * Per-run inline secrets bundle. `apiKey` is the BYOK provider key for the
- * run's selected `provider`. A run targets exactly one provider, so the key is
- * a single flat field rather than a per-provider block. `mcpServers` and
- * `proxyEndpointAuth` are cross-provider (an MCP credential is the same secret
- * whichever model is driving the MCP client).
+ * Per-run inline secrets bundle. `apiKeys` holds the BYOK provider keys, keyed
+ * by {@link RunProvider}. A run REQUIRES a key for its own `provider`; it MAY
+ * carry keys for additional providers so a subagent spawned with a
+ * different-family model inherits them server-side from the vault (the keys
+ * never transit the container). `mcpServers` and `proxyEndpointAuth` are
+ * cross-provider (an MCP credential is the same secret whichever model is
+ * driving the MCP client).
  */
 export interface PlatformInlineSecrets {
+  /**
+   * Deprecated compatibility field: the BYOK key for the run's selected
+   * provider. New multi-provider callers should use `apiKeys`, but the parser
+   * still accepts and preserves this flat field so existing SDK/CLI callers
+   * continue to work.
+   */
   readonly apiKey?: string;
+  readonly apiKeys?: Partial<Record<RunProvider, string>>;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
   readonly proxyEndpointAuth?: readonly PlatformProxyEndpointAuth[];
   /**
@@ -409,6 +418,7 @@ export const deniedSecretFields = new Set([
   "providerApiKey",
   "anthropicApiKey",
   "apiKey",
+  "apiKeys",
   "accessToken",
   "refreshToken",
   "password",
@@ -1000,8 +1010,11 @@ export function crossValidateSecretEnvAndValues(
 }
 
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
+  // A child run (parentRunId set) inherits its provider keys server-side from
+  // the parent's vault, so it may omit `secrets` entirely.
+  if (input === undefined || input === null) return {};
   const value = requireRecord(input, "secrets");
-  const allowedTopLevel = new Set<string>(["apiKey", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
+  const allowedTopLevel = new Set<string>(["apiKey", "apiKeys", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
   for (const key of Object.keys(value)) {
     if (key.startsWith("__aex_")) {
       // Platform-internal namespace (e.g. __aex_proxy_token). The BFF
@@ -1020,16 +1033,41 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   }
   const apiKey =
     value.apiKey !== undefined ? requireString(value.apiKey, "secrets.apiKey") : undefined;
+  const apiKeys = parseApiKeys(value.apiKeys);
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
   const proxyEndpointAuth = parseProxyEndpointAuth(value.proxyEndpointAuth);
   const envSecrets = parseEnvSecrets(value.envSecrets);
 
   return {
     ...(apiKey !== undefined ? { apiKey } : {}),
+    ...(apiKeys ? { apiKeys } : {}),
     ...(mcpServers ? { mcpServers } : {}),
     ...(proxyEndpointAuth ? { proxyEndpointAuth } : {}),
     ...(envSecrets ? { envSecrets } : {})
   };
+}
+
+/**
+ * Parse the per-provider BYOK key map. Each key must name a known
+ * {@link RunProvider}; each value must be a non-empty string. Returns
+ * `undefined` for an absent or empty map so the spread above stays clean.
+ */
+function parseApiKeys(input: unknown): Partial<Record<RunProvider, string>> | undefined {
+  if (input === undefined || input === null) return undefined;
+  const value = requireRecord(input, "secrets.apiKeys");
+  const out: Partial<Record<RunProvider, string>> = {};
+  for (const [provider, key] of Object.entries(value)) {
+    if (!(RUN_PROVIDERS as readonly string[]).includes(provider)) {
+      throw new Error(
+        `secrets.apiKeys["${provider}"] is not a known provider; permitted: ${RUN_PROVIDERS.join(", ")}`
+      );
+    }
+    if (typeof key !== "string" || key.length === 0) {
+      throw new Error(`secrets.apiKeys["${provider}"] must be a non-empty string`);
+    }
+    out[provider as RunProvider] = key;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseEnvSecrets(input: unknown): Readonly<Record<string, string>> | undefined {
@@ -1613,7 +1651,9 @@ export function parseRunSubmissionRequest(
   const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
-  enforceCredentialSecretPolicy(credentialMode, secrets);
+  enforceCredentialSecretPolicy(credentialMode, secrets, provider, {
+    inheritsFromParent: parentRunId !== undefined
+  });
 
   crossValidateProxyEndpointsAndAuth(proxyEndpoints, secrets.proxyEndpointAuth);
 
@@ -1755,16 +1795,28 @@ export function parseRunProvider(input: unknown): RunProvider {
 
 /**
  * Cross-check the supplied secrets bundle against the credential mode. BYOK
- * requires `secrets.apiKey` (the provider key for the run's `provider`). MCP /
- * proxy endpoint auth carry across providers and are not checked here.
+ * requires `secrets.apiKeys[provider]` (the key for the run's own `provider`).
+ * Additional provider keys are optional (validated for shape only) so the run
+ * can supply keys for the other providers its subagents may use. MCP / proxy
+ * endpoint auth carry across providers and are not checked here.
+ *
+ * A CHILD run (`inheritsFromParent`) is exempt from the own-key requirement: it
+ * inherits its provider keys server-side from the parent's vaulted bundle, so
+ * it need not carry any of its own. The server still verifies, at admission,
+ * that the parent actually holds a key for the child's provider.
  */
 export function enforceCredentialSecretPolicy(
   credentialMode: CredentialMode,
-  secrets: PlatformInlineSecrets
+  secrets: PlatformInlineSecrets,
+  provider: RunProvider,
+  opts?: { readonly inheritsFromParent?: boolean }
 ): void {
   void credentialMode;
-  if (!secrets.apiKey) {
-    throw new Error(`secrets.apiKey is required when credentialMode is byok`);
+  if (opts?.inheritsFromParent) return;
+  if (!(secrets.apiKeys?.[provider] ?? secrets.apiKey)) {
+    throw new Error(
+      `secrets.apiKey is required when credentialMode is byok (or secrets.apiKeys["${provider}"])`
+    );
   }
 }
 

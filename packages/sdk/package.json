@@ -26,15 +26,19 @@
     "examples"
   ],
   "scripts": {
-    "build": "bun ./scripts/clean-dist.mjs && bun run --cwd ../.. --filter @aexhq/contracts build && bun run --cwd ../.. --filter @aexhq/cli build && tsc -p tsconfig.build.json && bun ./scripts/bundle-cli.mjs && bun ./scripts/inline-contracts.mjs",
-    "lint": "tsc --noEmit",
+    "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
+    "build:unlocked": "bun ./scripts/clean-dist.mjs && bun run --cwd ../.. --filter @aexhq/contracts build && bun run --cwd ../.. --filter @aexhq/cli build && tsc -p tsconfig.build.json && bun ./scripts/bundle-cli.mjs && bun ./scripts/inline-contracts.mjs",
+    "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
+    "lint:unlocked": "tsc --noEmit",
     "test": "bun run test:unit",
-    "test:unit": "vitest run test/unit",
-    "test:security": "vitest run test/security",
+    "test:unit": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:unit:unlocked",
+    "test:unit:unlocked": "vitest run test/unit",
+    "test:security": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:security:unlocked",
+    "test:security:unlocked": "vitest run test/security",
     "test:property": "vitest run --passWithNoTests property",
     "test:coverage": "vitest run --coverage test/unit",
     "prepack": "bun run build",
-    "pack:dry-run": "bun pm pack --dry-run --ignore-scripts"
+    "pack:dry-run": "bun ../../scripts/with-generated-dist-lock.mjs bun pm pack --dry-run --ignore-scripts"
   },
   "devDependencies": {
     "@aexhq/contracts": "workspace:*"

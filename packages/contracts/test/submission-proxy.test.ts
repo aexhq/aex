@@ -12,9 +12,7 @@ const baseSubmission = {
     files: [],
     mcpServers: []
   },
-  secrets: {
-    apiKey: "sk-ant-test"
-  }
+  secrets: { apiKeys: { anthropic: "sk-ant-test" } }
 } as const;
 
 const bearerPolicy = {

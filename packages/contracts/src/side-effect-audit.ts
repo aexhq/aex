@@ -663,7 +663,7 @@ const forbiddenStringPatterns: readonly {
 ]);
 
 function isForbiddenAuditFieldName(key: string): boolean {
-  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|secretValue|sessionId|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
+  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|apiKeys|secretValue|sessionId|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
     key
   );
 }

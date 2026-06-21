@@ -705,7 +705,7 @@ function highEntropyShannonBits(value: string): number {
 }
 
 function isForbiddenCustodyFieldName(key: string): boolean {
-  return /^(apiKey|secretValue|bearerHash|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|responseBody|privateResourceHandle|resourceHandle|rawBody)$/i.test(
+  return /^(apiKey|apiKeys|secretValue|bearerHash|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|responseBody|privateResourceHandle|resourceHandle|rawBody)$/i.test(
     key
   );
 }

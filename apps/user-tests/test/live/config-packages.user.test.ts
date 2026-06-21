@@ -38,7 +38,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }] },
-          secrets: { apiKey: DEEPSEEK_KEY },
+          secrets: { apiKey: DEEPSEEK_KEY  },
           idempotencyKey: "user-packages-deepseek-managed-a-" + Date.now()
         }`
       });
@@ -74,7 +74,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
-          secrets: { apiKey: DEEPSEEK_KEY },
+          secrets: { apiKey: DEEPSEEK_KEY  },
           idempotencyKey: "user-packages-managed-runtime-" + Date.now()
         }`
       });

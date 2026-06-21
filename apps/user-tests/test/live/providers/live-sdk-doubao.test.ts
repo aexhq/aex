@@ -122,7 +122,7 @@ describeLive("live api.aex.dev via installed SDK — Doubao round-trip on manage
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-doubao-" + Date.now(),
-          secrets: { apiKey: doubaoKey }
+          secrets: { apiKey: doubaoKey  }
         });
 
         const deadline = Date.now() + 8 * 60 * 1000;

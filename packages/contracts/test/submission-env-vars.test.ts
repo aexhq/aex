@@ -14,9 +14,7 @@ const baseSubmission = {
     files: [],
     mcpServers: []
   },
-  secrets: {
-    apiKey: "sk-ant-test"
-  }
+  secrets: { apiKeys: { anthropic: "sk-ant-test" } }
 } as const;
 
 function submit(environment: Record<string, unknown>): ReturnType<typeof parseRunSubmissionRequest> {

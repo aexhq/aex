@@ -56,7 +56,7 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
           model: MODEL_DEEPSEEK,
           prompt: ${JSON.stringify([PROMPT])},
           agentsMd: [a, b],
-          secrets: { apiKey: DEEPSEEK_KEY },
+          secrets: { apiKey: DEEPSEEK_KEY  },
           idempotencyKey: "user-agentsmd-deepseek-managed-a-" + Date.now()
         }`
       });

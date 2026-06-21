@@ -60,7 +60,9 @@ const submission = fc.record({
     metadata: fc.option(jsonRecord, { nil: undefined })
   }),
   secrets: fc.record({
-    apiKey: nonEmptyString
+    apiKeys: fc.record({
+      anthropic: nonEmptyString
+    })
   })
 }, { requiredKeys: ["workspaceId", "idempotencyKey", "submission", "secrets"] });
 
@@ -71,7 +73,7 @@ describe("shared platform invariants", () => {
       expect(parsed.workspaceId).toBe(input.workspaceId);
       expect(parsed.idempotencyKey).toBe(input.idempotencyKey);
       expect(parsed.submission.prompt.length).toBeGreaterThan(0);
-      expect(parsed.secrets.apiKey).toBe(input.secrets.apiKey);
+      expect(parsed.secrets.apiKeys?.anthropic).toBe(input.secrets.apiKeys.anthropic);
     }), { numRuns: 100 });
   });
 
@@ -127,7 +129,7 @@ function makeValidSubmission(): PlatformRunSubmissionRequest {
       files: [],
       mcpServers: []
     },
-    secrets: { apiKey: "sk-ant-test" }
+    secrets: { apiKeys: { anthropic: "sk-ant-test" } }
   };
 }
 

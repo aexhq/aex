@@ -116,7 +116,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         }),
         McpServer.remote({ name: "noauth", url: "https://mcp.example/noauth" })
       ],
-      secrets: { apiKey: "sk-test" },
+      secrets: { apiKeys: { anthropic: "sk-test" } },
       idempotencyKey: "idem_unit"
     });
 
@@ -143,20 +143,20 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     ]);
 
     const secrets = body.secrets as Record<string, unknown>;
-    expect(secrets.apiKey).toBe("sk-test");
+    expect((secrets.apiKeys as Record<string, unknown>).anthropic).toBe("sk-test");
     expect(secrets.mcpServers).toEqual([
       { name: "github", url: "https://mcp.example/github", headers: { Authorization: "Bearer t" } }
     ]);
   });
 
-  it("requires secrets.apiKey", async () => {
+  it("requires a provider key for the selected provider", async () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
-        secrets: { apiKey: "" }
+        secrets: { apiKeys: { anthropic: "" } }
       })
     ).rejects.toThrow(/AgentExecutor\.submit: secrets\.apiKey is required/);
   });
@@ -168,7 +168,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       region: "iad",
-      secrets: { apiKey: "k" }
+      secrets: { apiKeys: { anthropic: "k" } }
     });
 
     const body = calls[0]!.body as Record<string, unknown>;
@@ -183,7 +183,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         model: "claude-haiku-4-5",
         prompt: "p",
         region: "ams",
-        secrets: { apiKey: "k" }
+        secrets: { apiKeys: { anthropic: "k" } }
       } as never)
     ).rejects.toThrow(/AgentExecutor\.submit: region must be one of: lhr, iad, sfo, bom/);
     expect(calls).toHaveLength(0);
@@ -195,7 +195,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       outputs: {
         captureTimeoutMs: 120000,
         maxFileBytes: 1_000_000_000_000,
@@ -235,7 +235,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       tools: [tool],
-      secrets: { apiKey: "k" }
+      secrets: { apiKeys: { anthropic: "k" } }
     });
 
     const submitCall = calls.find((call) => call.url === "https://x/api/runs")!;
@@ -258,20 +258,20 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect(tool.isConsumed).toBe(true);
   });
 
-  it("submits DeepSeek provider runs with a flat apiKey", async () => {
+  it("submits DeepSeek provider runs with per-provider apiKeys", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await client.submit({
       provider: "deepseek",
       model: "deepseek-chat",
       prompt: "p",
-      secrets: { apiKey: "sk-ds-test" },
+      secrets: { apiKeys: { deepseek: "sk-ds-test" } },
       idempotencyKey: "idem-deepseek"
     });
 
     const body = calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("deepseek");
-    expect(body.secrets).toEqual({ apiKey: "sk-ds-test" });
+    expect(body.secrets).toEqual({ apiKeys: { deepseek: "sk-ds-test" } });
   });
 
   it("derives provider from model when provider is omitted", async () => {
@@ -286,7 +286,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     for (const [model, expectedProvider] of cases) {
       const { fetch, calls } = makeStubFetch();
       const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-      await client.submit({ model, prompt: "p", secrets: { apiKey: "sk-x" } });
+      await client.submit({ model, prompt: "p", secrets: { apiKeys: { [expectedProvider]: "sk-x" } } });
       const body = calls[0]!.body as Record<string, unknown>;
       expect(body.provider, `model ${model}`).toBe(expectedProvider);
     }
@@ -300,7 +300,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         provider: "anthropic",
         model: "gpt-4.1",
         prompt: "p",
-        secrets: { apiKey: "sk-x" }
+        secrets: { apiKeys: { anthropic: "sk-x" } }
       })
     ).rejects.toThrow(/is not available for model "gpt-4\.1" \(supported: openai\)/);
   });
@@ -315,7 +315,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       provider: "openrouter",
       model: Models.GPT_4O_MINI,
       prompt: "p",
-      secrets: { apiKey: "sk-or-test" }
+      secrets: { apiKeys: { openrouter: "sk-or-test" } }
     });
     const body = calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("openrouter");
@@ -334,7 +334,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         maxTurns: 3,
         maxChars: null
       },
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-post-hook"
     });
 
@@ -354,7 +354,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       webhook: { url: "https://hooks.example.com/aex" },
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-webhook"
     });
 
@@ -368,7 +368,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-no-webhook"
     });
 
@@ -383,7 +383,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       postHook: { command: " " },
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-empty-post-hook"
     });
 
@@ -398,7 +398,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "",
-        secrets: { apiKey: "k" }
+        secrets: { apiKeys: { anthropic: "k" } }
       })
     ).rejects.toThrow(/prompt/);
   });
@@ -409,7 +409,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     await client.submit({
       model: "claude-haiku-4-5",
       prompt: ["one", "two"],
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "i"
     });
     const submission = (calls[0]!.body as Record<string, unknown>).submission as Record<string, unknown>;
@@ -430,8 +430,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
             headers: { Authorization: "Bearer t" }
           })
         ],
-        secrets: {
-          apiKey: "k",
+        secrets: { apiKeys: { anthropic: "k" } ,
           mcpServers: [
             { name: "github", url: "https://b.example/github", headers: { Authorization: "Bearer u" } }
           ]
@@ -448,7 +447,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         model: "claude-haiku-4-5",
         prompt: "p",
         skills: [{ kind: "workspace", id: "skl_x" } as unknown as Skill],
-        secrets: { apiKey: "k" }
+        secrets: { apiKeys: { anthropic: "k" } }
       })
     ).rejects.toThrow(/skills\[0\] must be a Skill instance/);
   });
@@ -461,7 +460,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       agentsMd: [draft],
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-asset-agentsmd"
     });
     // The draft staged through the content-addressable asset path before submit.
@@ -506,7 +505,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       skills: [skill],
       agentsMd: [agentsMd],
       files: [file],
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-assets"
     });
 
@@ -565,7 +564,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       skills: [uploaded],
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-preuploaded"
     });
 
@@ -596,7 +595,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       model: "claude-haiku-4-5",
       prompt: "p",
       skills: [draft],
-      secrets: { apiKey: "k" },
+      secrets: { apiKeys: { anthropic: "k" } },
       idempotencyKey: "idem-draft-inline"
     });
 
@@ -624,7 +623,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         model: "claude-haiku-4-5",
         prompt: "p",
         agentsMd: [{ kind: "workspace_agentsmd", id: "amd_x" } as unknown as AgentsMd],
-        secrets: { apiKey: "k" }
+        secrets: { apiKeys: { anthropic: "k" } }
       })
     ).rejects.toThrow(/agentsMd\[0\] must be an AgentsMd instance/);
   });
