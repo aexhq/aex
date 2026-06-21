@@ -61,7 +61,7 @@ silently lost.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Max subagent depth (public submit / `subagent` tool) | 1 (a root may spawn one level of child; that child may not spawn) | aex policy | No (hard ceiling) | [`RUN_MAX_PUBLIC_SUBAGENT_DEPTH`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L417) |
+| Max subagent depth (public submit / `subagent` tool) | 3 (a root may spawn a child, grandchild, and great-grandchild; a depth-3 run may not spawn further) | aex policy | No (hard ceiling) | [`RUN_MAX_PUBLIC_SUBAGENT_DEPTH`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L412) |
 | Concurrent child runs per lineage root | 4 | aex policy | Per-plane via env `AEX_MAX_CONCURRENT_CHILD_RUNS` | [`RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L427) |
 
 ### Retention (per run)
