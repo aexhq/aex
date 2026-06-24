@@ -42,6 +42,8 @@ import {
   type Run,
   type RunModel,
   type RunEvent,
+  type RunLimits,
+  parseRunLimits,
   type RunWebhookDelivery,
   type RunProvider,
   type RunRegion,
@@ -251,6 +253,15 @@ export interface SubmitOptions {
    * URL does not 409 (the URL is bound at first accept only).
    */
   readonly webhook?: { readonly url: string };
+  /**
+   * Optional per-run override of the lineage limits — the max number of
+   * concurrent child runs and the max subagent depth. A sibling of
+   * {@link parentRunId}: these are dials the client *requests*; the server
+   * resolves each against the per-workspace ceiling and the hard platform
+   * ceiling, and an absent field falls back to the platform default. Only
+   * shape + positivity are validated client-side.
+   */
+  readonly limits?: RunLimits;
   readonly signal?: AbortSignal;
 }
 
@@ -731,6 +742,18 @@ export class AgentExecutor {
           `(got ${JSON.stringify(options.region)})`
       );
     }
+    // Validate the per-run limits override with the SAME parser the server runs
+    // (shape + positivity + allow-list), failing fast before any asset upload.
+    // Normalizes an all-absent override (e.g. `{}`) away.
+    let limits: RunLimits | undefined;
+    try {
+      limits = parseRunLimits(options.limits);
+    } catch (err) {
+      throw new AexError(
+        "RUN_CONFIG_INVALID",
+        `AgentExecutor.submit: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     // Walk Skill / Tool / AgentsMd / File instances. Inline drafts are eagerly
     // uploaded to the content-addressable asset store here (before POST /runs)
@@ -815,6 +838,10 @@ export class AgentExecutor {
       // the hashed brief. The idempotency key here is randomly generated, so
       // including the field has no effect on dedup.
       ...(options.webhook ? { webhook: options.webhook } : {}),
+      // Per-run lineage-limit override — a top-level operational dial (sibling
+      // of parentRunId), NOT part of the hashed submission. Validated + normalized
+      // above; the server re-clamps against the workspace + platform ceilings.
+      ...(limits ? { limits } : {}),
       secrets,
       ...(proxyEndpointDeclarations.length > 0
         ? { proxyEndpoints: proxyEndpointDeclarations }

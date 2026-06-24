@@ -1546,11 +1546,31 @@ export interface PlatformRunSubmissionRequest {
    * callback URL never 409s and the field never enters `request_hash`.
    */
   readonly webhook?: RunWebhookSpec;
+  /**
+   * Optional per-run override of the lineage limits (max concurrent child runs,
+   * max subagent depth). A sibling of {@link parentRunId} — these are dials the
+   * client may *request*; the server resolves them against the per-workspace
+   * ceiling and the hard platform ceiling (clamping happens in the resolver, NOT
+   * this parser). Absent fields fall back to the platform defaults. Only shape +
+   * positivity are validated here.
+   */
+  readonly limits?: RunLimits;
 }
 
 /** Per-run webhook callback. v1: terminal-only; the URL must be https. */
 export interface RunWebhookSpec {
   readonly url: string;
+}
+
+/**
+ * Per-run override of the lineage limits. Both fields are optional; an absent
+ * field means "use the platform default". The parser ({@link parseRunLimits})
+ * only validates positivity/shape — clamping to the workspace + platform
+ * ceilings is the resolver's job (see `resolveRunLimits` in `@aexhq/shared`).
+ */
+export interface RunLimits {
+  readonly maxConcurrentChildRuns?: number;
+  readonly maxSubagentDepth?: number;
 }
 
 /**
@@ -1614,6 +1634,7 @@ export function parseRunSubmissionRequest(
     "proxyEndpoints",
     "parentRunId",
     "webhook",
+    "limits",
     SECRETS_KEY
   ]);
   for (const key of Object.keys(value)) {
@@ -1649,6 +1670,7 @@ export function parseRunSubmissionRequest(
   // derives it from the parent row (a forged depth must not bypass the cap).
   const parentRunId = optionalString(value.parentRunId, "submission.parentRunId");
   const webhook = parseRunWebhook(value.webhook);
+  const limits = parseRunLimits(value.limits);
   const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
@@ -1719,6 +1741,7 @@ export function parseRunSubmissionRequest(
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
     ...(parentRunId !== undefined ? { parentRunId } : {}),
     ...(webhook !== undefined ? { webhook } : {}),
+    ...(limits !== undefined ? { limits } : {}),
     secrets
   };
 }
@@ -1756,6 +1779,45 @@ export function parseRunWebhook(input: unknown): RunWebhookSpec | undefined {
     throw new Error("webhook.url must not contain userinfo (user:pass@host)");
   }
   return { url };
+}
+
+/**
+ * Parse the optional per-run `limits` override. Mirrors {@link parseRunWebhook}:
+ * absent ⇒ `undefined`; a non-object or any unknown subfield is rejected so the
+ * strict top-level allow-list extends to the nested object. Each present field
+ * is validated as a positive safe integer via {@link optionalPositiveInt}.
+ *
+ * This is a SHAPE/positivity gate only — it does NOT clamp to the workspace or
+ * platform ceilings (that precedence lives in the resolver, `resolveRunLimits`).
+ * Only the present fields are returned; an all-absent override (e.g. `{}`)
+ * collapses to `undefined` so it carries no signal onto the request.
+ */
+export function parseRunLimits(input: unknown): RunLimits | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  const value = requireRecord(input, "limits");
+  const allowed = new Set(["maxConcurrentChildRuns", "maxSubagentDepth"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`limits.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
+    }
+  }
+  const maxConcurrentChildRuns = optionalPositiveInt(
+    value.maxConcurrentChildRuns,
+    "limits.maxConcurrentChildRuns"
+  );
+  const maxSubagentDepth = optionalPositiveInt(value.maxSubagentDepth, "limits.maxSubagentDepth");
+  // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
+  // lands an empty object on the request — matches sibling parsers (parseRunWebhook,
+  // parseEnvironment). The resolver supplies platform defaults for absent fields.
+  if (maxConcurrentChildRuns === undefined && maxSubagentDepth === undefined) {
+    return undefined;
+  }
+  return {
+    ...(maxConcurrentChildRuns !== undefined ? { maxConcurrentChildRuns } : {}),
+    ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {})
+  };
 }
 
 export function parseRunRegion(input: unknown): RunRegion | undefined {

@@ -405,6 +405,98 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect("webhook" in body).toBe(false);
   });
 
+  it("includes limits on the top-level request body when supplied", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      limits: { maxConcurrentChildRuns: 200, maxSubagentDepth: 3 },
+      secrets: { apiKeys: { anthropic: "k" } },
+      idempotencyKey: "idem-limits"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.limits).toEqual({ maxConcurrentChildRuns: 200, maxSubagentDepth: 3 });
+    // Operational dial: lives top-level, not inside the hashed submission.
+    expect("limits" in (body.submission as Record<string, unknown>)).toBe(false);
+  });
+
+  it("omits limits from the request body when not supplied", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      secrets: { apiKeys: { anthropic: "k" } },
+      idempotencyKey: "idem-no-limits"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect("limits" in body).toBe(false);
+  });
+
+  it("passes a partial (single-field) limits override through verbatim", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      limits: { maxSubagentDepth: 4 },
+      secrets: { apiKeys: { anthropic: "k" } },
+      idempotencyKey: "idem-limits-partial"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    // Verbatim: the SDK spreads the option as-is (no field injected/dropped),
+    // and it lives top-level, not inside the hashed submission.
+    expect(body.limits).toEqual({ maxSubagentDepth: 4 });
+    expect("limits" in (body.submission as Record<string, unknown>)).toBe(false);
+  });
+
+  it("rejects an invalid limits override before posting (fail fast)", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await expect(
+      client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "p",
+        limits: { maxConcurrentChildRuns: 0 },
+        secrets: { apiKeys: { anthropic: "k" } }
+      } as never)
+    ).rejects.toThrow(/AgentExecutor\.submit: limits\.maxConcurrentChildRuns must be a positive/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an unknown limits subfield before posting (fail fast)", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await expect(
+      client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "p",
+        limits: { maxDepth: 5 },
+        secrets: { apiKeys: { anthropic: "k" } }
+      } as never)
+    ).rejects.toThrow(/AgentExecutor\.submit: limits\.maxDepth is not an allowed field/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("normalizes an empty limits override away (no limits key on the body)", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      limits: {},
+      secrets: { apiKeys: { anthropic: "k" } },
+      idempotencyKey: "idem-limits-empty"
+    });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect("limits" in body).toBe(false);
+  });
+
   it("omits postHook when the command is empty", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });

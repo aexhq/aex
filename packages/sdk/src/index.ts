@@ -134,6 +134,7 @@ export type {
   PlatformProxyAuthValue as ProxyAuthValue,
   PlatformEnvironment as RunEnvironment,
   PlatformRunSubmissionRequest,
+  RunLimits,
   RunWebhookSpec,
   ProxyAuthShape,
   ProxyMethod,
