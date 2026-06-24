@@ -28,19 +28,22 @@ shot of X.
 This skill calls the Doubao Ark vision endpoint **through the aex managed proxy**,
 so the API key never touches the container. At submit time the caller MUST declare:
 
-1. A proxy endpoint named `doubao-ark`:
+1. A proxy endpoint named `doubao-ark`, declared with `ProxyEndpoint.bearer(...)`:
 
    ```ts
-   const proxyEndpoints = [{
-     name: "doubao-ark",
-     baseUrl: "https://ark.ap-southeast.bytepluses.com",   // intl BytePlus gateway
-     authShape: { type: "bearer" },
-     allowMethods: ["POST"],
-     allowPathPrefixes: ["/api/v3/chat/completions"],
-     maxRequestBytes: 2_000_000,   // base64 image is ~1.33x raw; raise above the 64KB default
-     responseMode: "full",
-     timeoutMs: 60_000
-   }] as const;
+   import { ProxyEndpoint } from "@aexhq/sdk";
+
+   const proxyEndpoints = [
+     ProxyEndpoint.bearer({
+       name: "doubao-ark",
+       baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
+       allowMethods: ["POST"],
+       allowPathPrefixes: ["/api/v3/chat/completions"],
+       maxRequestBytes: 2_000_000, // base64 image is ~1.33x raw; raise above the 64KB default
+       responseMode: "full",
+       timeoutMs: 60_000
+     })
+   ];
    ```
 
 2. The matching auth value in `secrets.proxyEndpointAuth`:

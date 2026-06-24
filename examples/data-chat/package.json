@@ -4,10 +4,10 @@
   "type": "module",
   "description": "Interactive chat over your aex workspace data, built only on @aexhq/sdk + your own Anthropic key.",
   "scripts": {
-    "start": "node chat.mjs"
+    "start": "bun chat.mjs"
   },
   "dependencies": {
-    "@aexhq/sdk": "^0.26.5",
+    "@aexhq/sdk": "^0.27.0",
     "@anthropic-ai/sdk": "^0.69.0"
   }
 }

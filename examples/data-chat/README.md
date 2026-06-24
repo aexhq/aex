@@ -35,8 +35,8 @@ export ANTHROPIC_API_KEY=...    # your Anthropic key (BYOK)
 # export AEX_BASE_URL=https://api.aex.dev   # optional API plane override
 # export AEX_CHAT_MODEL=claude-sonnet-4-6   # optional model override
 
-npm install
-node chat.mjs
+bun install
+bun chat.mjs
 ```
 
 Then ask things like:

@@ -77,6 +77,28 @@ const looseReport = await aex.downloadOutput(runId, { path: "report.txt", match:
 console.log(looseReport.byteLength);
 ```
 
+## Reading one output as text
+
+`readOutputText(runId, selector, options?)` reads ONE output file as byte-capped, decoded UTF-8 text. It streams the file and stops at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a large deliverable never fully buffers — this is the read built for handing a run's output to an LLM tool. Select the file the same way as `downloadOutput`: by `{ path }` (suffix-matchable) or `{ id }`.
+
+```ts
+const { text, truncated, totalBytes } = await aex.readOutputText(
+  runId,
+  { path: "report.md", match: "suffix" },
+  { maxBytes: 50_000, grep: "error" }
+);
+
+if (truncated) {
+  // text is a prefix of a larger file — narrow with `grep` or a tighter `path`.
+}
+```
+
+Check `truncated` before treating `text` as complete. Pass `options.grep` (a substring or `RegExp`) to keep only matching lines of the capped text. The returned `output` is the matched `Output` record, and `totalBytes` is the file's full size when the server reports it.
+
+### Chatting over a workspace's outputs
+
+`createDataTools(client)` packages the read surface (`listRuns` + `listOutputs` + `readOutputText`) as a vendor-neutral LLM tool set (`{ tools, instructions, execute }`) so you can build a search-then-fetch chat over your runs and their outputs in a few lines on top of the public SDK. The `tools` are plain JSON-Schema definitions (the shape every major LLM tool API accepts); `execute(name, input)` dispatches a tool call against the workspace-scoped client. See the runnable `examples/data-chat/` example.
+
 ## Finding outputs
 
 `listOutputs(runId, query?)` and its alias `outputs(runId, query?)` can filter the captured output list client-side. Use `findOutputs` when you want discovery to be explicit, or `findOutput` when exactly one file is expected:
