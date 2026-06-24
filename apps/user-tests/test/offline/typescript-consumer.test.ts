@@ -257,7 +257,12 @@ describe("typescript consumer", () => {
           metadata: { surface: "root" },
           outputs: { allowedDirs: ["/workspace/outputs"] },
           includeBuiltinTools: false,
-          tools: [BuiltinTools.web_search, explicitBuiltin, BuiltinTools.read_file, BuiltinTools.edit_file]
+          // Canonical (post-parse) shape: parseTools extracts the cherry-picked
+          // builtin NAMES out of the wire \`tools\` union into \`builtinTools\`,
+          // leaving \`tools\` to carry only custom ToolRef bundles. The bare-string
+          // \`tools\` union (the pre-parse INPUT surface) is exercised by the
+          // SubmitRunOptions block above.
+          builtinTools: [BuiltinTools.web_search, explicitBuiltin, BuiltinTools.read_file, BuiltinTools.edit_file]
         },
         secrets: anthropicSecrets,
         proxyEndpoints: [proxy.declaration],
