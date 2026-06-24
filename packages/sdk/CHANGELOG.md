@@ -4,6 +4,24 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.28.0
+
+### Added
+
+- Per-run lineage limit overrides via `SubmitOptions.limits`:
+  - `limits.maxConcurrentChildRuns` — the max LIVE (non-terminal) child runs
+    allowed under a lineage root before a spawn is rejected with
+    `child_cap_exceeded` (platform default `1000`, hard ceiling `4096`).
+  - `limits.maxSubagentDepth` — the deepest subagent lineage the run may spawn
+    before a child submit is rejected with `depth_exceeded` (platform default and
+    hard ceiling `5`).
+  Both fields are optional; an absent field uses the platform default. The cap is
+  resolved ONCE at the root submit and governs the whole subtree. `submit()`
+  validates the override client-side (shape / positivity / allow-list) and throws
+  `AexError(RUN_CONFIG_INVALID)` before any asset upload — clamping to the
+  per-workspace and platform ceilings is the server's job, so an in-range value
+  here is not a guarantee it won't be lowered server-side.
+
 ## 0.27.0
 
 ### Added
