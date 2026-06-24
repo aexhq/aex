@@ -21,8 +21,12 @@ import type {
   OutputFileSelector,
   OutputFileType,
   OutputQuery,
+  OutputText,
+  ReadOutputTextOptions,
   Run,
   RunEvent,
+  RunListPage,
+  RunListQuery,
   RunWebhookDelivery,
   SecretRecord,
   SecretReveal,
@@ -64,6 +68,24 @@ export async function getRun(http: HttpClient, runId: string): Promise<Run> {
  */
 export async function getRunUnit(http: HttpClient, runId: string): Promise<RunUnit> {
   return http.request<RunUnit>(`/api/runs/${encodeURIComponent(runId)}`);
+}
+
+/**
+ * List the runs in the token's workspace, most-recent first, one page at a time.
+ * Backed by `GET /api/runs` (workspace-token gated; the bare collection path, NOT
+ * the run-keyed `GET /api/runs/:runId`). The server clamps `limit` to [1, 100] and
+ * returns an opaque `nextCursor` for the next page (absent on the last page).
+ *
+ * Returns public-safe {@link RunSummary} rows only — never the submission snapshot.
+ * For a single page; callers wanting every run loop on `nextCursor` themselves.
+ */
+export async function listRuns(http: HttpClient, query?: RunListQuery): Promise<RunListPage> {
+  const params: Record<string, string> = {};
+  if (query?.status !== undefined) params.status = query.status;
+  if (query?.since !== undefined) params.since = query.since;
+  if (query?.limit !== undefined) params.limit = String(query.limit);
+  if (query?.cursor !== undefined) params.cursor = query.cursor;
+  return http.request<RunListPage>("/api/runs", {}, params);
 }
 
 // Bound the transparent pager: the read route caps each page at 1000, so this
@@ -251,6 +273,112 @@ export async function downloadOutput(
     `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`
   );
   return { output, bytes: new Uint8Array(await response.arrayBuffer()) };
+}
+
+/** Byte ceiling for {@link readOutputText} — a hard cap even if a caller asks for more. */
+export const READ_OUTPUT_TEXT_MAX_BYTES = 10_000_000;
+/** Default `maxBytes` for {@link readOutputText} — a chat-sized preview. */
+export const READ_OUTPUT_TEXT_DEFAULT_BYTES = 50_000;
+
+/**
+ * Read ONE output file as byte-capped, decoded UTF-8 text. Built for handing a run
+ * deliverable to an LLM tool: it streams the file body and STOPS at `maxBytes`, so
+ * a 200 MB artifact never fully buffers in memory or context. `truncated` is true
+ * when the file is larger than the cap. Optionally `grep` keeps only matching lines.
+ *
+ * Selector is the same `{ path }` / `{ id }` shape as `downloadOutput`. A path
+ * selector lists the run's outputs to resolve the id; an id selector skips that.
+ */
+export async function readOutputText(
+  http: HttpClient,
+  runId: string,
+  selector: OutputFileSelector,
+  options?: ReadOutputTextOptions
+): Promise<OutputText> {
+  const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_OUTPUT_TEXT_DEFAULT_BYTES, READ_OUTPUT_TEXT_MAX_BYTES));
+  const output = isPathSelector(selector)
+    ? resolveOutputFileSelector(await listOutputs(http, runId), selector, runId)
+    : resolveOutputFileSelector([], selector, runId);
+  const { response } = await http.download(
+    `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`
+  );
+  const capped = await readCappedText(response, maxBytes);
+  const text = options?.grep === undefined ? capped.text : grepLines(capped.text, options.grep);
+  return { output, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
+}
+
+/**
+ * Read a streamed response body up to `maxBytes`, decode as UTF-8, and report
+ * whether the file was larger than the cap. Prefers the `content-length` header
+ * for `totalBytes`; falls back to the bytes actually read. Cancels the stream
+ * once the cap is reached so the remainder is never transferred.
+ */
+async function readCappedText(
+  response: Response,
+  maxBytes: number
+): Promise<{ readonly text: string; readonly truncated: boolean; readonly totalBytes: number }> {
+  const declaredRaw = response.headers.get("content-length");
+  const declared = declaredRaw !== null && /^\d+$/.test(declaredRaw) ? Number(declaredRaw) : undefined;
+  const decoder = new TextDecoder("utf-8");
+  const body = response.body;
+  if (!body) {
+    // No streaming body (some fetch polyfills) — buffer, then slice to the cap.
+    const buf = new Uint8Array(await response.arrayBuffer());
+    const total = declared ?? buf.byteLength;
+    return {
+      text: decoder.decode(buf.subarray(0, maxBytes)),
+      truncated: buf.byteLength > maxBytes,
+      totalBytes: total
+    };
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let read = 0;
+  let sawMore = false;
+  try {
+    while (read < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        read += value.byteLength;
+        chunks.push(value);
+      }
+    }
+    if (read >= maxBytes) {
+      // We hit the cap; peek once more to learn whether bytes remain, then stop.
+      const next = await reader.read();
+      if (!next.done && next.value && next.value.byteLength > 0) sawMore = true;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  const merged = concatBytes(chunks).subarray(0, maxBytes);
+  const truncated = declared !== undefined ? declared > maxBytes : sawMore;
+  const totalBytes = declared ?? read;
+  return { text: decoder.decode(merged), truncated, totalBytes };
+}
+
+function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0]!;
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
+function grepLines(text: string, pattern: string | RegExp): string {
+  const test =
+    typeof pattern === "string"
+      ? (line: string) => line.toLowerCase().includes(pattern.toLowerCase())
+      : (line: string) => pattern.test(line);
+  return text
+    .split("\n")
+    .filter((line) => test(line))
+    .join("\n");
 }
 
 export async function cancelRun(http: HttpClient, runId: string): Promise<void> {

@@ -48,6 +48,43 @@ export interface UsageSummary {
 }
 
 /**
+ * Filters for {@link import("./operations.js").listRuns} / `AgentExecutor.listRuns`.
+ * Every field is optional; omitting all of them lists the most recent runs in the
+ * token's workspace. Workspace identity is derived server-side from the API token,
+ * so there is no `workspaceId` here — a token can only ever enumerate its own runs.
+ */
+export interface RunListQuery {
+  /** Restrict to a single run status, e.g. `"succeeded"`. */
+  readonly status?: string;
+  /** ISO-8601 lower bound on `createdAt` (inclusive). */
+  readonly since?: string;
+  /** Page size. Defaults to 25, clamped server-side to [1, 100]. */
+  readonly limit?: number;
+  /** Opaque keyset cursor from a prior page's `nextCursor`. */
+  readonly cursor?: string;
+}
+
+/**
+ * A public-safe run summary as returned by `GET /api/runs` (the workspace run
+ * list). DELIBERATELY omits the submission snapshot (model/prompt/env) — the full,
+ * redaction-scanned submission is only reachable through `getRunUnit(runId)`.
+ */
+export interface RunSummary {
+  readonly id: string;
+  readonly status: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  /** Settled showback estimate (USD), present once the run has cost telemetry. */
+  readonly costUsd?: number;
+}
+
+/** One page of the workspace run list. `nextCursor` absent ⇒ last page. */
+export interface RunListPage {
+  readonly runs: readonly RunSummary[];
+  readonly nextCursor?: string;
+}
+
+/**
  * A run event as recorded by the dashboard. Includes the `type` field
  * that the `is*Event` type guards narrow on plus any provider payload.
  *
@@ -177,6 +214,41 @@ export type OutputFileSelector = Output | OutputFileIdSelector | OutputFilePathS
 export interface OutputFileDownload {
   readonly output: Output;
   readonly bytes: Uint8Array;
+}
+
+/** Options for `AgentExecutor.readOutputText` / {@link import("./operations.js").readOutputText}. */
+export interface ReadOutputTextOptions {
+  /**
+   * Stop reading after this many bytes. Defaults to 50_000; clamped server-side
+   * of the SDK to [1, 10_000_000]. The read streams and cancels once the cap is
+   * reached, so the remainder of a large file is never transferred.
+   */
+  readonly maxBytes?: number;
+  /**
+   * When set, return only the lines of the (capped) text matching this pattern.
+   * A string is matched literally (case-insensitive); a RegExp is used as given.
+   */
+  readonly grep?: string | RegExp;
+}
+
+/**
+ * A byte-capped, decoded text read of one output file, as returned by
+ * `AgentExecutor.readOutputText`. Built for feeding run deliverables to an LLM
+ * without loading the whole (possibly very large) file into memory or context:
+ * the read streams and stops at `maxBytes`, so `text` is at most that many bytes
+ * decoded as UTF-8. Check {@link truncated} before treating `text` as complete.
+ */
+export interface OutputText {
+  readonly output: Output;
+  /** Decoded UTF-8, capped to the requested `maxBytes`. */
+  readonly text: string;
+  /** True when the file is larger than `maxBytes` (so `text` is a prefix). */
+  readonly truncated: boolean;
+  /**
+   * Full size of the file in bytes when the server reports it (`content-length`);
+   * otherwise the number of bytes actually read.
+   */
+  readonly totalBytes: number;
 }
 
 export type OutputLinkExpiresIn = number | "15m" | "1h" | "1d";

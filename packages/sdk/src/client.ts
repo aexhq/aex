@@ -26,7 +26,11 @@ import {
   type OutputLink,
   type OutputLinkOptions,
   type OutputQuery,
+  type OutputText,
   type OutputMode,
+  type ReadOutputTextOptions,
+  type RunListPage,
+  type RunListQuery,
   type PlatformEnvironmentInput,
   type PlatformRunSubmissionInput,
   type PlatformSubmission,
@@ -822,6 +826,20 @@ export class AgentExecutor {
   }
 
   /**
+   * List the runs in this workspace, most-recent first, one page at a time.
+   * The workspace is derived server-side from the API token, so this only ever
+   * enumerates your own runs. Pass `query.cursor` (from a prior page's
+   * `nextCursor`) to page; omit it for the first page. Returns public-safe
+   * {@link RunSummary} rows — the full submission stays behind `getRunUnit`.
+   *
+   * This is the workspace-wide discovery entry point: combine it with
+   * `listOutputs` / `readOutputText` to reach any run's deliverables.
+   */
+  listRuns(query?: RunListQuery): Promise<RunListPage> {
+    return operations.listRuns(this.#http, query);
+  }
+
+  /**
    * Fetch the self-contained `RunUnit`: parsed submission inputs,
    * attempts, indexed events (inline + cursor for the tail), raw
    * provider-event Storage manifest, outputs, capture failures,
@@ -965,6 +983,22 @@ export class AgentExecutor {
   async fetchOutput(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<Response> {
     const link = await this.outputLink(runId, selectorOrQuery, options);
     return (this.#fetch ?? fetch)(link.url);
+  }
+
+  /**
+   * Read ONE output file as byte-capped, decoded UTF-8 text. Streams the file and
+   * STOPS at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a huge
+   * deliverable never fully buffers — ideal for handing a run's output to an LLM
+   * tool. Check `result.truncated` before treating the text as complete; pass
+   * `options.grep` to keep only matching lines. Select by `{ path }` or `{ id }`,
+   * same as `downloadOutput`.
+   */
+  readOutputText(
+    runId: string,
+    selector: OutputFileSelector,
+    options?: ReadOutputTextOptions
+  ): Promise<OutputText> {
+    return operations.readOutputText(this.#http, runId, selector, options);
   }
 
   eventArchiveLink(runId: string, options?: OutputLinkOptions): Promise<OutputLink> {

@@ -41,6 +41,12 @@ export type {
 export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
 export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "./bundle.js";
 
+// Data-source chat tools — turn the read surface (listRuns / listOutputs /
+// readOutputText) into vendor-neutral LLM tool definitions + an executor, so a
+// chat over workspace/run data is a few lines on top of the public SDK.
+export { createDataTools, DataToolError, DATA_TOOLS_INSTRUCTIONS } from "./data-tools.js";
+export type { CreateDataToolsOptions, DataChatTool, DataChatToolSchema, DataTools } from "./data-tools.js";
+
 // Errors
 export {
   AexApiError,
@@ -83,8 +89,13 @@ export type {
   OutputLink,
   OutputLinkOptions,
   OutputQuery,
+  OutputText,
   ProviderEvent,
+  ReadOutputTextOptions,
   Run,
+  RunListPage,
+  RunListQuery,
+  RunSummary,
   RunRecordArchiveFileV1,
   RunRecordArchiveFileRoleV1,
   RunRecordArchiveNamespaceV1,

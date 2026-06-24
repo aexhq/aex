@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import { AgentExecutor } from "../../src/index.js";
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+/** A download response with a streamable body + content-length, like the outputs route. */
+function fileResponse(text: string, contentLength = text.length): Response {
+  return new Response(text, { status: 200, headers: { "content-length": String(contentLength) } });
+}
+
+function clientFor(handler: (url: string) => Response): AgentExecutor {
+  const fetch: typeof globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    return handler(url);
+  };
+  return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+}
+
+describe("AgentExecutor.readOutputText", () => {
+  it("reads a small file fully (not truncated) by output id", async () => {
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) return fileResponse("hello world");
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await client.readOutputText("run-1", { id: "out-1" });
+    expect(result.text).toBe("hello world");
+    expect(result.truncated).toBe(false);
+    expect(result.totalBytes).toBe(11);
+  });
+
+  it("caps at maxBytes and reports truncated using content-length", async () => {
+    const big = "x".repeat(1000);
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) return fileResponse(big);
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await client.readOutputText("run-1", { id: "out-1" }, { maxBytes: 10 });
+    expect(result.text).toBe("x".repeat(10));
+    expect(result.truncated).toBe(true);
+    expect(result.totalBytes).toBe(1000);
+  });
+
+  it("resolves a path selector via listOutputs, then downloads by id", async () => {
+    const client = clientFor((url) => {
+      if (url.endsWith("/api/runs/run-1/outputs")) {
+        return json({ outputs: [{ id: "out-9", filename: "report.md" }] });
+      }
+      if (url.endsWith("/outputs/out-9/download")) return fileResponse("# Report\nbody\n");
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await client.readOutputText("run-1", { path: "report.md" });
+    expect(result.output.id).toBe("out-9");
+    expect(result.text).toContain("# Report");
+  });
+
+  it("grep keeps only matching lines of the capped text", async () => {
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) return fileResponse("alpha\nBETA\ngamma beta\n");
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await client.readOutputText("run-1", { id: "out-1" }, { grep: "beta" });
+    expect(result.text).toBe("BETA\ngamma beta");
+  });
+});
