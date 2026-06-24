@@ -155,12 +155,12 @@ export {
 } from "@aexhq/contracts";
 export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
-// Managed-runtime builtins — the default and closed builtin sets.
-// Prefer the `Builtins` symbol const (e.g.
-// `Builtins.WEB_SEARCH`) so an invalid token is a compile
-// error, not a runtime 400.
-export { DEFAULT_BUILTINS, BUILTINS, Builtins } from "@aexhq/contracts";
-export type { Builtin } from "@aexhq/contracts";
+// Builtin tools — the closed + default builtin tool sets. Toggle the standard
+// set with `includeBuiltinTools` on submit; cherry-pick individual tools by
+// listing their names in `tools`. Prefer the `BuiltinTools` const (e.g.
+// `BuiltinTools.notebook_edit`) so a typo is a compile error, not a runtime 400.
+export { BUILTIN_TOOL_NAMES, BuiltinTools, DEFAULT_BUILTIN_TOOLS, resolveBuiltinToolNames } from "@aexhq/contracts";
+export type { BuiltinToolName } from "@aexhq/contracts";
 
 // Provider + runtime dispatch surface. Agents and SDK consumers
 // inspect these to know which (provider, runtime) combos are valid

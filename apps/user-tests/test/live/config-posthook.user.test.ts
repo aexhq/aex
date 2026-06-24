@@ -36,7 +36,7 @@ function buildScript(spec: PostHookCase): string {
       runtime: "managed",
       model: MODEL_DEEPSEEK,
       prompt: "Reply with exactly: post hook ready.",
-      builtins: [],
+      includeBuiltinTools: false,
       postHook: ${postHookLiteral(spec)},
       secrets: { apiKey: DEEPSEEK_KEY  },
       idempotencyKey: "user-posthook-${spec.id}-" + Date.now()

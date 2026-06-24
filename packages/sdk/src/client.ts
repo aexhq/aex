@@ -48,7 +48,8 @@ import {
   type SecretRecord,
   type SecretReveal,
   type RunUnit,
-  type Builtin,
+  BUILTIN_TOOL_NAMES,
+  type BuiltinToolName,
   type RuntimeSize,
   type RuntimeKind,
   type Skill as SkillRecord,
@@ -151,7 +152,18 @@ export interface SubmitOptions {
   readonly system?: string;
   readonly prompt: string | readonly string[];
   readonly skills?: readonly Skill[];
-  readonly tools?: readonly Tool[];
+  /**
+   * Tools available to the agent. Each entry is either a custom {@link Tool}
+   * bundle, or a BUILTIN tool reference — a bare name string, preferably
+   * `BuiltinTools.<name>` (e.g. `BuiltinTools.notebook_edit`) so a typo is a
+   * compile error. Builtin references compose with {@link includeBuiltinTools}:
+   * use them to cherry-pick a tool the default set omits (notebook editing), or
+   * to pick a narrow subset alongside `includeBuiltinTools: false`.
+   *
+   * Order in the agent's tool list: resolved builtin tools, then custom tools,
+   * then MCP tools.
+   */
+  readonly tools?: readonly (Tool | BuiltinToolName)[];
   readonly agentsMd?: readonly AgentsMd[];
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
@@ -206,22 +218,14 @@ export interface SubmitOptions {
     readonly maxFiles?: number;
   };
   /**
-   * Override the managed runtime builtins enabled inside the runner.
-   * Each entry is one of the closed {@link Builtin} set — prefer the
-   * {@link Builtins} symbol const so a typo is a compile error.
+   * Whether to inject the standard builtin tool set
+   * ({@link DEFAULT_BUILTIN_TOOLS} — every builtin except `notebook_edit`).
    *
-   * - Omitted (default): the runner enables `DEFAULT_BUILTINS`
-   *   (`web_search`, `web_fetch`, `read`, `edit`, `glob`, `grep`, `head`,
-   *   `tail`).
-   * - Empty array: the agent runs with zero builtins — useful for pure-MCP
-   *   setups where every tool comes from a submitted `mcpServers` entry.
-   * - Custom list: narrows or extends the surface, e.g.
-   *   `[Builtins.WEB_SEARCH, Builtins.NOTEBOOK]`.
-   *
-   * Validation: each entry must be a member of {@link Builtins}, max 16
-   * entries, deduplicated server-side.
+   * - Omitted / `true` (default): inject the standard builtins.
+   * - `false`: inject NO builtins — useful for a pure-MCP / pure-custom run.
+   *   Cherry-pick a narrow subset back by listing builtin names in `tools`.
    */
-  readonly builtins?: readonly Builtin[];
+  readonly includeBuiltinTools?: boolean;
   /**
    * Assistant-output granularity. `"buffered"` (default) delivers one event per
    * assistant message; `"stream"` delivers per-token text deltas for live
@@ -748,7 +752,12 @@ export class AgentExecutor {
       ...(options.system ? { system: options.system } : {}),
       prompt,
       skills: preparedSkills,
-      tools: preparedTools,
+      // The wire `tools` is the union: builtin name strings (cherry-picks)
+      // followed by the custom tool bundle refs. The shared parser splits them
+      // back into `tools` (custom) + `builtinTools` (names). The cast
+      // acknowledges the SDK is producing pre-parse wire input here, same as
+      // `mcpServers` / `environment` below.
+      tools: [...preparedTools.builtinNames, ...preparedTools.refs] as unknown as readonly ToolRef[],
       agentsMd: preparedAgentsMd,
       files: preparedFiles,
       // submissionMcpServers may contain workspace refs of the shape
@@ -769,10 +778,10 @@ export class AgentExecutor {
         : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
       ...(outputCapture ? { outputs: outputCapture } : {}),
-      // Pass-through `builtins` verbatim — including an empty array,
-      // which is the "disable all builtins" signal. Distinguish from
-      // omitted (default applies) via `!== undefined`.
-      ...(options.builtins !== undefined ? { builtins: options.builtins } : {}),
+      // Pass-through the builtin-tool toggle verbatim (omitted ⇒ default ON).
+      ...(options.includeBuiltinTools !== undefined
+        ? { includeBuiltinTools: options.includeBuiltinTools }
+        : {}),
       ...(options.outputMode !== undefined ? { outputMode: options.outputMode } : {})
     };
 
@@ -1308,15 +1317,38 @@ async function prepareSkills(
   return refs;
 }
 
+/**
+ * Split the `tools` union into custom tool refs (drafts eagerly uploaded as
+ * assets) and builtin tool-name references (bare strings, validated against the
+ * closed {@link BUILTIN_TOOL_NAMES} set). Builtin names are deduped, in input
+ * order; the two groups are recombined on the wire (builtins first) by the
+ * caller.
+ */
 async function prepareTools(
-  tools: readonly Tool[],
+  tools: readonly (Tool | BuiltinToolName)[],
   uploader: AssetUploader
-): Promise<readonly ToolRef[]> {
+): Promise<{ readonly refs: readonly ToolRef[]; readonly builtinNames: readonly BuiltinToolName[] }> {
   const refs: ToolRef[] = [];
+  const seenBuiltins = new Set<BuiltinToolName>();
+  const builtinNames: BuiltinToolName[] = [];
   for (let i = 0; i < tools.length; i++) {
     const entry = tools[i];
+    // A bare string is a builtin tool reference.
+    if (typeof entry === "string") {
+      if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
+        throw new Error(
+          `AgentExecutor.submit: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
+            `expected a Tool instance or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
+        );
+      }
+      if (!seenBuiltins.has(entry)) {
+        seenBuiltins.add(entry);
+        builtinNames.push(entry);
+      }
+      continue;
+    }
     if (!(entry instanceof Tool)) {
-      throw new Error(`AgentExecutor.submit: tools[${i}] must be a Tool instance`);
+      throw new Error(`AgentExecutor.submit: tools[${i}] must be a Tool instance or a builtin tool name`);
     }
     if (entry.isConsumed) {
       throw new Error(`AgentExecutor.submit: tools[${i}] was already consumed by a prior submit`);
@@ -1337,7 +1369,7 @@ async function prepareTools(
     }
     refs.push(ref);
   }
-  return refs;
+  return { refs, builtinNames };
 }
 
 /** Walk AgentsMd[], eagerly upload drafts as assets, and return plain asset refs. */

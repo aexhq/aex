@@ -1412,23 +1412,24 @@ export interface PlatformSubmission {
    */
   readonly outputs?: PlatformOutputCaptureConfig;
   /**
-   * Optional override for the managed-runtime builtins enabled inside the
-   * runner container. Each entry is one of the closed {@link BUILTINS} set
-   * (prefer the {@link Builtins} symbol const).
+   * Whether to inject the standard builtin tool set ({@link DEFAULT_BUILTIN_TOOLS}).
    *
-   * Omit the field for {@link DEFAULT_BUILTINS}: web search, web fetch,
-   * file read/edit, glob, grep, head, and tail. Pass an empty array to opt out
-   * of all builtins for pure-MCP runs. Pass a custom list to narrow or extend
-   * the tool surface, for example `[Builtins.WEB_SEARCH, Builtins.NOTEBOOK]`.
+   *   - omitted / `true` (default): inject the standard builtins.
+   *   - `false`: inject NO builtins — useful for a pure-MCP / pure-custom run.
    *
-   * Validation:
-   *   - Each entry must be a member of {@link BUILTINS}.
-   *   - Max 16 entries.
-   *   - Deduplicated.
-   *
-   * The dispatcher accepts and persists it for snapshot fidelity.
+   * Cherry-pick individual builtins (e.g. opt the notebook in, or pick a narrow
+   * subset alongside `includeBuiltinTools: false`) by listing their names in
+   * `tools` (a bare-string builtin reference, prefer `BuiltinTools.<name>`).
    */
-  readonly builtins?: readonly Builtin[];
+  readonly includeBuiltinTools?: boolean;
+  /**
+   * Explicit builtin tool NAME references the caller listed in the wire `tools`
+   * union (the bare-string members), extracted at parse time. Each is a member
+   * of {@link BUILTIN_TOOL_NAMES}. Composed with {@link includeBuiltinTools} via
+   * {@link resolveBuiltinToolNames} to produce the run's final builtin tool set.
+   * `tools` itself carries only the custom tool bundles ({@link ToolRef}).
+   */
+  readonly builtinTools?: readonly BuiltinToolName[];
   /**
    * Assistant-output granularity. `buffered` (the default) emits one event per
    * assistant message; `stream` emits the agent's per-token text deltas as they
@@ -1836,7 +1837,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     "securityProfile",
     "metadata",
     "outputs",
-    "builtins",
+    "includeBuiltinTools",
     "outputMode",
     "platform"
   ]);
@@ -1849,7 +1850,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
   const skills = parseSkills(value.skills);
-  const tools = parseTools(value.tools);
+  const { tools, builtinTools } = parseTools(value.tools);
   const agentsMd = parseAgentsMd(value.agentsMd);
   const files = parseFiles(value.files);
   const mcpServers = parseMcpServers(value.mcpServers);
@@ -1858,7 +1859,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   const securityProfile = parseRuntimeSecurityProfile(value.securityProfile);
   const metadata = optionalJsonRecord(value.metadata, "submission.metadata");
   const outputs = parseOutputs(value.outputs);
-  const builtins = parseBuiltins(value.builtins);
+  const includeBuiltinTools = parseIncludeBuiltinTools(value.includeBuiltinTools);
   const outputMode = parseOutputMode(value.outputMode);
   const platform = parsePlatformConfig(value.platform);
 
@@ -1876,7 +1877,8 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     ...(securityProfile ? { securityProfile } : {}),
     ...(metadata ? { metadata } : {}),
     ...(outputs ? { outputs } : {}),
-    ...(builtins !== undefined ? { builtins } : {}),
+    ...(includeBuiltinTools !== undefined ? { includeBuiltinTools } : {}),
+    ...(builtinTools.length > 0 ? { builtinTools } : {}),
     ...(outputMode !== undefined ? { outputMode } : {}),
     ...(platform ? { platform } : {})
   };
@@ -1945,113 +1947,116 @@ function parseOutputMode(input: unknown): OutputMode | undefined {
 }
 
 /**
- * Managed-runtime builtins — the closed set the managed runtime accepts.
- * Closed so an invalid name is a compile error via {@link Builtins}, not a
- * silent runtime no-op.
+ * The CLOSED set of builtin tool NAMES the managed runtime can inject — one per
+ * machine tool the hands implement. This list is the single source of truth for
+ * validating builtin tool references; the platform's `HANDS_TOOLS` (the execute
+ * vocabulary) is pinned EQUAL to it at module load (`platform-runtime-agent`
+ * `assertNamesMatch`), so a rename on either side fails loudly rather than
+ * silently shipping a name the executors do not speak.
  *
- * The first entries are the recommended concrete builtins. The legacy aggregate
- * extension names remain accepted for existing callers, but are not the default.
+ * Order mirrors `HANDS_TOOLS`. A builtin tool reference (a bare string in
+ * `submission.tools`) must be a member of this set.
  */
-export const BUILTINS = [
-  "web_search",
-  "web_fetch",
-  "read",
-  "edit",
-  "glob",
-  "grep",
-  "head",
-  "tail",
+export const BUILTIN_TOOL_NAMES = [
   "bash",
-  "notebook",
-  "developer",
-  "computercontroller",
-  "memory",
-  "autovisualiser",
-  "tutorial"
-] as const;
-export type Builtin = (typeof BUILTINS)[number];
-
-/**
- * DX-first managed-runtime defaults. Omitted `builtins` resolves to this list.
- * Notebook support remains opt-in through {@link Builtins.NOTEBOOK}.
- */
-export const DEFAULT_BUILTINS = [
-  "web_search",
-  "web_fetch",
-  "read",
-  "edit",
-  "glob",
+  "read_file",
+  "write_file",
+  "edit_file",
   "grep",
+  "glob",
   "head",
   "tail",
-  "bash"
-] as const satisfies readonly Builtin[];
+  "todo_write",
+  "subagent",
+  "subagent_result",
+  "web_fetch",
+  "web_search",
+  "notebook_edit",
+  "bash_output",
+  "bash_kill",
+  "code_execution",
+  "wait",
+  "git"
+] as const;
+export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
 
 /**
- * Symbol-style accessors for the closed builtin set, e.g.
- * `Builtins.WEB_SEARCH`.
+ * Typo-safe accessors for the closed builtin tool set: each key maps to the
+ * real tool NAME string. Reference a builtin in `submission.tools` via
+ * `BuiltinTools.notebook_edit` rather than the bare string so a rename is a
+ * compile error, not a runtime 400.
+ *
+ * Keys are the real tool names; a unit test asserts `Object.values(BuiltinTools)`
+ * deep-equals `BUILTIN_TOOL_NAMES` so the two can never drift.
  */
-export const Builtins = {
-  /** Managed web search. Included in {@link DEFAULT_BUILTINS}. */
-  WEB_SEARCH: "web_search",
-  /** Fetch a URL and return readable text. Included in {@link DEFAULT_BUILTINS}. */
-  WEB_FETCH: "web_fetch",
-  /** Read files. Included in {@link DEFAULT_BUILTINS}. */
-  READ: "read",
-  /** Create/modify files. Included in {@link DEFAULT_BUILTINS}. */
-  EDIT: "edit",
-  /** Search paths by glob. Included in {@link DEFAULT_BUILTINS}. */
-  GLOB: "glob",
-  /** Search file contents. Included in {@link DEFAULT_BUILTINS}. */
-  GREP: "grep",
-  /** Read the first lines of a file. Included in {@link DEFAULT_BUILTINS}. */
-  HEAD: "head",
-  /** Read the last lines of a file. Included in {@link DEFAULT_BUILTINS}. */
-  TAIL: "tail",
-  /** Shell command execution. Included in {@link DEFAULT_BUILTINS}. */
-  BASH: "bash",
-  /** Jupyter notebook editing. Optional; not in {@link DEFAULT_BUILTINS}. */
-  NOTEBOOK: "notebook",
-  /** Legacy aggregate: shell/filesystem/navigation/web/notebook tools. */
-  DEVELOPER: "developer",
-  /** Legacy aggregate alias retained for existing callers. */
-  COMPUTER_CONTROLLER: "computercontroller",
-  /** Legacy aggregate alias retained for existing callers. */
-  MEMORY: "memory",
-  /** Legacy aggregate alias retained for existing callers. */
-  AUTOVISUALISER: "autovisualiser",
-  /** Legacy aggregate alias retained for existing callers. */
-  TUTORIAL: "tutorial"
-} as const satisfies Readonly<Record<string, Builtin>>;
+export const BuiltinTools = {
+  bash: "bash",
+  read_file: "read_file",
+  write_file: "write_file",
+  edit_file: "edit_file",
+  grep: "grep",
+  glob: "glob",
+  head: "head",
+  tail: "tail",
+  todo_write: "todo_write",
+  subagent: "subagent",
+  subagent_result: "subagent_result",
+  web_fetch: "web_fetch",
+  web_search: "web_search",
+  notebook_edit: "notebook_edit",
+  bash_output: "bash_output",
+  bash_kill: "bash_kill",
+  code_execution: "code_execution",
+  wait: "wait",
+  git: "git"
+} as const satisfies Readonly<Record<BuiltinToolName, BuiltinToolName>>;
 
-const MAX_BUILTINS = 16;
+/**
+ * The default builtin tool set injected when `includeBuiltinTools !== false`:
+ * every builtin tool EXCEPT `notebook_edit` (notebook editing stays opt-in —
+ * add `BuiltinTools.notebook_edit` to `tools` to enable it). Derived by
+ * filtering {@link BUILTIN_TOOL_NAMES} so it can never drift from the closed
+ * set.
+ */
+export const DEFAULT_BUILTIN_TOOLS = BUILTIN_TOOL_NAMES.filter(
+  (name) => name !== "notebook_edit"
+) as readonly BuiltinToolName[];
 
-function parseBuiltins(input: unknown): readonly Builtin[] | undefined {
-  if (input === undefined || input === null) return undefined;
-  if (!Array.isArray(input)) {
-    throw new Error("submission.builtins must be an array of strings");
-  }
-  if (input.length > MAX_BUILTINS) {
-    throw new Error(`submission.builtins exceeds the max of ${MAX_BUILTINS} entries`);
-  }
-  const seen = new Set<string>();
-  const out: Builtin[] = [];
-  for (let i = 0; i < input.length; i++) {
-    const v = input[i];
-    if (typeof v !== "string") {
-      throw new Error(`submission.builtins[${i}] must be a string`);
-    }
-    if (!(BUILTINS as readonly string[]).includes(v)) {
+/**
+ * Resolve the set of builtin tool NAMES a submission injects, deduplicated and
+ * in {@link BUILTIN_TOOL_NAMES} order.
+ *
+ *   - `includeBuiltinTools !== false` ⇒ start from {@link DEFAULT_BUILTIN_TOOLS}
+ *     (the standard set); `false` ⇒ start from none (pure-MCP / pure-custom).
+ *   - union in every builtin-name string the caller listed in `tools` (a
+ *     cherry-pick, e.g. `BuiltinTools.notebook_edit` to opt the notebook in).
+ *
+ * Every `toolRefs` string MUST be a member of {@link BUILTIN_TOOL_NAMES}; the
+ * union is validated ⊆ the closed set so an invalid name can never leak through.
+ */
+export function resolveBuiltinToolNames(
+  includeBuiltinTools: boolean | undefined,
+  toolRefs?: readonly string[]
+): readonly BuiltinToolName[] {
+  const enabled = new Set<string>(includeBuiltinTools !== false ? DEFAULT_BUILTIN_TOOLS : []);
+  for (const ref of toolRefs ?? []) {
+    if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(ref)) {
       throw new Error(
-        `submission.builtins[${i}] (${JSON.stringify(v)}) is not a managed-runtime builtin; ` +
-          `expected one of: ${BUILTINS.join(", ")}`
+        `${JSON.stringify(ref)} is not a builtin tool; expected one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
       );
     }
-    if (seen.has(v)) continue; // dedupe silently
-    seen.add(v);
-    out.push(v as Builtin);
+    enabled.add(ref);
   }
-  return out;
+  return BUILTIN_TOOL_NAMES.filter((name) => enabled.has(name));
+}
+
+/** Validate the optional `includeBuiltinTools` flag (default `true`). */
+function parseIncludeBuiltinTools(input: unknown): boolean | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== "boolean") {
+    throw new Error("submission.includeBuiltinTools must be a boolean");
+  }
+  return input;
 }
 
 /**
@@ -2300,17 +2305,40 @@ function parseSkills(input: unknown): readonly SkillRef[] {
   });
 }
 
-function parseTools(input: unknown): readonly ToolRef[] {
+/**
+ * Parse the `submission.tools` union: each entry is either a BARE STRING (a
+ * builtin tool reference, validated against {@link BUILTIN_TOOL_NAMES}) or a
+ * custom tool bundle OBJECT ({@link ToolRef}). Returns the two groups split:
+ * `tools` (custom bundles, the existing downstream shape) and `builtinTools`
+ * (the deduped builtin-name references, in {@link BUILTIN_TOOL_NAMES} order).
+ */
+function parseTools(input: unknown): {
+  readonly tools: readonly ToolRef[];
+  readonly builtinTools: readonly BuiltinToolName[];
+} {
   if (input === undefined) {
-    return [];
+    return { tools: [], builtinTools: [] };
   }
   if (!Array.isArray(input)) {
-    throw new Error("submission.tools must be an array of ToolRef objects");
+    throw new Error("submission.tools must be an array of builtin tool names or ToolRef objects");
   }
   const seenNames = new Set<string>();
   const seenAssetIds = new Set<string>();
-  return input.map((item, index): ToolRef => {
+  const seenBuiltins = new Set<string>();
+  const tools: ToolRef[] = [];
+  input.forEach((item, index) => {
     const path = `submission.tools[${index}]`;
+    // A bare string is a builtin tool reference (e.g. BuiltinTools.notebook_edit).
+    if (typeof item === "string") {
+      if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(item)) {
+        throw new Error(
+          `${path} (${JSON.stringify(item)}) is not a builtin tool name; ` +
+            `expected one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
+        );
+      }
+      seenBuiltins.add(item);
+      return;
+    }
     const raw = requireRecord(item, path);
     for (const key of Object.keys(raw)) {
       if (
@@ -2359,15 +2387,17 @@ function parseTools(input: unknown): readonly ToolRef[] {
       throw new Error(`${path}.input_schema.type must be "object"`);
     }
     const entry = normaliseSkillBundlePath(requireString(raw.entry, `${path}.entry`));
-    return {
+    tools.push({
       kind: "asset",
       assetId: fields.assetId,
       name: fields.name,
       description,
       input_schema: inputSchema as ToolInputSchema,
       entry
-    };
+    });
   });
+  const builtinTools = BUILTIN_TOOL_NAMES.filter((name) => seenBuiltins.has(name));
+  return { tools, builtinTools };
 }
 
 function parseAgentsMd(input: unknown): readonly AgentsMdRef[] {

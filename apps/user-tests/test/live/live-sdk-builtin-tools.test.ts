@@ -98,7 +98,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 function buildScript(cell: Cell, mode: "positive" | "negative", marker: string): string {
-  const builtinsLiteral = mode === "positive" ? '["developer"]' : "[]";
+  const includeBuiltinToolsLiteral = mode === "positive" ? "true" : "false";
   const prompt =
     mode === "positive"
       ? `Using your shell tool, run \`printf '${marker}\\n'\` and then reply with the exact line you printed.`
@@ -118,7 +118,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
-      builtins: ${builtinsLiteral},
+      includeBuiltinTools: ${includeBuiltinToolsLiteral},
       secrets: { apiKey: process.env.${cell.keyEnvName}  },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
     });

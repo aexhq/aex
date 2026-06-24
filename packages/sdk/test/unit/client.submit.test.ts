@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentsMd, AgentExecutor, File as AexFile, McpServer, Models, Skill, Tool } from "../../src/index.js";
+import { AgentsMd, AgentExecutor, BuiltinTools, File as AexFile, McpServer, Models, Skill, Tool } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly url: string;
@@ -256,6 +256,35 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       }
     ]);
     expect(tool.isConsumed).toBe(true);
+  });
+
+  it("threads includeBuiltinTools and places builtin tool refs (strings) before custom tools on the wire", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const tool = await Tool.fromFiles({
+      name: "calendar_lookup",
+      description: "Looks up calendar availability.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+      entry: "index.js",
+      files: { "index.js": "export default async () => ({ content: [] });\n" }
+    });
+
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      includeBuiltinTools: false,
+      // BuiltinTools.notebook_edit is just the name string "notebook_edit".
+      tools: [BuiltinTools.notebook_edit, tool],
+      secrets: { apiKeys: { anthropic: "k" } }
+    });
+
+    const submitCall = calls.find((call) => call.url === "https://x/api/runs")!;
+    const submission = (submitCall.body as Record<string, unknown>).submission as Record<string, unknown>;
+    expect(submission.includeBuiltinTools).toBe(false);
+    // Builtin string refs first, then the custom tool ref object.
+    const wireTools = submission.tools as unknown[];
+    expect(wireTools[0]).toBe("notebook_edit");
+    expect((wireTools[1] as { name: string }).name).toBe("calendar_lookup");
   });
 
   it("submits DeepSeek provider runs with per-provider apiKeys", async () => {

@@ -117,7 +117,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
-      builtins: ["developer"],
+      includeBuiltinTools: true,
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
       secrets: { apiKey: process.env.${cell.keyEnvName}  },
       idempotencyKey: "outputs-${cell.id}-" + Date.now()

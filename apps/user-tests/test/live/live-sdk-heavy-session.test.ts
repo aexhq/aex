@@ -281,7 +281,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       mcpServers: [mcpPrimary, mcpSecondary],
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
-      builtins: ["developer"],
+      includeBuiltinTools: true,
       environment: { envVars: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.runtime}-${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.runtime}-${spec.provider}" },
       secrets: { apiKey: process.env.${spec.keyEnvName}  },

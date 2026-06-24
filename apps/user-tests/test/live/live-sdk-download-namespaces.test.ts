@@ -106,7 +106,7 @@ function buildScript(cell: Cell, marker: string): string {
       runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(deepseekModel)},
       prompt: ${JSON.stringify(prompt)},
-      builtins: ["developer"],
+      includeBuiltinTools: true,
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
       secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT  },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()

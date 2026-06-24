@@ -147,7 +147,7 @@ function buildScript(cell: Cell): string {
       // both runtimes prefer the cheaper builtin shell + curl path and
       // the MCP — even when correctly wired — is never invoked. This
       // pins the assertion to MCP behaviour instead of model whim.
-      builtins: [],
+      includeBuiltinTools: false,
       secrets: { apiKey: process.env.${cell.keyEnvName}  },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     });

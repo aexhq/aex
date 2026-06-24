@@ -80,11 +80,11 @@ describe("typescript consumer", () => {
         AexApiError,
         AgentExecutor,
         AexError,
-        BUILTINS,
-        Builtins,
+        BUILTIN_TOOL_NAMES,
+        BuiltinTools,
         CleanupError,
         CredentialValidationError,
-        DEFAULT_BUILTINS,
+        DEFAULT_BUILTIN_TOOLS,
         DEFAULT_RUNTIME_SIZE,
         DEFAULT_RUN_PROVIDER,
         File,
@@ -111,7 +111,7 @@ describe("typescript consumer", () => {
         selectRuntime,
         validateProxyAuth,
         type AgentsMdRef,
-        type Builtin,
+        type BuiltinToolName,
         type InlineSecrets,
         type McpServerSecret,
         type Output,
@@ -146,8 +146,8 @@ describe("typescript consumer", () => {
       const region: RunRegion = RunRegions.IAD;
       const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_2GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
-      const explicitBuiltin: Builtin = Builtins.WEB_FETCH;
-      const everyBuiltin: readonly Builtin[] = BUILTINS;
+      const explicitBuiltin: BuiltinToolName = BuiltinTools.web_fetch;
+      const everyBuiltin: readonly BuiltinToolName[] = BUILTIN_TOOL_NAMES;
       const method: ProxyMethod = "GET";
       const responseMode: ProxyResponseMode = "headers_only";
       const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
@@ -207,7 +207,9 @@ describe("typescript consumer", () => {
         mcpServers: [mcp, workspaceMcp],
         proxyEndpoints: [proxy, publicProxy],
         outputs: { allowedDirs: ["/workspace/outputs"] },
-        builtins: [...DEFAULT_BUILTINS, Builtins.NOTEBOOK],
+        // Default builtin set ON, plus the opt-in notebook tool (a builtin ref).
+        includeBuiltinTools: true,
+        tools: [BuiltinTools.notebook_edit],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
           packages: [{ name: "apt:jq" }],
@@ -231,7 +233,7 @@ describe("typescript consumer", () => {
         model: RunModels.DEEPSEEK_CHAT,
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
-        builtins: [],
+        includeBuiltinTools: false,
         secrets: { apiKey: "sk-deepseek-type-surface"  },
         idempotencyKey: "type-surface-managed"
       } satisfies SubmitRunOptions;
@@ -254,7 +256,8 @@ describe("typescript consumer", () => {
           environment: { envVars: { USER_SURFACE_TEST: "1" } },
           metadata: { surface: "root" },
           outputs: { allowedDirs: ["/workspace/outputs"] },
-          builtins: [Builtins.WEB_SEARCH, explicitBuiltin, Builtins.READ, Builtins.EDIT]
+          includeBuiltinTools: false,
+          tools: [BuiltinTools.web_search, explicitBuiltin, BuiltinTools.read_file, BuiltinTools.edit_file]
         },
         secrets: anthropicSecrets,
         proxyEndpoints: [proxy.declaration],
