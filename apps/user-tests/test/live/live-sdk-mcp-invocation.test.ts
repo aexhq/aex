@@ -288,14 +288,17 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
 
-      // The agent actually selected the MCP tool. managed runtime/AG-UI often emits
-      // tool_request.data.name = "<serverName>__<toolName>" with
-      // data.extension = "<serverName>". Some payloads carry bare tool names,
-      // so accept either: name starts with the MCP name, OR extension equals it.
+      // The agent actually selected the MCP tool. The runtime advertises MCP
+      // tools under the canonical prefixed name `mcp__<serverName>__<toolName>`
+      // (MCP_TOOL_PREFIX="mcp__" in the container MCP adapter) and may also carry
+      // `data.extension = "<serverName>"`. Match on the server identity wherever
+      // it appears: normalize name/extension (lowercase, drop non-alphanumerics)
+      // and accept any that contain the MCP name — robust to the `mcp__` prefix
+      // and any bare/aliased shape.
+      const mcpMatches = (value: string | null): boolean =>
+        !!value && value.toLowerCase().replace(/[^a-z0-9]+/g, "").includes(MCP_NAME);
       const mcpRequests = result.toolRequests.filter(
-        (r) =>
-          (r.name && r.name.startsWith(MCP_NAME)) ||
-          r.extension === MCP_NAME
+        (r) => mcpMatches(r.name) || mcpMatches(r.extension)
       );
       if (mcpRequests.length === 0) {
         throw new Error(`no tool_request matched MCP "${MCP_NAME}"\n\n${dump()}`);
