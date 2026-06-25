@@ -60,7 +60,8 @@ For the hard ceilings and who can raise them, see
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| Concurrent child runs per lineage root | 4 | Per-plane via env `AEX_MAX_CONCURRENT_CHILD_RUNS`; not a per-run option. | [`RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L427) |
+| Concurrent child runs per lineage root | 1000 (live, non-terminal child runs) | Per-run via `options.limits.maxConcurrentChildRuns`, clamped to the 4096 platform ceiling. | [`RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L429) |
+| Max subagent depth | 5 | Per-run via `options.limits.maxSubagentDepth`, clamped to the same hard ceiling. | [`RUN_MAX_PUBLIC_SUBAGENT_DEPTH`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L415) |
 
 ## Workspace
 

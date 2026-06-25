@@ -39,7 +39,7 @@ so the API key never touches the container. At submit time the caller MUST decla
        baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
        allowMethods: ["POST"],
        allowPathPrefixes: ["/api/v3/chat/completions"],
-       maxRequestBytes: 2_000_000, // base64 image is ~1.33x raw; raise above the 64KB default
+       maxRequestBytes: 2_000_000, // base64 image is ~1.33x raw; mind the request-size cap (default 10 MiB)
        responseMode: "full",
        timeoutMs: 60_000
      })
