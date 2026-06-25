@@ -4,6 +4,22 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.28.1
+
+### Fixed
+
+- Live event stream no longer hangs on a silently half-open coordinator socket.
+  A stalled WebSocket (no close/error, no frames) previously blocked the async
+  iterator forever and could MISS a `RUN_FINISHED`/`RUN_ERROR` that was already
+  persisted server-side. The consumer now:
+  - sends a lightweight keep-alive ping the coordinator auto-responds to (no
+    durable-object wake), and
+  - runs an idle watchdog (default 45s) that, on no inbound frame, treats the
+    socket as dead and reconnects — resuming from the last cursor, which replays
+    the terminal exactly-once.
+  Tunable via the internal stream options `idleTimeoutMs` / `pingIntervalMs`;
+  a legitimately quiet run is kept alive by the ping/pong and does not reconnect.
+
 ## 0.28.0
 
 ### Added

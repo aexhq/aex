@@ -24,6 +24,7 @@ const evt = (sequence: number, type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT", 
 class FakeWebSocket implements WebSocketLike {
   readonly url: string;
   readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
+  readonly sent: string[] = [];
   closed = false;
   constructor(url: string) {
     this.url = url;
@@ -31,12 +32,22 @@ class FakeWebSocket implements WebSocketLike {
   addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
     (this.#listeners[type] ??= []).push(cb);
   }
+  send(data: string): void {
+    this.sent.push(data);
+  }
   close(): void {
     this.closed = true;
     this.#emit("close", {});
   }
+  open(): void {
+    this.#emit("open", {});
+  }
   message(event: AexEvent): void {
     this.#emit("message", { data: JSON.stringify(event) });
+  }
+  /** A keep-alive pong (or any non-event frame): proves liveness, carries no sequence. */
+  pong(data = "aex:pong"): void {
+    this.#emit("message", { data });
   }
   #emit(type: string, ev: { data?: unknown }): void {
     for (const cb of this.#listeners[type] ?? []) cb(ev);
@@ -198,6 +209,98 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     await consume;
 
     expect(received).toEqual([0, 1, 2]);
+  });
+});
+
+describe("streamCoordinatorEvents — half-open watchdog", () => {
+  it("treats a silently stalled socket as dead and reconnects from the cursor", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const fetchTicket = vi.fn(async () => "tkt");
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        reconnectDelayMs: 10,
+        idleTimeoutMs: 1000,
+        pingIntervalMs: 0, // isolate the watchdog from the ping cadence
+        fetchTicket,
+        webSocketFactory: (url) => {
+          const w = new FakeWebSocket(url);
+          sockets.push(w);
+          return w;
+        }
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0); // settle fetchTicket + connect
+      expect(sockets).toHaveLength(1);
+      sockets[0]!.message(evt(0));
+      await vi.advanceTimersByTimeAsync(0); // deliver seq 0 + re-arm the watchdog
+
+      // No frame at all for the whole window → presumed half-open → reconnect.
+      await vi.advanceTimersByTimeAsync(1000); // idle watchdog fires, schedules backoff
+      await vi.advanceTimersByTimeAsync(20); // backoff(10) + fresh ticket + reconnect
+
+      expect(sockets).toHaveLength(2);
+      expect(sockets[0]!.closed).toBe(true);
+      // Resume strictly after the last delivered sequence, with a fresh ticket.
+      expect(sockets[1]!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=1");
+      expect(fetchTicket).toHaveBeenCalledTimes(2);
+
+      sockets[1]!.message(evt(1, "RUN_FINISHED"));
+      await vi.advanceTimersByTimeAsync(0);
+      await consume;
+      expect(received).toEqual([0, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pings on open and a pong keeps a quiet run from reconnecting", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        reconnectDelayMs: 0,
+        idleTimeoutMs: 1000,
+        pingIntervalMs: 300,
+        fetchTicket: async () => "tkt",
+        webSocketFactory: (url) => {
+          const w = new FakeWebSocket(url);
+          sockets.push(w);
+          return w;
+        }
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0]!.open(); // begin the ping cadence
+
+      // 2.4s of zero events, but each ping is answered with a pong → no reconnect.
+      for (let i = 0; i < 8; i++) {
+        await vi.advanceTimersByTimeAsync(300);
+        sockets[0]!.pong();
+      }
+
+      expect(sockets).toHaveLength(1); // never tripped the watchdog
+      expect(sockets[0]!.sent.filter((s) => s === "aex:ping").length).toBeGreaterThanOrEqual(7);
+
+      sockets[0]!.message(evt(0, "RUN_FINISHED"));
+      await vi.advanceTimersByTimeAsync(0);
+      await consume;
+      expect(received).toEqual([0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
