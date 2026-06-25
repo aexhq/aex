@@ -143,7 +143,7 @@ export type {
 } from "@aexhq/contracts";
 
 // Runtime sizing — the closed set of valid managed runtime presets.
-// Prefer the `RuntimeSizes` symbol const (e.g. `RuntimeSizes.SHARED_2X_2GB`)
+// Prefer the `RuntimeSizes` symbol const (e.g. `RuntimeSizes.SHARED_2X_8GB`)
 // so an invalid token is a compile error, not a runtime 400.
 export {
   CUSTODY_MANIFEST_SCHEMA_VERSION,

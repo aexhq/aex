@@ -31,12 +31,21 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runtime size presets", () => {
+  it("exposes exactly the six CF-real preset tokens", () => {
+    expect([...RUNTIME_SIZES]).toEqual([
+      "shared-0.06x-256mb",
+      "shared-0.25x-1gb",
+      "shared-0.5x-4gb",
+      "shared-1x-6gb",
+      "shared-2x-8gb",
+      "shared-4x-12gb"
+    ]);
+  });
+
   it.each(RUNTIME_SIZES)("%s is a valid product preset", (size) => {
     const { cpus, memoryMb } = RUNTIME_SIZE_PRESETS[size];
-    expect([1, 2, 4, 8]).toContain(cpus);
-    expect(memoryMb % 128).toBe(0);
-    expect(memoryMb).toBeGreaterThanOrEqual(128 * cpus);
-    expect(memoryMb).toBeLessThanOrEqual(2048 * cpus);
+    expect(cpus).toBeGreaterThan(0);
+    expect(memoryMb).toBeGreaterThan(0);
   });
 
   it("has no duplicate resource pairs", () => {
@@ -58,8 +67,8 @@ describe("RuntimeSizes symbol const stays in lockstep with presets", () => {
 
 describe("default runtime size", () => {
   it("resolves to the current default runtime resource preset", () => {
-    expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.SHARED_1X_128MB);
-    expect(runtimeResources(DEFAULT_RUNTIME_SIZE)).toEqual({ cpus: 1, memoryMb: 128 });
+    expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.SHARED_0_25X_1GB);
+    expect(runtimeResources(DEFAULT_RUNTIME_SIZE)).toEqual({ cpus: 0.25, memoryMb: 1024 });
   });
 });
 
@@ -146,9 +155,9 @@ describe("graceful termination constants", () => {
 describe("submission contract — runtimeSize + timeout round-trip", () => {
   it("normalises timeout string to timeoutMs and keeps runtime size token", () => {
     const parsed = parseRunSubmissionRequest(
-      baseRequest({ runtimeSize: RuntimeSizes.SHARED_2X_2GB, timeout: "2h" })
+      baseRequest({ runtimeSize: RuntimeSizes.SHARED_2X_8GB, timeout: "2h" })
     );
-    expect(parsed.runtimeSize).toBe("shared-2x-2gb");
+    expect(parsed.runtimeSize).toBe("shared-2x-8gb");
     expect(parsed.timeoutMs).toBe(7_200_000);
   });
 
@@ -159,7 +168,7 @@ describe("submission contract — runtimeSize + timeout round-trip", () => {
   });
 
   it("rejects the old machine field", () => {
-    expect(() => parseRunSubmissionRequest(baseRequest({ machine: "shared-2x-2gb" }))).toThrow(
+    expect(() => parseRunSubmissionRequest(baseRequest({ machine: "shared-2x-8gb" }))).toThrow(
       /submission\.machine is not an allowed field/
     );
   });

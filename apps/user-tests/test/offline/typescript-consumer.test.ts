@@ -144,7 +144,7 @@ describe("typescript consumer", () => {
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
       const region: RunRegion = RunRegions.IAD;
-      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_2GB;
+      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_8GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
       const explicitBuiltin: BuiltinToolName = BuiltinTools.web_fetch;
       const everyBuiltin: readonly BuiltinToolName[] = BUILTIN_TOOL_NAMES;
@@ -427,7 +427,7 @@ describe("typescript consumer", () => {
 
       const provider: RunProvider = RUN_PROVIDERS[0];
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
-      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_1X_512MB;
+      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_0_25X_1GB;
       const proxy = ProxyEndpoint.bearer({
         name: "catalog",
         baseUrl: "https://example.test",

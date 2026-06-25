@@ -13,26 +13,16 @@ export interface RuntimeResources {
 
 /**
  * The single source of truth: every offered preset, keyed by its wire token.
- * Tokens intentionally remain stable product presets.
+ * Tokens intentionally remain stable product presets. The smallest
+ * (`shared-0.06x-256mb`) tier is for light / IO-bound runs only.
  */
 export const RUNTIME_SIZE_PRESETS = {
-  "shared-1x-128mb": { cpus: 1, memoryMb: 128 },
-  "shared-1x-256mb": { cpus: 1, memoryMb: 256 },
-  "shared-1x-512mb": { cpus: 1, memoryMb: 512 },
-  "shared-1x-1gb": { cpus: 1, memoryMb: 1024 },
-  "shared-1x-2gb": { cpus: 1, memoryMb: 2048 },
-  "shared-2x-512mb": { cpus: 2, memoryMb: 512 },
-  "shared-2x-1gb": { cpus: 2, memoryMb: 1024 },
-  "shared-2x-2gb": { cpus: 2, memoryMb: 2048 },
-  "shared-2x-4gb": { cpus: 2, memoryMb: 4096 },
-  "shared-4x-1gb": { cpus: 4, memoryMb: 1024 },
-  "shared-4x-2gb": { cpus: 4, memoryMb: 2048 },
-  "shared-4x-4gb": { cpus: 4, memoryMb: 4096 },
-  "shared-4x-8gb": { cpus: 4, memoryMb: 8192 },
-  "shared-8x-2gb": { cpus: 8, memoryMb: 2048 },
-  "shared-8x-4gb": { cpus: 8, memoryMb: 4096 },
-  "shared-8x-8gb": { cpus: 8, memoryMb: 8192 },
-  "shared-8x-16gb": { cpus: 8, memoryMb: 16384 }
+  "shared-0.06x-256mb": { cpus: 0.0625, memoryMb: 256 },
+  "shared-0.25x-1gb": { cpus: 0.25, memoryMb: 1024 },
+  "shared-0.5x-4gb": { cpus: 0.5, memoryMb: 4096 },
+  "shared-1x-6gb": { cpus: 1, memoryMb: 6144 },
+  "shared-2x-8gb": { cpus: 2, memoryMb: 8192 },
+  "shared-4x-12gb": { cpus: 4, memoryMb: 12288 }
 } as const satisfies Record<string, RuntimeResources>;
 
 /** The accepted runtime-size values (the wire/CLI tokens). */
@@ -41,31 +31,20 @@ export type RuntimeSize = keyof typeof RUNTIME_SIZE_PRESETS;
 /** All preset tokens, ordered as declared. Handy for CLI help + validation. */
 export const RUNTIME_SIZES = Object.keys(RUNTIME_SIZE_PRESETS) as readonly RuntimeSize[];
 
-/** Default when `runtimeSize` is omitted. */
-export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "shared-1x-128mb";
+/** Default when `runtimeSize` is omitted (the 1 GB tier). */
+export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "shared-0.25x-1gb";
 
 /**
- * Symbol-style accessors for TS callers. `RuntimeSizes.SHARED_2X_2GB`
- * resolves to the wire token `"shared-2x-2gb"`.
+ * Symbol-style accessors for TS callers. `RuntimeSizes.SHARED_2X_8GB`
+ * resolves to the wire token `"shared-2x-8gb"`.
  */
 export const RuntimeSizes = {
-  SHARED_1X_128MB: "shared-1x-128mb",
-  SHARED_1X_256MB: "shared-1x-256mb",
-  SHARED_1X_512MB: "shared-1x-512mb",
-  SHARED_1X_1GB: "shared-1x-1gb",
-  SHARED_1X_2GB: "shared-1x-2gb",
-  SHARED_2X_512MB: "shared-2x-512mb",
-  SHARED_2X_1GB: "shared-2x-1gb",
-  SHARED_2X_2GB: "shared-2x-2gb",
-  SHARED_2X_4GB: "shared-2x-4gb",
-  SHARED_4X_1GB: "shared-4x-1gb",
-  SHARED_4X_2GB: "shared-4x-2gb",
-  SHARED_4X_4GB: "shared-4x-4gb",
-  SHARED_4X_8GB: "shared-4x-8gb",
-  SHARED_8X_2GB: "shared-8x-2gb",
-  SHARED_8X_4GB: "shared-8x-4gb",
-  SHARED_8X_8GB: "shared-8x-8gb",
-  SHARED_8X_16GB: "shared-8x-16gb"
+  SHARED_0_06X_256MB: "shared-0.06x-256mb",
+  SHARED_0_25X_1GB: "shared-0.25x-1gb",
+  SHARED_0_5X_4GB: "shared-0.5x-4gb",
+  SHARED_1X_6GB: "shared-1x-6gb",
+  SHARED_2X_8GB: "shared-2x-8gb",
+  SHARED_4X_12GB: "shared-4x-12gb"
 } as const satisfies Record<string, RuntimeSize>;
 
 /** Resolve a preset token to its product-level resource descriptor. */

@@ -23,7 +23,7 @@ For the hard ceilings and who can raise them, see
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
 | `timeout` (run deadline) | 1 hour | Per-run via `options.timeout` (e.g. `"30m"`, `"2h"`), clamped to the run-timeout floor/ceiling. | [`RUN_DEFAULT_TIMEOUT_MS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L154) |
-| `runtimeSize` (machine size) | `shared-1x-128mb` — 1 vCPU, 128 MB | Per-run via `options.runtimeSize` (use `RuntimeSizes.*` in TypeScript). | [`RUN_DEFAULT_RUNTIME_SIZE`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L143) |
+| `runtimeSize` (machine size) | `shared-0.25x-1gb` — 0.25 vCPU, 1 GB | Per-run via `options.runtimeSize` (use `RuntimeSizes.*` in TypeScript). | [`RUN_DEFAULT_RUNTIME_SIZE`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L143) |
 | `postHook.timeout` | 60 minutes | Per-run via the hook's `timeoutMs`. | [`RUN_DEFAULT_POST_HOOK_TIMEOUT_MS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L234) |
 | `postHook.maxTurns` (repair budget) | 10 turns | Per-run via the hook's `maxTurns`. | [`RUN_DEFAULT_POST_HOOK_MAX_TURNS`](https://github.com/aexhq/aex-platform/blob/main/packages/shared/src/limits.ts#L244) |
 

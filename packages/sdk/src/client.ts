@@ -184,7 +184,7 @@ export interface SubmitOptions {
   /**
    * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
    * Prefer the {@link RuntimeSizes} symbol const, e.g.
-   * `RuntimeSizes.SHARED_2X_2GB`.
+   * `RuntimeSizes.SHARED_2X_8GB`.
    */
   readonly runtimeSize?: RuntimeSize;
   /**
