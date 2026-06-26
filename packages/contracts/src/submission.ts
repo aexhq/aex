@@ -229,7 +229,7 @@ export const Providers = {
  * each region to co-located managed Postgres, object storage, run-state
  * placement, and sandbox backing.
  *
- *   eu-west       → London        (Western Europe; hard EU data residency)
+ *   eu-west       → London        (Western Europe)
  *   us-west       → N. California (Western North America)
  *   ap-northeast  → Seoul         (Northeast Asia)
  *
@@ -241,7 +241,7 @@ export type Region = (typeof REGIONS)[number];
 
 /** Symbol-style accessors for the closed region set — e.g. `Regions.EU_WEST`. */
 export const Regions = {
-  /** Western Europe — London. Hard EU data residency. */
+  /** Western Europe — London. */
   EU_WEST: "eu-west",
   /** Western North America — N. California. */
   US_WEST: "us-west",
