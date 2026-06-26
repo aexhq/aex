@@ -4,6 +4,23 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.29.0
+
+### Changed (breaking)
+
+- **Regions renamed to product tokens.** `RUN_REGIONS` / `RunRegions` /
+  `RunRegion` / `parseRunRegion` are now `REGIONS` / `Regions` / `Region` /
+  `parseRegion`, and the accepted tokens are `eu-west` / `us-west` /
+  `ap-northeast` (was `lhr` / `iad` / `sfo` / `bom`). `iad` (`us-east`) is
+  dropped with no replacement. Update any `region:` value and any
+  `RunRegions.*` / `type RunRegion` import.
+- **`runtimeSize` tokens right-sized to real boxes.** The preset set is now the
+  six CF-real tiers `shared-0.06x-256mb` / `shared-0.25x-1gb` /
+  `shared-0.5x-4gb` / `shared-1x-6gb` / `shared-2x-8gb` / `shared-4x-12gb`
+  (fractional vCPU). The default machine changes from `shared-1x-128mb` to
+  `shared-0.25x-1gb` (0.25 vCPU / 1 GiB), which changes default run memory
+  headroom and cost. `RuntimeSizes.*` accessor keys are renamed accordingly.
+
 ## 0.28.1
 
 ### Fixed
