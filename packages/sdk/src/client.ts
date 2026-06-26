@@ -3,7 +3,7 @@ import {
   DEFAULT_CREDENTIAL_MODE,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
-  RUN_REGIONS,
+  REGIONS,
   RUNTIME_KINDS,
   RunStateError,
   SecretString,
@@ -46,7 +46,7 @@ import {
   parseRunLimits,
   type RunWebhookDelivery,
   type RunProvider,
-  type RunRegion,
+  type Region,
   type SecretRecord,
   type SecretReveal,
   type RunUnit,
@@ -140,11 +140,11 @@ export interface SubmitOptions {
    */
   readonly runtime?: RuntimeKind;
   /**
-   * Optional hosted-platform placement token for this run. These are product
-   * region tokens, not exact city guarantees; omit to let the platform infer a
-   * configured region and fall back when no hint matches.
+   * Optional hosted-platform placement region for this run. These are
+   * product-level tokens, not exact city guarantees; omit to let the platform
+   * infer a configured region and fall back when no hint matches.
    */
-  readonly region?: RunRegion;
+  readonly region?: Region;
   /**
    * Closed public model id. Prefer the {@link Models} symbol const, e.g.
    * `Models.CLAUDE_HAIKU_4_5`. Pair it with an explicit {@link Providers} value
@@ -734,11 +734,11 @@ export class AgentExecutor {
     }
     if (
       options.region !== undefined &&
-      !(RUN_REGIONS as readonly string[]).includes(options.region)
+      !(REGIONS as readonly string[]).includes(options.region)
     ) {
       throw new AexError(
         "RUN_CONFIG_INVALID",
-        `AgentExecutor.submit: region must be one of: ${RUN_REGIONS.join(", ")} ` +
+        `AgentExecutor.submit: region must be one of: ${REGIONS.join(", ")} ` +
           `(got ${JSON.stringify(options.region)})`
       );
     }

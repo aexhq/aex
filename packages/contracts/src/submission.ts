@@ -224,21 +224,30 @@ export const Providers = {
 } as const satisfies Readonly<Record<string, RunProvider>>;
 
 /**
- * Product placement tokens accepted on run submission. These are not exact
- * city guarantees: the hosted platform maps each token to the configured
- * database, object store, Durable Object, and sandbox backing available for
- * that product region.
+ * Product placement regions accepted on run submission. These are
+ * product-level tokens, not exact city guarantees: the hosted platform maps
+ * each region to co-located managed Postgres, object storage, run-state
+ * placement, and sandbox backing.
+ *
+ *   eu-west       → London        (Western Europe; hard EU data residency)
+ *   us-west       → N. California (Western North America)
+ *   ap-northeast  → Seoul         (Northeast Asia)
+ *
+ * Prefer the {@link Regions} accessors over raw strings so a typo is a compile
+ * error, not a runtime 400.
  */
-export const RUN_REGIONS = ["lhr", "iad", "sfo", "bom"] as const;
-export type RunRegion = (typeof RUN_REGIONS)[number];
+export const REGIONS = ["eu-west", "us-west", "ap-northeast"] as const;
+export type Region = (typeof REGIONS)[number];
 
-/** Symbol-style accessors for the closed run-region set. */
-export const RunRegions = {
-  LHR: "lhr",
-  IAD: "iad",
-  SFO: "sfo",
-  BOM: "bom"
-} as const satisfies Readonly<Record<string, RunRegion>>;
+/** Symbol-style accessors for the closed region set — e.g. `Regions.EU_WEST`. */
+export const Regions = {
+  /** Western Europe — London. Hard EU data residency. */
+  EU_WEST: "eu-west",
+  /** Western North America — N. California. */
+  US_WEST: "us-west",
+  /** Northeast Asia — Seoul. */
+  AP_NORTHEAST: "ap-northeast"
+} as const satisfies Readonly<Record<string, Region>>;
 
 /**
  * Customer-facing runtime selector. Optional on the wire; absent resolves
@@ -1505,7 +1514,7 @@ export interface PlatformRunSubmissionRequest {
    * falls back to its default region. Accepted tokens do not promise exact
    * city-level placement.
    */
-  readonly region?: RunRegion;
+  readonly region?: Region;
   readonly submission: PlatformSubmission;
   readonly secrets: PlatformInlineSecrets;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
@@ -1600,10 +1609,10 @@ export type PlatformRunSubmissionInput = Omit<
    */
   readonly runtime?: RuntimeKind;
   /**
-   * Optional product placement token. Invalid explicit values are rejected;
+   * Optional product placement region. Invalid explicit values are rejected;
    * omission lets the platform infer/fallback.
    */
-  readonly region?: RunRegion;
+  readonly region?: Region;
   /**
    * Run deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
    * Parsed + bounded to [1m, 6h] server-side into
@@ -1656,7 +1665,7 @@ export function parseRunSubmissionRequest(
   }
   const provider = parseRunProvider(value.provider);
   const runtime = parseRuntimeKind(value.runtime);
-  const region = parseRunRegion(value.region);
+  const region = parseRegion(value.region);
   const credentialMode = parseCredentialMode(value.credentialMode);
   void options;
   // Cross-field validation via the centralized runtime-support validator.
@@ -1820,16 +1829,16 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
   };
 }
 
-export function parseRunRegion(input: unknown): RunRegion | undefined {
+export function parseRegion(input: unknown): Region | undefined {
   if (input === undefined) {
     return undefined;
   }
-  if (typeof input !== "string" || !(RUN_REGIONS as readonly string[]).includes(input)) {
+  if (typeof input !== "string" || !(REGIONS as readonly string[]).includes(input)) {
     throw new Error(
-      `region must be one of: ${RUN_REGIONS.join(", ")} (got ${JSON.stringify(input)})`
+      `region must be one of: ${REGIONS.join(", ")} (got ${JSON.stringify(input)})`
     );
   }
-  return input as RunRegion;
+  return input as Region;
 }
 
 export function parseRuntimeKind(input: unknown): RuntimeKind | undefined {

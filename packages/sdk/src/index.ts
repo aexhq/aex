@@ -182,8 +182,8 @@ export {
   isRunModel,
   parseRunModel,
   Providers,
-  RUN_REGIONS,
-  RunRegions,
+  REGIONS,
+  Regions,
   RUN_PROVIDERS,
   RUNTIME_KINDS,
   RUNTIME_VALIDATION_CODES,
@@ -194,7 +194,7 @@ export type {
   CredentialMode,
   RunModel,
   RunProvider,
-  RunRegion,
+  Region,
   RuntimeKind,
   RuntimeValidationCode
 } from "@aexhq/contracts";

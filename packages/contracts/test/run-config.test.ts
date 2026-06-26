@@ -371,23 +371,23 @@ describe("run-config — parseRunRequestConfig", () => {
     expect(config.metadata).toEqual(metadata);
   });
 
-  it("accepts an optional region token", () => {
+  it("accepts an optional region", () => {
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",
       prompt: "x",
-      region: "iad"
+      region: "us-west"
     });
-    expect(config.region).toBe("iad");
+    expect(config.region).toBe("us-west");
   });
 
-  it("rejects an invalid region token", () => {
+  it("rejects an invalid region", () => {
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
         prompt: "x",
         region: "ams"
       })
-    ).toThrow(/region must be one of: lhr, iad, sfo, bom/);
+    ).toThrow(/region must be one of: eu-west, us-west, ap-northeast/);
   });
 
   it("accepts postHook config and preserves the public wire shape", () => {

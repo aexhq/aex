@@ -87,7 +87,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
   it("preserves existing WebSocket URL query parameters", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe?region=iad",
+      wsUrl: "wss://co/runs/r/subscribe?region=us-west",
       from: 0,
       fetchTicket: async () => "tkt",
       webSocketFactory: (url) => (ws = new FakeWebSocket(url))
@@ -100,7 +100,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     })();
 
     await flush();
-    expect(ws!.url).toBe("wss://co/runs/r/subscribe?region=iad&ticket=tkt&from=0");
+    expect(ws!.url).toBe("wss://co/runs/r/subscribe?region=us-west&ticket=tkt&from=0");
     ws!.message(evt(0, "RUN_FINISHED"));
     await consume;
   });

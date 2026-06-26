@@ -5,7 +5,7 @@ import {
   DEFAULT_BUILTIN_TOOLS,
   resolveBuiltinToolNames,
   DEFAULT_CREDENTIAL_MODE,
-  RUN_REGIONS,
+  REGIONS,
   RUNTIME_KINDS,
   RuntimeValidationError,
   collectManagedUnsupportedFeatures,
@@ -15,9 +15,9 @@ import {
   RUN_MODELS_BY_PROVIDER,
   RunModels,
   Providers,
-  RunRegions,
+  Regions,
   RUN_PROVIDERS,
-  parseRunRegion,
+  parseRegion,
   parseRunSubmissionRequest,
   providerForModel,
   providersForModel,
@@ -27,7 +27,7 @@ import {
   selectRuntime,
   type PlatformRunSubmissionRequest,
   type RunProvider,
-  type RunRegion,
+  type Region,
   type RuntimeKind
 } from "../src/index.js";
 
@@ -37,7 +37,7 @@ function assetRef(name: string, seed = 1) {
 }
 
 function baseRequest(
-  overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind; region: RunRegion }> = {}
+  overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind; region: Region }> = {}
 ) {
   const provider = overrides.provider ?? "anthropic";
   const model = {
@@ -183,26 +183,28 @@ describe("submission parser - providers and secrets", () => {
   });
 });
 
-describe("submission parser - run regions", () => {
-  it("exports the first public region tokens and symbol accessors", () => {
-    expect([...RUN_REGIONS]).toEqual(["lhr", "iad", "sfo", "bom"]);
-    expect(Object.values(RunRegions)).toEqual([...RUN_REGIONS]);
+describe("submission parser - regions", () => {
+  it("exports the public regions and symbol accessors", () => {
+    expect([...REGIONS]).toEqual(["eu-west", "us-west", "ap-northeast"]);
+    expect(Object.values(Regions)).toEqual([...REGIONS]);
   });
 
-  it("parses explicit region tokens", () => {
-    expect(parseRunRegion("iad")).toBe("iad");
-    expect(parseRunRegion(undefined)).toBeUndefined();
-    expect(() => parseRunRegion("mars")).toThrow(/region must be one of: lhr, iad, sfo, bom/);
+  it("parses explicit regions", () => {
+    expect(parseRegion("us-west")).toBe("us-west");
+    expect(parseRegion(undefined)).toBeUndefined();
+    expect(() => parseRegion("mars")).toThrow(
+      /region must be one of: eu-west, us-west, ap-northeast/
+    );
   });
 
   it("preserves an explicit top-level region and omits absent region", () => {
-    expect(parseRunSubmissionRequest(baseRequest({ region: "iad" })).region).toBe("iad");
+    expect(parseRunSubmissionRequest(baseRequest({ region: "us-west" })).region).toBe("us-west");
     expect(parseRunSubmissionRequest(baseRequest()).region).toBeUndefined();
   });
 
   it("rejects an invalid explicit region", () => {
     expect(() => parseRunSubmissionRequest({ ...baseRequest(), region: "ams" })).toThrow(
-      /region must be one of: lhr, iad, sfo, bom/
+      /region must be one of: eu-west, us-west, ap-northeast/
     );
   });
 });

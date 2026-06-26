@@ -167,12 +167,12 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     await client.submit({
       model: "claude-haiku-4-5",
       prompt: "p",
-      region: "iad",
+      region: "us-west",
       secrets: { apiKeys: { anthropic: "k" } }
     });
 
     const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.region).toBe("iad");
+    expect(body.region).toBe("us-west");
   });
 
   it("rejects invalid explicit regions before posting", async () => {
@@ -185,7 +185,9 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         region: "ams",
         secrets: { apiKeys: { anthropic: "k" } }
       } as never)
-    ).rejects.toThrow(/AgentExecutor\.submit: region must be one of: lhr, iad, sfo, bom/);
+    ).rejects.toThrow(
+      /AgentExecutor\.submit: region must be one of: eu-west, us-west, ap-northeast/
+    );
     expect(calls).toHaveLength(0);
   });
 

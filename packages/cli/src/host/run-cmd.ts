@@ -24,7 +24,7 @@
  *   --api-token <token>            see `parseCommonHostFlags`
  *
  * Optional (both modes):
- *   --region <region>             product placement token (lhr, iad, sfo, bom); omitted infers/falls back
+ *   --region <region>             product placement region (eu-west, us-west, ap-northeast); omitted infers/falls back
  *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-8gb); default shared-0.25x-1gb
  *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
  *   --idempotency-key <key>        defaults to a fresh UUID
@@ -38,7 +38,7 @@ import {
   DEFAULT_RUN_PROVIDER,
   operations,
   parseRunRequestConfig,
-  RUN_REGIONS,
+  REGIONS,
   RUN_MODELS,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
@@ -56,7 +56,7 @@ import {
   type PlatformProxyEndpointAuth,
   type RunModel,
   type RunProvider,
-  type RunRegion,
+  type Region,
   type RuntimeSize,
   type RuntimeKind,
   type SkillRef
@@ -147,8 +147,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   const regionFlag = takeFlagValue(rest, "--region");
   if (regionFlag.error) { io.stderr(`${regionFlag.error}\n`); return USAGE_ERR; }
   rest = regionFlag.remaining;
-  if (regionFlag.value && !(RUN_REGIONS as readonly string[]).includes(regionFlag.value)) {
-    io.stderr(`--region must be one of: ${RUN_REGIONS.join(", ")}\n`);
+  if (regionFlag.value && !(REGIONS as readonly string[]).includes(regionFlag.value)) {
+    io.stderr(`--region must be one of: ${REGIONS.join(", ")}\n`);
     return USAGE_ERR;
   }
 
@@ -416,7 +416,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     submission,
     secrets,
     ...(regionFlag.value
-      ? { region: regionFlag.value as RunRegion }
+      ? { region: regionFlag.value as Region }
       : runConfig.region
         ? { region: runConfig.region }
         : {}),

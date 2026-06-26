@@ -9,7 +9,7 @@ aex is an agent execution platform for launching autonomous agents from a simple
 The package ships:
 
 - `AgentExecutor` for submit, run, wait, stream, inspect, download, cancel, and delete.
-- Typed run primitives: `Models`, `Providers`, `RunRegions`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
+- Typed run primitives: `Models`, `Providers`, `Regions`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, whoami, and skills operations.
 
 ## Install

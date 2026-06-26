@@ -92,10 +92,10 @@ describe("typescript consumer", () => {
         ProviderError,
         ProxyEndpoint,
         RUN_PROVIDERS,
-        RUN_REGIONS,
+        REGIONS,
         RUNTIME_KINDS,
         RUNTIME_SIZES,
-        RunRegions,
+        Regions,
         RunModels,
         RuntimeSizes,
         RuntimeValidationError,
@@ -129,7 +129,7 @@ describe("typescript consumer", () => {
         type Run,
         type RunEvent,
         type RunProvider,
-        type RunRegion,
+        type Region,
         type RuntimeResources,
         type RuntimeSize,
         type RuntimeKind,
@@ -143,7 +143,7 @@ describe("typescript consumer", () => {
 
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
       const runtime: RuntimeKind = RUNTIME_KINDS[0];
-      const region: RunRegion = RunRegions.IAD;
+      const region: Region = Regions.US_WEST;
       const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_8GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
       const explicitBuiltin: BuiltinToolName = BuiltinTools.web_fetch;
@@ -275,7 +275,7 @@ describe("typescript consumer", () => {
       const validationCode: RuntimeValidationCode = "feature_runtime_mismatch";
       const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
       const builtinCount: number = everyBuiltin.length;
-      const regionCount: number = RUN_REGIONS.length;
+      const regionCount: number = REGIONS.length;
       const skillRef: SkillRef = inlineSkill.ref as SkillRef;
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
@@ -328,7 +328,7 @@ describe("typescript consumer", () => {
       ];
 
       void RUN_PROVIDERS;
-      void RUN_REGIONS;
+      void REGIONS;
       void RUNTIME_SIZES;
       void RunModels;
       void region;
