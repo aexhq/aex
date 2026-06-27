@@ -15,6 +15,7 @@
  */
 import type { AgentExecutor } from "./client.js";
 import type { OutputFileSelector } from "./client.js";
+import type { RunListQuery } from "@aexhq/contracts";
 
 /** JSON Schema for a tool's input — the subset every major LLM tool API accepts. */
 export interface DataChatToolSchema {
@@ -50,6 +51,20 @@ export interface CreateDataToolsOptions {
   readonly defaultReadBytes?: number;
 }
 
+/**
+ * Scopes a chat to a fixed set of runs. Either pin explicit `runIds` (the
+ * primary path — needs only `getRun`/`listOutputs`/`readOutputText`, no
+ * `listRuns`), or supply a `filter` (status/since/limit) resolved to a concrete
+ * allow-list via `listRuns` (owner-gated). Every corpus read tool refuses a run
+ * outside the resolved set.
+ */
+export interface ChatCorpus {
+  /** Explicit run-id allow-list. */
+  readonly runIds?: readonly string[];
+  /** Resolve the corpus from a `listRuns` query (status / since / limit). */
+  readonly filter?: RunListQuery;
+}
+
 /** Thrown by `DataTools.execute` for an unknown tool or malformed arguments. */
 export class DataToolError extends Error {
   constructor(message: string) {
@@ -68,14 +83,9 @@ export const DATA_TOOLS_INSTRUCTIONS =
   "read comes back `truncated`, narrow it with `grep` or a more specific `path` " +
   "rather than re-reading. Never assume a run or file exists without listing first.";
 
-/**
- * Build the data-source chat tool set bound to one {@link AgentExecutor}.
- * Everything the tools can reach is scoped to the client's workspace token.
- */
-export function createDataTools(client: AgentExecutor, options?: CreateDataToolsOptions): DataTools {
-  const defaultReadBytes = options?.defaultReadBytes ?? DEFAULT_READ_BYTES;
-
-  const tools: readonly DataChatTool[] = [
+/** The vendor-neutral tool definitions, shared by createDataTools/createCorpusTools. */
+function buildToolDefs(defaultReadBytes: number): readonly DataChatTool[] {
+  return [
     {
       name: "list_runs",
       description:
@@ -129,28 +139,52 @@ export function createDataTools(client: AgentExecutor, options?: CreateDataTools
           grep: { type: "string", description: "Optional: return only lines matching this substring (case-insensitive)." }
         }
       }
+    },
+    {
+      name: "search_outputs",
+      description:
+        "Find output files across runs by filename/extension/content type. Returns references " +
+        "(runId, outputId, filename, size) — call read_output to fetch content.",
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          filename: { type: "string", description: "Case-insensitive substring match on the filename." },
+          extension: { type: "string", description: "File extension, e.g. 'md', 'json' (no dot)." },
+          content_type: { type: "string", description: "Exact content type or a prefix wildcard like 'image/*'." },
+          limit: { type: "integer", description: "Max hits (default 100)." }
+        }
+      }
     }
   ];
+}
 
-  async function execute(name: string, input: Record<string, unknown>): Promise<unknown> {
+/** Shared executor over the read surface; `corpus` (when present) enforces the allow-list. */
+function makeExecute(
+  client: AgentExecutor,
+  defaultReadBytes: number,
+  corpus?: CorpusGuard
+): (name: string, input: Record<string, unknown>) => Promise<unknown> {
+  return async function execute(name: string, input: Record<string, unknown>): Promise<unknown> {
     const args = input ?? {};
     switch (name) {
       case "list_runs": {
-        const page = await client.listRuns({
+        if (corpus) return { runs: await corpus.listRunSummaries() };
+        return client.listRuns({
           ...(typeof args.status === "string" ? { status: args.status } : {}),
           ...(typeof args.since === "string" ? { since: args.since } : {}),
           ...(typeof args.limit === "number" ? { limit: args.limit } : {}),
           ...(typeof args.cursor === "string" ? { cursor: args.cursor } : {})
         });
-        return page;
       }
       case "get_run": {
         const runId = requireString(args.run_id, "run_id");
-        const run = await client.getRun(runId);
-        return summarizeRun(run);
+        if (corpus) await corpus.ensure(runId);
+        return summarizeRun(await client.getRun(runId));
       }
       case "list_outputs": {
         const runId = requireString(args.run_id, "run_id");
+        if (corpus) await corpus.ensure(runId);
         const outputs = await client.listOutputs(runId);
         return outputs.map((o) => ({
           id: o.id,
@@ -161,6 +195,7 @@ export function createDataTools(client: AgentExecutor, options?: CreateDataTools
       }
       case "read_output": {
         const runId = requireString(args.run_id, "run_id");
+        if (corpus) await corpus.ensure(runId);
         const selector = readSelector(args);
         const result = await client.readOutputText(runId, selector, {
           maxBytes: typeof args.max_bytes === "number" ? args.max_bytes : defaultReadBytes,
@@ -173,12 +208,93 @@ export function createDataTools(client: AgentExecutor, options?: CreateDataTools
           totalBytes: result.totalBytes
         };
       }
+      case "search_outputs": {
+        const runIds = corpus ? await corpus.ids() : undefined;
+        const page = await client.searchOutputs({
+          ...(runIds ? { runIds } : {}),
+          ...(typeof args.filename === "string" ? { filename: args.filename } : {}),
+          ...(typeof args.extension === "string" ? { extension: args.extension } : {}),
+          ...(typeof args.content_type === "string" ? { contentType: args.content_type } : {}),
+          ...(typeof args.limit === "number" ? { limit: args.limit } : {})
+        });
+        return page;
+      }
       default:
         throw new DataToolError(`unknown tool: ${name}`);
     }
+  };
+}
+
+/** Internal corpus allow-list, resolved lazily on first tool dispatch. */
+interface CorpusGuard {
+  ensure(runId: string): Promise<void>;
+  ids(): Promise<readonly string[]>;
+  listRunSummaries(): Promise<unknown[]>;
+}
+
+/**
+ * Build the data-source chat tool set bound to one {@link AgentExecutor}.
+ * Everything the tools can reach is scoped to the client's workspace token.
+ */
+export function createDataTools(client: AgentExecutor, options?: CreateDataToolsOptions): DataTools {
+  const defaultReadBytes = options?.defaultReadBytes ?? DEFAULT_READ_BYTES;
+  return {
+    tools: buildToolDefs(defaultReadBytes),
+    instructions: DATA_TOOLS_INSTRUCTIONS,
+    execute: makeExecute(client, defaultReadBytes)
+  };
+}
+
+/**
+ * Build a corpus-scoped variant of {@link createDataTools}: identical tools, but
+ * every read tool is fenced to the runs in `corpus`. A `get_run`/`list_outputs`/
+ * `read_output` for a run outside the corpus throws a {@link DataToolError}
+ * ("run <id> is not in this chat's corpus"); `list_runs` returns only corpus
+ * runs; `search_outputs` is auto-scoped to the corpus. This is a client-side
+ * guard on top of the server-side workspace-token data scope.
+ */
+export function createCorpusTools(
+  client: AgentExecutor,
+  corpus: ChatCorpus,
+  options?: CreateDataToolsOptions
+): DataTools {
+  const defaultReadBytes = options?.defaultReadBytes ?? DEFAULT_READ_BYTES;
+
+  let resolved: Set<string> | null = corpus.runIds ? new Set(corpus.runIds) : null;
+  async function resolve(): Promise<Set<string>> {
+    if (resolved) return resolved;
+    // No explicit runIds → page listRuns with the filter to a concrete set.
+    const ids: string[] = [];
+    const base: RunListQuery = corpus.filter ?? {};
+    let cursor: string | undefined = base.cursor;
+    do {
+      const page = await client.listRuns({ ...base, ...(cursor ? { cursor } : {}) });
+      for (const r of page.runs) ids.push(r.id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    resolved = new Set(ids);
+    return resolved;
   }
 
-  return { tools, instructions: DATA_TOOLS_INSTRUCTIONS, execute };
+  const guard: CorpusGuard = {
+    ensure: async (runId) => {
+      const set = await resolve();
+      if (!set.has(runId)) throw new DataToolError(`run ${runId} is not in this chat's corpus`);
+    },
+    ids: async () => [...(await resolve())],
+    // Build list_runs rows from getRun (Tier-1) so the runIds corpus never needs
+    // the owner-gated listRuns; bounded by the corpus size.
+    listRunSummaries: async () => {
+      const set = await resolve();
+      return Promise.all([...set].map(async (id) => summarizeRun(await client.getRun(id))));
+    }
+  };
+
+  return {
+    tools: buildToolDefs(defaultReadBytes),
+    instructions: DATA_TOOLS_INSTRUCTIONS,
+    execute: makeExecute(client, defaultReadBytes, guard)
+  };
 }
 
 function requireString(value: unknown, field: string): string {

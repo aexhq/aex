@@ -107,6 +107,27 @@ by code; CLI failures print a JSON envelope carrying the HTTP `status`, a one-li
 `remedy`, and the `runId` where known, and a wrong `--model`/`--provider`/
 `--runtime-size`/`--region` gets a "did you mean?" suggestion.
 
+## Chat over a corpus of runs
+
+Turn a selected set of runs into a read-only chat. `createCorpusTools(client, { runIds })`
+returns vendor-neutral, corpus-scoped read tools (`list_runs` / `get_run` /
+`list_outputs` / `read_output` / `search_outputs`) — every tool refuses a run
+outside the corpus. Drive them with any LLM; `examples/chat-corpus.ts` shows the
+direct-Claude loop (`@anthropic-ai/sdk`), and the CLI ships it as a one-shot
+command (BYOK; the importable SDK stays LLM-vendor-free):
+
+```bash
+aex chat --run run_<A> --run run_<B> \
+  --anthropic-api-key "$ANTHROPIC_API_KEY" \
+  --model claude-opus-4-8 \
+  --prompt "Across these runs, which produced a report.md and what's its headline finding?" \
+  --api-token "$AEX_API_TOKEN"
+```
+
+`AgentExecutor.searchOutputs({ runIds, filename, extension, contentType, limit })`
+finds output files across runs and returns references (no bytes) you then
+`readOutputText`.
+
 ## Feature Areas
 
 - **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, optional notebook tools, and post-hook repair.

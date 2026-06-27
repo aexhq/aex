@@ -34,6 +34,9 @@ import {
   type ReadOutputTextOptions,
   type RunListPage,
   type RunListQuery,
+  type OutputSearchQuery,
+  type OutputSearchHit,
+  type OutputSearchPage,
   type PlatformEnvironmentInput,
   type PlatformRunSubmissionInput,
   type PlatformSubmission,
@@ -1009,6 +1012,60 @@ export class AgentExecutor {
   }
 
   /**
+   * Find output files across runs by filename / extension / content type.
+   * Returns lean REFERENCE hits (runId, outputId, filename, size, content type)
+   * — never bytes; fetch content with {@link readOutputText}. Scope the search
+   * to a corpus with `query.runIds`; omit it to scan the whole workspace (needs
+   * the owner-gated `listRuns`). Composed client-side for the MVP (per-run
+   * `listOutputs` + the contracts output filter), so it works against any
+   * already-terminal run with no new server endpoint. Bounded by
+   * `query.limit` (default 100) — for very large corpora prefer the deferred
+   * server-side index.
+   */
+  async searchOutputs(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
+    const runIds = query.runIds ?? (await this.#allWorkspaceRunIds());
+    const limit = query.limit ?? 100;
+    // Translate the search query to an OutputQuery so the contracts output
+    // filter (classifyOutput / basename match / contentType wildcard) does the
+    // matching — no re-derived filter logic here.
+    const outputQuery: OutputQuery = {
+      ...(query.filename ? { filename: new RegExp(escapeRegExp(query.filename), "i") } : {}),
+      ...(query.extension ? { extension: query.extension } : {}),
+      ...(query.contentType ? { contentType: query.contentType } : {})
+    };
+    const hasFilter = Object.keys(outputQuery).length > 0;
+    const hits: OutputSearchHit[] = [];
+    for (const runId of runIds) {
+      const outputs = hasFilter
+        ? await this.listOutputs(runId, outputQuery)
+        : await this.listOutputs(runId);
+      for (const o of outputs) {
+        hits.push({
+          runId,
+          outputId: o.id,
+          ...(o.filename !== undefined ? { filename: o.filename } : {}),
+          ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
+          ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
+        });
+        if (hits.length >= limit) return { hits };
+      }
+    }
+    return { hits };
+  }
+
+  /** Enumerate every run id in the workspace by paging `listRuns`. */
+  async #allWorkspaceRunIds(): Promise<readonly string[]> {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.listRuns(cursor ? { cursor } : {});
+      for (const run of page.runs) ids.push(run.id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return ids;
+  }
+
+  /**
    * Fetch the self-contained `RunUnit`: parsed submission inputs,
    * attempts, indexed events (inline + cursor for the tail), raw
    * provider-event Storage manifest, outputs, capture failures,
@@ -1287,6 +1344,11 @@ const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 function isTerminal(status: string | undefined): boolean {
   return typeof status === "string" && TERMINAL_STATUSES.has(status);
+}
+
+/** Escape a literal string for safe interpolation into a RegExp. */
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isOutputPathSelector(selector: OutputFileSelector): selector is OutputFilePathSelector {

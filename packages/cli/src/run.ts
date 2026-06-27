@@ -21,6 +21,7 @@
  *     - `aex cancel <run-id>`
  *     - `aex delete <run-id>`
  *     - `aex whoami`
+ *     - `aex chat --run <id> [...] --anthropic-api-key K --prompt P` (read-only multi-run chat)
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
@@ -63,7 +64,8 @@ import {
   runToolsCmd,
   runRuntimeSizesCmd,
   runTailCmd,
-  runInspectCmd
+  runInspectCmd,
+  runChatCmd
 } from "./host/index.js";
 
 export type { CliExitCode } from "./host/common.js";
@@ -114,6 +116,9 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
     case "inspect":
       // One-shot full-timeline render + summary/jump-to-failure (WS stream).
       return runInspectCmd(io, rest);
+    case "chat":
+      // Read-only multi-run chat over a corpus (direct Claude + corpus read tools).
+      return runChatCmd(io, rest);
     case "outputs":
       // `outputs sync <dirs>` is the legacy in-container internal
       // capture walker. The bare `outputs <run-id>` form is the
@@ -208,6 +213,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex delete <run-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
   io.stdout("  aex whoami --api-token T\n");
+  io.stdout("  aex chat --run <id> [--run <id> ...] --anthropic-api-key K [--model M] --prompt P --api-token T\n");
   io.stdout("  aex login --api-token T [--aex-url U]      Persist token + url (then other verbs need no --api-token)\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");

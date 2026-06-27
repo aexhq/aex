@@ -85,6 +85,40 @@ export interface RunListPage {
 }
 
 /**
+ * Cross-run output search query (`AgentExecutor.searchOutputs`). Restrict to a
+ * corpus with `runIds`; filter by filename substring / extension / content type.
+ * The MVP composes this client-side (per-run `listOutputs` + filter) — a future
+ * server-side `GET /api/outputs/search` can back the same contract with a real
+ * cross-run index, body-only swap.
+ */
+export interface OutputSearchQuery {
+  /** Restrict the search to these runs (the chat corpus allow-list). */
+  readonly runIds?: readonly string[];
+  /** Case-insensitive substring match on the output filename. */
+  readonly filename?: string;
+  /** File extension, with or without a leading dot. Case-insensitive. */
+  readonly extension?: string;
+  /** Exact content type or a prefix wildcard such as `image/*`. */
+  readonly contentType?: string;
+  /** Cap the number of hits returned (default 100). */
+  readonly limit?: number;
+}
+
+/** One output-search hit — a reference only (no bytes); read with `readOutputText`. */
+export interface OutputSearchHit {
+  readonly runId: string;
+  readonly outputId: string;
+  readonly filename?: string;
+  readonly sizeBytes?: number;
+  readonly contentType?: string;
+}
+
+/** A page of output-search hits. */
+export interface OutputSearchPage {
+  readonly hits: readonly OutputSearchHit[];
+}
+
+/**
  * A run event as recorded by the dashboard. Includes the `type` field
  * that the `is*Event` type guards narrow on plus any provider payload.
  *

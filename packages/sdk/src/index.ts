@@ -46,8 +46,8 @@ export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "
 // Data-source chat tools — turn the read surface (listRuns / listOutputs /
 // readOutputText) into vendor-neutral LLM tool definitions + an executor, so a
 // chat over workspace/run data is a few lines on top of the public SDK.
-export { createDataTools, DataToolError, DATA_TOOLS_INSTRUCTIONS } from "./data-tools.js";
-export type { CreateDataToolsOptions, DataChatTool, DataChatToolSchema, DataTools } from "./data-tools.js";
+export { createDataTools, createCorpusTools, DataToolError, DATA_TOOLS_INSTRUCTIONS } from "./data-tools.js";
+export type { ChatCorpus, CreateDataToolsOptions, DataChatTool, DataChatToolSchema, DataTools } from "./data-tools.js";
 
 // Errors
 export {
@@ -92,6 +92,9 @@ export type {
   OutputLink,
   OutputLinkOptions,
   OutputQuery,
+  OutputSearchQuery,
+  OutputSearchHit,
+  OutputSearchPage,
   OutputText,
   ProviderEvent,
   ReadOutputTextOptions,

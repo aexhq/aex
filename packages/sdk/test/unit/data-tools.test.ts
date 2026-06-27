@@ -39,10 +39,16 @@ function stubClient(overrides: Partial<Record<string, (...args: unknown[]) => un
 }
 
 describe("createDataTools", () => {
-  it("exposes exactly the four read tools with valid JSON-schema shapes", () => {
+  it("exposes the read tools (incl. search_outputs) with valid JSON-schema shapes", () => {
     const { client } = stubClient();
     const { tools, instructions } = createDataTools(client);
-    expect(tools.map((t) => t.name)).toEqual(["list_runs", "get_run", "list_outputs", "read_output"]);
+    expect(tools.map((t) => t.name)).toEqual([
+      "list_runs",
+      "get_run",
+      "list_outputs",
+      "read_output",
+      "search_outputs"
+    ]);
     for (const tool of tools) {
       expect(tool.input_schema.type).toBe("object");
       expect(typeof tool.description).toBe("string");
