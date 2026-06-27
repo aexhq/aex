@@ -25,6 +25,7 @@ const guideSources = [
   ["limits-and-quotas.md", "limits-and-quotas"],
   ["secrets.md", "secrets"],
   ["credentials.md", "credentials"],
+  ["networking.md", "networking"],
   ["skills.md", "skills"],
   ["vision-skills.md", "vision-skills"],
   ["mcp.md", "mcp"],
