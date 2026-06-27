@@ -21,9 +21,10 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   refuseInsideManagedRun,
   takeFlagValue
 } from "./common.js";
@@ -39,7 +40,7 @@ const NAMESPACE_DOWNLOADERS = {
 export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "download")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -74,7 +75,12 @@ export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promis
   try {
     bytes = await downloader(http, runId);
   } catch (err) {
-    return emitJsonError(io, "download_failed", (err as Error).message ?? "download failed", { runId });
+    const d = describeApiError(err);
+    return emitJsonError(io, "download_failed", d.message, {
+      runId,
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 
   const destination = resolveDestination(io, outFlag.value, runId, namespace);

@@ -27,9 +27,10 @@ import {
   SUCCESS,
   USAGE_ERR,
   collectRepeated,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   refuseInsideManagedRun,
   takeFlagValue
 } from "./common.js";
@@ -53,7 +54,7 @@ export async function runSkillsCmd(io: CliIO, argv: readonly string[]): Promise<
 }
 
 async function runSkillsUpload(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) { io.stderr(`${common.reason}\n`); return USAGE_ERR; }
   let rest = common.rest;
 
@@ -111,7 +112,11 @@ async function runSkillsUpload(io: CliIO, argv: readonly string[]): Promise<CliE
     io.stdout(JSON.stringify(skill) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "skill_upload_failed", (err as Error).message ?? "upload failed");
+    const d = describeApiError(err);
+    return emitJsonError(io, "skill_upload_failed", d.message, {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }
 
@@ -134,7 +139,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 async function runSkillsList(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) { io.stderr(`${common.reason}\n`); return USAGE_ERR; }
   const positional = common.rest.filter((a) => !a.startsWith("--"));
   const unknown = common.rest.filter((a) => a.startsWith("--"));
@@ -152,12 +157,16 @@ async function runSkillsList(io: CliIO, argv: readonly string[]): Promise<CliExi
     for (const s of skills) io.stdout(JSON.stringify(s) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "skills_list_failed", (err as Error).message ?? "list failed");
+    const d = describeApiError(err);
+    return emitJsonError(io, "skills_list_failed", d.message, {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }
 
 async function runSkillsGet(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) { io.stderr(`${common.reason}\n`); return USAGE_ERR; }
   const positional = common.rest.filter((a) => !a.startsWith("--"));
   const unknown = common.rest.filter((a) => a.startsWith("--"));
@@ -176,12 +185,16 @@ async function runSkillsGet(io: CliIO, argv: readonly string[]): Promise<CliExit
     io.stdout(JSON.stringify(skill) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "skill_get_failed", (err as Error).message ?? "get failed");
+    const d = describeApiError(err);
+    return emitJsonError(io, "skill_get_failed", d.message, {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }
 
 async function runSkillsDelete(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) { io.stderr(`${common.reason}\n`); return USAGE_ERR; }
   const positional = common.rest.filter((a) => !a.startsWith("--"));
   const unknown = common.rest.filter((a) => a.startsWith("--"));
@@ -200,7 +213,11 @@ async function runSkillsDelete(io: CliIO, argv: readonly string[]): Promise<CliE
     io.stdout(JSON.stringify({ skillId, deleted: true }) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "skill_delete_failed", (err as Error).message ?? "delete failed");
+    const d = describeApiError(err);
+    return emitJsonError(io, "skill_delete_failed", d.message, {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }
 

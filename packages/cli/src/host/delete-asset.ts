@@ -11,16 +11,17 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
 
 export async function runDeleteAssetCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "delete-asset")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -38,6 +39,11 @@ export async function runDeleteAssetCmd(io: CliIO, argv: readonly string[]): Pro
     io.stdout(JSON.stringify({ hash, deleted: true }) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "delete_asset_failed", (err as Error).message ?? "delete-asset failed", { hash });
+    const d = describeApiError(err);
+    return emitJsonError(io, "delete_asset_failed", d.message, {
+      hash,
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }

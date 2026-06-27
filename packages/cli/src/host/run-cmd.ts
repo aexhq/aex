@@ -72,11 +72,13 @@ import {
   collectRepeated,
   collectRepeatedKv,
   collectRepeatedKvList,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   parseDuration,
   refuseInsideManagedRun,
+  suggest,
   takeBooleanFlag,
   takeFlagValue,
   takeOptionFlag
@@ -92,7 +94,7 @@ void AEX_DEFAULT_BASE_URL;
 export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "run")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -105,7 +107,11 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   let provider: RunProvider = DEFAULT_RUN_PROVIDER;
   if (providerFlag.value !== null) {
     if (!(RUN_PROVIDERS as readonly string[]).includes(providerFlag.value)) {
-      io.stderr(`--provider must be one of: ${RUN_PROVIDERS.join(", ")} (got: ${providerFlag.value})\n`);
+      const hint = suggest(providerFlag.value, RUN_PROVIDERS);
+      io.stderr(
+        `--provider must be one of: ${RUN_PROVIDERS.join(", ")} (got: ${providerFlag.value})` +
+          `${hint ? `; did you mean "${hint}"?` : ""}\n`
+      );
       return USAGE_ERR;
     }
     provider = providerFlag.value as RunProvider;
@@ -148,7 +154,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   if (regionFlag.error) { io.stderr(`${regionFlag.error}\n`); return USAGE_ERR; }
   rest = regionFlag.remaining;
   if (regionFlag.value && !(REGIONS as readonly string[]).includes(regionFlag.value)) {
-    io.stderr(`--region must be one of: ${REGIONS.join(", ")}\n`);
+    const hint = suggest(regionFlag.value, REGIONS);
+    io.stderr(`--region must be one of: ${REGIONS.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}\n`);
     return USAGE_ERR;
   }
 
@@ -168,7 +175,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   if (runtimeSizeFlag.error) { io.stderr(`${runtimeSizeFlag.error}\n`); return USAGE_ERR; }
   rest = runtimeSizeFlag.remaining;
   if (runtimeSizeFlag.value && !(RUNTIME_SIZES as readonly string[]).includes(runtimeSizeFlag.value)) {
-    io.stderr(`--runtime-size must be one of: ${RUNTIME_SIZES.join(", ")}\n`);
+    const hint = suggest(runtimeSizeFlag.value, RUNTIME_SIZES);
+    io.stderr(`--runtime-size must be one of: ${RUNTIME_SIZES.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}\n`);
     return USAGE_ERR;
   }
 
@@ -273,7 +281,11 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       return USAGE_ERR;
     }
     if (!(RUN_MODELS as readonly string[]).includes(modelFlag.value)) {
-      io.stderr(`--model must be one of: ${RUN_MODELS.join(", ")} (got: ${modelFlag.value})\n`);
+      const hint = suggest(modelFlag.value, RUN_MODELS);
+      io.stderr(
+        `--model must be one of: ${RUN_MODELS.join(", ")} (got: ${modelFlag.value})` +
+          `${hint ? `; did you mean "${hint}"?` : ""}\n`
+      );
       return USAGE_ERR;
     }
     if (promptFlags.values.length === 0) {
@@ -440,7 +452,11 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   try {
     run = await operations.submitRun(http, request);
   } catch (err) {
-    return emitJsonError(io, "submit_failed", (err as Error).message ?? "submission failed");
+    const d = describeApiError(err);
+    return emitJsonError(io, "submit_failed", d.message, {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 
   io.stdout(JSON.stringify(run) + "\n");
@@ -467,14 +483,28 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       io.stderr(`(transient) status poll failed: ${(err as Error).message}\n`);
     }
     if (!TERMINAL_STATUSES.has(currentStatus) && Date.now() >= deadline) {
-      emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following run`, { runId: run.id });
+      emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following run`, {
+        runId: run.id,
+        hint: `aex status ${run.id} | aex events ${run.id} | aex download ${run.id}`
+      });
       return TIMEOUT_ERR;
     }
   }
   try {
     const final = await operations.getRun(http, run.id);
     io.stdout(JSON.stringify(final) + "\n");
-    return final.status === "succeeded" ? SUCCESS : RUNTIME_ERR;
+    if (final.status === "succeeded") return SUCCESS;
+    // Non-succeeded terminal: surface a non-secret inspect hint so the operator
+    // knows the next move instead of just an exit code.
+    io.stderr(
+      JSON.stringify({
+        error: "run_not_succeeded",
+        runId: run.id,
+        status: final.status,
+        hint: `aex status ${run.id} | aex events ${run.id} | aex download ${run.id}`
+      }) + "\n"
+    );
+    return RUNTIME_ERR;
   } catch (err) {
     io.stderr(`final status fetch failed: ${(err as Error).message}\n`);
     return RUNTIME_ERR;

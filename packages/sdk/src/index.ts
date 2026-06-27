@@ -56,6 +56,7 @@ export {
   CleanupError,
   CredentialValidationError,
   ProviderError,
+  RunConfigValidationError,
   RunStateError
 } from "@aexhq/contracts";
 

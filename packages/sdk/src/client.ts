@@ -5,6 +5,7 @@ import {
   HttpClient,
   REGIONS,
   RUNTIME_KINDS,
+  RunConfigValidationError,
   RunStateError,
   SecretString,
   isRunSettled,
@@ -807,7 +808,7 @@ export class AgentExecutor {
    */
   async submit(options: SubmitOptions): Promise<string> {
     if (!options || typeof options !== "object") {
-      throw new Error("AgentExecutor.submit: options is required");
+      throw new RunConfigValidationError("AgentExecutor.submit: options is required");
     }
     // A model maps to one or more upstream providers (see MODEL_PROVIDER_IDS).
     // `providersForModel` returns the supported providers in priority order, or
@@ -820,7 +821,7 @@ export class AgentExecutor {
       supportedProviders.length > 0 &&
       !supportedProviders.includes(options.provider)
     ) {
-      throw new Error(
+      throw new RunConfigValidationError(
         `AgentExecutor.submit: provider ${JSON.stringify(options.provider)} is not available for ` +
           `model ${JSON.stringify(options.model)} (supported: ${supportedProviders.join(", ")})`
       );
@@ -834,7 +835,7 @@ export class AgentExecutor {
     // failing synchronously before any network call.
     const { foldedApiKeys } = resolveSubmitCredentials(options, provider);
     if (typeof options.model !== "string" || !options.model) {
-      throw new Error("AgentExecutor.submit: model is required");
+      throw new RunConfigValidationError("AgentExecutor.submit: model is required");
     }
     const prompt = normalisePrompt(options.prompt);
     const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
@@ -1382,16 +1383,16 @@ function generateIdempotencyKey(): string {
 function normalisePrompt(input: string | readonly string[]): readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new Error("AgentExecutor.submit: prompt must be a non-empty string");
+      throw new RunConfigValidationError("AgentExecutor.submit: prompt must be a non-empty string");
     }
     return [input];
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new Error("AgentExecutor.submit: prompt must be a non-empty string or string array");
+    throw new RunConfigValidationError("AgentExecutor.submit: prompt must be a non-empty string or string array");
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new Error("AgentExecutor.submit: prompt segments must be non-empty strings");
+      throw new RunConfigValidationError("AgentExecutor.submit: prompt segments must be non-empty strings");
     }
   }
   return [...input];
@@ -1419,13 +1420,13 @@ function resolveSubmitCredentials(
     options.apiKey
   ].filter((value): value is string => typeof value === "string" && value.length > 0);
   if (new Set(selectedCandidates).size > 1) {
-    throw new Error(
+    throw new RunConfigValidationError(
       `AgentExecutor.submit: conflicting API keys for provider ${JSON.stringify(provider)} ` +
         "(secrets.apiKeys / secrets.apiKey / credentials / apiKey disagree). Supply exactly one."
     );
   }
   if (selectedCandidates.length === 0) {
-    throw new Error(
+    throw new RunConfigValidationError(
       "AgentExecutor.submit: a provider API key is required — pass `apiKey`, " +
         "`credentials[provider]`, `secrets.apiKey`, or `secrets.apiKeys[provider]`."
     );
@@ -1530,13 +1531,13 @@ async function prepareSkills(
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
-      throw new Error(`AgentExecutor.submit: skills[${i}] must be a Skill instance`);
+      throw new RunConfigValidationError(`AgentExecutor.submit: skills[${i}] must be a Skill instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submit: skills[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`AgentExecutor.submit: skills[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
@@ -1571,7 +1572,7 @@ async function prepareTools(
     // A bare string is a builtin tool reference.
     if (typeof entry === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
-        throw new Error(
+        throw new RunConfigValidationError(
           `AgentExecutor.submit: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
             `expected a Tool instance or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
         );
@@ -1583,13 +1584,13 @@ async function prepareTools(
       continue;
     }
     if (!(entry instanceof Tool)) {
-      throw new Error(`AgentExecutor.submit: tools[${i}] must be a Tool instance or a builtin tool name`);
+      throw new RunConfigValidationError(`AgentExecutor.submit: tools[${i}] must be a Tool instance or a builtin tool name`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submit: tools[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`AgentExecutor.submit: tools[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({ ...bundle.ref, assetId });
@@ -1609,13 +1610,13 @@ async function prepareAgentsMd(
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
-      throw new Error(`AgentExecutor.submit: agentsMd[${i}] must be an AgentsMd instance`);
+      throw new RunConfigValidationError(`AgentExecutor.submit: agentsMd[${i}] must be an AgentsMd instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submit: agentsMd[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`AgentExecutor.submit: agentsMd[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
@@ -1639,13 +1640,13 @@ async function prepareFiles(
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
-      throw new Error(`AgentExecutor.submit: files[${i}] must be a File instance`);
+      throw new RunConfigValidationError(`AgentExecutor.submit: files[${i}] must be a File instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new Error(`AgentExecutor.submit: files[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`AgentExecutor.submit: files[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
@@ -1664,7 +1665,7 @@ async function prepareFiles(
 function getSubmittedRunId(response: { readonly id?: string; readonly runId?: string }): string {
   const id = response.id ?? response.runId;
   if (typeof id !== "string" || id.length === 0) {
-    throw new Error("AgentExecutor.submit: submit response did not include a run id");
+    throw new RunStateError("AgentExecutor.submit: submit response did not include a run id");
   }
   return id;
 }
@@ -1685,14 +1686,14 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new Error(`AgentExecutor.submit: mcpServers[${i}] must be an McpServer instance`);
+      throw new RunConfigValidationError(`AgentExecutor.submit: mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
     if (secret) {
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
-        throw new Error(
+        throw new RunConfigValidationError(
           `AgentExecutor.submit: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
         );
       }
@@ -1725,7 +1726,7 @@ function mergeProxyEndpointAuth(
   for (const entry of fromInstances) {
     const existing = byName.get(entry.name);
     if (existing && existing.value.type !== entry.value.type) {
-      throw new Error(
+      throw new RunConfigValidationError(
         `AgentExecutor.submit: proxyEndpoint "${entry.name}" auth type conflicts ` +
           `with secrets.proxyEndpointAuth (instance=${entry.value.type}, secrets=${existing.value.type})`
       );

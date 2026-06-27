@@ -474,8 +474,22 @@ describe("aex cancel + delete", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(1);
     expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
-    const err = JSON.parse(cap.stderr.trim()) as { error: string; message: string; hash: string };
-    expect(err).toEqual({ error: "delete_asset_failed", message: "asset_not_found", hash: hex });
+    const err = JSON.parse(cap.stderr.trim()) as {
+      error: string;
+      message: string;
+      hash: string;
+      status?: number;
+      remedy?: string;
+    };
+    // DX4: the envelope is now enriched with the HTTP status + an actionable
+    // remedy keyed on it (the message stays the API's own error string).
+    expect(err).toEqual({
+      error: "delete_asset_failed",
+      message: "asset_not_found",
+      hash: hex,
+      status: 404,
+      remedy: "no such run/resource — verify the id"
+    });
   });
 });
 

@@ -12,16 +12,17 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
 
 export async function runWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "whoami")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -37,6 +38,10 @@ export async function runWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<
     io.stdout(JSON.stringify(me) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "whoami_failed", (err as Error).message ?? "whoami failed");
+    const d = describeApiError(err);
+    return emitJsonError(io, "whoami_failed", d.message, {
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }

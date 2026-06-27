@@ -7,16 +7,17 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
 
 export async function runDeleteCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "delete")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -34,6 +35,11 @@ export async function runDeleteCmd(io: CliIO, argv: readonly string[]): Promise<
     io.stdout(JSON.stringify({ runId, deleted: true }) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "delete_failed", (err as Error).message ?? "delete failed", { runId });
+    const d = describeApiError(err);
+    return emitJsonError(io, "delete_failed", d.message, {
+      runId,
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }

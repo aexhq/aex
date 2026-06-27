@@ -19,6 +19,8 @@
  *     - `aex cancel <run-id>`
  *     - `aex delete <run-id>`
  *     - `aex whoami`
+ *     - `aex login` / `aex logout` / `aex auth status`
+ *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
  *   Operator (AWS creds, not `--api-token`):
  *     - `aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch]`
@@ -50,7 +52,14 @@ import {
   runDeliveriesCmd,
   runWaitCmd,
   runWhoamiCmd,
-  runDebugCmd
+  runDebugCmd,
+  runLoginCmd,
+  runLogoutCmd,
+  runAuthStatusCmd,
+  runModelsCmd,
+  runProvidersCmd,
+  runToolsCmd,
+  runRuntimeSizesCmd
 } from "./host/index.js";
 
 export type { CliExitCode } from "./host/common.js";
@@ -118,6 +127,23 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runDeleteAssetCmd(io, rest);
     case "whoami":
       return runWhoamiCmd(io, rest);
+    case "login":
+      return runLoginCmd(io, rest);
+    case "logout":
+      return runLogoutCmd(io, rest);
+    case "auth":
+      // `aex auth status` (default subcommand `status`). Token never printed.
+      return runAuthStatusCmd(io, rest[0] === "status" ? rest.slice(1) : rest);
+    case "models":
+      // Discoverability reads of the contracts SSoT — no token, no network.
+      // Each accepts an optional `list` subcommand and `--json`.
+      return runModelsCmd(io, rest);
+    case "providers":
+      return runProvidersCmd(io, rest);
+    case "tools":
+      return runToolsCmd(io, rest);
+    case "runtime-sizes":
+      return runRuntimeSizesCmd(io, rest);
     case "debug":
       // Operator/admin command: reads the AWS plane directly (S3 + DDB + SFN +
       // CloudWatch) via the standard AWS SDK credential chain. NOT an
@@ -170,6 +196,13 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex delete <run-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
   io.stdout("  aex whoami --api-token T\n");
+  io.stdout("  aex login --api-token T [--aex-url U]      Persist token + url (then other verbs need no --api-token)\n");
+  io.stdout("  aex logout                                 Clear the stored token\n");
+  io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");
+  io.stdout("  aex models list [--json]                   List models + default provider (no token needed)\n");
+  io.stdout("  aex providers list [--json]                List providers + their models (no token needed)\n");
+  io.stdout("  aex tools list [--json]                    List builtin tools (default vs opt-in; no token needed)\n");
+  io.stdout("  aex runtime-sizes list [--json]            List managed runtime presets (no token needed)\n");
   io.stdout("  aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]   (operator; AWS creds)\n");
   io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");

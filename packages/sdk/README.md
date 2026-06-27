@@ -77,6 +77,36 @@ aex run \
   --follow
 ```
 
+## CLI: login, discovery, typed errors
+
+Stop re-passing `--api-token` on every command — log in once and the token (plus
+your default `--aex-url`) is persisted to a `0600` config file
+(`$XDG_CONFIG_HOME/aex/config.json` or `~/.config/aex/config.json`; `%APPDATA%\aex\config.json`
+on Windows). An explicit `--api-token` flag always overrides the stored one.
+
+```bash
+aex login --api-token "$AEX_API_TOKEN" [--aex-url https://api.aex.dev]
+aex whoami            # no --api-token needed after login
+aex auth status       # show the resolved config (the token value is never printed)
+aex logout            # clear the stored token
+```
+
+Discover the closed sets the platform accepts — no token, no network (human table
+by default, machine JSON under `--json`):
+
+```bash
+aex models list           # canonical models + their default provider
+aex providers list        # providers + the models each serves
+aex tools list            # builtin tools (default vs opt-in, e.g. notebook_edit)
+aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
+```
+
+Errors are typed and actionable. Every `submit()` config-validation failure throws
+a `RunConfigValidationError` (`err.code === "RUN_CONFIG_INVALID"`) you can `catch`
+by code; CLI failures print a JSON envelope carrying the HTTP `status`, a one-line
+`remedy`, and the `runId` where known, and a wrong `--model`/`--provider`/
+`--runtime-size`/`--region` gets a "did you mean?" suggestion.
+
 ## Feature Areas
 
 - **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, optional notebook tools, and post-hook repair.

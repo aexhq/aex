@@ -13,9 +13,10 @@ import {
   SUCCESS,
   TIMEOUT_ERR,
   USAGE_ERR,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   parseDuration,
   refuseInsideManagedRun,
   takeBooleanFlag,
@@ -29,7 +30,7 @@ const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "events")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -62,7 +63,12 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
       }
       return SUCCESS;
     } catch (err) {
-      return emitJsonError(io, "events_failed", (err as Error).message ?? "event fetch failed", { runId });
+      const d = describeApiError(err);
+      return emitJsonError(io, "events_failed", d.message, {
+        runId,
+        ...(d.status !== undefined ? { status: d.status } : {}),
+        ...(d.remedy ? { remedy: d.remedy } : {})
+      });
     }
   }
 

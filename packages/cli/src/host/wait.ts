@@ -21,7 +21,7 @@ import {
   USAGE_ERR,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   parseDuration,
   refuseInsideManagedRun,
   takeOptionFlag
@@ -36,7 +36,7 @@ const DEFAULT_INTERVAL_MS = 2_000;
 export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "wait")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;

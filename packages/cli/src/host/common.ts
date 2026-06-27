@@ -4,7 +4,7 @@
  * to run host commands inside a managed run container, and exit codes
  * shared with the in-container proxy command.
  */
-import { AEX_DEFAULT_BASE_URL, HttpClient, type FetchLike } from "@aexhq/contracts";
+import { AEX_DEFAULT_BASE_URL, AexApiError, AexError, HttpClient, type FetchLike } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
 
 export interface CliExitCode {
@@ -34,18 +34,28 @@ export type ParseCommonResult =
   | { readonly ok: true; readonly flags: CommonHostFlags; readonly rest: readonly string[] }
   | { readonly ok: false; readonly reason: string };
 
+/** Raw, pre-resolution extraction: token/url may be `null` (no required check). */
+export interface ExtractedCommonHostFlags {
+  readonly apiToken: string | null;
+  readonly aexUrl: string | null;
+  readonly debug: boolean;
+  readonly rest: readonly string[];
+}
+
+export type ExtractCommonResult =
+  | { readonly ok: true; readonly flags: ExtractedCommonHostFlags }
+  | { readonly ok: false; readonly reason: string };
+
 /**
- * Parse and remove the common flags every host-side subcommand needs,
- * leaving the rest for the caller.
+ * Pure, synchronous extraction of the common host flags from argv. Unlike
+ * {@link parseCommonHostFlags} this does NOT require a token — it leaves
+ * `apiToken`/`aexUrl` as `null` when absent so {@link resolveCommonHostFlags}
+ * can fall back to the stored config. Touches no IO and reads no env.
  *
- * The CLI is `flags_only` — no `AEX_*` env reads. `--api-token` is
- * required; `--aex-url` defaults to `AEX_DEFAULT_BASE_URL`
- * (`https://api.aex.dev`) so SaaS users never need to supply it.
- *
- * There is no `--workspace` flag: workspace identity is derived
- * server-side from the API token.
+ * There is no `--workspace` flag: workspace identity is derived server-side
+ * from the API token.
  */
-export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
+export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonResult {
   let apiToken: string | null = null;
   let aexUrl: string | null = null;
   let debug = false;
@@ -82,12 +92,161 @@ export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult
     rest.push(arg);
   }
 
+  return { ok: true, flags: { apiToken, aexUrl, debug, rest } };
+}
+
+/**
+ * Parse and remove the common flags every host-side subcommand needs,
+ * leaving the rest for the caller. SYNCHRONOUS, token REQUIRED — retained for
+ * back-compat. New code should call {@link resolveCommonHostFlags}, which adds
+ * the stored-config fallback so a token persisted by `aex login` is honored.
+ *
+ * The CLI is `flags_only` — no `AEX_*` env reads. `--api-token` is
+ * required; `--aex-url` defaults to `AEX_DEFAULT_BASE_URL`
+ * (`https://api.aex.dev`) so SaaS users never need to supply it.
+ */
+export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
+  const extracted = extractCommonHostFlags(argv);
+  if (!extracted.ok) return extracted;
+  const { apiToken, aexUrl, debug, rest } = extracted.flags;
   if (!apiToken) return { ok: false, reason: "--api-token is required" };
   return {
     ok: true,
     flags: { apiToken, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug },
     rest
   };
+}
+
+/**
+ * Resolve the common host flags with the stored-config fallback (DX1).
+ * Precedence: `--api-token` flag > stored token; `--aex-url` flag > stored url >
+ * default. When neither a flag nor a stored token supplies the bearer, returns
+ * an actionable `ok:false` pointing at `aex login`.
+ *
+ * Under `--debug` it emits ONE non-secret auth-source line to stderr (which
+ * source won + the resolved url) so "wrong plane / wrong token" is a one-glance
+ * diagnosis. The token value is NEVER logged.
+ */
+export async function resolveCommonHostFlags(
+  io: CliIO,
+  argv: readonly string[]
+): Promise<ParseCommonResult> {
+  const extracted = extractCommonHostFlags(argv);
+  if (!extracted.ok) return extracted;
+  const { apiToken: flagToken, aexUrl: flagUrl, debug, rest } = extracted.flags;
+
+  let token = flagToken;
+  let url = flagUrl;
+  let source: "flag" | "stored" | "none" = flagToken ? "flag" : "none";
+  let storedLocation = "";
+
+  if (!token && io.configStore) {
+    const stored = await io.configStore.read();
+    storedLocation = io.configStore.location();
+    if (stored?.apiToken) {
+      token = stored.apiToken;
+      source = "stored";
+      if (!url && stored.aexUrl) url = stored.aexUrl;
+    }
+  }
+
+  const resolvedUrl = url ?? AEX_DEFAULT_BASE_URL;
+
+  if (debug) {
+    const where =
+      source === "flag"
+        ? "--api-token flag"
+        : source === "stored"
+          ? `stored token (${storedLocation})`
+          : "none";
+    io.stderr(`[aex] auth: ${where}; aex-url=${resolvedUrl}\n`);
+  }
+
+  if (!token) {
+    return { ok: false, reason: "no API token — pass --api-token or run `aex login`" };
+  }
+  return { ok: true, flags: { apiToken: token, aexUrl: resolvedUrl, debug }, rest };
+}
+
+/**
+ * Map a thrown SDK/transport error to a structured, actionable shape for the
+ * CLI's JSON error envelope. Pulls `status` from {@link AexApiError}, a stable
+ * `code` from {@link AexError}, and attaches a one-line `remedy` keyed on the
+ * HTTP status so a failure tells the operator what to do next. Secret-free
+ * (the error's own message is already redaction-scanned by `AexError`).
+ */
+export function describeApiError(err: unknown): {
+  readonly code: string;
+  readonly message: string;
+  readonly status?: number;
+  readonly remedy?: string;
+} {
+  if (err instanceof AexApiError) {
+    const remedy = remedyForStatus(err.status);
+    return {
+      code: err.code,
+      message: err.message,
+      status: err.status,
+      ...(remedy ? { remedy } : {})
+    };
+  }
+  if (err instanceof AexError) {
+    return { code: err.code, message: err.message };
+  }
+  return { code: "error", message: err instanceof Error ? err.message : String(err) };
+}
+
+function remedyForStatus(status: number): string | undefined {
+  if (status === 401) return "check --api-token, or run `aex login`";
+  if (status === 403) return "token lacks permission for this workspace/action";
+  if (status === 404) return "no such run/resource — verify the id";
+  if (status === 429) return "rate limited — retry with backoff";
+  if (status >= 500) return "server error — retry; re-run with --debug to capture the request trace";
+  return undefined;
+}
+
+/**
+ * "Did you mean?" suggester for a near-miss enum value. Returns the closest
+ * candidate by Levenshtein distance (≤ 2) or a unique case-insensitive prefix
+ * match, else `undefined`. Used on invalid `--model` / `--provider` /
+ * `--runtime-size` / `--region` to turn a flat rejection into a fix hint.
+ */
+export function suggest(input: string, candidates: readonly string[]): string | undefined {
+  const needle = input.trim();
+  if (!needle) return undefined;
+  // Unique case-insensitive prefix match first (cheap + intuitive).
+  const lower = needle.toLowerCase();
+  const prefixHits = candidates.filter((c) => c.toLowerCase().startsWith(lower));
+  if (prefixHits.length === 1) return prefixHits[0];
+  // Else nearest by edit distance, ties broken by declaration order.
+  let best: string | undefined;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const dist = levenshtein(needle, candidate);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = candidate;
+    }
+  }
+  return bestDist <= 2 ? best : undefined;
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  let curr = new Array<number>(n + 1);
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n]!;
 }
 
 export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {

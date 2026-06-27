@@ -57,6 +57,38 @@ export interface CliIO {
    * miss in its structured output and continues to the next dir.
    */
   readonly walkDirectory?: (root: string) => Promise<readonly OutputsSyncFileEntry[] | null>;
+  /**
+   * Persistent CLI config store (token + default `--aex-url`). Wired ONLY by
+   * the host entrypoint (`cli.ts`), which is the single file allowed to touch
+   * the OS/home/env to resolve the config path — keeping the pure command layer
+   * env-free and the `no-env-vars` bundle grep clean. Optional: in-container and
+   * test fakes omit it, in which case `aex login` is unavailable and host verbs
+   * fall back to requiring `--api-token`.
+   */
+  readonly configStore?: CliConfigStore;
+}
+
+/**
+ * Persisted CLI config (written by `aex login`). Forward/back compatible:
+ * unknown keys are ignored, and `schemaVersion` guards future shape changes.
+ */
+export interface StoredCliConfig {
+  readonly schemaVersion?: number;
+  readonly apiToken?: string;
+  readonly aexUrl?: string;
+}
+
+/**
+ * Read/write the persisted CLI config. Implemented by `cli.ts` over
+ * `node:fs/promises`; `read()` resolves `null` (never throws) when the file is
+ * absent or unreadable so an unauthenticated CLI degrades to "no stored token".
+ */
+export interface CliConfigStore {
+  /** The resolved on-disk config path (for display; never prints the token). */
+  location(): string;
+  read(): Promise<StoredCliConfig | null>;
+  write(config: StoredCliConfig): Promise<void>;
+  clear(): Promise<void>;
 }
 
 export interface OutputsSyncFileEntry {

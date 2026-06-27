@@ -8,16 +8,17 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
+  describeApiError,
   emitJsonError,
   makeHttpClient,
-  parseCommonHostFlags,
+  resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
 
 export async function runStatusCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "status")) return USAGE_ERR;
 
-  const common = parseCommonHostFlags(argv);
+  const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
@@ -35,6 +36,11 @@ export async function runStatusCmd(io: CliIO, argv: readonly string[]): Promise<
     io.stdout(JSON.stringify(run) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitJsonError(io, "status_failed", (err as Error).message ?? "status fetch failed", { runId });
+    const d = describeApiError(err);
+    return emitJsonError(io, "status_failed", d.message, {
+      runId,
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
   }
 }
