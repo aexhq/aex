@@ -51,9 +51,13 @@ await aex.submit({
 });
 ```
 
-Networking is open by default. If you explicitly set
-`environment.networking.mode` to `limited`, fetched hosts and the managed search
-host must be allowed by the run's networking configuration.
+Networking is open by default: the agent may reach any public host, subject to a
+fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a
+managed, SSRF-guarded path that is **not** governed by `environment.networking`,
+so their hosts never need to be listed in a `limited` allowlist. Setting
+`environment.networking.mode` to `limited` restricts only the agent's own
+arbitrary egress (e.g. a `curl` in `bash`); the built-in web tools keep working.
+See [Networking](../networking.md).
 
 ## Disable builtins
 

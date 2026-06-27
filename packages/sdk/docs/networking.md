@@ -11,9 +11,12 @@ platform's egress boundary, which enforces the run's networking policy and a
 fixed SSRF deny-list (loopback, link-local, cloud-metadata, and other private
 ranges are always blocked, including hostnames that resolve to those ranges).
 
-You control which public hosts the run may reach with the
-`environment.networking` field. Code cannot widen this from inside the
-container: the boundary is the platform's, not the agent's.
+**Networking is open by default.** A run that does not set
+`environment.networking` may reach any public host — still subject to the SSRF
+deny-list above — with no allowlist required. You use the `environment.networking`
+field to *narrow* that surface when you want a tighter, auditable egress posture.
+Code cannot widen the policy from inside the container: the boundary is the
+platform's, not the agent's.
 
 ## Paths that always work
 
@@ -81,10 +84,12 @@ const allowedHosts = buildPlatformAllowedHosts({
 
 ## Open mode
 
-Set `mode: "open"` when a run needs to reach hosts you can't enumerate ahead of
-time. The run may then reach any public host, still subject to the SSRF
-deny-list. Prefer `limited` whenever you can name the hosts — it gives the run a
-stable, auditable egress surface and is the least-privilege default.
+`open` is the default: a run that omits `environment.networking` already runs in
+open mode. Set `mode: "open"` explicitly when you want to be unambiguous, or when
+a run needs to reach hosts you can't enumerate ahead of time. The run may then
+reach any public host, still subject to the SSRF deny-list. Prefer `limited`
+whenever you can name the hosts — it gives the run a stable, auditable, least-
+privilege egress surface (it is the tighter posture, not the default).
 
 ```ts
 await aex.submit({
