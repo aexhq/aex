@@ -13,6 +13,7 @@
     "test:user:heavy": "vitest run --config vitest.heavy.config.ts",
     "pretest:user:providers": "bun run --cwd ../.. --filter @aexhq/conformance build",
     "test:user:providers": "vitest run --config vitest.providers.config.ts",
+    "test:user:fuzz": "vitest run --config vitest.fuzz.config.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

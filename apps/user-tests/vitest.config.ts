@@ -22,6 +22,7 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "test/live/live-sdk-heavy-session.test.ts",
+      "test/live/live-api-fuzz.test.ts",
       "test/live/providers/**"
     ],
     // Each scenario spawns its own child processes (bun install, tsc,

@@ -1,0 +1,238 @@
+import fc from "fast-check";
+import { afterAll, describe, expect, it } from "vitest";
+
+/**
+ * LIVE adversarial-input fuzz of the deployed dev API (the public HTTP contract
+ * a customer's @aexhq/sdk hits). RAW fetch — no SDK, no mocks — so we can send
+ * malformed bytes the SDK would never emit. Plane-agnostic: the same robustness
+ * invariants hold for the Cloudflare dev plane and the AWS Phase-1 plane.
+ *
+ * SELF-SKIPS (with a logged reason) unless AEX_API_URL + AEX_API_TOKEN are set
+ * — matching the repo's live-test posture. Non-gating: run on demand via
+ *   bun run --filter @aexhq/user-tests test:user:fuzz
+ * (excluded from the default `test:user` sweep — see vitest.config.ts).
+ *
+ * COST SAFETY: the only POST /api/runs bodies sent are ones that are GUARANTEED
+ * to be rejected BEFORE any run is dispatched (invalid JSON, non-object JSON,
+ * stdio MCP, SSRF/non-https webhook). No well-formed submission is ever sent, so
+ * the fuzz never spawns a real (Fargate-billed) run.
+ *
+ * INVARIANTS asserted:
+ *   (a) bad input ⇒ a structured 4xx, NEVER a 5xx;
+ *   (b) auth enforced: no/garbage bearer ⇒ 401; valid bearer ⇒ whoami 200;
+ *   (c) region-token routing: any crafted aex_* token ⇒ {308,401,403,451}, never 5xx;
+ *   (d) reject determinism: the same malformed submit ⇒ the same status (no dup);
+ *   (e) reads with adversarial ids/queries ⇒ 4xx or 2xx, never 5xx.
+ */
+
+const BASE = (process.env.AEX_API_URL ?? "").replace(/\/+$/, "");
+const TOKEN = process.env.AEX_API_TOKEN ?? "";
+const RUNS = Number(process.env.AEX_FUZZ_RUNS ?? "60");
+
+function skipReason(): string | null {
+  if (!BASE) return "AEX_API_URL is not set";
+  if (!/^https?:\/\//.test(BASE)) return `AEX_API_URL ("${BASE}") is not an absolute http(s) URL`;
+  if (!TOKEN) return "AEX_API_TOKEN is not set";
+  return null;
+}
+const SKIP = skipReason();
+if (SKIP) console.warn(`[live-api-fuzz] SKIPPED — ${SKIP}`);
+
+// --- transport with 503/transient retry -------------------------------------
+
+interface Res {
+  status: number;
+  body: string;
+}
+const findings: string[] = [];
+
+async function call(
+  method: string,
+  path: string,
+  opts: { token?: string | null; body?: string; contentType?: string } = {}
+): Promise<Res> {
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+  if (opts.body !== undefined) headers["content-type"] = opts.contentType ?? "application/json";
+  let last: Res = { status: 0, body: "" };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(`${BASE}${path}`, { method, headers, ...(opts.body !== undefined ? { body: opts.body } : {}) });
+      const text = await r.text().catch(() => "");
+      last = { status: r.status, body: text };
+      // 503 = Aurora min-ACU-0 cold-resume (AWS) → retryable infra, not a finding.
+      if (r.status !== 503) return last;
+    } catch (err) {
+      last = { status: 0, body: String(err) };
+    }
+    await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+  }
+  return last;
+}
+
+/** The core invariant: bad input is a structured 4xx, never a 5xx. */
+function expectNo5xx(label: string, r: Res): void {
+  if (r.status >= 500) {
+    findings.push(`${label} → ${r.status} ${r.body.slice(0, 200)}`);
+  }
+  expect(r.status, `${label} returned ${r.status} (${r.body.slice(0, 160)})`).toBeLessThan(500);
+}
+function expect4xx(label: string, r: Res): void {
+  expectNo5xx(label, r);
+  expect(r.status, `${label} returned ${r.status}`).toBeGreaterThanOrEqual(400);
+}
+
+// --- test-side crc32 (build adversarial self-routing tokens) -----------------
+
+function crc32b36(input: string): string {
+  let crc = 0xffffffff;
+  for (const byte of Buffer.from(input, "utf8")) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return ((crc ^ 0xffffffff) >>> 0).toString(36);
+}
+function craftToken(plane: string, code: string, ws: string, secret: string, fixCrc: boolean): string {
+  const body = ["aex", plane, code, ws, secret].join("_");
+  return `${body}_${fixCrc ? crc32b36(body) : "deadbeef"}`;
+}
+
+describe.skipIf(SKIP !== null)("LIVE API adversarial fuzz", () => {
+  afterAll(() => {
+    if (findings.length > 0) {
+      console.error(`[live-api-fuzz] ${findings.length} ROBUSTNESS FINDING(S):\n  ${findings.join("\n  ")}`);
+    }
+  });
+
+  it("whoami: valid bearer → 200; missing/garbage bearer → 401 (auth enforced)", async () => {
+    const ok = await call("GET", "/api/whoami", { token: TOKEN });
+    expect(ok.status, ok.body.slice(0, 160)).toBe(200);
+    expect((await call("GET", "/api/whoami", { token: null })).status).toBe(401);
+    await fc.assert(
+      fc.asyncProperty(fc.string({ minLength: 1, maxLength: 40 }), async (junk) => {
+        const r = await call("GET", "/api/whoami", { token: junk });
+        expectNo5xx(`whoami garbage-token`, r);
+        expect([401, 403]).toContain(r.status);
+      }),
+      { numRuns: Math.min(RUNS, 30) }
+    );
+  });
+
+  it("region-token routing: any crafted aex_* token → {308,401,403,451}, never 5xx", async () => {
+    const ws = fc.string({ minLength: 4, maxLength: 26 }).map((s) => s.replace(/[^A-Za-z0-9]/g, "0") || "0000");
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom("dev", "prd", "xyz"),
+        fc.constantFrom("euw2", "usw2", "apn2", "zzz9"),
+        ws,
+        fc.boolean(),
+        async (plane, code, wsId, fixCrc) => {
+          const token = craftToken(plane, code, wsId, "feedfacecafebeef", fixCrc);
+          const r = await call("GET", "/api/whoami", { token });
+          expectNo5xx(`crafted-token ${plane}/${code}/crc:${fixCrc}`, r);
+          expect([308, 401, 403, 451]).toContain(r.status);
+        }
+      ),
+      { numRuns: Math.min(RUNS, 40) }
+    );
+  });
+
+  it("POST /runs: malformed bodies are edge-rejected 4xx (never 5xx, never a dispatched run)", async () => {
+    // Only bodies GUARANTEED rejected BEFORE any run dispatch on either plane.
+    const invalidJson = fc
+      .string({ minLength: 0, maxLength: 60 })
+      .filter((s) => {
+        try {
+          const v = JSON.parse(s);
+          return !(v && typeof v === "object" && !Array.isArray(v)); // keep non-object JSON + parse failures
+        } catch {
+          return true;
+        }
+      });
+    await fc.assert(
+      fc.asyncProperty(invalidJson, async (raw) => {
+        const r = await call("POST", "/api/runs", { token: TOKEN, body: raw });
+        expect4xx(`POST /runs invalid-json`, r);
+      }),
+      { numRuns: Math.min(RUNS, 40) }
+    );
+
+    // stdio MCP transport — server-side backstop reject (cheap, pre-dispatch).
+    const stdioBody = JSON.stringify({
+      submission: { model: "claude-haiku-4-5", prompt: ["x"], mcpServers: [{ name: "s", url: "stdio://x", transport: "stdio" }] },
+      secrets: {}
+    });
+    expect4xx("POST /runs stdio-mcp", await call("POST", "/api/runs", { token: TOKEN, body: stdioBody }));
+
+    // SSRF / non-https webhook — pre-dispatch reject.
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom("http://example.com/h", "https://127.0.0.1/h", "https://10.0.0.1/h", "https://169.254.169.254/h", "https://user:pw@example.com/h", "not-a-url"),
+        async (url) => {
+          const body = JSON.stringify({ submission: { model: "claude-haiku-4-5", prompt: ["x"] }, secrets: {}, webhook: { url } });
+          const r = await call("POST", "/api/runs", { token: TOKEN, body });
+          expect4xx(`POST /runs bad-webhook ${url}`, r);
+        }
+      ),
+      { numRuns: Math.min(RUNS, 12) }
+    );
+  });
+
+  it("POST /runs: reject determinism — same malformed body ⇒ same status (no dup)", async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.constantFrom("@@@", "[]", '"x"', "123", "{bad}"), async (raw) => {
+        const a = await call("POST", "/api/runs", { token: TOKEN, body: raw });
+        const b = await call("POST", "/api/runs", { token: TOKEN, body: raw });
+        expect4xx("POST /runs determinism", a);
+        expect(b.status).toBe(a.status);
+      }),
+      { numRuns: 5 }
+    );
+  });
+
+  it("read endpoints: adversarial run ids → 4xx/2xx, never 5xx", async () => {
+    const runId = fc.oneof(
+      fc.string({ minLength: 0, maxLength: 40 }),
+      fc.constantFrom("../etc", "%2e%2e", "run_'; DROP", "🔥", "a".repeat(300), "..%2f..%2f")
+    );
+    await fc.assert(
+      fc.asyncProperty(runId, fc.constantFrom("", "/events", "/outputs"), async (id, suffix) => {
+        const enc = encodeURIComponent(id);
+        const r = await call("GET", `/api/runs/${enc}${suffix}`, { token: TOKEN });
+        expectNo5xx(`GET /runs/<id>${suffix}`, r);
+        expect(r.status).toBeLessThan(500);
+      }),
+      { numRuns: Math.min(RUNS, 40) }
+    );
+  });
+
+  it("read endpoints: adversarial listRuns / presign inputs → never 5xx", async () => {
+    const qp = fc.record(
+      {
+        limit: fc.oneof(fc.integer({ min: -9999, max: 99999 }).map(String), fc.string({ maxLength: 8 })),
+        status: fc.oneof(fc.constantFrom("succeeded", "bogus", ""), fc.string({ maxLength: 12 })),
+        cursor: fc.string({ maxLength: 24 })
+      },
+      { requiredKeys: [] }
+    );
+    await fc.assert(
+      fc.asyncProperty(qp, async (q) => {
+        const search = new URLSearchParams(q as Record<string, string>).toString();
+        const r = await call("GET", `/api/runs?${search}`, { token: TOKEN });
+        expectNo5xx("GET /runs?<query>", r);
+      }),
+      { numRuns: Math.min(RUNS, 30) }
+    );
+    // presign with adversarial/garbage bodies — reject path only.
+    await fc.assert(
+      fc.asyncProperty(
+        fc.oneof(fc.constant("{}"), fc.constant('{"hash":123}'), fc.constant('{"hash":"notahash"}'), fc.string({ maxLength: 30 })),
+        async (raw) => {
+          const r = await call("POST", "/api/assets/presign", { token: TOKEN, body: raw });
+          expectNo5xx("POST /assets/presign garbage", r);
+        }
+      ),
+      { numRuns: Math.min(RUNS, 20) }
+    );
+  });
+});
