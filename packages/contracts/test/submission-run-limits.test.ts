@@ -157,6 +157,51 @@ describe("parseRunLimits (shape + positivity gate)", () => {
     });
   });
 
+  describe("maxSpendUsd boundaries (positive NUMBER — fractional USD allowed)", () => {
+    it("accepts a fractional USD amount", () => {
+      expect(parseRunLimits({ maxSpendUsd: 2.5 })).toEqual({ maxSpendUsd: 2.5 });
+    });
+
+    it("accepts an integer USD amount", () => {
+      expect(parseRunLimits({ maxSpendUsd: 100 })).toEqual({ maxSpendUsd: 100 });
+    });
+
+    it("accepts it alongside the other fields", () => {
+      expect(parseRunLimits({ maxConcurrentChildRuns: 2, maxSubagentDepth: 3, maxSpendUsd: 5 })).toEqual({
+        maxConcurrentChildRuns: 2,
+        maxSubagentDepth: 3,
+        maxSpendUsd: 5
+      });
+    });
+
+    it("rejects 0", () => {
+      expect(() => parseRunLimits({ maxSpendUsd: 0 })).toThrow(
+        /limits\.maxSpendUsd must be a positive finite number/
+      );
+    });
+
+    it("rejects -1", () => {
+      expect(() => parseRunLimits({ maxSpendUsd: -1 })).toThrow(
+        /limits\.maxSpendUsd must be a positive finite number/
+      );
+    });
+
+    it("rejects NaN / Infinity", () => {
+      expect(() => parseRunLimits({ maxSpendUsd: Number.NaN })).toThrow(
+        /limits\.maxSpendUsd must be a positive finite number/
+      );
+      expect(() => parseRunLimits({ maxSpendUsd: Number.POSITIVE_INFINITY })).toThrow(
+        /limits\.maxSpendUsd must be a positive finite number/
+      );
+    });
+
+    it('rejects a numeric string "5"', () => {
+      expect(() => parseRunLimits({ maxSpendUsd: "5" })).toThrow(
+        /limits\.maxSpendUsd must be a positive finite number/
+      );
+    });
+  });
+
   describe("non-object input", () => {
     it("rejects a string", () => {
       expect(() => parseRunLimits("nope")).toThrow(/limits must be an object/);

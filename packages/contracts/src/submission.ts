@@ -1332,6 +1332,20 @@ export function optionalPositiveInt(input: unknown, field: string): number | und
   return input;
 }
 
+/**
+ * A finite positive NUMBER (fractional allowed — e.g. a USD amount like `2.5`), or
+ * undefined when absent. Rejects non-numbers, NaN/Infinity, and `<= 0`.
+ */
+export function optionalPositiveNumber(input: unknown, field: string): number | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "number" || !Number.isFinite(input) || input <= 0) {
+    throw new Error(`${field} must be a positive finite number`);
+  }
+  return input;
+}
+
 function parseOptionalBoundedInt(
   input: unknown,
   field: string,
@@ -1580,6 +1594,15 @@ export interface RunWebhookSpec {
 export interface RunLimits {
   readonly maxConcurrentChildRuns?: number;
   readonly maxSubagentDepth?: number;
+  /**
+   * Per-run spend cap in USD (defense-in-depth). The platform converts it to a
+   * wall-clock budget (priced compute is wall-time; BYOK provider tokens cost the
+   * platform nothing) and kills the run once it would out-spend the cap. A
+   * positive number; omitted ⇒ unbounded per-run (only the run's wall-clock
+   * `timeout` + the per-workspace spend cap apply). Only shape/positivity are
+   * validated here.
+   */
+  readonly maxSpendUsd?: number;
 }
 
 /**
@@ -1806,7 +1829,7 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
     return undefined;
   }
   const value = requireRecord(input, "limits");
-  const allowed = new Set(["maxConcurrentChildRuns", "maxSubagentDepth"]);
+  const allowed = new Set(["maxConcurrentChildRuns", "maxSubagentDepth", "maxSpendUsd"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw new Error(`limits.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
@@ -1817,15 +1840,20 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
     "limits.maxConcurrentChildRuns"
   );
   const maxSubagentDepth = optionalPositiveInt(value.maxSubagentDepth, "limits.maxSubagentDepth");
+  // maxSpendUsd is a USD amount (may be fractional, e.g. $2.50) so it is a positive
+  // NUMBER, not a positive int. Clamping to the workspace/platform ceiling is the
+  // resolver's job; here we only enforce shape + positivity.
+  const maxSpendUsd = optionalPositiveNumber(value.maxSpendUsd, "limits.maxSpendUsd");
   // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
   // lands an empty object on the request — matches sibling parsers (parseRunWebhook,
   // parseEnvironment). The resolver supplies platform defaults for absent fields.
-  if (maxConcurrentChildRuns === undefined && maxSubagentDepth === undefined) {
+  if (maxConcurrentChildRuns === undefined && maxSubagentDepth === undefined && maxSpendUsd === undefined) {
     return undefined;
   }
   return {
     ...(maxConcurrentChildRuns !== undefined ? { maxConcurrentChildRuns } : {}),
-    ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {})
+    ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
+    ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {})
   };
 }
 
