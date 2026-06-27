@@ -17,7 +17,8 @@ import { strToU8, zipSync } from "fflate";
 export class AgentsMd {
   readonly #ref: AgentsMdRef | DraftAgentsMdRef;
   readonly #zipBytes: Uint8Array | undefined;
-  #consumed = false;
+  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  #assetId: string | undefined;
 
   constructor(ref: AgentsMdRef | DraftAgentsMdRef, zipBytes?: Uint8Array) {
     this.#ref = ref;
@@ -29,11 +30,17 @@ export class AgentsMd {
   }
 
   get isDraft(): boolean {
-    return this.#ref.kind === "draft" && !this.#consumed;
+    return this.#ref.kind === "draft";
   }
 
-  get isConsumed(): boolean {
-    return this.#consumed;
+  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  get _cachedAssetId(): string | undefined {
+    return this.#assetId;
+  }
+
+  /** Internal: remember the asset id resolved for this draft's bytes. */
+  _rememberAsset(assetId: string): void {
+    this.#assetId = assetId;
   }
 
   /**
@@ -65,16 +72,9 @@ export class AgentsMd {
    * `client.submit` can upload it as an asset.
    */
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
-    if (this.#consumed) {
-      throw new Error(
-        "AgentsMd: cannot reuse a consumed AgentsMd in submit. Build a fresh one " +
-          "via AgentsMd.fromContent(...) / AgentsMd.fromPath(...) per submit call."
-      );
-    }
     if (this.#ref.kind !== "draft" || !this.#zipBytes) {
       return undefined;
     }
-    this.#consumed = true;
     return {
       name: this.#ref.name,
       contentHash: this.#ref.contentHash,

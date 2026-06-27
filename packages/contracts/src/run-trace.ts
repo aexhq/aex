@@ -185,6 +185,16 @@ export function summarizeRunUsage(events: readonly TraceEvent[]): UsageSummary {
   };
 }
 
+/**
+ * The run's final assistant text: every `TEXT_MESSAGE_CONTENT` block in stream
+ * order, concatenated. The one-line "what did the agent say" accessor over
+ * {@link decodeAssistantText} (buffered mode yields whole messages, stream mode
+ * yields token deltas — both concatenate correctly). Pure.
+ */
+export function textOf(events: readonly TraceEvent[]): string {
+  return decodeAssistantText(events).map((entry) => entry.text).join("");
+}
+
 /** Decode the assistant text blocks (`TEXT_MESSAGE_CONTENT`) in stream order. Pure. */
 export function decodeAssistantText(events: readonly TraceEvent[]): readonly AssistantTextEntry[] {
   const out: AssistantTextEntry[] = [];

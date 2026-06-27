@@ -12,6 +12,8 @@ import {
   parseCredentialMode,
   providersForModel,
   streamCoordinatorEvents,
+  summarizeRunTrace,
+  textOf,
   type AexEvent,
   type AgentsMdRecord,
   type CredentialMode,
@@ -42,6 +44,8 @@ import {
   type Run,
   type RunModel,
   type RunEvent,
+  type RunTrace,
+  type UsageSummary,
   type RunLimits,
   parseRunLimits,
   type RunWebhookDelivery,
@@ -103,8 +107,9 @@ export interface AgentExecutorOptions {
  *     secret is bundled into the constructor and split into
  *     `secrets.proxyEndpointAuth` server-side; the public submission
  *     only carries the declaration (`{ name, baseUrl, authShape, … }`).
- *   - `secrets.apiKey` or `secrets.apiKeys[provider]` — REQUIRED: the provider
- *     key for the selected provider. `apiKeys` MAY carry keys for additional
+ *   - `apiKey` / `credentials` / `secrets` — the BYOK provider key(s). A key for
+ *     the selected provider is REQUIRED; the simplest call passes just `apiKey`.
+ *     Use `credentials` (or `secrets.apiKeys`) to carry keys for additional
  *     providers so subagents spawned with a different-family model can use them
  *     (the child inherits the parent's keys server-side). The platform never
  *     holds a long-lived provider key on your behalf.
@@ -234,7 +239,26 @@ export interface SubmitOptions {
    * typing UIs.
    */
   readonly outputMode?: OutputMode;
-  readonly secrets: PlatformInlineSecrets;
+  /**
+   * Single-provider BYOK key sugar — the key for the run's selected `provider`.
+   * The simplest call passes just `apiKey` (no nested `secrets` envelope). When
+   * several sources name a key for the same provider they must agree (else submit
+   * throws); resolution precedence is
+   * `secrets.apiKeys[provider] ?? secrets.apiKey ?? credentials[provider] ?? apiKey`.
+   */
+  readonly apiKey?: string;
+  /**
+   * Multi-provider BYOK key map — the clean way to supply keys for more than one
+   * provider (e.g. so a subagent spawned with a different-family model inherits a
+   * key server-side). Folded into the `secrets.apiKeys` wire shape.
+   */
+  readonly credentials?: Partial<Record<RunProvider, string>>;
+  /**
+   * Advanced inline secrets bundle (per-provider `apiKeys`, MCP headers, proxy
+   * auth, env secrets). OPTIONAL — the common case uses `apiKey` / `credentials`.
+   * `secrets.apiKey` / `secrets.apiKeys` keep working unchanged.
+   */
+  readonly secrets?: PlatformInlineSecrets;
   readonly idempotencyKey?: string;
   /**
    * Lineage parent (agent-session §9). When set, the server admits this run as
@@ -267,6 +291,44 @@ export interface SubmitOptions {
 
 /** @deprecated Renamed to {@link SubmitOptions}. Kept for one release. */
 export type SubmitRunOptions = SubmitOptions;
+
+/**
+ * The settle-consistent result of {@link AgentExecutor.run} / `runAndCollect`:
+ * the terminal run record plus its settle-bracketed events, decoded trace,
+ * assistant text, and captured outputs — everything a "do it and give me the
+ * result" caller needs without hand-rolling a poll loop.
+ */
+export interface RunResult {
+  readonly runId: string;
+  /** The full terminal run record (status, costTelemetry, timings). */
+  readonly run: Run;
+  readonly status: string;
+  /** `true` when `status === "succeeded"`. */
+  readonly ok: boolean;
+  /** The assistant's final text (decoded over the settled events). */
+  readonly text: string;
+  /** The settle-bracketed event stream (RUN_STARTED … terminal). */
+  readonly events: readonly RunEvent[];
+  /** Decoded view of the events: tool calls + usage + assistant text. */
+  readonly trace: RunTrace;
+  /** The run's captured output files. */
+  readonly outputs: readonly Output[];
+  /** Aggregate token usage when the deployment exposes it on the record. */
+  readonly usage?: UsageSummary;
+  /** Settle-time showback estimate (USD), from `run.costTelemetry`. */
+  readonly costUsd?: number;
+  /** The run's error message when `!ok`. */
+  readonly error?: string;
+}
+
+/** Options for {@link AgentExecutor.run} / `runAndCollect`. */
+export interface RunCollectOptions {
+  /** Overall wait budget (ms) for the run to reach a terminal record. */
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  /** Throw a {@link RunStateError} when the run does not succeed. Default false. */
+  readonly throwOnFailure?: boolean;
+}
 
 export interface StreamEventsOptions {
   /** Poll interval in ms for the `RunEvent` snapshot loop. Default 1000. */
@@ -643,17 +705,88 @@ export class AgentExecutor {
   }
 
   /**
-   * Submit a run and wait until its RECORD is terminal — the settle-consistent
-   * "do it and give me the result" primitive. Returns the final `Run`, so on
-   * resolve a subsequent `getRun`/`listOutputs` is guaranteed consistent (it
-   * polls `getRun` via {@link waitForRun}, NOT the RUN_FINISHED event, which the
-   * runner emits before the platform commits the record). For long-running flows
-   * that need live events, prefer `submit` + `streamEnvelopes(runId, {
-   * settleConsistent: true })`, or `submit` + `stream(runId)` + `wait(runId)`.
+   * Submit a run, wait until its RECORD is terminal, and collect the full
+   * {@link RunResult} — the settle-consistent "do it and give me the result"
+   * primitive. Folds the poll loop every consumer hand-rolled into one call:
+   * submit → {@link waitForRun} (polls `getRun`, NOT the earlier RUN_FINISHED
+   * event) → poll `listEvents` until the snapshot is settle-bracketed
+   * (RUN_STARTED + a terminal event present) → `listOutputs` → decode the trace
+   * and assistant text. On resolve, `getRun`/`listOutputs` are guaranteed
+   * consistent.
+   *
+   * Uses polling (portable across backends), NOT the coordinator WebSocket. By
+   * default a failed run resolves with `ok: false` and a populated `error`; pass
+   * `{ throwOnFailure: true }` to throw instead. For live events prefer `submit`
+   * + `streamEnvelopes(runId, { settleConsistent: true })`.
    */
-  async run(options: SubmitOptions): Promise<Run> {
+  async run(options: SubmitOptions, opts: RunCollectOptions = {}): Promise<RunResult> {
+    const signal = opts.signal ?? options.signal;
     const runId = await this.submit(options);
-    return this.waitForRun(runId, options.signal ? { signal: options.signal } : {});
+    const run = await this.waitForRun(runId, {
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(signal ? { signal } : {})
+    });
+    const events = await this.#collectSettledEvents(runId, signal);
+    const outputs = await this.listOutputs(runId);
+    const ok = run.status === "succeeded";
+    const costUsd = run.costTelemetry?.billedCostUsd;
+    const errorMessage = typeof run.errorMessage === "string" && run.errorMessage ? run.errorMessage : undefined;
+    const result: RunResult = {
+      runId,
+      run,
+      status: run.status,
+      ok,
+      text: textOf(events),
+      events,
+      trace: summarizeRunTrace(events),
+      outputs,
+      ...(run.usage ? { usage: run.usage } : {}),
+      ...(typeof costUsd === "number" ? { costUsd } : {}),
+      ...(!ok && errorMessage ? { error: errorMessage } : {})
+    };
+    if (opts.throwOnFailure && !ok) {
+      throw new RunStateError(
+        `AgentExecutor.run: run ${runId} ended ${run.status}${errorMessage ? `: ${errorMessage}` : ""}`,
+        { runId, status: run.status }
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Explicit, discoverable alias for {@link run}: submit, wait, and collect the
+   * full {@link RunResult} in one call.
+   */
+  runAndCollect(options: SubmitOptions, opts?: RunCollectOptions): Promise<RunResult> {
+    return this.run(options, opts);
+  }
+
+  /**
+   * Poll `listEvents` until the snapshot is settle-bracketed — both a
+   * RUN_STARTED and a terminal (RUN_FINISHED / RUN_ERROR) event present — then
+   * return it. The runner emits the terminal AG-UI event BEFORE the platform
+   * commits the record, and the `listEvents` snapshot can lag the terminal
+   * record by a beat; this closes that race so the decoded trace/text/outputs
+   * are complete. Bounded so an older runtime that never emits one of the
+   * brackets still returns the best snapshot available.
+   */
+  async #collectSettledEvents(runId: string, signal: AbortSignal | undefined): Promise<readonly RunEvent[]> {
+    const intervalMs = 500;
+    const maxAttempts = 20;
+    let latest: readonly RunEvent[] = [];
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (signal?.aborted) return latest;
+      latest = await this.listEvents(runId);
+      const hasStart = latest.some((event) => event.type === "RUN_STARTED");
+      const hasTerminal = latest.some((event) => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR");
+      if (hasStart && hasTerminal) return latest;
+      try {
+        await sleep(intervalMs, signal);
+      } catch {
+        return latest;
+      }
+    }
+    return latest;
   }
 
   /**
@@ -694,16 +827,12 @@ export class AgentExecutor {
     }
     const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
     const credentialMode = parseCredentialMode(options.credentialMode);
-    if (!options.secrets) {
-      throw new Error("AgentExecutor.submit: secrets is required");
-    }
-    // The BYOK provider key (for the selected `provider`) is required. The
-    // shared parser re-runs this check on the server; failing early here
-    // gives the caller a synchronous error before any network call.
-    const selectedProviderKey = options.secrets.apiKeys?.[provider] ?? options.secrets.apiKey;
-    if (typeof selectedProviderKey !== "string" || !selectedProviderKey) {
-      throw new Error("AgentExecutor.submit: secrets.apiKey is required");
-    }
+    // Resolve the BYOK key(s) across the top-level sugar (`apiKey`,
+    // `credentials`) and the advanced `secrets` bundle, folding everything into a
+    // single `apiKeys` map (the wire shape the platform reads). Validates the
+    // selected provider's key is present and that the sources don't disagree,
+    // failing synchronously before any network call.
+    const { foldedApiKeys } = resolveSubmitCredentials(options, provider);
     if (typeof options.model !== "string" || !options.model) {
       throw new Error("AgentExecutor.submit: model is required");
     }
@@ -712,7 +841,7 @@ export class AgentExecutor {
       splitProxyEndpoints(options.proxyEndpoints ?? []);
     const mergedProxyAuth = mergeProxyEndpointAuth(
       proxyEndpointAuthFromInstances,
-      options.secrets.proxyEndpointAuth ?? []
+      options.secrets?.proxyEndpointAuth ?? []
     );
     // Split secretEnv into value-free declarations (hashed submission) and
     // ephemeral values (vaulted secrets channel), mirroring the proxy split.
@@ -766,7 +895,7 @@ export class AgentExecutor {
     const preparedFiles = await prepareFiles(options.files ?? [], uploader);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
-      options.secrets.mcpServers ?? []
+      options.secrets?.mcpServers ?? []
     );
     const outputCapture = outputsForWire(options.outputs);
 
@@ -810,6 +939,9 @@ export class AgentExecutor {
 
     const secrets: PlatformInlineSecrets = {
       ...options.secrets,
+      // Folded BYOK keys (sugar + secrets.apiKeys) override; omitted entirely
+      // when empty so a pure legacy `secrets.apiKey` submission stays unchanged.
+      ...(Object.keys(foldedApiKeys).length > 0 ? { apiKeys: foldedApiKeys } : {}),
       ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
       ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {}),
       ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
@@ -1265,6 +1397,58 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
   return [...input];
 }
 
+/**
+ * Resolve the BYOK provider key(s) for a submission across the top-level sugar
+ * (`apiKey`, `credentials`) and the advanced `secrets` bundle, folding them into
+ * one `apiKeys` map (the wire shape the platform reads). Per-provider precedence:
+ * `secrets.apiKeys[p] ?? secrets.apiKey ?? credentials[p] ?? apiKey`. Legacy
+ * `secrets.apiKey` is left in place (not folded) so a pure-legacy submission's
+ * wire shape is unchanged; the platform falls back to it for the selected
+ * provider. Throws synchronously when the selected provider has no key, or when
+ * the sources name DIFFERENT keys for it (a call-site mistake).
+ */
+function resolveSubmitCredentials(
+  options: SubmitOptions,
+  provider: RunProvider
+): { foldedApiKeys: Partial<Record<RunProvider, string>> } {
+  const secrets = options.secrets;
+  const selectedCandidates = [
+    secrets?.apiKeys?.[provider],
+    secrets?.apiKey,
+    options.credentials?.[provider],
+    options.apiKey
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  if (new Set(selectedCandidates).size > 1) {
+    throw new Error(
+      `AgentExecutor.submit: conflicting API keys for provider ${JSON.stringify(provider)} ` +
+        "(secrets.apiKeys / secrets.apiKey / credentials / apiKey disagree). Supply exactly one."
+    );
+  }
+  if (selectedCandidates.length === 0) {
+    throw new Error(
+      "AgentExecutor.submit: a provider API key is required — pass `apiKey`, " +
+        "`credentials[provider]`, `secrets.apiKey`, or `secrets.apiKeys[provider]`."
+    );
+  }
+  // Fold in precedence order (lowest first; later writes win):
+  // apiKey (selected provider) < credentials < secrets.apiKeys.
+  const foldedApiKeys: Partial<Record<RunProvider, string>> = {};
+  if (typeof options.apiKey === "string" && options.apiKey.length > 0) {
+    foldedApiKeys[provider] = options.apiKey;
+  }
+  for (const [p, key] of Object.entries(options.credentials ?? {})) {
+    if (typeof key === "string" && key.length > 0) {
+      foldedApiKeys[p as RunProvider] = key;
+    }
+  }
+  for (const [p, key] of Object.entries(secrets?.apiKeys ?? {})) {
+    if (typeof key === "string" && key.length > 0) {
+      foldedApiKeys[p as RunProvider] = key;
+    }
+  }
+  return { foldedApiKeys };
+}
+
 function postHookForWire(input: PlatformPostHookInput | undefined): PlatformPostHookInput | undefined {
   if (input === undefined || typeof input.command !== "string" || input.command.trim().length === 0) {
     return undefined;
@@ -1306,6 +1490,37 @@ type AssetUploader = (args: {
   readonly contentType?: string;
 }) => Promise<UploadedAsset>;
 
+/**
+ * A draft asset instance: yields its bytes once and caches the resolved asset id
+ * so reuse across submits skips a re-upload (uploads are content-hash deduped).
+ */
+interface DraftAsset {
+  readonly _cachedAssetId: string | undefined;
+  _rememberAsset(assetId: string): void;
+}
+
+/**
+ * Resolve a draft's asset id: reuse the cached id from a prior submit, otherwise
+ * upload the bytes and cache the result on the instance.
+ */
+async function resolveAssetId(
+  entry: DraftAsset,
+  bundle: { readonly bytes: Uint8Array; readonly contentHash: string },
+  uploader: AssetUploader
+): Promise<string> {
+  const cached = entry._cachedAssetId;
+  if (cached !== undefined) {
+    return cached;
+  }
+  const uploaded = await uploader({
+    bytes: bundle.bytes,
+    hash: bundle.contentHash,
+    contentType: "application/zip"
+  });
+  entry._rememberAsset(uploaded.assetId);
+  return uploaded.assetId;
+}
+
 /** Walk Skill[], eagerly upload drafts as assets, and return plain asset refs. */
 async function prepareSkills(
   skills: readonly Skill[],
@@ -1317,23 +1532,16 @@ async function prepareSkills(
     if (!(entry instanceof Skill)) {
       throw new Error(`AgentExecutor.submit: skills[${i}] must be a Skill instance`);
     }
-    if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submit: skills[${i}] was already consumed by a prior submit`);
-    }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
         throw new Error(`AgentExecutor.submit: skills[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploader({
-        bytes: bundle.bytes,
-        hash: bundle.contentHash,
-        contentType: "application/zip"
-      });
+      const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
         kind: "asset",
-        assetId: uploaded.assetId,
+        assetId,
         name: bundle.name
       });
       continue;
@@ -1377,21 +1585,14 @@ async function prepareTools(
     if (!(entry instanceof Tool)) {
       throw new Error(`AgentExecutor.submit: tools[${i}] must be a Tool instance or a builtin tool name`);
     }
-    if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submit: tools[${i}] was already consumed by a prior submit`);
-    }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
         throw new Error(`AgentExecutor.submit: tools[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploader({
-        bytes: bundle.bytes,
-        hash: bundle.contentHash,
-        contentType: "application/zip"
-      });
-      refs.push({ ...bundle.ref, assetId: uploaded.assetId });
+      const assetId = await resolveAssetId(entry, bundle, uploader);
+      refs.push({ ...bundle.ref, assetId });
       continue;
     }
     refs.push(ref);
@@ -1410,23 +1611,16 @@ async function prepareAgentsMd(
     if (!(entry instanceof AgentsMd)) {
       throw new Error(`AgentExecutor.submit: agentsMd[${i}] must be an AgentsMd instance`);
     }
-    if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submit: agentsMd[${i}] was already consumed by a prior submit`);
-    }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
         throw new Error(`AgentExecutor.submit: agentsMd[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploader({
-        bytes: bundle.bytes,
-        hash: bundle.contentHash,
-        contentType: "application/zip"
-      });
+      const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
         kind: "asset",
-        assetId: uploaded.assetId,
+        assetId,
         name: bundle.name
       });
       continue;
@@ -1447,23 +1641,16 @@ async function prepareFiles(
     if (!(entry instanceof File)) {
       throw new Error(`AgentExecutor.submit: files[${i}] must be a File instance`);
     }
-    if (entry.isConsumed) {
-      throw new Error(`AgentExecutor.submit: files[${i}] was already consumed by a prior submit`);
-    }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
         throw new Error(`AgentExecutor.submit: files[${i}] is draft but has no bytes`);
       }
-      const uploaded = await uploader({
-        bytes: bundle.bytes,
-        hash: bundle.contentHash,
-        contentType: "application/zip"
-      });
+      const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
         kind: "asset",
-        assetId: uploaded.assetId,
+        assetId,
         name: bundle.name,
         mountPath: bundle.mountPath
       });

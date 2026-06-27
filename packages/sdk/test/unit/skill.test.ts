@@ -223,8 +223,8 @@ describe("Skill.upload — pre-upload a draft to the workspace asset store", () 
     expect(uploaded).toBeInstanceOf(Skill);
     expect(uploaded.isDraft).toBe(false);
     expect(uploaded.toJSON()).toEqual({ kind: "asset", assetId: `asset_${draftHex}`, name: "rules" });
-    // The original draft is consumed by the upload.
-    expect(skill.isConsumed).toBe(true);
+    // The original draft is reusable (no consume) and stays a draft.
+    expect(skill.isDraft).toBe(true);
   });
 
   it("rejects uploading an already-materialized (catalog) Skill", async () => {
@@ -234,10 +234,12 @@ describe("Skill.upload — pre-upload a draft to the workspace asset store", () 
     expect(client._uploadAsset).not.toHaveBeenCalled();
   });
 
-  it("rejects re-uploading a consumed draft", async () => {
+  it("allows re-uploading a draft (reusable, content-hash deduped)", async () => {
     const skill = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
     const client = { _uploadAsset: vi.fn(async (a: { hash: string }) => ({ assetId: `asset_${a.hash.slice(7)}` })) };
-    await skill.upload(client);
-    await expect(skill.upload(client)).rejects.toThrow(/cannot reuse a consumed Skill/);
+    const first = await skill.upload(client);
+    const second = await skill.upload(client);
+    expect(first.toJSON()).toEqual(second.toJSON());
+    expect(client._uploadAsset).toHaveBeenCalledTimes(2);
   });
 })

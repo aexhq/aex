@@ -24,7 +24,8 @@ export interface ToolManifestInput {
 export class Tool {
   readonly #ref: ToolRef | DraftToolRef;
   readonly #inlineBytes: Uint8Array | undefined;
-  #consumed = false;
+  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  #assetId: string | undefined;
 
   private constructor(ref: ToolRef | DraftToolRef, inlineBytes?: Uint8Array) {
     this.#ref = ref;
@@ -36,11 +37,17 @@ export class Tool {
   }
 
   get isDraft(): boolean {
-    return this.#ref.kind === "draft" && !this.#consumed;
+    return this.#ref.kind === "draft";
   }
 
-  get isConsumed(): boolean {
-    return this.#consumed;
+  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  get _cachedAssetId(): string | undefined {
+    return this.#assetId;
+  }
+
+  /** Internal: remember the asset id resolved for this draft's bytes. */
+  _rememberAsset(assetId: string): void {
+    this.#assetId = assetId;
   }
 
   static async fromFiles(args: ToolManifestInput & { readonly files: SkillFiles }): Promise<Tool> {
@@ -87,15 +94,9 @@ export class Tool {
   }
 
   _takeDraftBundle(): { ref: ToolRef; contentHash: string; bytes: Uint8Array } | undefined {
-    if (this.#consumed) {
-      throw new Error(
-        "Tool: cannot reuse a consumed Tool in submit. Build a fresh Tool via Tool.fromPath(...) / Tool.fromFiles(...) per submit call."
-      );
-    }
     if (this.#ref.kind !== "draft" || !this.#inlineBytes) {
       return undefined;
     }
-    this.#consumed = true;
     const { kind: _kind, contentHash, ...ref } = this.#ref;
     return {
       ref: { kind: "asset", ...ref },

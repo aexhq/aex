@@ -16,6 +16,8 @@ export type {
   OutputFilePathSelector,
   OutputFileSelector,
   OutputLinkSelector,
+  RunCollectOptions,
+  RunResult,
   StreamEventsOptions,
   SubmitOptions,
   SubmitRunOptions,
@@ -199,7 +201,10 @@ export type {
   RuntimeValidationCode
 } from "@aexhq/contracts";
 
-// Normalized coordinator event guards
+// Event guards. The lifecycle/channel guards (isRunStarted/isRunError/isCustom/
+// isLog/…) operate on the coordinator `AexEvent` envelope; isTextMessage /
+// isToolCallStart / isToolCallResult / isRunFinished narrow the loose `RunEvent`
+// snapshot shape `listEvents` / `RunResult.events` return, typing `.data`.
 export {
   AEX_RUN_SETTLED_NAME,
   isCustom,
@@ -215,6 +220,12 @@ export {
   isToolCallResult,
   isToolCallStart
 } from "@aexhq/contracts";
+export type {
+  RunFinishedRunEvent,
+  TextMessageRunEvent,
+  ToolCallResultRunEvent,
+  ToolCallStartRunEvent
+} from "@aexhq/contracts";
 
 // Typed `listEvents` decoders — correlate TOOL_CALL_START/RESULT into tool-call
 // traces, tolerate historical/internal `aex.usage` records when present, and
@@ -223,7 +234,8 @@ export {
   decodeAssistantText,
   decodeToolCalls,
   summarizeRunTrace,
-  summarizeRunUsage
+  summarizeRunUsage,
+  textOf
 } from "@aexhq/contracts";
 export type {
   AssistantTextEntry,

@@ -3,7 +3,8 @@ import {
   decodeAssistantText,
   decodeToolCalls,
   summarizeRunTrace,
-  summarizeRunUsage
+  summarizeRunUsage,
+  textOf
 } from "../src/run-trace.js";
 
 // The exact loose `RunEvent` wire shapes `listEvents` returns (see
@@ -155,5 +156,21 @@ describe("decodeAssistantText / summarizeRunTrace", () => {
     expect(trace.toolCalls[0]!.durationMs).toBe(500);
     expect(trace.usage.totalTokens).toBe(15);
     expect(trace.text.map((t) => t.text)).toEqual(["done"]);
+  });
+});
+
+describe("textOf", () => {
+  it("concatenates the assistant text blocks in stream order", () => {
+    expect(
+      textOf([
+        text("hello ", 1, "2026-01-01T00:00:00.000Z"),
+        result(TOOL_ID_A, "ok", false, 2, "2026-01-01T00:00:00.500Z"),
+        text("world", 3, "2026-01-01T00:00:01.000Z")
+      ])
+    ).toBe("hello world");
+  });
+
+  it("is empty when no assistant text events are present", () => {
+    expect(textOf([usage({ input_tokens: 1 }, 1)])).toBe("");
   });
 });

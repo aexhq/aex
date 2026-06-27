@@ -109,6 +109,9 @@ describe("Tool.upload", () => {
       description: "Looks up calendar availability.",
       entry: "index.js"
     });
-    expect(tool.isConsumed).toBe(true);
+    // The draft is reusable (no consume): the original stays a draft and can be
+    // uploaded again (uploads are content-hash deduped).
+    expect(tool.isDraft).toBe(true);
+    await expect(tool.upload(client)).resolves.toBeInstanceOf(Tool);
   });
 });

@@ -21,17 +21,28 @@ bun add @aexhq/sdk
 ## First Run
 
 ```ts
-import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
+import { AgentExecutor, Models } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({
-  apiToken: process.env.AEX_API_TOKEN!
+const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+
+// run() submits, waits for the run to settle, and returns the result —
+// no manual poll loop. `provider` is derived from the model.
+const { text, ok } = await aex.run({
+  model: Models.CLAUDE_HAIKU_4_5,
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  prompt: "Summarize this repo."
 });
 
+console.log(ok, text);
+```
+
+Need the run id, live events, or downloads? Use `submit` + `stream` + `wait`:
+
+```ts
 const runId = await aex.submit({
-  provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Write the report and save outputs.",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  prompt: "Write the report and save outputs."
 });
 
 for await (const event of aex.stream(runId)) {
@@ -42,6 +53,17 @@ const run = await aex.wait(runId);
 console.log(run.status);
 
 await aex.download(runId, { to: "./run.zip" });
+```
+
+For multiple providers (e.g. subagents on a different model family), pass a
+`credentials` map instead of `apiKey`:
+
+```ts
+await aex.run({
+  model: Models.CLAUDE_HAIKU_4_5,
+  credentials: { anthropic: process.env.ANTHROPIC_API_KEY!, openai: process.env.OPENAI_API_KEY! },
+  prompt: "Delegate research to a subagent."
+});
 ```
 
 The same request can run from the CLI:

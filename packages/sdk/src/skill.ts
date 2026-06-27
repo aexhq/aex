@@ -31,7 +31,8 @@ import { readDirectoryAsFiles } from "./node-fs.js";
 export class Skill {
   readonly #ref: AssetRef | DraftSkillRef;
   readonly #inlineBytes: Uint8Array | undefined;
-  #consumed = false;
+  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  #assetId: string | undefined;
 
   /**
    * Internal constructor. Use `Skill.fromFiles` or `Skill.fromPath` to create
@@ -54,11 +55,17 @@ export class Skill {
 
   /** True for local-bytes Skills that haven't been uploaded yet. */
   get isDraft(): boolean {
-    return this.#ref.kind === "draft" && !this.#consumed;
+    return this.#ref.kind === "draft";
   }
 
-  get isConsumed(): boolean {
-    return this.#consumed;
+  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  get _cachedAssetId(): string | undefined {
+    return this.#assetId;
+  }
+
+  /** Internal: remember the asset id resolved for this draft's bytes. */
+  _rememberAsset(assetId: string): void {
+    this.#assetId = assetId;
   }
 
   /**
@@ -166,25 +173,17 @@ export class Skill {
   }
 
   /**
-   * Internal: yield the draft's bytes + metadata so `client.submit`
-   * can upload the asset. After this returns, the Skill is marked consumed
-   * so a second submit call against the same instance throws
-   * (avoid silently re-uploading; explicit re-construction is the
-   * supported retry pattern).
+   * Internal: yield the draft's bytes + metadata so `client.submit` can upload
+   * the asset. Idempotent (non-consuming): a Skill is reusable across submits —
+   * the first submit caches the resolved asset id (see `_rememberAsset`) so
+   * later submits reuse it instead of re-uploading.
    *
    * Returns undefined for already-materialized Skills.
    */
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
-    if (this.#consumed) {
-      throw new Error(
-        "Skill: cannot reuse a consumed Skill in submit. Build a fresh Skill via " +
-          "Skill.fromPath(...) / Skill.fromFiles(...) per submit call."
-      );
-    }
     if (this.#ref.kind !== "draft" || !this.#inlineBytes) {
       return undefined;
     }
-    this.#consumed = true;
     return {
       name: this.#ref.name,
       contentHash: this.#ref.contentHash,

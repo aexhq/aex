@@ -109,6 +109,7 @@ describe("typescript consumer", () => {
         isTextMessage,
         redactSecrets,
         selectRuntime,
+        textOf,
         validateProxyAuth,
         type AgentsMdRef,
         type BuiltinToolName,
@@ -128,8 +129,10 @@ describe("typescript consumer", () => {
         type ProxyResponseMode,
         type Run,
         type RunEvent,
+        type RunResult,
         type RunProvider,
         type Region,
+        type TextMessageRunEvent,
         type RuntimeResources,
         type RuntimeSize,
         type RuntimeKind,
@@ -238,6 +241,19 @@ describe("typescript consumer", () => {
         idempotencyKey: "type-surface-managed"
       } satisfies SubmitRunOptions;
 
+      // New DX surface: top-level apiKey sugar + multi-provider credentials map
+      // (secrets is now optional).
+      const apiKeyOptions = {
+        model: RunModels.CLAUDE_HAIKU_4_5,
+        prompt: "hello",
+        apiKey: "sk-ant-top-level"
+      } satisfies SubmitRunOptions;
+      const credentialsOptions = {
+        model: RunModels.CLAUDE_HAIKU_4_5,
+        prompt: "hello",
+        credentials: { anthropic: "sk-ant", openai: "sk-oai" }
+      } satisfies SubmitRunOptions;
+
       const wireRequest = {
         workspaceId: "ws_type_surface",
         idempotencyKey: "wire-type-surface",
@@ -310,6 +326,25 @@ describe("typescript consumer", () => {
       const eventArchiveLinkPromise: Promise<OutputLink> = client.eventArchiveLink("run_type_surface", { expiresIn: "1h" });
       const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
 
+      // run() now returns a settle-consistent RunResult; runAndCollect is its alias.
+      const runResultPromise: Promise<RunResult> = client.run(apiKeyOptions);
+      const collectPromise: Promise<RunResult> = client.runAndCollect(credentialsOptions, {
+        throwOnFailure: false,
+        timeoutMs: 1_000
+      });
+      const finalTextPromise: Promise<string> = (async () => {
+        const events = await client.events("run_type_surface");
+        let acc = "";
+        for (const ev of events) {
+          if (isTextMessage(ev)) {
+            // Inside the guard, ev.data.text is narrowed to a string.
+            const narrowed: TextMessageRunEvent = ev;
+            acc += narrowed.data.text;
+          }
+        }
+        return textOf(events) + acc;
+      })();
+
       const errors = [
         AexError,
         AexApiError,
@@ -356,6 +391,11 @@ describe("typescript consumer", () => {
       void fetchOutputPromise;
       void eventArchiveLinkPromise;
       void downloadPromise;
+      void runResultPromise;
+      void collectPromise;
+      void finalTextPromise;
+      void apiKeyOptions;
+      void credentialsOptions;
       void errors;
       void redacted;
       void exportedFns;

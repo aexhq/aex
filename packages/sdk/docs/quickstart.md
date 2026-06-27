@@ -10,26 +10,35 @@ title: Quickstart
 bun add @aexhq/sdk
 ```
 
-## 2. Submit a run
+## 2. Run a prompt
 
 ```ts
-import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
+import { AgentExecutor, Models } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({
-  apiToken: process.env.AEX_API_TOKEN!
-});
+const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
-const runId = await aex.submit({
-  provider: Providers.ANTHROPIC,
+// run() submits, waits for the run to settle, and returns the result.
+// `provider` is derived from the model; `apiKey` is your BYOK provider key.
+const { text, ok } = await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Write a short report and save it as a file.",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  prompt: "Write a short report and save it as a file."
 });
+
+console.log(ok, text);
 ```
 
-## 3. Stream, wait, and download
+## 3. Submit, stream, wait, and download
+
+When you need the run id, live events, or downloads, drive the lifecycle yourself:
 
 ```ts
+const runId = await aex.submit({
+  model: Models.CLAUDE_HAIKU_4_5,
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  prompt: "Write a short report and save it as a file."
+});
+
 for await (const event of aex.stream(runId)) {
   console.log(event.type);
 }

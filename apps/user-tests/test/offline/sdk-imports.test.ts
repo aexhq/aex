@@ -45,7 +45,8 @@ describe("sdk imports", () => {
         "RUN_RECORD_SCHEMA_VERSION",
         "RUN_RECORD_MANIFEST_SCHEMA_VERSION",
         "validateProxyAuth",
-        "buildPlatformAllowedHosts"
+        "buildPlatformAllowedHosts",
+        "textOf"
       ];
       const result = {};
       for (const name of names) {
@@ -74,6 +75,7 @@ describe("sdk imports", () => {
     expect(result["RUN_RECORD_MANIFEST_SCHEMA_VERSION"]).toBe("string");
     expect(result["validateProxyAuth"]).toBe("function");
     expect(result["buildPlatformAllowedHosts"]).toBe("function");
+    expect(result["textOf"]).toBe("function");
     expect(result["AexClient_present"]).toBe(false);
     expect(result["AexPlatformClient_present"]).toBe(false);
     expect(result["Template_present"]).toBe(false);

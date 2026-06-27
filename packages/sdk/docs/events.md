@@ -69,9 +69,11 @@ Two facts make this easy to work with:
   consistently, don't key off the terminal event — use one of:
 
 ```ts
-// Blocking: resolves only once the RECORD is terminal (polls getRun, not the event).
-const run = await aex.run(runConfig);      // submit + wait
-const same = await aex.waitForRun(runId);  // or wait on an already-submitted run
+// Blocking: submit + wait + collect. Resolves once the RECORD is terminal
+// (polls getRun, not the event) and returns a settle-consistent RunResult
+// (status, ok, text, events, trace, outputs, costUsd).
+const result = await aex.run(runConfig);
+const sameRun = await aex.waitForRun(runId); // or wait on an already-submitted run for the bare Run record
 ```
 
 ```ts
@@ -112,7 +114,7 @@ terminal event is `RUN_ERROR` with `data.reason: "failed"` and
 
 ## Typed helpers
 
-The package exports conservative type guards that narrow normalized aex event envelopes:
+The package exports conservative type guards over run events:
 
 ```ts
 import {
@@ -126,8 +128,17 @@ import {
   isToolCallResult,
   isCustom,
   isLog,
-  isEventChannel
+  isEventChannel,
+  textOf
 } from "@aexhq/sdk";
 ```
 
-They narrow only the discriminant. Payload field shapes stay `unknown` until callers parse them, and provider-specific payloads remain behind the normalized envelope.
+All guards test the `type` discriminant at runtime. `isTextMessage`,
+`isToolCallStart`, `isToolCallResult`, and `isRunFinished` operate on the loose
+`RunEvent` snapshot (`listEvents` / `RunResult.events`) and additionally NARROW
+`event.data` to the fields that event type carries — e.g. inside
+`if (isTextMessage(e))`, `e.data.text` is typed `string`. The lifecycle/channel
+guards (`isRunStarted`, `isRunError`, `isCustom`, `isLog`, …) operate on the
+coordinator envelope and narrow only the discriminant. `textOf(events)` returns
+the run's final assistant text concatenated from the `TEXT_MESSAGE_CONTENT`
+blocks.

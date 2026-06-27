@@ -28,7 +28,8 @@ import { zipSync } from "fflate";
 export class File {
   readonly #ref: FileRef | DraftFileRef;
   readonly #bytes: Uint8Array | undefined;
-  #consumed = false;
+  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  #assetId: string | undefined;
 
   constructor(ref: FileRef | DraftFileRef, bytes?: Uint8Array) {
     this.#ref = ref;
@@ -40,11 +41,17 @@ export class File {
   }
 
   get isDraft(): boolean {
-    return this.#ref.kind === "draft" && !this.#consumed;
+    return this.#ref.kind === "draft";
   }
 
-  get isConsumed(): boolean {
-    return this.#consumed;
+  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  get _cachedAssetId(): string | undefined {
+    return this.#assetId;
+  }
+
+  /** Internal: remember the asset id resolved for this draft's bytes. */
+  _rememberAsset(assetId: string): void {
+    this.#assetId = assetId;
   }
 
   /**
@@ -136,16 +143,9 @@ export class File {
     bytes: Uint8Array;
     mountPath: string;
   } | undefined {
-    if (this.#consumed) {
-      throw new Error(
-        "File: cannot reuse a consumed File in submit. Build a fresh File via " +
-          "File.fromPath(...) / File.fromBytes(...) per submit call."
-      );
-    }
     if (this.#ref.kind !== "draft" || !this.#bytes) {
       return undefined;
     }
-    this.#consumed = true;
     return {
       name: this.#ref.name,
       contentHash: this.#ref.contentHash,

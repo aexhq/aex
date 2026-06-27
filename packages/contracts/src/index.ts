@@ -29,3 +29,20 @@ export * from "./run-artifacts.js";
 export * as operations from "./operations.js";
 export * from "./proxy-validation.js";
 export * from "./sse.js";
+// Explicit re-export (shadows the same-named `AexEvent` guards from
+// `event-envelope.js`): the public `is*` guards narrow the loose `RunEvent`
+// snapshot shape `listEvents` returns. An `AexEvent` is assignable to `RunEvent`,
+// so envelope consumers keep working; the envelope-typed guards stay reachable
+// via the direct `event-envelope.js` module.
+export {
+  isRunFinished,
+  isTextMessage,
+  isToolCallResult,
+  isToolCallStart
+} from "./event-guards.js";
+export type {
+  RunFinishedRunEvent,
+  TextMessageRunEvent,
+  ToolCallResultRunEvent,
+  ToolCallStartRunEvent
+} from "./event-guards.js";

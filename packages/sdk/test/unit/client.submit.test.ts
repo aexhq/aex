@@ -158,7 +158,61 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         prompt: "p",
         secrets: { apiKeys: { anthropic: "" } }
       })
-    ).rejects.toThrow(/AgentExecutor\.submit: secrets\.apiKey is required/);
+    ).rejects.toThrow(/AgentExecutor\.submit: a provider API key is required/);
+  });
+
+  it("accepts the top-level apiKey sugar and folds it into secrets.apiKeys[provider]", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      apiKey: "sk-ant-sugar",
+      idempotencyKey: "idem-apikey-sugar"
+    });
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.secrets).toEqual({ apiKeys: { anthropic: "sk-ant-sugar" } });
+  });
+
+  it("folds the credentials map (multi-provider) into secrets.apiKeys", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      provider: "anthropic",
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      credentials: { anthropic: "sk-ant", openai: "sk-oai" },
+      idempotencyKey: "idem-credentials"
+    });
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.secrets).toEqual({ apiKeys: { anthropic: "sk-ant", openai: "sk-oai" } });
+  });
+
+  it("keeps a pure legacy secrets.apiKey submission on the wire unchanged", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      secrets: { apiKey: "sk-ant-legacy" },
+      idempotencyKey: "idem-legacy"
+    });
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body.secrets).toEqual({ apiKey: "sk-ant-legacy" });
+  });
+
+  it("throws when sources disagree on the selected provider's key", async () => {
+    const { fetch, calls } = makeStubFetch();
+    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    await expect(
+      client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "p",
+        apiKey: "sk-one",
+        secrets: { apiKey: "sk-two" }
+      })
+    ).rejects.toThrow(/conflicting API keys for provider "anthropic"/);
+    expect(calls).toHaveLength(0);
   });
 
   it("forwards an explicit region as a top-level submit field", async () => {
@@ -257,7 +311,32 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         entry: "index.js"
       }
     ]);
-    expect(tool.isConsumed).toBe(true);
+
+    // The draft is reusable across submits: a second submit reuses the cached
+    // asset id (no re-upload) and produces the identical wire ref.
+    calls.length = 0;
+    await client.submit({
+      model: "claude-haiku-4-5",
+      prompt: "p2",
+      tools: [tool],
+      secrets: { apiKeys: { anthropic: "k" } }
+    });
+    expect(calls.some((c) => c.url.endsWith("/assets/presign"))).toBe(false);
+    const second = calls.find((c) => c.url === "https://x/api/runs")!.body as Record<string, unknown>;
+    expect((second.submission as Record<string, unknown>).tools).toEqual([
+      {
+        kind: "asset",
+        assetId: expect.stringMatching(/^asset_[0-9a-f]{64}$/),
+        name: "calendar_lookup",
+        description: "Looks up calendar availability.",
+        input_schema: {
+          type: "object",
+          properties: { start: { type: "string" } },
+          required: ["start"]
+        },
+        entry: "index.js"
+      }
+    ]);
   });
 
   it("threads includeBuiltinTools and places builtin tool refs (strings) before custom tools on the wire", async () => {
