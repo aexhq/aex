@@ -39,6 +39,12 @@
     "@aexhq/contracts": "workspace:*",
     "fflate": "^0.8.2"
   },
+  "optionalDependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/client-sfn": "^3.0.0"
+  },
   "devDependencies": {
     "esbuild": "^0.28.0"
   }

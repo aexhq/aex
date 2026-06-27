@@ -7,7 +7,7 @@
  * token file are fixed constants in `internal.ts`. The mechanical
  * enforcement test in Phase 9 greps the built artifact to confirm.
  */
-import { readFile, writeFile, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { runCli } from "./run.js";
 import type { CliIO, OutputsSyncFileEntry } from "./internal.js";
@@ -39,6 +39,9 @@ async function walkDirectory(root: string): Promise<readonly OutputsSyncFileEntr
 const io: CliIO = {
   readFile: (path) => readFile(path, "utf8"),
   writeFile: (path, data) => writeFile(path, data),
+  mkdirp: async (path) => {
+    await mkdir(path, { recursive: true });
+  },
   fetchImpl: fetch,
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk),

@@ -15,6 +15,7 @@ export { runCancelCmd } from "./cancel.js";
 export { runDeleteCmd } from "./delete.js";
 export { runDeleteAssetCmd } from "./delete-asset.js";
 export { runWhoamiCmd } from "./whoami.js";
+export { runDebugCmd } from "./debug.js";
 export {
   type CliExitCode,
   SUCCESS,

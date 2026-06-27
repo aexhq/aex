@@ -20,7 +20,11 @@
  *     - `aex delete <run-id>`
  *     - `aex whoami`
  *
- * Every host subcommand requires `--api-token`. `--aex-url` is
+ *   Operator (AWS creds, not `--api-token`):
+ *     - `aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch]`
+ *
+ * Every host subcommand (except the operator `debug` verb) requires
+ * `--api-token`. `--aex-url` is
  * optional and defaults to `https://api.aex.dev`. There is no
  * `--workspace` flag — the workspace is derived server-side from the
  * API token.
@@ -45,7 +49,8 @@ import {
   runStatusCmd,
   runDeliveriesCmd,
   runWaitCmd,
-  runWhoamiCmd
+  runWhoamiCmd,
+  runDebugCmd
 } from "./host/index.js";
 
 export type { CliExitCode } from "./host/common.js";
@@ -113,6 +118,11 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runDeleteAssetCmd(io, rest);
     case "whoami":
       return runWhoamiCmd(io, rest);
+    case "debug":
+      // Operator/admin command: reads the AWS plane directly (S3 + DDB + SFN +
+      // CloudWatch) via the standard AWS SDK credential chain. NOT an
+      // --api-token verb — distinct from the public host commands above.
+      return runDebugCmd(io, rest);
     default:
       io.stderr(`unknown subcommand: ${sub}\n`);
       io.stderr("run `aex --help` for usage\n");
@@ -160,6 +170,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex delete <run-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
   io.stdout("  aex whoami --api-token T\n");
+  io.stdout("  aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]   (operator; AWS creds)\n");
   io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
   io.stdout("  --api-token <token>         REQUIRED — aex SDK API token (workspace is derived from it)\n");
