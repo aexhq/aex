@@ -36,10 +36,22 @@ for await (const event of aex.streamEnvelopes(runId, { from: 0 })) {
 The CLI mirrors the same surface:
 
 ```bash
-aex events <run-id> --api-token … [--aex-url …]                      # snapshot
-aex events <run-id> --follow [--timeout 8m] --api-token … [--aex-url …]  # stream until terminal
-aex wait   <run-id> [--timeout 8m] [--interval 2s] --api-token …          # block, print final run
+aex events  <run-id> --api-token … [--aex-url …]                      # snapshot (polling)
+aex events  <run-id> --follow [--timeout 8m] --api-token … [--aex-url …]  # stream until terminal (polling)
+aex tail    <run-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token …  # live, human-readable, over the WS envelope stream
+aex inspect <run-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token …             # one-shot full timeline + jump-to-failure + cost/usage
+aex wait    <run-id> [--timeout 8m] [--interval 2s] --api-token …          # block, print final run
 ```
+
+`aex tail` and `aex inspect` consume the same coordinator WebSocket envelope
+stream as `streamEnvelopes()` (replay-from-cursor + tail + exactly-once resume),
+so they are the low-latency equivalents of `events --follow`'s polling. `--json`
+is the raw-NDJSON escape hatch; `--filter` keeps only the named AG-UI types
+(`TEXT_MESSAGE_CONTENT`, `TOOL_CALL_START`, …) or sources (`agent`/`runtime`/…);
+a `RUN_ERROR` is surfaced as a jump-to-failure line. `aex inspect` adds a header,
+a settle-consistent full timeline, and a cost/usage footer. Both exit `0`
+succeeded / `1` other terminal / `3` timeout. They need a global `WebSocket`
+(Bun or Node ≥ 22).
 
 `aex wait` is the host mirror of `aex.wait(runId)` / `aex.waitForRun(runId)`:
 it polls until the run reaches a terminal status and prints the final `Run`

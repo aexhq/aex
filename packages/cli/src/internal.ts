@@ -11,7 +11,8 @@ import type {
   ProxyIndexFile,
   ProxyIndexEntry,
   ProxyMethod,
-  ProxyResponseMode
+  ProxyResponseMode,
+  WebSocketLike
 } from "@aexhq/contracts";
 
 /**
@@ -66,6 +67,19 @@ export interface CliIO {
    * fall back to requiring `--api-token`.
    */
   readonly configStore?: CliConfigStore;
+  /**
+   * Open a live coordinator WebSocket. Wired ONLY by `cli.ts` from the global
+   * `WebSocket` (Bun / Node ≥ 22). Optional: omitted when no global `WebSocket`
+   * exists (older Node) or in fakes — `aex tail`/`aex inspect` then emit an
+   * actionable error. Tests inject a fake socket.
+   */
+  readonly webSocketFactory?: (url: string) => WebSocketLike;
+  /**
+   * Register a process-signal handler. Wired ONLY by `cli.ts`
+   * (`process.on(sig, handler)`); the long-lived stream verbs use it for
+   * graceful Ctrl-C. Optional: fakes/other verbs omit it.
+   */
+  readonly onSignal?: (signal: "SIGINT", handler: () => void) => void;
 }
 
 /**

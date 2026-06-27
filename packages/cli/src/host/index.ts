@@ -18,6 +18,8 @@ export { runWhoamiCmd } from "./whoami.js";
 export { runDebugCmd } from "./debug.js";
 export { runLoginCmd, runLogoutCmd, runAuthStatusCmd } from "./auth-cmd.js";
 export { runModelsCmd, runProvidersCmd, runToolsCmd, runRuntimeSizesCmd } from "./discover-cmd.js";
+export { runTailCmd } from "./tail.js";
+export { runInspectCmd } from "./inspect.js";
 export {
   type CliExitCode,
   SUCCESS,

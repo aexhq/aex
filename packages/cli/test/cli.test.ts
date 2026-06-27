@@ -91,6 +91,8 @@ describe("aex --help", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("aex run");
     expect(cap.stdout).toContain("aex whoami");
+    expect(cap.stdout).toContain("aex tail");
+    expect(cap.stdout).toContain("aex inspect");
     expect(cap.stdout).toContain("Usage:");
   });
 

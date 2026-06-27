@@ -9,15 +9,18 @@
  *
  * This IS the single host-only file allowed to touch the OS/home/env:
  * the persistent config store (`aex login`) resolves its path from
- * `XDG_CONFIG_HOME` / `APPDATA` / `os.homedir()` here — so the command
- * layer (`run.ts` / `host/*`) stays pure and the `no-env-vars` bundle
- * grep (which only forbids `process.env.AEX_*`) stays green.
+ * `XDG_CONFIG_HOME` / `APPDATA` / `os.homedir()` here, and the live WS
+ * factory + SIGINT handler (for `aex tail`/`aex inspect`) are wired here
+ * too — so the command layer (`run.ts` / `host/*`) stays pure and the
+ * `no-env-vars` bundle grep (which only forbids `process.env.AEX_*`)
+ * stays green.
  */
 import { readFile, writeFile, readdir, stat, mkdir, chmod, rm } from "node:fs/promises";
 import { resolve as resolvePath, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { runCli } from "./run.js";
 import type { CliIO, CliConfigStore, StoredCliConfig, OutputsSyncFileEntry } from "./internal.js";
+import type { WebSocketLike } from "@aexhq/contracts";
 
 async function walkDirectory(root: string): Promise<readonly OutputsSyncFileEntry[] | null> {
   try {
@@ -104,6 +107,14 @@ const configStore: CliConfigStore = {
   }
 };
 
+// The live coordinator stream needs a global `WebSocket` (Bun / Node ≥ 22).
+// When absent, omit the factory so `aex tail`/`inspect` emit an actionable
+// error instead of a ReferenceError.
+const webSocketFactory: CliIO["webSocketFactory"] =
+  typeof WebSocket === "undefined"
+    ? undefined
+    : (url: string) => new WebSocket(url) as unknown as WebSocketLike;
+
 const io: CliIO = {
   readFile: (path) => readFile(path, "utf8"),
   writeFile: (path, data) => writeFile(path, data),
@@ -117,7 +128,11 @@ const io: CliIO = {
   argv: process.argv,
   cwd: () => process.cwd(),
   walkDirectory,
-  configStore
+  configStore,
+  ...(webSocketFactory ? { webSocketFactory } : {}),
+  onSignal: (signal, handler) => {
+    process.on(signal, handler);
+  }
 };
 
 await runCli(io);

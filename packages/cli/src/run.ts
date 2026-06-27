@@ -14,6 +14,8 @@
  *     - `aex deliveries <run-id>`
  *     - `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
  *     - `aex events <run-id> [--follow] [--timeout <dur>]`
+ *     - `aex tail <run-id> [--json] [--filter ...] [--logs] [--settle] [--timeout <dur>]`
+ *     - `aex inspect <run-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
  *     - `aex outputs <run-id>`
  *     - `aex download <run-id> [--only outputs|events|metadata] [--out path]`
  *     - `aex cancel <run-id>`
@@ -59,7 +61,9 @@ import {
   runModelsCmd,
   runProvidersCmd,
   runToolsCmd,
-  runRuntimeSizesCmd
+  runRuntimeSizesCmd,
+  runTailCmd,
+  runInspectCmd
 } from "./host/index.js";
 
 export type { CliExitCode } from "./host/common.js";
@@ -104,6 +108,12 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runWaitCmd(io, rest);
     case "events":
       return runEventsCmd(io, rest);
+    case "tail":
+      // Live human-readable follow over the coordinator WS envelope stream.
+      return runTailCmd(io, rest);
+    case "inspect":
+      // One-shot full-timeline render + summary/jump-to-failure (WS stream).
+      return runInspectCmd(io, rest);
     case "outputs":
       // `outputs sync <dirs>` is the legacy in-container internal
       // capture walker. The bare `outputs <run-id>` form is the
@@ -190,6 +200,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex deliveries <run-id> --api-token T\n");
   io.stdout("  aex wait <run-id> [--timeout 8m] [--interval 2s] --api-token T\n");
   io.stdout("  aex events <run-id> [--follow] [--timeout 8m] --api-token T\n");
+  io.stdout("  aex tail <run-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token T\n");
+  io.stdout("  aex inspect <run-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token T\n");
   io.stdout("  aex outputs <run-id> --api-token T\n");
   io.stdout("  aex download <run-id> [--only outputs|events|metadata] [--out path] --api-token T\n");
   io.stdout("  aex cancel <run-id> --api-token T\n");
