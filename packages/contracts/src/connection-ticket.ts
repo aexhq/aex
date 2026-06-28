@@ -10,7 +10,7 @@
  *
  * This lives in shared so the coordinator (which verifies) and the API
  * hosted API's ticket broker (which mints, on behalf of a workspace token) use
- * ONE implementation. Pure Web Crypto — identical under Bun, Node, and workerd.
+ * ONE implementation. Pure Web Crypto — identical under Bun and Node.
  */
 
 const DEFAULT_TICKET_TTL_MS = 60_000;

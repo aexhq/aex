@@ -4,8 +4,8 @@ import { Transform, type TransformCallback } from "node:stream";
  * Value-AGNOSTIC secret patterns: each matches a SHAPE, not a known value.
  * Correctness must not depend on seeding the redactor with the literal
  * secret — the two real leaks this project hit were a database password that
- * survived a naive `sed` mask (as a substring) and an Anthropic key emitted by
- * `wrangler workflows describe` that the harness NEVER loaded. A value-seeded
+ * survived a naive `sed` mask (as a substring) and an Anthropic key surfaced in
+ * a deploy CLI's describe output that the harness NEVER loaded. A value-seeded
  * redactor is blind to both; these patterns catch them by form.
  *
  * Ordering matters: structured shapes (connection strings, auth headers, JWT)
@@ -58,7 +58,7 @@ const MIN_CHAR_CLASSES = 2;
  * A mixed-case run with no digit and < this length is treated as a benign
  * identifier, not a secret. Real opaque secrets are alnum-mixed (carry a
  * digit) or very long; digit-free camelCase identifiers like
- * `asyncRunEntryPointWithESMLoader` / `createDurableObjectNamespace` (which
+ * `asyncRunEntryPointWithESMLoader` / `getReadableStreamController` (which
  * appear in stack traces the diagnostic bundle captures) are 24–39 chars and
  * digit-free — eating them would gut debuggability. The length escape hatch
  * still catches the rare long digit-free secret.

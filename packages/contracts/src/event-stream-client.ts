@@ -66,7 +66,7 @@ export interface CoordinatorStreamOptions {
   readonly idleTimeoutMs?: number;
   /**
    * Client keep-alive ping cadence. The client sends {@link COORDINATOR_PING},
-   * which the coordinator auto-responds to WITHOUT waking the durable object, so
+   * which the coordinator auto-responds to WITHOUT waking the stateful coordinator, so
    * a legitimately quiet run keeps the socket measurably alive and does not trip
    * the watchdog. Default 15s. Set 0 to disable (then only real events reset the
    * watchdog → quiet runs may reconnect).

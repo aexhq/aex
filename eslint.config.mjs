@@ -28,7 +28,6 @@ export default tseslint.config(
       "**/dist/**",
       "**/build/**",
       "**/.next/**",
-      "**/.wrangler/**",
       "**/coverage/**",
       "**/.cache/**",
       // CI checks out the private platform repo here only for contract parity.

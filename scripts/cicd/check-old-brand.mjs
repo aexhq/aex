@@ -18,7 +18,6 @@ const ignoredDirs = new Set([
   ".generated",
   "_platform",
   ".source",
-  ".wrangler",
   "out",
   "playwright-report",
   "test-results",

@@ -12,7 +12,7 @@
  * the HMAC key is the raw bytes after the `whsec_` prefix. Verification accepts
  * the secret with or without the prefix.
  *
- * Pure Web Crypto — identical under Bun, Node, and workerd; this mirrors the
+ * Pure Web Crypto — identical under Bun and Node; this mirrors the
  * `standardwebhooks` library so a customer can verify with either.
  */
 
