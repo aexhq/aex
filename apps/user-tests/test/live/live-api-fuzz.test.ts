@@ -123,7 +123,7 @@ describe.skipIf(SKIP !== null)("LIVE API adversarial fuzz", () => {
     await fc.assert(
       fc.asyncProperty(
         fc.constantFrom("dev", "prd", "xyz"),
-        fc.constantFrom("euw2", "usw2", "apn2", "zzz9"),
+        fc.constantFrom("euw2", "usw2", "apn1", "zzz9"),
         ws,
         fc.boolean(),
         async (plane, code, wsId, fixCrc) => {

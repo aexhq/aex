@@ -231,7 +231,7 @@ export const Providers = {
  *
  *   eu-west       → London        (Western Europe)
  *   us-west       → N. California (Western North America)
- *   ap-northeast  → Seoul         (Northeast Asia)
+ *   ap-northeast  → Tokyo         (Northeast Asia)
  *
  * Prefer the {@link Regions} accessors over raw strings so a typo is a compile
  * error, not a runtime 400.
@@ -245,7 +245,7 @@ export const Regions = {
   EU_WEST: "eu-west",
   /** Western North America — N. California. */
   US_WEST: "us-west",
-  /** Northeast Asia — Seoul. */
+  /** Northeast Asia — Tokyo. */
   AP_NORTHEAST: "ap-northeast"
 } as const satisfies Readonly<Record<string, Region>>;
 
