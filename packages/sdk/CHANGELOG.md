@@ -4,6 +4,38 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.30.0
+
+### Added
+
+- Per-run spend cap via `limits.maxSpendUsd` (`SubmitOptions.limits`). A positive
+  USD amount that bounds total spend for a single run: once the run would exceed
+  the cap it is stopped. An absent field means no per-run cap (the run is still
+  bounded by its `timeout` and any workspace-level cap). As with the other
+  `limits` fields, `submit()` validates shape/positivity client-side and the
+  server resolves the value against the workspace and platform ceilings.
+- Read-only chat over a fixed corpus of runs, built only on the public read
+  surface:
+  - `AgentExecutor.searchOutputs(query?)` — search across the token's own run
+    outputs, returning lean references (pair with `readOutputText` to fetch the
+    matching content).
+  - `createCorpusTools(client, corpus, options?)` — packages the corpus read
+    surface (`list_runs` / `list_outputs` / `read_output` / search) as a
+    vendor-neutral LLM tool set scoped to an explicit run allow-list or a
+    `listRuns` filter; every tool refuses a run outside the resolved corpus.
+  - `aex chat` — a read-only, multi-run chat CLI over a corpus that uses your own
+    provider key plus the corpus read tools. See `examples/data-chat/`.
+- CLI host commands for auth and live run inspection:
+  - `aex login` / `aex logout` / `aex auth status` — persist your API token and
+    default `--aex-url` to a `0600` config file so commands stop re-passing
+    `--api-token`. `login` validates the token against `whoami` before writing (a
+    bad token is never persisted) and the token value is never printed.
+  - `aex tail <run-id>` — live, human-readable follow over the coordinator
+    envelope stream (the low-latency equivalent of `events --follow`), with
+    `--json` / `--filter` / `--logs` and a jump-to-failure line on `RUN_ERROR`.
+  - `aex inspect <run-id>` — one-shot full-timeline render with a header, a
+    settle-consistent timeline, a jump-to-failure line, and a cost/usage footer.
+
 ## 0.29.0
 
 ### Changed (breaking)
@@ -29,8 +61,8 @@ follows semantic versioning.
   A stalled WebSocket (no close/error, no frames) previously blocked the async
   iterator forever and could MISS a `RUN_FINISHED`/`RUN_ERROR` that was already
   persisted server-side. The consumer now:
-  - sends a lightweight keep-alive ping the coordinator auto-responds to (no
-    durable-object wake), and
+  - sends a lightweight keep-alive ping the coordinator auto-responds to
+    (without forcing an extra server-side wake), and
   - runs an idle watchdog (default 45s) that, on no inbound frame, treats the
     socket as dead and reconnects — resuming from the last cursor, which replays
     the terminal exactly-once.

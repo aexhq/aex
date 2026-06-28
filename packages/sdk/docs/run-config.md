@@ -21,7 +21,7 @@ Allowed fields:
 - `proxyEndpoints` - array of `PlatformProxyEndpoint`; endpoint-level `retry` is allowed here and remains declaration-based.
 - `metadata` - non-secret structured metadata.
 
-`agentsMd`, `files`, `outputs`, `tools`, `includeBuiltinTools`, `limits`, and `outputMode` are top-level `submit` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission. The `limits` option sets per-run subagent-lineage caps (`maxConcurrentChildRuns`, `maxSubagentDepth`); see [Limits & quotas](limits-and-quotas.md).
+`agentsMd`, `files`, `outputs`, `tools`, `includeBuiltinTools`, `limits`, and `outputMode` are top-level `submit` options, not run-config fields. They carry bytes, capture behavior, or agent tool/output controls that belong on a concrete run submission. The `limits` option sets per-run caps: the subagent-lineage caps (`maxConcurrentChildRuns`, `maxSubagentDepth`) and a USD spend cap (`maxSpendUsd`, which stops the run once its spend would exceed the cap); see [Limits & quotas](limits-and-quotas.md).
 
 Secrets never live in run config. Pass credentials through `submit({ ...config, secrets })` in the SDK or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Secrets](secrets.md) for secret lifecycles and [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
 

@@ -7,7 +7,7 @@
     "start": "bun chat.mjs"
   },
   "dependencies": {
-    "@aexhq/sdk": "^0.27.0",
+    "@aexhq/sdk": "^0.30.0",
     "@anthropic-ai/sdk": "^0.69.0"
   }
 }
