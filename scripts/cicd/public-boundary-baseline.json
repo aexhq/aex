@@ -51,6 +51,7 @@
     "allowedModuleFiles": [
       "./connection-ticket.js",
       "./event-envelope.js",
+      "./event-guards.js",
       "./event-stream-client.js",
       "./http.js",
       "./index.js",
