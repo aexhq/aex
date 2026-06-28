@@ -4,8 +4,8 @@ import { afterAll, describe, expect, it } from "vitest";
 /**
  * LIVE adversarial-input fuzz of the deployed dev API (the public HTTP contract
  * a customer's @aexhq/sdk hits). RAW fetch — no SDK, no mocks — so we can send
- * malformed bytes the SDK would never emit. Plane-agnostic: the same robustness
- * invariants hold for the Cloudflare dev plane and the AWS Phase-1 plane.
+ * malformed bytes the SDK would never emit. Substrate-agnostic: the same
+ * robustness invariants hold for any deployment plane behind the public contract.
  *
  * SELF-SKIPS (with a logged reason) unless AEX_API_URL + AEX_API_TOKEN are set
  * — matching the repo's live-test posture. Non-gating: run on demand via
