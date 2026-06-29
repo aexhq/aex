@@ -46,7 +46,7 @@ describe("provider/runtime capability matrix generation", () => {
       "| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](secrets.md); [Events](events.md) |"
     );
     expect(rendered).toContain(
-      "| `anthropic` | yes | [managed](#anthropic) |"
+      "| `anthropic` | submission parser + managed execution | [Installed-SDK Anthropic live user test](../../../apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts) |"
     );
     expect(rendered).toContain(
       "| `openai` | submission parser + managed execution |"

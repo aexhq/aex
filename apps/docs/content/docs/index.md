@@ -20,8 +20,6 @@ Submit typed runs, stream durable events, capture outputs, and compose agents wi
 
 ## First run
 
-Set `AEX_API_TOKEN` and `ANTHROPIC_API_KEY` before running either example.
-
 ### TypeScript
 
 ```ts

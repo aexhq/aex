@@ -611,11 +611,12 @@ describe("aex download", () => {
 
 describe("aex run", () => {
   it("submits a run config loaded from --config and prints the run record", async () => {
+    const assetId = `asset_${"a".repeat(64)}`;
     const runConfig = {
       model: "claude-haiku-4-5",
       system: "be helpful",
       prompt: ["hi"],
-      skills: [{ kind: "asset", assetId: "asset_pdf", name: "pdf" }],
+      skills: [{ kind: "asset", assetId, name: "pdf" }],
       mcpServers: [
         {
           name: "github",
@@ -666,7 +667,7 @@ describe("aex run", () => {
     expect(submission.model).toBe("claude-haiku-4-5");
     expect(submission.prompt).toEqual(["hi"]);
     expect(submission.skills).toEqual([
-      { kind: "asset", assetId: "asset_pdf", name: "pdf" }
+      { kind: "asset", assetId, name: "pdf" }
     ]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
@@ -682,6 +683,29 @@ describe("aex run", () => {
     ]);
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
     expect(printed).toMatchObject({ id: "run-new", status: "queued" });
+  });
+
+  it("rejects an invalid skill asset id in --config before posting", async () => {
+    const runConfig = {
+      model: "claude-haiku-4-5",
+      prompt: ["hi"],
+      skills: [{ kind: "asset", assetId: "asset_pdf", name: "pdf" }]
+    };
+    const cap = makeHostIo({
+      argv: [
+        "run",
+        "--config",
+        "/abs/run-invalid-skill.json",
+        "--anthropic-api-key",
+        "sk-ant-1",
+        ...COMMON
+      ],
+      files: { [resolvedFromCwd("/abs/run-invalid-skill.json")]: JSON.stringify(runConfig) }
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.calls).toHaveLength(0);
+    expect(cap.stderr).toContain("assetId must match");
   });
 
   it("submits a run request built from --model/--prompt/--mcp/--mcp-auth flags", async () => {

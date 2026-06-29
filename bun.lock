@@ -55,7 +55,7 @@
     },
     "packages/cli": {
       "name": "@aexhq/cli",
-      "version": "0.30.0",
+      "version": "0.31.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },
@@ -85,14 +85,14 @@
     },
     "packages/contracts": {
       "name": "@aexhq/contracts",
-      "version": "0.30.0",
+      "version": "0.31.0",
       "dependencies": {
         "fflate": "0.8.2",
       },
     },
     "packages/sdk": {
       "name": "@aexhq/sdk",
-      "version": "0.30.0",
+      "version": "0.31.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },

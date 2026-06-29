@@ -4,6 +4,23 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.31.0
+
+### Changed (breaking)
+
+- Removed the retired public runtime, region, upload, and credential-mode choices
+  from SDK and CLI submission paths. The public surface now targets the single
+  hosted managed runtime, asset-backed skills, and `secrets.apiKeys`.
+- Updated provider/runtime capability docs and validation to the current
+  submission-parser plus managed-execution model.
+
+### Fixed
+
+- Hardened CLI config validation coverage so invalid skill asset ids are
+  rejected before any run submission request is sent.
+- Added installed-package blackbox coverage for the major SDK submit input
+  shapes, builder edge cases, secret redaction, and no-network validation paths.
+
 ## 0.30.0
 
 ### Added

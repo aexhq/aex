@@ -52,7 +52,11 @@ describe("AgentExecutor.submit — typed RunConfigValidationError (DX4a)", () =>
     const client = makeClient(fetch);
     let caught: unknown;
     try {
-      await client.submit({ model: "claude-haiku-4-5", prompt: "" });
+      await client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "",
+        secrets: { apiKeys: { anthropic: "sk-x" } }
+      });
     } catch (err) {
       caught = err;
     }
@@ -66,7 +70,11 @@ describe("AgentExecutor.submit — typed RunConfigValidationError (DX4a)", () =>
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
-      client.submit({ model: "claude-haiku-4-5", prompt: "" })
+      client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "",
+        secrets: { apiKeys: { anthropic: "sk-x" } }
+      })
     ).rejects.toMatchObject({
       code: "RUN_CONFIG_INVALID",
       message: "AgentExecutor.submit: prompt must be a non-empty string"
