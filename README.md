@@ -17,18 +17,26 @@
 bun add @aexhq/sdk
 ```
 
+The package includes the TypeScript SDK and the bundled `aex` CLI used below.
+Set both credentials before running the examples: `AEX_API_TOKEN` authenticates
+to aex, and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
+
+```bash
+export AEX_API_TOKEN="<your-aex-token>"
+export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
+```
+
 ## First Run
 
 ```ts
-import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
+import { AgentExecutor, Models } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const runId = await aex.submit({
-  provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save outputs.",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 
 for await (const event of aex.stream(runId)) console.log(event.type);
@@ -37,7 +45,7 @@ await aex.wait(runId);
 await aex.download(runId, { to: "./run.zip" });
 ```
 
-Same shape from the CLI:
+Same shape from the bundled CLI:
 
 ```bash
 aex run \

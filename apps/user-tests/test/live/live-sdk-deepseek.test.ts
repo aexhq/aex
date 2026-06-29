@@ -3,7 +3,7 @@
  *
  * Drives the **published `@aexhq/sdk` SDK** against the live
  * api.aex.dev hosted API with a real DeepSeek round-trip on the
- * managed runtime runtime: SDK → /runs → control-plane workflow → managed
+ * managed runtime: SDK → /runs → control-plane workflow → managed
  * runtime → real managed-runtime process → BYOK provider-proxy → api.deepseek.com →
  * stream-json events → terminal. No smoke shortcut.
  *
@@ -67,7 +67,7 @@ interface LiveResult {
   readonly leakedDeepseekKey: boolean;
 }
 
-describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed runtime runtime", () => {
+describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed runtime", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -107,7 +107,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-deepseek-" + Date.now(),
-          secrets: { apiKey: deepseekKey  }
+          secrets: { apiKeys: { deepseek: deepseekKey } }
         });
 
         // Real managed-runtime runs take longer than smoke mode — managed runtime

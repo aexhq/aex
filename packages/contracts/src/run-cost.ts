@@ -1,4 +1,4 @@
-import type { CredentialMode, RunProvider, RuntimeKind } from "./submission.js";
+import type { RunProvider } from "./submission.js";
 
 export const RUN_COST_TELEMETRY_SCHEMA_VERSION = 1;
 export const RUN_USAGE_SAMPLE_SCHEMA_VERSION = 1;
@@ -118,9 +118,7 @@ export interface RunUsageSample {
   readonly quantity: number;
   readonly source: RunUsageSampleSource;
   readonly provider?: RunProvider | string;
-  readonly runtime?: RuntimeKind | string;
   readonly model?: string;
-  readonly credentialMode?: CredentialMode;
   readonly recordedAt?: string;
 }
 
@@ -211,7 +209,6 @@ export interface RunCostTelemetry {
   readonly schemaVersion: typeof RUN_COST_TELEMETRY_SCHEMA_VERSION;
   readonly runId?: string;
   readonly provider?: RunProvider | string;
-  readonly runtime?: RuntimeKind | string;
   readonly recordedAt?: string;
   readonly status?: RunCostSummaryStatus;
   readonly sourceSummary?: RunCostSourceSummary;
@@ -241,7 +238,6 @@ export type RunCostTelemetryInput = Omit<RunCostTelemetry, "schemaVersion">;
 export interface RunCostTelemetryFromUsageSamplesInput {
   readonly runId?: string;
   readonly provider?: RunProvider | string;
-  readonly runtime?: RuntimeKind | string;
   readonly recordedAt?: string;
   readonly status?: RunCostSummaryStatus;
   readonly samples: readonly RunUsageSampleInput[];
@@ -286,9 +282,7 @@ export function buildRunUsageSample(input: RunUsageSampleInput): RunUsageSample 
     quantity: nonNegativeFinite(input.quantity, "quantity"),
     source: normalizeUsageSampleSource(input.source),
     ...(input.provider ? { provider: input.provider } : {}),
-    ...(input.runtime ? { runtime: input.runtime } : {}),
     ...(input.model ? { model: input.model } : {}),
-    ...(input.credentialMode ? { credentialMode: input.credentialMode } : {}),
     ...(input.recordedAt ? { recordedAt: input.recordedAt } : {})
   });
 }
@@ -298,7 +292,6 @@ export function buildRunCostTelemetry(input: RunCostTelemetryInput): RunCostTele
     schemaVersion: RUN_COST_TELEMETRY_SCHEMA_VERSION,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.provider ? { provider: input.provider } : {}),
-    ...(input.runtime ? { runtime: input.runtime } : {}),
     ...(input.recordedAt ? { recordedAt: input.recordedAt } : {}),
     ...(input.status ? { status: normalizeSummaryStatus(input.status) } : {}),
     ...(input.sourceSummary ? { sourceSummary: normalizeSourceSummary(input.sourceSummary) } : {}),
@@ -323,7 +316,6 @@ export function buildRunCostTelemetryFromUsageSamples(
   };
   if (input.runId) telemetry.runId = input.runId;
   if (input.provider) telemetry.provider = input.provider;
-  if (input.runtime) telemetry.runtime = input.runtime;
   if (input.recordedAt) telemetry.recordedAt = input.recordedAt;
   if (input.status) telemetry.status = input.status;
 
@@ -464,7 +456,6 @@ export function mergeRunCostTelemetry(
   const merged: MutableRunCostTelemetryInput = {};
   const runId = patch.runId ?? base.runId;
   const provider = patch.provider ?? base.provider;
-  const runtime = patch.runtime ?? base.runtime;
   const recordedAt = patch.recordedAt ?? base.recordedAt;
   const status = patch.status ?? base.status;
   const sourceSummary = mergeSourceSummary(base.sourceSummary, patch.sourceSummary);
@@ -482,7 +473,6 @@ export function mergeRunCostTelemetry(
   const costBasis = patch.costBasis ?? base.costBasis;
   if (runId) merged.runId = runId;
   if (provider) merged.provider = provider;
-  if (runtime) merged.runtime = runtime;
   if (recordedAt) merged.recordedAt = recordedAt;
   if (status) merged.status = status;
   if (sourceSummary) merged.sourceSummary = sourceSummary;

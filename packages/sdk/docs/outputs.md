@@ -14,7 +14,7 @@ import { RunModels } from "@aexhq/sdk";
 const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "Produce a report and save it as a file.",
-  secrets: { apiKey }
+  secrets: { apiKeys: { anthropic: apiKey } }
 });
 
 await aex.wait(runId);

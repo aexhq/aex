@@ -1,4 +1,4 @@
-import type { CredentialMode, RunProvider, RuntimeKind } from "./submission.js";
+import type { RunProvider } from "./submission.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
@@ -44,7 +44,7 @@ export type SideEffectAuditActorPrincipalType =
 
 export const SIDE_EFFECT_AUDIT_SOURCE_PLANES = [
   "dashboard",
-  "worker",
+  "api",
   "runtime",
   "system"
 ] as const;
@@ -186,8 +186,6 @@ export interface SideEffectAuditStatusMetadataV1 {
 
 export interface SideEffectAuditDimensionsMetadataV1 {
   readonly provider?: RunProvider | string;
-  readonly runtime?: RuntimeKind | string;
-  readonly credentialMode?: CredentialMode;
   readonly namespace?: "metadata" | "events" | "logs" | "outputs" | "archive";
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly surface?: string;
@@ -498,13 +496,11 @@ function normalizeDimensions(
 ): SideEffectAuditDimensionsMetadataV1 {
   assertSupportedNestedKeys(
     input,
-    ["provider", "runtime", "credentialMode", "namespace", "method", "surface"],
+    ["provider", "namespace", "method", "surface"],
     "metadata.dimensions"
   );
   return Object.freeze({
     ...(input.provider ? { provider: assertSafeMetadataString(input.provider, "metadata.dimensions.provider") } : {}),
-    ...(input.runtime ? { runtime: assertSafeMetadataString(input.runtime, "metadata.dimensions.runtime") } : {}),
-    ...(input.credentialMode ? { credentialMode: input.credentialMode } : {}),
     ...(input.namespace ? { namespace: input.namespace } : {}),
     ...(input.method ? { method: input.method } : {}),
     ...(input.surface ? { surface: assertSafeMetadataString(input.surface, "metadata.dimensions.surface") } : {})

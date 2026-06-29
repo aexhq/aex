@@ -47,7 +47,7 @@ await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Edit the analysis notebook.",
   tools: [BuiltinTools.notebook_edit],
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 
@@ -69,6 +69,6 @@ await aex.submit({
   prompt: "Use only the declared MCP tools.",
   mcpServers,
   includeBuiltinTools: false,
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```

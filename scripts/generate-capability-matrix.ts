@@ -3,26 +3,19 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  checkRuntimeSupported,
-  DEFAULT_RUN_PROVIDER,
   RUN_PROVIDERS,
-  RUNTIME_KINDS,
-  selectRuntime,
-  type PlatformRunSubmissionRequest,
-  type RunProvider,
-  type RuntimeKind
+  type RunProvider
 } from "../packages/contracts/src/submission.js";
 import { RUN_MODELS_BY_PROVIDER } from "../packages/contracts/src/models.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
-  RUNTIME_VALIDATION_SUPPORT,
   type ProviderPublicSupport,
   type SupportPointer
 } from "../packages/contracts/src/provider-support.js";
 
 export const CAPABILITY_MATRIX_PATH = "packages/sdk/docs/provider-runtime-capabilities.md";
 
-export interface RuntimeCapabilityCell {
+export interface ManagedCapabilityCell {
   readonly enforcement: string;
   readonly docsAnchor: string;
   readonly evidence: readonly SupportPointer[];
@@ -34,40 +27,14 @@ export interface CapabilityMatrixRow {
   readonly docsAnchor: string;
   readonly docs: readonly SupportPointer[];
   readonly evidence: readonly SupportPointer[];
-  readonly defaultProvider: boolean;
-  readonly autoRoute: RuntimeKind;
-  readonly managedRuntime: RuntimeCapabilityCell;
+  readonly managedExecution: ManagedCapabilityCell;
 }
 
-function runtimeCell(provider: RunProvider, runtime: RuntimeKind, support: ProviderPublicSupport): RuntimeCapabilityCell {
-  if (!checkRuntimeSupported(provider, runtime).ok) {
-    throw new Error(`runtime ${runtime} is not supported for provider ${provider}`);
-  }
-
+function managedCell(support: ProviderPublicSupport): ManagedCapabilityCell {
   return {
-    enforcement: "submission parser + managed dispatch",
+    enforcement: "submission parser + managed execution",
     docsAnchor: support.docsAnchor,
-    evidence: support.runtimeEvidence[runtime] ?? support.evidence
-  };
-}
-
-function buildDispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
-  return {
-    workspaceId: "capability-matrix",
-    idempotencyKey: `capability-matrix-${provider}`,
-    credentialMode: "byok",
-    provider,
-    submission: {
-      model: RUN_MODELS_BY_PROVIDER[provider][0]!,
-      prompt: ["capability matrix runtime probe"],
-      skills: [],
-      agentsMd: [],
-      files: [],
-      mcpServers: []
-    },
-    secrets: {
-      apiKey: `sk-${provider}-capability-matrix`
-    }
+    evidence: support.managedEvidence
   };
 }
 
@@ -84,9 +51,7 @@ export function buildCapabilityMatrixRows(): CapabilityMatrixRow[] {
       docsAnchor: publicSupport.docsAnchor,
       docs: publicSupport.docs,
       evidence: publicSupport.evidence,
-      defaultProvider: provider === DEFAULT_RUN_PROVIDER,
-      autoRoute: selectRuntime(buildDispatcherProbe(provider)),
-      managedRuntime: runtimeCell(provider, "managed", publicSupport)
+      managedExecution: managedCell(publicSupport)
     };
   });
 }
@@ -99,10 +64,6 @@ function renderProviderLink(row: CapabilityMatrixRow): string {
   return `[${row.displayName}](#${row.docsAnchor})`;
 }
 
-function renderRuntimeCell(cell: RuntimeCapabilityCell): string {
-  return `[managed](#${cell.docsAnchor})`;
-}
-
 function renderSupportedModels(provider: RunProvider): string {
   return RUN_MODELS_BY_PROVIDER[provider].map((model) => `\`${model}\``).join(", ");
 }
@@ -113,7 +74,6 @@ export function renderProviderRuntimeCapabilityMarkdown(
   const providerList = rows
     .map((row) => `${renderProviderLink(row)} (\`${row.provider}\`)`)
     .join(", ");
-  const runtimeList = RUNTIME_KINDS.map((runtime) => `\`${runtime}\``).join(", ");
   const lines = [
     "---",
     "title: Provider runtime capabilities",
@@ -121,11 +81,11 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "# Provider runtime capabilities",
     "",
-    "Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`; runtime routing is derived through `checkRuntimeSupported` and `selectRuntime` in `packages/contracts/src/submission.ts`.",
+    "Generated from `packages/contracts/src/provider-support.ts` and `packages/contracts/src/models.ts`.",
     "",
     "Regenerate with `bun run capabilities:generate`; check with `bun run capabilities:check`.",
     "",
-    `Providers: ${providerList}. Runtime selectors: ${runtimeList}.`,
+    `Providers: ${providerList}.`,
     "",
     "All new submissions run on the managed runtime. Public support is expressed as supported providers and supported model ids.",
     "",
@@ -149,75 +109,33 @@ export function renderProviderRuntimeCapabilityMarkdown(
 
   lines.push(
     "",
-    "## Runtime routing",
+    "## Managed evidence",
     "",
-    "| Provider | Default provider | Auto route | Runtime selector |",
-    "| --- | --- | --- | --- |"
+    "| Provider | Enforcement path | Evidence |",
+    "| --- | --- | --- |"
   );
 
   for (const row of rows) {
+    const cell = row.managedExecution;
     lines.push(
       [
         `| \`${row.provider}\``,
-        row.defaultProvider ? "yes" : "no",
-        `\`${row.autoRoute}\``,
-        `${renderRuntimeCell(row.managedRuntime)} |`
+        cell.enforcement,
+        `${renderPointerLinks(cell.evidence)} |`
       ].join(" | ")
     );
   }
 
   lines.push(
     "",
-    "## Runtime evidence",
+    "## Skills",
     "",
-    "| Provider | Runtime | Enforcement path | Evidence |",
-    "| --- | --- | --- | --- |"
-  );
-
-  for (const row of rows) {
-    for (const runtime of RUNTIME_KINDS) {
-      const cell = row.managedRuntime;
-      lines.push(
-        [
-          `| \`${row.provider}\``,
-          `\`${runtime}\``,
-          cell.enforcement,
-          `${renderPointerLinks(cell.evidence)} |`
-        ].join(" | ")
-      );
-    }
-  }
-
-  lines.push(
-    "",
-    "## Validation errors",
-    "",
-    "| Code | Docs anchor | Enforcement path | Evidence |",
-    "| --- | --- | --- | --- |"
-  );
-
-  for (const [code, support] of Object.entries(RUNTIME_VALIDATION_SUPPORT)) {
-    lines.push(
-      [
-        `| \`${code}\``,
-        `[${support.docsAnchor}](#${support.docsAnchor})`,
-        support.enforcement,
-        `${renderPointerLinks(support.evidence)} |`
-      ].join(" | ")
-    );
-  }
-
-  lines.push(
-    "",
-    "### Managed unsupported features",
-    "",
-    "Provider-hosted skill refs (a `kind:\"provider\"` skill ref) are rejected because new runs dispatch to the managed runtime. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into durable run asset storage.",
+    "Only asset-backed skills are accepted on submissions. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into durable run asset storage.",
     "",
     "Notes:",
     "",
     "- Supported models are the public SDK model ids accepted for each provider.",
-    "- Runtime routing describes how a validated submission is dispatched.",
-    "- `runtime: \"native\"` is not a runtime selector; the submission parser rejects it as an invalid enum value.",
+    "- Execution uses the managed path; there is no public runtime selector.",
     "",
     "## Provider anchors",
     ""
@@ -229,7 +147,6 @@ export function renderProviderRuntimeCapabilityMarkdown(
       "",
       `- Wire provider: \`${row.provider}\``,
       `- Supported models: ${renderSupportedModels(row.provider)}`,
-      `- Auto route: \`${row.autoRoute}\``,
       `- Docs: ${renderPointerLinks(row.docs)}`,
       `- Evidence: ${renderPointerLinks(row.evidence)}`,
       ""

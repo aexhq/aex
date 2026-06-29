@@ -132,8 +132,6 @@ describe("SDK wire-conformance (property)", () => {
         model: fc.oneof(validModel, fc.string({ maxLength: 12 }), fc.constant(undefined), fc.integer()),
         prompt: fc.oneof(prompt, fc.constant(""), fc.constant([]), fc.constant(undefined)),
         provider: fc.oneof(fc.constant(undefined), fc.constantFrom("anthropic", "deepseek", "bogus")),
-        runtime: fc.oneof(fc.constant(undefined), fc.constantFrom("managed", "bogus")),
-        region: fc.oneof(fc.constant(undefined), fc.constantFrom("eu-west", "us-east", "bogus")),
         runtimeSize: fc.oneof(fc.constant(undefined), fc.string({ maxLength: 12 })),
         timeout: fc.oneof(timeout, fc.string({ maxLength: 8 })),
         limits: fc.oneof(fc.constant(undefined), limits, fc.record({ bogusField: fc.integer() })),

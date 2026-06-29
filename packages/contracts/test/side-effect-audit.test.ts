@@ -16,7 +16,7 @@ import {
 
 const actor = {
   principal: { type: "api_token", ref: "api-token-11111111" },
-  sourcePlane: "worker",
+  sourcePlane: "api",
   authenticatedBy: "api_token"
 } as const;
 
@@ -57,9 +57,7 @@ describe("side-effect audit contract", () => {
           finishedAt: "2026-06-02T12:00:00.000Z"
         },
         dimensions: {
-          runtime: "managed",
           provider: "anthropic",
-          credentialMode: "byok",
           method: "GET",
           surface: "named_proxy_endpoint"
         }
@@ -70,7 +68,7 @@ describe("side-effect audit contract", () => {
     expect(event.kind).toBe(SIDE_EFFECT_AUDIT_KIND);
     expect(event.actor).toMatchObject({
       principal: { type: "api_token", ref: "api-token-11111111" },
-      sourcePlane: "worker"
+      sourcePlane: "api"
     });
     expect(event.target).toMatchObject({
       type: "proxy_endpoint",
@@ -310,7 +308,7 @@ describe("side-effect audit contract", () => {
         actor,
         metadata: {
           status: { status: "deleted" },
-          dimensions: { surface: "worker_delete_route" }
+          dimensions: { surface: "api_delete_route" }
         }
       })
     ).toThrow(/metadata\.dimensions is not supported/);

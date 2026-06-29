@@ -1,6 +1,6 @@
 // Wire format between the in-container runtime bridge (mounted at
 // `/mnt/session/uploads/aex/aex`, invoked through `bun`) and
-// the Worker-owned named proxy route
+// the hosted API's named proxy route
 // (`POST /api/runs/:runId/proxy/:endpointName`).
 //
 // This module is the single source of truth for the request shape, the
@@ -13,7 +13,7 @@
  * header on every request; the BFF rejects mismatches with HTTP 426
  * `unsupported_protocol`.
  *
- * Bumps are coordinated: CLI and BFF release together, the worker
+ * Bumps are coordinated: CLI and BFF release together, the hosted API
  * bundles the matching CLI artifact, and the e2e suite runs both with
  * the new version.
  */
@@ -22,13 +22,13 @@ export const PROXY_PROTOCOL_VERSION = "1" as const;
 /**
  * Streaming named-proxy protocol. A client that sends `"2"` in
  * {@link PROXY_PROTOCOL_HEADER} opts into the streamed response path: the
- * Worker pipes the upstream body back unbuffered (no base64, no
- * `arrayBuffer()` in the ~128MB isolate) and carries the envelope metadata
+ * hosted API pipes the upstream body back unbuffered (no base64, no
+ * full-body JSON envelope) and carries the envelope metadata
  * in the `x-aex-proxy-*` response headers below instead of a JSON envelope.
  *
  * Additive: `"1"` stays valid and keeps the buffered
  * {@link ProxyResponseEnvelope}. Old runners keep working; new runners
- * stream. The version is on the request header so the Worker can serve
+ * stream. The version is on the request header so the hosted API can serve
  * both shapes without a coordinated CLI/BFF release.
  */
 export const PROXY_PROTOCOL_VERSION_V2 = "2" as const;
@@ -36,7 +36,7 @@ export const PROXY_PROTOCOL_VERSION_V2 = "2" as const;
 export const PROXY_PROTOCOL_HEADER = "x-aex-proxy-protocol";
 
 /**
- * Response headers for the streamed (v2) named-proxy path. The Worker sets
+ * Response headers for the streamed (v2) named-proxy path. The hosted API sets
  * these BEFORE it starts streaming the upstream body, so the client can
  * reconstruct the same fields the v1 {@link ProxyResponseEnvelope} carried
  * without buffering. All values are plain strings; numeric fields are
@@ -211,7 +211,7 @@ export interface ProxyIndexEntry {
 export const PROXY_ENDPOINT_DEFAULTS = {
   allowHeaders: [] as readonly string[],
   responseMode: "headers_only" as ProxyResponseMode,
-  // 10 MiB. The body is buffered into the Worker to enforce this cap, while the
+  // 10 MiB. The body is buffered in the hosted API to enforce this cap, while the
   // launch default fits practical multimodal/tool POSTs without every endpoint
   // needing an override.
   maxRequestBytes: 10 * 1024 * 1024,
@@ -245,7 +245,7 @@ export interface ProxyEndpointPolicy {
 export interface BuildProxyIndexFileInput {
   readonly runId: string;
   /**
-   * Worker host that serves `/api/runs/:runId/proxy/:endpointName`.
+   * Hosted API origin that serves `/api/runs/:runId/proxy/:endpointName`.
    * When unset
    * (or empty) the run has no reachable proxy plane and `proxyBaseUrl`
    * resolves to `null`.
@@ -364,7 +364,7 @@ export function authShapeQueryName(shape: ProxyAuthShape): string | undefined {
  *     upstream's IP allowlist / rate-limit (`host`, `content-length`,
  *     `x-forwarded-*`, `x-real-ip`, `forwarded`).
  *
- * The api Worker provider-proxy and the dashboard MCP proxy strip exactly
+ * The platform API provider-proxy and the dashboard MCP proxy strip exactly
  * this set (both inject upstream auth separately — the provider key, or the
  * Vault MCP-bundle headers, applied AFTER the strip). The dashboard
  * customer HTTP proxy hard-denies this set MINUS `x-api-key`, because a

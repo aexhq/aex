@@ -33,9 +33,6 @@ server-side** from the run's vaulted bundle — the keys never transit the
 container. If the parent holds no key for the child's provider, the child submit
 is rejected with `parent_missing_provider_key`.
 
-The flat `secrets.apiKey` is still accepted as a back-compat shorthand for the
-run's own provider key (equivalent to `apiKeys[provider]`).
-
 MCP credential types:
 
 - `static_bearer`;
@@ -105,7 +102,7 @@ const runId = await aex.submit({
   prompt: "…",
   proxyEndpoints,
   secrets: {
-    apiKey: process.env.ANTHROPIC_API_KEY!,
+    apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
     proxyEndpointAuth
   }
 });
@@ -143,7 +140,7 @@ const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "…",
   proxyEndpoints,
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 

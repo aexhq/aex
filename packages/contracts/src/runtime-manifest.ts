@@ -1,31 +1,24 @@
+import type { RunProvider } from "./submission.js";
+
 /**
- * Runtime manifest: the per-run, per-provider description of where
+ * Runtime manifest: the per-run description of where
  * aex places things inside the agent container, plus the merged
  * env-var bag delivered via `RUNTIME.env` / `RUNTIME.json`.
  *
  * The hosted API computes a manifest at submitRun-response time
- * (from the validated submission + the chosen provider) via
- * {@link buildRuntimeManifest} and echoes it on the wire as
+ * from the validated submission via {@link buildRuntimeManifest} and
+ * echoes it on the wire as
  * `Run.runtimeManifest`, so caller code (anyone rendering catalog markdown
  * pre-submission, or resolving aex's in-container path strings) doesn't
  * have to guess.
  * The managed runtime materialises the actual `RUNTIME.env` / `RUNTIME.json`
- * files in-container from the same provider + envVars inputs, so the
+ * files in-container from the same envVars inputs, so the
  * SDK-side view and the in-container view describe the same layout.
  *
  * Manifest values are derived, never persisted separately — the source
  * of truth for the customer half remains `submission.environment.envVars`
- * on the run row; the aex half is constant for a given
- * provider+SDK-version pair.
+ * on the run row; the aex half is constant for a given SDK version.
  */
-
-/**
- * Set of providers whose runtime contract aex models. Today only
- * `"anthropic"` ships; the field is on the manifest so forward-compat
- * consumers can branch on it without us having to silently change
- * what `runtimeManifest` means when we add a second provider.
- */
-export type RuntimeProvider = "anthropic";
 
 /**
  * The in-container paths the agent and skill code reference at
@@ -39,8 +32,8 @@ export type RuntimeProvider = "anthropic";
  * under `/mnt/session/uploads/`.
  */
 export interface RuntimeManifest {
-  readonly provider: RuntimeProvider;
-  /** Where Skills-API-registered bundles auto-discover (Anthropic). */
+  readonly provider: RunProvider | string;
+  /** Where skill bundles auto-discover in the managed runner. */
   readonly skillsRoot: string;
   /** Parent dir of File mounts: `<filesRoot>/<f_id>/<rel-path>`. */
   readonly filesRoot: string;
@@ -83,12 +76,12 @@ export interface MountedFileManifest {
 }
 
 /**
- * Managed-runner container paths. Kept here so the BFF, worker, and
+ * Managed-runner container paths. Kept here so the BFF, hosted API, and
  * in-container bridge render identical values; runtime bootstrap constants are
  * validated against these by a regression test
  * (`packages/contracts/test/runtime-manifest.test.ts`).
  */
-const ANTHROPIC_PATHS = Object.freeze({
+const RUNTIME_PATHS = Object.freeze({
   skillsRoot: "/workspace/skills",
   filesRoot: "/mnt/session/uploads/aex/files",
   assetsRoot: "/mnt/session/uploads/aex/assets",
@@ -99,21 +92,12 @@ const ANTHROPIC_PATHS = Object.freeze({
   runtimeEnv: "/mnt/session/uploads/aex/RUNTIME.env"
 } as const);
 
-/**
- * Container paths exposed for a given provider. Today only
- * `"anthropic"` is recognised; calling with anything else throws so
- * forward-compat surfaces the missing provider entry instead of
- * silently emitting Anthropic paths.
- */
-export function runtimePathsFor(provider: RuntimeProvider): typeof ANTHROPIC_PATHS {
-  if (provider === "anthropic") {
-    return ANTHROPIC_PATHS;
-  }
-  throw new Error(`Unknown runtime provider: ${provider as string}`);
+export function runtimePaths(): typeof RUNTIME_PATHS {
+  return RUNTIME_PATHS;
 }
 
 export interface BuildRuntimeManifestInput {
-  readonly provider: RuntimeProvider;
+  readonly provider: RunProvider | string;
   /**
    * Customer-supplied `environment.envVars` from the validated
    * submission. Keys with the reserved `AEX_` prefix are
@@ -149,10 +133,10 @@ const DEFAULT_FILE_MOUNT_PATH = "/workspace";
 /**
  * Build the runtime manifest for a single submission. Pure function:
  * same input → same output → safe to call from the BFF response path
- * and from the worker bootstrap path with identical results.
+ * and from the hosted bootstrap path with identical results.
  */
 export function buildRuntimeManifest(input: BuildRuntimeManifestInput): RuntimeManifest {
-  const paths = runtimePathsFor(input.provider);
+  const paths = runtimePaths();
   const aexEnvVars: Record<string, string> = {
     AEX_PROVIDER: input.provider,
     AEX_CLI: paths.aexCli,

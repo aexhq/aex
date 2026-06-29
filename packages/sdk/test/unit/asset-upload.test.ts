@@ -3,8 +3,8 @@
  *
  * Covers the three branches:
  *   - presign returns exists:true  → dedup, no PUT, no finalize
- *   - presign → object storage PUT → finalize  → normal upload (bytes bypass the worker)
- *   - presign 503 presign_unconfigured → fall back to the buffered POST /assets
+ *   - presign → object storage PUT → finalize  → normal upload (bytes bypass the hosted API)
+ *   - presign errors fail without a buffered `/assets` retry
  */
 import { describe, expect, it, vi } from "vitest";
 import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/asset-upload.js";
@@ -75,9 +75,8 @@ describe("uploadAsset (direct-to-storage)", () => {
     expect(putHeaders["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
   });
 
-  it("falls back to the buffered POST /assets when presign is 503 presign_unconfigured", async () => {
+  it("does not fall back to buffered POST /assets when presign is unavailable", async () => {
     const hash = await hashOf(bytes);
-    const hex = hash.slice("sha256:".length);
     const calls: string[] = [];
     const http: AssetsHttpClient = {
       request: vi.fn(async (path: string) => {
@@ -85,15 +84,13 @@ describe("uploadAsset (direct-to-storage)", () => {
         if (path === "/assets/presign") {
           throw new AexApiError(503, "object storage S3 creds not configured", { ok: false, code: "presign_unconfigured" });
         }
-        return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, sizeBytes: bytes.byteLength } as unknown;
+        throw new Error(`unexpected request: ${path}`);
       }) as AssetsHttpClient["request"]
     };
     const fetch: AssetFetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => "" }));
-    const out = await uploadAsset({ http, bytes, hash, fetch });
-    expect(out.exists).toBe(false);
-    expect(out.assetId).toBe(`asset_${hex}`);
-    expect(calls).toEqual(["/assets/presign", "/assets"]);
-    expect(fetch).not.toHaveBeenCalled(); // no object storage PUT on the buffered path
+    await expect(uploadAsset({ http, bytes, hash, fetch })).rejects.toThrow(/object storage S3 creds not configured/);
+    expect(calls).toEqual(["/assets/presign"]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("throws when the object storage PUT fails (e.g. object storage rejected the checksum)", async () => {

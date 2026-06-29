@@ -41,15 +41,13 @@ const SHELL_FAMILY = new Set(["shell", "bash"]);
 
 interface Cell {
   readonly id: string;
-  readonly provider: "deepseek";
-  readonly runtime: "managed";
-  readonly model: string;
+  readonly provider: "deepseek";  readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
+  { id: "deepseek-managed",  provider: "deepseek", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
 ];
 
 interface CaseResult {
@@ -114,12 +112,10 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
     });
 
     const runId = await client.submit({
-      provider: ${JSON.stringify(cell.provider)},
-      runtime: ${JSON.stringify(cell.runtime)},
-      model: ${JSON.stringify(cell.model)},
+      provider: ${JSON.stringify(cell.provider)},      model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
       includeBuiltinTools: ${includeBuiltinToolsLiteral},
-      secrets: { apiKey: process.env.${cell.keyEnvName}  },
+      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
     });
 
@@ -236,7 +232,7 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       const dump = (): string => dumpResult(cell, result);
 
       expect(result.runStatus, dump()).toBe("succeeded");
-      expect(result.runtime).toBe(cell.runtime);
+      expect(result.runtime).toBe("managed");
       expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters

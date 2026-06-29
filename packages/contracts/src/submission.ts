@@ -54,7 +54,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 
 /**
  * Networking + runtime-package snapshot carried inside a flat submission
- * so the worker can deep-clone and mutate it per run (e.g. injecting the
+ * so the hosted API can deep-clone and mutate it per run (e.g. injecting the
  * proxy hostname into `allowed_hosts`) without sharing state across
  * concurrent runs.
  *
@@ -116,7 +116,7 @@ const ENV_VAR_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
 export interface PlatformNetworking {
   readonly mode: "limited" | "open";
-  /** Lowercase host names. The worker always appends the proxy host. */
+  /** Lowercase host names. The hosted API always appends the proxy host. */
   readonly allowedHosts?: readonly string[];
 }
 
@@ -223,86 +223,6 @@ export const Providers = {
   DOUBAO_CN: "doubao-cn"
 } as const satisfies Readonly<Record<string, RunProvider>>;
 
-/**
- * Product placement regions accepted on run submission. These are
- * product-level tokens, not exact city guarantees: the hosted platform maps
- * each region to co-located managed Postgres, object storage, run-state
- * placement, and sandbox backing.
- *
- *   eu-west       → London        (Western Europe)
- *   us-west       → N. California (Western North America)
- *   ap-northeast  → Tokyo         (Northeast Asia)
- *
- * Prefer the {@link Regions} accessors over raw strings so a typo is a compile
- * error, not a runtime 400.
- */
-export const REGIONS = ["eu-west", "us-west", "ap-northeast"] as const;
-export type Region = (typeof REGIONS)[number];
-
-/** Symbol-style accessors for the closed region set — e.g. `Regions.EU_WEST`. */
-export const Regions = {
-  /** Western Europe — London. */
-  EU_WEST: "eu-west",
-  /** Western North America — N. California. */
-  US_WEST: "us-west",
-  /** Northeast Asia — Tokyo. */
-  AP_NORTHEAST: "ap-northeast"
-} as const satisfies Readonly<Record<string, Region>>;
-
-/**
- * Customer-facing runtime selector. Optional on the wire; absent resolves
- * to the same managed runtime as `"managed"`. `"native"` is no longer an
- * accepted submission value and fails schema validation.
- */
-export const RUNTIME_KINDS = ["managed"] as const;
-export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
-
-/**
- * Credential source for upstream provider access. Launch accepts only BYOK:
- * callers may omit `credentialMode` or pass `"byok"`. Other strings, including
- * `"managed"`, are invalid submission values rather than reserved product
- * promises.
- */
-export const CREDENTIAL_MODES = ["byok"] as const;
-export type CredentialMode = (typeof CREDENTIAL_MODES)[number];
-export const DEFAULT_CREDENTIAL_MODE: CredentialMode = "byok";
-
-export function parseCredentialMode(input: unknown): CredentialMode {
-  if (input === undefined) {
-    return DEFAULT_CREDENTIAL_MODE;
-  }
-  if (typeof input !== "string" || !(CREDENTIAL_MODES as readonly string[]).includes(input)) {
-    throw new Error(
-      `credentialMode must be one of: ${CREDENTIAL_MODES.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as CredentialMode;
-}
-
-export function credentialModeOrDefault(input: CredentialMode | undefined): CredentialMode {
-  return input ?? DEFAULT_CREDENTIAL_MODE;
-}
-
-/** Outcome of the centralized runtime-support check. */
-export interface RuntimeSupportCheck {
-  readonly ok: boolean;
-  readonly message?: string;
-}
-
-/**
- * Centralized runtime-support validator. Native is removed from the public
- * runtime enum, so an absent runtime and `"managed"` are the only supported
- * inputs. Schema parsing rejects other runtime strings before this helper is
- * reached, but the result type remains for SDK preflight checks.
- */
-export function checkRuntimeSupported(
-  provider: RunProvider,
-  runtime: RuntimeKind | undefined
-): RuntimeSupportCheck {
-  void provider;
-  return { ok: true };
-}
-
 export interface PlatformMcpServerSecret {
   readonly name: string;
   readonly url: string;
@@ -336,13 +256,6 @@ export type PlatformProxyAuthValue =
  * driving the MCP client).
  */
 export interface PlatformInlineSecrets {
-  /**
-   * Deprecated compatibility field: the BYOK key for the run's selected
-   * provider. New multi-provider callers should use `apiKeys`, but the parser
-   * still accepts and preserves this flat field so existing SDK/CLI callers
-   * continue to work.
-   */
-  readonly apiKey?: string;
   readonly apiKeys?: Partial<Record<RunProvider, string>>;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
   readonly proxyEndpointAuth?: readonly PlatformProxyEndpointAuth[];
@@ -465,7 +378,7 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
  * Validate a customer-supplied `environment.envVars` map. Returns a
  * frozen copy with keys in insertion order, or `undefined` when the
  * input is absent / an empty object (treated as not supplied so the
- * worker can omit the field from the parsed snapshot).
+ * hosted API can omit the field from the parsed snapshot).
  *
  * Rules:
  *   - Must be a JSON object whose values are all strings.
@@ -1023,7 +936,7 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   // the parent's vault, so it may omit `secrets` entirely.
   if (input === undefined || input === null) return {};
   const value = requireRecord(input, "secrets");
-  const allowedTopLevel = new Set<string>(["apiKey", "apiKeys", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
+  const allowedTopLevel = new Set<string>(["apiKeys", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
   for (const key of Object.keys(value)) {
     if (key.startsWith("__aex_")) {
       // Platform-internal namespace (e.g. __aex_proxy_token). The BFF
@@ -1040,15 +953,12 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
       );
     }
   }
-  const apiKey =
-    value.apiKey !== undefined ? requireString(value.apiKey, "secrets.apiKey") : undefined;
   const apiKeys = parseApiKeys(value.apiKeys);
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
   const proxyEndpointAuth = parseProxyEndpointAuth(value.proxyEndpointAuth);
   const envSecrets = parseEnvSecrets(value.envSecrets);
 
   return {
-    ...(apiKey !== undefined ? { apiKey } : {}),
     ...(apiKeys ? { apiKeys } : {}),
     ...(mcpServers ? { mcpServers } : {}),
     ...(proxyEndpointAuth ? { proxyEndpointAuth } : {}),
@@ -1398,7 +1308,7 @@ function isJsonValue(input: unknown): input is JsonValue {
 
 /**
  * Wire-level submission posted to /api/runs in the flat surface. The
- * `prompt` is always an array internally so the worker, the audit log,
+ * `prompt` is always an array internally so the hosted API, the audit log,
  * and the BFF idempotency hash all see one shape. `mcpServers` carries
  * only the non-secret half; bearer headers travel in
  * `secrets.mcpServers` keyed by `name`.
@@ -1506,29 +1416,11 @@ export interface PlatformRunSubmissionRequest {
   readonly workspaceId: string;
   readonly idempotencyKey: string;
   /**
-   * Credential source for upstream provider access. Omitted means
-   * `"byok"`; launch does not accept managed provider credentials.
-   */
-  readonly credentialMode: CredentialMode;
-  /**
    * Provider selector. Always populated after parsing — absent on the
    * wire means {@link DEFAULT_RUN_PROVIDER}. All providers are dispatched
    * through the managed runtime.
    */
   readonly provider: RunProvider;
-  /**
-   * Customer's explicit runtime choice. `undefined` and `"managed"` both
-   * resolve to the managed runtime. Other runtime values are rejected by
-   * `parseRunSubmissionRequest`.
-   */
-  readonly runtime?: RuntimeKind;
-  /**
-   * Optional product placement token requested by the caller. Omitted means
-   * the hosted platform infers a configured region from request geography and
-   * falls back to its default region. Accepted tokens do not promise exact
-   * city-level placement.
-   */
-  readonly region?: Region;
   readonly submission: PlatformSubmission;
   readonly secrets: PlatformInlineSecrets;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
@@ -1620,22 +1512,10 @@ export interface RunLimits {
  */
 export type PlatformRunSubmissionInput = Omit<
   PlatformRunSubmissionRequest,
-  "workspaceId" | "credentialMode" | "provider" | "runtime" | "region" | "timeoutMs" | "postHook"
+  "workspaceId" | "provider" | "timeoutMs" | "postHook"
 > & {
   readonly workspaceId?: string;
-  readonly credentialMode?: CredentialMode;
   readonly provider?: RunProvider;
-  /**
-   * Optional runtime selector. Set `"managed"` explicitly or omit the
-   * field; both resolve to the managed runtime. `"native"` is no longer
-   * accepted.
-   */
-  readonly runtime?: RuntimeKind;
-  /**
-   * Optional product placement region. Invalid explicit values are rejected;
-   * omission lets the platform infer/fallback.
-   */
-  readonly region?: Region;
   /**
    * Run deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
    * Parsed + bounded to [1m, 6h] server-side into
@@ -1655,10 +1535,7 @@ export function parseRunSubmissionRequest(
   const allowedTopLevelFields = new Set([
     "workspaceId",
     "idempotencyKey",
-    "credentialMode",
     "provider",
-    "runtime",
-    "region",
     "submission",
     "runtimeSize",
     "timeout",
@@ -1687,15 +1564,7 @@ export function parseRunSubmissionRequest(
     assertNoSecretBearingFields(fieldValue, [key]);
   }
   const provider = parseRunProvider(value.provider);
-  const runtime = parseRuntimeKind(value.runtime);
-  const region = parseRegion(value.region);
-  const credentialMode = parseCredentialMode(value.credentialMode);
   void options;
-  // Cross-field validation via the centralized runtime-support validator.
-  const runtimeSupport = checkRuntimeSupported(provider, runtime);
-  if (!runtimeSupport.ok) {
-    throw new Error(runtimeSupport.message ?? "unsupported runtime");
-  }
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
   // Lineage parent only. `depth` is NEVER accepted from the wire — the server
@@ -1706,7 +1575,7 @@ export function parseRunSubmissionRequest(
   const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
-  enforceCredentialSecretPolicy(credentialMode, secrets, provider, {
+  enforceCredentialSecretPolicy(secrets, provider, {
     inheritsFromParent: parentRunId !== undefined
   });
 
@@ -1740,32 +1609,10 @@ export function parseRunSubmissionRequest(
     }
   }
 
-  const candidate: PlatformRunSubmissionRequest = {
-    workspaceId: "",
-    idempotencyKey: "",
-    credentialMode,
-    provider,
-    ...(runtime ? { runtime } : {}),
-    ...(region ? { region } : {}),
-    submission,
-    secrets
-  };
-  const unsupportedManagedFeatures = collectManagedUnsupportedFeatures(candidate);
-  if (unsupportedManagedFeatures.length > 0) {
-    throw new RuntimeValidationError(
-      "feature_runtime_mismatch",
-      `The managed runtime does not support these submission features: ` +
-        `${unsupportedManagedFeatures.join(", ")}. Remove them or use inline aex skills.`
-    );
-  }
-
   return {
     workspaceId: requireString(value.workspaceId, "workspaceId"),
     idempotencyKey: requireString(value.idempotencyKey, "idempotencyKey"),
-    credentialMode,
     provider,
-    ...(runtime ? { runtime } : {}),
-    ...(region ? { region } : {}),
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -1857,30 +1704,6 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
   };
 }
 
-export function parseRegion(input: unknown): Region | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (typeof input !== "string" || !(REGIONS as readonly string[]).includes(input)) {
-    throw new Error(
-      `region must be one of: ${REGIONS.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as Region;
-}
-
-export function parseRuntimeKind(input: unknown): RuntimeKind | undefined {
-  if (input === undefined) {
-    return undefined;
-  }
-  if (typeof input !== "string" || !(RUNTIME_KINDS as readonly string[]).includes(input)) {
-    throw new Error(
-      `runtime must be one of: ${RUNTIME_KINDS.join(", ")} (got ${JSON.stringify(input)})`
-    );
-  }
-  return input as RuntimeKind;
-}
-
 export function parseRunProvider(input: unknown): RunProvider {
   if (input === undefined) {
     return DEFAULT_RUN_PROVIDER;
@@ -1906,16 +1729,14 @@ export function parseRunProvider(input: unknown): RunProvider {
  * that the parent actually holds a key for the child's provider.
  */
 export function enforceCredentialSecretPolicy(
-  credentialMode: CredentialMode,
   secrets: PlatformInlineSecrets,
   provider: RunProvider,
   opts?: { readonly inheritsFromParent?: boolean }
 ): void {
-  void credentialMode;
   if (opts?.inheritsFromParent) return;
-  if (!(secrets.apiKeys?.[provider] ?? secrets.apiKey)) {
+  if (!secrets.apiKeys?.[provider]) {
     throw new Error(
-      `secrets.apiKey is required when credentialMode is byok (or secrets.apiKeys["${provider}"])`
+      `secrets.apiKeys["${provider}"] is required`
     );
   }
 }
@@ -2165,7 +1986,7 @@ function parseIncludeBuiltinTools(input: unknown): boolean | undefined {
  * plus a generous margin for legitimate multi-root use cases (per-tool
  * output directory + scratch state + logs, repeated across a few
  * subdirectories), without inviting abuse of the synthetic-turn path
- * the worker drives at session terminal.
+ * the platform capture path drives at session terminal.
  */
 const MAX_OUTPUT_DIRS = 32;
 
@@ -2382,24 +2203,13 @@ function parseSkills(input: unknown): readonly SkillRef[] {
   if (!Array.isArray(input)) {
     throw new Error("submission.skills must be an array of SkillRef objects");
   }
-  const seenProvider = new Set<string>();
   const seenAssetId = new Set<string>();
   return input.map((item, index) => {
     const ref = parseSkillRef(item, `submission.skills[${index}]`);
-    if (ref.kind === "provider") {
-      const key = `${ref.vendor}:${ref.skillId}:${ref.version ?? ""}`;
-      if (seenProvider.has(key)) {
-        throw new Error(
-          `submission.skills duplicate provider skill: ${ref.vendor}:${ref.skillId}${ref.version ? `:${ref.version}` : ""}`
-        );
-      }
-      seenProvider.add(key);
-    } else if (ref.kind === "asset") {
-      if (seenAssetId.has(ref.assetId)) {
-        throw new Error(`submission.skills duplicate assetId: ${ref.assetId}`);
-      }
-      seenAssetId.add(ref.assetId);
+    if (seenAssetId.has(ref.assetId)) {
+      throw new Error(`submission.skills duplicate assetId: ${ref.assetId}`);
     }
+    seenAssetId.add(ref.assetId);
     return ref;
   });
 }
@@ -2569,64 +2379,3 @@ function parseMcpServers(input: unknown): readonly McpServerRef[] {
   });
 }
 
-// ===========================================================================
-// Runtime dispatcher
-// ===========================================================================
-
-/**
- * Codes emitted when a submission contains features the active runtime cannot
- * serve. Code values are stable so dashboard / SDK error rendering can branch
- * on them.
- */
-export const RUNTIME_VALIDATION_CODES = [
-  "feature_runtime_mismatch"
-] as const;
-export type RuntimeValidationCode = (typeof RUNTIME_VALIDATION_CODES)[number];
-
-/**
- * Thrown by `parseRunSubmissionRequest` and `selectRuntime` when the submitted
- * run cannot be served by the active managed runtime. The `code` field is part
- * of the public contract; keep it stable when phrasing changes.
- */
-export class RuntimeValidationError extends Error {
-  readonly code: RuntimeValidationCode;
-  constructor(code: RuntimeValidationCode, message: string) {
-    super(message);
-    this.name = "RuntimeValidationError";
-    this.code = code;
-  }
-}
-
-/**
- * Walk the parsed submission and collect features that the active managed
- * runtime cannot serve. Provider-hosted skill refs (`kind:"provider"`) are
- * rejected now that new submissions only dispatch through managed runs.
- */
-export function collectManagedUnsupportedFeatures(req: PlatformRunSubmissionRequest): string[] {
-  const features: string[] = [];
-  for (const skill of req.submission.skills) {
-    if (skill.kind === "provider") {
-      const versionSuffix = skill.version ? `@${skill.version}` : "";
-      features.push(`provider skill "${skill.vendor}/${skill.skillId}${versionSuffix}" (kind:"provider")`);
-    }
-  }
-  return features;
-}
-
-/**
- * Backward-incompatible replacement for the old dual-runtime dispatcher. It is
- * kept as a pure helper so SDK, CLI, and tests can resolve the runtime without
- * I/O.
- */
-export function selectRuntime(req: PlatformRunSubmissionRequest): RuntimeKind {
-  const unsupported = collectManagedUnsupportedFeatures(req);
-  if (unsupported.length > 0) {
-    throw new RuntimeValidationError(
-      "feature_runtime_mismatch",
-      `The managed runtime does not support these submission features: ` +
-        `${unsupported.join(", ")}. Remove them or use inline aex skills.`
-    );
-  }
-  void req;
-  return "managed";
-}

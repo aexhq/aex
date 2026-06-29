@@ -11,18 +11,13 @@
  *
  *   1. POST /assets/presign  → { exists } | { uploadUrl, requiredHeaders }
  *      - `exists:true` is a dedup hit; we're done.
- *      - otherwise the Worker mints a presigned PUT scoped to the exact
+ *      - otherwise the hosted API mints a presigned PUT scoped to the exact
  *        content-addressed key and signs `x-amz-checksum-sha256` so the object
  *        store enforces integrity server-side.
  *   2. PUT the bytes straight to `uploadUrl` with `requiredHeaders` (the signed
  *      checksum). The store rejects a byte mismatch — a 2xx proves bytes == hash.
  *   3. POST /assets/finalize → confirms the object exists (HEAD only).
  *
- * Fallback: when the hosted API has no object-store upload credentials it
- * answers presign with 503 `presign_unconfigured`; we POST the bytes to the
- * buffered `/assets`
- * path (small bundles only). The runner re-verifies the hash on download in
- * every case.
  */
 
 /**
@@ -61,12 +56,11 @@ export interface UploadedAsset {
 
 /**
  * Upload `bytes` to the hosted API's content-addressable asset store via the
- * direct-to-storage presign flow, falling back to the buffered `/assets` POST
- * when the hosted API has no object-store upload credentials.
+ * direct-to-storage presign flow.
  *
  * Verifies the advisory hash matches the bytes BEFORE sending so a mismatch
- * fails fast on the client. The store (or the buffered endpoint) re-verifies, and the
- * runner re-checks on download.
+ * fails fast on the client. Object storage re-verifies via the signed checksum,
+ * and the runner re-checks on download.
  */
 export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset> {
   const expected = args.hash.startsWith("sha256:") ? args.hash.slice("sha256:".length) : args.hash;
@@ -98,10 +92,6 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
       body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
     });
   } catch (err) {
-    // 503 presign_unconfigured → fall back to the buffered upload path.
-    if (isPresignUnconfigured(err)) {
-      return uploadAssetBuffered(args, actual);
-    }
     throw err;
   }
 
@@ -155,47 +145,6 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     contentHash,
     sizeBytes: fin.sizeBytes ?? args.bytes.byteLength,
     exists: false
-  };
-}
-
-/** Detect the 503 `presign_unconfigured` rejection, regardless of error class. */
-function isPresignUnconfigured(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { status?: unknown; details?: unknown; code?: unknown };
-  if (e.status !== 503) return false;
-  const detailCode = (e.details as { code?: unknown } | undefined)?.code;
-  return e.code === "presign_unconfigured" || detailCode === "presign_unconfigured";
-}
-
-/**
- * Fallback: POST the bytes to the buffered `/assets` endpoint. Used only when
- * the hosted API has no object-store upload credentials (presign 503). Subject to the API's
- * payload limit, so suitable for small bundles only.
- */
-async function uploadAssetBuffered(args: UploadAssetArgs, actualHex: string): Promise<UploadedAsset> {
-  const body = await args.http.request<{
-    ok: boolean;
-    assetId?: string;
-    exists: boolean;
-    path?: string;
-    hash?: string;
-    contentHash?: string;
-    sizeBytes: number;
-  }>("/assets", {
-    method: "POST",
-    headers: {
-      "content-type": args.contentType ?? "application/zip",
-      "content-length": String(args.bytes.byteLength),
-      "x-asset-hash": `sha256:${actualHex}`
-    },
-    body: args.bytes
-  });
-  const contentHash = body.contentHash ?? body.hash ?? `sha256:${actualHex}`;
-  return {
-    assetId: body.assetId ?? assetIdFromContentHash(contentHash),
-    contentHash,
-    sizeBytes: body.sizeBytes,
-    exists: body.exists
   };
 }
 

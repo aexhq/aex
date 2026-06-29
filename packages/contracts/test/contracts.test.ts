@@ -267,7 +267,7 @@ describe("platform run submission schema", () => {
       submission: baseSubmission,
       secrets: { apiKeys: { anthropic: "sk-ant-test" } , openai: { apiKey: "x" } }
     })).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKey, apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
+      /secrets\.openai is not an allowed field; permitted: apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
     );
   });
 

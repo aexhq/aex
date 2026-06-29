@@ -100,8 +100,8 @@ async function runSkillsUpload(io: CliIO, argv: readonly string[]): Promise<CliE
   const contentHash = `sha256:${await sha256Hex(built.zip)}`;
   const http = makeHttpClient(io, common.flags);
   try {
-    // Direct-to-storage upload (bytes bypass the hosted API); falls back to the
-    // buffered multipart path when object-store presign creds are unconfigured.
+    // Direct-to-storage upload: bytes bypass the hosted API, and presign errors
+    // are terminal.
     const skill = await operations.createSkillBundleDirect(http, io.fetchImpl as DirectPutFetch, {
       name: nameFlag.value,
       body: built.zip,

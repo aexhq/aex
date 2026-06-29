@@ -43,7 +43,7 @@ describe("AgentExecutor.run → RunResult", () => {
     const result: RunResult = await client.run({
       model: "claude-haiku-4-5",
       prompt: "say hello world",
-      apiKey: "sk-ant"
+      secrets: { apiKeys: { anthropic: "sk-ant" } }
     });
 
     expect(result.runId).toBe("run-1");
@@ -68,7 +68,7 @@ describe("AgentExecutor.run → RunResult", () => {
     const result = await client.runAndCollect({
       model: "claude-haiku-4-5",
       prompt: "p",
-      apiKey: "sk-ant"
+      secrets: { apiKeys: { anthropic: "sk-ant" } }
     });
     expect(result.ok).toBe(true);
     expect(result.text).toBe("hello world");
@@ -76,7 +76,11 @@ describe("AgentExecutor.run → RunResult", () => {
 
   it("returns ok:false with error for a failed run by default (no throw)", async () => {
     const { client } = runClient({ id: "run-1", status: "failed", errorMessage: "boom" });
-    const result = await client.run({ model: "claude-haiku-4-5", prompt: "p", apiKey: "sk-ant" });
+    const result = await client.run({
+      model: "claude-haiku-4-5",
+      prompt: "p",
+      secrets: { apiKeys: { anthropic: "sk-ant" } }
+    });
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
     expect(result.error).toBe("boom");
@@ -85,7 +89,14 @@ describe("AgentExecutor.run → RunResult", () => {
   it("throws when throwOnFailure is set and the run did not succeed", async () => {
     const { client } = runClient({ id: "run-1", status: "failed", errorMessage: "boom" });
     await expect(
-      client.run({ model: "claude-haiku-4-5", prompt: "p", apiKey: "sk-ant" }, { throwOnFailure: true })
+      client.run(
+        {
+          model: "claude-haiku-4-5",
+          prompt: "p",
+          secrets: { apiKeys: { anthropic: "sk-ant" } }
+        },
+        { throwOnFailure: true }
+      )
     ).rejects.toThrow(/run run-1 ended failed: boom/);
   });
 });

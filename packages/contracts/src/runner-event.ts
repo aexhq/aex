@@ -91,7 +91,7 @@ export interface RunnerEventBatch {
 
 /**
  * Maximum number of events per batch. Bounds the size of the body
- * api.aex.dev accepts and the size of the downstream Postgres / KV
+ * api.aex.dev accepts and the size of the downstream Postgres / metadata-store
  * write. Larger streams are split into multiple batches; the runner is
  * responsible for chunking.
  */

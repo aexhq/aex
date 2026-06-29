@@ -5,9 +5,7 @@
  *
  *   - `SkillRef` is the wire-level reference to a skill. Public run
  *     configs use storage-neutral `kind:"asset"` refs produced by the SDK
- *     upload path or by workspace catalog records. Provider skill refs remain
- *     in the parser for wire compatibility, but the managed runtime rejects
- *     them at submission time.
+ *     upload path or by workspace catalog records.
  *
  *   - `McpServerRef` is the non-secret part of an MCP server declaration:
  *     `name` and `url`. Bearer / cookie / per-request headers travel in
@@ -32,11 +30,9 @@
  */
 
 import {
-  parseRegion,
   type JsonValue,
   type PlatformProxyEndpoint,
-  type PlatformEnvironment,
-  type Region,
+  type PlatformEnvironment
 } from "./submission.js";
 import { parseRunModel, type RunModel } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
@@ -106,7 +102,7 @@ export const SKILL_BUNDLE_LIMITS = {
 // SkillRef (discriminated)
 // ---------------------------------------------------------------------------
 
-export type SkillRef = ProviderSkillRef | AssetRef;
+export type SkillRef = AssetRef;
 
 /**
  * Storage-neutral uploaded asset reference. Runtime materialization resolves
@@ -134,19 +130,8 @@ export interface ToolRef extends AssetRef {
   readonly entry: string;
 }
 
-export interface ProviderSkillRef {
-  readonly kind: "provider";
-  readonly vendor: "anthropic" | "custom";
-  readonly skillId: string;
-  readonly version?: string;
-}
-
 /** Content-hash format: `sha256:<64 lowercase hex>`. */
 export const INLINE_CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
-
-export function isProviderSkillRef(ref: SkillRef): ref is ProviderSkillRef {
-  return ref.kind === "provider";
-}
 
 export function isAssetRef(ref: SkillRef | AgentsMdRef | FileRef): ref is AssetRef {
   return ref.kind === "asset";
@@ -227,10 +212,8 @@ export function assertValidMountPath(value: string, field: string): void {
 }
 
 /**
- * Parse a `SkillRef` from untrusted input. Used by the BFF run parser
- * and by the operations module when deserialising API responses. Only
- * `kind: "asset"` and `kind: "provider"` are valid; all other historical
- * wire shapes (including storage-specific refs) are rejected.
+ * Parse a `SkillRef` from untrusted input. Only asset-backed skill refs are
+ * accepted on the public surface.
  */
 export function parseSkillRef(input: unknown, path: string): SkillRef {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -238,35 +221,10 @@ export function parseSkillRef(input: unknown, path: string): SkillRef {
   }
   const record = input as Record<string, unknown>;
   const kind = record.kind;
-  if (kind === "provider") {
-    for (const key of Object.keys(record)) {
-      if (key !== "kind" && key !== "vendor" && key !== "skillId" && key !== "version") {
-        throw new Error(`${path} contains unexpected field for provider SkillRef: ${key}`);
-      }
-    }
-    const vendor = record.vendor;
-    if (vendor !== "anthropic" && vendor !== "custom") {
-      throw new Error(`${path}.vendor must be 'anthropic' or 'custom'`);
-    }
-    const skillId = record.skillId;
-    if (typeof skillId !== "string" || skillId.length === 0 || skillId.length > 256) {
-      throw new Error(`${path}.skillId must be a non-empty string (<= 256 chars)`);
-    }
-    const version = record.version;
-    if (version !== undefined && (typeof version !== "string" || version.length === 0 || version.length > 64)) {
-      throw new Error(`${path}.version, when provided, must be a non-empty string (<= 64 chars)`);
-    }
-    return {
-      kind: "provider",
-      vendor,
-      skillId,
-      ...(version !== undefined ? { version } : {})
-    };
-  }
   if (kind === "asset") {
     return parseAssetRefFields(record, path);
   }
-  throw new Error(`${path}.kind must be 'provider' or 'asset'`);
+  throw new Error(`${path}.kind must be 'asset'`);
 }
 
 /**
@@ -607,11 +565,9 @@ export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
         `${path}.url must not contain userinfo (username/password); use secrets.mcpServers[].headers for auth`
       );
     }
-    // SSRF guard at the parser boundary (C4) — the Worker MCP proxy
-    // relies on this validation; CF's outbound fetch refuses RFC1918 but
-    // does NOT block loopback names, link-local IPv6, 169.254.x, or
-    // arbitrary non-443 ports on https. Each branch below maps to a
-    // c4-worker-ssrf.regression test case.
+    // SSRF guard at the parser boundary (C4) — the platform MCP proxy
+    // relies on this validation. Each branch below maps to an
+    // SSRF regression test case.
     const ssrfDenial = denyReasonForMcpHost(parsed);
     if (ssrfDenial !== null) {
       throw new Error(`${path}.url ${ssrfDenial}`);
@@ -728,7 +684,7 @@ function denyReasonForV4(host: string): string | null {
  * when the URL is acceptable. Hostnames are lowercased; numeric ranges
  * are checked literally so the catch covers both names ("localhost") and
  * IP literals ("127.0.0.1") symmetrically. The numeric-range checks
- * delegate to {@link denyReasonForHostIp} (shared with the Worker proxy).
+ * delegate to {@link denyReasonForHostIp} (shared with the platform proxy).
  *
  * Surface tracked by server-side SSRF regression coverage.
  */
@@ -821,8 +777,6 @@ export interface RunRequestConfig {
   readonly environment?: PlatformEnvironment;
   /** Managed runtime size preset (see {@link RuntimeSize}). */
   readonly runtimeSize?: RuntimeSize;
-  /** Product placement region. Omitted lets the hosted platform infer/fallback. */
-  readonly region?: Region;
   /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
   readonly timeout?: string;
   /** Post-agent-run verifier command. Empty command is treated as omitted. */
@@ -854,7 +808,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "mcpServers",
     "environment",
     "runtimeSize",
-    "region",
     "timeout",
     "postHook",
     "proxyEndpoints",
@@ -873,7 +826,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
   const prompt = parseRunRequestConfigPrompt(record.prompt);
   const skills = parseRunRequestConfigSkills(record.skills);
   const mcpServers = parseRunRequestConfigMcpServers(record.mcpServers);
-  const region = parseRegion(record.region);
   const postHook = parsePostHook(record.postHook, "run request config postHook");
   return {
     model,
@@ -891,7 +843,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     ...(record.runtimeSize !== undefined
       ? { runtimeSize: record.runtimeSize as NonNullable<RunRequestConfig["runtimeSize"]> }
       : {}),
-    ...(region !== undefined ? { region } : {}),
     ...(record.timeout !== undefined
       ? { timeout: record.timeout as NonNullable<RunRequestConfig["timeout"]> }
       : {}),
@@ -972,8 +923,8 @@ function parseRunRequestConfigMcpServers(value: unknown): readonly RunConfigMcpS
  * `mcpServerSecrets` half is what enters run-scoped custody.
  *
  * `prompt` is normalised to `readonly string[]` (single-string callers
- * get wrapped in a length-1 array) so the wire payload, the worker, and
- * the audit log don't have to re-handle two shapes.
+ * get wrapped in a length-1 array) so the wire payload, the hosted API,
+ * and the audit log don't have to re-handle two shapes.
  */
 export interface NormalisedRunRequestConfig {
   readonly model: RunModel;

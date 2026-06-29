@@ -10,7 +10,19 @@ title: Quickstart
 bun add @aexhq/sdk
 ```
 
-## 2. Run a prompt
+This installs the TypeScript SDK exports and the bundled `aex` CLI.
+
+## 2. Set credentials
+
+The examples need both an aex API token and your BYOK provider key for the model
+you choose. For the Claude examples below:
+
+```bash
+export AEX_API_TOKEN="<your-aex-token>"
+export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
+```
+
+## 3. Run a prompt
 
 ```ts
 import { AgentExecutor, Models } from "@aexhq/sdk";
@@ -18,24 +30,24 @@ import { AgentExecutor, Models } from "@aexhq/sdk";
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 // run() submits, waits for the run to settle, and returns the result.
-// `provider` is derived from the model; `apiKey` is your BYOK provider key.
+// `provider` is derived from the model; `secrets.apiKeys` carries your BYOK provider key.
 const { text, ok } = await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
   prompt: "Write a short report and save it as a file."
 });
 
 console.log(ok, text);
 ```
 
-## 3. Submit, stream, wait, and download
+## 4. Submit, stream, wait, and download
 
 When you need the run id, live events, or downloads, drive the lifecycle yourself:
 
 ```ts
 const runId = await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
   prompt: "Write a short report and save it as a file."
 });
 
@@ -49,7 +61,7 @@ console.log(run.status);
 await aex.download(runId, { to: "./run.zip" });
 ```
 
-The same run from the CLI:
+The same run from the bundled CLI:
 
 ```bash
 aex run \

@@ -32,7 +32,6 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
       const script = sdkRunnerScript({
         submit: `{
           provider: "deepseek",
-          runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
             "Using the shell, run exactly: cat /workspace/RUNTIME.env",
@@ -40,7 +39,7 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
             "If the file or the variable is missing, reply with exactly: CANARY_UNSET"
           ],
           environment: { envVars: { CANARY_VALUE: ${JSON.stringify(canary)} } },
-          secrets: { apiKey: DEEPSEEK_KEY  },
+          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
           idempotencyKey: "user-envvars-deepseek-managed-a-" + Date.now()
         }`
       });

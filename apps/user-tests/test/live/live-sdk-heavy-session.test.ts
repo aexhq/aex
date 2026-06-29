@@ -176,7 +176,6 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 interface CaseSpec {
   readonly scriptName: string;
-  readonly runtime: "managed";
   readonly provider: "deepseek";
   readonly model: string;
   readonly keyEnvName: string;
@@ -245,16 +244,16 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     // SKILL.md starts with YAML frontmatter so each test skill is
     // self-describing and produces a stable skill_loaded name.
     const skillAlpha = await Skill.fromFiles({
-      name: "heavy-alpha-${spec.runtime}",
-      files: { "SKILL.md": "---\\nname: heavy-alpha-${spec.runtime}\\ndescription: Complete every numbered step the user lists, in order.\\n---\\n# alpha\\nComplete every numbered step the user lists, in order." }
+      name: "heavy-alpha-${spec.provider}",
+      files: { "SKILL.md": "---\\nname: heavy-alpha-${spec.provider}\\ndescription: Complete every numbered step the user lists, in order.\\n---\\n# alpha\\nComplete every numbered step the user lists, in order." }
     });
     const skillBeta = await Skill.fromFiles({
-      name: "heavy-beta-${spec.runtime}",
-      files: { "SKILL.md": "---\\nname: heavy-beta-${spec.runtime}\\ndescription: Always follow the project tracking guidance.\\n---\\n# beta\\nAlways follow the project tracking guidance." }
+      name: "heavy-beta-${spec.provider}",
+      files: { "SKILL.md": "---\\nname: heavy-beta-${spec.provider}\\ndescription: Always follow the project tracking guidance.\\n---\\n# beta\\nAlways follow the project tracking guidance." }
     });
     const skillGamma = await Skill.fromFiles({
-      name: "heavy-gamma-${spec.runtime}",
-      files: { "SKILL.md": "---\\nname: heavy-gamma-${spec.runtime}\\ndescription: Write output files exactly as instructed, then acknowledge references.\\n---\\n# gamma\\nWrite output files exactly as instructed, then acknowledge references." }
+      name: "heavy-gamma-${spec.provider}",
+      files: { "SKILL.md": "---\\nname: heavy-gamma-${spec.provider}\\ndescription: Write output files exactly as instructed, then acknowledge references.\\n---\\n# gamma\\nWrite output files exactly as instructed, then acknowledge references." }
     });
 
     const mcpPrimary = McpServer.remote({
@@ -273,7 +272,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
 
     const submitOpts = {
       provider: ${JSON.stringify(spec.provider)},
-      runtime: ${JSON.stringify(spec.runtime)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
       prompt: ${JSON.stringify(promptSteps)},
@@ -282,10 +280,10 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
       includeBuiltinTools: true,
-      environment: { envVars: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.runtime}-${spec.provider}" } },
-      metadata: { suite: "heavy-session", cell: "${spec.runtime}-${spec.provider}" },
-      secrets: { apiKey: process.env.${spec.keyEnvName}  },
-      idempotencyKey: "heavy-${spec.runtime}-${spec.provider}-" + Date.now()
+      environment: { envVars: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
+      metadata: { suite: "heavy-session", cell: "${spec.provider}" },
+      secrets: { apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} } },
+      idempotencyKey: "heavy-${spec.provider}-" + Date.now()
     };
 
     const runId = await client.submit(submitOpts);
@@ -567,7 +565,6 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
       const result = await runCase(
         {
           scriptName: "heavy-managed-deepseek.mjs",
-          runtime: "managed",
           provider: "deepseek",
           model: deepseekModel,
           keyEnvName: "DEEPSEEK_KEY_SUBMIT",

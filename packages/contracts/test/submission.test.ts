@@ -4,31 +4,20 @@ import {
   BuiltinTools,
   DEFAULT_BUILTIN_TOOLS,
   resolveBuiltinToolNames,
-  DEFAULT_CREDENTIAL_MODE,
-  REGIONS,
-  RUNTIME_KINDS,
-  RuntimeValidationError,
-  collectManagedUnsupportedFeatures,
   DEFAULT_RUN_PROVIDER,
   Models,
   RUN_MODELS,
   RUN_MODELS_BY_PROVIDER,
   RunModels,
   Providers,
-  Regions,
   RUN_PROVIDERS,
-  parseRegion,
   parseRunSubmissionRequest,
   providerForModel,
   providersForModel,
   resolveProviderModelId,
   assertRunModelMatchesProvider,
   MODEL_PROVIDER_IDS,
-  selectRuntime,
-  type PlatformRunSubmissionRequest,
-  type RunProvider,
-  type Region,
-  type RuntimeKind
+  type RunProvider
 } from "../src/index.js";
 
 function assetRef(name: string, seed = 1) {
@@ -37,7 +26,7 @@ function assetRef(name: string, seed = 1) {
 }
 
 function baseRequest(
-  overrides: Partial<{ provider: RunProvider; runtime: RuntimeKind; region: Region }> = {}
+  overrides: Partial<{ provider: RunProvider }> = {}
 ) {
   const provider = overrides.provider ?? "anthropic";
   const model = {
@@ -54,8 +43,6 @@ function baseRequest(
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
     provider,
-    ...(overrides.runtime !== undefined ? { runtime: overrides.runtime } : {}),
-    ...(overrides.region !== undefined ? { region: overrides.region } : {}),
     submission: {
       model,
       prompt: ["hello"],
@@ -113,28 +100,11 @@ describe("submission parser - providers and secrets", () => {
     expect(parsed.provider).toBe("anthropic");
   });
 
-  it("normalizes omitted credentialMode to BYOK in the parsed snapshot", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest());
-    expect(DEFAULT_CREDENTIAL_MODE).toBe("byok");
-    expect(parsed.credentialMode).toBe("byok");
-    expect(JSON.parse(JSON.stringify(parsed))).toHaveProperty("credentialMode", "byok");
-  });
-
-  it("accepts explicit BYOK credential mode", () => {
-    const parsed = parseRunSubmissionRequest({
+  it("rejects explicit credentialMode as a removed choice field", () => {
+    expect(() => parseRunSubmissionRequest({
       ...baseRequest(),
       credentialMode: "byok"
-    });
-    expect(parsed.credentialMode).toBe("byok");
-  });
-
-  it("rejects managed as an unknown credential mode", () => {
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseRequest(),
-        credentialMode: "managed"
-      })
-    ).toThrow(/credentialMode must be one of: byok/);
+    })).toThrow(/submission\.credentialMode is not an allowed field/);
   });
 
   it.each(["deepseek", "openai", "gemini", "mistral"] as const)(
@@ -143,7 +113,7 @@ describe("submission parser - providers and secrets", () => {
       const req = baseRequest({ provider });
       expect(() =>
         parseRunSubmissionRequest({ ...req, secrets: {} })
-      ).toThrow(/secrets\.apiKey is required when credentialMode is byok/);
+      ).toThrow(new RegExp(`secrets\\.apiKeys\\["${provider}"\\] is required`));
     }
   );
 
@@ -155,7 +125,7 @@ describe("submission parser - providers and secrets", () => {
         secrets: { ...req.secrets, openai: { apiKey: "sk-openai-x" } }
       })
     ).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKey, apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
+      /secrets\.openai is not an allowed field; permitted: apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
     );
   });
 
@@ -183,82 +153,19 @@ describe("submission parser - providers and secrets", () => {
   });
 });
 
-describe("submission parser - regions", () => {
-  it("exports the public regions and symbol accessors", () => {
-    expect([...REGIONS]).toEqual(["eu-west", "us-west", "ap-northeast"]);
-    expect(Object.values(Regions)).toEqual([...REGIONS]);
-  });
-
-  it("parses explicit regions", () => {
-    expect(parseRegion("us-west")).toBe("us-west");
-    expect(parseRegion(undefined)).toBeUndefined();
-    expect(() => parseRegion("mars")).toThrow(
-      /region must be one of: eu-west, us-west, ap-northeast/
-    );
-  });
-
-  it("preserves an explicit top-level region and omits absent region", () => {
-    expect(parseRunSubmissionRequest(baseRequest({ region: "us-west" })).region).toBe("us-west");
-    expect(parseRunSubmissionRequest(baseRequest()).region).toBeUndefined();
-  });
-
-  it("rejects an invalid explicit region", () => {
-    expect(() => parseRunSubmissionRequest({ ...baseRequest(), region: "ams" })).toThrow(
-      /region must be one of: eu-west, us-west, ap-northeast/
-    );
-  });
+describe("submission parser - removed choice fields", () => {
+  it.each(["runtime", "region", "credentialMode"] as const)(
+    "rejects top-level %s",
+    (field) => {
+      expect(() =>
+        parseRunSubmissionRequest({ ...baseRequest(), [field]: "managed" })
+      ).toThrow(new RegExp(`submission\\.${field} is not an allowed field`));
+    }
+  );
 });
 
-describe("submission parser - managed-only runtime field", () => {
-  it("accepts explicit runtime: 'managed' for every provider", () => {
-    for (const provider of RUN_PROVIDERS) {
-      const parsed = parseRunSubmissionRequest(baseRequest({ provider, runtime: "managed" }));
-      expect(parsed.runtime).toBe("managed");
-      expect(selectRuntime(parsed)).toBe("managed");
-    }
-  });
-
-  it("omits runtime from the parsed request when the wire field is absent, then selects managed", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest());
-    expect(parsed.runtime).toBeUndefined();
-    expect(selectRuntime(parsed)).toBe("managed");
-  });
-
-  it("rejects runtime: 'native' as an invalid enum value", () => {
-    expect(() =>
-      parseRunSubmissionRequest({ ...baseRequest(), runtime: "native" })
-    ).toThrow(/runtime must be one of: managed \(got "native"\)/);
-  });
-
-  it("rejects unknown runtime values with a helpful enumeration", () => {
-    expect(() =>
-      parseRunSubmissionRequest({ ...baseRequest(), runtime: "gpu-managed" })
-    ).toThrow(/runtime must be one of: managed/);
-  });
-});
-
-describe("managed runtime unsupported features", () => {
-  it("rejects provider-hosted skill refs at parse time with feature_runtime_mismatch", () => {
-    const req = baseRequest({ provider: "anthropic", runtime: "managed" });
-    let captured: unknown;
-    try {
-      parseRunSubmissionRequest({
-        ...req,
-        submission: {
-          ...req.submission,
-          skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" } as const]
-        }
-      });
-    } catch (err) {
-      captured = err;
-    }
-    expect(captured).toBeInstanceOf(RuntimeValidationError);
-    expect((captured as RuntimeValidationError).code).toBe("feature_runtime_mismatch");
-    expect((captured as RuntimeValidationError).message).toMatch(/provider skill "anthropic\/pdf" \(kind:"provider"\)/);
-    expect((captured as RuntimeValidationError).message).not.toMatch(/switch to runtime/);
-  });
-
-  it("rejects provider-hosted skill refs when runtime is omitted", () => {
+describe("submission parser - asset-only skills", () => {
+  it("rejects provider-hosted skill refs", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
       parseRunSubmissionRequest({
@@ -268,34 +175,11 @@ describe("managed runtime unsupported features", () => {
           skills: [{ kind: "provider", vendor: "custom", skillId: "research", version: "v2" } as const]
         }
       })
-    ).toThrowError(RuntimeValidationError);
-  });
-
-  it("collectManagedUnsupportedFeatures lists provider skill refs and ignores asset skill refs", () => {
-    const parsed = parseRunSubmissionRequest({
-      ...baseRequest(),
-      submission: {
-        ...baseRequest().submission,
-        skills: [assetRef("rules", 1)]
-      }
-    });
-    expect(collectManagedUnsupportedFeatures(parsed)).toEqual([]);
-
-    const direct: PlatformRunSubmissionRequest = {
-      ...parsed,
-      submission: {
-        ...parsed.submission,
-        skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf", version: "2024-09" }]
-      }
-    };
-    expect(collectManagedUnsupportedFeatures(direct)).toEqual([
-      `provider skill "anthropic/pdf@2024-09" (kind:"provider")`
-    ]);
-    expect(() => selectRuntime(direct)).toThrowError(RuntimeValidationError);
+    ).toThrow(/submission\.skills\[0\]\.kind must be 'asset'/);
   });
 });
 
-describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
+describe("RUN_PROVIDERS exports", () => {
   it("RUN_MODELS is the public model allowlist", () => {
     expect([...RUN_MODELS]).toEqual([
       "claude-haiku-4-5",
@@ -388,9 +272,6 @@ describe("RUNTIME_KINDS / RUN_PROVIDERS exports", () => {
     expect(() => resolveBuiltinToolNames(false, ["nope"])).toThrow(/is not a builtin tool/);
   });
 
-  it("RUNTIME_KINDS exposes only managed", () => {
-    expect([...RUNTIME_KINDS]).toEqual(["managed"]);
-  });
 });
 
 describe("providerForModel / providersForModel", () => {

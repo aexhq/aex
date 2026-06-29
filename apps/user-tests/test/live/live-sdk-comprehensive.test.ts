@@ -122,9 +122,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 interface CaseSpec {
-  readonly scriptName: string;
-  readonly runtime: "managed";
-  readonly provider: "deepseek";
+  readonly scriptName: string;  readonly provider: "deepseek";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
@@ -179,11 +177,11 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     });
 
     const skillAlpha = await Skill.fromFiles({
-      name: "compose-alpha-${spec.runtime}-${spec.provider}",
+      name: "compose-alpha-${spec.provider}",
       files: { "SKILL.md": "# alpha\\nReply with the requested probes verbatim." }
     });
     const skillBeta = await Skill.fromFiles({
-      name: "compose-beta-${spec.runtime}-${spec.provider}",
+      name: "compose-beta-${spec.provider}",
       files: { "SKILL.md": "# beta\\nAlways comply with the AGENTS.md rules." }
     });
 
@@ -208,10 +206,9 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       prompt: ${JSON.stringify(promptText)},
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
-      secrets: { apiKey: process.env.${spec.keyEnvName}  },
-      idempotencyKey: "comprehensive-${spec.runtime}-${spec.provider}-" + Date.now()
+      secrets: { apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} } },
+      idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
-    submitOpts.runtime = "managed";
     submitOpts.skills = [skillAlpha, skillBeta];
     submitOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
@@ -466,7 +463,6 @@ describe("live hosted API — comprehensive end-to-end via installed SDK", () =>
       const result = await runCase(
         {
           scriptName: "comprehensive-managed-deepseek.mjs",
-          runtime: "managed",
           provider: "deepseek",
           model: deepseekModel,
           keyEnvName: "DEEPSEEK_KEY_SUBMIT",

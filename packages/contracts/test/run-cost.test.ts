@@ -16,7 +16,6 @@ describe("run cost telemetry", () => {
     const telemetry = buildRunCostTelemetry({
       runId: "11111111-1111-4111-8111-111111111111",
       provider: "anthropic",
-      runtime: "native",
       recordedAt: "2026-06-01T00:00:00.000Z",
       durations: {
         runtimeMs: 1200,
@@ -122,7 +121,6 @@ describe("run cost telemetry", () => {
     const telemetry = buildRunCostTelemetryFromUsageSamples({
       runId: "11111111-1111-4111-8111-111111111111",
       provider: "anthropic",
-      runtime: "native",
       status: "complete",
       recordedAt: "2026-06-01T00:00:05.000Z",
       samples: [
@@ -154,7 +152,6 @@ describe("run cost telemetry", () => {
           sampleId: "usage-runtime",
           metric: "runtime.active_ms",
           quantity: 1200,
-          runtime: "native",
           source: { type: "runtime-job", id: "runtime-interval-1" }
         },
         {
@@ -286,7 +283,6 @@ describe("run cost telemetry", () => {
     const telemetry = buildRunCostTelemetryFromUsageSamples({
       runId: "11111111-1111-4111-8111-111111111111",
       provider: "anthropic",
-      runtime: "native",
       samples: [
         {
           sampleId: "usage-provider-total",

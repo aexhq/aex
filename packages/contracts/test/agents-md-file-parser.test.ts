@@ -1,8 +1,7 @@
 /**
  * Submission parser — AgentsMd / Files acceptance after the asset-id boundary.
  *
- * Only `kind: "asset"` is valid on the public wire. Storage-specific refs are
- * rejected at the public contract boundary.
+ * Only `kind: "asset"` is valid on the public wire.
  */
 
 import { describe, expect, it } from "vitest";
@@ -39,23 +38,9 @@ describe("parseRunSubmissionRequest — agentsMd[] (asset refs)", () => {
     expect(parsed.submission.agentsMd).toEqual([VALID_ASSET]);
   });
 
-  it("rejects storage-specific and historical kinds", () => {
+  it("rejects non-asset agentsMd refs", () => {
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ agentsMd: [{ kind: "workspace_agentsmd", id: "amd_x" }] }))
-    ).toThrow(/kind must be 'asset'/);
-    expect(() =>
-      parseRunSubmissionRequest(baseRequest({ agentsMd: [{ kind: "transient_agentsmd", slot: "x", name: "n", contentHash: `sha256:${HASH_HEX}` }] }))
-    ).toThrow(/kind must be 'asset'/);
-    expect(() =>
-      parseRunSubmissionRequest(baseRequest({
-        agentsMd: [{
-          kind: "storage_backend",
-          path: `assets/${WS_ID}/${HASH_HEX}`,
-          hash: `sha256:${HASH_HEX}`,
-          sizeBytes: 100,
-          name: "rules"
-        }]
-      }))
+      parseRunSubmissionRequest(baseRequest({ agentsMd: [{ kind: "not_asset", id: "amd_x" }] }))
     ).toThrow(/kind must be 'asset'/);
   });
 
@@ -94,7 +79,7 @@ describe("parseRunSubmissionRequest — files[] (asset refs)", () => {
 
   it("rejects any kind other than 'asset'", () => {
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ files: [{ kind: "workspace_file", id: "f_x" }] }))
+      parseRunSubmissionRequest(baseRequest({ files: [{ kind: "not_asset", id: "f_x" }] }))
     ).toThrow(/kind must be 'asset'/);
   });
 

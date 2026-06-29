@@ -8,20 +8,22 @@ aex supports BYOK provider keys, per-run credentials, and reusable workspace
 secrets. Secret values are excluded from the idempotency fingerprint and do not
 belong in run config.
 
+Runnable examples need both `AEX_API_TOKEN` for aex and the matching BYOK
+provider key, such as `ANTHROPIC_API_KEY` for Claude.
+
 ## Use A Provider Key For One Run
 
 ### TypeScript
 
 ```ts
-import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
+import { AgentExecutor, Models } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 await aex.submit({
-  provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save outputs.",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 
@@ -54,7 +56,7 @@ await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Inspect the repository issues.",
   secretEnv: { GITHUB_TOKEN: githubToken },
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 
@@ -109,7 +111,7 @@ await aex.submit({
   secretEnv: {
     SERPER_API_KEY: Secret.ref("serper-api-key")
   },
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 

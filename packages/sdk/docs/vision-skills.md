@@ -58,7 +58,7 @@ const runId = await aex.submit({
   skills: [await Skill.fromPath("./vision-skill", { name: "frame-vision-gate" })],
   proxyEndpoints,
   secrets: {
-    apiKey: process.env.ANTHROPIC_API_KEY!,
+    apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
     proxyEndpointAuth
   }
 });

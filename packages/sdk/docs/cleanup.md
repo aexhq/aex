@@ -20,7 +20,7 @@ import { RunModels } from "@aexhq/sdk";
 const runId = await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt: "...",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 
@@ -33,7 +33,7 @@ run's tracked resources. It is one of:
 - `pending` / `running` - cleanup is queued or in progress.
 - `succeeded` - tracked cleanup work completed for the resources aex
   controls.
-- `failed_retryable` - a step failed in a way the cleanup worker will retry.
+- `failed_retryable` - a step failed in a way the cleanup task will retry.
 - `failed_terminal` - a step failed past retries; manual intervention may be
   needed.
 - `skipped` - cleanup was not applicable for a tracked resource, or the

@@ -138,7 +138,7 @@ export interface RunEvent {
   readonly recordedAt?: string;
   /** Which sub-stream this record rides — `"event"` (typed) or `"log"`. Absent ⇒ `"event"`. */
   readonly channel?: import("./event-envelope.js").AexEventChannel;
-  /** Coarse origin classifier (agent/worker/runtime/mcp/aex/workflow/machine). */
+  /** Coarse origin classifier. See {@link AexEventSource}. */
   readonly source?: import("./event-envelope.js").AexEventSource;
   /** Per-source monotonic counter assigned at the source (carried, not re-ordered). */
   readonly sourceSeq?: number;

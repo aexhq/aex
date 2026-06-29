@@ -42,14 +42,13 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-c
 interface Cell {
   readonly id: string;
   readonly provider: "deepseek";
-  readonly runtime: "managed";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
+  { id: "deepseek-managed",  provider: "deepseek", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
 ];
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -114,12 +113,11 @@ function buildOutputScript(cell: Cell, marker: string): string {
 
     const runId = await client.submit({
       provider: ${JSON.stringify(cell.provider)},
-      runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
       includeBuiltinTools: true,
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
-      secrets: { apiKey: process.env.${cell.keyEnvName}  },
+      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
       idempotencyKey: "outputs-${cell.id}-" + Date.now()
     });
 
@@ -336,11 +334,10 @@ function buildCorruptedSkillScript(): string {
       try {
         runId = await client.submit({
           provider: "deepseek",
-          runtime: "managed",
           model: ${JSON.stringify(deepseekModel)},
           prompt: "Hello.",
           skills: [skillRef],
-          secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT  },
+          secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } },
           idempotencyKey: "fail-corrupt-skill-" + Date.now()
         });
         submitOk = true;
@@ -415,7 +412,7 @@ function buildIncompatibleRuntimeScript(): string {
         runtime: "native",
         model: "deepseek-chat",
         prompt: "Hello.",
-        secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test"  },
+        secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" } },
         idempotencyKey: "fail-incompat-runtime-" + Date.now()
       });
       submitOk = true;
@@ -474,7 +471,6 @@ function buildStdioMcpScript(): string {
           workspaceId: "ws-test",
           idempotencyKey: "fail-stdio-mcp-" + Date.now(),
           provider: "deepseek",
-          runtime: "managed",
           submission: {
             model: ${JSON.stringify(deepseekModel)},
             prompt: ["Hello."],
@@ -483,7 +479,7 @@ function buildStdioMcpScript(): string {
             files: [],
             mcpServers: [{ name: "bad-stdio", url: "stdio:///dev/null", transport: "stdio" }]
           },
-          secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT  }
+          secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } }
         })
       });
       submitStatus = res.status;
@@ -577,7 +573,7 @@ describe("live outputs — agent writes a known file, bytes round-trip", () => {
       const dump = (): string => dumpOutputResult(cell, result);
 
       expect(result.runStatus, dump()).toBe("succeeded");
-      expect(result.runtime).toBe(cell.runtime);
+      expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
       expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");

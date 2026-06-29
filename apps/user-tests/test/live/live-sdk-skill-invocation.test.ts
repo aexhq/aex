@@ -46,15 +46,13 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-c
 
 interface Cell {
   readonly id: string;
-  readonly provider: "deepseek";
-  readonly runtime: "managed";
-  readonly model: string;
+  readonly provider: "deepseek";  readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed",  provider: "deepseek",  runtime: "managed", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
+  { id: "deepseek-managed",  provider: "deepseek", model: deepseekModel,  keyEnvName: "DEEPSEEK_KEY_SUBMIT",  keyValue: deepseekKey }
 ];
 
 interface CaseResult {
@@ -167,13 +165,11 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     });
 
     const runId = await client.submit({
-      provider: ${JSON.stringify(cell.provider)},
-      runtime: ${JSON.stringify(cell.runtime)},
-      model: ${JSON.stringify(cell.model)},
+      provider: ${JSON.stringify(cell.provider)},      model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
       prompt: ${JSON.stringify(prompt)},
       skills: [alpha, beta],
-      secrets: { apiKey: process.env.${cell.keyEnvName}  },
+      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     });
 
@@ -326,7 +322,7 @@ describe("live skill invocation — agent actually follows skill content", () =>
       const expectedSkillPrefixes = [`ack-alpha-${nameSuffix}`, "weather-beta-control"];
 
       expect(result.runStatus, dump()).toBe("succeeded");
-      expect(result.runtime).toBe(cell.runtime);
+      expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
 
       // Event frame: runtime_started present + last event is

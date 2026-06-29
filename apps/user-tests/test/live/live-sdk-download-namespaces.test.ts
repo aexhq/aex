@@ -39,11 +39,10 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-c
 
 interface Cell {
   readonly id: string;
-  readonly runtime: "managed";
 }
 
 const CELLS: readonly Cell[] = [
-  { id: "deepseek-managed-a", runtime: "managed" }
+  { id: "deepseek-managed-a" }
 ];
 
 const DIAGNOSTIC_PREFIXES = ["runtime/", "host/"];
@@ -103,12 +102,11 @@ function buildScript(cell: Cell, marker: string): string {
 
     const runId = await client.submit({
       provider: "deepseek",
-      runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(deepseekModel)},
       prompt: ${JSON.stringify(prompt)},
       includeBuiltinTools: true,
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
-      secrets: { apiKey: process.env.DEEPSEEK_KEY_SUBMIT  },
+      secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     });
 

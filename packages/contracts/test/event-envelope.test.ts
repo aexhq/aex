@@ -205,10 +205,10 @@ describe("log channel — logToInbound + guards (unified stream)", () => {
   };
 
   it("projects a log line to an inbound LOG record on the log channel", () => {
-    const rec = logToInbound("worker", line);
+    const rec = logToInbound("api", line);
     expect(rec.type).toBe("LOG");
     expect(rec.channel).toBe("log");
-    expect(rec.source).toBe("worker");
+    expect(rec.source).toBe("api");
     expect(rec.sourceSeq).toBe(5);
     expect(rec.emittedAt).toBe(line.emittedAt);
     expect(rec.time).toBe(new Date(line.emittedAt).toISOString());
@@ -217,7 +217,7 @@ describe("log channel — logToInbound + guards (unified stream)", () => {
   });
 
   it("surfaces level FIRST-CLASS (not only inside data)", () => {
-    const rec = logToInbound("worker", line);
+    const rec = logToInbound("api", line);
     expect(rec.level).toBe("warn");
     // data.level is kept too so an existing data-reading consumer still works.
     expect((rec.data as { level?: string }).level).toBe("warn");
@@ -235,14 +235,14 @@ describe("log channel — logToInbound + guards (unified stream)", () => {
     expect(channelOf(typed)).toBe("event");
     expect(isEventChannel(typed)).toBe(true);
     expect(isLog(typed)).toBe(false);
-    const log = { ...logToInbound("worker", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
+    const log = { ...logToInbound("api", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
     expect(channelOf(log)).toBe("log");
     expect(isLog(log)).toBe(true);
     expect(isEventChannel(log)).toBe(false);
   });
 
   it("toAGUI carries a LOG under the reserved CUSTOM as aex.log", () => {
-    const log = { ...logToInbound("worker", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
+    const log = { ...logToInbound("api", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
     const agui = toAGUI(log);
     expect(agui.type).toBe("CUSTOM");
     expect(agui).toMatchObject({ name: "aex.log" });

@@ -92,23 +92,17 @@ describe("typescript consumer", () => {
         ProviderError,
         ProxyEndpoint,
         RUN_PROVIDERS,
-        REGIONS,
-        RUNTIME_KINDS,
         RUNTIME_SIZES,
-        Regions,
         RunModels,
         RuntimeSizes,
-        RuntimeValidationError,
         SecretString,
         Skill,
         buildPlatformAllowedHosts,
         bundleSkillFiles,
-        collectManagedUnsupportedFeatures,
         hashSkillBundle,
         isRunStarted,
         isTextMessage,
         redactSecrets,
-        selectRuntime,
         textOf,
         validateProxyAuth,
         type AgentsMdRef,
@@ -131,22 +125,17 @@ describe("typescript consumer", () => {
         type RunEvent,
         type RunResult,
         type RunProvider,
-        type Region,
         type TextMessageRunEvent,
         type RuntimeResources,
         type RuntimeSize,
-        type RuntimeKind,
-        type RuntimeValidationCode,
         type SkillBundleManifest,
         type SkillFiles,
         type SkillRef,
-        type SubmitRunOptions,
+        type SubmitOptions,
         type WaitForRunOptions
       } from "@aexhq/sdk";
 
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
-      const runtime: RuntimeKind = RUNTIME_KINDS[0];
-      const region: Region = Regions.US_WEST;
       const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_8GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
       const explicitBuiltin: BuiltinToolName = BuiltinTools.web_fetch;
@@ -156,7 +145,7 @@ describe("typescript consumer", () => {
       const authShape: ProxyAuthShape = { type: "header", name: "x-api-key" };
       const authValue: ProxyAuthValue = { type: "header", value: "proxy-test-value" };
       const resources: RuntimeResources = { cpus: 2, memoryMb: 2048 };
-      const anthropicSecrets: InlineSecrets = { apiKey: "sk-ant-type-surface" };
+      const anthropicSecrets: InlineSecrets = { apiKeys: { anthropic: "sk-ant-type-surface" } };
       const mcpSecret: McpServerSecret = {
         name: "docs",
         url: "https://mcp.example.test/sse",
@@ -200,7 +189,6 @@ describe("typescript consumer", () => {
 
       const anthropicOptions = {
         provider: "anthropic",
-        runtime: "managed",
         model: RunModels.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
         prompt: ["Read the attached file.", "Reply with a short acknowledgement."],
@@ -218,8 +206,7 @@ describe("typescript consumer", () => {
           packages: [{ name: "apt:jq" }],
           envVars: { USER_SURFACE_TEST: "1" }
         },
-        metadata: { suite: "typescript-consumer", runtime: "managed" },
-        region,
+        metadata: { suite: "typescript-consumer" },
         runtimeSize,
         timeout: "15m",
         secrets: {
@@ -228,44 +215,33 @@ describe("typescript consumer", () => {
           proxyEndpointAuth: [{ name: "metadata", value: authValue }]
         },
         idempotencyKey: "type-surface-anthropic-managed"
-      } satisfies SubmitRunOptions;
+      } satisfies SubmitOptions;
 
       const managedOptions = {
         provider: "deepseek",
-        runtime: "managed",
         model: RunModels.DEEPSEEK_CHAT,
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
         includeBuiltinTools: false,
-        secrets: { apiKey: "sk-deepseek-type-surface"  },
+        secrets: { apiKeys: { deepseek: "sk-deepseek-type-surface" } },
         idempotencyKey: "type-surface-managed"
-      } satisfies SubmitRunOptions;
+      } satisfies SubmitOptions;
 
-      // New DX surface: top-level apiKey sugar + multi-provider credentials map
-      // (secrets is now optional).
-      const apiKeyOptions = {
+      const apiKeysOptions = {
         model: RunModels.CLAUDE_HAIKU_4_5,
         prompt: "hello",
-        apiKey: "sk-ant-top-level"
-      } satisfies SubmitRunOptions;
-      const credentialsOptions = {
-        model: RunModels.CLAUDE_HAIKU_4_5,
-        prompt: "hello",
-        credentials: { anthropic: "sk-ant", openai: "sk-oai" }
-      } satisfies SubmitRunOptions;
+        secrets: { apiKeys: { anthropic: "sk-ant", openai: "sk-oai" } }
+      } satisfies SubmitOptions;
 
       const wireRequest = {
         workspaceId: "ws_type_surface",
         idempotencyKey: "wire-type-surface",
-        credentialMode: "byok",
         provider,
-        runtime,
-        region,
         submission: {
           model: RunModels.CLAUDE_HAIKU_4_5,
           system: "Be precise.",
           prompt: ["hello"],
-          skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" }],
+          skills: [inlineSkill.ref as SkillRef],
           agentsMd: [],
           files: [],
           mcpServers: [],
@@ -277,7 +253,7 @@ describe("typescript consumer", () => {
           // builtin NAMES out of the wire \`tools\` union into \`builtinTools\`,
           // leaving \`tools\` to carry only custom ToolRef bundles. The bare-string
           // \`tools\` union (the pre-parse INPUT surface) is exercised by the
-          // SubmitRunOptions block above.
+          // SubmitOptions block above.
           builtinTools: [BuiltinTools.web_search, explicitBuiltin, BuiltinTools.read_file, BuiltinTools.edit_file]
         },
         secrets: anthropicSecrets,
@@ -286,12 +262,8 @@ describe("typescript consumer", () => {
         timeoutMs: 15 * 60_000
       } satisfies PlatformRunSubmissionRequest;
 
-      const selectedRuntime: RuntimeKind = selectRuntime(wireRequest);
-      const managedUnsupportedFeatures: string[] = collectManagedUnsupportedFeatures(wireRequest);
-      const validationCode: RuntimeValidationCode = "feature_runtime_mismatch";
       const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
       const builtinCount: number = everyBuiltin.length;
-      const regionCount: number = REGIONS.length;
       const skillRef: SkillRef = inlineSkill.ref as SkillRef;
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
@@ -327,8 +299,8 @@ describe("typescript consumer", () => {
       const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
 
       // run() now returns a settle-consistent RunResult; runAndCollect is its alias.
-      const runResultPromise: Promise<RunResult> = client.run(apiKeyOptions);
-      const collectPromise: Promise<RunResult> = client.runAndCollect(credentialsOptions, {
+      const runResultPromise: Promise<RunResult> = client.run(apiKeysOptions);
+      const collectPromise: Promise<RunResult> = client.runAndCollect(apiKeysOptions, {
         throwOnFailure: false,
         timeoutMs: 1_000
       });
@@ -351,7 +323,7 @@ describe("typescript consumer", () => {
         CleanupError,
         CredentialValidationError,
         ProviderError,
-        RuntimeValidationError
+        ProviderError
       ];
       const secret = new SecretString("sk-ant-type-surface", "anthropic api key");
       const redacted = redactSecrets({ secret: String(secret), nested: ["sk-ant-type-surface"] });
@@ -363,17 +335,11 @@ describe("typescript consumer", () => {
       ];
 
       void RUN_PROVIDERS;
-      void REGIONS;
       void RUNTIME_SIZES;
       void RunModels;
-      void region;
       void resources;
-      void selectedRuntime;
-      void managedUnsupportedFeatures;
-      void validationCode;
       void platformEndpoint;
       void builtinCount;
-      void regionCount;
       void skillRef;
       void agentsRef;
       void manifest;
@@ -394,8 +360,7 @@ describe("typescript consumer", () => {
       void runResultPromise;
       void collectPromise;
       void finalTextPromise;
-      void apiKeyOptions;
-      void credentialsOptions;
+      void apiKeysOptions;
       void errors;
       void redacted;
       void exportedFns;
@@ -457,16 +422,13 @@ describe("typescript consumer", () => {
         RuntimeSizes,
         ProxyEndpoint,
         RUN_PROVIDERS,
-        RUNTIME_KINDS,
         RunModels,
         type RunProvider,
-        type RuntimeKind,
         type RuntimeSize,
-        type SubmitRunOptions
+        type SubmitOptions
       } from "@aexhq/sdk";
 
       const provider: RunProvider = RUN_PROVIDERS[0];
-      const runtime: RuntimeKind = RUNTIME_KINDS[0];
       const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_0_25X_1GB;
       const proxy = ProxyEndpoint.bearer({
         name: "catalog",
@@ -479,13 +441,12 @@ describe("typescript consumer", () => {
 
       const options = {
         provider,
-        runtime,
         model: RunModels.CLAUDE_HAIKU_4_5,
         prompt: "hello",
         proxyEndpoints: [proxy],
         runtimeSize,
-        secrets: { apiKey: "sk-ant-bundler"  }
-      } satisfies SubmitRunOptions;
+        secrets: { apiKeys: { anthropic: "sk-ant-bundler" } }
+      } satisfies SubmitOptions;
 
       const client = new AgentExecutor({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
       void client;

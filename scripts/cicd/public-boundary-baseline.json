@@ -41,7 +41,6 @@
       "(^|/)\\.env(?:\\.|$)",
       "^(?:\\.github|apps|eval|scripts|tools)(?:/|$)",
       "^(?:packages/(?:cli|db|runtime-bridge|shared|conformance))(?:/|$)",
-      "(^|/)wrangler\\.toml$",
       "(^|/)vercel\\.json$"
     ]
   },

@@ -96,7 +96,7 @@ describe("aex outputs sync (internal)", () => {
     expect(JSON.parse(summary)).toMatchObject({ summary: { dirs: 2, files: 0, missing: 1 } });
   });
 
-  it("rejects non-absolute output dirs as a defence against worker mis-instruction", async () => {
+  it("rejects non-absolute output dirs as a defence against platform mis-instruction", async () => {
     const cap = makeIo({ inContainer: true, walk: async () => [] });
     const exit = await runOutputsSyncCmd(cap.io, ["workspace/outputs"]);
     expect(exit.code).toBe(0);

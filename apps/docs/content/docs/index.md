@@ -20,18 +20,19 @@ Submit typed runs, stream durable events, capture outputs, and compose agents wi
 
 ## First run
 
+Set `AEX_API_TOKEN` and `ANTHROPIC_API_KEY` before running either example.
+
 ### TypeScript
 
 ```ts
-import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
+import { AgentExecutor, Models } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const runId = await aex.submit({
-  provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save outputs.",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 
 for await (const event of aex.stream(runId)) console.log(event.type);

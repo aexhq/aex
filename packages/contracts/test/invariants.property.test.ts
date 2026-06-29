@@ -119,7 +119,6 @@ function makeValidSubmission(): PlatformRunSubmissionRequest {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",
-    credentialMode: "byok",
     provider: "anthropic",
     submission: {
       model: "claude-haiku-4-5",

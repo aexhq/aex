@@ -277,7 +277,7 @@ describe("aex proxy — successful call", () => {
         [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
         [AEX_RUN_TOKEN_PATH]: "bearer-xyz"
       },
-      // Mirror the Worker v2 streamed response: raw upstream body + the
+      // Mirror the hosted API v2 streamed response: raw upstream body + the
       // x-aex-proxy-* metadata headers (no JSON envelope, no base64).
       fetchHandler: async () =>
         new Response(upstreamPayload, {

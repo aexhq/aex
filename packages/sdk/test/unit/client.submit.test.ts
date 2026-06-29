@@ -161,87 +161,38 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     ).rejects.toThrow(/AgentExecutor\.submit: a provider API key is required/);
   });
 
-  it("accepts the top-level apiKey sugar and folds it into secrets.apiKeys[provider]", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      apiKey: "sk-ant-sugar",
-      idempotencyKey: "idem-apikey-sugar"
-    });
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.secrets).toEqual({ apiKeys: { anthropic: "sk-ant-sugar" } });
-  });
-
-  it("folds the credentials map (multi-provider) into secrets.apiKeys", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      provider: "anthropic",
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      credentials: { anthropic: "sk-ant", openai: "sk-oai" },
-      idempotencyKey: "idem-credentials"
-    });
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.secrets).toEqual({ apiKeys: { anthropic: "sk-ant", openai: "sk-oai" } });
-  });
-
-  it("keeps a pure legacy secrets.apiKey submission on the wire unchanged", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKey: "sk-ant-legacy" },
-      idempotencyKey: "idem-legacy"
-    });
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.secrets).toEqual({ apiKey: "sk-ant-legacy" });
-  });
-
-  it("throws when sources disagree on the selected provider's key", async () => {
+  it("rejects removed provider-key sugar without posting", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
-        apiKey: "sk-one",
-        secrets: { apiKey: "sk-two" }
-      })
-    ).rejects.toThrow(/conflicting API keys for provider "anthropic"/);
+        apiKey: "sk-one"
+      } as never)
+    ).rejects.toThrow(/apiKey is not a supported option/);
     expect(calls).toHaveLength(0);
   });
 
-  it("forwards an explicit region as a top-level submit field", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      region: "us-west",
-      secrets: { apiKeys: { anthropic: "k" } }
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.region).toBe("us-west");
-  });
-
-  it("rejects invalid explicit regions before posting", async () => {
+  it("rejects removed runtime and region choice fields without posting", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
-        region: "ams",
+        runtime: "managed",
         secrets: { apiKeys: { anthropic: "k" } }
       } as never)
-    ).rejects.toThrow(
-      /AgentExecutor\.submit: region must be one of: eu-west, us-west, ap-northeast/
-    );
+    ).rejects.toThrow(/runtime is not a supported option/);
+    await expect(
+      client.submit({
+        model: "claude-haiku-4-5",
+        prompt: "p",
+        region: "us-west",
+        secrets: { apiKeys: { anthropic: "k" } }
+      } as never)
+    ).rejects.toThrow(/region is not a supported option/);
     expect(calls).toHaveLength(0);
   });
 
@@ -824,7 +775,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "p",
-        agentsMd: [{ kind: "workspace_agentsmd", id: "amd_x" } as unknown as AgentsMd],
+        agentsMd: [{ kind: "not_asset", id: "amd_x" } as unknown as AgentsMd],
         secrets: { apiKeys: { anthropic: "k" } }
       })
     ).rejects.toThrow(/agentsMd\[0\] must be an AgentsMd instance/);

@@ -61,7 +61,7 @@ await aex.submit({
       allowedHosts: ["api.example.com", "status.example.com"]
     }
   },
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 
@@ -96,7 +96,7 @@ await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Research the topic across the open web.",
   environment: { networking: { mode: "open" } },
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 

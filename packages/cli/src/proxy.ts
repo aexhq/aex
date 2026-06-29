@@ -247,7 +247,7 @@ export async function runProxy(io: CliIO, rest: readonly string[]): Promise<CliE
     return RUNTIME_ERR;
   }
 
-  // v2 streamed success: the Worker carries the envelope metadata in the
+  // v2 streamed success: the hosted API carries the envelope metadata in the
   // x-aex-proxy-* response headers and streams the (already byte-capped)
   // body. Reconstruct the same ProxyResponseEnvelope JSON the agent saw
   // under v1 so the stdout contract is unchanged. A BFF-level error (e.g.
@@ -306,9 +306,9 @@ function emitError(io: CliIO, body: ProxyErrorBody): void {
 
 /**
  * Reassemble a {@link ProxyResponseEnvelope} from a v2 streamed response.
- * The Worker has already enforced the byte-cap, so reading the body to the
+ * The hosted API has already enforced the byte-cap, so reading the body to the
  * end here is bounded by `maxResponseBytes` — the OOM risk lived on the
- * Worker isolate, not in this per-call container process.
+ * API process, not in this per-call container process.
  */
 async function readStreamedEnvelope(
   response: Response,
@@ -326,7 +326,7 @@ async function readStreamedEnvelope(
         upstreamHeaders = parsed as Record<string, string>;
       }
     } catch {
-      // The metadata header is Worker-controlled; a malformed value is a
+      // The metadata header is controlled by the hosted API; a malformed value is a
       // protocol bug, not agent input. Degrade to empty rather than crash.
     }
   }

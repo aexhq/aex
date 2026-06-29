@@ -141,7 +141,7 @@ export class Skill {
 
   /**
    * Reference a skill already uploaded to the workspace catalog
-   * (`aex skills upload` / `operations.createSkillBundle`) in a run.
+   * (`aex skills upload`) in a run.
    *
    * A catalog skill's bytes are a content-addressed asset, so referencing it
    * is just an `{ kind:"asset" }` ref — once a run snapshots the bytes, it is

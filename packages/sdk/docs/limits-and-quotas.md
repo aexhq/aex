@@ -68,8 +68,8 @@ silently lost.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Per-run metadata KV record TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_RECORD_TTL_SECONDS` |
-| Per-run secret-envelope KV TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_SECRET_TTL_SECONDS` |
+| Per-run metadata record TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_RECORD_TTL_SECONDS` |
+| Per-run secret-envelope TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_SECRET_TTL_SECONDS` |
 
 ## Workspace scope
 

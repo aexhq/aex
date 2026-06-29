@@ -158,8 +158,6 @@ describe("installed CLI host commands", () => {
         "sk-deepseek-test",
         "--idempotency-key",
         "cli-host-installed-shape",
-        "--region",
-        "us-west",
         ...common
       ],
       { cwd: install.installDir, timeoutMs: 30_000 }
@@ -250,9 +248,9 @@ describe("installed CLI host commands", () => {
     const submit = api.requests[0]!.body as Record<string, unknown>;
     expect(submit.workspaceId).toBeUndefined();
     expect(submit.provider).toBe("deepseek");
-    expect(submit.region).toBe("us-west");
+    expect(submit).not.toHaveProperty("region");
     expect(submit.idempotencyKey).toBe("cli-host-installed-shape");
-    expect(submit.secrets).toEqual({ apiKey: "sk-deepseek-test" });
+    expect(submit.secrets).toEqual({ apiKeys: { deepseek: "sk-deepseek-test" } });
     expect(submit.submission).toMatchObject({
       model: "deepseek-chat",
       prompt: ["hello_from_installed_cli"]

@@ -30,7 +30,6 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
       const script = sdkRunnerScript({
         submit: `{
           provider: "deepseek",
-          runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
             "Use the bash tool exactly once to run this command without installing anything:",
@@ -38,7 +37,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }] },
-          secrets: { apiKey: DEEPSEEK_KEY  },
+          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
           idempotencyKey: "user-packages-deepseek-managed-a-" + Date.now()
         }`
       });
@@ -66,7 +65,6 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
       const script = sdkRunnerScript({
         submit: `{
           provider: "deepseek",
-          runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
             "Use the bash tool exactly once to run this command without installing anything:",
@@ -74,7 +72,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
-          secrets: { apiKey: DEEPSEEK_KEY  },
+          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
           idempotencyKey: "user-packages-managed-runtime-" + Date.now()
         }`
       });

@@ -24,12 +24,6 @@ All three sources normalize to the same content-addressed asset. Identical bytes
 dedup by hash, so repeated submissions of the same bundle are no-op uploads.
 There is no per-run auto-suffixed `skl_*` row for inline skills.
 
-Provider-hosted skill refs (`kind:"provider"`, e.g. Anthropic prebuilt Agent
-Skills or custom provider skill IDs) are not supported on the managed runtime.
-Every new submission dispatches to managed, so a `kind:"provider"` ref is
-rejected at submission time with `feature_runtime_mismatch`. Supply the bytes as
-an aex asset instead.
-
 ## Materialization
 
 For each run, the platform copies referenced skill assets into durable run asset
@@ -68,7 +62,7 @@ await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [await Skill.fromPath("./skills/rules", { name: "rules" })],
-  secrets: { apiKey }
+  secrets: { apiKeys: { anthropic: apiKey } }
 });
 ```
 
@@ -80,9 +74,7 @@ flow:
 2. The SDK PUTs bytes directly to object storage with the signed checksum headers.
 3. `POST /assets/finalize` confirms the object exists.
 
-When direct upload credentials are not configured, small bundles fall back to
-the buffered `/assets` upload path. The runner re-verifies the content hash when
-it downloads the asset.
+The runner re-verifies the content hash when it downloads the asset.
 
 ## Pre-Upload For Reuse
 
@@ -97,7 +89,7 @@ await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [uploaded],
-  secrets: { apiKey }
+  secrets: { apiKeys: { anthropic: apiKey } }
 });
 ```
 
@@ -134,7 +126,7 @@ await aex.submit({
   model: RunModels.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [Skill.fromCatalog(record)],
-  secrets: { apiKey }
+  secrets: { apiKeys: { anthropic: apiKey } }
 });
 ```
 

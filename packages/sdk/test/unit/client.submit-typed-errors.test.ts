@@ -2,8 +2,8 @@
  * DX4a: every `submit()` offline validation rejects with a TYPED, code-carrying
  * `AexError` subclass (not a bare `Error`), so callers can `catch` by `err.code`
  * / `instanceof RunConfigValidationError`. The thrown MESSAGES stay byte-identical
- * to the pre-typing behaviour (asserted alongside the existing submit-test
- * regexes), so this is a backward-compatible change.
+ * to the public validation contract asserted alongside the existing submit-test
+ * regexes.
  */
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -66,7 +66,7 @@ describe("AgentExecutor.submit — typed RunConfigValidationError (DX4a)", () =>
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
-      client.submit({ model: "claude-haiku-4-5", prompt: "", apiKey: "sk-x" })
+      client.submit({ model: "claude-haiku-4-5", prompt: "" })
     ).rejects.toMatchObject({
       code: "RUN_CONFIG_INVALID",
       message: "AgentExecutor.submit: prompt must be a non-empty string"
@@ -94,7 +94,7 @@ describe("AgentExecutor.submit — typed RunConfigValidationError (DX4a)", () =>
         model: "gpt-4.1",
         prompt: "hi",
         provider: "anthropic",
-        apiKey: "sk-x"
+        secrets: { apiKeys: { anthropic: "sk-x" } }
       })
     ).rejects.toMatchObject({
       name: "RunConfigValidationError",
@@ -110,7 +110,7 @@ describe("AgentExecutor.submit — typed RunConfigValidationError (DX4a)", () =>
       client.submit({
         model: "claude-haiku-4-5",
         prompt: "hi",
-        apiKey: "sk-x",
+        secrets: { apiKeys: { anthropic: "sk-x" } },
         // not a builtin tool name
         tools: ["definitely_not_a_builtin"] as unknown as never
       })

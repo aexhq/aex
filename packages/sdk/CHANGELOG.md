@@ -47,7 +47,7 @@ follows semantic versioning.
   dropped with no replacement. Update any `region:` value and any
   `RunRegions.*` / `type RunRegion` import.
 - **`runtimeSize` tokens right-sized to real boxes.** The preset set is now the
-  six CF-real tiers `shared-0.06x-256mb` / `shared-0.25x-1gb` /
+  six managed runtime tiers `shared-0.06x-256mb` / `shared-0.25x-1gb` /
   `shared-0.5x-4gb` / `shared-1x-6gb` / `shared-2x-8gb` / `shared-4x-12gb`
   (fractional vCPU). The default machine changes from `shared-1x-128mb` to
   `shared-0.25x-1gb` (0.25 vCPU / 1 GiB), which changes default run memory
@@ -100,8 +100,7 @@ follows semantic versioning.
   - `createDataTools(client)` — packages the read surface as a vendor-neutral
     LLM tool set (`{ tools, instructions, execute }`). See `examples/data-chat/`.
 - Per-provider BYOK: `secrets.apiKeys` is a `{ [provider]: key }` map so subagents
-  spawned with a different-family model can inherit the right key. `secrets.apiKey`
-  is kept for back-compat (used when no per-provider key matches).
+  spawned with a different-family model can inherit the right key.
 
 ### Changed
 

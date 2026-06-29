@@ -3,15 +3,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  checkRuntimeSupported,
   RUN_PROVIDERS,
-  RUNTIME_KINDS,
-  selectRuntime,
-  type PlatformRunSubmissionRequest,
-  type RunProvider,
-  type RuntimeKind
+  type RunProvider
 } from "../../packages/contracts/src/submission.js";
-import { RUN_MODELS_BY_PROVIDER } from "../../packages/contracts/src/models.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
   type SupportPointer
@@ -35,26 +29,6 @@ function evidencePath(pointer: SupportPointer): string {
   return resolve(repoRoot, "packages", "sdk", "docs", pointer.href);
 }
 
-function dispatcherProbe(provider: RunProvider): PlatformRunSubmissionRequest {
-  return {
-    workspaceId: "capability-matrix-test",
-    idempotencyKey: `capability-matrix-test-${provider}`,
-    credentialMode: "byok",
-    provider,
-    submission: {
-      model: RUN_MODELS_BY_PROVIDER[provider][0]!,
-      prompt: ["capability matrix runtime probe"],
-      skills: [],
-      agentsMd: [],
-      files: [],
-      mcpServers: []
-    },
-    secrets: {
-      apiKey: `sk-${provider}-capability-test`
-    }
-  };
-}
-
 describe("provider/runtime capability matrix generation", () => {
   it("renders one deterministic managed-runtime row for every provider", () => {
     const rendered = renderProviderRuntimeCapabilityMarkdown();
@@ -72,10 +46,10 @@ describe("provider/runtime capability matrix generation", () => {
       "| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](secrets.md); [Events](events.md) |"
     );
     expect(rendered).toContain(
-      "| `anthropic` | yes | `managed` | [managed](#anthropic) |"
+      "| `anthropic` | yes | [managed](#anthropic) |"
     );
     expect(rendered).toContain(
-      "| `openai` | `managed` | submission parser + managed dispatch |"
+      "| `openai` | submission parser + managed execution |"
     );
     expect(rendered).not.toContain("live-unverified");
     expect(rendered).not.toContain("Native feature parity");
@@ -100,14 +74,14 @@ describe("provider/runtime capability matrix generation", () => {
 
     for (const row of buildCapabilityMatrixRows()) {
       expect(row).not.toHaveProperty("publicStatus");
-      expect(row.managedRuntime).not.toHaveProperty("status");
-      expect(row.managedRuntime).not.toHaveProperty("ownership");
+      expect(row.managedExecution).not.toHaveProperty("status");
+      expect(row.managedExecution).not.toHaveProperty("ownership");
     }
   });
 
   it("keeps every managed runtime cell documented with anchor, enforcement, and evidence", () => {
     for (const row of buildCapabilityMatrixRows()) {
-      const cell = row.managedRuntime;
+      const cell = row.managedExecution;
       expect(cell.docsAnchor).toBe(row.docsAnchor);
       expect(cell.enforcement.length).toBeGreaterThan(0);
       expect(cell.evidence.length).toBeGreaterThan(0);
@@ -118,7 +92,7 @@ describe("provider/runtime capability matrix generation", () => {
     for (const provider of RUN_PROVIDERS) {
       const row = buildCapabilityMatrixRows().find((candidate) => candidate.provider === provider);
       expect(row).toBeDefined();
-      expect(row?.managedRuntime.enforcement).toBe("submission parser + managed dispatch");
+      expect(row?.managedExecution.enforcement).toBe("submission parser + managed execution");
     }
   });
 
@@ -139,12 +113,11 @@ describe("provider/runtime capability matrix generation", () => {
     }
   });
 
-  it("derives routing cells from checkRuntimeSupported and selectRuntime", () => {
-    expect([...RUNTIME_KINDS]).toEqual(["managed"]);
+  it("has no public runtime selector fields in generated rows", () => {
     for (const row of buildCapabilityMatrixRows()) {
-      expect(checkRuntimeSupported(row.provider, "managed").ok).toBe(true);
-      expect(row.autoRoute).toBe(selectRuntime(dispatcherProbe(row.provider)));
-      expect(row.autoRoute).toBe("managed");
+      expect(row).not.toHaveProperty("autoRoute");
+      expect(row).not.toHaveProperty("managedRuntime");
+      expect(row.managedExecution.enforcement).toBe("submission parser + managed execution");
     }
   });
 

@@ -33,12 +33,11 @@ function buildScript(spec: PostHookCase): string {
   return sdkRunnerScript({
     submit: `{
       provider: "deepseek",
-      runtime: "managed",
       model: MODEL_DEEPSEEK,
       prompt: "Reply with exactly: post hook ready.",
       includeBuiltinTools: false,
       postHook: ${postHookLiteral(spec)},
-      secrets: { apiKey: DEEPSEEK_KEY  },
+      secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
       idempotencyKey: "user-posthook-${spec.id}-" + Date.now()
     }`
   });

@@ -33,7 +33,6 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
       const script = sdkRunnerScript({
         submit: `{
           provider: "deepseek",
-          runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
             "Using the shell, make two separate HTTPS GET requests with curl -sS -m 10:",
@@ -43,7 +42,7 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
             "Reply with ONLY the two tokens separated by a space."
           ],
           environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
-          secrets: { apiKey: DEEPSEEK_KEY  },
+          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
           idempotencyKey: "user-networking-" + Date.now()
         }`
       });

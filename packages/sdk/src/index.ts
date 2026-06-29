@@ -20,7 +20,6 @@ export type {
   RunResult,
   StreamEventsOptions,
   SubmitOptions,
-  SubmitRunOptions,
   WaitForRunOptions
 } from "./client.js";
 
@@ -117,7 +116,6 @@ export type {
   RunWebhookDelivery,
   RunWebhookDeliveryStatus,
   RuntimeManifest,
-  RuntimeProvider,
   SecretRecord,
   SecretReveal,
   SignedOutputLink,
@@ -169,13 +167,9 @@ export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 export { BUILTIN_TOOL_NAMES, BuiltinTools, DEFAULT_BUILTIN_TOOLS, resolveBuiltinToolNames } from "@aexhq/contracts";
 export type { BuiltinToolName } from "@aexhq/contracts";
 
-// Provider + runtime dispatch surface. Agents and SDK consumers
-// inspect these to know which (provider, runtime) combos are valid
-// and to validate submissions offline before posting.
+// Provider/model surface. Provider choice decides the upstream model route;
+// execution uses the managed path.
 export {
-  CREDENTIAL_MODES,
-  DEFAULT_CREDENTIAL_MODE,
-  collectManagedUnsupportedFeatures,
   DEFAULT_RUN_PROVIDER,
   RUN_MODELS,
   RUN_MODELS_BY_PROVIDER,
@@ -188,21 +182,11 @@ export {
   isRunModel,
   parseRunModel,
   Providers,
-  REGIONS,
-  Regions,
-  RUN_PROVIDERS,
-  RUNTIME_KINDS,
-  RUNTIME_VALIDATION_CODES,
-  RuntimeValidationError,
-  selectRuntime
+  RUN_PROVIDERS
 } from "@aexhq/contracts";
 export type {
-  CredentialMode,
   RunModel,
-  RunProvider,
-  Region,
-  RuntimeKind,
-  RuntimeValidationCode
+  RunProvider
 } from "@aexhq/contracts";
 
 // Event guards. The lifecycle/channel guards (isRunStarted/isRunError/isCustom/

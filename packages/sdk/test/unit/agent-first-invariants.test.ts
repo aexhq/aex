@@ -104,7 +104,7 @@ describe("agent-first invariants (workspace-wide)", () => {
 
   it("does not read process.env.AEX_* from any user-facing parser surface", () => {
     // Platform-operator env vars (`AEX_TOKEN_PEPPER`,
-    // `AEX_CLI_BUNDLE_PATH`, etc.) live in BFF / worker code
+    // `AEX_CLI_BUNDLE_PATH`, etc.) live in BFF / hosted API code
     // ONLY. The user-facing parser surfaces (the SDK client and the
     // public contracts parser) must NEVER read process.env directly:
     // doing so creates an implicit default the agent reading the

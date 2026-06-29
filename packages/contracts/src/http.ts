@@ -136,7 +136,7 @@ function extractErrorMessage(body: unknown): string {
       const message = (obj.error as { readonly message?: unknown }).message;
       if (typeof message === "string") return message;
     }
-    // aex Worker error envelope: `{ ok:false, code, message }`. Surface
+    // aex API error envelope: `{ ok:false, code, message }`. Surface
     // the server's message so structured rejections (e.g. runtime support)
     // aren't flattened to the generic fallback below.
     if (typeof obj.message === "string") return obj.message;

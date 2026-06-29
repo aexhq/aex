@@ -1,5 +1,5 @@
 import type { RunStatus } from "./status.js";
-import type { CredentialMode, RunProvider, RuntimeKind } from "./submission.js";
+import type { RunProvider } from "./submission.js";
 
 export const CUSTODY_MANIFEST_SCHEMA_VERSION = 1;
 export const CUSTODY_REDACTION_SCANNER_VERSION = 1;
@@ -19,9 +19,6 @@ export type CustodySecretClass = (typeof CUSTODY_SECRET_CLASSES)[number];
 
 export const CUSTODY_RESOURCE_CLASSES = [
   "runtime_machine",
-  "native_provider_session",
-  "native_provider_resource",
-  "provider_asset",
   "proxy_token",
   "execution_secret",
   "event_archive",
@@ -36,8 +33,6 @@ export const CUSTODY_EXPOSURE_SURFACES = [
   "aex_kv",
   "host_env",
   "host_file",
-  "provider_vault",
-  "provider_session",
   "dashboard_proxy",
   "api_provider_proxy",
   "api_mcp_proxy",
@@ -69,7 +64,6 @@ export const CUSTODY_DISPOSITION_STATUSES = [
   "destroyed",
   "revoked",
   "not_found",
-  "provider_delete_confirmed",
   "retained_by_policy",
   "cleanup_failed",
   "parked_for_operator",
@@ -114,9 +108,7 @@ export interface CustodyManifestRunV1 {
   readonly runId: string;
   readonly workspaceId: string;
   readonly provider: RunProvider | string;
-  readonly runtime: RuntimeKind | string;
   readonly terminalStatus: RunStatus | string;
-  readonly credentialMode?: CredentialMode;
   readonly createdAt?: string;
   readonly terminalAt?: string;
 }
@@ -383,9 +375,7 @@ function normalizeRun(input: CustodyManifestRunInput): CustodyManifestRunV1 {
     runId: assertSafeIdentifier(input.runId, "run.runId"),
     workspaceId: assertSafeIdentifier(input.workspaceId, "run.workspaceId"),
     provider: assertSafeMetadataString(input.provider, "run.provider"),
-    runtime: assertSafeMetadataString(input.runtime, "run.runtime"),
     terminalStatus: assertSafeMetadataString(input.terminalStatus, "run.terminalStatus"),
-    ...(input.credentialMode ? { credentialMode: input.credentialMode } : {}),
     ...(input.createdAt ? { createdAt: assertTimestamp(input.createdAt, "run.createdAt") } : {}),
     ...(input.terminalAt ? { terminalAt: assertTimestamp(input.terminalAt, "run.terminalAt") } : {})
   });

@@ -15,7 +15,6 @@ function makeValid(): PlatformRunSubmissionRequest {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",
-    credentialMode: "byok",
     provider: "anthropic",
     submission: {
       model: "claude-haiku-4-5",
@@ -54,7 +53,12 @@ describe("parseRunSubmissionRequest robustness (property)", () => {
         fc.anything(),
         (key, value) => {
           const input = makeValid() as unknown as Record<string, unknown>;
-          input[key] = value;
+          Object.defineProperty(input, key, {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true
+          });
           expect(() => parseRunSubmissionRequest(input)).toThrow();
         }
       ),
@@ -89,10 +93,7 @@ describe("parseRunSubmissionRequest robustness (property)", () => {
 const RESERVED = new Set([
   "workspaceId",
   "idempotencyKey",
-  "credentialMode",
   "provider",
-  "runtime",
-  "region",
   "submission",
   "runtimeSize",
   "timeout",

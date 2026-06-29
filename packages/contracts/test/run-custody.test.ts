@@ -13,9 +13,7 @@ const baseRun = {
   runId: "run-11111111",
   workspaceId: "workspace-11111111",
   provider: "anthropic",
-  runtime: "native",
   terminalStatus: "succeeded",
-  credentialMode: "byok",
   createdAt: "2026-06-02T10:00:00.000Z",
   terminalAt: "2026-06-02T10:05:00.000Z"
 } as const;
@@ -40,8 +38,8 @@ describe("run custody manifest contract", () => {
               revokedAt: "2026-06-02T10:05:01.000Z"
             },
             {
-              surface: "provider_session",
-              access: "replicated",
+              surface: "aex_vault",
+              access: "stored",
               status: "revoked",
               firstExposedAt: "2026-06-02T10:00:10.000Z",
               revokedAt: "2026-06-02T10:05:01.000Z"
@@ -69,14 +67,14 @@ describe("run custody manifest contract", () => {
       ],
       resources: [
         {
-          class: "native_provider_session",
+          class: "runtime_machine",
           count: 1,
-          exposures: [{ surface: "provider_session", access: "replicated", status: "revoked" }],
+          exposures: [{ surface: "run_artifact_store", access: "stored", status: "revoked" }],
           disposition: {
-            status: "provider_delete_confirmed",
+            status: "destroyed",
             decidedAt: "2026-06-02T10:05:02.000Z"
           },
-          evidence: [{ source: "provider_cleanup_summary", status: "confirmed", count: 1 }]
+          evidence: [{ source: "cleanup_step", status: "confirmed", count: 1 }]
         },
         {
           class: "run_output",
@@ -101,7 +99,6 @@ describe("run custody manifest contract", () => {
       runId: "run-11111111",
       workspaceId: "workspace-11111111",
       provider: "anthropic",
-      runtime: "native",
       terminalStatus: "succeeded"
     });
     expect(manifest.summary).toMatchObject({

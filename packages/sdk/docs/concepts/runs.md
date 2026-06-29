@@ -19,7 +19,7 @@ const runId = await aex.submit({
   provider: "anthropic",
   model: Models.CLAUDE_HAIKU_4_5,
   prompt: "Write the report and save it as a file.",
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 
 for await (const event of aex.stream(runId)) {
@@ -39,8 +39,5 @@ the normalized non-secret submission, so a retry with the same key and same body
 returns the existing run while a mismatched body fails with an idempotency
 conflict.
 
-Use the optional `region` submit field when you need a product placement target
-such as `eu-west`, `us-west`, or `ap-northeast`. Regions select configured platform
-backing for the run; they are not exact city guarantees. When omitted, aex
-infers a configured region from request geography and falls back when no hint
-matches.
+aex selects product placement server-side. There is no submit-time region
+selector.

@@ -17,9 +17,7 @@ aex exposes one submission shape across supported providers:
 | Doubao | `Providers.DOUBAO` |
 | Doubao China | `Providers.DOUBAO_CN` |
 
-All submissions run on the managed runtime. Omit `runtime` or pass
-`runtime: "managed"`; `runtime: "native"` is rejected before any runtime side
-effect.
+All submissions run on the managed runtime. There is no public runtime selector; omit `runtime`.
 
 ## Selection
 
@@ -32,7 +30,7 @@ await aex.submit({
   provider: Providers.OPENAI,
   model: Models.GPT_4_1,
   prompt: "Summarise the attached files.",
-  secrets: { apiKey: process.env.OPENAI_API_KEY! }
+  secrets: { apiKeys: { openai: process.env.OPENAI_API_KEY! } }
 });
 ```
 

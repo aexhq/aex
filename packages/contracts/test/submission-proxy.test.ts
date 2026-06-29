@@ -402,7 +402,7 @@ describe("submission proxy endpoints — policy contract", () => {
   });
 });
 
-describe("submission.environment — snapshot prerequisite for proxy worker", () => {
+describe("submission.environment — snapshot prerequisite for platform proxy", () => {
   it("accepts limited networking with allowedHosts", () => {
     const parsed = parseRunSubmissionRequest({
       ...baseSubmission,

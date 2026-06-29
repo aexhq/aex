@@ -209,7 +209,7 @@ function remedyForStatus(status: number): string | undefined {
  * "Did you mean?" suggester for a near-miss enum value. Returns the closest
  * candidate by Levenshtein distance (≤ 2) or a unique case-insensitive prefix
  * match, else `undefined`. Used on invalid `--model` / `--provider` /
- * `--runtime-size` / `--region` to turn a flat rejection into a fix hint.
+ * `--runtime-size` to turn a flat rejection into a fix hint.
  */
 export function suggest(input: string, candidates: readonly string[]): string | undefined {
   const needle = input.trim();

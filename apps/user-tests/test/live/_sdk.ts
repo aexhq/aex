@@ -1,6 +1,6 @@
 /**
  * Shared scaffolding for the config-fix USER tests (SDK-driven, customer
- * perspective). These differ from raw Worker probes; THESE drive the
+ * perspective). These differ from raw API probes; THESE drive the
  * installed `aex` SDK end-to-end
  * (SDK → /runs → runtime → events), the real customer surface.
  *

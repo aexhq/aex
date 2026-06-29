@@ -5,7 +5,7 @@
 // The CLI is built from `packages/cli` (a workspace package) so
 // the agent-first invariant — "one package, one CLI binary" — holds
 // mechanically: consumers run `bun add @aexhq/sdk` and immediately get
-// both the SDK import and the `aex` executable. The worker uses the
+// both the SDK import and the `aex` executable. The hosted runtime uses the
 // same bundle in-container at /aex/aex.
 //
 // This script is invoked from the SDK's `build` script (which itself

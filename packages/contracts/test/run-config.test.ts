@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   isAssetRef,
-  isProviderSkillRef,
   MCP_SERVER_NAME_PATTERN,
   normaliseSkillBundlePath,
   normaliseRunRequestConfig,
@@ -21,12 +20,6 @@ import {
 } from "../src/index.js";
 
 const goodSkillId = "skl_abcdefgh01234567";
-const goodProviderRef = {
-  kind: "provider",
-  vendor: "anthropic",
-  skillId: "pdf",
-  version: "v1"
-} as const;
 const goodInlineHash = `sha256:${"a".repeat(64)}`;
 const goodAssetRef = {
   kind: "asset",
@@ -69,12 +62,6 @@ describe("run-config — id and name patterns", () => {
 });
 
 describe("run-config — parseSkillRef", () => {
-  it("parses a provider ref round-trip", () => {
-    const parsed = parseSkillRef(goodProviderRef, "ref");
-    expect(parsed).toEqual(goodProviderRef);
-    expect(isProviderSkillRef(parsed)).toBe(true);
-  });
-
   it("parses an asset ref round-trip", () => {
     const parsed = parseSkillRef(goodAssetRef, "ref");
     expect(parsed).toEqual(goodAssetRef);
@@ -86,21 +73,10 @@ describe("run-config — parseSkillRef", () => {
     expect(() => parseSkillRef({ kind: "inline", slot: "x", name: "n", contentHash: goodInlineHash }, "ref")).toThrow(/kind/i);
   });
 
-  it("rejects a provider ref with unknown vendor", () => {
+  it("rejects a provider ref", () => {
     expect(() =>
       parseSkillRef({ kind: "provider", vendor: "openai", skillId: "x" }, "ref")
-    ).toThrow(/vendor/i);
-  });
-
-  it("rejects a storage-specific ref", () => {
-    const bad = {
-      kind: "storage_backend",
-      path: `assets/11111111-1111-4111-8111-111111111111/${"a".repeat(64)}`,
-      hash: goodInlineHash,
-      sizeBytes: 100,
-      name: "rules"
-    };
-    expect(() => parseSkillRef(bad, "ref")).toThrow(/provider' or 'asset/);
+    ).toThrow(/kind must be 'asset'/i);
   });
 
   it("rejects an asset ref with extra fields", () => {
@@ -371,23 +347,14 @@ describe("run-config — parseRunRequestConfig", () => {
     expect(config.metadata).toEqual(metadata);
   });
 
-  it("accepts an optional region", () => {
-    const config = parseRunRequestConfig({
-      model: "claude-haiku-4-5",
-      prompt: "x",
-      region: "us-west"
-    });
-    expect(config.region).toBe("us-west");
-  });
-
-  it("rejects an invalid region", () => {
+  it("rejects region as a removed choice field", () => {
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
         prompt: "x",
-        region: "ams"
+        region: "us-west"
       })
-    ).toThrow(/region must be one of: eu-west, us-west, ap-northeast/);
+    ).toThrow(/unexpected field: region/);
   });
 
   it("accepts postHook config and preserves the public wire shape", () => {
@@ -459,17 +426,16 @@ describe("run-config — parseRunRequestConfig", () => {
     ).toThrow(/duplicate/i);
   });
 
-  it("accepts an asset skill and provider skill side by side", () => {
+  it("accepts asset skills", () => {
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",
       prompt: "x",
-      skills: [goodAssetRef, goodProviderRef],
+      skills: [goodAssetRef],
       mcpServers: []
     });
-    expect(config.skills).toHaveLength(2);
+    expect(config.skills).toHaveLength(1);
     const skills = config.skills ?? [];
     expect(isAssetRef(skills[0]!)).toBe(true);
-    expect(isProviderSkillRef(skills[1]!)).toBe(true);
   });
 });
 
@@ -645,10 +611,10 @@ describe("run-config — parseRunSubmissionRequest", () => {
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          skills: [goodAssetRef, goodProviderRef]
+          skills: [goodAssetRef, { kind: "provider", vendor: "anthropic", skillId: "pdf" }]
         }
       })
-    ).toThrow(/managed runtime does not support/i);
+    ).toThrow(/kind must be 'asset'/i);
   });
 
   it("rejects an empty string prompt", () => {
@@ -670,18 +636,6 @@ describe("run-config — parseRunSubmissionRequest", () => {
         submission: {
           ...baseSubmission.submission,
           skills: [goodAssetRef, goodAssetRef]
-        }
-      })
-    ).toThrow(/duplicate/i);
-  });
-
-  it("rejects duplicate provider skills (vendor:skillId:version triple)", () => {
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseSubmission,
-        submission: {
-          ...baseSubmission.submission,
-          skills: [goodProviderRef, goodProviderRef]
         }
       })
     ).toThrow(/duplicate/i);

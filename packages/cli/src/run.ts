@@ -34,7 +34,7 @@
  * `--workspace` flag — the workspace is derived server-side from the
  * API token.
  */
-import { RUN_PROVIDERS, REGIONS, type ProxyErrorBody } from "@aexhq/contracts";
+import { RUN_PROVIDERS, type ProxyErrorBody } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
 import { runOutputsSyncCmd } from "./outputs-sync.js";
 import { formatProxyEndpointSummary, printProxyHelp, runProxy, tryReadManifest } from "./proxy.js";
@@ -229,7 +229,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --debug                     Optional; print a redacted per-request trace to stderr (uploads nothing)\n\n");
   io.stdout("aex run flags:\n");
   io.stdout(`  --provider <name>           Optional; one of: ${RUN_PROVIDERS.join(", ")} (default anthropic)\n`);
-  io.stdout("  --runtime managed           Optional runtime selector; omitted also uses managed\n");
   for (const provider of RUN_PROVIDERS) {
     io.stdout(`  --${provider}-api-key <key>${" ".repeat(Math.max(1, 13 - provider.length))}REQUIRED when --provider ${provider}; never stored\n`);
   }
@@ -242,7 +241,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --metadata key=value        Submission metadata entry (repeatable)\n");
   io.stdout("  --proxy-endpoint '<json>'   PlatformProxyEndpoint JSON (repeatable)\n");
   io.stdout("  --proxy-auth name=<spec>    bearer:tok | basic:u:p | header:v | query:v (repeatable)\n");
-  io.stdout(`  --region <region>           Product placement region; one of: ${REGIONS.join(", ")}\n`);
   io.stdout("  --runtime-size <size>       managed runtime preset\n");
   io.stdout("  --run-timeout <dur>         Server-side run deadline (e.g. 1h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");

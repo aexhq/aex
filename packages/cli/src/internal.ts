@@ -52,7 +52,7 @@ export interface CliIO {
   /**
    * Walk a directory and return every regular-file entry beneath it
    * (recursive). Used only by the internal `outputs sync` subcommand
-   * that the worker invokes from inside a managed run container at
+   * that the hosted runtime invokes from inside a managed run container at
    * session terminal. Returns `null` (not throws) when the directory
    * does not exist or is unreadable — `outputs sync` records the
    * miss in its structured output and continues to the next dir.

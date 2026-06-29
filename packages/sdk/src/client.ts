@@ -1,23 +1,18 @@
 import {
   AexError,
-  DEFAULT_CREDENTIAL_MODE,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
-  REGIONS,
-  RUNTIME_KINDS,
   RunConfigValidationError,
   RunStateError,
   SecretString,
   isRunSettled,
   operations,
-  parseCredentialMode,
   providersForModel,
   streamCoordinatorEvents,
   summarizeRunTrace,
   textOf,
   type AexEvent,
   type AgentsMdRecord,
-  type CredentialMode,
   type AgentsMdRef,
   type DebugSink,
   type FetchLike,
@@ -54,14 +49,12 @@ import {
   parseRunLimits,
   type RunWebhookDelivery,
   type RunProvider,
-  type Region,
   type SecretRecord,
   type SecretReveal,
   type RunUnit,
   BUILTIN_TOOL_NAMES,
   type BuiltinToolName,
   type RuntimeSize,
-  type RuntimeKind,
   type Skill as SkillRecord,
   type SkillRef,
   type ToolRef,
@@ -111,30 +104,22 @@ export interface AgentExecutorOptions {
  *     secret is bundled into the constructor and split into
  *     `secrets.proxyEndpointAuth` server-side; the public submission
  *     only carries the declaration (`{ name, baseUrl, authShape, … }`).
- *   - `apiKey` / `credentials` / `secrets` — the BYOK provider key(s). A key for
- *     the selected provider is REQUIRED; the simplest call passes just `apiKey`.
- *     Use `credentials` (or `secrets.apiKeys`) to carry keys for additional
- *     providers so subagents spawned with a different-family model can use them
- *     (the child inherits the parent's keys server-side). The platform never
- *     holds a long-lived provider key on your behalf.
+ *   - `secrets.apiKeys` — the BYOK provider key(s), keyed by provider. A key
+ *     for the selected provider is REQUIRED unless this is an admitted child
+ *     run inheriting keys from its parent. The platform never holds a
+ *     long-lived provider key on your behalf.
  *
  * `idempotencyKey` is auto-generated when omitted; pass one explicitly
  * if you want client-driven retry safety across process restarts.
  */
 export interface SubmitOptions {
   /**
-   * Credential source for upstream provider access. Omitted defaults to
-   * `"byok"`, which requires `secrets.apiKey` or
-   * `secrets.apiKeys[provider]`.
-   */
-  readonly credentialMode?: CredentialMode;
-  /**
    * Upstream provider selector. Prefer naming it explicitly with the
    * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. The
    * same model id can route through different providers, so `provider` is a
    * first-class field — pass it alongside `model` rather than letting the model
    * alone decide routing. The BYOK key for the selected provider is supplied as
-   * `secrets.apiKey` or `secrets.apiKeys[provider]`.
+   * `secrets.apiKeys[provider]`.
    *
    * Optional today: when omitted it is derived from `model` (each currently
    * supported model maps to a single provider), so existing call sites keep
@@ -142,18 +127,6 @@ export interface SubmitOptions {
    * throws.
    */
   readonly provider?: RunProvider;
-  /**
-   * Optional runtime selector. Omit it or pass `"managed"`; both run on
-   * the managed runtime through the hosted BYOK provider-proxy. `"native"`
-   * is no longer accepted.
-   */
-  readonly runtime?: RuntimeKind;
-  /**
-   * Optional hosted-platform placement region for this run. These are
-   * product-level tokens, not exact city guarantees; omit to let the platform
-   * infer a configured region and fall back when no hint matches.
-   */
-  readonly region?: Region;
   /**
    * Closed public model id. Prefer the {@link Models} symbol const, e.g.
    * `Models.CLAUDE_HAIKU_4_5`. Pair it with an explicit {@link Providers} value
@@ -244,23 +217,8 @@ export interface SubmitOptions {
    */
   readonly outputMode?: OutputMode;
   /**
-   * Single-provider BYOK key sugar — the key for the run's selected `provider`.
-   * The simplest call passes just `apiKey` (no nested `secrets` envelope). When
-   * several sources name a key for the same provider they must agree (else submit
-   * throws); resolution precedence is
-   * `secrets.apiKeys[provider] ?? secrets.apiKey ?? credentials[provider] ?? apiKey`.
-   */
-  readonly apiKey?: string;
-  /**
-   * Multi-provider BYOK key map — the clean way to supply keys for more than one
-   * provider (e.g. so a subagent spawned with a different-family model inherits a
-   * key server-side). Folded into the `secrets.apiKeys` wire shape.
-   */
-  readonly credentials?: Partial<Record<RunProvider, string>>;
-  /**
    * Advanced inline secrets bundle (per-provider `apiKeys`, MCP headers, proxy
-   * auth, env secrets). OPTIONAL — the common case uses `apiKey` / `credentials`.
-   * `secrets.apiKey` / `secrets.apiKeys` keep working unchanged.
+   * auth, env secrets). Provider keys must use `secrets.apiKeys`.
    */
   readonly secrets?: PlatformInlineSecrets;
   readonly idempotencyKey?: string;
@@ -292,9 +250,6 @@ export interface SubmitOptions {
   readonly limits?: RunLimits;
   readonly signal?: AbortSignal;
 }
-
-/** @deprecated Renamed to {@link SubmitOptions}. Kept for one release. */
-export type SubmitRunOptions = SubmitOptions;
 
 /**
  * The settle-consistent result of {@link AgentExecutor.run} / `runAndCollect`:
@@ -438,18 +393,6 @@ export class SkillsClient {
     return operations.findSkillByName(this.#http, name);
   }
 
-  /**
-   * Internal: post a pre-bundled skill zip to the BFF. Only
-   * `Skill.upload` calls this. NOT part of the public API.
-   */
-  async _uploadSkillBundle(args: { readonly name: string; readonly body: Uint8Array }): Promise<SkillRecord> {
-    return operations.createSkillBundle(this.#http, {
-      name: args.name,
-      body: args.body,
-      contentType: "application/zip",
-      filename: `${args.name}.zip`
-    });
-  }
 }
 
 /**
@@ -642,22 +585,6 @@ export class AgentExecutor {
   }
 
   /**
-   * Internal: forwards to `SkillsClient._uploadSkillBundle`. NOT part of
-   * the public API.
-   *
-   * NOTE (tech-debt): this is part of the legacy workspace-skill upload
-   * surface (`SkillsClient` + `operations.createSkillBundle` + the TUS
-   * chunked path in asset-upload.ts). The live submit path materializes
-   * inline skills via `uploadAsset` instead; `Skill.upload(client)`
-   * pre-stages a draft explicitly for reuse. This surface is retained
-   * pending a deliberate deprecation pass (it still threads into the CLI
-   * host commands), tracked in the remediation plan as item 4a.
-   */
-  async _uploadSkillBundle(args: { readonly name: string; readonly body: Uint8Array }): Promise<SkillRecord> {
-    return this.skills._uploadSkillBundle(args);
-  }
-
-  /**
    * Internal: an `AgentsMd.upload(this)` shortcut that bypasses
    * `client.agentsMd` indirection. Forwarded to
    * `AgentsMdClient._uploadAgentsMd`. NOT part of the public API.
@@ -813,6 +740,7 @@ export class AgentExecutor {
     if (!options || typeof options !== "object") {
       throw new RunConfigValidationError("AgentExecutor.submit: options is required");
     }
+    assertNoRemovedSubmitFields(options);
     // A model maps to one or more upstream providers (see MODEL_PROVIDER_IDS).
     // `providersForModel` returns the supported providers in priority order, or
     // `[]` for an unknown model string (the model check below then rejects it).
@@ -830,13 +758,7 @@ export class AgentExecutor {
       );
     }
     const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
-    const credentialMode = parseCredentialMode(options.credentialMode);
-    // Resolve the BYOK key(s) across the top-level sugar (`apiKey`,
-    // `credentials`) and the advanced `secrets` bundle, folding everything into a
-    // single `apiKeys` map (the wire shape the platform reads). Validates the
-    // selected provider's key is present and that the sources don't disagree,
-    // failing synchronously before any network call.
-    const { foldedApiKeys } = resolveSubmitCredentials(options, provider);
+    validateSubmitCredentials(options, provider);
     if (typeof options.model !== "string" || !options.model) {
       throw new RunConfigValidationError("AgentExecutor.submit: model is required");
     }
@@ -852,29 +774,6 @@ export class AgentExecutor {
     const { declarations: secretEnvDeclarations, values: envSecretValues } =
       splitSecretEnv(options.secretEnv);
 
-    // Validate the runtime selector before any network I/O — inline drafts
-    // are uploaded below, so an invalid runtime must reject first rather than
-    // leak an asset upload.
-    if (
-      options.runtime !== undefined &&
-      !(RUNTIME_KINDS as readonly string[]).includes(options.runtime)
-    ) {
-      throw new AexError(
-        "RUNTIME_UNSUPPORTED",
-        `AgentExecutor.submit: runtime must be one of: ${RUNTIME_KINDS.join(", ")} ` +
-          `(got ${JSON.stringify(options.runtime)})`
-      );
-    }
-    if (
-      options.region !== undefined &&
-      !(REGIONS as readonly string[]).includes(options.region)
-    ) {
-      throw new AexError(
-        "RUN_CONFIG_INVALID",
-        `AgentExecutor.submit: region must be one of: ${REGIONS.join(", ")} ` +
-          `(got ${JSON.stringify(options.region)})`
-      );
-    }
     // Validate the per-run limits override with the SAME parser the server runs
     // (shape + positivity + allow-list), failing fast before any asset upload.
     // Normalizes an all-absent override (e.g. `{}`) away.
@@ -943,9 +842,6 @@ export class AgentExecutor {
 
     const secrets: PlatformInlineSecrets = {
       ...options.secrets,
-      // Folded BYOK keys (sugar + secrets.apiKeys) override; omitted entirely
-      // when empty so a pure legacy `secrets.apiKey` submission stays unchanged.
-      ...(Object.keys(foldedApiKeys).length > 0 ? { apiKeys: foldedApiKeys } : {}),
       ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
       ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {}),
       ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
@@ -959,12 +855,6 @@ export class AgentExecutor {
       // shared parser still defaults to `anthropic` when callers omit
       // the field entirely, but the SDK has resolved it by here.
       provider,
-      ...(credentialMode !== DEFAULT_CREDENTIAL_MODE ? { credentialMode } : {}),
-      // `runtime` is optional on the wire — absent means let the
-      // dispatcher auto-route. Only emit it when the caller asked for
-      // a specific runtime so the wire shape stays minimal.
-      ...(options.runtime ? { runtime: options.runtime } : {}),
-      ...(options.region ? { region: options.region } : {}),
       submission,
       ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
@@ -1113,7 +1003,7 @@ export class AgentExecutor {
 
   /**
    * Stream the unified {@link AexEvent} envelope live over the coordinator
-   * WebSocket. The Worker's ticket broker authorizes the connection (workspace
+   * WebSocket. The hosted API's ticket broker authorizes the connection (workspace
    * token → short-lived coordinator ticket); the shared client replays from
    * the cursor, tails live, and resumes exactly-once across reconnects. The
    * ticket is re-minted on each (re)connect so a long run never outlives it.
@@ -1460,56 +1350,33 @@ function normalisePrompt(input: string | readonly string[]): readonly string[] {
   return [...input];
 }
 
-/**
- * Resolve the BYOK provider key(s) for a submission across the top-level sugar
- * (`apiKey`, `credentials`) and the advanced `secrets` bundle, folding them into
- * one `apiKeys` map (the wire shape the platform reads). Per-provider precedence:
- * `secrets.apiKeys[p] ?? secrets.apiKey ?? credentials[p] ?? apiKey`. Legacy
- * `secrets.apiKey` is left in place (not folded) so a pure-legacy submission's
- * wire shape is unchanged; the platform falls back to it for the selected
- * provider. Throws synchronously when the selected provider has no key, or when
- * the sources name DIFFERENT keys for it (a call-site mistake).
- */
-function resolveSubmitCredentials(
-  options: SubmitOptions,
-  provider: RunProvider
-): { foldedApiKeys: Partial<Record<RunProvider, string>> } {
-  const secrets = options.secrets;
-  const selectedCandidates = [
-    secrets?.apiKeys?.[provider],
-    secrets?.apiKey,
-    options.credentials?.[provider],
-    options.apiKey
-  ].filter((value): value is string => typeof value === "string" && value.length > 0);
-  if (new Set(selectedCandidates).size > 1) {
-    throw new RunConfigValidationError(
-      `AgentExecutor.submit: conflicting API keys for provider ${JSON.stringify(provider)} ` +
-        "(secrets.apiKeys / secrets.apiKey / credentials / apiKey disagree). Supply exactly one."
-    );
-  }
-  if (selectedCandidates.length === 0) {
-    throw new RunConfigValidationError(
-      "AgentExecutor.submit: a provider API key is required — pass `apiKey`, " +
-        "`credentials[provider]`, `secrets.apiKey`, or `secrets.apiKeys[provider]`."
-    );
-  }
-  // Fold in precedence order (lowest first; later writes win):
-  // apiKey (selected provider) < credentials < secrets.apiKeys.
-  const foldedApiKeys: Partial<Record<RunProvider, string>> = {};
-  if (typeof options.apiKey === "string" && options.apiKey.length > 0) {
-    foldedApiKeys[provider] = options.apiKey;
-  }
-  for (const [p, key] of Object.entries(options.credentials ?? {})) {
-    if (typeof key === "string" && key.length > 0) {
-      foldedApiKeys[p as RunProvider] = key;
+function assertNoRemovedSubmitFields(options: SubmitOptions): void {
+  const record = options as unknown as Record<string, unknown>;
+  for (const field of ["credentialMode", "runtime", "region", "apiKey", "credentials"]) {
+    if (Object.prototype.hasOwnProperty.call(record, field)) {
+      throw new RunConfigValidationError(
+        `AgentExecutor.submit: ${field} is not a supported option; use the managed path with secrets.apiKeys[provider].`
+      );
     }
   }
-  for (const [p, key] of Object.entries(secrets?.apiKeys ?? {})) {
-    if (typeof key === "string" && key.length > 0) {
-      foldedApiKeys[p as RunProvider] = key;
-    }
+  const secrets = record.secrets;
+  if (secrets && typeof secrets === "object" && !Array.isArray(secrets) && Object.prototype.hasOwnProperty.call(secrets, "apiKey")) {
+    throw new RunConfigValidationError(
+      "AgentExecutor.submit: secrets.apiKey is not supported; use secrets.apiKeys[provider]."
+    );
   }
-  return { foldedApiKeys };
+}
+
+function validateSubmitCredentials(options: SubmitOptions, provider: RunProvider): void {
+  if (options.parentRunId) {
+    return;
+  }
+  const key = options.secrets?.apiKeys?.[provider];
+  if (typeof key !== "string" || key.length === 0) {
+    throw new RunConfigValidationError(
+      `AgentExecutor.submit: a provider API key is required — pass secrets.apiKeys[${JSON.stringify(provider)}].`
+    );
+  }
 }
 
 function postHookForWire(input: PlatformPostHookInput | undefined): PlatformPostHookInput | undefined {

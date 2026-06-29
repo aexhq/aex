@@ -615,7 +615,7 @@ describe("aex run", () => {
       model: "claude-haiku-4-5",
       system: "be helpful",
       prompt: ["hi"],
-      skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf", version: "v1" }],
+      skills: [{ kind: "asset", assetId: "asset_pdf", name: "pdf" }],
       mcpServers: [
         {
           name: "github",
@@ -666,13 +666,13 @@ describe("aex run", () => {
     expect(submission.model).toBe("claude-haiku-4-5");
     expect(submission.prompt).toEqual(["hi"]);
     expect(submission.skills).toEqual([
-      { kind: "provider", vendor: "anthropic", skillId: "pdf", version: "v1" }
+      { kind: "asset", assetId: "asset_pdf", name: "pdf" }
     ]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);
     const secrets = body.secrets as Record<string, unknown>;
-    expect(secrets.apiKey).toBe("sk-ant-1");
+    expect(secrets.apiKeys).toEqual({ anthropic: "sk-ant-1" });
     expect(secrets.mcpServers).toEqual([
       {
         name: "github",
@@ -752,7 +752,7 @@ describe("aex run", () => {
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("deepseek");
-    expect(body.secrets).toEqual({ apiKey: "sk-ds-1" });
+    expect(body.secrets).toEqual({ apiKeys: { deepseek: "sk-ds-1" } });
   });
 
   it("threads --webhook into the request body as webhook.url", async () => {
@@ -1083,7 +1083,7 @@ describe("aex skills", () => {
 
   it("upload --file: runs the direct-to-storage flow (presign → object storage PUT → finalize) and prints the skill record", async () => {
     // The CLI catalog upload now goes direct-to-storage: the bytes never transit
-    // the worker. Assert the three-step wire shape (presign → PUT → finalize)
+    // the hosted API. Assert the three-step wire shape (presign → PUT → finalize)
     // and that the signed checksum header rides the object storage PUT.
     const tmp = makeSkillsTmpDir(
       "---\nname: rules-cli\ndescription: cli upload skill\n---\n# rules-cli\n"
@@ -1148,37 +1148,29 @@ describe("aex skills", () => {
     }
   });
 
-  it("upload: falls back to the buffered multipart POST /api/skills when presign is unconfigured (503)", async () => {
+  it("upload: treats presign_unconfigured as terminal and does not POST a bundle to the API", async () => {
     const tmp = makeSkillsTmpDir(
-      "---\nname: rules-fallback\ndescription: cli upload skill\n---\n# rules-fallback\n"
+      "---\nname: rules-direct\ndescription: cli upload skill\n---\n# rules-direct\n"
     );
     const cap = makeHostIo({
-      argv: ["skills", "upload", "--name", "rules-fallback", "--file", join(tmp.dir, "SKILL.md"), ...COMMON],
+      argv: ["skills", "upload", "--name", "rules-direct", "--file", join(tmp.dir, "SKILL.md"), ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/api/skills/presign")) {
           return new Response(JSON.stringify({ ok: false, code: "presign_unconfigured", message: "object storage S3 creds not configured" }), { status: 503, headers: { "content-type": "application/json" } });
         }
-        // Fallback path: buffered multipart upload to /api/skills.
-        const body = call.init.body;
-        if (!(body instanceof FormData) || body.get("name") !== "rules-fallback" || !(body.get("bundle") instanceof Blob)) {
-          return new Response(JSON.stringify({ error: { message: "expected multipart FormData" } }), { status: 400, headers: { "content-type": "application/json" } });
-        }
-        return new Response(
-          JSON.stringify({ skill: { id: "skl_fb", name: "rules-fallback", state: "ready", hash: "sha256:" + "b".repeat(64), fileCount: 1 } }),
-          { status: 201, headers: { "content-type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: { message: `unexpected url ${call.url}` } }), { status: 400, headers: { "content-type": "application/json" } });
       }
     });
     try {
       await runCli(cap.io);
-      expect(cap.stderr).toBe("");
-      expect(cap.exitCode).toBe(0);
+      expect(cap.exitCode).toBe(1);
       const urls = cap.calls.map((c) => c.url);
-      expect(urls).toContain("https://dash.example/api/skills/presign");
-      expect(urls).toContain("https://dash.example/api/skills");
+      expect(urls).toEqual(["https://dash.example/api/skills/presign"]);
       expect(urls.some((u) => u.includes("object-storage.example.test"))).toBe(false);
-      const printed = JSON.parse(cap.stdout.trim()) as { id: string };
-      expect(printed.id).toBe("skl_fb");
+      const errJson = JSON.parse(cap.stderr.trim()) as { error: string; message: string; status?: number };
+      expect(errJson.error).toBe("skill_upload_failed");
+      expect(errJson.status).toBe(503);
+      expect(errJson.message).toContain("object storage S3 creds not configured");
     } finally {
       tmp.cleanup();
     }

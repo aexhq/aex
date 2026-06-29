@@ -9,13 +9,22 @@ aex is an agent execution platform for launching autonomous agents from a simple
 The package ships:
 
 - `AgentExecutor` for submit, run, wait, stream, inspect, download, cancel, and delete.
-- Typed run primitives: `Models`, `Providers`, `Regions`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
+- Typed run primitives: `Models`, `Providers`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, whoami, and skills operations.
 
 ## Install
 
 ```bash
 bun add @aexhq/sdk
+```
+
+This installs the TypeScript SDK exports and the bundled `aex` CLI. Set both
+credentials before running the examples: `AEX_API_TOKEN` authenticates to aex,
+and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
+
+```bash
+export AEX_API_TOKEN="<your-aex-token>"
+export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
 ## First Run
@@ -29,7 +38,7 @@ const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 // no manual poll loop. `provider` is derived from the model.
 const { text, ok } = await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
   prompt: "Summarize this repo."
 });
 
@@ -41,7 +50,7 @@ Need the run id, live events, or downloads? Use `submit` + `stream` + `wait`:
 ```ts
 const runId = await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
   prompt: "Write the report and save outputs."
 });
 
@@ -55,18 +64,23 @@ console.log(run.status);
 await aex.download(runId, { to: "./run.zip" });
 ```
 
-For multiple providers (e.g. subagents on a different model family), pass a
-`credentials` map instead of `apiKey`:
+For multiple providers (e.g. subagents on a different model family), include
+each BYOK key in `secrets.apiKeys`:
 
 ```ts
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  credentials: { anthropic: process.env.ANTHROPIC_API_KEY!, openai: process.env.OPENAI_API_KEY! },
+  secrets: {
+    apiKeys: {
+      anthropic: process.env.ANTHROPIC_API_KEY!,
+      openai: process.env.OPENAI_API_KEY!
+    }
+  },
   prompt: "Delegate research to a subagent."
 });
 ```
 
-The same request can run from the CLI:
+The same request can run from the bundled CLI:
 
 ```bash
 aex run \
@@ -104,8 +118,8 @@ aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
 Errors are typed and actionable. Every `submit()` config-validation failure throws
 a `RunConfigValidationError` (`err.code === "RUN_CONFIG_INVALID"`) you can `catch`
 by code; CLI failures print a JSON envelope carrying the HTTP `status`, a one-line
-`remedy`, and the `runId` where known, and a wrong `--model`/`--provider`/
-`--runtime-size`/`--region` gets a "did you mean?" suggestion.
+`remedy`, and the `runId` where known, and a wrong `--model`, `--provider`, or
+`--runtime-size` gets a "did you mean?" suggestion.
 
 ## Chat over a corpus of runs
 

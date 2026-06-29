@@ -14,7 +14,7 @@
  *      {"dir":"/workspace/reports","path":"/workspace/reports/x.txt","sizeBytes":42}
  *  - Reports missing dirs via stderr (non-fatal). Exits 0 if at least
  *    one dir contained at least one file; 0 also when ALL dirs were
- *    empty (best-effort semantics — the worker still records the
+ *    empty (best-effort semantics — the hosted runtime still records the
  *    capture attempt either way).
  *
  * No flags. Each positional argument is one directory to walk.

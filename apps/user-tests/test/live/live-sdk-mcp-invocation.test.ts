@@ -52,7 +52,6 @@ const MCP_URL = "https://mcp.deepwiki.com/mcp";
 interface Cell {
   readonly id: string;
   readonly provider: "deepseek";
-  readonly runtime: "managed";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
@@ -62,7 +61,6 @@ const CELLS: readonly Cell[] = [
   {
     id: "deepseek-managed",
     provider: "deepseek",
-    runtime: "managed",
     model: deepseekModel,
     keyEnvName: "DEEPSEEK_KEY_SUBMIT",
     keyValue: deepseekKey
@@ -138,7 +136,6 @@ function buildScript(cell: Cell): string {
 
     const runId = await client.submit({
       provider: ${JSON.stringify(cell.provider)},
-      runtime: ${JSON.stringify(cell.runtime)},
       model: ${JSON.stringify(cell.model)},
       prompt: ${JSON.stringify(prompt)},
       mcpServers: [mcp],
@@ -148,7 +145,7 @@ function buildScript(cell: Cell): string {
       // the MCP — even when correctly wired — is never invoked. This
       // pins the assertion to MCP behaviour instead of model whim.
       includeBuiltinTools: false,
-      secrets: { apiKey: process.env.${cell.keyEnvName}  },
+      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     });
 
@@ -271,7 +268,7 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       const dump = (): string => dumpResult(cell, result);
 
       expect(result.runStatus, dump()).toBe("succeeded");
-      expect(result.runtime).toBe(cell.runtime);
+      expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
 
       // Event frame: runtime_started present + last event is runtime_terminal.

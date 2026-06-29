@@ -825,138 +825,16 @@ export async function submitRun(
 }
 
 /**
- * Multipart variant of `submitRun` for runs that carry transient
- * (per-run) skill bundles and/or transient AgentsMd content.
- *
- * The JSON submission travels as the `submission` part; each
- * `InlineSkillRef.slot` in `request.submission.skills` MUST be
- * mirrored by exactly one `skill:<slot>` part with the bundle bytes.
- * Each `InlineAgentsMdRef.slot` in `request.submission.agentsMd`
- * MUST be mirrored by exactly one `agentsmd:<slot>` part with the
- * markdown text.
- *
- * The BFF re-canonicalises and re-hashes each bundle/file; a
- * `contentHash` mismatch is rejected with a deterministic error.
- *
- * At least one of `bundles` or `agentsMdParts` must be non-empty.
- */
-export async function submitRunMultipart(
-  http: HttpClient,
-  request: PlatformRunSubmissionInput,
-  bundles: ReadonlyArray<{
-    readonly slot: string;
-    readonly bytes: Uint8Array;
-    readonly filename: string;
-  }>,
-  agentsMdParts?: ReadonlyArray<{
-    readonly slot: string;
-    readonly content: string;
-    readonly filename: string;
-  }>,
-  fileParts?: ReadonlyArray<{
-    readonly slot: string;
-    readonly bytes: Uint8Array;
-    readonly filename: string;
-  }>
-): Promise<Run> {
-  const hasBundles = Array.isArray(bundles) && bundles.length > 0;
-  const hasAgentsMd = Array.isArray(agentsMdParts) && agentsMdParts.length > 0;
-  const hasFiles = Array.isArray(fileParts) && fileParts.length > 0;
-  if (!hasBundles && !hasAgentsMd && !hasFiles) {
-    throw new Error("submitRunMultipart: bundles, agentsMdParts, or fileParts must be non-empty");
-  }
-  const form = new FormData();
-  // Submission rides as a typed JSON Blob so the BFF reads
-  // `multipart["submission"]` with the right content-type and never
-  // has to re-detect the body shape.
-  form.append(
-    "submission",
-    new Blob([JSON.stringify(request)], { type: "application/json" }),
-    "submission.json"
-  );
-  const seen = new Set<string>();
-  for (const bundle of bundles) {
-    if (typeof bundle.slot !== "string" || !bundle.slot) {
-      throw new Error("submitRunMultipart: each bundle must have a non-empty slot id");
-    }
-    if (seen.has(bundle.slot)) {
-      throw new Error(`submitRunMultipart: duplicate inline skill slot "${bundle.slot}"`);
-    }
-    seen.add(bundle.slot);
-    const blob = toBlob(bundle.bytes, "application/zip");
-    form.append(`skill:${bundle.slot}`, blob, bundle.filename);
-  }
-  for (const part of agentsMdParts ?? []) {
-    if (typeof part.slot !== "string" || !part.slot) {
-      throw new Error("submitRunMultipart: each agentsMd part must have a non-empty slot id");
-    }
-    const partKey = `agentsmd:${part.slot}`;
-    if (seen.has(partKey)) {
-      throw new Error(`submitRunMultipart: duplicate agentsMd slot "${part.slot}"`);
-    }
-    seen.add(partKey);
-    const blob = new Blob([part.content], { type: "text/plain" });
-    form.append(partKey, blob, part.filename);
-  }
-  for (const part of fileParts ?? []) {
-    if (typeof part.slot !== "string" || !part.slot) {
-      throw new Error("submitRunMultipart: each file part must have a non-empty slot id");
-    }
-    const partKey = `file:${part.slot}`;
-    if (seen.has(partKey)) {
-      throw new Error(`submitRunMultipart: duplicate file slot "${part.slot}"`);
-    }
-    seen.add(partKey);
-    const blob = toBlob(part.bytes, "application/zip");
-    form.append(partKey, blob, part.filename);
-  }
-  return http.request<Run>("/api/runs", {
-    method: "POST",
-    body: form
-  });
-}
-
-/**
- * Upload a workspace skill bundle as a zip blob. The hosted API runs
- * the two-phase flow internally (insert pending row, stream bytes into
- * object storage, validate manifest, transition to ready) and returns
- * the finalized `Skill`. Use `Skill.fromPath` / `Skill.upload` in the
- * SDK to build the body; this transport function only knows about
- * bytes.
- */
-export async function createSkillBundle(
-  http: HttpClient,
-  args: {
-    readonly name: string;
-    readonly body: Blob | ArrayBuffer | Uint8Array;
-    readonly contentType?: string;
-    readonly filename?: string;
-  }
-): Promise<Skill> {
-  const form = new FormData();
-  form.append("name", args.name);
-  const blobBody = toBlob(args.body, args.contentType ?? "application/zip");
-  form.append("bundle", blobBody, args.filename ?? `${args.name}.zip`);
-  const result = await http.request<{ readonly skill: Skill } | Skill>("/api/skills", {
-    method: "POST",
-    body: form
-  });
-  return unwrapSkill(result);
-}
-
-/**
  * Upload a workspace skill bundle DIRECTLY to object storage via the presign
  * flow, so the bytes never transit the hosted API (bundle size bounded by the
- * object store, not API memory). Falls back to the buffered multipart
- * `createSkillBundle` when the hosted API has no object-store upload
- * credentials (503 `presign_unconfigured`).
+ * object store, not API memory). Presign errors are terminal.
  *
  *   1. POST /api/skills/presign     { name, hash, sizeBytes } → { uploadUrl, requiredHeaders, skillId }
  *   2. PUT bytes → uploadUrl        (signed checksum; the store rejects a mismatch)
  *   3. POST /api/skills/:id/finalize { manifest } → finalized Skill
  *
  * `manifest` is the client-computed bundle manifest (the caller already
- * validated the zip shape before hashing); the Worker records it on finalize
+ * validated the zip shape before hashing); the hosted API records it on finalize
  * without re-buffering the object.
  */
 export async function createSkillBundleDirect(
@@ -970,30 +848,16 @@ export async function createSkillBundleDirect(
     readonly contentType?: string;
   }
 ): Promise<Skill> {
-  let presign: {
+  const presign = await http.request<{
     ok: boolean;
     skillId: string;
     uploadUrl: string;
     requiredHeaders?: Record<string, string>;
-  };
-  try {
-    presign = await http.request<typeof presign>("/api/skills/presign", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: args.name, hash: args.contentHash, sizeBytes: args.body.byteLength })
-    });
-  } catch (err) {
-    const status = (err as { status?: number }).status;
-    const code = ((err as { details?: { code?: string } }).details ?? {}).code;
-    if (status === 503 && code === "presign_unconfigured") {
-      return createSkillBundle(http, {
-        name: args.name,
-        body: args.body,
-        ...(args.contentType ? { contentType: args.contentType } : {})
-      });
-    }
-    throw err;
-  }
+  }>("/api/skills/presign", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: args.name, hash: args.contentHash, sizeBytes: args.body.byteLength })
+  });
 
   const putRes = await fetchImpl(presign.uploadUrl, {
     method: "PUT",

@@ -24,7 +24,7 @@ For the current provider/model set, see the generated
 
 | Area | Boundary |
 | --- | --- |
-| Runtime | New submissions run on the managed runtime. `runtime: "native"` is rejected. |
+| Runtime | New submissions run on the managed runtime. There is no public runtime selector. |
 | Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
 | Secrets | Provider keys, MCP credentials, proxy auth, and env secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
 | MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |

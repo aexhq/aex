@@ -35,7 +35,7 @@ await aex.submit({
       allowPathPrefixes: ["/v1/"]
     })
   ],
-  secrets: { apiKey: process.env.ANTHROPIC_API_KEY! }
+  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 ```
 

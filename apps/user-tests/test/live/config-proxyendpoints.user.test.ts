@@ -14,7 +14,7 @@
  * sha256, writes /mnt/session/uploads/aex/aex, and the entrypoint drops
  * an `aex` PATH wrapper.
  *
- * Only passes once the Worker is deployed with AEX_RUNTIME_BRIDGE_MANIFEST and
+ * Only passes once the hosted API is deployed with AEX_RUNTIME_BRIDGE_MANIFEST and
  * AEX_PROXY_PUBLIC_BASE_URL is set (the index.json's
  * `proxyBaseUrl` is composed from it). Runs on managed (deepseek). waitMs ~8min.
  */
@@ -37,7 +37,6 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
       const script = sdkRunnerScript({
         submit: `{
           provider: "deepseek",
-          runtime: "managed",
           model: MODEL_DEEPSEEK,
           prompt: [
             "Using the shell, run this exact one-liner and reply with its exact final stdout line, no prose:",
@@ -52,7 +51,7 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
               responseMode: "full"
             })
           ],
-          secrets: { apiKey: DEEPSEEK_KEY  },
+          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
           idempotencyKey: "user-proxyendpoints-" + Date.now()
         }`
       });
@@ -80,7 +79,7 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
         `INDEX_MISSING reported while proxy should require the manifest: ${shellEvidence}\n\n${runDiagnostics(result)}`
       ).not.toContain("INDEX_MISSING");
 
-      // scope: the actual proxy round-trip is served by the API Worker-owned
+      // scope: the actual proxy round-trip is served by the hosted API-owned
       // named proxy route at ${AEX_PROXY_PUBLIC_BASE_URL}/api/runs/:id/proxy.
       // Every plane that runs this user test is configured enough to prove the
       // real customer path, not just the mounted bridge files.

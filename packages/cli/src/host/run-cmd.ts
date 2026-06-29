@@ -24,7 +24,6 @@
  *   --api-token <token>            see `parseCommonHostFlags`
  *
  * Optional (both modes):
- *   --region <region>             product placement region (eu-west, us-west, ap-northeast); omitted infers/falls back
  *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-8gb); default shared-0.25x-1gb
  *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
  *   --idempotency-key <key>        defaults to a fresh UUID
@@ -38,11 +37,9 @@ import {
   DEFAULT_RUN_PROVIDER,
   operations,
   parseRunRequestConfig,
-  REGIONS,
   RUN_MODELS,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
-  RUNTIME_KINDS,
   TERMINAL_RUN_STATUSES,
   validateProxyAuth,
   type RunRequestConfig,
@@ -56,9 +53,7 @@ import {
   type PlatformProxyEndpointAuth,
   type RunModel,
   type RunProvider,
-  type Region,
   type RuntimeSize,
-  type RuntimeKind,
   type SkillRef
 } from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
@@ -132,30 +127,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   }
   if (!providerKeyValues[provider]) {
     io.stderr(`--${provider}-api-key is required when --provider is ${provider} (the platform does not store provider keys on your behalf)\n`);
-    return USAGE_ERR;
-  }
-
-  // Optional runtime selector. Validate the value against the wire enum
-  // here so the user gets an early error from the CLI; the shared parser
-  // re-runs the check when the request lands at the API plane.
-  const runtimeFlag = takeFlagValue(rest, "--runtime");
-  if (runtimeFlag.error) { io.stderr(`${runtimeFlag.error}\n`); return USAGE_ERR; }
-  rest = runtimeFlag.remaining;
-  let runtime: RuntimeKind | undefined;
-  if (runtimeFlag.value !== null) {
-    if (!(RUNTIME_KINDS as readonly string[]).includes(runtimeFlag.value)) {
-      io.stderr(`--runtime must be one of: ${RUNTIME_KINDS.join(", ")} (got: ${runtimeFlag.value})\n`);
-      return USAGE_ERR;
-    }
-    runtime = runtimeFlag.value as RuntimeKind;
-  }
-
-  const regionFlag = takeFlagValue(rest, "--region");
-  if (regionFlag.error) { io.stderr(`${regionFlag.error}\n`); return USAGE_ERR; }
-  rest = regionFlag.remaining;
-  if (regionFlag.value && !(REGIONS as readonly string[]).includes(regionFlag.value)) {
-    const hint = suggest(regionFlag.value, REGIONS);
-    io.stderr(`--region must be one of: ${REGIONS.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}\n`);
     return USAGE_ERR;
   }
 
@@ -415,8 +386,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
 
   const hasAdditionalProviderKeys = Object.keys(providerKeyValues).some((p) => p !== provider);
   const secrets: PlatformInlineSecrets = {
-    apiKey: providerKeyValues[provider] as string,
-    ...(hasAdditionalProviderKeys ? { apiKeys: providerKeyValues } : {}),
+    apiKeys: hasAdditionalProviderKeys ? providerKeyValues : { [provider]: providerKeyValues[provider] as string },
     ...(mcpServerSecrets.length > 0 ? { mcpServers: mcpServerSecrets } : {}),
     ...(proxyAuth.length > 0 ? { proxyEndpointAuth: proxyAuth } : {})
   };
@@ -424,14 +394,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   const request: PlatformRunSubmissionInput = {
     idempotencyKey: idempotency.value ?? generateIdempotencyKey(),
     provider,
-    ...(runtime ? { runtime } : {}),
     submission,
     secrets,
-    ...(regionFlag.value
-      ? { region: regionFlag.value as Region }
-      : runConfig.region
-        ? { region: runConfig.region }
-        : {}),
     ...(runtimeSizeFlag.value
       ? { runtimeSize: runtimeSizeFlag.value as RuntimeSize }
       : runConfig.runtimeSize
@@ -625,4 +589,3 @@ function generateIdempotencyKey(): string {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-

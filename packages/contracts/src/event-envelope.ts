@@ -21,7 +21,7 @@
  * coordinator:
  *   - `channel`   — "event" (the typed AG-UI stream) or "log" (a verbose log
  *                   line). The single axis a consumer splits the unified stream
- *                   on. Absent ⇒ "event" (back-compat for existing producers).
+ *                   on.
  *   - `sourceSeq` — a per-SOURCE monotonic counter assigned AT the source. The
  *                   DO's hard guarantee is that records of the same source are
  *                   never reordered relative to their `sourceSeq`.
@@ -33,9 +33,8 @@
  * `sequence` on arrival, which is the canonical stream order. `sourceSeq` /
  * `emittedAt` are CARRIED through broadcast + archive, not used to reorder.
  *
- * This module is **additive**: it does not change {@link RunnerEvent} or any
- * existing wire shape. It is a pure projection plus honest guards and a strict
- * AG-UI projection for consumers.
+ * This module is a pure projection plus honest guards and a strict AG-UI
+ * projection for consumers.
  */
 
 import type { JsonValue } from "./submission.js";
@@ -55,7 +54,7 @@ export const AEX_EVENT_MAP_VERSION = 1 as const;
 /**
  * Coarse origin classifier — the first axis a consumer filters on.
  *   - `agent`   — the model: text, reasoning, builtin tool calls/results.
- *   - `worker`  — the hosted aex edge itself.
+ *   - `api`     — the hosted aex API path.
  *   - `runtime` — the execution runtime: lifecycle, diagnostics, non-fatal
  *                 stream errors.
  *   - `mcp`     — an MCP server (a tool call/result routed through MCP).
@@ -64,7 +63,7 @@ export const AEX_EVENT_MAP_VERSION = 1 as const;
  *   - `host`    — the managed host the runtime executes on; distinct from the
  *                 runtime process itself.
  */
-export const AEX_EVENT_SOURCES = ["agent", "worker", "runtime", "mcp", "aex", "workflow", "host"] as const;
+export const AEX_EVENT_SOURCES = ["agent", "api", "runtime", "mcp", "aex", "workflow", "host"] as const;
 export type AexEventSource = (typeof AEX_EVENT_SOURCES)[number];
 
 /**
@@ -155,8 +154,6 @@ export interface AexEvent {
    * as the authoritative receive marker. It does NOT need to exceed `emittedAt`:
    * the source runs on a different host with an independent clock, so cross-host
    * drift can leave `receivedAt < emittedAt` and that is expected, not an error.
-   * Absent on records produced before this field existed (back-compat with
-   * archived records).
    */
   readonly receivedAt?: number;
   /**
@@ -266,7 +263,7 @@ function project(evt: RunnerEvent): Projection {
 }
 
 // --- Log channel ----------------------------------------------------------
-// A worker/workflow log line is a record on the unified stream's `log` channel,
+// A hosted API/workflow log line is a record on the unified stream's `log` channel,
 // distinct from the typed `event` channel. The coordinator is still the seq
 // authority; the producer supplies `source`/`sourceSeq`/`emittedAt` and a
 // minimal payload (level + message + optional fields).

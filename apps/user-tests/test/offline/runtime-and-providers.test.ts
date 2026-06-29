@@ -1,24 +1,13 @@
 /**
- * Scenario 5: runtime-and-providers.test.ts
- *
- * Locks the managed-runtime + widened-provider surface as it appears
- * inside a clean `bun add @aexhq/sdk` tempdir — the same way a real
- * user / AI agent sees the package. Catches regressions where:
- *   - SDK drops the `runtime?` option from SubmitRunOptions
- *   - SDK silently rejects providers in RUN_PROVIDERS
- *   - Server-side validation (selectRuntime) stops being importable
- *   - RuntimeValidationError code values shift
- *
- * Every assertion runs in a child Bun process whose cwd is the
- * install tempdir, so resolution goes through the installed
- * `node_modules/@aexhq/sdk` and NOT the monorepo workspace symlink.
+ * Locks the clean public provider surface as it appears inside a clean
+ * `bun add @aexhq/sdk` tempdir.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
-describe("managed runtime + widened providers (published surface)", () => {
+describe("managed-only provider surface (published package)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -35,149 +24,69 @@ describe("managed runtime + widened providers (published surface)", () => {
     return runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
-  it("exports the v1 provider set + RUNTIME_KINDS + selectRuntime", async () => {
+  it("exports providers without runtime/region selector helpers", async () => {
     const script = `
       const mod = await import("@aexhq/sdk");
-      const result = {
+      console.log(JSON.stringify({
         providers: mod.RUN_PROVIDERS,
-        runtimes: mod.RUNTIME_KINDS,
         defaultProvider: mod.DEFAULT_RUN_PROVIDER,
-        hasSelectRuntime: typeof mod.selectRuntime === "function",
-        hasCollect: typeof mod.collectManagedUnsupportedFeatures === "function",
-        hasError: typeof mod.RuntimeValidationError === "function",
-        validationCodes: mod.RUNTIME_VALIDATION_CODES
-      };
-      console.log(JSON.stringify(result));
+        hasRuntimeKinds: "RUNTIME_KINDS" in mod,
+        hasRegions: "REGIONS" in mod || "Regions" in mod,
+        hasSelectRuntime: "selectRuntime" in mod,
+        hasRuntimeValidationError: "RuntimeValidationError" in mod
+      }));
     `;
-    const { exitCode, stdout, stderr } = await runChild(script, "runtime-exports.mjs");
+    const { exitCode, stdout, stderr } = await runChild(script, "provider-exports.mjs");
     expect(exitCode, stderr).toBe(0);
-    const out = JSON.parse(stdout.trim()) as {
-      providers: string[];
-      runtimes: string[];
-      defaultProvider: string;
-      hasSelectRuntime: boolean;
-      hasCollect: boolean;
-      hasError: boolean;
-      validationCodes: string[];
-    };
-    expect(out.providers).toEqual([
-      "anthropic",
-      "deepseek",
-      "openai",
-      "gemini",
-      "mistral",
-      "openrouter",
-      "doubao",
-      "doubao-cn"
-    ]);
-    expect(out.runtimes).toEqual(["managed"]);
-    expect(out.defaultProvider).toBe("anthropic");
-    expect(out.hasSelectRuntime).toBe(true);
-    expect(out.hasCollect).toBe(true);
-    expect(out.hasError).toBe(true);
-    expect(out.validationCodes).toEqual(["feature_runtime_mismatch"]);
+    expect(JSON.parse(stdout.trim())).toEqual({
+      providers: ["anthropic", "deepseek", "openai", "gemini", "mistral", "openrouter", "doubao", "doubao-cn"],
+      defaultProvider: "anthropic",
+      hasRuntimeKinds: false,
+      hasRegions: false,
+      hasSelectRuntime: false,
+      hasRuntimeValidationError: false
+    });
   });
 
-  it("selectRuntime resolves every provider to managed", async () => {
+  it("AgentExecutor.submit rejects removed options before any HTTP call", async () => {
     const script = `
-      const { selectRuntime } = await import("@aexhq/sdk");
-      const base = {
-        workspaceId: "ws", idempotencyKey: "id", provider: "anthropic",
-        submission: { model: "claude-haiku-4-5", prompt: ["hi"], skills: [], agentsMd: [], files: [], mcpServers: [] },
-        secrets: { apiKey: "sk-ant-test-1"  }
-      };
-      const a = selectRuntime(base);
-      const b = selectRuntime({
-        ...base, provider: "deepseek",
-        secrets: { apiKey: "sk-d-test"  }
-      });
-      console.log(JSON.stringify({ anthropic: a, deepseek: b }));
-    `;
-    const { exitCode, stdout } = await runChild(script, "select-runtime.mjs");
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout.trim())).toEqual({ anthropic: "managed", deepseek: "managed" });
-  });
-
-  it("AgentExecutor.submit rejects runtime:'native' without an HTTP call", async () => {
-    const script = `
-      const { AgentExecutor, AexError } = await import("@aexhq/sdk");
+      const { AgentExecutor } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      try {
-        await client.submit({
-          provider: "anthropic",
-          runtime: "native",
-          model: "claude-haiku-4-5",
-          prompt: "hi",
-          secrets: { apiKey: "sk-ant-test"  }
-        });
-        console.log(JSON.stringify({ caught: false }));
-      } catch (err) {
-        console.log(JSON.stringify({
-          caught: true,
-          isClass: err instanceof AexError,
-          code: err.code,
-          messageHasRuntime: typeof err.message === "string" && err.message.includes("runtime"),
-          fetchCalls: calls.length
-        }));
+      const fields = ["runtime", "region", "credentialMode", "apiKey", "credentials"];
+      const results = [];
+      for (const field of fields) {
+        try {
+          await client.submit({
+            provider: "anthropic",
+            model: "claude-haiku-4-5",
+            prompt: "hi",
+            secrets: { apiKeys: { anthropic: "sk-ant-test" } },
+            [field]: field === "credentials" ? { anthropic: "sk-ant-test" } : "managed"
+          });
+          results.push({ field, caught: false });
+        } catch (err) {
+          results.push({ field, caught: true, message: err.message });
+        }
       }
+      console.log(JSON.stringify({ results, fetchCalls: calls.length }));
     `;
-    const { exitCode, stdout } = await runChild(script, "select-native-reject.mjs");
-    expect(exitCode).toBe(0);
-    const out = JSON.parse(stdout.trim());
-    expect(out).toEqual({
-      caught: true,
-      isClass: true,
-      code: "RUNTIME_UNSUPPORTED",
-      messageHasRuntime: true,
-      fetchCalls: 0
-    });
+    const { exitCode, stdout, stderr } = await runChild(script, "removed-options.mjs");
+    expect(exitCode, stderr).toBe(0);
+    const out = JSON.parse(stdout.trim()) as { results: Array<{ field: string; caught: boolean; message: string }>; fetchCalls: number };
+    expect(out.fetchCalls).toBe(0);
+    expect(out.results.map((result) => result.field)).toEqual(["runtime", "region", "credentialMode", "apiKey", "credentials"]);
+    expect(out.results.every((result) => result.caught && result.message.includes("not a supported option"))).toBe(true);
   });
 
-  it("selectRuntime throws feature_runtime_mismatch for Skill.provider on managed", async () => {
-    const script = `
-      const { selectRuntime } = await import("@aexhq/sdk");
-      const req = {
-        workspaceId: "ws", idempotencyKey: "id", provider: "anthropic", runtime: "managed",
-        submission: {
-          model: "claude-haiku-4-5", prompt: ["hi"],
-          skills: [{ kind: "provider", vendor: "anthropic", skillId: "pdf" }],
-          agentsMd: [], files: [], mcpServers: []
-        },
-        secrets: { apiKey: "sk-ant-test-1"  }
-      };
-      try {
-        selectRuntime(req);
-        console.log(JSON.stringify({ caught: false }));
-      } catch (err) {
-        console.log(JSON.stringify({
-          caught: true,
-          code: err.code,
-          mentionsPdf: err.message.includes("pdf"),
-          mentionsNative: err.message.includes("native")
-        }));
-      }
-    `;
-    const { exitCode, stdout } = await runChild(script, "select-feature-reject.mjs");
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout.trim())).toEqual({
-      caught: true,
-      code: "feature_runtime_mismatch",
-      mentionsPdf: true,
-      mentionsNative: false
-    });
-  });
-
-  it("AgentExecutor.submit forwards the optional runtime field on the wire", async () => {
+  it("AgentExecutor.submit posts canonical secrets.apiKeys only", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
       const requests = [];
       const fetchFake = async (url, init) => {
         let body = init?.body;
-        if (typeof body !== "string" && body) {
-          body = await new Response(body).text();
-        }
+        if (typeof body !== "string" && body) body = await new Response(body).text();
         requests.push({ url: typeof url === "string" ? url : url.toString(), method: init?.method, body });
         return new Response(JSON.stringify({
           id: "run_test_user_e2e",
@@ -189,66 +98,28 @@ describe("managed runtime + widened providers (published surface)", () => {
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       await client.submit({
         provider: "anthropic",
-        runtime: "managed",
         model: "claude-haiku-4-5",
         prompt: "test",
-        secrets: { apiKey: "sk-ant-test-12345"  }
+        secrets: { apiKeys: { anthropic: "sk-ant-test-12345" } }
       });
       const submitBody = JSON.parse(requests[0].body);
       console.log(JSON.stringify({
         url: requests[0].url,
         method: requests[0].method,
         provider: submitBody.provider,
-        runtime: submitBody.runtime,
-        hasSecrets: typeof submitBody.secrets === "object"
+        hasRuntime: "runtime" in submitBody,
+        hasRegion: "region" in submitBody,
+        secrets: submitBody.secrets
       }));
     `;
-    const { exitCode, stdout, stderr } = await runChild(script, "client-runtime-forward.mjs");
+    const { exitCode, stdout, stderr } = await runChild(script, "client-canonical-submit.mjs");
     expect(exitCode, stderr).toBe(0);
-    const out = JSON.parse(stdout.trim()) as {
-      url: string;
-      method: string;
-      provider: string;
-      runtime: string;
-      hasSecrets: boolean;
-    };
-    expect(out.url).toMatch(/example\.invalid/);
-    expect(out.url).toMatch(/\/api\/runs$/);
-    expect(out.method).toBe("POST");
-    expect(out.provider).toBe("anthropic");
-    expect(out.runtime).toBe("managed");
-    expect(out.hasSecrets).toBe(true);
-  });
-
-  it("AgentExecutor.submit omits runtime from the wire when the caller doesn't supply it", async () => {
-    const script = `
-      const { AgentExecutor } = await import("@aexhq/sdk");
-      const requests = [];
-      const fetchFake = async (url, init) => {
-        let body = init?.body;
-        if (typeof body !== "string" && body) {
-          body = await new Response(body).text();
-        }
-        requests.push({ body });
-        return new Response(JSON.stringify({
-          id: "run_test_omit",
-          workspaceId: "ws_t",
-          status: "queued",
-          createdAt: new Date().toISOString()
-        }), { status: 202, headers: { "content-type": "application/json" } });
-      };
-      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      await client.submit({
-        provider: "anthropic",
-        model: "claude-haiku-4-5",
-        prompt: "hi",
-        secrets: { apiKey: "sk-ant-test-12345"  }
-      });
-      const body = JSON.parse(requests[0].body);
-      console.log(JSON.stringify({ hasRuntime: "runtime" in body }));
-    `;
-    const { exitCode, stdout } = await runChild(script, "client-runtime-omit.mjs");
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout.trim())).toEqual({ hasRuntime: false });
+    expect(JSON.parse(stdout.trim())).toMatchObject({
+      method: "POST",
+      provider: "anthropic",
+      hasRuntime: false,
+      hasRegion: false,
+      secrets: { apiKeys: { anthropic: "sk-ant-test-12345" } }
+    });
   });
 });

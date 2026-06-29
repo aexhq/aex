@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildRuntimeManifest, runtimePathsFor } from "../src/index.js";
+import { buildRuntimeManifest, runtimePaths } from "../src/index.js";
 
-describe("buildRuntimeManifest — Anthropic provider", () => {
-  it("emits the Anthropic container paths verbatim", () => {
-    const m = buildRuntimeManifest({ provider: "anthropic" });
-    expect(m.provider).toBe("anthropic");
+describe("buildRuntimeManifest", () => {
+  it("emits the managed-runner container paths verbatim", () => {
+    const m = buildRuntimeManifest({ provider: "deepseek" });
+    expect(m.provider).toBe("deepseek");
     expect(m.skillsRoot).toBe("/workspace/skills");
     expect(m.filesRoot).toBe("/mnt/session/uploads/aex/files");
     expect(m.assetsRoot).toBe("/mnt/session/uploads/aex/assets");
@@ -16,8 +16,8 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
   });
 
   it("populates the aex-set env vars from the same path table", () => {
-    const m = buildRuntimeManifest({ provider: "anthropic" });
-    expect(m.envVars.AEX_PROVIDER).toBe("anthropic");
+    const m = buildRuntimeManifest({ provider: "deepseek" });
+    expect(m.envVars.AEX_PROVIDER).toBe("deepseek");
     expect(m.envVars.AEX_CLI).toBe(m.aexCli);
     expect(m.envVars.AEX_SKILLS_ROOT).toBe(m.skillsRoot);
     expect(m.envVars.AEX_FILES_ROOT).toBe(m.filesRoot);
@@ -83,12 +83,10 @@ describe("buildRuntimeManifest — Anthropic provider", () => {
     expect(buildRuntimeManifest({ provider: "anthropic" }).mountedFiles).toEqual([]);
   });
 
-  it("throws for an unknown provider", () => {
-    expect(() => buildRuntimeManifest({ provider: "openai" as never })).toThrow(
-      /Unknown runtime provider: openai/
-    );
-    expect(() => runtimePathsFor("deepseek" as never)).toThrow(
-      /Unknown runtime provider: deepseek/
+  it("uses one path table for every provider", () => {
+    expect(runtimePaths()).toBe(runtimePaths());
+    expect(buildRuntimeManifest({ provider: "anthropic" }).skillsRoot).toBe(
+      buildRuntimeManifest({ provider: "openai" }).skillsRoot
     );
   });
 });

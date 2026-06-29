@@ -1,4 +1,4 @@
-import type { RunProvider, RuntimeKind, RuntimeValidationCode } from "./submission.js";
+import type { RunProvider } from "./submission.js";
 
 export interface SupportPointer {
   readonly label: string;
@@ -11,14 +11,7 @@ export interface ProviderPublicSupport {
   readonly docsAnchor: string;
   readonly docs: readonly SupportPointer[];
   readonly evidence: readonly SupportPointer[];
-  readonly runtimeEvidence: Readonly<Partial<Record<RuntimeKind, readonly SupportPointer[]>>>;
-}
-
-export interface RuntimeValidationSupport {
-  readonly docsAnchor: string;
-  readonly docs: readonly SupportPointer[];
-  readonly evidence: readonly SupportPointer[];
-  readonly enforcement: string;
+  readonly managedEvidence: readonly SupportPointer[];
 }
 
 const COMMON_DOCS = [
@@ -28,7 +21,6 @@ const COMMON_DOCS = [
 
 const COMMON_EVIDENCE = [
   { label: "Submission parser and routing parity", href: "../../contracts/test/submission.test.ts" },
-  { label: "Runtime support validator", href: "../../contracts/test/runtime-support.test.ts" },
   { label: "Generated matrix freshness", href: "../../../scripts/validate/capability-matrix.test.ts" }
 ] as const satisfies readonly SupportPointer[];
 
@@ -50,24 +42,9 @@ const DEEPSEEK_LIVE_USER_EVIDENCE = [
   }
 ] as const satisfies readonly SupportPointer[];
 
-const ANTHROPIC_MANAGED_EVIDENCE = [
-  ...ANTHROPIC_LIVE_USER_EVIDENCE,
-  { label: "Runtime support validator", href: "../../contracts/test/runtime-support.test.ts" }
-] as const satisfies readonly SupportPointer[];
+const ANTHROPIC_MANAGED_EVIDENCE = ANTHROPIC_LIVE_USER_EVIDENCE;
 
-const DEEPSEEK_MANAGED_EVIDENCE = [
-  ...DEEPSEEK_LIVE_USER_EVIDENCE,
-  { label: "Runtime support validator", href: "../../contracts/test/runtime-support.test.ts" }
-] as const satisfies readonly SupportPointer[];
-
-export const RUNTIME_VALIDATION_SUPPORT = {
-  feature_runtime_mismatch: {
-    docsAnchor: "managed-unsupported-features",
-    docs: [{ label: "Runtime routing", href: "provider-runtime-capabilities.md#runtime-routing" }],
-    evidence: [{ label: "Submission parser and routing parity", href: "../../contracts/test/submission.test.ts" }],
-    enforcement: "collectManagedUnsupportedFeatures + selectRuntime"
-  }
-} as const satisfies Readonly<Record<RuntimeValidationCode, RuntimeValidationSupport>>;
+const DEEPSEEK_MANAGED_EVIDENCE = DEEPSEEK_LIVE_USER_EVIDENCE;
 
 /**
  * Public provider support facts for generated SDK docs. Keep this metadata
@@ -80,54 +57,42 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     docsAnchor: "anthropic",
     docs: COMMON_DOCS,
     evidence: [...COMMON_EVIDENCE, ...ANTHROPIC_MANAGED_EVIDENCE],
-    runtimeEvidence: {
-      managed: ANTHROPIC_MANAGED_EVIDENCE
-    }
+    managedEvidence: ANTHROPIC_MANAGED_EVIDENCE
   },
   deepseek: {
     displayName: "DeepSeek",
     docsAnchor: "deepseek",
     docs: COMMON_DOCS,
     evidence: [...COMMON_EVIDENCE, ...DEEPSEEK_MANAGED_EVIDENCE],
-    runtimeEvidence: {
-      managed: DEEPSEEK_MANAGED_EVIDENCE
-    }
+    managedEvidence: DEEPSEEK_MANAGED_EVIDENCE
   },
   openai: {
     displayName: "OpenAI",
     docsAnchor: "openai",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
-    runtimeEvidence: {
-      managed: COMMON_EVIDENCE
-    }
+    managedEvidence: COMMON_EVIDENCE
   },
   gemini: {
     displayName: "Gemini",
     docsAnchor: "gemini",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
-    runtimeEvidence: {
-      managed: COMMON_EVIDENCE
-    }
+    managedEvidence: COMMON_EVIDENCE
   },
   mistral: {
     displayName: "Mistral",
     docsAnchor: "mistral",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
-    runtimeEvidence: {
-      managed: COMMON_EVIDENCE
-    }
+    managedEvidence: COMMON_EVIDENCE
   },
   openrouter: {
     displayName: "OpenRouter",
     docsAnchor: "openrouter",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
-    runtimeEvidence: {
-      managed: COMMON_EVIDENCE
-    }
+    managedEvidence: COMMON_EVIDENCE
   },
   // Doubao (ByteDance) via the official Ark API — international BytePlus gateway.
   doubao: {
@@ -135,9 +100,7 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     docsAnchor: "doubao",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
-    runtimeEvidence: {
-      managed: COMMON_EVIDENCE
-    }
+    managedEvidence: COMMON_EVIDENCE
   },
   // Doubao (ByteDance) via the official Ark API — China Volcengine gateway.
   "doubao-cn": {
@@ -145,9 +108,7 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     docsAnchor: "doubao-cn",
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
-    runtimeEvidence: {
-      managed: COMMON_EVIDENCE
-    }
+    managedEvidence: COMMON_EVIDENCE
   }
 } as const satisfies Readonly<Record<RunProvider, ProviderPublicSupport>>;
 

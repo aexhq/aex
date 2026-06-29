@@ -4,16 +4,16 @@
  * Sibling of live-sdk-deepseek.test.ts. Same installed SDK and managed
  * runtime path, swapped provider — Anthropic via the BYOK provider-proxy.
  *
- *   SDK → POST /api/runs { provider: "anthropic", runtime: "managed" }
+ *   SDK → POST /api/runs { provider: "anthropic" }
  *      → hosted run-lifecycle → managed runtime
  *      → /provider-proxy/anthropic-messages/v1/messages
  *      → hosted API injects the run-scoped Anthropic key
  *      → api.anthropic.com /v1/messages → assistant_text event
  *
- * The customer may omit runtime or pass runtime:'managed'; both use the
- * same managed sandbox semantics as every other provider. The dispatcher
- * rejects provider-hosted skill refs on managed, so this path uses local
- * SDK/object storage assets when skills or files are needed.
+ * There is no customer runtime selector; every provider uses the same
+ * managed sandbox semantics. The dispatcher rejects provider-hosted skill
+ * refs, so this path uses local SDK/object storage assets when skills or
+ * files are needed.
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
@@ -78,7 +78,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
   });
 
   it(
-    "submits via SDK with runtime:'managed', waits for terminal, asserts a real Anthropic response landed in the event log",
+    "submits via SDK, waits for terminal, asserts a real Anthropic response landed in the event log",
     async () => {
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
@@ -96,11 +96,10 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
 
         const runId = await client.submit({
           provider: "anthropic",
-          runtime: "managed",
           model,
           prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-anthropic-mgd-" + Date.now(),
-          secrets: { apiKey: anthropicKey  }
+          secrets: { apiKeys: { anthropic: anthropicKey } }
         });
 
         const deadline = Date.now() + 8 * 60 * 1000;

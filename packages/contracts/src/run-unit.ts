@@ -230,7 +230,7 @@ export interface RunUnit {
 /**
  * Parse a legacy run snapshot jsonb payload into the typed flat
  * submission. Never throws on minor unknown keys so we can
- * forward-compat with worker-side enrichment.
+ * forward-compat with hosted API enrichment.
  *
  * Returns a typed shape even for malformed snapshots by falling back to the
  * default public model and empty collection defaults, because the dashboard
@@ -371,7 +371,7 @@ function toSkillRefArray(value: unknown): readonly SkillRef[] {
       out.push(parseSkillRef(value[i], `submission.skills[${i}]`));
     } catch {
       // Skip malformed entries rather than failing the whole detail
-      // read. Worker-side enrichment may add fields we don't recognise.
+      // read. Hosted API enrichment may add fields we don't recognise.
     }
   }
   return out;

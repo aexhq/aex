@@ -45,7 +45,7 @@ const REDACTED = "[REDACTED]";
  * The candidate run deliberately EXCLUDES `_`: secrets are contiguous opaque
  * runs, whereas `SCREAMING_SNAKE_CASE` env names and `snake_case` identifiers
  * are `_`-separated words — excluding `_` breaks those into sub-24 fragments so
- * they are never eaten (the `CF_CONFORMANCE_PROBE_URL` false positive). The
+ * they are never eaten. The
  * class-diversity gate (≥2 of lower/upper/digit) then keeps the remaining
  * single-class runs (all-lowercase module paths like `internal/modules/esm`)
  * while still catching mixed-case/alnum secret blobs. Entropy alone cannot

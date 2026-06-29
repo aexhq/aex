@@ -31,7 +31,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runtime size presets", () => {
-  it("exposes exactly the six CF-real preset tokens", () => {
+  it("exposes exactly the six managed runtime preset tokens", () => {
     expect([...RUNTIME_SIZES]).toEqual([
       "shared-0.06x-256mb",
       "shared-0.25x-1gb",
