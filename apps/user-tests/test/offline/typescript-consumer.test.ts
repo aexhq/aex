@@ -93,7 +93,7 @@ describe("typescript consumer", () => {
         ProxyEndpoint,
         RUN_PROVIDERS,
         RUNTIME_SIZES,
-        RunModels,
+        Models,
         RuntimeSizes,
         SecretString,
         Skill,
@@ -189,7 +189,7 @@ describe("typescript consumer", () => {
 
       const anthropicOptions = {
         provider: "anthropic",
-        model: RunModels.CLAUDE_HAIKU_4_5,
+        model: Models.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
         prompt: ["Read the attached file.", "Reply with a short acknowledgement."],
         skills: [inlineSkill],
@@ -219,7 +219,7 @@ describe("typescript consumer", () => {
 
       const managedOptions = {
         provider: "deepseek",
-        model: RunModels.DEEPSEEK_CHAT,
+        model: Models.DEEPSEEK_CHAT,
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
         includeBuiltinTools: false,
@@ -228,7 +228,7 @@ describe("typescript consumer", () => {
       } satisfies SubmitOptions;
 
       const apiKeysOptions = {
-        model: RunModels.CLAUDE_HAIKU_4_5,
+        model: Models.CLAUDE_HAIKU_4_5,
         prompt: "hello",
         secrets: { apiKeys: { anthropic: "sk-ant", openai: "sk-oai" } }
       } satisfies SubmitOptions;
@@ -238,7 +238,7 @@ describe("typescript consumer", () => {
         idempotencyKey: "wire-type-surface",
         provider,
         submission: {
-          model: RunModels.CLAUDE_HAIKU_4_5,
+          model: Models.CLAUDE_HAIKU_4_5,
           system: "Be precise.",
           prompt: ["hello"],
           skills: [inlineSkill.ref as SkillRef],
@@ -336,7 +336,7 @@ describe("typescript consumer", () => {
 
       void RUN_PROVIDERS;
       void RUNTIME_SIZES;
-      void RunModels;
+      void Models;
       void resources;
       void platformEndpoint;
       void builtinCount;
@@ -422,7 +422,7 @@ describe("typescript consumer", () => {
         RuntimeSizes,
         ProxyEndpoint,
         RUN_PROVIDERS,
-        RunModels,
+        Models,
         type RunProvider,
         type RuntimeSize,
         type SubmitOptions
@@ -441,7 +441,7 @@ describe("typescript consumer", () => {
 
       const options = {
         provider,
-        model: RunModels.CLAUDE_HAIKU_4_5,
+        model: Models.CLAUDE_HAIKU_4_5,
         prompt: "hello",
         proxyEndpoints: [proxy],
         runtimeSize,

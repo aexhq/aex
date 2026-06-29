@@ -5,7 +5,7 @@
 //
 // Env required: AEX_WORKSPACE_TOKEN, DOUBAO_API_KEY, ANTHROPIC_API_KEY (or your
 // chosen run provider key). Optional: AEX_API_URL for a non-default plane.
-import { AgentExecutor, RunModels, Skill, ProxyEndpoint, validateProxyAuth } from "@aexhq/sdk";
+import { AgentExecutor, Models, Skill, ProxyEndpoint, validateProxyAuth } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({
   apiToken: process.env.AEX_WORKSPACE_TOKEN,
@@ -34,7 +34,7 @@ validateProxyAuth(proxyEndpoints, proxyEndpointAuth); // fail fast at submit tim
 
 const runId = await aex.submit({
   provider: "anthropic",
-  model: RunModels.CLAUDE_HAIKU_4_5,
+  model: Models.CLAUDE_HAIKU_4_5,
   prompt: [
     "You have a candidate image at /workspace/files/candidate_frame.jpg and must",
     "decide whether it actually depicts an owlbear (a tabletop-RPG creature).",

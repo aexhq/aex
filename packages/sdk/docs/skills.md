@@ -54,12 +54,12 @@ keep their run-scoped copy.
 canonical zip bytes and a `sha256:<hex>` content hash.
 
 ```ts
-import { AgentExecutor, RunModels, Skill } from "@aexhq/sdk";
+import { AgentExecutor, Models, Skill } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken });
 
 await aex.submit({
-  model: RunModels.CLAUDE_HAIKU_4_5,
+  model: Models.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [await Skill.fromPath("./skills/rules", { name: "rules" })],
   secrets: { apiKeys: { anthropic: apiKey } }
@@ -86,7 +86,7 @@ const draft = await Skill.fromFiles({ name: "rules", files });
 const uploaded = await draft.upload(aex);
 
 await aex.submit({
-  model: RunModels.CLAUDE_HAIKU_4_5,
+  model: Models.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [uploaded],
   secrets: { apiKeys: { anthropic: apiKey } }
@@ -123,7 +123,7 @@ assets. Use them when a team wants a named, listed skill record:
 const [record] = await aex.skills.list();
 
 await aex.submit({
-  model: RunModels.CLAUDE_HAIKU_4_5,
+  model: Models.CLAUDE_HAIKU_4_5,
   prompt,
   skills: [Skill.fromCatalog(record)],
   secrets: { apiKeys: { anthropic: apiKey } }

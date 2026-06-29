@@ -8,7 +8,6 @@ import {
   Models,
   RUN_MODELS,
   RUN_MODELS_BY_PROVIDER,
-  RunModels,
   Providers,
   RUN_PROVIDERS,
   parseRunSubmissionRequest,
@@ -30,14 +29,14 @@ function baseRequest(
 ) {
   const provider = overrides.provider ?? "anthropic";
   const model = {
-    anthropic: RunModels.CLAUDE_HAIKU_4_5,
-    deepseek: RunModels.DEEPSEEK_CHAT,
-    openai: RunModels.GPT_4_1,
-    gemini: RunModels.GEMINI_2_5_FLASH,
-    mistral: RunModels.MISTRAL_LARGE_LATEST,
-    openrouter: RunModels.GPT_4O_MINI,
-    doubao: RunModels.DOUBAO_SEED_PRO,
-    "doubao-cn": RunModels.DOUBAO_SEED_FLASH
+    anthropic: Models.CLAUDE_HAIKU_4_5,
+    deepseek: Models.DEEPSEEK_CHAT,
+    openai: Models.GPT_4_1,
+    gemini: Models.GEMINI_2_5_FLASH,
+    mistral: Models.MISTRAL_LARGE_LATEST,
+    openrouter: Models.GPT_4O_MINI,
+    doubao: Models.DOUBAO_SEED_PRO,
+    "doubao-cn": Models.DOUBAO_SEED_FLASH
   }[provider];
   return {
     workspaceId: "workspace-1",
@@ -84,7 +83,7 @@ describe("submission parser - providers and secrets", () => {
         ...baseRequest({ provider: "deepseek" }),
         submission: {
           ...baseRequest({ provider: "deepseek" }).submission,
-          model: RunModels.CLAUDE_HAIKU_4_5
+          model: Models.CLAUDE_HAIKU_4_5
         }
       })
     ).toThrow(/not supported for provider deepseek/);

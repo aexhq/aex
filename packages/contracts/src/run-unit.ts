@@ -35,7 +35,7 @@ import type {
   PlatformEnvironment
 } from "./submission.js";
 import type { RuntimeSecurityProfileName } from "./runtime-security-profile.js";
-import { RunModels, parseRunModel } from "./models.js";
+import { Models, parseRunModel } from "./models.js";
 import { PLATFORM_PACKAGE_ECOSYSTEMS } from "./submission.js";
 
 // ---------------------------------------------------------------------------
@@ -312,7 +312,7 @@ function fallbackFlat(): RunUnitFlatSubmission {
   return {
     kind: "submission",
     submission: {
-      model: RunModels.CLAUDE_HAIKU_4_5,
+      model: Models.CLAUDE_HAIKU_4_5,
       prompt: [],
       skills: [],
       agentsMd: [],
@@ -334,11 +334,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function coerceRunUnitModel(value: unknown) {
-  if (typeof value !== "string") return RunModels.CLAUDE_HAIKU_4_5;
+  if (typeof value !== "string") return Models.CLAUDE_HAIKU_4_5;
   try {
     return parseRunModel(value, "run unit submission.model");
   } catch {
-    return RunModels.CLAUDE_HAIKU_4_5;
+    return Models.CLAUDE_HAIKU_4_5;
   }
 }
 

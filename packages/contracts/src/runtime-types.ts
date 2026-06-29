@@ -300,9 +300,6 @@ export interface OutputLink {
   readonly [key: string]: unknown;
 }
 
-/** @deprecated Renamed to {@link OutputLink}. */
-export type SignedOutputLink = OutputLink;
-
 export interface WhoAmI {
   readonly principalType: "api_token" | "user";
   readonly workspaceId?: string;

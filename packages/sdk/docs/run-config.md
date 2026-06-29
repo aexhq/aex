@@ -33,11 +33,11 @@ exhausts `maxTurns` fails the run with `data.failureClass: "post_hook_failed"`.
 Use an ordinary function when you want reusable typed parameters. aex does not store or execute this function; it only receives the run parameters you submit.
 
 ```ts
-import { RunModels } from "@aexhq/sdk";
+import { Models } from "@aexhq/sdk";
 
 function summarise(topic: string) {
   return {
-    model: RunModels.CLAUDE_HAIKU_4_5,
+    model: Models.CLAUDE_HAIKU_4_5,
     system: "You are a concise automation agent.",
     prompt: `Write a short answer about ${topic}.`
   };

@@ -938,34 +938,8 @@ export async function findSkillByName(http: HttpClient, name: string): Promise<S
 }
 
 // ===========================================================================
-// AgentsMd upload helpers. Launch submissions use content-addressed asset refs.
+// AgentsMd read/delete helpers. Launch submissions use content-addressed asset refs.
 // ===========================================================================
-
-/**
- * Upload a workspace AgentsMd file as a markdown string. The BFF
- * canonicalises the content into a deterministic zip with AGENTS.md at
- * root and runs the two-phase pending → ready upload.
- */
-export async function createAgentsMd(
-  http: HttpClient,
-  args: {
-    readonly name: string;
-    readonly content: string;
-  }
-): Promise<AgentsMdRecord> {
-  const form = new FormData();
-  form.append("name", args.name);
-  form.append(
-    "content",
-    new Blob([args.content], { type: "text/plain" }),
-    "AGENTS.md"
-  );
-  const result = await http.request<{ readonly agentsMd: AgentsMdRecord } | AgentsMdRecord>(
-    "/api/agentsmd",
-    { method: "POST", body: form }
-  );
-  return unwrapAgentsMd(result);
-}
 
 export async function listAgentsMd(http: HttpClient): Promise<readonly AgentsMdRecord[]> {
   const result = await http.request<
@@ -1000,30 +974,8 @@ function unwrapAgentsMd(
 }
 
 // ===========================================================================
-// File upload helpers. Launch submissions use content-addressed asset refs.
+// File read/delete helpers. Launch submissions use content-addressed asset refs.
 // ===========================================================================
-
-/**
- * Upload a workspace File as a zip bundle. The BFF canonicalises the
- * content and runs the two-phase pending → ready upload.
- */
-export async function createFile(
-  http: HttpClient,
-  args: {
-    readonly name: string;
-    readonly bytes: Uint8Array;
-  }
-): Promise<FileRecord> {
-  const form = new FormData();
-  form.append("name", args.name);
-  const blob = toBlob(args.bytes, "application/zip");
-  form.append("bundle", blob, `${args.name}.zip`);
-  const result = await http.request<{ readonly file: FileRecord } | FileRecord>(
-    "/api/files",
-    { method: "POST", body: form }
-  );
-  return unwrapFile(result);
-}
 
 export async function listFiles(http: HttpClient): Promise<readonly FileRecord[]> {
   const result = await http.request<{ readonly files: readonly FileRecord[] } | readonly FileRecord[]>(
@@ -1131,21 +1083,6 @@ function unwrapSkill(result: { readonly skill: Skill } | Skill): Skill {
     return (result as { readonly skill: Skill }).skill;
   }
   return result as Skill;
-}
-
-function toBlob(input: Blob | ArrayBuffer | Uint8Array, contentType: string): Blob {
-  if (input instanceof Blob) {
-    return input;
-  }
-  if (input instanceof Uint8Array) {
-    // BlobPart accepts ArrayBufferView, but lib.dom's overload set
-    // narrows on the underlying buffer kind. Slice into a fresh
-    // ArrayBuffer so a SharedArrayBuffer-backed Uint8Array works.
-    const copy = new Uint8Array(input.byteLength);
-    copy.set(input);
-    return new Blob([copy.buffer], { type: contentType });
-  }
-  return new Blob([input], { type: contentType });
 }
 
 function hasRun(value: Run | { readonly run: Run }): value is { readonly run: Run } {

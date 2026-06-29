@@ -11,6 +11,9 @@ follows semantic versioning.
 - Removed the retired public runtime, region, upload, and credential-mode choices
   from SDK and CLI submission paths. The public surface now targets the single
   hosted managed runtime, asset-backed skills, and `secrets.apiKeys`.
+- Removed the `RunModels` back-compat alias. Use the canonical `Models` constants
+  (provider-neutral model ids); `RunModels` was a 1:1 alias of `Models`.
+- Removed the deprecated `SignedOutputLink` type alias. Use `OutputLink`.
 - Updated provider/runtime capability docs and validation to the current
   submission-parser plus managed-execution model.
 

@@ -401,8 +401,7 @@ export class SkillsClient {
  * New run submissions usually use `AgentsMd.fromContent(...)` or
  * `AgentsMd.fromPath(...)` directly inside `submit`; the SDK
  * materializes those bytes to the hosted asset store before the run lands. This namespace is
- * the read/delete surface for persisted AgentsMd records plus an internal
- * upload transport retained for legacy callers.
+ * the read/delete surface for persisted AgentsMd records.
  */
 export class AgentsMdClient {
   readonly #http: HttpClient;
@@ -422,17 +421,6 @@ export class AgentsMdClient {
   delete(agentsMdId: string): Promise<void> {
     return operations.deleteAgentsMd(this.#http, agentsMdId);
   }
-
-  /**
-   * Internal: post an AgentsMd markdown string to the BFF.
-   * NOT part of the public API.
-   */
-  async _uploadAgentsMd(args: {
-    readonly name: string;
-    readonly content: string;
-  }): Promise<AgentsMdRecord> {
-    return operations.createAgentsMd(this.#http, args);
-  }
 }
 
 /**
@@ -441,8 +429,7 @@ export class AgentsMdClient {
  * New run submissions usually use `File.fromPath(...)` or
  * `File.fromBytes(...)` directly inside `submit`; the SDK materializes
  * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
- * surface for persisted file records plus an internal upload transport
- * retained for legacy callers.
+ * surface for persisted file records.
  */
 export class FilesClient {
   readonly #http: HttpClient;
@@ -461,14 +448,6 @@ export class FilesClient {
 
   delete(fileId: string): Promise<void> {
     return operations.deleteFile(this.#http, fileId);
-  }
-
-  /**
-   * Internal: post a pre-bundled file zip to the BFF.
-   * NOT part of the public API.
-   */
-  async _uploadFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<FileRecord> {
-    return operations.createFile(this.#http, args);
   }
 }
 
@@ -582,27 +561,6 @@ export class AgentExecutor {
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
-  }
-
-  /**
-   * Internal: an `AgentsMd.upload(this)` shortcut that bypasses
-   * `client.agentsMd` indirection. Forwarded to
-   * `AgentsMdClient._uploadAgentsMd`. NOT part of the public API.
-   */
-  async _uploadAgentsMd(args: {
-    readonly name: string;
-    readonly content: string;
-  }): Promise<AgentsMdRecord> {
-    return this.agentsMd._uploadAgentsMd(args);
-  }
-
-  /**
-   * Internal: a `File.upload(this)` shortcut that bypasses
-   * `client.files` indirection. Forwarded to
-   * `FilesClient._uploadFile`. NOT part of the public API.
-   */
-  async _uploadFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<FileRecord> {
-    return this.files._uploadFile(args);
   }
 
   /**

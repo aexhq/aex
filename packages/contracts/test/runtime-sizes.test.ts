@@ -9,7 +9,7 @@ import {
   RUN_PROCESS_KILL_GRACE_MS,
   RUN_TERMINAL_GRACE_MS,
   RuntimeSizes,
-  RunModels,
+  Models,
   orchestrationTimeoutString,
   parseDurationToMs,
   parseRunTimeout,
@@ -24,7 +24,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
     provider: "anthropic",
-    submission: { model: RunModels.CLAUDE_HAIKU_4_5, prompt: ["hello"], skills: [], agentsMd: [], files: [], mcpServers: [] },
+    submission: { model: Models.CLAUDE_HAIKU_4_5, prompt: ["hello"], skills: [], agentsMd: [], files: [], mcpServers: [] },
     secrets: { apiKeys: { anthropic: "sk-anthropic-test" } },
     ...overrides
   };

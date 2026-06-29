@@ -30,7 +30,7 @@ settings are `responseMode: "full"` (so the skill gets the upstream JSON back) a
 a raised `maxRequestBytes` (so the base64 image fits):
 
 ```ts
-import { AgentExecutor, RunModels, Skill, ProxyEndpoint, validateProxyAuth } from "@aexhq/sdk";
+import { AgentExecutor, Models, Skill, ProxyEndpoint, validateProxyAuth } from "@aexhq/sdk";
 
 const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
@@ -53,7 +53,7 @@ const proxyEndpointAuth = [
 validateProxyAuth(proxyEndpoints, proxyEndpointAuth); // fail fast at submit time
 
 const runId = await aex.submit({
-  model: RunModels.CLAUDE_HAIKU_4_5,
+  model: Models.CLAUDE_HAIKU_4_5,
   prompt: "…read skills/frame-vision-gate/SKILL.md, then caption + verify the frame…",
   skills: [await Skill.fromPath("./vision-skill", { name: "frame-vision-gate" })],
   proxyEndpoints,

@@ -121,12 +121,6 @@ export const Models = {
 } as const satisfies Readonly<Record<string, RunModel>>;
 
 /**
- * Back-compat alias for {@link Models}. Existing imports of `RunModels`
- * keep working; new code should prefer `Models`.
- */
-export const RunModels = Models;
-
-/**
  * Per-model provider lists, in declaration order. Derived from
  * {@link MODEL_PROVIDER_IDS} so the two never drift.
  */

@@ -118,7 +118,6 @@ export type {
   RuntimeManifest,
   SecretRecord,
   SecretReveal,
-  SignedOutputLink,
   Skill as SkillRecord,
   UsageSummary,
   WhoAmI
@@ -175,7 +174,6 @@ export {
   RUN_MODELS_BY_PROVIDER,
   MODEL_PROVIDER_IDS,
   Models,
-  RunModels,
   providerForModel,
   providersForModel,
   resolveProviderModelId,
