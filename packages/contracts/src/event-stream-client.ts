@@ -12,7 +12,7 @@
  * A silently half-open socket (no close/error, no frames) is the dangerous
  * case: the read loop would block forever and MISS a terminal that was already
  * persisted server-side. So the client sends a tiny keep-alive ping the
- * coordinator auto-responds to (hibernation-safe, no DO wake) and runs an idle
+ * coordinator answers with a matching pong, and runs an idle
  * watchdog: if no frame arrives within {@link CoordinatorStreamOptions.idleTimeoutMs},
  * the socket is treated as dead and reconnected — resume-from-cursor then
  * replays the terminal.
@@ -66,7 +66,7 @@ export interface CoordinatorStreamOptions {
   readonly idleTimeoutMs?: number;
   /**
    * Client keep-alive ping cadence. The client sends {@link COORDINATOR_PING},
-   * which the coordinator auto-responds to WITHOUT waking the stateful coordinator, so
+   * which the coordinator answers with a matching pong, so
    * a legitimately quiet run keeps the socket measurably alive and does not trip
    * the watchdog. Default 15s. Set 0 to disable (then only real events reset the
    * watchdog → quiet runs may reconnect).
@@ -77,8 +77,8 @@ export interface CoordinatorStreamOptions {
 const isTerminalType = (e: AexEvent): boolean => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 
 /**
- * Keep-alive ping the client sends; the coordinator answers it via
- * `setWebSocketAutoResponse` without waking the DO. Must stay byte-identical to
+ * Keep-alive ping the client sends; the coordinator answers it with the matching
+ * pong in its WebSocket message handler. Must stay byte-identical to
  * the coordinator's pair (aex-platform `packages/shared/src/event-stream-client.ts`).
  */
 const COORDINATOR_PING = "aex:ping";
