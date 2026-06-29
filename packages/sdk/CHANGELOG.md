@@ -4,6 +4,19 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.32.0
+
+### Changed (breaking)
+
+- Removed the `RunModels` back-compat alias. Use the canonical `Models` constants
+  (provider-neutral model ids); `RunModels` was a 1:1 alias of `Models`.
+- Removed the deprecated `SignedOutputLink` type alias. Use `OutputLink`.
+- Removed the legacy DeepSeek model ids `deepseek-chat` / `deepseek-reasoner`
+  (`Models.DEEPSEEK_CHAT` / `Models.DEEPSEEK_REASONER`). Use `deepseek-v4-flash`
+  (`Models.DEEPSEEK_V4_FLASH`, the prior `deepseek-chat` route) or
+  `deepseek-v4-pro` (`Models.DEEPSEEK_V4_PRO`).
+- Removed unused internal upload transports from the public client classes.
+
 ## 0.31.0
 
 ### Changed (breaking)
@@ -11,9 +24,6 @@ follows semantic versioning.
 - Removed the retired public runtime, region, upload, and credential-mode choices
   from SDK and CLI submission paths. The public surface now targets the single
   hosted managed runtime, asset-backed skills, and `secrets.apiKeys`.
-- Removed the `RunModels` back-compat alias. Use the canonical `Models` constants
-  (provider-neutral model ids); `RunModels` was a 1:1 alias of `Models`.
-- Removed the deprecated `SignedOutputLink` type alias. Use `OutputLink`.
 - Updated provider/runtime capability docs and validation to the current
   submission-parser plus managed-execution model.
 

@@ -14,7 +14,8 @@ This installs the TypeScript SDK exports and the bundled `aex` CLI.
 
 ## 2. Set credentials
 
-The examples need both an aex API token and your BYOK provider key for the model
+In the dashboard, create a quickstart SDK token with `runs:read`, `runs:write`,
+and `outputs:read`. The examples also need your BYOK provider key for the model
 you choose. For the Claude examples below:
 
 ```bash

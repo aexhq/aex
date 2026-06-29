@@ -29,7 +29,7 @@ const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const runId = await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Write the report and save outputs.",
+  prompt: "Write a short report and save it as a file.",
   secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 
@@ -45,7 +45,7 @@ aex run \
   --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
-  --prompt "Write the report and save outputs." \
+  --prompt "Write a short report and save it as a file." \
   --follow
 ```
 

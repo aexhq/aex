@@ -18,8 +18,10 @@ bun add @aexhq/sdk
 ```
 
 The package includes the TypeScript SDK and the bundled `aex` CLI used below.
-Set both credentials before running the examples: `AEX_API_TOKEN` authenticates
-to aex, and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
+In the dashboard, create a quickstart SDK token with `runs:read`, `runs:write`,
+and `outputs:read`, then set both credentials before running the examples:
+`AEX_API_TOKEN` authenticates to aex, and `ANTHROPIC_API_KEY` is your BYOK
+provider key for Claude.
 
 ```bash
 export AEX_API_TOKEN="<your-aex-token>"
@@ -35,7 +37,7 @@ const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
 
 const runId = await aex.submit({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Write the report and save outputs.",
+  prompt: "Write a short report and save it as a file.",
   secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
 });
 
@@ -52,7 +54,7 @@ aex run \
   --api-token "$AEX_API_TOKEN" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
-  --prompt "Write the report and save outputs." \
+  --prompt "Write a short report and save it as a file." \
   --follow
 ```
 
