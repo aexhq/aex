@@ -37,6 +37,10 @@ bun run --filter @aexhq/user-tests test:user:offline
 bun run --filter @aexhq/user-tests test:user
 # or from the repo root:
 bun run test:user
+
+# Explicit live suites kept out of the default sweep.
+bun run test:user:fuzz
+bun run test:user:providers
 ```
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
@@ -146,8 +150,8 @@ on the two wire shapes by the DeepSeek (openai-chat) and Anthropic
 (anthropic-messages) workhorse suites, so a wire-shape-equivalent provider
 needs only this connectivity check, not the full scenario matrix.
 
-Each file self-skips when its provider key is absent (e.g. `DOUBAO_API_KEY`),
-so a run only pays for whichever keys are provisioned. The suite is **excluded**
+Each file hard-fails when its provider key is absent (e.g. `DOUBAO_API_KEY`);
+run the suite only in an environment provisioned for the provider matrix. The suite is **excluded**
 from the default `test:user` sweep (see `vitest.config.ts`) and runs via its
 own config:
 

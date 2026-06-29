@@ -26,6 +26,7 @@
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
+ *   AEX_API_TOKEN            workspace API token
  *   DOUBAO_API_KEY           customer's Ark (BytePlus/Volcengine) API key
  *   AEX_USER_TEST_TARBALL          path to a packed aex tgz
  *     OR AEX_USER_TEST_VERSION     published package version
@@ -49,14 +50,9 @@ function requireEnv(name: string): string {
   return value;
 }
 
-// Doubao's provider evidence lives in the on-demand provider suite, so unlike
-// the DeepSeek workhorse (which throws on a missing key — that secret is a hard
-// contract for the default sweep) this self-skips when DOUBAO_API_KEY is absent.
-// The live-on-demand-tests workflow provisions the key and runs this scenario.
-const doubaoKey = process.env["DOUBAO_API_KEY"] ?? "";
+const doubaoKey = requireEnv("DOUBAO_API_KEY");
 const model = process.env["AEX_USER_TEST_DOUBAO_MODEL"] ?? "doubao-seed-flash";
 const provider = process.env["AEX_USER_TEST_DOUBAO_PROVIDER"] ?? "doubao";
-const describeLive = doubaoKey ? describe : describe.skip;
 
 interface LiveResult {
   readonly runId: string;
@@ -82,10 +78,10 @@ function liveFailureDiagnostic(result: LiveResult): string {
         : result.assistantTextJoined
   };
   const serialized = JSON.stringify(safe, null, 2);
-  return doubaoKey ? serialized.split(doubaoKey).join("[REDACTED_DOUBAO_KEY]") : serialized;
+  return serialized.split(doubaoKey).join("[REDACTED_DOUBAO_KEY]");
 }
 
-describeLive("live api.aex.dev via installed SDK — Doubao round-trip on managed runtime", () => {
+describe("live api.aex.dev via installed SDK — Doubao round-trip on managed runtime", () => {
   let install: InstallResult;
 
   beforeAll(async () => {

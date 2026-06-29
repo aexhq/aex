@@ -51,7 +51,11 @@ pack checks.
 | [`Release`](.github/workflows/release.yml) | manual SDK publish to npm, then live user tests against the exact published version |
 | [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 
-Releases are manual. The publish and promote workflows run in the `npm-release`
+Releases are manual. Publish canaries first, validate the exact immutable
+version against the hosted service, then promote that same version to `latest`.
+The public repo must not encode private deployment internals; any hosted
+deployment validation that happens between canary and promote is a separate
+operator stage. The publish and promote workflows run in the `npm-release`
 GitHub Environment and require its `NPM_TOKEN` secret until npm trusted
 publishing is configured for the package and workflow.
 

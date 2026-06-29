@@ -7,8 +7,8 @@ loadLocalEnv();
  * Dedicated config for the LIVE adversarial-input fuzz of the dev API
  * (`bun run test:user:fuzz`). Kept SEPARATE from vitest.config.ts so the fuzz
  * sweep runs ONLY when invoked explicitly — never as part of the default
- * `test:user` sweep (which excludes this file). It self-skips (with a logged
- * reason) unless AEX_API_URL + AEX_API_TOKEN are set, so it is non-gating.
+ * `test:user` sweep (which excludes this file). It fails fast unless
+ * AEX_API_URL + AEX_API_TOKEN are set, so invoking this script is a hard gate.
  *
  * The suite uses RAW fetch (no SDK, no child process / packed-tarball install),
  * and bounds fast-check numRuns so the whole sweep stays in minutes. It only

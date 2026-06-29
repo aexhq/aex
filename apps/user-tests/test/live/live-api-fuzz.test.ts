@@ -7,8 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
  * malformed bytes the SDK would never emit. Substrate-agnostic: the same
  * robustness invariants hold for any deployment plane behind the public contract.
  *
- * SELF-SKIPS (with a logged reason) unless AEX_API_URL + AEX_API_TOKEN are set
- * — matching the repo's live-test posture. Non-gating: run on demand via
+ * Fails fast unless AEX_API_URL + AEX_API_TOKEN are set. Run on demand via
  *   bun run --filter @aexhq/user-tests test:user:fuzz
  * (excluded from the default `test:user` sweep — see vitest.config.ts).
  *
@@ -25,18 +24,33 @@ import { afterAll, describe, expect, it } from "vitest";
  *   (e) reads with adversarial ids/queries ⇒ 4xx or 2xx, never 5xx.
  */
 
-const BASE = (process.env.AEX_API_URL ?? "").replace(/\/+$/, "");
-const TOKEN = process.env.AEX_API_TOKEN ?? "";
-const RUNS = Number(process.env.AEX_FUZZ_RUNS ?? "60");
-
-function skipReason(): string | null {
-  if (!BASE) return "AEX_API_URL is not set";
-  if (!/^https?:\/\//.test(BASE)) return `AEX_API_URL ("${BASE}") is not an absolute http(s) URL`;
-  if (!TOKEN) return "AEX_API_TOKEN is not set";
-  return null;
+interface FuzzEnv {
+  readonly base: string;
+  readonly token: string;
+  readonly runs: number;
 }
-const SKIP = skipReason();
-if (SKIP) console.warn(`[live-api-fuzz] SKIPPED — ${SKIP}`);
+
+function requireFuzzEnv(): FuzzEnv {
+  const rawBase = process.env.AEX_API_URL;
+  if (!rawBase) {
+    throw new Error("live-api-fuzz: required env AEX_API_URL is missing");
+  }
+  const base = rawBase.replace(/\/+$/, "");
+  if (!/^https?:\/\//.test(base)) {
+    throw new Error("live-api-fuzz: AEX_API_URL must be an absolute http(s) URL");
+  }
+  const token = process.env.AEX_API_TOKEN;
+  if (!token) {
+    throw new Error("live-api-fuzz: required env AEX_API_TOKEN is missing");
+  }
+  const runs = Number(process.env.AEX_FUZZ_RUNS ?? "60");
+  if (!Number.isInteger(runs) || runs < 1) {
+    throw new Error("live-api-fuzz: AEX_FUZZ_RUNS must be a positive integer when set");
+  }
+  return { base, token, runs };
+}
+
+const { base: BASE, token: TOKEN, runs: RUNS } = requireFuzzEnv();
 
 // --- transport with 503/transient retry -------------------------------------
 
@@ -97,7 +111,7 @@ function craftToken(plane: string, code: string, ws: string, secret: string, fix
   return `${body}_${fixCrc ? crc32b36(body) : "deadbeef"}`;
 }
 
-describe.skipIf(SKIP !== null)("LIVE API adversarial fuzz", () => {
+describe("LIVE API adversarial fuzz", () => {
   afterAll(() => {
     if (findings.length > 0) {
       console.error(`[live-api-fuzz] ${findings.length} ROBUSTNESS FINDING(S):\n  ${findings.join("\n  ")}`);
