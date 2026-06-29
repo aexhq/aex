@@ -66,7 +66,7 @@ describe("platform run submission schema", () => {
       provider: "deepseek",
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
-      submission: { ...baseSubmission, model: "deepseek-chat" },
+      submission: { ...baseSubmission, model: "deepseek-v4-flash" },
       secrets: { apiKeys: { deepseek: "sk-deepseek-test" } }
     });
 

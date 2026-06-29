@@ -757,7 +757,7 @@ describe("aex run", () => {
         "--provider",
         "deepseek",
         "--model",
-        "deepseek-chat",
+        "deepseek-v4-flash",
         "--prompt",
         "hello",
         "--deepseek-api-key",

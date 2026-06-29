@@ -714,7 +714,7 @@ const client = new AgentExecutor({
 const longPrompt = "x".repeat(32 * 1024);
 await client.submit({
   provider: "deepseek",
-  model: "deepseek-chat",
+  model: "deepseek-v4-flash",
   prompt: longPrompt,
   outputs: {
     allowedDirs: ["", "/workspace/one", "/workspace/two", ""],

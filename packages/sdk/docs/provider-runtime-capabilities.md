@@ -17,7 +17,7 @@ All new submissions run on the managed runtime. Public support is expressed as s
 | Provider | Selector | Supported models | Docs | Evidence |
 | --- | --- | --- | --- | --- |
 | [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](../../../apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts) |
-| [DeepSeek](#deepseek) | `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-chat`, `deepseek-reasoner` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
+| [DeepSeek](#deepseek) | `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
 | [OpenAI](#openai) | `openai` | `gpt-4.1`, `gpt-4o-mini` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 | [Gemini](#gemini) | `gemini` | `gemini-2.0-flash`, `gemini-2.5-flash` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
 | [Mistral](#mistral) | `mistral` | `mistral-large-latest`, `mistral-small-latest` | [Secrets](secrets.md); [Events](events.md) | [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts) |
@@ -59,7 +59,7 @@ Notes:
 ### DeepSeek
 
 - Wire provider: `deepseek`
-- Supported models: `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-chat`, `deepseek-reasoner`
+- Supported models: `deepseek-v4-flash`, `deepseek-v4-pro`
 - Docs: [Secrets](secrets.md); [Events](events.md)
 - Evidence: [Submission parser and routing parity](../../contracts/test/submission.test.ts); [Generated matrix freshness](../../../scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](../../../apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](../../../apps/user-tests/test/live/live-sdk-comprehensive.test.ts)
 

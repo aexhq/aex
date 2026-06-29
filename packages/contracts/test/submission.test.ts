@@ -30,7 +30,7 @@ function baseRequest(
   const provider = overrides.provider ?? "anthropic";
   const model = {
     anthropic: Models.CLAUDE_HAIKU_4_5,
-    deepseek: Models.DEEPSEEK_CHAT,
+    deepseek: Models.DEEPSEEK_V4_FLASH,
     openai: Models.GPT_4_1,
     gemini: Models.GEMINI_2_5_FLASH,
     mistral: Models.MISTRAL_LARGE_LATEST,
@@ -187,8 +187,6 @@ describe("RUN_PROVIDERS exports", () => {
       "claude-sonnet-4-6",
       "deepseek-v4-flash",
       "deepseek-v4-pro",
-      "deepseek-chat",
-      "deepseek-reasoner",
       "gpt-4.1",
       "gpt-4o-mini",
       "gpt-4o",

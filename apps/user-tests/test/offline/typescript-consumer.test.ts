@@ -219,7 +219,7 @@ describe("typescript consumer", () => {
 
       const managedOptions = {
         provider: "deepseek",
-        model: Models.DEEPSEEK_CHAT,
+        model: Models.DEEPSEEK_V4_FLASH,
         prompt: "Say hello.",
         runtimeSize: defaultRuntimeSize,
         includeBuiltinTools: false,

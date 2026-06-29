@@ -25,8 +25,6 @@ export const MODEL_PROVIDER_IDS = {
   "claude-sonnet-4-6": { anthropic: "claude-sonnet-4-6" },
   "deepseek-v4-flash": { deepseek: "deepseek-v4-flash" },
   "deepseek-v4-pro": { deepseek: "deepseek-v4-pro" },
-  "deepseek-chat": { deepseek: "deepseek-chat" },
-  "deepseek-reasoner": { deepseek: "deepseek-reasoner" },
   "gpt-4.1": { openai: "gpt-4.1" },
   "gpt-4o-mini": { openai: "gpt-4o-mini", openrouter: "openai/gpt-4o-mini" },
   "gpt-4o": { openrouter: "openai/gpt-4o" },
@@ -79,19 +77,6 @@ export const Models = {
   DEEPSEEK_V4_FLASH: "deepseek-v4-flash",
   /** DeepSeek V4 Pro — DeepSeek (reasoning-heavy). */
   DEEPSEEK_V4_PRO: "deepseek-v4-pro",
-  /**
-   * @deprecated Legacy alias DeepSeek routes to `deepseek-v4-flash` (non-thinking).
-   * DeepSeek removes this name on 2026-07-24 15:59 UTC — migrate to
-   * {@link Models.DEEPSEEK_V4_FLASH}.
-   */
-  DEEPSEEK_CHAT: "deepseek-chat",
-  /**
-   * @deprecated Legacy alias DeepSeek routes to `deepseek-v4-flash` (thinking).
-   * DeepSeek removes this name on 2026-07-24 15:59 UTC — migrate to
-   * {@link Models.DEEPSEEK_V4_FLASH} (or {@link Models.DEEPSEEK_V4_PRO} for
-   * heavier reasoning).
-   */
-  DEEPSEEK_REASONER: "deepseek-reasoner",
   /** GPT-4.1 — OpenAI. */
   GPT_4_1: "gpt-4.1",
   /** GPT-4o mini — OpenAI, or via OpenRouter (`provider: Providers.OPENROUTER`). */

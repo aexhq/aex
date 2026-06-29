@@ -37,7 +37,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
 
 interface Cell {
   readonly id: string;
@@ -410,7 +410,7 @@ function buildIncompatibleRuntimeScript(): string {
       const runId = await client.submit({
         provider: "deepseek",
         runtime: "native",
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
         prompt: "Hello.",
         secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" } },
         idempotencyKey: "fail-incompat-runtime-" + Date.now()

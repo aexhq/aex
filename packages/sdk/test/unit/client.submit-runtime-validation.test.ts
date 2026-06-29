@@ -35,7 +35,7 @@ describe("AgentExecutor.submit — removed field validation", () => {
       client.submit({
         provider: "deepseek",
         runtime: "native",
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
         prompt: "hi",
         secrets: { apiKeys: { deepseek: "sk-x" } }
       } as unknown as Parameters<AgentExecutor["submit"]>[0])

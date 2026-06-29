@@ -151,7 +151,7 @@ describe("installed CLI host commands", () => {
         "--provider",
         "deepseek",
         "--model",
-        "deepseek-chat",
+        "deepseek-v4-flash",
         "--prompt",
         "hello_from_installed_cli",
         "--deepseek-api-key",
@@ -252,7 +252,7 @@ describe("installed CLI host commands", () => {
     expect(submit.idempotencyKey).toBe("cli-host-installed-shape");
     expect(submit.secrets).toEqual({ apiKeys: { deepseek: "sk-deepseek-test" } });
     expect(submit.submission).toMatchObject({
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       prompt: ["hello_from_installed_cli"]
     });
   });

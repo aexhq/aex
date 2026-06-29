@@ -324,7 +324,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await client.submit({
       provider: "deepseek",
-      model: "deepseek-chat",
+      model: "deepseek-v4-flash",
       prompt: "p",
       secrets: { apiKeys: { deepseek: "sk-ds-test" } },
       idempotencyKey: "idem-deepseek"

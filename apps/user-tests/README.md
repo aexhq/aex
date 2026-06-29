@@ -123,7 +123,7 @@ prove the **app** behaves as expected under a
 maximal submission, not to test model capability.
 
 Scope: one DeepSeek-managed cell using the configured
-`AEX_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-chat`.
+`AEX_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-v4-flash`.
 
 It is **excluded** from the default `test:user` sweep (see
 `vitest.config.ts`) and runs only via its own entrypoint + config:

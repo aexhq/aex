@@ -19,7 +19,7 @@
  *     OR AEX_USER_TEST_VERSION     published package version
  *
  * Optional:
- *   AEX_USER_TEST_DEEPSEEK_MODEL            default "deepseek-chat"
+ *   AEX_USER_TEST_DEEPSEEK_MODEL            default "deepseek-v4-flash"
  *
  * TODO (D7 cost tracking, not yet implemented): when enabled, an
  * AEX_COST_LOG_PATH env var would have these tests append a JSONL line per
@@ -45,7 +45,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
 
 interface LiveResult {
   readonly runId: string;

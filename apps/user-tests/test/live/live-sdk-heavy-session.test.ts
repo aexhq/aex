@@ -66,7 +66,7 @@
  *   AEX_USER_TEST_TARBALL            packed SDK tarball
  *     OR AEX_USER_TEST_VERSION       published package version
  * Optional:
- *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek-chat"
+ *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek-v4-flash"
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -84,7 +84,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-chat";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";

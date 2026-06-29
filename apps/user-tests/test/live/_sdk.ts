@@ -40,7 +40,7 @@ export function requireUserEnv(opts: { deepseek?: boolean } = {}): UserEnv {
   const env: UserEnv = {
     apiBase: req("AEX_API_URL").replace(/\/$/, ""),
     apiToken: req("AEX_API_TOKEN"),
-    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-chat"
+    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-v4-flash"
   };
   return {
     ...env,

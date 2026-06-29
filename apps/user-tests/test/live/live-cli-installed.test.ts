@@ -42,7 +42,7 @@ function requireLiveCliEnv(): LiveCliEnv {
     apiBase,
     apiToken: requireEnv("AEX_API_TOKEN"),
     deepseekKey: requireEnv("DEEPSEEK_API_KEY"),
-    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-chat"
+    deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL ?? "deepseek-v4-flash"
   };
 }
 
