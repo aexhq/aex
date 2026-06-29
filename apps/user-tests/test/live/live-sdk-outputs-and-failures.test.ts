@@ -461,7 +461,7 @@ function buildStdioMcpScript(): string {
     let errorMessage = null;
 
     try {
-      const res = await fetch(process.env.AEX_API_URL + "/runs", {
+      const res = await fetch(process.env.AEX_API_URL + "/api/runs", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -708,7 +708,11 @@ describe("live failure surfacing — SDK error contract", () => {
             errorCode: result.errorCode,
             errorMessage: result.errorMessage
           },
-          { messageIncludes: "runtime", context: "b2 incompatible-runtime" }
+          {
+            classes: ["AexError", "RunConfigValidationError"],
+            messageIncludes: "runtime",
+            context: "b2 incompatible-runtime"
+          }
         );
       } catch (e) {
         // Try the alternate hint word ("native") before giving up.
@@ -718,7 +722,11 @@ describe("live failure surfacing — SDK error contract", () => {
             errorCode: result.errorCode,
             errorMessage: result.errorMessage
           },
-          { messageIncludes: "native", context: "b2 incompatible-runtime (alt hint)" }
+          {
+            classes: ["AexError", "RunConfigValidationError"],
+            messageIncludes: "native",
+            context: "b2 incompatible-runtime (alt hint)"
+          }
         );
       }
     },
@@ -737,8 +745,10 @@ describe("live failure surfacing — SDK error contract", () => {
 
       // Hosted API MUST reject at submit. No accept-both branch here.
       expect(result.submitOk, dump()).toBe(false);
-      expect(result.submitStatus, dump()).toBeGreaterThanOrEqual(400);
-      expect(result.submitStatus, dump()).toBeLessThan(500);
+      expect(typeof result.submitStatus, dump()).toBe("number");
+      const submitStatus = result.submitStatus as number;
+      expect(submitStatus, dump()).toBeGreaterThanOrEqual(400);
+      expect(submitStatus, dump()).toBeLessThan(500);
 
       // The error body MUST identify this as stdio-rejection so a user
       // who hits this gets an actionable message. The canonical
