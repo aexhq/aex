@@ -66,6 +66,8 @@ jobs:
         run: bun run test
 
       - name: Offline user tests
+        env:
+          AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
         run: bun run test:user:offline
 
       - name: Docs build
@@ -143,4 +145,5 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
+          AEX_USER_TEST_MAX_WORKERS: 4
         run: bun run test:user

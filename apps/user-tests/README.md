@@ -43,6 +43,11 @@ bun run test:user:fuzz
 bun run test:user:providers
 ```
 
+Offline runs use `vitest.offline.config.ts` and default to 4 file workers.
+Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
+uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI sets it to
+4 after selecting a single SDK artifact for all workers.
+
 The scenarios live under `test:user` / `test:user:offline`, NOT
 `test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
 workspace-recursive runner that invokes every package's `test:unit`

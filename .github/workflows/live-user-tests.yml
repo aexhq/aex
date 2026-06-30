@@ -77,6 +77,7 @@ jobs:
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
           AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
+          AEX_USER_TEST_MAX_WORKERS: 4
         run: |
           set -euo pipefail
           mkdir -p .suite-diagnostics/raw

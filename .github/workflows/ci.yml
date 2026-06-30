@@ -61,6 +61,8 @@ jobs:
         run: bun run test
 
       - name: Offline user tests
+        env:
+          AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
         run: bun run test:user:offline
 
       - name: Docs build

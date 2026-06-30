@@ -26,9 +26,9 @@
  */
 import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface InstallResult {
@@ -194,7 +194,15 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
   };
   writeFileSync(join(installDir, "package.json"), JSON.stringify(hostPkg, null, 2));
 
-  const args = ["install", spec, "--ignore-scripts", "--no-progress"];
+  const installSpec =
+    source === "registry"
+      ? spec
+      : (() => {
+          const localSpec = join(installDir, basename(spec));
+          copyFileSync(spec, localSpec);
+          return localSpec;
+        })();
+  const args = ["install", installSpec, "--ignore-scripts", "--no-progress"];
   if (options.registryUrl) {
     args.push("--registry", options.registryUrl);
   }
@@ -252,7 +260,7 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
     aexDir,
     aexPackageJson: pkg,
     resolvedVersion: pkg.version,
-    installSpec: spec,
+    installSpec,
     source,
     cleanup
   };
