@@ -99,6 +99,10 @@ const MCP_SERVER_NAME = "deepwiki";
 // /data — its writable tree is /workspace.)
 const CUSTOM_OUTPUT_DIR = "/workspace/outputs/heavy";
 
+function managedHeavySkillName(role: "alpha" | "beta" | "gamma", provider: CaseSpec["provider"]): string {
+  return `heavy-${role}-managed-${provider}`;
+}
+
 // Every event type aex emits on a SUCCESSFUL run. Mirror of
 // AEX_EVENT_TYPES in packages/contracts/src/event-envelope.ts minus
 // RUN_ERROR (failure-only; covered by live-sdk-outputs-and-failures).
@@ -244,16 +248,16 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     // SKILL.md starts with YAML frontmatter so each test skill is
     // self-describing and produces a stable skill_loaded name.
     const skillAlpha = await Skill.fromFiles({
-      name: "heavy-alpha-${spec.provider}",
-      files: { "SKILL.md": "---\\nname: heavy-alpha-${spec.provider}\\ndescription: Complete every numbered step the user lists, in order.\\n---\\n# alpha\\nComplete every numbered step the user lists, in order." }
+      name: ${JSON.stringify(managedHeavySkillName("alpha", spec.provider))},
+      files: { "SKILL.md": ${JSON.stringify(`---\nname: ${managedHeavySkillName("alpha", spec.provider)}\ndescription: Complete every numbered step the user lists, in order.\n---\n# alpha\nComplete every numbered step the user lists, in order.`)} }
     });
     const skillBeta = await Skill.fromFiles({
-      name: "heavy-beta-${spec.provider}",
-      files: { "SKILL.md": "---\\nname: heavy-beta-${spec.provider}\\ndescription: Always follow the project tracking guidance.\\n---\\n# beta\\nAlways follow the project tracking guidance." }
+      name: ${JSON.stringify(managedHeavySkillName("beta", spec.provider))},
+      files: { "SKILL.md": ${JSON.stringify(`---\nname: ${managedHeavySkillName("beta", spec.provider)}\ndescription: Always follow the project tracking guidance.\n---\n# beta\nAlways follow the project tracking guidance.`)} }
     });
     const skillGamma = await Skill.fromFiles({
-      name: "heavy-gamma-${spec.provider}",
-      files: { "SKILL.md": "---\\nname: heavy-gamma-${spec.provider}\\ndescription: Write output files exactly as instructed, then acknowledge references.\\n---\\n# gamma\\nWrite output files exactly as instructed, then acknowledge references." }
+      name: ${JSON.stringify(managedHeavySkillName("gamma", spec.provider))},
+      files: { "SKILL.md": ${JSON.stringify(`---\nname: ${managedHeavySkillName("gamma", spec.provider)}\ndescription: Write output files exactly as instructed, then acknowledge references.\n---\n# gamma\nWrite output files exactly as instructed, then acknowledge references.`)} }
     });
 
     const mcpPrimary = McpServer.remote({
@@ -503,10 +507,14 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   }
 
   // Every submitted skill materialized into the container.
-  expect(result.skillLoadedNames.length, dump()).toBeGreaterThanOrEqual(3);
+  if (result.skillLoadedNames.length < expectedSkillPrefixes.length) {
+    throw new Error(
+      `expected at least ${expectedSkillPrefixes.length} skill_loaded events, got ${result.skillLoadedNames.length}\n\n${dump()}`
+    );
+  }
   for (const prefix of expectedSkillPrefixes) {
     if (!result.skillLoadedNames.some((n) => n.startsWith(prefix))) {
-      throw new Error(`skill "${prefix}" produced no skill_loaded\n\n${dump()}`);
+      throw new Error(`skill "${prefix}" produced no skill_loaded event\n\n${dump()}`);
     }
   }
 
@@ -575,7 +583,11 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
         },
         install.installDir
       );
-      assertManagedShape(result, ["heavy-alpha-managed", "heavy-beta-managed", "heavy-gamma-managed"]);
+      assertManagedShape(result, [
+        managedHeavySkillName("alpha", "deepseek"),
+        managedHeavySkillName("beta", "deepseek"),
+        managedHeavySkillName("gamma", "deepseek")
+      ]);
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe("deepseek");
     },

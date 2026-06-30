@@ -17,7 +17,7 @@
     "brand:check": "bun scripts/cicd/check-old-brand.mjs",
     "contracts:parity:check": "bun scripts/cicd/check-contract-parity.mjs",
     "test": "bun run test:unit",
-    "test:unit": "bun run --workspaces --if-present --parallel test:unit && bun run --filter @aexhq/sdk test:security && bun run vitest run --root scripts/validate capability-matrix.test.ts",
+    "test:unit": "bun run --workspaces --if-present --parallel test:unit && bun run --filter @aexhq/sdk test:security && bun run vitest run --root scripts/validate",
     "test:user": "bun run --filter @aexhq/user-tests test:user",
     "test:user:offline": "bun run --filter @aexhq/user-tests test:user:offline",
     "test:user:heavy": "bun run --filter @aexhq/user-tests test:user:heavy",

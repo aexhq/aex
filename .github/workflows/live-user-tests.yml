@@ -77,7 +77,47 @@ jobs:
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
           AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
-        run: bun run test:user
+        run: |
+          set -euo pipefail
+          mkdir -p .suite-diagnostics/raw
+          bun run test:user 2>&1 | tee .suite-diagnostics/raw/live-user-tests.log
+
+      - name: Redact live user test log
+        if: ${{ always() }}
+        env:
+          AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p .suite-diagnostics/redacted
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
+          const rawPath = ".suite-diagnostics/raw/live-user-tests.log";
+          const outPath = ".suite-diagnostics/redacted/live-user-tests.log";
+          let text = existsSync(rawPath)
+            ? readFileSync(rawPath, "utf8")
+            : "live-user-tests.log was not created before diagnostics collection.\n";
+
+          for (const name of ["AEX_API_TOKEN", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"]) {
+            const value = process.env[name];
+            if (value && value.length > 0) {
+              text = text.split(value).join(`[REDACTED:${name}]`);
+            }
+          }
+
+          writeFileSync(outPath, text);
+          NODE
+
+      - name: Upload redacted live user test log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-user-tests-redacted-log
+          path: .suite-diagnostics/redacted
+          if-no-files-found: error
+          retention-days: 14
 
       # The expensive, optional suites (heavy full-feature session +
       # per-provider correctness matrix) are NOT run here — they live in the

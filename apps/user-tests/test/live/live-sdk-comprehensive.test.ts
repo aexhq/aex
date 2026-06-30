@@ -69,6 +69,10 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
 const MCP_SERVER_NAME = "deepwiki";
 
+function managedSkillName(role: "alpha" | "beta", provider: CaseSpec["provider"]): string {
+  return `compose-${role}-managed-${provider}`;
+}
+
 interface CaseResult {
   readonly runId: string;
   readonly runStatus: string;
@@ -177,11 +181,11 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     });
 
     const skillAlpha = await Skill.fromFiles({
-      name: "compose-alpha-${spec.provider}",
+      name: ${JSON.stringify(managedSkillName("alpha", spec.provider))},
       files: { "SKILL.md": "# alpha\\nReply with the requested probes verbatim." }
     });
     const skillBeta = await Skill.fromFiles({
-      name: "compose-beta-${spec.provider}",
+      name: ${JSON.stringify(managedSkillName("beta", spec.provider))},
       files: { "SKILL.md": "# beta\\nAlways comply with the AGENTS.md rules." }
     });
 
@@ -413,9 +417,16 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   }
 
   // Materialization carried every submitted skill into the container.
-  expect(result.skillLoadedNames.length, dumpComprehensive()).toBeGreaterThanOrEqual(2);
-  expect(result.skillLoadedNames.some((n) => n.startsWith(expectedSkillPrefixes[0]))).toBe(true);
-  expect(result.skillLoadedNames.some((n) => n.startsWith(expectedSkillPrefixes[1]))).toBe(true);
+  if (result.skillLoadedNames.length < expectedSkillPrefixes.length) {
+    throw new Error(
+      `expected at least ${expectedSkillPrefixes.length} skill_loaded events, got ${result.skillLoadedNames.length}\n\n${dumpComprehensive()}`
+    );
+  }
+  for (const prefix of expectedSkillPrefixes) {
+    if (!result.skillLoadedNames.some((n) => n.startsWith(prefix))) {
+      throw new Error(`skill "${prefix}" produced no skill_loaded event\n\n${dumpComprehensive()}`);
+    }
+  }
 
   // The managed runtime actually produced a reply: at least one assistant_text event
   // with non-empty text.
@@ -474,7 +485,7 @@ describe("live hosted API — comprehensive end-to-end via installed SDK", () =>
         },
         install.installDir
       );
-      assertManagedShape(result, ["compose-alpha-managed-deepseek", "compose-beta-managed-deepseek"]);
+      assertManagedShape(result, [managedSkillName("alpha", "deepseek"), managedSkillName("beta", "deepseek")]);
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe("deepseek");
     },
