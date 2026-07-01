@@ -31,10 +31,10 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
     "an allowed host is reachable and a non-allowed host is blocked on the same managed run",
     async () => {
       const script = sdkRunnerScript({
-        submit: `{
+        run: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
-          prompt: [
+          message: [
             "Using the shell, make two separate HTTPS GET requests with curl -sS -m 10:",
             "Judge each by whether you actually REACHED the site (got its real response), not merely whether any bytes came back — a proxy 403/Forbidden means BLOCKED, not reached.",
             "1) https://example.com — if you reached the host and got its normal response, note the token ALLOWED_REACHED; if blocked/refused/timed out/proxy-403, note ALLOWED_FAILED.",
@@ -42,7 +42,7 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
             "Reply with ONLY the two tokens separated by a space."
           ],
           environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
-          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
+          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-networking-" + Date.now()
         }`
       });

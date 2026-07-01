@@ -48,7 +48,6 @@ describe("sdk imports", () => {
         "SessionHandle",
         "SessionTurnStream",
         "Sizes",
-        "RuntimeSizes",
         "Skill",
         "McpServer",
         "RUN_RECORD_SCHEMA_VERSION",
@@ -61,7 +60,9 @@ describe("sdk imports", () => {
       for (const name of names) {
         result[name] = typeof mod[name];
       }
-      result.Sizes_eq_RuntimeSizes = mod.Sizes === mod.RuntimeSizes;
+      // The legacy RuntimeSizes symbol was renamed to Sizes on the root
+      // surface — only Sizes is exported now.
+      result.RuntimeSizes_present = (typeof mod.RuntimeSizes !== "undefined");
       // Confirm the renamed SDK client and legacy platform export are GONE — single-surface invariant.
       result.AexClient_present = (typeof mod.AexClient !== "undefined");
       result.AexPlatformClient_present = (typeof mod.AexPlatformClient !== "undefined");
@@ -87,8 +88,7 @@ describe("sdk imports", () => {
     expect(result["SessionHandle"]).toBe("function");
     expect(result["SessionTurnStream"]).toBe("function");
     expect(result["Sizes"]).toBe("object");
-    expect(result["RuntimeSizes"]).toBe("object");
-    expect(result["Sizes_eq_RuntimeSizes"]).toBe(true);
+    expect(result["RuntimeSizes_present"]).toBe(false);
     expect(result["Skill"]).toBe("function");
     expect(result["McpServer"]).toBe("function");
     expect(result["RUN_RECORD_SCHEMA_VERSION"]).toBe("string");

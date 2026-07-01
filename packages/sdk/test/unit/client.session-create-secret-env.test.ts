@@ -1,7 +1,7 @@
 /**
- * submit() splits `secretEnv: Record<envName, Secret>` exactly like it splits
- * proxyEndpoints: value-free declarations into `submission.secretEnv` (hashed)
- * and ephemeral values into `secrets.envSecrets` (vaulted, hash-excluded).
+ * openSession splits `environment.secrets: Record<envName, Secret>` exactly like
+ * it splits proxyEndpoints: value-free declarations into `submission.secretEnv`
+ * (hashed) and ephemeral values into `secrets.envSecrets` (vaulted, hash-excluded).
  */
 import { describe, expect, it, vi } from "vitest";
 import { AgentExecutor, Secret } from "../../src/index.js";
@@ -34,15 +34,24 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
   return { fetch: stub, calls };
 }
 
-function submitWith(secretEnv: Record<string, Secret>) {
+function openWith(secrets: Record<string, Secret>) {
   const { fetch, calls } = makeStubFetch();
   const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-  return { client, calls, run: () => client.submit({ model: "claude-haiku-4-5", prompt: "p", secrets: { apiKeys: { anthropic: "sk-x" } }, secretEnv }) };
+  return {
+    client,
+    calls,
+    run: () =>
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        environment: { secrets }
+      })
+  };
 }
 
-describe("submit() secretEnv split", () => {
+describe("openSession environment.secrets split", () => {
   it("workspace ref → submission.secretEnv {ref}; no value travels", async () => {
-    const { calls, run } = submitWith({ SERPER_API_KEY: Secret.ref("serper") });
+    const { calls, run } = openWith({ SERPER_API_KEY: Secret.ref("serper") });
     await run();
     const body = calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
@@ -52,7 +61,7 @@ describe("submit() secretEnv split", () => {
   });
 
   it("ephemeral value → submission.secretEnv {ephemeral} + secrets.envSecrets value", async () => {
-    const { calls, run } = submitWith({ SERPER_API_KEY: Secret.value("sk-live-XYZ") });
+    const { calls, run } = openWith({ SERPER_API_KEY: Secret.value("sk-live-XYZ") });
     await run();
     const body = calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
@@ -62,7 +71,7 @@ describe("submit() secretEnv split", () => {
   });
 
   it("the ephemeral value is NEVER in the (hashed) submission half", async () => {
-    const { calls, run } = submitWith({ SERPER_API_KEY: Secret.value("sk-live-XYZ") });
+    const { calls, run } = openWith({ SERPER_API_KEY: Secret.value("sk-live-XYZ") });
     await run();
     const body = calls[0]!.body as Record<string, unknown>;
     expect(JSON.stringify(body.submission)).not.toContain("sk-live-XYZ");
@@ -70,7 +79,7 @@ describe("submit() secretEnv split", () => {
   });
 
   it("mixes refs and ephemeral values in one submission", async () => {
-    const { calls, run } = submitWith({
+    const { calls, run } = openWith({
       SERPER_API_KEY: Secret.ref("serper"),
       DOUBAO_API_KEYS: Secret.value("ark-secret")
     });
@@ -85,17 +94,17 @@ describe("submit() secretEnv split", () => {
     expect(secrets.envSecrets).toEqual({ DOUBAO_API_KEYS: "ark-secret" });
   });
 
-  it("omits both fields when secretEnv is not provided", async () => {
+  it("omits both fields when environment.secrets is not provided", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({ model: "claude-haiku-4-5", prompt: "p", secrets: { apiKeys: { anthropic: "sk-x" } } });
+    await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-x" } });
     const body = calls[0]!.body as Record<string, unknown>;
     expect("secretEnv" in (body.submission as object)).toBe(false);
     expect("envSecrets" in (body.secrets as object)).toBe(false);
   });
 
   it("rejects an invalid env var name", async () => {
-    const { run } = submitWith({ "bad-name": Secret.ref("serper") });
+    const { run } = openWith({ "bad-name": Secret.ref("serper") });
     await expect(run()).rejects.toThrow(/env var name/i);
   });
 
@@ -103,11 +112,10 @@ describe("submit() secretEnv split", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         model: "claude-haiku-4-5",
-        prompt: "p",
-        secrets: { apiKeys: { anthropic: "sk-x" } },
-        secretEnv: { SERPER_API_KEY: "sk-x" as unknown as Secret }
+        apiKeys: { anthropic: "sk-x" },
+        environment: { secrets: { SERPER_API_KEY: "sk-x" as unknown as Secret } }
       })
     ).rejects.toThrow(/must be a Secret/);
   });

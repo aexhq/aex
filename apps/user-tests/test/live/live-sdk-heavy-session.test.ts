@@ -278,35 +278,29 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       provider: ${JSON.stringify(spec.provider)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
-      prompt: ${JSON.stringify(promptSteps)},
+      message: ${JSON.stringify(promptSteps)},
       skills: [skillAlpha, skillBeta, skillGamma],
       mcpServers: [mcpPrimary, mcpSecondary],
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
       includeBuiltinTools: true,
-      environment: { envVars: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
+      environment: { variables: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.provider}" },
-      secrets: { apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} } },
+      apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "heavy-${spec.provider}-" + Date.now()
     };
 
-    const runId = await client.submit(submitOpts);
+    const result = await client.run(submitOpts, { timeoutMs: ${spec.pollDeadlineMs} });
+    const runId = result.runId;
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: ${JSON.stringify(spec.provider)}
+    };
+    const session = await client.sessions.open(runId);
 
-    // Block on the SDK's own terminal-wait instead of a
-    // hand-rolled poll: it covers every terminal status — including
-    // \`timed_out\`, which the old succeeded/failed/cancelled break-set
-    // silently polled through — and throws on the deadline.
-    let run;
-    try {
-      run = await client.wait(runId, { timeoutMs: ${spec.pollDeadlineMs}, intervalMs: ${spec.pollIntervalMs} });
-    } catch (err) {
-      const last = await client.getRun(runId).catch(() => null);
-      process.stderr.write(JSON.stringify({ kind: "timeout", error: err && err.message, run: last }, null, 2));
-      process.exit(2);
-    }
-
-    const events = await client.listEvents(runId);
-    const outputs = await client.listOutputs(runId);
+    const events = Array.isArray(result.events) ? result.events : [];
+    const outputs = Array.isArray(result.outputs) ? result.outputs : [];
 
     // CUSTOM envelopes nest the original payload under data.value.
     function customName(e) {
@@ -352,7 +346,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     for (const out of outputs.slice(0, 16)) {
       let sample = null;
       try {
-        const bytes = await client.downloadOutput(runId, out);
+        const bytes = await session.outputs().download(out);
         const text = new TextDecoder().decode(bytes);
         sample = text.slice(0, 256);
         for (const p of outProbes) {
@@ -366,7 +360,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
 
     const serialized = JSON.stringify({ run, events, outputs });
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
-    const result = {
+    const payload = {
       runId: runId,
       runStatus: run.status,
       runtime: run.runtime ?? "(missing)",
@@ -389,7 +383,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       streamErrors
     };
-    process.stdout.write(JSON.stringify(result));
+    process.stdout.write(JSON.stringify(payload));
     process.exit(0);
   `;
 }

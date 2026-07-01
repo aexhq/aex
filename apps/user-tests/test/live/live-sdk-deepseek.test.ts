@@ -101,34 +101,25 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           apiToken
         });
 
-        // Submit a DeepSeek run. The SDK's submit returns the run id.
-        const runId = await client.submit({
+        // Run a DeepSeek agent. The SDK's run() opens a one-shot session,
+        // streams to park, and returns the collected RunResult. Real
+        // managed-runtime runs take a while (cold-start + image pull +
+        // process startup + LLM round-trip), so give it up to 8 minutes.
+        const result = await client.run({
           provider: "deepseek",
           model,
-          prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-deepseek-" + Date.now(),
-          secrets: { apiKeys: { deepseek: deepseekKey } }
-        });
-
-        // Real managed-runtime runs take longer than smoke mode — managed runtime
-        // cold-start + image pull + managed-runtime process startup + LLM
-        // round-trip. Give it up to 8 minutes.
-        const deadline = Date.now() + 8 * 60 * 1000;
-        let run = null;
-        while (Date.now() < deadline) {
-          run = await client.getRun(runId);
-          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 3_000));
-        }
-        if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-          process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-          process.exit(2);
-        }
-
-        const events = await client.listEvents(runId);
-        const outputs = await client.listOutputs(runId);
+          apiKeys: { deepseek: deepseekKey }
+        }, { timeoutMs: 8 * 60 * 1000 });
+        const runId = result.runId;
+        const run = {
+          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          runtime: "managed",
+          provider: "deepseek"
+        };
+        const events = Array.isArray(result.events) ? result.events : [];
+        const outputs = Array.isArray(result.outputs) ? result.outputs : [];
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))

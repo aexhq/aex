@@ -164,28 +164,22 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       files: { "SKILL.md": ${JSON.stringify(betaSkill)} }
     });
 
-    const runId = await client.submit({
+    const result = await client.run({
       provider: ${JSON.stringify(cell.provider)},      model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
-      prompt: ${JSON.stringify(prompt)},
+      message: ${JSON.stringify(prompt)},
       skills: [alpha, beta],
-      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
+      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
-    });
+    }, { timeoutMs: 6 * 60_000 });
+    const runId = result.runId;
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: ${JSON.stringify(cell.provider)}
+    };
 
-    const deadline = Date.now() + 6 * 60_000;
-    let run = null;
-    while (Date.now() < deadline) {
-      run = await client.getRun(runId);
-      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-      await new Promise((r) => setTimeout(r, 2_500));
-    }
-    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-      process.exit(2);
-    }
-
-    const events = await client.listEvents(runId);
+    const events = Array.isArray(result.events) ? result.events : [];
 
     // CUSTOM envelopes nest the original payload under data.value, keyed by
     // data.name (aex.notification / aex.skill_loaded / aex.stream_error).

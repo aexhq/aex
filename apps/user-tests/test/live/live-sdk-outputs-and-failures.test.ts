@@ -111,37 +111,31 @@ function buildOutputScript(cell: Cell, marker: string): string {
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const runId = await client.submit({
+    const result = await client.run({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
-      prompt: ${JSON.stringify(prompt)},
+      message: ${JSON.stringify(prompt)},
       includeBuiltinTools: true,
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
-      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
+      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "outputs-${cell.id}-" + Date.now()
-    });
-
-    const deadline = Date.now() + 6 * 60_000;
-    let run = null;
-    while (Date.now() < deadline) {
-      run = await client.getRun(runId);
-      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-      await new Promise((r) => setTimeout(r, 2_500));
-    }
-    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-      process.exit(2);
-    }
-
-    const events = await client.listEvents(runId);
-    const outputs = await client.listOutputs(runId);
+    }, { timeoutMs: 6 * 60_000 });
+    const runId = result.runId;
+    const session = await client.sessions.open(runId);
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: ${JSON.stringify(cell.provider)}
+    };
+    const events = Array.isArray(result.events) ? result.events : [];
+    const outputs = Array.isArray(result.outputs) ? result.outputs : [];
 
     const downloaded = [];
     for (const out of outputs) {
       let downloadedLen = 0;
       let sample = "";
       try {
-        const bytes = await client.downloadOutput(runId, out);
+        const bytes = await session.outputs().download(out);
         const text = new TextDecoder().decode(bytes);
         downloadedLen = text.length;
         sample = text.slice(0, 512);
@@ -332,26 +326,24 @@ function buildCorruptedSkillScript(): string {
 
     if (skillRef) {
       try {
-        runId = await client.submit({
+        const result = await client.run({
           provider: "deepseek",
           model: ${JSON.stringify(deepseekModel)},
-          prompt: "Hello.",
+          message: "Hello.",
           skills: [skillRef],
-          secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } },
+          apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
           idempotencyKey: "fail-corrupt-skill-" + Date.now()
-        });
+        }, { timeoutMs: 3 * 60_000 });
         submitOk = true;
-        const deadline = Date.now() + 3 * 60_000;
-        let run = null;
-        while (Date.now() < deadline) {
-          run = await client.getRun(runId);
-          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-          await new Promise((r) => setTimeout(r, 2_500));
-        }
-        runStatus = run ? run.status : null;
-        runErrorMessage = run && run.errorMessage ? run.errorMessage : null;
+        runId = result.runId;
+        const run = {
+          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          errorMessage: result.error ?? null
+        };
+        runStatus = run.status;
+        runErrorMessage = run.errorMessage;
 
-        const events = await client.listEvents(runId);
+        const events = Array.isArray(result.events) ? result.events : [];
         eventKinds = events.map((e) => e.type);
         const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
         terminalKind = terminal ? terminal.type : null;
@@ -388,9 +380,10 @@ function buildCorruptedSkillScript(): string {
 }
 
 function buildIncompatibleRuntimeScript(): string {
-  // Probe: runtime="native" is no longer a public selector. The installed SDK
-  // must reject it before any HTTP call, giving a deterministic error-shape
-  // check without depending on provider behavior.
+  // Probe: the legacy "runtimeSize" selector is gone (renamed to "runtime").
+  // The installed SDK must reject the removed field before any HTTP call,
+  // giving a deterministic error-shape check ("runtimeSize is not a supported
+  // option") without depending on provider behavior.
   return `
     import { AgentExecutor } from "@aexhq/sdk";
 
@@ -407,14 +400,15 @@ function buildIncompatibleRuntimeScript(): string {
     let errorMessage = null;
 
     try {
-      const runId = await client.submit({
+      const result = await client.run({
         provider: "deepseek",
-        runtime: "native",
+        runtimeSize: "native",
         model: "deepseek-v4-flash",
-        prompt: "Hello.",
-        secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" } },
+        message: "Hello.",
+        apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT ?? "sk-test" },
         idempotencyKey: "fail-incompat-runtime-" + Date.now()
       });
+      void result;
       submitOk = true;
     } catch (e) {
       errorClass = e && e.constructor ? e.constructor.name : "Error";
@@ -685,8 +679,8 @@ describe("live failure surfacing — SDK error contract", () => {
     async () => {
       // The ORIGINAL b2 used an invalid model string and was removed because
       // Anthropic silently accepted placeholder models. This replacement probes
-      // a deterministic SDK-side rejection: runtime="native" is outside the
-      // public runtime enum.
+      // a deterministic SDK-side rejection: the legacy "runtimeSize" field is a
+      // removed option and is rejected before any HTTP call.
       const result = await runFailureCase(
         buildIncompatibleRuntimeScript,
         "fail-incompat-runtime.mjs",

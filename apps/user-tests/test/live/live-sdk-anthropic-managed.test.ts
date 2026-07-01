@@ -94,30 +94,21 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           apiToken
         });
 
-        const runId = await client.submit({
+        const result = await client.run({
           provider: "anthropic",
           model,
-          prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-anthropic-mgd-" + Date.now(),
-          secrets: { apiKeys: { anthropic: anthropicKey } }
-        });
-
-        const deadline = Date.now() + 8 * 60 * 1000;
-        let run = null;
-        while (Date.now() < deadline) {
-          run = await client.getRun(runId);
-          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 3_000));
-        }
-        if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-          process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-          process.exit(2);
-        }
-
-        const events = await client.listEvents(runId);
-        const outputs = await client.listOutputs(runId);
+          apiKeys: { anthropic: anthropicKey }
+        }, { timeoutMs: 8 * 60 * 1000 });
+        const runId = result.runId;
+        const run = {
+          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          runtime: "managed",
+          provider: "anthropic"
+        };
+        const events = Array.isArray(result.events) ? result.events : [];
+        const outputs = Array.isArray(result.outputs) ? result.outputs : [];
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))

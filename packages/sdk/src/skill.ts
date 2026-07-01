@@ -9,8 +9,8 @@ import { fetchSkillArchive } from "./fetch-archive.js";
 import { readDirectoryAsFiles } from "./node-fs.js";
 
 /**
- * One `Skill` class for skill bytes. `client.submit` materializes the bytes
- * as an uploaded asset before the run lands; the wire ref becomes
+ * One `Skill` class for skill bytes. `client.run` / `openSession` materializes
+ * the bytes as an uploaded asset before the run lands; the wire ref becomes
  * `kind:"asset"`.
  *
  * Build from an inline files map (`Skill.fromFiles`), a local directory
@@ -22,16 +22,17 @@ import { readDirectoryAsFiles } from "./node-fs.js";
  * There is no `Skill.fromId(...)`. A URL is an ingestion source, not a
  * persistent reference.
  *
- * An inline draft is auto-staged to the content-addressable asset store at
- * submit time (the bytes upload before `POST /runs`; the wire ref becomes
- * `kind:"asset"`). Call `await skill.upload(client)` to pre-stage the bytes
+ * An inline draft is auto-staged to the content-addressable asset store when
+ * the session is created (the bytes upload before `POST /api/sessions`; the
+ * wire ref becomes `kind:"asset"`). Call `await skill.upload(client)` to
+ * pre-stage the bytes
  * explicitly — useful when you want to reuse the resulting `kind:"asset"`
  * Skill across multiple runs.
  */
 export class Skill {
   readonly #ref: AssetRef | DraftSkillRef;
   readonly #inlineBytes: Uint8Array | undefined;
-  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  /** Asset id cached after the first use, so reuse skips a re-upload. */
   #assetId: string | undefined;
 
   /**
@@ -46,8 +47,8 @@ export class Skill {
   /**
    * The wire-level reference. Returns the SDK-private draft shape for
    * un-materialized skills (kind:"draft", with name + contentHash).
-   * `client.submit` walks these and uploads them before the run
-   * lands.
+   * `client.run` / `openSession` walks these and uploads them before
+   * the run lands.
    */
   get ref(): AssetRef | DraftSkillRef {
     return this.#ref;
@@ -58,7 +59,7 @@ export class Skill {
     return this.#ref.kind === "draft";
   }
 
-  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  /** Internal: the asset id resolved on a prior use, or undefined. */
   get _cachedAssetId(): string | undefined {
     return this.#assetId;
   }
@@ -72,7 +73,7 @@ export class Skill {
    * Build a draft Skill from an inline files map. The SDK validates
    * basic safety (no path traversal, size caps, has `SKILL.md`),
    * deterministically zips the bundle, and computes the
-   * `sha256:<hex>` content hash. `client.submit` materializes
+   * `sha256:<hex>` content hash. `client.run` / `openSession` materializes
    * these before the run lands.
    */
   static async fromFiles(args: { readonly name: string; readonly files: SkillFiles }): Promise<Skill> {
@@ -112,7 +113,7 @@ export class Skill {
    *
    * The archive must contain `SKILL.md` at its root, or inside a single
    * top-level folder (which is stripped). The signed URL only needs to be valid
-   * for this call; `client.submit` snapshots the bytes into the run.
+   * for this call; `client.run` / `openSession` snapshots the bytes into the run.
    *
    * Universal (Bun / Node 18+ / browser): requires a global `fetch`, or pass one.
    */
@@ -149,7 +150,7 @@ export class Skill {
    * `Skill` record returned by `client.skills.list()` / `.get()`:
    *
    *   const [s] = await client.skills.list();
-   *   await client.submit({ ..., skills: [Skill.fromCatalog(s)] });
+   *   await client.run({ ..., skills: [Skill.fromCatalog(s)], message: "..." });
    *
    * The record must be `ready` (it has a content hash). Unlike the draft
    * builders this performs no upload — the bytes already live in the catalog.
@@ -173,10 +174,10 @@ export class Skill {
   }
 
   /**
-   * Internal: yield the draft's bytes + metadata so `client.submit` can upload
-   * the asset. Idempotent (non-consuming): a Skill is reusable across submits —
-   * the first submit caches the resolved asset id (see `_rememberAsset`) so
-   * later submits reuse it instead of re-uploading.
+   * Internal: yield the draft's bytes + metadata so `client.run` / `openSession`
+   * can upload the asset. Idempotent (non-consuming): a Skill is reusable across
+   * sessions — the first use caches the resolved asset id (see `_rememberAsset`)
+   * so later uses reuse it instead of re-uploading.
    *
    * Returns undefined for already-materialized Skills.
    */
@@ -221,7 +222,7 @@ export class Skill {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "Skill: draft Skills cannot be JSON-serialised — they only become wire refs when " +
-        "client.submit uploads the bytes as an asset."
+        "aex.run / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;
@@ -230,7 +231,7 @@ export class Skill {
 
 /**
  * SDK-internal draft skill marker. Never reaches the wire; the
- * materialize step inside `client.submit` converts these to
+ * materialize step inside `client.run` / `openSession` converts these to
  * `kind:"asset"` refs.
  */
 export interface DraftSkillRef {

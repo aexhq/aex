@@ -9,15 +9,15 @@ import { strToU8, zipSync } from "fflate";
  * behaviour).
  *
  *   const rules = await AgentsMd.fromContent("# Be helpful", { name: "rules" });
- *   await client.submit({ agentsMd: [rules], ... });
+ *   await client.run({ agentsMd: [rules], message: "..." });
  *
- * `client.submit` materializes the bytes to the hosted asset store before
- * the run lands. Asset deduplication handles repeated uploads automatically.
+ * `client.run` / `openSession` materializes the bytes to the hosted asset store
+ * before the run lands. Asset deduplication handles repeated uploads automatically.
  */
 export class AgentsMd {
   readonly #ref: AgentsMdRef | DraftAgentsMdRef;
   readonly #zipBytes: Uint8Array | undefined;
-  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  /** Asset id cached after the first use, so reuse skips a re-upload. */
   #assetId: string | undefined;
 
   constructor(ref: AgentsMdRef | DraftAgentsMdRef, zipBytes?: Uint8Array) {
@@ -33,7 +33,7 @@ export class AgentsMd {
     return this.#ref.kind === "draft";
   }
 
-  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  /** Internal: the asset id resolved on a prior use, or undefined. */
   get _cachedAssetId(): string | undefined {
     return this.#assetId;
   }
@@ -69,7 +69,7 @@ export class AgentsMd {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.submit` can upload it as an asset.
+   * `client.run` / `openSession` can upload it as an asset.
    */
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
     if (this.#ref.kind !== "draft" || !this.#zipBytes) {
@@ -86,7 +86,7 @@ export class AgentsMd {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "AgentsMd: draft AgentsMd cannot be JSON-serialised — it only becomes a wire " +
-          "ref when client.submit uploads the bytes as an asset."
+          "ref when aex.run / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;

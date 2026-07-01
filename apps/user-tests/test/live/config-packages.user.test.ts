@@ -28,16 +28,16 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
     "managed deepseek pre-installs an apt package (jq) before the agent runs",
     async () => {
       const script = sdkRunnerScript({
-        submit: `{
+        run: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
-          prompt: [
+          message: [
             "Use the bash tool exactly once to run this command without installing anything:",
             "\`command -v jq || echo JQ_MISSING\`",
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }] },
-          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
+          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-packages-deepseek-managed-a-" + Date.now()
         }`
       });
@@ -63,16 +63,16 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
       // pip:cowsay exercises the system-wide pip path. Both must be present
       // without the agent installing.
       const script = sdkRunnerScript({
-        submit: `{
+        run: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
-          prompt: [
+          message: [
             "Use the bash tool exactly once to run this command without installing anything:",
             "\`command -v jq || echo JQ_MISSING; python3 -c \\"import cowsay; print('PIP_OK')\\" || echo PIP_MISSING\`",
             "Reply with the exact stdout."
           ],
           environment: { packages: [{ name: "jq" }, { name: "pip:cowsay" }] },
-          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
+          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-packages-managed-runtime-" + Date.now()
         }`
       });

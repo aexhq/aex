@@ -17,10 +17,10 @@ retention field is rejected if supplied.
 ```ts
 import { Models } from "@aexhq/sdk";
 
-const runId = await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "...",
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  message: "...",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

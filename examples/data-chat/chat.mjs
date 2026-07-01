@@ -1,7 +1,7 @@
 // Interactive chat over your aex workspace data — built ENTIRELY on the public
 // SDK. The only aex import is `@aexhq/sdk`; the LLM is your own Anthropic key
 // (BYOK). Because the chat can only call `createDataTools(client)` (which only
-// calls public read methods), it can reach your runs and their outputs and
+// calls public read methods), it can reach your sessions and their outputs and
 // nothing else — there is no path to internal/operator data.
 //
 //   AEX_API_TOKEN   = your workspace token (scopes all data access)
@@ -12,7 +12,7 @@
 //
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { AgentExecutor, createDataTools } from "@aexhq/sdk";
+import { Aex, createDataTools } from "@aexhq/sdk";
 import Anthropic from "@anthropic-ai/sdk";
 
 const apiToken = required("AEX_API_TOKEN");
@@ -20,13 +20,14 @@ const anthropicKey = required("ANTHROPIC_API_KEY");
 const MODEL = process.env.AEX_CHAT_MODEL ?? "claude-sonnet-4-6";
 
 // 1. The aex client — workspace identity comes from the token, server-side.
-const client = new AgentExecutor({
+const client = new Aex({
   apiToken,
   ...(process.env.AEX_BASE_URL ? { baseUrl: process.env.AEX_BASE_URL } : {})
 });
 
 // 2. The unified data interface as model tools. `data.execute` only ever calls
-//    public read methods (listRuns / getRun / listOutputs / readOutputText).
+//    public read methods (sessions.list / sessions.get / sessions.outputs /
+//    sessions.readOutput).
 const data = createDataTools(client);
 
 // 3. Your own LLM, your own key.

@@ -60,12 +60,11 @@ describe("ProxyEndpoint", () => {
     expect(query.auth).toEqual({ name: "weather", value: { type: "query", value: "wk" } });
   });
 
-  it("submit splits ProxyEndpoint instances into declaration + secrets bag", async () => {
+  it("openSession splits ProxyEndpoint instances into declaration + secrets bag", async () => {
     const { fetch, calls } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       proxyEndpoints: [
         ProxyEndpoint.bearer({
           name: "stripe",
@@ -84,7 +83,7 @@ describe("ProxyEndpoint", () => {
           }
         })
       ],
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "i-px"
     });
     const body = calls[0]!.body;
@@ -144,13 +143,12 @@ describe("ProxyEndpoint", () => {
     ).toThrow(/auth header/);
   });
 
-  it("rejects duplicate endpoint names within one submit call", async () => {
+  it("rejects duplicate endpoint names within one session create", async () => {
     const { fetch } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         model: "claude-haiku-4-5",
-        prompt: "p",
         proxyEndpoints: [
           ProxyEndpoint.bearer({
             name: "dup",
@@ -167,7 +165,7 @@ describe("ProxyEndpoint", () => {
             allowPathPrefixes: ["/"]
           })
         ],
-        secrets: { apiKeys: { anthropic: "k" } }
+        apiKeys: { anthropic: "k" }
       })
     ).rejects.toThrow(/duplicate name/);
   });
@@ -183,12 +181,11 @@ describe("ProxyEndpoint", () => {
     expect(ep.auth).toBeNull();
   });
 
-  it("submit omits keyless endpoints from secrets.proxyEndpointAuth", async () => {
+  it("openSession omits keyless endpoints from secrets.proxyEndpointAuth", async () => {
     const { fetch, calls } = makeFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x.test", fetch });
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       proxyEndpoints: [
         ProxyEndpoint.none({
           name: "wikimedia",
@@ -204,7 +201,7 @@ describe("ProxyEndpoint", () => {
           allowPathPrefixes: ["/v1/charges"]
         })
       ],
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "i-px-mixed"
     });
     const body = calls[0]!.body;

@@ -7,7 +7,7 @@ description: "aex is an agent execution platform for launching autonomous agents
 
 aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
 
-Submit typed runs, stream durable events, capture outputs, and compose agents with skills, files, MCP, proxy endpoints, and subagents across the managed runtime.
+Open durable agent sessions, send turns, stream events, capture outputs, and compose agents with skills, files, MCP, proxy endpoints, and subagents across the managed runtime.
 
 ## Feature areas
 

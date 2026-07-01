@@ -121,7 +121,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           const deadline = Date.now() + timeoutMs;
           let events = [];
           while (Date.now() < deadline) {
-            events = await session.listEvents();
+            events = await session.events().list();
             const names = events
               .filter((e) => e.type === "CUSTOM")
               .map((e) => e.data && e.data.name)
@@ -284,7 +284,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           const deadline = Date.now() + timeoutMs;
           let events = [];
           while (Date.now() < deadline) {
-            events = await session.listEvents();
+            events = await session.events().list();
             if (events.some((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle")) return events;
             await new Promise((r) => setTimeout(r, 1000));
           }

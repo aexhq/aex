@@ -113,30 +113,22 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
           apiToken
         });
 
-        const runId = await client.submit({
+        const result = await client.run({
           provider,
           model,
-          prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-doubao-" + Date.now(),
-          secrets: { apiKeys: { doubao: doubaoKey } }
-        });
+          apiKeys: { doubao: doubaoKey }
+        }, { timeoutMs: 8 * 60 * 1000 });
+        const runId = result.runId;
+        const run = {
+          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          runtime: "managed",
+          provider
+        };
 
-        const deadline = Date.now() + 8 * 60 * 1000;
-        let run = null;
-        while (Date.now() < deadline) {
-          run = await client.getRun(runId);
-          if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 3_000));
-        }
-        if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-          process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-          process.exit(2);
-        }
-
-        const events = await client.listEvents(runId);
-        const outputs = await client.listOutputs(runId);
+        const events = Array.isArray(result.events) ? result.events : [];
+        const outputs = Array.isArray(result.outputs) ? result.outputs : [];
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
@@ -144,7 +136,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
 
         const serialized = JSON.stringify({ run, events, outputs });
-        const result = {
+        const payload = {
           runId: runId,
           runStatus: run.status,
           probe: ${JSON.stringify(probe)},
@@ -158,7 +150,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
           outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
           leakedDoubaoKey: serialized.includes(doubaoKey)
         };
-        process.stdout.write(JSON.stringify(result));
+        process.stdout.write(JSON.stringify(payload));
         process.exit(0);
       `;
       const scriptPath = join(install.installDir, "live-doubao-runner.mjs");

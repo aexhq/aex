@@ -50,12 +50,12 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
           const a = await AgentsMd.fromContent("# Project notes A\\n\\nThe internal codename for this project is ${tokenA}.", { name: "rules-a" });
           const b = await AgentsMd.fromContent("# Project notes B\\n\\nThe internal codename for the database is ${tokenB}.", { name: "rules-b" });
         `,
-        submit: `{
+        run: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
-          prompt: ${JSON.stringify([PROMPT])},
+          message: ${JSON.stringify([PROMPT])},
           agentsMd: [a, b],
-          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
+          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-agentsmd-deepseek-managed-a-" + Date.now()
         }`
       });

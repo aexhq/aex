@@ -10,7 +10,7 @@ The package ships:
 
 - `Aex` / `AgentExecutor` for sessions, one-shot runs, inspect, download, cancel, and delete.
 - `sessions` / `openSession()` for durable, resumable agent sessions.
-- Typed run primitives: `Models`, `Providers`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
+- Typed run primitives: `Models`, `Providers`, `Sizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, whoami, and skills operations.
 
 ## Install
@@ -113,32 +113,33 @@ aex tools list            # builtin tools (default vs opt-in, e.g. notebook_edit
 aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
 ```
 
-Errors are typed and actionable. Every `submit()` config-validation failure throws
-a `RunConfigValidationError` (`err.code === "RUN_CONFIG_INVALID"`) you can `catch`
-by code; CLI failures print a JSON envelope carrying the HTTP `status`, a one-line
-`remedy`, and the `runId` where known, and a wrong `--model`, `--provider`, or
-`--runtime-size` gets a "did you mean?" suggestion.
+Errors are typed and actionable. Every `openSession()` / `run()` config-validation
+failure throws a `RunConfigValidationError` (`err.code === "RUN_CONFIG_INVALID"`)
+you can `catch` by code; CLI failures print a JSON envelope carrying the HTTP
+`status`, a one-line `remedy`, and the `runId` where known, and a wrong `--model`,
+`--provider`, or `--runtime-size` gets a "did you mean?" suggestion.
 
-## Chat over a corpus of runs
+## Chat over a corpus of sessions
 
-Turn a selected set of runs into a read-only chat. `createCorpusTools(client, { runIds })`
-returns vendor-neutral, corpus-scoped read tools (`list_runs` / `get_run` /
-`list_outputs` / `read_output` / `search_outputs`) — every tool refuses a run
-outside the corpus. Drive them with any LLM; `examples/chat-corpus.ts` shows the
-direct-Claude loop (`@anthropic-ai/sdk`), and the CLI ships it as a one-shot
-command (BYOK; the importable SDK stays LLM-vendor-free):
+Turn a selected set of sessions into a read-only chat.
+`createCorpusTools(client, { sessionIds })` returns vendor-neutral, corpus-scoped
+read tools (`list_sessions` / `get_session` / `list_outputs` / `read_output` /
+`search_outputs`) — every tool refuses a session outside the corpus. Drive them
+with any LLM; `examples/chat-corpus.ts` shows the direct-Claude loop
+(`@anthropic-ai/sdk`), and the CLI ships it as a one-shot command (BYOK; the
+importable SDK stays LLM-vendor-free):
 
 ```bash
-aex chat --run run_<A> --run run_<B> \
+aex chat --run ses_<A> --run ses_<B> \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-opus-4-8 \
-  --prompt "Across these runs, which produced a report.md and what's its headline finding?" \
+  --prompt "Across these sessions, which produced a report.md and what's its headline finding?" \
   --api-token "$AEX_API_TOKEN"
 ```
 
-`AgentExecutor.searchOutputs({ runIds, filename, extension, contentType, limit })`
-finds output files across runs and returns references (no bytes) you then
-`readOutputText`.
+`aex.sessions.searchOutputs({ runIds, filename, extension, contentType, limit })`
+finds output files across sessions (scope with the `runIds` session-id allow-list)
+and returns references (no bytes) you then read with `aex.sessions.readOutput`.
 
 ## Feature Areas
 

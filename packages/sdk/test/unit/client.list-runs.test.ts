@@ -26,28 +26,28 @@ function listClient(page: unknown): { readonly client: AgentExecutor; readonly c
   };
 }
 
-describe("AgentExecutor.listRuns", () => {
-  it("GETs the bare /api/runs collection and threads query params", async () => {
-    const page = { runs: [{ id: "run-1", status: "succeeded", createdAt: "t", updatedAt: "t" }], nextCursor: "c2" };
+describe("aex.sessions.list", () => {
+  it("GETs the bare /api/sessions collection and threads query params", async () => {
+    const page = { sessions: [{ id: "sess-1", status: "idle", createdAt: "t", updatedAt: "t" }], nextCursor: "c2" };
     const { client, calls } = listClient(page);
 
-    const result = await client.listRuns({ status: "succeeded", limit: 2, cursor: "c1" });
+    const result = await client.sessions.list({ status: "idle", limit: 2, cursor: "c1" });
 
     expect(result).toEqual(page);
     expect(calls).toHaveLength(1);
     const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe("/api/runs");
+    expect(url.pathname).toBe("/api/sessions");
     expect(calls[0]!.method).toBe("GET");
-    expect(url.searchParams.get("status")).toBe("succeeded");
+    expect(url.searchParams.get("status")).toBe("idle");
     expect(url.searchParams.get("limit")).toBe("2");
     expect(url.searchParams.get("cursor")).toBe("c1");
   });
 
   it("omits params when no query is given", async () => {
-    const { client, calls } = listClient({ runs: [] });
-    await client.listRuns();
+    const { client, calls } = listClient({ sessions: [] });
+    await client.sessions.list();
     const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe("/api/runs");
+    expect(url.pathname).toBe("/api/sessions");
     expect(url.search).toBe("");
   });
 });

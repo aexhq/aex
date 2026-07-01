@@ -65,26 +65,36 @@ const result = await aex.run({
 console.log(result.runId, result.status, result.text);
 ```
 
-## 5. Low-level run control
+## 5. Session control: stream, wait, download
 
-The lower-level `submit` path remains available for explicit run-record
-workflows:
+Sessions are the low-level API. The handle a session gives you can do everything
+to itself — stream its events, wait for it to park, and download its record:
 
 ```ts
-const runId = await aex.submit({
+const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
-  prompt: "Write a short report and save it as a file."
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-for await (const event of aex.stream(runId)) {
+// A turn streams its own events; iterate them, then collect the result.
+const turn = session.send("Write a short report and save it as a file.");
+for await (const event of turn) {
   console.log(event.type);
 }
+await turn.done();
 
-const run = await aex.wait(runId);
-console.log(run.status);
+// Reads/streams/downloads are grouped into accessor sub-resources:
+// session.messages() / events() / outputs() / webhooks(). Grab the last
+// assistant message (an AssistantTextEntry; use ?.text for the string).
+const lastText = (await session.messages().last())?.text;
+console.log(lastText);
 
-await aex.download(runId, { to: "./run.zip" });
+// Poll the record until the session parks (idle / suspended / error).
+const record = await session.wait();
+console.log(record.status);
+
+// Download the whole session record (metadata, events, outputs) as a zip.
+await session.download({ to: "./session.zip" });
 ```
 
 The same run from the bundled CLI:

@@ -28,32 +28,26 @@ shot of X.
 This skill calls the Doubao Ark vision endpoint **through the aex managed proxy**,
 so the API key never touches the container. At submit time the caller MUST declare:
 
-1. A proxy endpoint named `doubao-ark`, declared with `ProxyEndpoint.bearer(...)`:
+A proxy endpoint named `doubao-ark`, declared with `ProxyEndpoint.bearer(...)`.
+The instance carries the key as `token`; the SDK splits it into the vaulted
+secrets channel server-side, so no separate auth array is needed:
 
-   ```ts
-   import { ProxyEndpoint } from "@aexhq/sdk";
+```ts
+import { ProxyEndpoint } from "@aexhq/sdk";
 
-   const proxyEndpoints = [
-     ProxyEndpoint.bearer({
-       name: "doubao-ark",
-       baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
-       allowMethods: ["POST"],
-       allowPathPrefixes: ["/api/v3/chat/completions"],
-       maxRequestBytes: 2_000_000, // base64 image is ~1.33x raw; mind the request-size cap (default 10 MiB)
-       responseMode: "full",
-       timeoutMs: 60_000
-     })
-   ];
-   ```
+const doubaoArk = ProxyEndpoint.bearer({
+  name: "doubao-ark",
+  baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
+  token: process.env.DOUBAO_API_KEY!,
+  allowMethods: ["POST"],
+  allowPathPrefixes: ["/api/v3/chat/completions"],
+  maxRequestBytes: 2_000_000, // base64 image is ~1.33x raw; mind the request-size cap (default 10 MiB)
+  responseMode: "full",
+  timeoutMs: 60_000
+});
+```
 
-2. The matching auth value in `secrets.proxyEndpointAuth`:
-
-   ```ts
-   const proxyEndpointAuth = [{
-     name: "doubao-ark",
-     value: { type: "bearer", token: process.env.DOUBAO_API_KEY! }
-   }] as const;
-   ```
+Pass it as `proxyEndpoints: [doubaoArk]` on the `openSession` / `run` call.
 
 (China gateway: set `baseUrl` to `https://ark.cn-beijing.volces.com` and declare
 `doubao-ark` against it — same path prefix. Note the China host's reachability
@@ -61,8 +55,9 @@ from the platform egress is currently unverified; prefer the BytePlus host.)
 
 The skill auto-detects the endpoint and falls back to **direct egress** (a plain
 HTTPS POST from `python`) when the proxy endpoint is absent — in that mode the run
-must instead expose the key as `secretEnv: { DOUBAO_API_KEY: Secret.value(...) }`
-and allow-list the Ark host under `environment.networking` (see README).
+must instead expose the key as
+`environment: { secrets: { DOUBAO_API_KEY: Secret.value(...) } }` and allow-list
+the Ark host under `environment.networking`.
 
 ## How to call it
 

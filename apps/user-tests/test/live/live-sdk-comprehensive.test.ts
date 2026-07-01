@@ -203,35 +203,29 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       { name: "compose-rules" }
     );
 
-    const submitOpts = {
+    const runOpts = {
       provider: ${JSON.stringify(spec.provider)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
-      prompt: ${JSON.stringify(promptText)},
+      message: ${JSON.stringify(promptText)},
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
-      secrets: { apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} } },
+      apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
-    submitOpts.skills = [skillAlpha, skillBeta];
-    submitOpts.mcpServers = [mcpPrimary, mcpSecondary];
+    runOpts.skills = [skillAlpha, skillBeta];
+    runOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
-    const runId = await client.submit(submitOpts);
-
-    const deadline = Date.now() + ${spec.pollDeadlineMs};
-    let run = null;
-    while (Date.now() < deadline) {
-      run = await client.getRun(runId);
-      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-      await new Promise((r) => setTimeout(r, ${spec.pollIntervalMs}));
-    }
-    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-      process.exit(2);
-    }
-
-    const events = await client.listEvents(runId);
-    const outputs = await client.listOutputs(runId);
+    const result = await client.run(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
+    const runId = result.runId;
+    const session = await client.sessions.open(runId);
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: ${JSON.stringify(spec.provider)}
+    };
+    const events = Array.isArray(result.events) ? result.events : [];
+    const outputs = Array.isArray(result.outputs) ? result.outputs : [];
 
     // CUSTOM envelopes nest the original payload under data.value.
     function customName(e) {
@@ -287,7 +281,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     for (const out of outputs.slice(0, 8)) {
       let sample = null;
       try {
-        const bytes = await client.downloadOutput(runId, out);
+        const bytes = await session.outputs().download(out);
         const text = new TextDecoder().decode(bytes);
         sample = text.slice(0, 256);
       } catch (err) {

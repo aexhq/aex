@@ -26,11 +26,11 @@ All submissions run on the managed runtime. There is no public runtime selector;
 ```ts
 import { Models, Providers } from "@aexhq/sdk";
 
-await aex.submit({
+await aex.run({
   provider: Providers.OPENAI,
   model: Models.GPT_4_1,
-  prompt: "Summarise the attached files.",
-  secrets: { apiKeys: { openai: process.env.OPENAI_API_KEY! } }
+  message: "Summarise the attached files.",
+  apiKeys: { openai: process.env.OPENAI_API_KEY! }
 });
 ```
 

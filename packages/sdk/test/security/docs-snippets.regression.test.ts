@@ -7,16 +7,17 @@
  * -----
  * The README and `packages/sdk/docs/*.md` have drifted before by advertising
  * removed or nonexistent helpers (`Skill.fromId(...)`, `uploadIfChanged(...)`,
- * `client.skills.findByHash(...)`, two-arg `submit(...)`, etc.). The current
- * surface intentionally supports `Skill.upload(client)`, so that method may be
- * documented; the removed helpers must stay absent from docs.
+ * two-arg `submit(...)`, etc.). The session redesign then DELETED `submit()` and
+ * the entire run-id-addressed client surface (`getRun` / `stream` / `wait` /
+ * `listRuns` / `readOutputText` / `download*` / `cancel` on the client) and
+ * folded everything into sessions. The docs must teach the session surface and
+ * must not resurrect the removed one.
  *
  * Locked invariant
  * ----------------
- * Either the methods exist (pick the "restore uploads" direction) OR
- * the docs no longer reference them (pick the "draft-only" direction).
- * Either way, the test below is the single tripwire — it stays green by
- * keeping the docs and the shipped SDK surface aligned.
+ * Every method the docs teach must exist on the shipped SDK surface, and no
+ * published doc may advertise a removed method. This test is the single tripwire
+ * that keeps the docs and the SDK aligned.
  */
 
 import { describe, expect, it } from "vitest";
@@ -25,22 +26,15 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import {
   AgentExecutor,
-  Skill,
+  SessionClient,
+  SessionHandle,
   AgentsMd,
+  Sizes,
   File as AexFile
 } from "../../src/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
-const docsRoot = resolve(repoRoot, "packages", "sdk", "docs");
-
-function readDoc(name: string): string {
-  return readFileSync(resolve(docsRoot, name), "utf8");
-}
-
-function readReadme(): string {
-  return readFileSync(resolve(repoRoot, "README.md"), "utf8");
-}
 
 function walkDocs(root: string): string[] {
   if (!existsSync(root)) return [];
@@ -57,7 +51,14 @@ function walkDocs(root: string): string[] {
   return entries;
 }
 
-function publishedDocFiles(): ReadonlyArray<{ readonly label: string; readonly content: string }> {
+// The typedoc-generated SDK reference (`apps/docs/content/.../reference/sdk/`) is
+// emitted verbatim from the JSDoc comments in `src/` on every `bun run generate`,
+// so it mirrors the code itself. The composition-primitive JSDoc has been scrubbed
+// of the removed `client.submit(...)` surface, so the generated mirror IS scanned
+// too — that keeps the code comments honest, not just the hand-written guides.
+const GENERATED_TYPEDOC = resolve(repoRoot, "apps", "docs", "content", "docs", "reference", "sdk");
+
+function publishedDocFiles(): ReadonlyArray<{ readonly label: string; readonly content: string; readonly generated: boolean }> {
   const paths = [
     resolve(repoRoot, "README.md"),
     resolve(repoRoot, "packages", "sdk", "README.md"),
@@ -68,108 +69,129 @@ function publishedDocFiles(): ReadonlyArray<{ readonly label: string; readonly c
   ];
   return paths.map((path) => ({
     label: path.replace(repoRoot, "").replace(/^[\\/]/, ""),
-    content: readFileSync(path, "utf8")
+    content: readFileSync(path, "utf8"),
+    generated: path.startsWith(GENERATED_TYPEDOC)
   }));
 }
 
+const isFn = (obj: object, key: string): boolean =>
+  typeof (obj as unknown as Record<string, unknown>)[key] === "function";
+
 describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
-  it("every method advertised in the docs exists on the SDK exports (OR no doc advertises a missing one)", () => {
+  it("the session-first surface the docs teach exists on the shipped SDK", () => {
     const missing: string[] = [];
 
-    // Build a manifest of (advertised-method, code-presence) pairs.
-    // Each probe is a runtime existence check — we're deliberately
-    // looking at methods that may not be on the static type, so we
-    // route every read through `unknown` first to satisfy TS's
-    // "no implicit overlap" rule on the double-cast.
-    const probe = (obj: object, key: string): boolean =>
-      typeof (obj as unknown as Record<string, unknown>)[key] === "function";
-    const hasKey = (obj: object, key: string): boolean =>
-      (obj as unknown as Record<string, unknown>)[key] !== undefined;
+    // Client-level operations the docs call as `aex.<method>(...)`.
+    for (const key of ["openSession", "run", "runAndCollect", "whoami", "deleteWorkspaceAsset"]) {
+      if (!isFn(AgentExecutor.prototype, key)) missing.push(`AgentExecutor.prototype.${key}`);
+    }
+    // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
+    for (const key of ["create", "open", "get", "list", "outputs", "readOutput", "searchOutputs", "run"]) {
+      if (!isFn(SessionClient.prototype, key)) missing.push(`SessionClient.prototype.${key}`);
+    }
+    // The lifecycle verbs a `session` handle keeps FLAT in the docs. The read /
+    // stream / download surface was regrouped into accessor sub-resources
+    // (`session.messages()/events()/outputs()/webhooks()`), checked below.
+    for (const key of [
+      "send",
+      "refresh",
+      "wait",
+      "unit",
+      "suspend",
+      "cancel",
+      "resume",
+      "delete",
+      "download",
+      "downloadMetadata",
+      "messages",
+      "events",
+      "outputs",
+      "webhooks"
+    ]) {
+      if (!isFn(SessionHandle.prototype, key)) missing.push(`SessionHandle.prototype.${key}`);
+    }
 
-    const manifest: ReadonlyArray<{ doc: string; needle: RegExp; present: boolean; method: string }> = [
-      // Skill.upload(aex)
-      {
-        doc: "README.md",
-        needle: /Skill\.fromPath\([^)]*\)\.upload\((?:client|aex)\)/,
-        present: probe(Skill.prototype, "upload"),
-        method: "Skill.prototype.upload"
-      },
-      // Skill.uploadIfChanged(aex)
-      {
-        doc: "skills.md",
-        needle: /\.uploadIfChanged\((?:client|aex)\)/,
-        present: probe(Skill.prototype, "uploadIfChanged"),
-        method: "Skill.prototype.uploadIfChanged"
-      },
-      // aex.skills.findByHash
-      {
-        doc: "skills.md",
-        needle: /(?:client|aex)\.skills\.findByHash\(/,
-        present: hasKey(AgentExecutor.prototype, "skills"),
-        method: "AgentExecutor.prototype.skills.findByHash"
-      },
-      // aex.skills.findByName
-      {
-        doc: "skills.md",
-        needle: /(?:client|aex)\.skills\.findByName\(/,
-        present: hasKey(AgentExecutor.prototype, "skills"),
-        method: "AgentExecutor.prototype.skills.findByName"
-      },
-      // 2-arg submit(config, opts)
-      {
-        doc: "credentials.md",
-        needle: /(?:client|aex)\.submit\((?:config|template),/,
-        // The signature is `submit(options)`; a 2-arg shape would
-        // accept run config as the first positional. We probe by calling
-        // length on the function.
-        present: AgentExecutor.prototype.submit.length >= 2,
-        method: "AgentExecutor.prototype.submit(config, options)"
-      }
+    // The docs now teach `session.<group>().<verb>()` — verify each accessor
+    // returns an object exposing the verbs the guides chain onto it. Accessors
+    // build their object literal synchronously (no I/O), so a bare handle over a
+    // stub HTTP client is enough to assert the shape.
+    const handle = new SessionHandle({} as never, { id: "ses_regression" } as never);
+    const accessorVerbs: ReadonlyArray<{ readonly group: string; readonly verbs: readonly string[] }> = [
+      { group: "messages", verbs: ["list", "last", "first"] },
+      { group: "events", verbs: ["list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
+      { group: "outputs", verbs: ["list", "last", "first", "read", "find", "findOne", "link", "fetch", "download"] },
+      { group: "webhooks", verbs: ["list", "redeliver"] }
     ];
-
-    for (const entry of manifest) {
-      const docContent =
-        entry.doc === "README.md" ? readReadme() : readDoc(entry.doc);
-      const advertised = entry.needle.test(docContent);
-      if (advertised && !entry.present) {
-        missing.push(
-          `Doc ${entry.doc} advertises pattern ${entry.needle} but ${entry.method} does not exist at runtime.`
-        );
+    for (const { group, verbs } of accessorVerbs) {
+      const factory = (handle as unknown as Record<string, (() => object) | undefined>)[group];
+      if (typeof factory !== "function") {
+        missing.push(`session.${group}()`);
+        continue;
+      }
+      const accessor = factory.call(handle);
+      for (const verb of verbs) {
+        if (!isFn(accessor, verb)) missing.push(`session.${group}().${verb}`);
       }
     }
 
     expect(missing).toEqual([]);
+
+    // Runtime sizing is exported as `Sizes` (the docs use `Sizes.SHARED_0_25X_1GB`);
+    // the old `RuntimeSizes` export was removed.
+    expect(typeof Sizes.SHARED_0_25X_1GB).toBe("string");
   });
 
   it("AgentsMd.fromPath and File.fromPath actually exist when referenced in public docs", () => {
     // Smoke check the AgentsMd / File static factories used by the public
     // composition docs. If they don't exist, every copy-paste throws TypeError.
-    // The previous shape was `if (/X\.fromPath\(/.test(quickstart))
-    // expect(...)` — a silent-skip when the doc gets rewritten or
-    // grep'd differently. These are PUBLIC API contracts whose existence
-    // is independent of any single doc page; pin them unconditionally.
-    // If a future API change removes fromPath, both the docs AND the test
-    // can be deleted in the same PR (the doc-drift test below already
-    // enforces "documented APIs must exist").
     const hasStatic = (cls: object, key: string): boolean =>
       typeof (cls as unknown as Record<string, unknown>)[key] === "function";
     expect(hasStatic(AexFile, "fromPath")).toBe(true);
     expect(hasStatic(AgentsMd, "fromPath")).toBe(true);
     // Sanity: published docs still reference at least one of them (so this
-    // file remains relevant). If docs stop referencing fromPath entirely, the
-    // inverse case must be considered explicitly.
+    // file remains relevant).
     const docs = publishedDocFiles();
     expect(
       docs.some((doc) => /File\.fromPath\(/.test(doc.content) || /AgentsMd\.fromPath\(/.test(doc.content))
     ).toBe(true);
   });
 
-  it("published docs do not advertise the removed RunRef/ref-style run API", () => {
+  it("published docs do not advertise the removed submit / run-id-addressed client surface", () => {
     const forbidden: ReadonlyArray<{ readonly name: string; readonly needle: RegExp }> = [
+      // Removed run-id-addressed client API — every read/control verb moved onto
+      // the session handle or `aex.sessions.*`.
+      { name: "client .submit(...)", needle: /\.submit\s*\(/ },
+      { name: "client .getRun(...)", needle: /\.getRun\s*\(/ },
+      { name: "client .getRunUnit(...)", needle: /\.getRunUnit\s*\(/ },
+      { name: "client .getUnit(...)", needle: /\.getUnit\s*\(/ },
+      { name: "client .listRuns(...)", needle: /\.listRuns\s*\(/ },
+      { name: "client .readOutputText(...)", needle: /\.readOutputText\s*\(/ },
+      { name: "client .waitForRun(...)", needle: /\.waitForRun\s*\(/ },
+      // Removed `RuntimeSizes` export (use `Sizes`).
+      { name: "RuntimeSizes export", needle: /\bRuntimeSizes\b/ },
+      // Renamed data-source chat tools (run vocabulary -> session vocabulary).
+      { name: "list_runs tool", needle: /\blist_runs\b/ },
+      { name: "get_run tool", needle: /\bget_run\b/ },
+      { name: "run_id tool arg", needle: /\brun_id\b/ },
+      // Removed RunRef / ref-style run API.
       { name: "RunRef type", needle: /\bRunRef\b/ },
       { name: "ref.runId", needle: /\bref\.runId\b/ },
-      { name: "ref method", needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadEvents|downloadMetadata|cancel|delete)\s*\(/ },
-      { name: "const ref submit", needle: /\bconst\s+ref\s*=\s*await\s+(?:client|aex)\.submit\(/ }
+      {
+        name: "ref method",
+        needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadEvents|downloadMetadata|cancel|delete)\s*\(/
+      },
+      // The session read/stream/download surface moved from flat handle methods
+      // onto accessor sub-resources (`session.events().list()`,
+      // `session.outputs().read(...)`, `session.messages().last()`, …). The docs
+      // must not resurrect the removed flat form invoked directly on a handle.
+      // `session.download(...)` / `session.downloadMetadata(...)` stay flat, and
+      // `session.events().streamEnvelopes(...)` (accessor form) is allowed —
+      // only the direct `session.streamEnvelopes(...)` is forbidden.
+      {
+        name: "flat session-handle read/stream/download verb (now under messages()/events()/outputs()/webhooks())",
+        needle:
+          /\b(?:session|resumed|handle)\.(?:listEvents|streamEvents|streamEnvelopes|eventArchiveLink|downloadEvents|listOutputs|readOutput|findOutputs|findOutput|outputLink|fetchOutput|downloadOutputs|downloadOutput|webhookDeliveries|redeliverWebhook)\s*\(/
+      }
     ];
     const failures: string[] = [];
     for (const doc of publishedDocFiles()) {

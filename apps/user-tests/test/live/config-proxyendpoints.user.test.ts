@@ -35,10 +35,10 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
     "declaring a ProxyEndpoint mounts index.json + the runtime bridge and a real round-trip succeeds",
     async () => {
       const script = sdkRunnerScript({
-        submit: `{
+        run: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
-          prompt: [
+          message: [
             "Using the shell, run this exact one-liner and reply with its exact final stdout line, no prose:",
             "if test -f /mnt/session/uploads/aex/index.json; then printf 'INDEX_PRESENT '; else printf 'INDEX_MISSING '; fi; if bun /mnt/session/uploads/aex/aex proxy httpbin --path /get >/tmp/aex-proxy-response.json 2>/tmp/aex-proxy-error.txt; then printf 'PROXY_OK\\\\n'; else printf 'PROXY_ERR\\\\n'; fi"
           ],
@@ -51,7 +51,7 @@ describe("user/SDK: managed proxyEndpoints bridge round-trip succeeds", () => {
               responseMode: "full"
             })
           ],
-          secrets: { apiKeys: { deepseek: DEEPSEEK_KEY } },
+          apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-proxyendpoints-" + Date.now()
         }`
       });

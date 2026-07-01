@@ -1,7 +1,7 @@
 /**
- * SDK-level coverage for `AgentExecutor.streamEvents` (the loose `RunEvent`
+ * SDK-level coverage for `SessionHandle.streamEvents` (the loose `RunEvent`
  * snapshot poll loop). It polls the coordinator-backed `/events` endpoint,
- * dedupes by event id, and stops on a terminal run status or an abort. The
+ * dedupes by event id, and stops once the session parks (or on an abort). The
  * low-latency live envelope stream is covered separately (streamEnvelopes →
  * coordinator WS, shared event-stream-client tests).
  */
@@ -28,8 +28,8 @@ function makeFetch(plan: ReadonlyArray<{ match: RegExp; respond: () => Response 
   return { fetch: fakeFetch, calls };
 }
 
-describe("AgentExecutor.streamEvents — polling the coordinator-backed /events", () => {
-  it("yields events, dedupes by id across polls, and stops on terminal status", async () => {
+describe("SessionHandle.streamEvents — polling the coordinator-backed /events", () => {
+  it("yields events, dedupes by id across polls, and stops when the session parks", async () => {
     let listCount = 0;
     let getCount = 0;
     const { fetch: f, calls } = makeFetch([
@@ -48,17 +48,20 @@ describe("AgentExecutor.streamEvents — polling the coordinator-backed /events"
         }
       },
       {
-        match: /\/runs\/run-abc$/,
+        match: /\/sessions\/run-abc$/,
         respond: () => {
           getCount++;
-          return jsonResponse({ id: "run-abc", status: getCount >= 2 ? "succeeded" : "running" });
+          // getCount 1 = openSession rehydrate; the poll loop reads status on
+          // 2 (running) and 3 (succeeded → parked).
+          return jsonResponse({ id: "run-abc", status: getCount >= 3 ? "succeeded" : "running" });
         }
       }
     ]);
 
     const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const session = await client.openSession("run-abc");
     const events: string[] = [];
-    for await (const ev of client.streamEvents("run-abc", { intervalMs: 1 })) {
+    for await (const ev of session.events().stream({ intervalMs: 1 })) {
       events.push(ev.id);
     }
     expect(events).toEqual(["e1", "e2"]);
@@ -69,13 +72,14 @@ describe("AgentExecutor.streamEvents — polling the coordinator-backed /events"
   it("stops promptly when the signal aborts", async () => {
     const { fetch: f, calls } = makeFetch([
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
-      { match: /\/runs\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
+      { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
     ]);
     const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const session = await client.openSession("run-abc");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 5);
     const events: string[] = [];
-    for await (const ev of client.streamEvents("run-abc", { signal: controller.signal, intervalMs: 1 })) {
+    for await (const ev of session.events().stream({ signal: controller.signal, intervalMs: 1 })) {
       events.push(ev.id);
     }
     expect(events).toEqual([]);

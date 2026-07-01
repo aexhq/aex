@@ -94,7 +94,7 @@ describe("typescript consumer", () => {
         RUN_PROVIDERS,
         RUNTIME_SIZES,
         Models,
-        RuntimeSizes,
+        Sizes,
         Secret,
         SecretString,
         Skill,
@@ -136,12 +136,11 @@ describe("typescript consumer", () => {
         type SkillBundleManifest,
         type SkillFiles,
         type SkillRef,
-        type SubmitOptions,
         type WaitForRunOptions
       } from "@aexhq/sdk";
 
       const provider: RunProvider = DEFAULT_RUN_PROVIDER;
-      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_2X_8GB;
+      const runtimeSize: RuntimeSize = Sizes.SHARED_2X_8GB;
       const defaultRuntimeSize: RuntimeSize = DEFAULT_RUNTIME_SIZE;
       const explicitBuiltin: BuiltinToolName = BuiltinTools.web_fetch;
       const everyBuiltin: readonly BuiltinToolName[] = BUILTIN_TOOL_NAMES;
@@ -196,7 +195,7 @@ describe("typescript consumer", () => {
         provider: "anthropic",
         model: Models.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
-        prompt: ["Read the attached file.", "Reply with a short acknowledgement."],
+        message: ["Read the attached file.", "Reply with a short acknowledgement."],
         skills: [inlineSkill],
         agentsMd: [agentsMd],
         files: [file],
@@ -209,28 +208,24 @@ describe("typescript consumer", () => {
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
           packages: [{ name: "apt:jq" }],
-          envVars: { USER_SURFACE_TEST: "1" }
+          variables: { USER_SURFACE_TEST: "1" },
+          secrets: { SESSION_TOKEN: Secret.value("session-token") }
         },
         metadata: { suite: "typescript-consumer" },
-        runtimeSize,
-        timeout: "15m",
-        secrets: {
-          ...anthropicSecrets,
-          mcpServers: [mcpSecret],
-          proxyEndpointAuth: [{ name: "metadata", value: authValue }]
-        },
+        runtime: runtimeSize,
+        overrides: { timeout: "15m" },
+        apiKeys: { anthropic: "sk-ant-type-surface" },
         idempotencyKey: "type-surface-anthropic-managed"
-      } satisfies SubmitOptions;
+      } satisfies SessionRunOptions;
 
       const managedOptions = {
         provider: "deepseek",
         model: Models.DEEPSEEK_V4_FLASH,
-        prompt: "Say hello.",
-        runtimeSize: defaultRuntimeSize,
+        runtime: defaultRuntimeSize,
         includeBuiltinTools: false,
-        secrets: { apiKeys: { deepseek: "sk-deepseek-type-surface" } },
+        apiKeys: { deepseek: "sk-deepseek-type-surface" },
         idempotencyKey: "type-surface-managed"
-      } satisfies SubmitOptions;
+      } satisfies SessionCreateOptions;
 
       const apiKeysOptions = {
         model: Models.CLAUDE_HAIKU_4_5,
@@ -291,19 +286,7 @@ describe("typescript consumer", () => {
         baseUrl: "https://example.invalid",
         fetch: fetchFake
       });
-      const runIdPromise: Promise<string> = client.submit(anthropicOptions);
-      const runPromise: Promise<Run> = client.getRun("run_type_surface");
-      const eventsPromise: Promise<readonly RunEvent[]> = client.listEvents("run_type_surface");
-      const outputsPromise: Promise<readonly Output[]> = client.outputs("run_type_surface");
-      const foundOutputsPromise: Promise<readonly Output[]> = client.findOutputs("run_type_surface", outputQuery);
-      const foundOutputPromise: Promise<Output | null> = client.findOutput("run_type_surface", outputQuery);
-      const outputLinkPromise: Promise<OutputLink> = client.outputLink("run_type_surface", outputQuery, outputLinkOptions);
-      const compatLinkPromise: Promise<OutputLink> = client.createOutputLink("run_type_surface", outputSelector);
-      const fetchOutputPromise: Promise<Response> = client.fetchOutput("run_type_surface", { filename: "report.json" });
-      const eventArchiveLinkPromise: Promise<OutputLink> = client.eventArchiveLink("run_type_surface", { expiresIn: "1h" });
-      const downloadPromise: Promise<Uint8Array> = client.downloadOutput("run_type_surface", outputSelector);
-
-      // run() now returns a settle-consistent RunResult; runAndCollect is its alias.
+      // run() returns a settle-consistent RunResult; runAndCollect is its alias.
       const runResultPromise: Promise<RunResult> = client.run(apiKeysOptions);
       const collectPromise: Promise<RunResult> = client.runAndCollect(apiKeysOptions, {
         throwOnFailure: false,
@@ -312,7 +295,7 @@ describe("typescript consumer", () => {
       const sessionOptions = {
         model: Models.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
-        runtime: RuntimeSizes.SHARED_0_25X_1GB,
+        runtime: Sizes.SHARED_0_25X_1GB,
         overrides: { idleTtl: "3m" },
         environment: {
           variables: { USER_SURFACE_TEST: "1" },
@@ -326,21 +309,50 @@ describe("typescript consumer", () => {
         ...sessionOptions,
         message: "hello"
       });
+
+      // The run-addressed reads (events / outputs / links / download / webhooks)
+      // folded onto the SessionHandle — a session id doubles as the run handle.
+      const runViewPromise: Promise<Run> = (async () => (await client.run(apiKeysOptions)).run)();
       const sessionTurnPromise: Promise<SessionTurnResult> = (async () => {
         const session = await client.sessions.open("run_type_surface");
+        const outputsPromise: Promise<readonly Output[]> = session.outputs().list();
+        const foundOutputsPromise: Promise<readonly Output[]> = session.outputs().find(outputQuery);
+        const foundOutputPromise: Promise<Output | null> = session.outputs().findOne(outputQuery);
+        const outputLinkPromise: Promise<OutputLink> = session.outputs().link(outputQuery, outputLinkOptions);
+        const selectorLinkPromise: Promise<OutputLink> = session.outputs().link(outputSelector);
+        const fetchOutputPromise: Promise<Response> = session.outputs().fetch({ filename: "report.json" });
+        const eventArchiveLinkPromise: Promise<OutputLink> = session.events().archiveLink({ expiresIn: "1h" });
+        const downloadPromise: Promise<Uint8Array> = session.outputs().download(outputSelector);
+        const wholeArchivePromise: Promise<Uint8Array> = session.download();
+        void session.events().list();
+        void session.outputs().read(outputSelector);
+        void session.wait(waitOpts);
+        void session.unit();
+        void session.events().stream();
+        void session.events().streamEnvelopes();
+        void session.webhooks().list();
+        void outputsPromise;
+        void foundOutputsPromise;
+        void foundOutputPromise;
+        void outputLinkPromise;
+        void selectorLinkPromise;
+        void fetchOutputPromise;
+        void eventArchiveLinkPromise;
+        void downloadPromise;
+        void wholeArchivePromise;
         return await session.send("continue").done();
       })();
       const finalTextPromise: Promise<string> = (async () => {
-        const events = await client.events("run_type_surface");
+        const result = await client.run(apiKeysOptions);
         let acc = "";
-        for (const ev of events) {
+        for (const ev of result.events) {
           if (isTextMessage(ev)) {
             // Inside the guard, ev.data.text is narrowed to a string.
             const narrowed: TextMessageRunEvent = ev;
             acc += narrowed.data.text;
           }
         }
-        return textOf(events) + acc;
+        return textOf(result.events) + acc;
       })();
 
       const errors = [
@@ -372,17 +384,7 @@ describe("typescript consumer", () => {
       void anthropicOptions;
       void managedOptions;
       void skillHash;
-      void runIdPromise;
-      void runPromise;
-      void eventsPromise;
-      void outputsPromise;
-      void foundOutputsPromise;
-      void foundOutputPromise;
-      void outputLinkPromise;
-      void compatLinkPromise;
-      void fetchOutputPromise;
-      void eventArchiveLinkPromise;
-      void downloadPromise;
+      void runViewPromise;
       void runResultPromise;
       void collectPromise;
       void sessionOptions;
@@ -413,6 +415,16 @@ describe("typescript consumer", () => {
       import type { RunRef } from "@aexhq/sdk";
       // @ts-expect-error removed debug-log result type must stay absent from the root surface
       import type { RunDebugLogs } from "@aexhq/sdk";
+      // @ts-expect-error removed submit options type must stay absent from the root surface
+      import type { SubmitOptions } from "@aexhq/sdk";
+      // @ts-expect-error legacy runtime-sizes symbol was renamed to Sizes
+      import { RuntimeSizes } from "@aexhq/sdk";
+      // @ts-expect-error removed run-list page type must stay absent from the root surface
+      import type { RunListPage } from "@aexhq/sdk";
+      // @ts-expect-error removed run-list query type must stay absent from the root surface
+      import type { RunListQuery } from "@aexhq/sdk";
+      // @ts-expect-error removed run-summary type must stay absent from the root surface
+      import type { RunSummary } from "@aexhq/sdk";
       import { AgentExecutor } from "@aexhq/sdk";
       const client = new AgentExecutor({ apiToken: "ant_legacy_negative", baseUrl: "https://example.invalid" });
       // @ts-expect-error removed logs download helper must stay absent from AgentExecutor
@@ -421,6 +433,24 @@ describe("typescript consumer", () => {
       void client.getRunDebugLogs("run_type_surface");
       // @ts-expect-error removed debug logs alias must stay absent from AgentExecutor
       void client.debugLogs("run_type_surface");
+      // The one-shot/run-addressed client surface folded into sessions — these
+      // must all stay absent from the client (they live on SessionHandle now).
+      // @ts-expect-error removed submit verb must stay absent from AgentExecutor
+      void client.submit({ model: "claude-haiku-4-5" });
+      // @ts-expect-error removed getRun verb must stay absent from AgentExecutor
+      void client.getRun("run_type_surface");
+      // @ts-expect-error removed listRuns verb must stay absent from AgentExecutor
+      void client.listRuns();
+      // @ts-expect-error removed searchOutputs verb must stay absent from AgentExecutor
+      void client.searchOutputs({});
+      // @ts-expect-error removed cancel verb must stay absent from AgentExecutor
+      void client.cancel("run_type_surface");
+      // @ts-expect-error removed download verb must stay absent from AgentExecutor
+      void client.download("run_type_surface");
+      // @ts-expect-error removed listEvents verb must stay absent from AgentExecutor
+      void client.listEvents("run_type_surface");
+      // @ts-expect-error removed wait verb must stay absent from AgentExecutor
+      void client.wait("run_type_surface");
       export {};
     `;
     writeFileSync(join(install.installDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
@@ -450,17 +480,17 @@ describe("typescript consumer", () => {
     const consumer = `
       import {
         AgentExecutor,
-        RuntimeSizes,
+        Sizes,
         ProxyEndpoint,
         RUN_PROVIDERS,
         Models,
         type RunProvider,
         type RuntimeSize,
-        type SubmitOptions
+        type SessionCreateOptions
       } from "@aexhq/sdk";
 
       const provider: RunProvider = RUN_PROVIDERS[0];
-      const runtimeSize: RuntimeSize = RuntimeSizes.SHARED_0_25X_1GB;
+      const runtimeSize: RuntimeSize = Sizes.SHARED_0_25X_1GB;
       const proxy = ProxyEndpoint.bearer({
         name: "catalog",
         baseUrl: "https://example.test",
@@ -473,11 +503,10 @@ describe("typescript consumer", () => {
       const options = {
         provider,
         model: Models.CLAUDE_HAIKU_4_5,
-        prompt: "hello",
         proxyEndpoints: [proxy],
-        runtimeSize,
-        secrets: { apiKeys: { anthropic: "sk-ant-bundler" } }
-      } satisfies SubmitOptions;
+        runtime: runtimeSize,
+        apiKeys: { anthropic: "sk-ant-bundler" }
+      } satisfies SessionCreateOptions;
 
       const client = new AgentExecutor({ apiToken: "ant_bundler", baseUrl: "https://example.invalid" });
       void client;

@@ -18,13 +18,13 @@ function clientFor(handler: (url: string) => Response): AgentExecutor {
   return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
 }
 
-describe("AgentExecutor.readOutputText", () => {
+describe("aex.sessions.readOutput", () => {
   it("reads a small file fully (not truncated) by output id", async () => {
     const client = clientFor((url) => {
       if (url.endsWith("/outputs/out-1/download")) return fileResponse("hello world");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.readOutputText("run-1", { id: "out-1" });
+    const result = await client.sessions.readOutput("run-1", { id: "out-1" });
     expect(result.text).toBe("hello world");
     expect(result.truncated).toBe(false);
     expect(result.totalBytes).toBe(11);
@@ -36,7 +36,7 @@ describe("AgentExecutor.readOutputText", () => {
       if (url.endsWith("/outputs/out-1/download")) return fileResponse(big);
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.readOutputText("run-1", { id: "out-1" }, { maxBytes: 10 });
+    const result = await client.sessions.readOutput("run-1", { id: "out-1" }, { maxBytes: 10 });
     expect(result.text).toBe("x".repeat(10));
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(1000);
@@ -50,7 +50,7 @@ describe("AgentExecutor.readOutputText", () => {
       if (url.endsWith("/outputs/out-9/download")) return fileResponse("# Report\nbody\n");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.readOutputText("run-1", { path: "report.md" });
+    const result = await client.sessions.readOutput("run-1", { path: "report.md" });
     expect(result.output.id).toBe("out-9");
     expect(result.text).toContain("# Report");
   });
@@ -60,7 +60,7 @@ describe("AgentExecutor.readOutputText", () => {
       if (url.endsWith("/outputs/out-1/download")) return fileResponse("alpha\nBETA\ngamma beta\n");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.readOutputText("run-1", { id: "out-1" }, { grep: "beta" });
+    const result = await client.sessions.readOutput("run-1", { id: "out-1" }, { grep: "beta" });
     expect(result.text).toBe("BETA\ngamma beta");
   });
 });

@@ -47,21 +47,21 @@ without you listing them.
 ### TypeScript
 
 ```ts
-import { AgentExecutor, Models, Providers } from "@aexhq/sdk";
+import { Aex, Models, Providers } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
-await aex.submit({
+await aex.run({
   provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Fetch the public status page and summarize it.",
+  message: "Fetch the public status page and summarize it.",
   environment: {
     networking: {
       mode: "limited",
       allowedHosts: ["api.example.com", "status.example.com"]
     }
   },
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -92,11 +92,11 @@ whenever you can name the hosts — it gives the run a stable, auditable, least-
 privilege egress surface (it is the tighter posture, not the default).
 
 ```ts
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Research the topic across the open web.",
+  message: "Research the topic across the open web.",
   environment: { networking: { mode: "open" } },
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

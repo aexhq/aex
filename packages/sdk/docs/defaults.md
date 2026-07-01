@@ -21,9 +21,9 @@ For the hard ceilings and who can raise them, see
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| `timeout` (run deadline) | 1 hour | Per-run via `options.timeout` (e.g. `"30m"`, `"2h"`), clamped to the run-timeout floor/ceiling. | `RUN_DEFAULT_TIMEOUT_MS` |
-| `runtimeSize` (machine size) | `shared-0.25x-1gb` — 0.25 vCPU, 1 GB | Per-run via `options.runtimeSize` (use `RuntimeSizes.*` in TypeScript). | `RUN_DEFAULT_RUNTIME_SIZE` |
-| `limits.maxSpendUsd` (per-run spend cap) | None — no per-run spend cap (the run is still bounded by its `timeout` and any workspace-level cap) | Per-run via `options.limits.maxSpendUsd` (a positive USD amount); the run is stopped once its spend would exceed the cap. | — |
+| `timeout` (run deadline) | 1 hour | Per-session via `overrides.timeout` (e.g. `"30m"`, `"2h"`), clamped to the run-timeout floor/ceiling. | `RUN_DEFAULT_TIMEOUT_MS` |
+| `runtime` (machine size) | `shared-0.25x-1gb` — 0.25 vCPU, 1 GB | Per-session via `runtime` (use `Sizes.*` in TypeScript). | `RUN_DEFAULT_RUNTIME_SIZE` |
+| `overrides.maxSpendUsd` (per-session spend cap) | None — no spend cap (the session is still bounded by its `timeout` and any workspace-level cap) | Per-session via `overrides.maxSpendUsd` (a positive USD amount); the session is stopped once its spend would exceed the cap. | — |
 
 ## Tools
 
@@ -51,15 +51,15 @@ For the hard ceilings and who can raise them, see
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| Output link / signed-URL TTL | 300 seconds (5 minutes) at the storage layer; `outputLink(...)` defaults to `"1h"` | Per-call via `expiresSeconds` (storage) or `expiresIn` on `outputLink` / `fetchOutput`. | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
+| Output link / signed-URL TTL | 300 seconds (5 minutes) at the storage layer; `session.outputs().link(...)` defaults to `"1h"` | Per-call via `expiresSeconds` (storage) or `expiresIn` on `session.outputs().link` / `session.outputs().fetch`. | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
 | Event-stream connection ticket TTL | 60 seconds | Per-mint via the `ttlMs` argument. | `REQUEST_TICKET_DEFAULT_TTL_MS` |
 
 ## Subagents
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| Concurrent child runs per lineage root | 1000 (live, non-terminal child runs) | Per-run via `options.limits.maxConcurrentChildRuns`, clamped to the 4096 platform ceiling. | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
-| Max subagent depth | 5 | Per-run via `options.limits.maxSubagentDepth`, clamped to the same hard ceiling. | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
+| Concurrent child runs per lineage root | 1000 (live, non-terminal child runs) | Platform default (subagents run in-process; no public per-run override). Hard ceiling 4096. | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
+| Max subagent depth | 5 | Platform default (subagents run in-process; no public per-run override). | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
 
 ## Workspace
 

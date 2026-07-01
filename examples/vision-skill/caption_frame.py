@@ -10,8 +10,8 @@ Two transports, auto-selected:
     it never enters this container. Requires the run to declare a `doubao-ark`
     proxy endpoint (see SKILL.md).
   - DIRECT (fallback): plain HTTPS POST to the Ark host, reading the key from
-    DOUBAO_API_KEY (supplied via the run's `secretEnv`). Requires the Ark host to
-    be reachable under the run's networking mode.
+    DOUBAO_API_KEY (supplied via the run's `environment.secrets`). Requires the
+    Ark host to be reachable under the run's networking mode.
 
 Output schema mirrors broll_builder.caption_visual.v1 so an existing verify step
 consumes it unchanged.
@@ -170,7 +170,7 @@ def _post_direct(request_body: dict[str, Any]) -> dict[str, Any]:
     if not api_key:
         raise RuntimeError(
             "no doubao-ark proxy endpoint declared and DOUBAO_API_KEY not set; "
-            "declare the proxy endpoint or supply the key via secretEnv"
+            "declare the proxy endpoint or supply the key via environment.secrets"
         )
     req = urllib.request.Request(
         f"{DIRECT_BASE_URL.rstrip('/')}{ARK_PATH}",

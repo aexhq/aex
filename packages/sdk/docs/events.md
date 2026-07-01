@@ -12,15 +12,20 @@ tool-approval hook.
 
 ## Two ways to consume events
 
+A session's reads and streams are grouped under accessor sub-resources:
+`session.events()` owns the event timeline, `session.messages()` owns the decoded
+assistant text, and `session.outputs()` owns the captured files. Reach a verb by
+chaining it off the accessor.
+
 ```ts
 // Pull a snapshot of every event captured so far.
-const events = await aex.events(runId);
+const events = await session.events().list();
 ```
 
 ```ts
 // Stream the RunEvent snapshot shape: yields each event once, stops when the
-// run reaches a terminal status. Backed by polling the aex events endpoint.
-for await (const event of aex.stream(runId, { intervalMs: 1000 })) {
+// session parks. Backed by polling the aex events endpoint.
+for await (const event of session.events().stream({ intervalMs: 1000 })) {
   if (event.type === "TEXT_MESSAGE_CONTENT") {
     // ...
   }
@@ -30,12 +35,27 @@ for await (const event of aex.stream(runId, { intervalMs: 1000 })) {
 For the canonical event envelope, use the coordinator WebSocket stream:
 
 ```ts
-for await (const event of aex.streamEnvelopes(runId, { from: 0 })) {
+for await (const event of session.events().streamEnvelopes({ from: 0 })) {
   console.log(event.sequence, event.type, event.source);
 }
 ```
 
-`streamEnvelopes()` uses a short-lived ticket minted by the hosted API, then subscribes directly to the per-run coordinator. Subscribe means read-from-cursor plus tail: reconnects resume from the last sequence.
+`session.events().streamEnvelopes()` uses a short-lived ticket minted by the hosted API, then subscribes directly to the per-session coordinator. Subscribe means read-from-cursor plus tail: reconnects resume from the last sequence.
+
+## Assistant text
+
+To collect just the agent's assistant messages, use the `messages()` accessor —
+`list()` returns every decoded `AssistantTextEntry` oldest-first, and
+`last()`/`first()` return one entry (or `undefined` when empty). Read `.text`
+for the string:
+
+```ts
+const lastText = (await session.messages().last())?.text;
+```
+
+`decodeAssistantText`, `textOf`, and `summarizeRunTrace` remain exported as the
+power-user escape hatch over a raw `RunEvent` list, but "get the last message"
+is now `await session.messages().last()`.
 
 The CLI mirrors the same surface:
 
@@ -57,15 +77,15 @@ a settle-consistent full timeline, and a cost/usage footer. Both exit `0`
 succeeded / `1` other terminal / `3` timeout. They need a global `WebSocket`
 (Bun or Node ≥ 22).
 
-`aex wait` is the host mirror of `aex.wait(runId)` / `aex.waitForRun(runId)`:
+`aex wait` is the host mirror of `session.wait()`:
 it polls until the run reaches a terminal status and prints the final `Run`
 record. Exit `0` when the run `succeeded`, `1` for any other terminal status,
 and `3` when `--timeout` elapses first (a `--timeout` on `events --follow` /
 `run --follow` uses the same exit-`3` convention). Durations accept `ms`/`s`/`m`/`h`
 suffixes or a bare millisecond integer.
 
-Both surfaces observe the same events. A subscriber attached after `submit()` or
-a session message is accepted replays the events it missed, then continues live.
+Both surfaces observe the same events. A subscriber attached after a session
+message is accepted replays the events it missed, then continues live.
 
 ## Session turn events
 
@@ -90,36 +110,37 @@ collected session turn. The returned `runId` is the session id.
 
 ## Terminal events vs. the run record
 
-The low-level `submit()` run path emits a terminal **event** — `RUN_FINISHED`
+A session turn emits a terminal **event** — `RUN_FINISHED`
 (success) or `RUN_ERROR` — when
 the agent's stream ends. This is an AG-UI *render-complete* signal: the runner
-emits it **before** aex commits the authoritative run record, so a `getRun(runId)`
-issued the instant you observe `RUN_FINISHED` can still read `status: "running"`
-for a moment. Treat the terminal event as the lowest-latency "stop the spinner"
-signal — **not** a read-consistency barrier.
+emits it **before** aex commits the authoritative session record, so an
+`aex.sessions.get(id)` issued the instant you observe `RUN_FINISHED` can still
+read a non-parked status for a moment. Treat the terminal event as the
+lowest-latency "stop the spinner" signal — **not** a read-consistency barrier.
 
 Two facts make this easy to work with:
 
 - **Outputs are already durable at the terminal event.** The runner uploads every
-  output before it emits the terminal event, and `listOutputs(runId)` / downloads
+  output before it emits the terminal event, and `session.outputs().list()` / downloads
   read object storage directly — so the moment you see `RUN_FINISHED` the outputs
   are complete and readable.
-- **The run _record_ settles a beat later.** To read the authoritative status
+- **The session _record_ settles a beat later.** To read the authoritative status
   consistently, don't key off the terminal event — use one of:
 
 ```ts
-// Low-level run record path: submit + wait.
-const runId = await aex.submit(runConfig);
-const sameRun = await aex.waitForRun(runId); // or wait on an already-submitted run for the bare Run record
+// Session record path: send a turn, then wait for the session to park.
+const session = await aex.openSession(config);
+await session.send("Continue the task.").done();
+const record = await session.wait(); // the parked session record
 ```
 
 ```ts
 // Live events AND a settle-consistent end: the iterator keeps reading past
 // RUN_FINISHED until the post-mirror barrier, so the record is terminal when it ends.
-for await (const event of aex.streamEnvelopes(runId, { settleConsistent: true })) {
+for await (const event of session.events().streamEnvelopes({ settleConsistent: true })) {
   // render events live…
 }
-const run = await aex.getRun(runId); // guaranteed terminal here
+const settled = await aex.sessions.get(session.id); // guaranteed terminal here
 ```
 
 Under the hood the coordinator broadcasts one `aex.run.settled` CUSTOM event as a
@@ -129,10 +150,10 @@ run's last stream event, immediately after the durable record commits.
 
 ## Temporary event archive links
 
-For terminal runs, `eventArchiveLink(runId, options?)` returns a temporary direct URL to `events.jsonl`, the same redacted customer-visible event export used by `downloadEvents(runId)`.
+For terminal runs, `session.events().archiveLink(options?)` returns a temporary direct URL to `events.jsonl`, the same redacted customer-visible event export used by `session.events().download()`.
 
 ```ts
-const link = await aex.eventArchiveLink(runId, { expiresIn: "1h" });
+const link = await session.events().archiveLink({ expiresIn: "1h" });
 const response = await fetch(link.url);
 const jsonl = await response.text();
 ```
@@ -141,7 +162,7 @@ const jsonl = await response.text();
 
 ## Event shape
 
-Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submit`.
+Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied when the session was opened.
 
 ## Typed helpers
 
@@ -166,7 +187,7 @@ import {
 
 All guards test the `type` discriminant at runtime. `isTextMessage`,
 `isToolCallStart`, `isToolCallResult`, and `isRunFinished` operate on the loose
-`RunEvent` snapshot (`listEvents` / `RunResult.events`) and additionally NARROW
+`RunEvent` snapshot (`session.events().list()` / `RunResult.events`) and additionally NARROW
 `event.data` to the fields that event type carries — e.g. inside
 `if (isTextMessage(e))`, `e.data.text` is typed `string`. The lifecycle/channel
 guards (`isRunStarted`, `isRunError`, `isCustom`, `isLog`, …) operate on the

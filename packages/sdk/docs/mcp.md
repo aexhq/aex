@@ -13,7 +13,7 @@ Rules:
 - Tool policy must be configured before session start.
 - Enabled MCP tools use `always_allow` provider permissions.
 - `always_ask` is not used by aex MVP.
-- Bearer/OAuth-style auth is passed in the per-run `secrets.mcpServers` bundle.
+- Bearer/OAuth-style auth is carried by the `McpServer` instance (its `headers`); the SDK splits it into the vaulted secrets channel server-side.
 
 Use allowlists for sensitive servers whenever possible.
 

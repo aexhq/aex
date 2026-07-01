@@ -26,8 +26,8 @@ import {
  *
  * Wire-format unchanged: the SDK splits each `ProxyEndpoint` instance
  * into a `PlatformProxyEndpoint` (the non-secret declaration) plus a
- * `PlatformProxyEndpointAuth` entry (the per-request secret) at
- * `submit` time, exactly the way `McpServer` already splits
+ * `PlatformProxyEndpointAuth` entry (the per-request secret) when the
+ * session is created, exactly the way `McpServer` already splits
  * `headers` into `secrets.mcpServers`.
  *
  * Five named constructors:
@@ -40,7 +40,7 @@ import {
  *
  * All five share the same allow-list / response-mode / cap parameters.
  * The four authenticated variants split into `secrets.proxyEndpointAuth[].value`
- * at submit time; `none` produces only a declaration (no secret).
+ * when the session is created; `none` produces only a declaration (no secret).
  */
 
 export interface ProxyEndpointCommonOptions {
@@ -178,7 +178,7 @@ export class ProxyEndpoint {
 /**
  * Split a list of `ProxyEndpoint` instances into the public declarations
  * (`proxyEndpoints[]`) and the per-request auth bundle
- * (`secrets.proxyEndpointAuth[]`). Mirrors the way `submit` already
+ * (`secrets.proxyEndpointAuth[]`). Mirrors the way the SDK already
  * splits `McpServer.headers` into `secrets.mcpServers[]`.
  *
  * Throws on duplicate endpoint names — names are the cross-reference

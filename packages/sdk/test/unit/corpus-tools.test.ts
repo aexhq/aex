@@ -1,7 +1,7 @@
 /**
  * `createCorpusTools` (chat-mvp) — corpus-scoped read tools. Every read tool is
- * fenced to the corpus runs; search_outputs is auto-scoped; list_runs returns
- * only corpus runs.
+ * fenced to the corpus sessions; search_outputs is auto-scoped; list_sessions
+ * returns only corpus sessions.
  */
 import { describe, expect, it } from "vitest";
 import { createCorpusTools, DataToolError } from "../../src/index.js";
@@ -19,58 +19,60 @@ function stubClient(): {
       return value(...args);
     };
   const client = {
-    listRuns: record("listRuns", () => ({
-      runs: [{ id: "run-1" }, { id: "run-2" }, { id: "run-3" }]
-    })),
-    getRun: record("getRun", (id) => ({ id, status: "succeeded", createdAt: "t" })),
-    listOutputs: record("listOutputs", () => [{ id: "o1", filename: "f.md", sizeBytes: 1, contentType: "text/markdown" }]),
-    readOutputText: record("readOutputText", () => ({ output: { id: "o1", filename: "f.md" }, text: "x", truncated: false, totalBytes: 1 })),
-    searchOutputs: record("searchOutputs", () => ({ hits: [{ runId: "run-1", outputId: "o1" }] }))
+    sessions: {
+      list: record("list", () => ({
+        sessions: [{ id: "run-1" }, { id: "run-2" }, { id: "run-3" }]
+      })),
+      get: record("get", (id) => ({ id, status: "idle", createdAt: "t" })),
+      outputs: record("outputs", () => [{ id: "o1", filename: "f.md", sizeBytes: 1, contentType: "text/markdown" }]),
+      readOutput: record("readOutput", () => ({ output: { id: "o1", filename: "f.md" }, text: "x", truncated: false, totalBytes: 1 })),
+      searchOutputs: record("searchOutputs", () => ({ hits: [{ runId: "run-1", outputId: "o1" }] }))
+    }
   } as unknown as AgentExecutor;
   return { client, calls };
 }
 
-describe("createCorpusTools (runIds corpus)", () => {
-  it("rejects get_run / list_outputs / read_output for a run outside the corpus", async () => {
+describe("createCorpusTools (sessionIds corpus)", () => {
+  it("rejects get_session / list_outputs / read_output for a session outside the corpus", async () => {
     const { client } = stubClient();
-    const tools = createCorpusTools(client, { runIds: ["run-1", "run-2"] });
-    await expect(tools.execute("get_run", { run_id: "run-9" })).rejects.toBeInstanceOf(DataToolError);
-    await expect(tools.execute("list_outputs", { run_id: "run-9" })).rejects.toThrow(/not in this chat's corpus/);
-    await expect(tools.execute("read_output", { run_id: "run-9", path: "f.md" })).rejects.toBeInstanceOf(DataToolError);
+    const tools = createCorpusTools(client, { sessionIds: ["run-1", "run-2"] });
+    await expect(tools.execute("get_session", { session_id: "run-9" })).rejects.toBeInstanceOf(DataToolError);
+    await expect(tools.execute("list_outputs", { session_id: "run-9" })).rejects.toThrow(/not in this chat's corpus/);
+    await expect(tools.execute("read_output", { session_id: "run-9", path: "f.md" })).rejects.toBeInstanceOf(DataToolError);
   });
 
   it("allows in-corpus reads", async () => {
     const { client } = stubClient();
-    const tools = createCorpusTools(client, { runIds: ["run-1", "run-2"] });
-    const summary = (await tools.execute("get_run", { run_id: "run-1" })) as { id: string };
+    const tools = createCorpusTools(client, { sessionIds: ["run-1", "run-2"] });
+    const summary = (await tools.execute("get_session", { session_id: "run-1" })) as { id: string };
     expect(summary.id).toBe("run-1");
   });
 
-  it("auto-scopes search_outputs to the corpus runIds", async () => {
+  it("auto-scopes search_outputs to the corpus sessionIds", async () => {
     const { client, calls } = stubClient();
-    const tools = createCorpusTools(client, { runIds: ["run-1", "run-2"] });
+    const tools = createCorpusTools(client, { sessionIds: ["run-1", "run-2"] });
     await tools.execute("search_outputs", { filename: "report" });
     const call = calls.find((c) => c.method === "searchOutputs")!;
     expect(call.args[0]).toEqual({ runIds: ["run-1", "run-2"], filename: "report" });
   });
 
-  it("list_runs returns only corpus runs (built from getRun, no listRuns call)", async () => {
+  it("list_sessions returns only corpus sessions (built from get, no list call)", async () => {
     const { client, calls } = stubClient();
-    const tools = createCorpusTools(client, { runIds: ["run-1", "run-2"] });
-    const result = (await tools.execute("list_runs", {})) as { runs: Array<{ id: string }> };
-    expect(result.runs.map((r) => r.id).sort()).toEqual(["run-1", "run-2"]);
-    expect(calls.some((c) => c.method === "listRuns")).toBe(false);
+    const tools = createCorpusTools(client, { sessionIds: ["run-1", "run-2"] });
+    const result = (await tools.execute("list_sessions", {})) as { sessions: Array<{ id: string }> };
+    expect(result.sessions.map((r) => r.id).sort()).toEqual(["run-1", "run-2"]);
+    expect(calls.some((c) => c.method === "list")).toBe(false);
   });
 });
 
 describe("createCorpusTools (filter corpus)", () => {
-  it("resolves the allow-list from listRuns and scopes to it", async () => {
+  it("resolves the allow-list from listSessions and scopes to it", async () => {
     const { client, calls } = stubClient();
-    const tools = createCorpusTools(client, { filter: { status: "succeeded" } });
-    // run-1/run-2/run-3 come from listRuns; run-9 is not in the set
-    await expect(tools.execute("get_run", { run_id: "run-9" })).rejects.toBeInstanceOf(DataToolError);
-    const ok = (await tools.execute("get_run", { run_id: "run-3" })) as { id: string };
+    const tools = createCorpusTools(client, { filter: { status: "idle" } });
+    // run-1/run-2/run-3 come from listSessions; run-9 is not in the set
+    await expect(tools.execute("get_session", { session_id: "run-9" })).rejects.toBeInstanceOf(DataToolError);
+    const ok = (await tools.execute("get_session", { session_id: "run-3" })) as { id: string };
     expect(ok.id).toBe("run-3");
-    expect(calls.some((c) => c.method === "listRuns")).toBe(true);
+    expect(calls.some((c) => c.method === "list")).toBe(true);
   });
 });

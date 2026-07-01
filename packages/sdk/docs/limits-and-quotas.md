@@ -29,10 +29,9 @@ And whether you can **raise** it: per-run option, per-plan, or no.
 | Maximum run timeout | 6 hours | aex policy | Per plan (billing-driven) | `RUN_MAX_TIMEOUT_MS` |
 | Minimum run timeout | 1 minute | aex policy | No (floor) | `RUN_MIN_TIMEOUT_MS` |
 | Per-call exec timeout (default) | 30 minutes | aex policy | Per-call via the tool call's `timeoutMs` | `RUN_DEFAULT_EXEC_TIMEOUT_MS` |
-| Post-hook timeout (default) | 60 minutes | aex policy | Per-run via the hook's `timeoutMs` | `RUN_DEFAULT_POST_HOOK_TIMEOUT_MS` |
 | MCP connect timeout (default) | 30 seconds | aex policy | Per-port via `connectTimeoutMs` | `RUN_DEFAULT_MCP_CONNECT_TIMEOUT_MS` |
 | MCP call timeout (default) | 30 minutes | aex policy | Per-port via `callTimeoutMs` | `RUN_DEFAULT_MCP_CALL_TIMEOUT_MS` |
-| Per-run spend cap | None by default; when set, the run is stopped once its spend would exceed the cap | aex policy | Per-run via `options.limits.maxSpendUsd` (a positive USD amount) | — |
+| Per-session spend cap | None by default; when set, the session is stopped once its spend would exceed the cap | aex policy | Per-session via `overrides.maxSpendUsd` (a positive USD amount) | — |
 
 ### Output capture (per run)
 
@@ -61,8 +60,8 @@ silently lost.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Max subagent depth (public submit / `subagent` tool) | 5 (a depth-5 lineage may not spawn deeper) | aex policy | Per-run via `options.limits.maxSubagentDepth` (clamped to this hard ceiling) | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
-| Concurrent child runs per lineage root | 1000 live (non-terminal); hard ceiling 4096 | aex policy | Per-run via `options.limits.maxConcurrentChildRuns` (clamped to the 4096 ceiling) | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
+| Max subagent depth (`subagent` tool) | 5 (a depth-5 lineage may not spawn deeper) | aex policy | No public per-run override (subagents run in-process) | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
+| Concurrent child runs per lineage root | 1000 live (non-terminal); hard ceiling 4096 | aex policy | No public per-run override (subagents run in-process) | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
 
 ### Retention (per run)
 

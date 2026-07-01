@@ -10,11 +10,13 @@ import {
   operations,
   providersForModel,
   streamCoordinatorEvents,
+  decodeAssistantText,
   summarizeRunTrace,
   textOf,
   type AexEvent,
   type AgentsMdRecord,
   type AgentsMdRef,
+  type AssistantTextEntry,
   type DebugSink,
   type FetchLike,
   type FileRecord,
@@ -28,8 +30,6 @@ import {
   type OutputText,
   type OutputMode,
   type ReadOutputTextOptions,
-  type RunListPage,
-  type RunListQuery,
   type OutputSearchQuery,
   type OutputSearchHit,
   type OutputSearchPage,
@@ -42,7 +42,6 @@ import {
   type SessionStateChangeAccepted,
   type SessionTurn,
   type PlatformEnvironmentInput,
-  type PlatformRunSubmissionInput,
   type PlatformSubmission,
   type PlatformInlineSecrets,
   type PlatformMcpServerSecret,
@@ -96,161 +95,6 @@ export interface AgentExecutorOptions {
    * route the traces elsewhere. Purely local — nothing is uploaded.
    */
   readonly debug?: boolean | DebugSink;
-}
-
-/**
- * Per-run submission options. Everything the user wants to send is
- * spelled out at the call site:
- *
- *   - `model` / `system` / `prompt` — the agent's brief.
- *   - `skills` — array of local `Skill` instances
- *     (`Skill.fromFiles` / `Skill.fromPath`). Local skills are materialized
- *     to the hosted asset store before the run lands.
- *   - `mcpServers` — array of `McpServer` instances (headers split into
- *     `secrets.mcpServers` server-side; the public submission only
- *     carries `{ name, url }`).
- *   - `proxyEndpoints` — array of `ProxyEndpoint` instances. The auth
- *     secret is bundled into the constructor and split into
- *     `secrets.proxyEndpointAuth` server-side; the public submission
- *     only carries the declaration (`{ name, baseUrl, authShape, … }`).
- *   - `secrets.apiKeys` — the BYOK provider key(s), keyed by provider. A key
- *     for the selected provider is REQUIRED unless this is an admitted child
- *     run inheriting keys from its parent. The platform never holds a
- *     long-lived provider key on your behalf.
- *
- * `idempotencyKey` is auto-generated when omitted; pass one explicitly
- * if you want client-driven retry safety across process restarts.
- */
-export interface SubmitOptions {
-  /**
-   * Upstream provider selector. Prefer naming it explicitly with the
-   * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. The
-   * same model id can route through different providers, so `provider` is a
-   * first-class field — pass it alongside `model` rather than letting the model
-   * alone decide routing. The BYOK key for the selected provider is supplied as
-   * `secrets.apiKeys[provider]`.
-   *
-   * Optional today: when omitted it is derived from `model` (each currently
-   * supported model maps to a single provider), so existing call sites keep
-   * working. If supplied it MUST match the model's provider or `submit`
-   * throws.
-   */
-  readonly provider?: RunProvider;
-  /**
-   * Closed public model id. Prefer the {@link Models} symbol const, e.g.
-   * `Models.CLAUDE_HAIKU_4_5`. Pair it with an explicit {@link Providers} value
-   * on `provider`; if `provider` is omitted it is derived from this model.
-   */
-  readonly model: RunModel;
-  readonly system?: string;
-  readonly prompt: string | readonly string[];
-  readonly skills?: readonly Skill[];
-  /**
-   * Tools available to the agent. Each entry is either a custom {@link Tool}
-   * bundle, or a BUILTIN tool reference — a bare name string, preferably
-   * `BuiltinTools.<name>` (e.g. `BuiltinTools.notebook_edit`) so a typo is a
-   * compile error. Builtin references compose with {@link includeBuiltinTools}:
-   * use them to cherry-pick a tool the default set omits (notebook editing), or
-   * to pick a narrow subset alongside `includeBuiltinTools: false`.
-   *
-   * Order in the agent's tool list: resolved builtin tools, then custom tools,
-   * then MCP tools.
-   */
-  readonly tools?: readonly (Tool | BuiltinToolName)[];
-  readonly agentsMd?: readonly AgentsMd[];
-  readonly files?: readonly File[];
-  readonly mcpServers?: readonly McpServer[];
-  /**
-   * Env-var secrets, keyed by env name. Each value is a {@link Secret}:
-   * `Secret.value(v)` (ephemeral per-run — vaulted at submit, deleted at the
-   * run's terminal) or `Secret.ref(handle)` (a persisted workspace secret,
-   * resolved server-side). The SDK splits these into value-free declarations on
-   * the hashed submission and ephemeral values into the vaulted secrets channel,
-   * so a value never enters the run snapshot or the idempotency hash. The
-   * runtime injects each as the named env var.
-   */
-  readonly secretEnv?: Readonly<Record<string, Secret>>;
-  readonly environment?: PlatformEnvironmentInput;
-  readonly metadata?: PlatformSubmission["metadata"];
-  /**
-   * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
-   * Prefer the {@link RuntimeSizes} symbol const, e.g.
-   * `RuntimeSizes.SHARED_2X_8GB`.
-   */
-  readonly runtimeSize?: RuntimeSize;
-  /**
-   * Run deadline as a duration string (`"1h"`, `"90m"`, `"30s"`). Bounded to
-   * [1m, 6h]; omit for the 1h default. Applies to both runtimes.
-   */
-  readonly timeout?: string;
-  readonly proxyEndpoints?: readonly ProxyEndpoint[];
-  /**
-   * Output capture policy for the run's output files.
-   *
-   * - `allowedDirs` omitted: every regular file the session creates or
-   *   modifies is captured.
-   * - `allowedDirs` present: the listed roots narrow capture to those paths.
-   * - `deniedDirs` subtracts noise from the allowed roots.
-   *
-   * Captured bytes land in private storage and can be retrieved via
-   * `client.outputs(runId)` / `client.download(runId)`. See
-   * `packages/sdk/docs/outputs.md` for the full contract.
-   */
-  readonly outputs?: {
-    readonly allowedDirs?: readonly string[];
-    readonly deniedDirs?: readonly string[];
-    readonly captureTimeoutMs?: number;
-    readonly maxFileBytes?: number;
-    readonly maxTotalBytes?: number;
-    readonly maxFiles?: number;
-  };
-  /**
-   * Whether to inject the standard builtin tool set
-   * ({@link DEFAULT_BUILTIN_TOOLS} — every builtin except `notebook_edit`).
-   *
-   * - Omitted / `true` (default): inject the standard builtins.
-   * - `false`: inject NO builtins — useful for a pure-MCP / pure-custom run.
-   *   Cherry-pick a narrow subset back by listing builtin names in `tools`.
-   */
-  readonly includeBuiltinTools?: boolean;
-  /**
-   * Assistant-output granularity. `"buffered"` (default) delivers one event per
-   * assistant message; `"stream"` delivers per-token text deltas for live
-   * typing UIs.
-   */
-  readonly outputMode?: OutputMode;
-  /**
-   * Advanced inline secrets bundle (per-provider `apiKeys`, MCP headers, proxy
-   * auth, env secrets). Provider keys must use `secrets.apiKeys`.
-   */
-  readonly secrets?: PlatformInlineSecrets;
-  readonly idempotencyKey?: string;
-  /**
-   * Lineage parent (agent-session §9). When set, the server admits this run as
-   * a CHILD of `parentRunId` (same workspace required), enforcing the
-   * max-subagent-depth + per-root concurrency caps and persisting the lineage.
-   * The depth is always derived server-side from the parent row — clients name
-   * the parent, never the depth.
-   */
-  readonly parentRunId?: string;
-  /**
-   * Optional per-run callback URL. The platform delivers exactly the terminal
-   * `run.finished` event to `webhook.url` at the settle-consistent barrier,
-   * signed Standard-Webhooks style (verify with {@link verifyAexWebhook}). The
-   * URL must be https. It rides alongside `idempotencyKey` and never enters the
-   * idempotency hash, so re-submitting the same key with a different callback
-   * URL does not 409 (the URL is bound at first accept only).
-   */
-  readonly webhook?: { readonly url: string };
-  /**
-   * Optional per-run override of the lineage limits — the max number of
-   * concurrent child runs and the max subagent depth. A sibling of
-   * {@link parentRunId}: these are dials the client *requests*; the server
-   * resolves each against the per-workspace ceiling and the hard platform
-   * ceiling, and an absent field falls back to the platform default. Only
-   * shape + positivity are validated client-side.
-   */
-  readonly limits?: RunLimits;
 }
 
 /**
@@ -313,22 +157,87 @@ export interface SessionOverrides {
   readonly maxSpendUsd?: number;
 }
 
-export interface SessionCreateOptions extends Omit<
-  SubmitOptions,
-  | "prompt"
-  | "webhook"
-  | "environment"
-  | "secretEnv"
-  | "secrets"
-  | "runtimeSize"
-  | "parentRunId"
-  | "limits"
-  | "timeout"
-> {
+/**
+ * Options for opening a session (the low-level API) or a one-shot `run`.
+ * Everything the agent needs is spelled out at the call site:
+ *
+ *   - `model` / `system` — the agent's brief.
+ *   - `skills` / `agentsMd` / `files` — local composition instances
+ *     (`Skill.fromFiles` / `AgentsMd.fromContent` / `File.fromBytes`, …),
+ *     materialized to the hosted asset store before the session lands.
+ *   - `mcpServers` / `proxyEndpoints` — instances whose secrets are split into
+ *     the vaulted secrets channel server-side; the public submission carries
+ *     only the declarations.
+ *   - `apiKeys` — the BYOK provider key(s), keyed by provider. A key for the
+ *     selected provider is REQUIRED. The platform never holds a long-lived
+ *     provider key on your behalf.
+ */
+export interface SessionCreateOptions {
+  /**
+   * Upstream provider selector. Prefer naming it explicitly with the
+   * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. When
+   * omitted it is derived from `model`; if supplied it MUST serve the model.
+   */
+  readonly provider?: RunProvider;
+  /**
+   * Closed public model id. Prefer the {@link Models} symbol const, e.g.
+   * `Models.CLAUDE_HAIKU_4_5`.
+   */
+  readonly model: RunModel;
+  readonly system?: string;
+  readonly skills?: readonly Skill[];
+  /**
+   * Tools available to the agent. Each entry is either a custom {@link Tool}
+   * bundle, or a BUILTIN tool reference — a bare name string, preferably
+   * `BuiltinTools.<name>` so a typo is a compile error.
+   */
+  readonly tools?: readonly (Tool | BuiltinToolName)[];
+  readonly agentsMd?: readonly AgentsMd[];
+  readonly files?: readonly File[];
+  readonly mcpServers?: readonly McpServer[];
+  /**
+   * Output capture policy for the session's output files. `allowedDirs` omitted
+   * captures every regular file the session creates or modifies; the listed
+   * roots narrow capture; `deniedDirs` subtracts noise.
+   */
+  readonly outputs?: {
+    readonly allowedDirs?: readonly string[];
+    readonly deniedDirs?: readonly string[];
+    readonly captureTimeoutMs?: number;
+    readonly maxFileBytes?: number;
+    readonly maxTotalBytes?: number;
+    readonly maxFiles?: number;
+  };
+  /**
+   * Whether to inject the standard builtin tool set
+   * ({@link DEFAULT_BUILTIN_TOOLS}). Omitted / `true` injects the standard
+   * builtins; `false` injects none. Cherry-pick a subset back via `tools`.
+   */
+  readonly includeBuiltinTools?: boolean;
+  /**
+   * Assistant-output granularity. `"buffered"` (default) delivers one event per
+   * assistant message; `"stream"` delivers per-token text deltas.
+   */
+  readonly outputMode?: OutputMode;
+  readonly metadata?: PlatformSubmission["metadata"];
+  readonly idempotencyKey?: string;
+  readonly proxyEndpoints?: readonly ProxyEndpoint[];
+  /** BYOK provider key(s), keyed by provider. */
   readonly apiKeys?: Partial<Record<RunProvider, string>>;
   readonly environment?: SessionEnvironmentOptions;
+  /**
+   * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
+   * Prefer the {@link Sizes} symbol const.
+   */
   readonly runtime?: RuntimeSize;
   readonly overrides?: SessionOverrides;
+  /**
+   * Optional per-session callback URL. The platform delivers the terminal
+   * event to `webhook.url` at the settle-consistent barrier, signed
+   * Standard-Webhooks style (verify with {@link verifyAexWebhook}). The URL
+   * must be https.
+   */
+  readonly webhook?: { readonly url: string };
 }
 
 export type ChatCreateOptions = SessionCreateOptions;
@@ -413,13 +322,66 @@ function sendSessionInternal(
   return sender(normaliseSessionInput(input, "SessionHandle.send", "input"), options);
 }
 
+/**
+ * Accessor over the session's decoded assistant messages. `session.messages()`
+ * returns this synchronously; each method fetches on call.
+ */
+export interface SessionMessages {
+  list(): Promise<readonly AssistantTextEntry[]>;
+  last(): Promise<AssistantTextEntry | undefined>;
+  first(): Promise<AssistantTextEntry | undefined>;
+}
+
+/**
+ * Accessor over the session's event stream (`session.events()`): the buffered
+ * `SessionEvent` snapshots, the polling `RunEvent` iterator, the live
+ * coordinator envelope iterator, and the events-namespace archive.
+ */
+export interface SessionEvents {
+  list(): Promise<readonly SessionEvent[]>;
+  last(): Promise<SessionEvent | undefined>;
+  first(): Promise<SessionEvent | undefined>;
+  stream(options?: StreamEventsOptions): AsyncIterable<RunEvent>;
+  streamEnvelopes(options?: StreamEnvelopesOptions): AsyncIterable<AexEvent>;
+  archiveLink(options?: OutputLinkOptions): Promise<OutputLink>;
+  /** Download the events-namespace archive as a zip. */
+  download(options?: OutputDownloadOptions): Promise<Uint8Array>;
+}
+
+/**
+ * Accessor over the session's captured output files (`session.outputs()`):
+ * enumerate, read one as capped text, locate/resolve, and download.
+ */
+export interface SessionOutputs {
+  list(query?: OutputQuery): Promise<readonly Output[]>;
+  last(): Promise<Output | undefined>;
+  first(): Promise<Output | undefined>;
+  read(selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText>;
+  find(query: OutputQuery): Promise<readonly Output[]>;
+  findOne(query: OutputQuery): Promise<Output | null>;
+  link(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink>;
+  fetch(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<Response>;
+  /** No selector = outputs-namespace zip; with selector = one file's raw bytes. */
+  download(selector?: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
+}
+
+/**
+ * Accessor over the session's webhook delivery ledger (`session.webhooks()`).
+ */
+export interface SessionWebhooks {
+  list(): Promise<readonly RunWebhookDelivery[]>;
+  redeliver(deliveryId: string): Promise<void>;
+}
+
 export class SessionHandle {
   readonly #http: HttpClient;
+  readonly #fetch: FetchLike | undefined;
   #session: Session;
 
-  constructor(http: HttpClient, session: Session) {
+  constructor(http: HttpClient, session: Session, fetch?: FetchLike) {
     this.#http = http;
     this.#session = session;
+    this.#fetch = fetch;
     internalSessionSenders.set(this, (input, options = {}) => new SessionTurnStream(() => this.#send(input, options)));
   }
 
@@ -493,12 +455,137 @@ export class SessionHandle {
     }
   }
 
-  listEvents(): Promise<readonly SessionEvent[]> {
-    return operations.listSessionEvents(this.#http, this.id);
+  /**
+   * Accessor for the session's decoded assistant messages (buffered output
+   * mode: one entry per assistant message). `list()` returns them oldest-first;
+   * `last()`/`first()` return a single entry or `undefined` when empty.
+   */
+  messages(): SessionMessages {
+    const http = this.#http;
+    const id = this.id;
+    const list = async (): Promise<readonly AssistantTextEntry[]> =>
+      decodeAssistantText((await operations.listSessionEvents(http, id)) as unknown as readonly RunEvent[]);
+    return {
+      list,
+      last: async () => (await list()).at(-1),
+      first: async () => (await list())[0]
+    };
   }
 
-  listOutputs(query?: OutputQuery): Promise<readonly Output[]> {
-    return operations.listSessionOutputs(this.#http, this.id, query);
+  /**
+   * Accessor for the session's event stream: the buffered `SessionEvent`
+   * snapshots (`list`/`last`/`first`), the polling `RunEvent` iterator
+   * (`stream`), the live coordinator envelope iterator (`streamEnvelopes`), and
+   * the events-namespace archive (`archiveLink`/`download`).
+   */
+  events(): SessionEvents {
+    const http = this.#http;
+    const id = this.id;
+    const list = (): Promise<readonly SessionEvent[]> => operations.listSessionEvents(http, id);
+    return {
+      list,
+      last: async () => (await list()).at(-1),
+      first: async () => (await list())[0],
+      stream: (options?: StreamEventsOptions) => streamSessionEventsPolling(http, id, options ?? {}),
+      streamEnvelopes: (options?: StreamEnvelopesOptions) => streamSessionEnvelopes(http, id, options ?? {}),
+      archiveLink: (options?: OutputLinkOptions) => operations.eventArchiveLink(http, id, options),
+      download: async (options?: OutputDownloadOptions) =>
+        writeOptionalFile(await operations.downloadEvents(http, id), options?.to)
+    };
+  }
+
+  /**
+   * Accessor for the session's captured output files: `list`/`last`/`first`
+   * enumerate them; `read` streams one as capped text; `find`/`findOne`/`link`/
+   * `fetch` locate and resolve them; `download` fetches the outputs-namespace
+   * zip (no selector) or one file's raw bytes (with selector).
+   */
+  outputs(): SessionOutputs {
+    const http = this.#http;
+    const id = this.id;
+    const fetchLike = this.#fetch;
+    const list = (query?: OutputQuery): Promise<readonly Output[]> =>
+      operations.listSessionOutputs(http, id, query);
+    return {
+      list,
+      last: async () => (await list()).at(-1),
+      first: async () => (await list())[0],
+      read: (selector, options) => operations.readOutputText(http, id, selector, options),
+      find: (query) => operations.findOutputs(http, id, query),
+      findOne: (query) => operations.findOutput(http, id, query),
+      link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
+      fetch: async (selectorOrQuery, options) => {
+        const link = await operations.outputLink(http, id, selectorOrQuery, options);
+        return (fetchLike ?? globalThis.fetch)(link.url);
+      },
+      download: (selector, options) => downloadSessionOutput(http, id, selector, options)
+    };
+  }
+
+  /**
+   * Accessor for the session's webhook delivery ledger: `list()` returns the
+   * delivery attempts; `redeliver(id)` re-sends the frozen payload under the
+   * same `webhook-id` so the consumer dedupes.
+   */
+  webhooks(): SessionWebhooks {
+    const http = this.#http;
+    const id = this.id;
+    return {
+      list: () => operations.getRunWebhookDeliveries(http, id),
+      redeliver: (deliveryId) => operations.redeliverRunWebhook(http, id, deliveryId)
+    };
+  }
+
+  /** Re-read the session record from the server and store it as the current record. */
+  async refresh(): Promise<Session> {
+    this.#session = await operations.getSession(this.#http, this.id);
+    return this.#session;
+  }
+
+  /**
+   * Poll the session record until it reaches a parked/terminal status (idle,
+   * suspended, error, or any terminal run status). Throws if `timeoutMs`
+   * elapses first. Updates the stored record.
+   */
+  async wait(options: WaitForRunOptions = {}): Promise<Session> {
+    const intervalMs = options.intervalMs ?? 1_500;
+    const timeoutMs = options.timeoutMs;
+    const signal = options.signal;
+    const deadline = typeof timeoutMs === "number" ? Date.now() + timeoutMs : Number.POSITIVE_INFINITY;
+    while (!signal?.aborted) {
+      const session = await operations.getSession(this.#http, this.id);
+      this.#session = session;
+      if (isSessionParked(session.status)) return session;
+      if (Date.now() >= deadline) {
+        throw new Error(`SessionHandle.wait: timeout after ${timeoutMs}ms`);
+      }
+      await sleep(intervalMs, signal);
+    }
+    throw new Error("SessionHandle.wait: aborted");
+  }
+
+  /**
+   * Fetch the self-contained `RunUnit` for this session: parsed submission,
+   * attempts, indexed events, outputs, capture failures, proxy-call audit, and
+   * resolved skills. Use this when you need fields beyond the session record.
+   */
+  unit(): Promise<RunUnit> {
+    return operations.getRunUnit(this.#http, this.id);
+  }
+
+  /**
+   * Download EVERYTHING public about this session as one zip, assembled
+   * client-side from the public read endpoints. Organised into `metadata/`,
+   * `events/`, and `outputs/` folders, plus a `manifest.json`. Pass `to` to
+   * also write the bytes to a file path while still returning them.
+   */
+  async download(options?: OutputDownloadOptions): Promise<Uint8Array> {
+    return writeOptionalFile(await operations.download(this.#http, this.id), options?.to);
+  }
+
+  /** Download only the session record (the `metadata` namespace) as a zip. */
+  async downloadMetadata(options?: OutputDownloadOptions): Promise<Uint8Array> {
+    return writeOptionalFile(await operations.downloadMetadata(this.#http, this.id), options?.to);
   }
 }
 
@@ -507,14 +594,17 @@ export type ChatSession = SessionHandle;
 
 export class SessionClient {
   readonly #http: HttpClient;
+  readonly #fetch: FetchLike | undefined;
   readonly #buildCreateRequest: (options: SessionCreateOptions) => Promise<SessionCreateRequest>;
 
   constructor(
     http: HttpClient,
-    buildCreateRequest: (options: SessionCreateOptions) => Promise<SessionCreateRequest>
+    buildCreateRequest: (options: SessionCreateOptions) => Promise<SessionCreateRequest>,
+    fetch?: FetchLike
   ) {
     this.#http = http;
     this.#buildCreateRequest = buildCreateRequest;
+    this.#fetch = fetch;
   }
 
   async create(options: SessionCreateOptions): Promise<SessionHandle> {
@@ -524,11 +614,11 @@ export class SessionClient {
       request,
       { idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey() }
     );
-    return new SessionHandle(this.#http, session);
+    return new SessionHandle(this.#http, session, this.#fetch);
   }
 
   async open(sessionId: string): Promise<SessionHandle> {
-    return new SessionHandle(this.#http, await operations.getSession(this.#http, sessionId));
+    return new SessionHandle(this.#http, await operations.getSession(this.#http, sessionId), this.#fetch);
   }
 
   get(sessionId: string): Promise<Session> {
@@ -537,6 +627,66 @@ export class SessionClient {
 
   list(query?: SessionListQuery): Promise<SessionListPage> {
     return operations.listSessions(this.#http, query);
+  }
+
+  /** List a session's captured output files. */
+  outputs(sessionId: string, query?: OutputQuery): Promise<readonly Output[]> {
+    return operations.listSessionOutputs(this.#http, sessionId, query);
+  }
+
+  /** Read ONE output file of a session as byte-capped, decoded UTF-8 text. */
+  readOutput(sessionId: string, selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText> {
+    return operations.readOutputText(this.#http, sessionId, selector, options);
+  }
+
+  /**
+   * Find output files across sessions by filename / extension / content type.
+   * Returns lean REFERENCE hits (never bytes; fetch content with `readOutput`).
+   * Scope the search to a corpus with `query.runIds` (a session-id allow-list);
+   * omit it to scan every session in the workspace. Composed client-side (per-
+   * session `listSessionOutputs` + the contracts output filter), bounded by
+   * `query.limit` (default 100).
+   */
+  async searchOutputs(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
+    const sessionIds = query.runIds ?? (await this.#allSessionIds());
+    const limit = query.limit ?? 100;
+    // Translate the search query to an OutputQuery so the contracts output
+    // filter does the matching — no re-derived filter logic here.
+    const outputQuery: OutputQuery = {
+      ...(query.filename ? { filename: new RegExp(escapeRegExp(query.filename), "i") } : {}),
+      ...(query.extension ? { extension: query.extension } : {}),
+      ...(query.contentType ? { contentType: query.contentType } : {})
+    };
+    const hasFilter = Object.keys(outputQuery).length > 0;
+    const hits: OutputSearchHit[] = [];
+    for (const sessionId of sessionIds) {
+      const outputs = hasFilter
+        ? await operations.listSessionOutputs(this.#http, sessionId, outputQuery)
+        : await operations.listSessionOutputs(this.#http, sessionId);
+      for (const o of outputs) {
+        hits.push({
+          runId: sessionId,
+          outputId: o.id,
+          ...(o.filename !== undefined ? { filename: o.filename } : {}),
+          ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
+          ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
+        });
+        if (hits.length >= limit) return { hits };
+      }
+    }
+    return { hits };
+  }
+
+  /** Enumerate every session id in the workspace by paging `listSessions`. */
+  async #allSessionIds(): Promise<readonly string[]> {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await operations.listSessions(this.#http, cursor ? { cursor } : {});
+      for (const session of page.sessions) ids.push(session.id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return ids;
   }
 
   async run(options: SessionRunOptions): Promise<SessionRunResult> {
@@ -575,6 +725,88 @@ async function* streamSessionTurnEvents(
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {})
   });
+}
+
+/**
+ * Poll the session's `RunEvent` snapshots until the session parks, the signal
+ * aborts, or the caller breaks the iterator, deduping by event id. Module-level
+ * so `SessionHandle.events()` can hand it to its accessor object literal.
+ */
+async function* streamSessionEventsPolling(
+  http: HttpClient,
+  id: string,
+  options: StreamEventsOptions
+): AsyncIterable<RunEvent> {
+  if (options.signal?.aborted) return;
+  const seenIds = new Set<string>();
+  const intervalMs = options.intervalMs ?? 1_000;
+  const signal = options.signal;
+  while (!signal?.aborted) {
+    const events = await operations.listRunEvents(http, id);
+    for (const event of events) {
+      if (!seenIds.has(event.id)) {
+        seenIds.add(event.id);
+        yield event;
+      }
+    }
+    const session = await operations.getSession(http, id);
+    if (isSessionParked(session.status)) return;
+    // `sleep` rejects on abort — treat that as a graceful stop.
+    try {
+      await sleep(intervalMs, signal);
+    } catch {
+      return;
+    }
+  }
+}
+
+/**
+ * Stream the unified {@link AexEvent} envelope live over the session's
+ * coordinator WebSocket. The ticket is re-minted on each (re)connect so a long
+ * session never outlives it. Module-level so `SessionHandle.events()` can hand
+ * it to its accessor object literal.
+ */
+async function* streamSessionEnvelopes(
+  http: HttpClient,
+  id: string,
+  options: StreamEnvelopesOptions
+): AsyncIterable<AexEvent> {
+  const first = await operations.getSessionCoordinatorTicket(http, id);
+  yield* streamCoordinatorEvents({
+    wsUrl: first.wsUrl,
+    from: options.from ?? 0,
+    fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, id)).ticket,
+    // settleConsistent ends the stream on the post-mirror barrier instead of
+    // the earlier RUN_FINISHED UX signal.
+    ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
+    ...(options.signal ? { signal: options.signal } : {})
+  });
+}
+
+/**
+ * Download captured deliverables. No selector → the full outputs namespace as a
+ * zip; a selector → one file's raw bytes. Module-level so
+ * `SessionHandle.outputs()` can hand it to its accessor object literal.
+ */
+async function downloadSessionOutput(
+  http: HttpClient,
+  id: string,
+  selector?: OutputFileSelector,
+  options?: OutputDownloadOptions
+): Promise<Uint8Array> {
+  let bytes: Uint8Array;
+  if (selector === undefined) {
+    bytes = await operations.downloadOutputs(http, id);
+  } else {
+    const output = isOutputPathSelector(selector)
+      ? resolveOutputFileSelector(await operations.listOutputs(http, id), selector, id)
+      : resolveOutputFileSelector([], selector, id);
+    const { response } = await http.download(
+      `/api/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(output.id)}/download`
+    );
+    bytes = new Uint8Array(await response.arrayBuffer());
+  }
+  return writeOptionalFile(bytes, options?.to);
 }
 
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
@@ -671,9 +903,9 @@ export interface OutputDownloadOptions {
 /**
  * Workspace skill admin operations exposed under `client.skills`.
  *
- * New run submissions usually use `Skill.fromFiles(...)` or
- * `Skill.fromPath(...)` directly inside `submit`; the SDK materializes
- * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
+ * New sessions usually use `Skill.fromFiles(...)` or
+ * `Skill.fromPath(...)` directly on `openSession` / `run`; the SDK materializes
+ * those bytes to the hosted asset store before the session starts. This namespace is the read/delete
  * surface for workspace skill records and the internal transport used by the
  * legacy CLI upload command.
  */
@@ -728,9 +960,9 @@ export class SkillsClient {
 /**
  * Workspace AgentsMd admin operations exposed under `client.agentsMd`.
  *
- * New run submissions usually use `AgentsMd.fromContent(...)` or
- * `AgentsMd.fromPath(...)` directly inside `submit`; the SDK
- * materializes those bytes to the hosted asset store before the run lands. This namespace is
+ * New sessions usually use `AgentsMd.fromContent(...)` or
+ * `AgentsMd.fromPath(...)` directly on `openSession` / `run`; the SDK
+ * materializes those bytes to the hosted asset store before the session starts. This namespace is
  * the read/delete surface for persisted AgentsMd records.
  */
 export class AgentsMdClient {
@@ -756,9 +988,9 @@ export class AgentsMdClient {
 /**
  * Workspace File admin operations exposed under `client.files`.
  *
- * New run submissions usually use `File.fromPath(...)` or
- * `File.fromBytes(...)` directly inside `submit`; the SDK materializes
- * those bytes to the hosted asset store before the run lands. This namespace is the read/delete
+ * New sessions usually use `File.fromPath(...)` or
+ * `File.fromBytes(...)` directly on `openSession` / `run`; the SDK materializes
+ * those bytes to the hosted asset store before the session starts. This namespace is the read/delete
  * surface for persisted file records.
  */
 export class FilesClient {
@@ -893,7 +1125,7 @@ export class AgentExecutor {
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
-    this.chat = new ChatClient(this.#http, (options) => this.#buildSessionCreateRequest(options));
+    this.chat = new ChatClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
     this.sessions = this.chat;
   }
 
@@ -1007,190 +1239,6 @@ export class AgentExecutor {
       : this.sessions.create(optionsOrId);
   }
 
-  /**
-   * Poll `listEvents` until the snapshot is settle-bracketed — both a
-   * RUN_STARTED and a terminal (RUN_FINISHED / RUN_ERROR) event present — then
-   * return it. The runner emits the terminal AG-UI event BEFORE the platform
-   * commits the record, and the `listEvents` snapshot can lag the terminal
-   * record by a beat; this closes that race so the decoded trace/text/outputs
-   * are complete. Bounded so an older runtime that never emits one of the
-   * brackets still returns the best snapshot available.
-   */
-  async #collectSettledEvents(runId: string, signal: AbortSignal | undefined): Promise<readonly RunEvent[]> {
-    const intervalMs = 500;
-    const maxAttempts = 20;
-    let latest: readonly RunEvent[] = [];
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      if (signal?.aborted) return latest;
-      latest = await this.listEvents(runId);
-      const hasStart = latest.some((event) => event.type === "RUN_STARTED");
-      const hasTerminal = latest.some((event) => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR");
-      if (hasStart && hasTerminal) return latest;
-      try {
-        await sleep(intervalMs, signal);
-      } catch {
-        return latest;
-      }
-    }
-    return latest;
-  }
-
-  /**
-   * Submit a run and return its run id immediately. Use that id with
-   * `wait`, `stream`, `outputs`, `download`, `cancel`, or `delete`.
-   *
-   * The SDK splits `mcpServers[i].headers` into `secrets.mcpServers`
-   * and `proxyEndpoints[i]` auth values into `secrets.proxyEndpointAuth`
-   * before sending so credentials never enter the hashed submission or
-   * the run snapshot.
-   *
-   * Unstaged inline skills / agentsMd / files (`Skill.fromFiles` /
-   * `Skill.fromPath` / `AgentsMd.fromContent` / `File.fromBytes` without a
-   * prior `.upload`) are auto-uploaded to the content-addressable asset
-   * store (`/assets/presign` → PUT → `/assets/finalize`) before `POST /runs`,
-   * deduped by content hash, and referenced in the submission as plain
-   * `{ kind:"asset" }` refs — identical to a pre-staged `.upload(client)`.
-   */
-  async submit(options: SubmitOptions): Promise<string> {
-    if (!options || typeof options !== "object") {
-      throw new RunConfigValidationError("AgentExecutor.submit: options is required");
-    }
-    assertNoRemovedSubmitFields(options, "AgentExecutor.submit");
-    // A model maps to one or more upstream providers (see MODEL_PROVIDER_IDS).
-    // `providersForModel` returns the supported providers in priority order, or
-    // `[]` for an unknown model string (the model check below then rejects it).
-    // An explicit provider is allowed but must be one that serves the model;
-    // when omitted the model's default (first-listed) provider is used.
-    const supportedProviders = providersForModel(options.model);
-    if (
-      options.provider &&
-      supportedProviders.length > 0 &&
-      !supportedProviders.includes(options.provider)
-    ) {
-      throw new RunConfigValidationError(
-        `AgentExecutor.submit: provider ${JSON.stringify(options.provider)} is not available for ` +
-          `model ${JSON.stringify(options.model)} (supported: ${supportedProviders.join(", ")})`
-      );
-    }
-    const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
-    validateSubmitCredentials(options, provider, "AgentExecutor.submit");
-    if (typeof options.model !== "string" || !options.model) {
-      throw new RunConfigValidationError("AgentExecutor.submit: model is required");
-    }
-    const prompt = normalisePrompt(options.prompt, "AgentExecutor.submit", "prompt");
-    const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
-      splitProxyEndpoints(options.proxyEndpoints ?? []);
-    const mergedProxyAuth = mergeProxyEndpointAuth(
-      proxyEndpointAuthFromInstances,
-      options.secrets?.proxyEndpointAuth ?? []
-    );
-    // Split secretEnv into value-free declarations (hashed submission) and
-    // ephemeral values (vaulted secrets channel), mirroring the proxy split.
-    const { declarations: secretEnvDeclarations, values: envSecretValues } =
-      splitSecretEnv(options.secretEnv);
-
-    // Validate the per-run limits override with the SAME parser the server runs
-    // (shape + positivity + allow-list), failing fast before any asset upload.
-    // Normalizes an all-absent override (e.g. `{}`) away.
-    let limits: RunLimits | undefined;
-    try {
-      limits = parseRunLimits(options.limits);
-    } catch (err) {
-      throw new AexError(
-        "RUN_CONFIG_INVALID",
-        `AgentExecutor.submit: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    // Walk Skill / Tool / AgentsMd / File instances. Inline drafts are eagerly
-    // uploaded to the content-addressable asset store here (before POST /runs)
-    // and referenced as plain `kind:"asset"` refs. Already-materialized asset
-    // refs pass through unchanged.
-    const uploader: AssetUploader = (args) => this._uploadAsset(args);
-    const preparedSkills = await prepareSkills(options.skills ?? [], uploader);
-    const preparedTools = await prepareTools(options.tools ?? [], uploader);
-    const preparedAgentsMd = await prepareAgentsMd(options.agentsMd ?? [], uploader);
-    const preparedFiles = await prepareFiles(options.files ?? [], uploader);
-    const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
-      options.mcpServers ?? [],
-      options.secrets?.mcpServers ?? []
-    );
-    const outputCapture = outputsForWire(options.outputs);
-
-    const submission: PlatformSubmission = {
-      model: options.model,
-      ...(options.system ? { system: options.system } : {}),
-      prompt,
-      skills: preparedSkills,
-      // The wire `tools` is the union: builtin name strings (cherry-picks)
-      // followed by the custom tool bundle refs. The shared parser splits them
-      // back into `tools` (custom) + `builtinTools` (names). The cast
-      // acknowledges the SDK is producing pre-parse wire input here, same as
-      // `mcpServers` / `environment` below.
-      tools: [...preparedTools.builtinNames, ...preparedTools.refs] as unknown as readonly ToolRef[],
-      agentsMd: preparedAgentsMd,
-      files: preparedFiles,
-      // submissionMcpServers may contain workspace refs of the shape
-      // {kind:"workspace", id:"mcp_..."}. The BFF runs
-      // `resolveWorkspaceMcpRefsInSubmission` BEFORE the shared parser
-      // and replaces them with the resolved {name, url}, so by the
-      // time anything reads PlatformSubmission post-parse the
-      // shape matches McpServerRef. The cast acknowledges that the
-      // SDK is producing pre-resolution wire input here.
-      mcpServers: submissionMcpServers as readonly McpServerRef[],
-      ...(Object.keys(secretEnvDeclarations).length > 0 ? { secretEnv: secretEnvDeclarations } : {}),
-      // `options.environment.packages` carry the customer wire shape
-      // (`{name:"pip:pandas"}`); the shared parser resolves the ecosystem
-      // prefix into PlatformPackage. The cast acknowledges the SDK is
-      // producing pre-parse wire input here, same as `mcpServers` above.
-      ...(options.environment
-        ? { environment: options.environment as NonNullable<PlatformSubmission["environment"]> }
-        : {}),
-      ...(options.metadata ? { metadata: options.metadata } : {}),
-      ...(outputCapture ? { outputs: outputCapture } : {}),
-      // Pass-through the builtin-tool toggle verbatim (omitted ⇒ default ON).
-      ...(options.includeBuiltinTools !== undefined
-        ? { includeBuiltinTools: options.includeBuiltinTools }
-        : {}),
-      ...(options.outputMode !== undefined ? { outputMode: options.outputMode } : {})
-    };
-
-    const secrets: PlatformInlineSecrets = {
-      ...options.secrets,
-      ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
-      ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {}),
-      ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
-    };
-
-    const request: PlatformRunSubmissionInput = {
-      idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey(),
-      // Always include `provider` on the wire so dashboard / proxy
-      // tooling never has to second-guess what the runtime saw. The
-      // shared parser still defaults to `anthropic` when callers omit
-      // the field entirely, but the SDK has resolved it by here.
-      provider,
-      submission,
-      ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
-      ...(options.timeout ? { timeout: options.timeout } : {}),
-      ...(options.parentRunId ? { parentRunId: options.parentRunId } : {}),
-      // Operational/delivery concern — sibling of idempotencyKey, NOT part of
-      // the hashed brief. The idempotency key here is randomly generated, so
-      // including the field has no effect on dedup.
-      ...(options.webhook ? { webhook: options.webhook } : {}),
-      // Per-run lineage-limit override — a top-level operational dial (sibling
-      // of parentRunId), NOT part of the hashed submission. Validated + normalized
-      // above; the server re-clamps against the workspace + platform ceilings.
-      ...(limits ? { limits } : {}),
-      secrets,
-      ...(proxyEndpointDeclarations.length > 0
-        ? { proxyEndpoints: proxyEndpointDeclarations }
-        : {})
-    };
-
-    const run = await operations.submitRun(this.#http, request);
-    return getSubmittedRunId(run);
-  }
-
   async #buildSessionCreateRequest(options: SessionCreateOptions): Promise<SessionCreateRequest> {
     if (!options || typeof options !== "object") {
       throw new RunConfigValidationError("Aex.openSession: options is required");
@@ -1278,319 +1326,14 @@ export class AgentExecutor {
       ...(options.overrides?.timeout ? { timeout: options.overrides.timeout } : {}),
       ...(limits ? { limits } : {}),
       retention,
+      // Operational/delivery concern — sibling of secrets, NOT part of the
+      // hashed submission. Delivered at the settle-consistent barrier.
+      ...(options.webhook ? { webhook: options.webhook } : {}),
       secrets,
       ...(proxyEndpointDeclarations.length > 0
         ? { proxyEndpoints: proxyEndpointDeclarations }
         : {})
     };
-  }
-
-  getRun(runId: string): Promise<Run> {
-    return operations.getRun(this.#http, runId);
-  }
-
-  /** Short alias for `getRun`. */
-  get(runId: string): Promise<Run> {
-    return this.getRun(runId);
-  }
-
-  /**
-   * List the runs in this workspace, most-recent first, one page at a time.
-   * The workspace is derived server-side from the API token, so this only ever
-   * enumerates your own runs. Pass `query.cursor` (from a prior page's
-   * `nextCursor`) to page; omit it for the first page. Returns public-safe
-   * {@link RunSummary} rows — the full submission stays behind `getRunUnit`.
-   *
-   * This is the workspace-wide discovery entry point: combine it with
-   * `listOutputs` / `readOutputText` to reach any run's deliverables.
-   */
-  listRuns(query?: RunListQuery): Promise<RunListPage> {
-    return operations.listRuns(this.#http, query);
-  }
-
-  /**
-   * Find output files across runs by filename / extension / content type.
-   * Returns lean REFERENCE hits (runId, outputId, filename, size, content type)
-   * — never bytes; fetch content with {@link readOutputText}. Scope the search
-   * to a corpus with `query.runIds`; omit it to scan the whole workspace (needs
-   * the owner-gated `listRuns`). Composed client-side for the MVP (per-run
-   * `listOutputs` + the contracts output filter), so it works against any
-   * already-terminal run with no new server endpoint. Bounded by
-   * `query.limit` (default 100) — for very large corpora prefer the deferred
-   * server-side index.
-   */
-  async searchOutputs(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
-    const runIds = query.runIds ?? (await this.#allWorkspaceRunIds());
-    const limit = query.limit ?? 100;
-    // Translate the search query to an OutputQuery so the contracts output
-    // filter (classifyOutput / basename match / contentType wildcard) does the
-    // matching — no re-derived filter logic here.
-    const outputQuery: OutputQuery = {
-      ...(query.filename ? { filename: new RegExp(escapeRegExp(query.filename), "i") } : {}),
-      ...(query.extension ? { extension: query.extension } : {}),
-      ...(query.contentType ? { contentType: query.contentType } : {})
-    };
-    const hasFilter = Object.keys(outputQuery).length > 0;
-    const hits: OutputSearchHit[] = [];
-    for (const runId of runIds) {
-      const outputs = hasFilter
-        ? await this.listOutputs(runId, outputQuery)
-        : await this.listOutputs(runId);
-      for (const o of outputs) {
-        hits.push({
-          runId,
-          outputId: o.id,
-          ...(o.filename !== undefined ? { filename: o.filename } : {}),
-          ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
-          ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
-        });
-        if (hits.length >= limit) return { hits };
-      }
-    }
-    return { hits };
-  }
-
-  /** Enumerate every run id in the workspace by paging `listRuns`. */
-  async #allWorkspaceRunIds(): Promise<readonly string[]> {
-    const ids: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await this.listRuns(cursor ? { cursor } : {});
-      for (const run of page.runs) ids.push(run.id);
-      cursor = page.nextCursor;
-    } while (cursor);
-    return ids;
-  }
-
-  /**
-   * Fetch the self-contained `RunUnit`: parsed submission inputs,
-   * attempts, indexed events (inline + cursor for the tail), raw
-   * provider-event Storage manifest, outputs, capture failures,
-   * proxy-call audit, pinned workspace skills, provider skills,
-   * inline skills. Backed by the same endpoint as `getRun` but
-   * typed against the full wire shape — use this when you need
-   * fields beyond `{id, status, timestamps, usage}`.
-   */
-  getRunUnit(runId: string): Promise<RunUnit> {
-    return operations.getRunUnit(this.#http, runId);
-  }
-
-  /** Short alias for `getRunUnit`. */
-  getUnit(runId: string): Promise<RunUnit> {
-    return this.getRunUnit(runId);
-  }
-
-  listEvents(runId: string): Promise<readonly RunEvent[]> {
-    return operations.listRunEvents(this.#http, runId);
-  }
-
-  /** Short alias for `listEvents`. */
-  events(runId: string): Promise<readonly RunEvent[]> {
-    return this.listEvents(runId);
-  }
-
-  /**
-   * Yield run events (the `RunEvent` snapshot shape) as they arrive, by
-   * polling the coordinator-backed `/events` endpoint until the run reaches
-   * a terminal state, the signal aborts, or the caller breaks the iterator.
-   *
-   * For the live, low-latency envelope stream prefer {@link streamEnvelopes}
-   * (coordinator WebSocket). This polling form stays for consumers that want
-   * the loose `RunEvent` shape without a WS.
-   */
-  async *streamEvents(runId: string, options: StreamEventsOptions = {}): AsyncIterable<RunEvent> {
-    if (options.signal?.aborted) return;
-    yield* this.#streamEventsPolling(runId, { ...options, seenIds: new Set<string>() });
-  }
-
-  /** Short alias for `streamEvents`. */
-  stream(runId: string, options?: StreamEventsOptions): AsyncIterable<RunEvent> {
-    return this.streamEvents(runId, options);
-  }
-
-  /**
-   * Stream the unified {@link AexEvent} envelope live over the coordinator
-   * WebSocket. The hosted API's ticket broker authorizes the connection (workspace
-   * token → short-lived coordinator ticket); the shared client replays from
-   * the cursor, tails live, and resumes exactly-once across reconnects. The
-   * ticket is re-minted on each (re)connect so a long run never outlives it.
-   */
-  async *streamEnvelopes(runId: string, options: StreamEnvelopesOptions = {}): AsyncIterable<AexEvent> {
-    const first = await operations.getCoordinatorTicket(this.#http, runId);
-    yield* streamCoordinatorEvents({
-      wsUrl: first.wsUrl,
-      from: options.from ?? 0,
-      fetchTicket: async () => (await operations.getCoordinatorTicket(this.#http, runId)).ticket,
-      // settleConsistent ends the stream on the post-mirror barrier instead of the
-      // earlier RUN_FINISHED UX signal, so "stream ended" ⇒ getRun is terminal.
-      ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
-      ...(options.signal ? { signal: options.signal } : {})
-    });
-  }
-
-  async *#streamEventsPolling(
-    runId: string,
-    options: StreamEventsOptions & { seenIds: Set<string> }
-  ): AsyncIterable<RunEvent> {
-    const intervalMs = options.intervalMs ?? 1_000;
-    const signal = options.signal;
-    while (!signal?.aborted) {
-      const events = await this.listEvents(runId);
-      for (const event of events) {
-        if (!options.seenIds.has(event.id)) {
-          options.seenIds.add(event.id);
-          yield event;
-        }
-      }
-      const run = await this.getRun(runId);
-      if (isTerminal(run.status)) return;
-      // `sleep` rejects on abort — treat that as a graceful stop.
-      try {
-        await sleep(intervalMs, signal);
-      } catch {
-        return;
-      }
-    }
-  }
-
-  /**
-   * Poll the run record until it reaches a terminal status (succeeded,
-   * failed, terminated). Throws if `timeoutMs` elapses first.
-   */
-  async waitForRun(runId: string, options: WaitForRunOptions = {}): Promise<Run> {
-    const intervalMs = options.intervalMs ?? 1_500;
-    const timeoutMs = options.timeoutMs;
-    const signal = options.signal;
-    const deadline = typeof timeoutMs === "number" ? Date.now() + timeoutMs : Number.POSITIVE_INFINITY;
-    while (!signal?.aborted) {
-      const run = await this.getRun(runId);
-      if (isTerminal(run.status)) return run;
-      if (Date.now() >= deadline) {
-        throw new Error(`AgentExecutor.waitForRun: timeout after ${timeoutMs}ms`);
-      }
-      await sleep(intervalMs, signal);
-    }
-    throw new Error("AgentExecutor.waitForRun: aborted");
-  }
-
-  /** Short alias for `waitForRun`. */
-  wait(runId: string, options?: WaitForRunOptions): Promise<Run> {
-    return this.waitForRun(runId, options);
-  }
-
-  listOutputs(runId: string, query?: OutputQuery): Promise<readonly Output[]> {
-    return operations.listOutputs(this.#http, runId, query);
-  }
-
-  /** Short alias for `listOutputs`. */
-  outputs(runId: string, query?: OutputQuery): Promise<readonly Output[]> {
-    return this.listOutputs(runId, query);
-  }
-
-  findOutputs(runId: string, query: OutputQuery): Promise<readonly Output[]> {
-    return operations.findOutputs(this.#http, runId, query);
-  }
-
-  findOutput(runId: string, query: OutputQuery): Promise<Output | null> {
-    return operations.findOutput(this.#http, runId, query);
-  }
-
-  outputLink(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink> {
-    return operations.outputLink(this.#http, runId, selectorOrQuery, options);
-  }
-
-  createOutputLink(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink> {
-    return this.outputLink(runId, selectorOrQuery, options);
-  }
-
-  async fetchOutput(runId: string, selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<Response> {
-    const link = await this.outputLink(runId, selectorOrQuery, options);
-    return (this.#fetch ?? fetch)(link.url);
-  }
-
-  /**
-   * Read ONE output file as byte-capped, decoded UTF-8 text. Streams the file and
-   * STOPS at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a huge
-   * deliverable never fully buffers — ideal for handing a run's output to an LLM
-   * tool. Check `result.truncated` before treating the text as complete; pass
-   * `options.grep` to keep only matching lines. Select by `{ path }` or `{ id }`,
-   * same as `downloadOutput`.
-   */
-  readOutputText(
-    runId: string,
-    selector: OutputFileSelector,
-    options?: ReadOutputTextOptions
-  ): Promise<OutputText> {
-    return operations.readOutputText(this.#http, runId, selector, options);
-  }
-
-  eventArchiveLink(runId: string, options?: OutputLinkOptions): Promise<OutputLink> {
-    return operations.eventArchiveLink(this.#http, runId, options);
-  }
-
-  /**
-   * Download captured deliverables. Omit `selector` to receive the full
-   * outputs namespace as a zip; pass an id, Output object, or path selector
-   * to receive one file's raw bytes.
-   */
-  downloadOutput(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array>;
-  downloadOutput(runId: string, selector: undefined, options?: OutputDownloadOptions): Promise<Uint8Array>;
-  downloadOutput(runId: string, selector: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
-  async downloadOutput(
-    runId: string,
-    selectorOrOptions?: OutputFileSelector | OutputDownloadOptions,
-    options?: OutputDownloadOptions
-  ): Promise<Uint8Array> {
-    const hasSelector = selectorOrOptions !== undefined && !isOutputDownloadOptionsOnly(selectorOrOptions);
-    const selector = hasSelector ? selectorOrOptions as OutputFileSelector : undefined;
-    const to = hasSelector ? options?.to : (selectorOrOptions as OutputDownloadOptions | undefined)?.to ?? options?.to;
-    let bytes: Uint8Array;
-    if (selector === undefined) {
-      bytes = await operations.downloadOutputs(this.#http, runId);
-    } else {
-      const output = isOutputPathSelector(selector)
-        ? resolveOutputFileSelector(await operations.listOutputs(this.#http, runId), selector, runId)
-        : resolveOutputFileSelector([], selector, runId);
-      const { response } = await this.#http.download(
-        `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`
-      );
-      bytes = new Uint8Array(await response.arrayBuffer());
-    }
-    return writeOptionalFile(bytes, to);
-  }
-
-  cancelRun(runId: string): Promise<void> {
-    return operations.cancelRun(this.#http, runId);
-  }
-
-  /** Short alias for `cancelRun`. */
-  cancel(runId: string): Promise<void> {
-    return this.cancelRun(runId);
-  }
-
-  deleteRun(runId: string): Promise<void> {
-    return operations.deleteRun(this.#http, runId);
-  }
-
-  /** Short alias for `deleteRun`. */
-  delete(runId: string): Promise<void> {
-    return this.deleteRun(runId);
-  }
-
-  /**
-   * List a run's webhook delivery attempts (the per-run delivery ledger).
-   * Empty when the run carried no `webhook` or has not yet terminated.
-   */
-  getRunWebhookDeliveries(runId: string): Promise<readonly RunWebhookDelivery[]> {
-    return operations.getRunWebhookDeliveries(this.#http, runId);
-  }
-
-  /**
-   * Manually re-trigger a run's webhook delivery: re-sends the frozen payload
-   * with the SAME `webhook-id` so the consumer dedupes.
-   */
-  redeliverRunWebhook(runId: string, deliveryId: string): Promise<void> {
-    return operations.redeliverRunWebhook(this.#http, runId, deliveryId);
   }
 
   /**
@@ -1605,33 +1348,6 @@ export class AgentExecutor {
   whoami(): Promise<WhoAmI> {
     return operations.whoami(this.#http);
   }
-
-  /**
-   * Download EVERYTHING public about a run as one zip, assembled client-side
-   * from the public read endpoints (`getRun` + `listEvents` +
-   * `listOutputs` + per-output `/download`). Organised into the namespace
-   * folders `metadata/`, `events/`, and `outputs/`, plus a `manifest.json`.
-   * Pass `to` to also write the
-   * bytes to a file path while still returning the bytes.
-   */
-  async download(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
-    return writeOptionalFile(await operations.download(this.#http, runId), options?.to);
-  }
-
-  /** Download only the run's deliverables (the `outputs` namespace) as a zip. */
-  async downloadOutputs(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
-    return writeOptionalFile(await operations.downloadOutputs(this.#http, runId), options?.to);
-  }
-
-  /** Download only the indexed event archive (the `events` namespace) as a zip. */
-  async downloadEvents(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
-    return writeOptionalFile(await operations.downloadEvents(this.#http, runId), options?.to);
-  }
-
-  /** Download only the run record (the `metadata` namespace) as a zip. */
-  async downloadMetadata(runId: string, options?: OutputDownloadOptions): Promise<Uint8Array> {
-    return writeOptionalFile(await operations.downloadMetadata(this.#http, runId), options?.to);
-  }
 }
 
 /** Canonical SDK client name. `AgentExecutor` remains as a compatibility alias. */
@@ -1644,6 +1360,15 @@ const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 function isTerminal(status: string | undefined): boolean {
   return typeof status === "string" && TERMINAL_STATUSES.has(status);
+}
+
+/**
+ * A session is "parked" once it stops making progress: it reached one of the
+ * turn-terminal statuses (`idle` / `suspended` / `error`) or a terminal run
+ * status. `SessionHandle.wait` / `streamEvents` stop here.
+ */
+function isSessionParked(status: string | undefined): boolean {
+  return status === "idle" || status === "suspended" || status === "error" || isTerminal(status);
 }
 
 function sessionToRun(session: Session): Run {
@@ -1680,18 +1405,6 @@ function escapeRegExp(input: string): string {
 
 function isOutputPathSelector(selector: OutputFileSelector): selector is OutputFilePathSelector {
   return Boolean(selector && typeof selector === "object" && "path" in selector);
-}
-
-function isOutputDownloadOptionsOnly(
-  value: OutputFileSelector | OutputDownloadOptions
-): value is OutputDownloadOptions {
-  return Boolean(
-    value &&
-      typeof value === "object" &&
-      "to" in value &&
-      !("id" in value) &&
-      !("path" in value)
-  );
 }
 
 function resolveOutputFileSelector(
@@ -1769,28 +1482,6 @@ function generateIdempotencyKey(): string {
   return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-function normalisePrompt(
-  input: string | readonly string[],
-  surface = "AgentExecutor.submit",
-  field = "prompt"
-): readonly string[] {
-  if (typeof input === "string") {
-    if (!input) {
-      throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string`);
-    }
-    return [input];
-  }
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string or string array`);
-  }
-  for (const segment of input) {
-    if (typeof segment !== "string" || !segment) {
-      throw new RunConfigValidationError(`${surface}: ${field} segments must be non-empty strings`);
-    }
-  }
-  return [...input];
-}
-
 function normaliseSessionInput(
   input: string | readonly string[],
   surface: string,
@@ -1813,27 +1504,6 @@ function normaliseSessionInput(
   return [...input];
 }
 
-function assertNoRemovedSubmitFields(
-  options: SubmitOptions,
-  surface: string,
-  extraFields: readonly string[] = []
-): void {
-  const record = options as unknown as Record<string, unknown>;
-  for (const field of ["credentialMode", "runtime", "region", "apiKey", "credentials", "postHook", ...extraFields]) {
-    if (Object.prototype.hasOwnProperty.call(record, field)) {
-      throw new RunConfigValidationError(
-        `${surface}: ${field} is not a supported option; use the managed path with secrets.apiKeys[provider].`
-      );
-    }
-  }
-  const secrets = record.secrets;
-  if (secrets && typeof secrets === "object" && !Array.isArray(secrets) && Object.prototype.hasOwnProperty.call(secrets, "apiKey")) {
-    throw new RunConfigValidationError(
-      `${surface}: secrets.apiKey is not supported; use secrets.apiKeys[provider].`
-    );
-  }
-}
-
 function assertNoLegacySessionFields(options: SessionCreateOptions, surface: string): void {
   const record = options as unknown as Record<string, unknown>;
   const messages: Record<string, string> = {
@@ -1850,8 +1520,7 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     limits: "use overrides.",
     timeout: "use overrides.timeout.",
     signal: "use session.cancel() / session.suspend() for remote control.",
-    postHook: "send a follow-up validation message when the session returns idle.",
-    webhook: "send a follow-up validation message instead of a submit webhook."
+    postHook: "send a follow-up validation message when the session returns idle."
   };
   for (const [field, message] of Object.entries(messages)) {
     if (Object.prototype.hasOwnProperty.call(record, field)) {
@@ -1876,18 +1545,6 @@ function assertNoSessionSendSignal(options: unknown, surface: string): void {
   }
 }
 
-function validateSubmitCredentials(options: SubmitOptions, provider: RunProvider, surface: string): void {
-  if (options.parentRunId) {
-    return;
-  }
-  const key = options.secrets?.apiKeys?.[provider];
-  if (typeof key !== "string" || key.length === 0) {
-    throw new RunConfigValidationError(
-      `${surface}: a provider API key is required — pass secrets.apiKeys[${JSON.stringify(provider)}].`
-    );
-  }
-}
-
 function validateApiKeys(
   apiKeys: Partial<Record<RunProvider, string>> | undefined,
   provider: RunProvider,
@@ -1901,7 +1558,7 @@ function validateApiKeys(
   }
 }
 
-function outputsForWire(outputs: SubmitOptions["outputs"]): PlatformSubmission["outputs"] | undefined {
+function outputsForWire(outputs: SessionCreateOptions["outputs"]): PlatformSubmission["outputs"] | undefined {
   if (outputs === undefined) {
     return undefined;
   }
@@ -1998,13 +1655,13 @@ async function prepareSkills(
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
-      throw new RunConfigValidationError(`AgentExecutor.submit: skills[${i}] must be a Skill instance`);
+      throw new RunConfigValidationError(`aex: skills[${i}] must be a Skill instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`AgentExecutor.submit: skills[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`aex: skills[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
@@ -2040,7 +1697,7 @@ async function prepareTools(
     if (typeof entry === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
         throw new RunConfigValidationError(
-          `AgentExecutor.submit: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
+          `aex: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
             `expected a Tool instance or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
         );
       }
@@ -2051,13 +1708,13 @@ async function prepareTools(
       continue;
     }
     if (!(entry instanceof Tool)) {
-      throw new RunConfigValidationError(`AgentExecutor.submit: tools[${i}] must be a Tool instance or a builtin tool name`);
+      throw new RunConfigValidationError(`aex: tools[${i}] must be a Tool instance or a builtin tool name`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`AgentExecutor.submit: tools[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`aex: tools[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({ ...bundle.ref, assetId });
@@ -2077,13 +1734,13 @@ async function prepareAgentsMd(
   for (let i = 0; i < agentsMds.length; i++) {
     const entry = agentsMds[i];
     if (!(entry instanceof AgentsMd)) {
-      throw new RunConfigValidationError(`AgentExecutor.submit: agentsMd[${i}] must be an AgentsMd instance`);
+      throw new RunConfigValidationError(`aex: agentsMd[${i}] must be an AgentsMd instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`AgentExecutor.submit: agentsMd[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`aex: agentsMd[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
@@ -2107,13 +1764,13 @@ async function prepareFiles(
   for (let i = 0; i < files.length; i++) {
     const entry = files[i];
     if (!(entry instanceof File)) {
-      throw new RunConfigValidationError(`AgentExecutor.submit: files[${i}] must be a File instance`);
+      throw new RunConfigValidationError(`aex: files[${i}] must be a File instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`AgentExecutor.submit: files[${i}] is draft but has no bytes`);
+        throw new RunConfigValidationError(`aex: files[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       refs.push({
@@ -2128,15 +1785,6 @@ async function prepareFiles(
   }
   return refs;
 }
-
-function getSubmittedRunId(response: { readonly id?: string; readonly runId?: string }): string {
-  const id = response.id ?? response.runId;
-  if (typeof id !== "string" || id.length === 0) {
-    throw new RunStateError("AgentExecutor.submit: submit response did not include a run id");
-  }
-  return id;
-}
-
 
 function mergeMcpServers(
   inputs: readonly McpServer[],
@@ -2153,7 +1801,7 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new RunConfigValidationError(`AgentExecutor.submit: mcpServers[${i}] must be an McpServer instance`);
+      throw new RunConfigValidationError(`aex: mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
@@ -2161,7 +1809,7 @@ function mergeMcpServers(
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
         throw new RunConfigValidationError(
-          `AgentExecutor.submit: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
+          `aex: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
         );
       }
       secretByName.set(secret.name, secret);
@@ -2194,7 +1842,7 @@ function mergeProxyEndpointAuth(
     const existing = byName.get(entry.name);
     if (existing && existing.value.type !== entry.value.type) {
       throw new RunConfigValidationError(
-        `AgentExecutor.submit: proxyEndpoint "${entry.name}" auth type conflicts ` +
+        `aex: proxyEndpoint "${entry.name}" auth type conflicts ` +
           `with secrets.proxyEndpointAuth (instance=${entry.value.type}, secrets=${existing.value.type})`
       );
     }

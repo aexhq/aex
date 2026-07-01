@@ -28,18 +28,25 @@ function downloadClient(): AgentExecutor {
         headers: { "content-type": "application/json" }
       });
     }
+    // Session rehydrate (openSession).
+    if (url.endsWith("/api/sessions/run-1")) {
+      return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
     throw new Error(`No fake responder for ${url}`);
   };
   return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
 }
 
-describe("AgentExecutor download { to } options", () => {
+describe("SessionHandle download { to } options", () => {
   it("download writes the zip to disk and still returns the bytes", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "run.zip");
-      const client = downloadClient();
-      const bytes = await client.download("run-1", { to: path });
+      const session = await downloadClient().openSession("run-1");
+      const bytes = await session.download({ to: path });
       const written = await readFile(path);
       expect(bytes.byteLength).toBeGreaterThan(0);
       expect(Array.from(written)).toEqual(Array.from(bytes));
@@ -52,8 +59,8 @@ describe("AgentExecutor download { to } options", () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "report.txt");
-      const client = downloadClient();
-      const bytes = await client.downloadOutput("run-1", { id: "abc" }, { to: path });
+      const session = await downloadClient().openSession("run-1");
+      const bytes = await session.outputs().download({ id: "abc" }, { to: path });
       expect(new TextDecoder().decode(bytes)).toBe("hello");
       expect(await readFile(path, "utf8")).toBe("hello");
     } finally {

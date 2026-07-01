@@ -43,11 +43,11 @@ builtin set; add it via `tools`:
 ```ts
 import { BuiltinTools, Models } from "@aexhq/sdk";
 
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Edit the analysis notebook.",
+  message: "Edit the analysis notebook.",
   tools: [BuiltinTools.notebook_edit],
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -64,11 +64,11 @@ See [Networking](../networking.md).
 ```ts
 import { Models } from "@aexhq/sdk";
 
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Use only the declared MCP tools.",
+  message: "Use only the declared MCP tools.",
   mcpServers,
   includeBuiltinTools: false,
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```

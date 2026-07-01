@@ -12,8 +12,8 @@ that asset into durable run asset storage before dispatch.
 There are three sources for skill bytes:
 
 - **Inline/local draft:** `Skill.fromFiles(...)`, `Skill.fromPath(...)`, or
-  `Skill.fromUrl(...)` builds a draft in the SDK process. `submit` uploads
-  it before posting `/runs`.
+  `Skill.fromUrl(...)` builds a draft in the SDK process. `openSession` / `run`
+  uploads it before the session lands.
 - **Pre-uploaded workspace asset:** call `await draft.upload(aex)` and reuse the
   returned materialized `Skill`, or pass an existing `kind:"asset"` ref from a
   config file.
@@ -54,19 +54,19 @@ keep their run-scoped copy.
 canonical zip bytes and a `sha256:<hex>` content hash.
 
 ```ts
-import { AgentExecutor, Models, Skill } from "@aexhq/sdk";
+import { Aex, Models, Skill } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken });
+const aex = new Aex({ apiToken });
 
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt,
+  message,
   skills: [await Skill.fromPath("./skills/rules", { name: "rules" })],
-  secrets: { apiKeys: { anthropic: apiKey } }
+  apiKeys: { anthropic: apiKey }
 });
 ```
 
-Before it posts `/runs`, the SDK uploads each draft through the asset upload
+Before the session lands, the SDK uploads each draft through the asset upload
 flow:
 
 1. `POST /assets/presign` checks for a dedup hit and, when needed, returns a
@@ -85,15 +85,15 @@ multiple submissions, upload the draft explicitly:
 const draft = await Skill.fromFiles({ name: "rules", files });
 const uploaded = await draft.upload(aex);
 
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt,
+  message,
   skills: [uploaded],
-  secrets: { apiKeys: { anthropic: apiKey } }
+  apiKeys: { anthropic: apiKey }
 });
 ```
 
-The returned `uploaded` skill carries a plain `kind:"asset"` ref. Submitting it
+The returned `uploaded` skill carries a plain `kind:"asset"` ref. Reusing it
 does not upload bytes again.
 
 ## Fetch From A Signed URL
@@ -122,11 +122,11 @@ assets. Use them when a team wants a named, listed skill record:
 ```ts
 const [record] = await aex.skills.list();
 
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt,
+  message,
   skills: [Skill.fromCatalog(record)],
-  secrets: { apiKeys: { anthropic: apiKey } }
+  apiKeys: { anthropic: apiKey }
 });
 ```
 

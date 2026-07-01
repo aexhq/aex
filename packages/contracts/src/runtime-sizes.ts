@@ -35,8 +35,8 @@ export const RUNTIME_SIZES = Object.keys(RUNTIME_SIZE_PRESETS) as readonly Runti
 export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "shared-0.25x-1gb";
 
 /**
- * Symbol-style accessors for TS callers. `RuntimeSizes.SHARED_2X_8GB`
- * resolves to the wire token `"shared-2x-8gb"`.
+ * Symbol-style accessors for TS callers: the `SHARED_2X_8GB` member resolves to
+ * the wire token `"shared-2x-8gb"`. Re-exported by the SDK as `Sizes`.
  */
 export const RuntimeSizes = {
   SHARED_0_06X_256MB: "shared-0.06x-256mb",

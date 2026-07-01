@@ -1,22 +1,22 @@
 /**
- * Regression coverage for the terminal-status set used by `waitForRun`.
+ * Regression coverage for the terminal-status set used by `SessionHandle.wait`.
  *
- * The SDK's terminal check is backed by the shared `TERMINAL_RUN_STATUSES`
+ * The SDK's parked check is backed by the shared `TERMINAL_RUN_STATUSES`
  * set, which includes `timed_out`. A prior hardcoded local set omitted it,
- * so a run that resolved to `timed_out` would poll forever. These tests
- * prove `waitForRun` returns promptly for `timed_out` (and that the shared
+ * so a session that resolved to `timed_out` would poll forever. These tests
+ * prove `session.wait()` returns promptly for `timed_out` (and that the shared
  * set still recognizes the other terminal statuses).
  */
 import { describe, expect, it } from "vitest";
 import { TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
 import { AgentExecutor } from "../../src/index.js";
 
-function makeGetRunFetch(status: string): { fetch: typeof fetch; calls: number } {
+function makeSessionFetch(status: string): { fetch: typeof fetch; calls: number } {
   const state = { calls: 0 };
   const fakeFetch: typeof fetch = async (input) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    if (/\/runs\/run-abc$/.test(url)) {
+    if (/\/sessions\/run-abc$/.test(url)) {
       state.calls++;
       return new Response(JSON.stringify({ id: "run-abc", status }), {
         status: 200,
@@ -33,23 +33,27 @@ function makeGetRunFetch(status: string): { fetch: typeof fetch; calls: number }
   };
 }
 
-describe("AgentExecutor.waitForRun — terminal statuses", () => {
-  it("returns immediately for a timed_out run instead of hanging", async () => {
-    const f = makeGetRunFetch("timed_out");
+describe("SessionHandle.wait — terminal statuses", () => {
+  it("returns immediately for a timed_out session instead of hanging", async () => {
+    const f = makeSessionFetch("timed_out");
     const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
-    const run = await client.waitForRun("run-abc", { intervalMs: 1, timeoutMs: 1_000 });
+    const session = await client.openSession("run-abc");
+    const before = f.calls; // the openSession rehydrate read
+    const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
     expect(run.status).toBe("timed_out");
-    // A single GET is enough; no polling loop means no sleep happened.
-    expect(f.calls).toBe(1);
+    // A single status read is enough; no polling loop means no sleep happened.
+    expect(f.calls - before).toBe(1);
   });
 
   it("treats every shared TERMINAL_RUN_STATUSES value as terminal", async () => {
     for (const status of TERMINAL_RUN_STATUSES) {
-      const f = makeGetRunFetch(status);
+      const f = makeSessionFetch(status);
       const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
-      const run = await client.waitForRun("run-abc", { intervalMs: 1, timeoutMs: 1_000 });
+      const session = await client.openSession("run-abc");
+      const before = f.calls;
+      const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
       expect(run.status).toBe(status);
-      expect(f.calls).toBe(1);
+      expect(f.calls - before).toBe(1);
     }
   });
 });

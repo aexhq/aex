@@ -134,10 +134,10 @@ function buildScript(cell: Cell): string {
       url: ${JSON.stringify(MCP_URL)}
     });
 
-    const runId = await client.submit({
+    const result = await client.run({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
-      prompt: ${JSON.stringify(prompt)},
+      message: ${JSON.stringify(prompt)},
       mcpServers: [mcp],
       // builtins:[] removes the shell/edit/web fallbacks so the model
       // can ONLY satisfy the prompt via the MCP. With them present
@@ -145,23 +145,17 @@ function buildScript(cell: Cell): string {
       // the MCP — even when correctly wired — is never invoked. This
       // pins the assertion to MCP behaviour instead of model whim.
       includeBuiltinTools: false,
-      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
+      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
-    });
+    }, { timeoutMs: 6 * 60_000 });
+    const runId = result.runId;
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: ${JSON.stringify(cell.provider)}
+    };
 
-    const deadline = Date.now() + 6 * 60_000;
-    let run = null;
-    while (Date.now() < deadline) {
-      run = await client.getRun(runId);
-      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-      await new Promise((r) => setTimeout(r, 2_500));
-    }
-    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-      process.exit(2);
-    }
-
-    const events = await client.listEvents(runId);
+    const events = Array.isArray(result.events) ? result.events : [];
 
     const toolRequests = events
       .filter((e) => e.type === "TOOL_CALL_START")

@@ -39,14 +39,17 @@ export type {
   RunResult,
   SessionCreateOptions,
   SessionEnvironmentOptions,
+  SessionEvents,
   SessionInput,
+  SessionMessages,
+  SessionOutputs,
   SessionOverrides,
   SessionRunOptions,
   SessionRunResult,
   SessionSendOptions,
   SessionTurnResult,
+  SessionWebhooks,
   StreamEventsOptions,
-  SubmitOptions,
   WaitForRunOptions
 } from "./client.js";
 
@@ -69,9 +72,10 @@ export type {
 export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
 export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "./bundle.js";
 
-// Data-source chat tools — turn the read surface (listRuns / listOutputs /
-// readOutputText) into vendor-neutral LLM tool definitions + an executor, so a
-// chat over workspace/run data is a few lines on top of the public SDK.
+// Data-source chat tools — turn the sessions read surface (sessions.list /
+// sessions.outputs / sessions.readOutput) into vendor-neutral LLM tool
+// definitions + an executor, so a chat over workspace/session data is a few
+// lines on top of the public SDK.
 export { createDataTools, createCorpusTools, DataToolError, DATA_TOOLS_INSTRUCTIONS } from "./data-tools.js";
 export type { ChatCorpus, CreateDataToolsOptions, DataChatTool, DataChatToolSchema, DataTools } from "./data-tools.js";
 
@@ -125,9 +129,6 @@ export type {
   ProviderEvent,
   ReadOutputTextOptions,
   Run,
-  RunListPage,
-  RunListQuery,
-  RunSummary,
   Session,
   SessionEvent,
   SessionListPage,
@@ -181,7 +182,7 @@ export type {
 } from "@aexhq/contracts";
 
 // Runtime sizing — the closed set of valid managed runtime presets.
-// Prefer the `RuntimeSizes` symbol const (e.g. `RuntimeSizes.SHARED_2X_8GB`)
+// Prefer the `Sizes` symbol const (e.g. `Sizes.SHARED_2X_8GB`)
 // so an invalid token is a compile error, not a runtime 400.
 export {
   CUSTODY_MANIFEST_SCHEMA_VERSION,
@@ -189,14 +190,13 @@ export {
   RUN_RECORD_SCHEMA_VERSION,
   DEFAULT_RUNTIME_SIZE,
   RUNTIME_SIZE_PRESETS,
-  RUNTIME_SIZES,
-  RuntimeSizes
+  RUNTIME_SIZES
 } from "@aexhq/contracts";
 export { RuntimeSizes as Sizes } from "@aexhq/contracts";
 export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
 // Builtin tools — the closed + default builtin tool sets. Toggle the standard
-// set with `includeBuiltinTools` on submit; cherry-pick individual tools by
+// set with `includeBuiltinTools` on session create; cherry-pick individual tools by
 // listing their names in `tools`. Prefer the `BuiltinTools` const (e.g.
 // `BuiltinTools.notebook_edit`) so a typo is a compile error, not a runtime 400.
 export { BUILTIN_TOOL_NAMES, BuiltinTools, DEFAULT_BUILTIN_TOOLS, resolveBuiltinToolNames } from "@aexhq/contracts";

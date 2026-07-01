@@ -35,8 +35,8 @@ export interface WorkspaceMcpServerSubmissionEntry {
  *     `{ name, headers }`.
  *
  * For workspace refs (`McpServer.fromId(id)`), the submission entry
- * is `{kind:"workspace", id}`; the BFF resolves it to inline at
- * submit time. The user still supplies auth separately via
+ * is `{kind:"workspace", id}`; the BFF resolves it to inline when
+ * the session is created. The user still supplies auth separately via
  * `secrets.mcpServers[<workspace-name>]` keyed by the workspace
  * MCP's persisted `name`.
  */
@@ -110,8 +110,8 @@ export class McpServer {
 
   /**
    * Reference a workspace-persistent MCP server by id. The BFF
-   * resolves the ref to inline `{name, url}` at submit time using the
-   * row from `workspace_mcp_servers`. Auth still arrives inline at
+   * resolves the ref to inline `{name, url}` when the session is created using
+   * the row from `workspace_mcp_servers`. Auth still arrives inline at
    * the call site — pass it in `secrets.mcpServers[<workspace-name>]`.
    */
   static fromId(id: string): McpServer {

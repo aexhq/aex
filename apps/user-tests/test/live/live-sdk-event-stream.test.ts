@@ -4,10 +4,10 @@
  * Exercises the unified event coordinator end-to-end through the installed
  * SDK, the way a user listening to a run would:
  *
- *   1. submit (DeepSeek Managed)
- *   2. LISTEN live over the coordinator WebSocket via `client.streamEnvelopes(runId)`
+ *   1. run (DeepSeek Managed) — a one-shot session via `client.run(...)`
+ *   2. LISTEN over the coordinator WebSocket via `session.events().streamEnvelopes(...)`
  *      (ticket broker → coordinator WS, exactly-once cursor resume).
- *   3. SNAPSHOT the same log via `client.listEvents()`.
+ *   3. SNAPSHOT the same log from the settle-consistent `RunResult.events`.
  *   4. DOWNLOAD the durable event archive: mint a ticket and read the
  *      coordinator manifest (rolling object storage chunks + counts), proving the events
  *      are durably archived and downloadable after the run.
@@ -85,13 +85,15 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         const model = process.env.MODEL;
 
         const client = new AgentExecutor({ baseUrl, apiToken });
-        const runId = await client.submit({
+        const result = await client.run({
           provider: "deepseek",
           model,
-          prompt: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-event-stream-" + Date.now(),
-          secrets: { apiKeys: { deepseek: deepseekKey } }
-        });
+          apiKeys: { deepseek: deepseekKey }
+        }, { timeoutMs: 120 * 1000 });
+        const runId = result.runId;
+        const session = await client.sessions.open(runId);
 
         // 1. Listen live over the coordinator WebSocket (exactly-once,
         //    reconnecting). Stop on the terminal envelope or the deadline.
@@ -104,7 +106,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         const ac = new AbortController();
         const listen = (async () => {
           try {
-            for await (const ev of client.streamEnvelopes(runId, { from: 0, signal: ac.signal })) {
+            for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
               streamed.push(ev.type);
               if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
             }
@@ -149,16 +151,16 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           return redacted.toString();
         }
 
-        // 2. Snapshot the same log + final status. Postgres \`mark-terminal\`
-        //    lands AFTER the terminal WS broadcast, so poll for terminal
-        //    status before reading (avoids a pre-terminal status race).
-        let run;
-        try {
-          run = await client.waitForRun(runId, { timeoutMs: 40 * 1000, intervalMs: 2000 });
-        } catch (e) {
-          run = await client.getRun(runId);
-        }
-        const snapshot = await client.listEvents(runId);
+        // 2. Snapshot the same log + final status. \`client.run(...)\` already
+        //    waited for the session to park at a terminal state, so the
+        //    settle-consistent RunResult carries the final status + events
+        //    directly — no waitForRun/getRun/listEvents round-trip needed.
+        const run = {
+          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          runtime: "managed",
+          provider: "deepseek"
+        };
+        const snapshot = Array.isArray(result.events) ? result.events : [];
 
         // 3. Download the durable archive: ticket → coordinator manifest. The
         //    manifest is written by a later workflow step (complete-coordinator)

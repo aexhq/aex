@@ -9,8 +9,8 @@ import type { SkillFiles } from "./bundle.js";
  * This runs in the SDK process (the caller's own app), so the URL is
  * caller-controlled — there is no SSRF surface here. Host the skill yourself
  * and hand the SDK a temporary signed URL (e.g. an S3 presigned URL); it only
- * needs to be valid for this fetch, because `client.submit` snapshots the
- * bytes into the run afterwards.
+ * needs to be valid for this fetch, because `client.run` / `openSession`
+ * snapshots the bytes into the run afterwards.
  *
  * Signed URLs carry secrets in their query string, so the query is never echoed
  * in error messages.

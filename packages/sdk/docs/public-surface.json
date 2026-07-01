@@ -2,7 +2,7 @@
   "brand": "aex",
   "productName": "Agent Executor",
   "oneLine": "aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.",
-  "description": "Submit typed runs, stream durable events, capture outputs, and compose agents with skills, files, MCP, proxy endpoints, and subagents across the managed runtime.",
+  "description": "Open durable agent sessions, send turns, stream events, capture outputs, and compose agents with skills, files, MCP, proxy endpoints, and subagents across the managed runtime.",
   "alpha": {
     "label": "Alpha testing",
     "description": "Access is limited to invited testers while we harden the hosted runtime, dashboard, and SDK workflows."

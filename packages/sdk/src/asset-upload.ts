@@ -1,8 +1,8 @@
 /**
- * Asset materialization for the SDK submit path.
+ * Asset materialization for the SDK run / session path.
  *
  * Every inline `Skill` / `AgentsMd` / `File` draft is materialized to the
- * hosted API's content-addressable asset store before the submit round-trip,
+ * hosted API's content-addressable asset store before the session starts,
  * so the wire submission carries only storage-neutral `kind:"asset"` refs.
  *
  * Upload is direct-to-storage (no bytes through the hosted API, so bundle size

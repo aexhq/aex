@@ -100,38 +100,33 @@ function buildScript(cell: Cell, marker: string): string {
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const runId = await client.submit({
+    const result = await client.run({
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
-      prompt: ${JSON.stringify(prompt)},
+      message: ${JSON.stringify(prompt)},
       includeBuiltinTools: true,
       outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
-      secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } },
+      apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
-    });
-
-    const deadline = Date.now() + 6 * 60_000;
-    let run = null;
-    while (Date.now() < deadline) {
-      run = await client.getRun(runId);
-      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-      await new Promise((r) => setTimeout(r, 2_500));
-    }
-    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-      process.exit(2);
-    }
+    }, { timeoutMs: 6 * 60_000 });
+    const runId = result.runId;
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: "deepseek"
+    };
+    const session = await client.sessions.open(runId);
 
     const probe = (bytes) => ({
       byteLength: bytes.byteLength,
       magicOk: bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04
     });
 
-    const outputs = await client.listOutputs(runId);
-    const downloadAll = await client.download(runId);
-    const downloadOut = await client.downloadOutputs(runId);
+    const outputs = await session.outputs().list();
+    const downloadAll = await session.download();
+    const downloadOut = await session.outputs().download(undefined);
 
-    const result = {
+    const payload = {
       runId: runId,
       runStatus: run.status,
       outputs: outputs.map((o) => ({ id: o.id, filename: o.filename ?? null })),
@@ -139,7 +134,7 @@ function buildScript(cell: Cell, marker: string): string {
       downloadOutputs: probe(downloadOut),
       marker: ${JSON.stringify(marker)}
     };
-    process.stdout.write(JSON.stringify(result));
+    process.stdout.write(JSON.stringify(payload));
     process.exit(0);
   `;
 }

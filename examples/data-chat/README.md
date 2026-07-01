@@ -1,13 +1,14 @@
 # Data-source chat (SDK-only)
 
-An interactive chat over your aex workspace — list runs, inspect a run, and read
-its output files — driven by Claude with **your own** Anthropic key.
+An interactive chat over your aex workspace — list sessions, inspect a session,
+and read its output files — driven by Claude with **your own** Anthropic key.
 
 It is built on nothing but the **public SDK**. The single aex dependency is
 `@aexhq/sdk`; the chat's tools come from `createDataTools(client)`, which only
-calls public read methods (`listRuns`, `getRun`, `listOutputs`, `readOutputText`).
-So the assistant can reach your runs and their captured outputs **and nothing
-else** — there is no path to internal or operator data, by construction.
+calls public read methods (`sessions.list`, `sessions.get`, `sessions.outputs`,
+`sessions.readOutput`). So the assistant can reach your sessions and their
+captured outputs **and nothing else** — there is no path to internal or operator
+data, by construction.
 
 ## How it works
 
@@ -21,7 +22,7 @@ else** — there is no path to internal or operator data, by construction.
                             aex API  (scoped to your workspace token)
 ```
 
-- **Search-then-fetch.** `list_runs` / `list_outputs` return lean references and
+- **Search-then-fetch.** `list_sessions` / `list_outputs` return lean references and
   metadata; only `read_output` returns file content, and it is byte-capped
   (default 50 KB), so a large deliverable never floods the context window.
 - **Two keys, one boundary.** The workspace token scopes data access; the
@@ -41,10 +42,10 @@ bun chat.mjs
 
 Then ask things like:
 
-- `list my last 5 runs`
-- `which of my recent runs failed?`
-- `summarize the report from my most recent succeeded run`
-- `show me the first 100 lines of output.md from run <id>`
+- `list my last 5 sessions`
+- `which of my recent sessions failed?`
+- `summarize the report from my most recent succeeded session`
+- `show me the first 100 lines of output.md from session <id>`
 
 ## The tools (vendor-neutral)
 
@@ -54,7 +55,7 @@ same adapter works beyond Anthropic:
 
 | Tool | Returns |
 |---|---|
-| `list_runs` | run summaries + `nextCursor` (no prompts/outputs) |
-| `get_run` | one run's status / timing / cost |
-| `list_outputs` | a run's output files (metadata only) |
+| `list_sessions` | session summaries + `nextCursor` (no prompts/outputs) |
+| `get_session` | one session's status / timing / cost |
+| `list_outputs` | a session's output files (metadata only) |
 | `read_output` | one file as byte-capped text (`truncated` flag, optional `grep`) |

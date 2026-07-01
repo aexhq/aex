@@ -98,22 +98,15 @@ const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
 
-/** Poll-to-terminal + read events/outputs + print the standard result JSON. */
+/**
+ * Read the settle-consistent RunResult that `client.run(...)` returns
+ * (events/outputs/text are already collected — no poll loop) + print the
+ * standard result JSON.
+ */
 const TAIL = `
-const deadline = Date.now() + Number(process.env.WAIT_MS || "240000");
-let run = null;
-while (Date.now() < deadline) {
-  run = await client.getRun(runId);
-  if (["succeeded","failed","cancelled","timed_out"].includes(run.status)) break;
-  await new Promise((r) => setTimeout(r, 2000));
-}
-const events = await client.listEvents(runId).catch(() => []);
-let outputs = [];
-try { outputs = await client.listOutputs(runId); } catch {}
-const text = events
-  .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
-  .map((e) => (e && e.data && typeof e.data.text === "string" ? e.data.text : ""))
-  .join(" ");
+const events = Array.isArray(result.events) ? result.events : [];
+const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+const text = typeof result.text === "string" ? result.text : "";
 const toolResultText = events
   .filter((e) => e.type === "TOOL_CALL_RESULT")
   .map((e) => JSON.stringify(e && e.data !== undefined ? e.data : ""))
@@ -127,29 +120,36 @@ const streamErrors = events
     }
     return e.data && typeof e.data === "object" ? e.data : { unknown: true };
   });
+// A one-shot run() parks the session cleanly on success (idle/suspended);
+// surface that as "succeeded" so callers keep the run-oriented contract.
+const status = result.ok
+  ? "succeeded"
+  : (typeof result.status === "string" && result.status ? result.status : "failed");
 process.stdout.write(JSON.stringify({
-  runId: runId,
-  status: run ? run.status : "(none)",
-  runtime: run ? (run.runtime ?? null) : null,
-  provider: run ? (run.provider ?? null) : null,
+  runId: result.runId,
+  status,
+  runtime: "managed",
+  provider: (result.run && typeof result.run.provider === "string") ? result.run.provider : null,
   terminalKind: terminal ? terminal.type : null,
   terminalData: terminal ? terminal.data : null,
   assistantText: text,
   toolResultText,
   eventKinds: events.map((e) => e.type),
   streamErrors,
-  outputCount: Array.isArray(outputs) ? outputs.length : 0
+  outputCount: outputs.length
 }));
 `;
 
 /**
  * Assemble a full runner script. `setup` (optional) runs first and may
- * `await` (e.g. AgentsMd.fromContent); `submit` is the object literal /
- * expression passed to `client.submit(...)` and must assign nothing —
- * the helper wraps it as `const runId = await client.submit(<submit>);`.
+ * `await` (e.g. AgentsMd.fromContent); `run` is the object literal /
+ * expression passed to `client.run(...)` and must assign nothing — the helper
+ * wraps it as `const result = await client.run(<run>, { timeoutMs });`. The
+ * `run` object is the session/run surface: `message` (the first turn), `apiKeys`
+ * (BYOK provider keys), plus the usual composition inputs.
  */
-export function sdkRunnerScript(parts: { readonly setup?: string; readonly submit: string }): string {
-  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst runId = await client.submit(${parts.submit});\n${TAIL}`;
+export function sdkRunnerScript(parts: { readonly setup?: string; readonly run: string }): string {
+  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst result = await client.run(${parts.run}, { timeoutMs: Number(process.env.WAIT_MS || "240000") });\n${TAIL}`;
 }
 
 /** Write + run a runner script in the install dir; parse the result JSON. */

@@ -1,39 +1,52 @@
 /**
  * H-1 coherence: the run read + output-download surface on the hosted API
- * plane is now workspace-token gated. Our own clients
- * must keep working against it, which means EVERY read path has to send
- * `Authorization: Bearer <apiToken>`.
+ * plane is workspace-token gated. Our own clients must keep working against
+ * it, which means EVERY read path has to send `Authorization: Bearer <apiToken>`.
  *
  * The shared `HttpClient` attaches that header on both `request()` and
  * `download()`, so all `operations.*` reads inherit it. These tests pin
- * that invariant at the SDK boundary: a recording fetch captures the
- * Authorization header each read op sent. If a future refactor routes a
- * read around the token-bearing transport, one of these turns red BEFORE
- * it can break against the gated routes in production.
+ * that invariant at the SDK boundary via the `SessionHandle` read surface:
+ * a recording fetch captures the Authorization header each read op sent. If a
+ * future refactor routes a read around the token-bearing transport, one of
+ * these turns red BEFORE it can break against the gated routes in production.
  */
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { AgentExecutor, type SessionHandle } from "../../src/index.js";
 
 const TOKEN = "apt_read_auth_token";
 const BASE = "https://example.test";
+const SID = "sess-1";
 
 interface RecordedCall {
   readonly url: string;
   readonly authorization: string | null;
+  readonly body?: string;
 }
 
 /**
- * Build a client whose fetch records the URL + Authorization header of
- * every request and returns the supplied body. The recorded calls let
- * each test assert the Bearer rode along.
+ * Build a client whose fetch records the URL + Authorization header of every
+ * request and returns the supplied body — EXCEPT the session-rehydrate read
+ * (`GET /api/sessions/sess-1`, used by `openSession`) which always returns a
+ * minimal session record so a handle can be built.
  */
 function recordingClient(body: unknown, contentType = "application/json") {
   const calls: RecordedCall[] = [];
   const stub: typeof fetch = async (input, init) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    const method = (init?.method ?? "GET").toString();
     const headers = new Headers(init?.headers);
-    calls.push({ url, authorization: headers.get("authorization") });
+    calls.push({
+      url,
+      authorization: headers.get("authorization"),
+      ...(typeof init?.body === "string" ? { body: init.body } : {})
+    });
+    if (method === "GET" && url.endsWith(`/api/sessions/${SID}`)) {
+      return new Response(JSON.stringify({ id: SID, status: "succeeded" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
     return new Response(typeof body === "string" ? body : JSON.stringify(body), {
       status: 200,
       headers: { "content-type": contentType }
@@ -43,48 +56,66 @@ function recordingClient(body: unknown, contentType = "application/json") {
   return { client, calls };
 }
 
+/** Open the session handle, then drop the rehydrate read so tests assert only the op under test. */
+async function openHandle(client: AgentExecutor, calls: RecordedCall[]): Promise<SessionHandle> {
+  const session = await client.openSession(SID);
+  calls.length = 0;
+  return session;
+}
+
 describe("SDK read paths send the workspace token (H-1 coherence)", () => {
-  it("getRun sends Authorization: Bearer", async () => {
-    const { client, calls } = recordingClient({ id: "run-1", status: "succeeded" });
-    await client.getRun("run-1");
+  it("refresh sends Authorization: Bearer", async () => {
+    const { client, calls } = recordingClient({ id: SID, status: "succeeded" });
+    const session = await openHandle(client, calls);
+    await session.refresh();
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
   it("listEvents sends Authorization: Bearer", async () => {
     const { client, calls } = recordingClient({ events: [] });
-    await client.listEvents("run-1");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/events`);
+    const session = await openHandle(client, calls);
+    await session.events().list();
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/events`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
   it("listOutputs sends Authorization: Bearer", async () => {
     const { client, calls } = recordingClient({ outputs: [] });
-    await client.listOutputs("run-1");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/outputs`);
+    const session = await openHandle(client, calls);
+    await session.outputs().list();
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("createOutputLink sends Authorization: Bearer (POST /link)", async () => {
-    const { client, calls } = recordingClient({ url: `${BASE}/api/runs/run-1/outputs/abc/download` });
-    await client.createOutputLink("run-1", "abc");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/outputs/abc/link`);
+  it("outputLink by id sends Authorization: Bearer (POST /link)", async () => {
+    const { client, calls } = recordingClient({ url: `${BASE}/api/runs/${SID}/outputs/abc/download` });
+    const session = await openHandle(client, calls);
+    await session.outputs().link("abc");
+    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/outputs/abc/link`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
   it("outputLink resolves queries with Authorization: Bearer and sends the TTL body", async () => {
-    const calls: Array<RecordedCall & { readonly body?: string }> = [];
+    const calls: RecordedCall[] = [];
     const stub: typeof fetch = async (input, init) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method ?? "GET").toString();
       const headers = new Headers(init?.headers);
       calls.push({
         url,
         authorization: headers.get("authorization"),
         ...(typeof init?.body === "string" ? { body: init.body } : {})
       });
-      if (url.endsWith("/api/runs/run-1/outputs")) {
+      if (method === "GET" && url.endsWith(`/api/sessions/${SID}`)) {
+        return new Response(JSON.stringify({ id: SID, status: "succeeded" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith(`/api/runs/${SID}/outputs`)) {
         return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -96,8 +127,10 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       });
     };
     const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const session = await client.openSession(SID);
+    calls.length = 0;
 
-    const link = await client.outputLink("run-1", { filename: "result.txt" }, { expiresIn: "15m" });
+    const link = await session.outputs().link({ filename: "result.txt" }, { expiresIn: "15m" });
 
     expect(link).toMatchObject({
       url: "https://objects.example/result.txt",
@@ -105,8 +138,8 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       output: { id: "abc", filename: "reports/result.txt" }
     });
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/run-1/outputs`,
-      `${BASE}/api/runs/run-1/outputs/abc/link`
+      `${BASE}/api/runs/${SID}/outputs`,
+      `${BASE}/api/runs/${SID}/outputs/abc/link`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
     expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 900 });
@@ -118,15 +151,22 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const stub: typeof fetch = async (input, init) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method ?? "GET").toString();
       const headers = new Headers(init?.headers);
       calls.push({ url, authorization: headers.get("authorization") });
-      if (url.endsWith("/api/runs/run-1/outputs")) {
+      if (method === "GET" && url.endsWith(`/api/sessions/${SID}`)) {
+        return new Response(JSON.stringify({ id: SID, status: "succeeded" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith(`/api/runs/${SID}/outputs`)) {
         return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith("/api/runs/run-1/outputs/abc/link")) {
+      if (url.endsWith(`/api/runs/${SID}/outputs/abc/link`)) {
         return new Response(JSON.stringify({ url: directUrl }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -135,13 +175,15 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       return new Response("direct-bytes", { status: 200, headers: { "content-type": "text/plain" } });
     };
     const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const session = await client.openSession(SID);
+    calls.length = 0;
 
-    const response = await client.fetchOutput("run-1", { filename: "result.txt" });
+    const response = await session.outputs().fetch({ filename: "result.txt" });
 
     expect(await response.text()).toBe("direct-bytes");
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/run-1/outputs`,
-      `${BASE}/api/runs/run-1/outputs/abc/link`,
+      `${BASE}/api/runs/${SID}/outputs`,
+      `${BASE}/api/runs/${SID}/outputs/abc/link`,
       directUrl
     ]);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
@@ -151,16 +193,18 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
 
   it("eventArchiveLink sends Authorization: Bearer (POST /events/link)", async () => {
     const { client, calls } = recordingClient({ url: "https://objects.example/events.jsonl" });
-    await client.eventArchiveLink("run-1");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/events/link`);
+    const session = await openHandle(client, calls);
+    await session.events().archiveLink();
+    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/events/link`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
   it("downloadOutput by id sends Authorization: Bearer to the gated download route", async () => {
     const { client, calls } = recordingClient("hello", "text/plain");
-    const bytes = await client.downloadOutput("run-1", { id: "abc" });
+    const session = await openHandle(client, calls);
+    const bytes = await session.outputs().download({ id: "abc" });
     expect(new TextDecoder().decode(bytes)).toBe("hello");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/outputs/abc/download`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/outputs/abc/download`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -169,9 +213,16 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const stub: typeof fetch = async (input, init) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method ?? "GET").toString();
       const headers = new Headers(init?.headers);
       calls.push({ url, authorization: headers.get("authorization") });
-      if (url.endsWith("/api/runs/run-1/outputs")) {
+      if (method === "GET" && url.endsWith(`/api/sessions/${SID}`)) {
+        return new Response(JSON.stringify({ id: SID, status: "succeeded" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith(`/api/runs/${SID}/outputs`)) {
         return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -180,36 +231,40 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
     };
     const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const session = await client.openSession(SID);
+    calls.length = 0;
 
-    const bytes = await client.downloadOutput("run-1", { path: "result.txt", match: "suffix" });
+    const bytes = await session.outputs().download({ path: "result.txt", match: "suffix" });
 
     expect(new TextDecoder().decode(bytes)).toBe("hello");
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/run-1/outputs`,
-      `${BASE}/api/runs/run-1/outputs/abc/download`
+      `${BASE}/api/runs/${SID}/outputs`,
+      `${BASE}/api/runs/${SID}/outputs/abc/download`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
 
   it("downloadOutput without a selector downloads the outputs zip with Authorization: Bearer", async () => {
     const { client, calls } = recordingClient({ outputs: [] });
-    const bytes = await client.downloadOutput("run-1");
+    const session = await openHandle(client, calls);
+    const bytes = await session.outputs().download();
     expect(bytes.byteLength).toBeGreaterThan(0);
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/run-1/outputs`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/outputs`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
   it("download assembles the run zip and every read carries Authorization: Bearer", async () => {
     // `download` is the SDK's whole-run verb: it fans out to getRun +
-    // listEvents + listOutputs (and per-output /download) and zips the result
+    // listRunEvents + listOutputs (and per-output /download) and zips the result
     // client-side. EVERY one of those reads must carry the token because the
     // public read/download surface is gated.
     const { client, calls } = recordingClient({ events: [], outputs: [] });
-    await client.download("run-1");
+    const session = await openHandle(client, calls);
+    await session.download();
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/run-1`,
-      `${BASE}/api/runs/run-1/events`,
-      `${BASE}/api/runs/run-1/outputs`
+      `${BASE}/api/runs/${SID}`,
+      `${BASE}/api/runs/${SID}/events`,
+      `${BASE}/api/runs/${SID}/outputs`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });

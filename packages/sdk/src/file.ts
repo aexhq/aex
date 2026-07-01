@@ -13,7 +13,7 @@ import { zipSync } from "fflate";
  *
  *   const settings = await File.fromPath("./settings.json");
  *   const dataset = await File.fromPath("./data/");
- *   await client.submit({ files: [settings, dataset], ... });
+ *   await client.run({ files: [settings, dataset], message: "..." });
  *
  * `mountPath` is the absolute container directory the file unzips into; it
  * defaults to `/workspace` (the agent's default working directory), so a file
@@ -21,14 +21,14 @@ import { zipSync } from "fflate";
  * `subtitles.srt` becomes `/workspace/subtitles.srt`, a folder lands its entries
  * under `/workspace/`. The resolved path is surfaced back on the Run record.
  *
- * `client.submit` materializes the bytes to the hosted asset store before
- * the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
+ * `client.run` / `openSession` materializes the bytes to the hosted asset store
+ * before the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
  * same bytes are deduped.
  */
 export class File {
   readonly #ref: FileRef | DraftFileRef;
   readonly #bytes: Uint8Array | undefined;
-  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  /** Asset id cached after the first use, so reuse skips a re-upload. */
   #assetId: string | undefined;
 
   constructor(ref: FileRef | DraftFileRef, bytes?: Uint8Array) {
@@ -44,7 +44,7 @@ export class File {
     return this.#ref.kind === "draft";
   }
 
-  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  /** Internal: the asset id resolved on a prior use, or undefined. */
   get _cachedAssetId(): string | undefined {
     return this.#assetId;
   }
@@ -135,7 +135,7 @@ export class File {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.submit` can upload it as an asset.
+   * `client.run` / `openSession` can upload it as an asset.
    */
   _takeDraftBundle(): {
     name: string;
@@ -158,7 +158,7 @@ export class File {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "File: draft Files cannot be JSON-serialised — they only become wire refs when " +
-        "client.submit uploads the bytes as an asset."
+        "aex.run / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;

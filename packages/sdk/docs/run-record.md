@@ -4,28 +4,28 @@ title: Run record
 
 # Run record
 
-The run record is the durable product primitive for one run id. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured outputs, and manifest entries for custody and cost telemetry.
+The run record is the durable product primitive for one session. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured outputs, and manifest entries for custody and cost telemetry.
 
-## Listing runs
+## Listing sessions
 
-`aex.listRuns(query?)` enumerates the runs in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API token, so this only ever returns your own runs. It is the workspace-wide discovery entry point: combine it with `listOutputs` / `readOutputText` (see [Outputs](outputs.md)) to reach any run's deliverables.
+`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API token, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: combine it with `aex.sessions.outputs` / `aex.sessions.readOutput` (see [Outputs](outputs.md)) to reach any session's deliverables.
 
 ```ts
 let cursor: string | undefined;
 do {
-  const page = await aex.listRuns({ status: "succeeded", limit: 25, cursor });
-  for (const run of page.runs) {
-    console.log(run.id, run.status, run.createdAt, run.costUsd);
+  const page = await aex.sessions.list({ status: "idle", limit: 25, cursor });
+  for (const session of page.sessions) {
+    console.log(session.id, session.status, session.createdAt, session.costUsd);
   }
   cursor = page.nextCursor;
 } while (cursor);
 ```
 
-`query` fields are all optional: `status` (single run status, e.g. `"succeeded"`), `since` (ISO-8601 lower bound on `createdAt`), `limit` (defaults to 25, clamped to `[1, 100]`), and `cursor` (the opaque keyset cursor from a prior page's `nextCursor` — absent on the last page). Each page row is a public-safe `RunSummary` (`id`, `status`, `createdAt`, `updatedAt`, and `costUsd` once settled); it deliberately omits the submission snapshot (model / prompt / env). Use `aex.getRun(runId)` for status / timing / cost on one run, or `aex.getRunUnit(runId)` (alias `getUnit`) for the full self-contained record including the parsed submission.
+`query` fields are all optional: `status` (single session status, e.g. `"idle"`), `since` (ISO-8601 lower bound on `createdAt`), `limit` (defaults to 25, clamped to `[1, 100]`), and `cursor` (the opaque keyset cursor from a prior page's `nextCursor` — absent on the last page). Each page row is a public-safe `SessionSummary` (`id`, `status`, `createdAt`, `updatedAt`, and `costUsd` once settled); it deliberately omits the submission snapshot (model / system / env). Use `aex.sessions.get(id)` for status / timing / cost on one session, or `session.unit()` on a handle for the full self-contained record including the parsed submission.
 
 ## Downloading a run record
 
-`aex.download(runId)` and `aex download <run-id>` return a zip with this layout:
+`session.download()` and `aex download <session-id>` return a zip with this layout:
 
 ```text
 manifest.json

@@ -48,22 +48,30 @@ describe("managed-only provider surface (published package)", () => {
     });
   });
 
-  it("AgentExecutor.submit rejects removed options before any HTTP call", async () => {
+  it("openSession rejects removed legacy options before any HTTP call", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      const fields = ["runtime", "region", "credentialMode", "apiKey", "credentials"];
+      // The one-shot/submit surface folded into sessions: these fields are the
+      // legacy submit inputs that no longer exist on the session API. Each must
+      // be rejected at the SDK boundary before any HTTP call.
+      const fields = ["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentRunId"];
       const results = [];
       for (const field of fields) {
         try {
-          await client.submit({
+          await client.openSession({
             provider: "anthropic",
             model: "claude-haiku-4-5",
-            prompt: "hi",
-            secrets: { apiKeys: { anthropic: "sk-ant-test" } },
-            [field]: field === "credentials" ? { anthropic: "sk-ant-test" } : "managed"
+            apiKeys: { anthropic: "sk-ant-test" },
+            [field]: field === "secrets"
+              ? { apiKeys: { anthropic: "sk-ant-test" } }
+              : field === "limits"
+                ? { maxConcurrentChildRuns: 2 }
+                : field === "runtimeSize"
+                  ? "shared-2x-8gb"
+                  : "unsupported"
           });
           results.push({ field, caught: false });
         } catch (err) {
@@ -76,11 +84,11 @@ describe("managed-only provider surface (published package)", () => {
     expect(exitCode, stderr).toBe(0);
     const out = JSON.parse(stdout.trim()) as { results: Array<{ field: string; caught: boolean; message: string }>; fetchCalls: number };
     expect(out.fetchCalls).toBe(0);
-    expect(out.results.map((result) => result.field)).toEqual(["runtime", "region", "credentialMode", "apiKey", "credentials"]);
+    expect(out.results.map((result) => result.field)).toEqual(["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentRunId"]);
     expect(out.results.every((result) => result.caught && result.message.includes("not a supported option"))).toBe(true);
   });
 
-  it("AgentExecutor.submit posts canonical secrets.apiKeys only", async () => {
+  it("sessions.create posts canonical top-level apiKeys secrets only", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
       const requests = [];
@@ -89,35 +97,32 @@ describe("managed-only provider surface (published package)", () => {
         if (typeof body !== "string" && body) body = await new Response(body).text();
         requests.push({ url: typeof url === "string" ? url : url.toString(), method: init?.method, body });
         return new Response(JSON.stringify({
-          id: "run_test_user_e2e",
-          workspaceId: "ws_t",
-          status: "queued",
-          createdAt: new Date().toISOString()
-        }), { status: 202, headers: { "content-type": "application/json" } });
+          session: { id: "sess_test_user_e2e", status: "idle", turnSeq: 0 }
+        }), { status: 201, headers: { "content-type": "application/json" } });
       };
       const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
-      await client.submit({
+      await client.sessions.create({
         provider: "anthropic",
         model: "claude-haiku-4-5",
-        prompt: "test",
-        secrets: { apiKeys: { anthropic: "sk-ant-test-12345" } }
+        apiKeys: { anthropic: "sk-ant-test-12345" }
       });
-      const submitBody = JSON.parse(requests[0].body);
+      const createBody = JSON.parse(requests[0].body);
       console.log(JSON.stringify({
         url: requests[0].url,
         method: requests[0].method,
-        provider: submitBody.provider,
-        hasRuntime: "runtime" in submitBody,
-        hasRegion: "region" in submitBody,
-        secrets: submitBody.secrets
+        provider: createBody.provider,
+        hasRuntimeSize: "runtimeSize" in createBody,
+        hasRegion: "region" in createBody,
+        secrets: createBody.secrets
       }));
     `;
-    const { exitCode, stdout, stderr } = await runChild(script, "client-canonical-submit.mjs");
+    const { exitCode, stdout, stderr } = await runChild(script, "client-canonical-create.mjs");
     expect(exitCode, stderr).toBe(0);
     expect(JSON.parse(stdout.trim())).toMatchObject({
+      url: expect.stringContaining("/api/sessions"),
       method: "POST",
       provider: "anthropic",
-      hasRuntime: false,
+      hasRuntimeSize: false,
       hasRegion: false,
       secrets: { apiKeys: { anthropic: "sk-ant-test-12345" } }
     });

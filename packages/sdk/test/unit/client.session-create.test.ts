@@ -86,6 +86,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
         { status: 201, headers: { "content-type": "application/json" } }
       );
     }
+    // Session create (POST /api/sessions) and any other read.
     return new Response(
       JSON.stringify({ id: "run_test", status: "queued" }),
       { status: 200, headers: { "content-type": "application/json" } }
@@ -94,8 +95,12 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
   return { fetch: stub, calls };
 }
 
-describe("AgentExecutor.submit (flat surface, wire shape)", () => {
-  it("builds the flat submission and routes MCP headers into secrets", async () => {
+function idempotencyHeader(call: CapturedRequest): string | undefined {
+  return call.headers["Idempotency-Key"] ?? call.headers["idempotency-key"];
+}
+
+describe("Aex.openSession — session-create wire shape", () => {
+  it("builds the session-create submission and routes MCP headers into secrets", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({
       apiToken: "tkn_test",
@@ -103,10 +108,9 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       fetch
     });
 
-    const runId = await client.submit({
+    const session = await client.openSession({
       model: "claude-haiku-4-5",
       system: "You are tidy.",
-      prompt: "do work",
       outputMode: "stream",
       mcpServers: [
         McpServer.remote({
@@ -116,27 +120,30 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
         }),
         McpServer.remote({ name: "noauth", url: "https://mcp.example/noauth" })
       ],
-      secrets: { apiKeys: { anthropic: "sk-test" } },
+      apiKeys: { anthropic: "sk-test" },
       idempotencyKey: "idem_unit"
     });
 
-    expect(runId).toBe("run_test");
+    expect(session.id).toBe("run_test");
     expect(calls).toHaveLength(1);
     const call = calls[0]!;
     expect(call.method).toBe("POST");
-    expect(call.url).toBe("https://example.test/api/runs");
+    expect(call.url).toBe("https://example.test/api/sessions");
     expect(call.headers["authorization"] ?? call.headers["Authorization"]).toBe("Bearer tkn_test");
+    // The idempotency key rides the header, not the body.
+    expect(idempotencyHeader(call)).toBe("idem_unit");
 
     const body = call.body as Record<string, unknown>;
-    expect(body.idempotencyKey).toBe("idem_unit");
-    expect("cleanup" in body).toBe(false);
+    // Session retention is always present on the create body.
+    expect(body.retention).toEqual({ idleTtl: "3m" });
 
     const submission = body.submission as Record<string, unknown>;
     expect(submission.model).toBe("claude-haiku-4-5");
     expect(submission.outputMode).toBe("stream");
     expect(submission.system).toBe("You are tidy.");
-    expect(submission.prompt).toEqual(["do work"]);
     expect(submission.skills).toEqual([]);
+    // The one-shot message travels via /messages, never the create submission.
+    expect("prompt" in submission).toBe(false);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://mcp.example/github" },
       { name: "noauth", url: "https://mcp.example/noauth" }
@@ -153,56 +160,19 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         model: "claude-haiku-4-5",
-        prompt: "p",
-        secrets: { apiKeys: { anthropic: "" } }
+        apiKeys: { anthropic: "" }
       })
-    ).rejects.toThrow(/AgentExecutor\.submit: a provider API key is required/);
-  });
-
-  it("rejects removed provider-key sugar without posting", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await expect(
-      client.submit({
-        model: "claude-haiku-4-5",
-        prompt: "p",
-        apiKey: "sk-one"
-      } as never)
-    ).rejects.toThrow(/apiKey is not a supported option/);
-    expect(calls).toHaveLength(0);
-  });
-
-  it("rejects removed runtime and region choice fields without posting", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await expect(
-      client.submit({
-        model: "claude-haiku-4-5",
-        prompt: "p",
-        runtime: "managed",
-        secrets: { apiKeys: { anthropic: "k" } }
-      } as never)
-    ).rejects.toThrow(/runtime is not a supported option/);
-    await expect(
-      client.submit({
-        model: "claude-haiku-4-5",
-        prompt: "p",
-        region: "us-west",
-        secrets: { apiKeys: { anthropic: "k" } }
-      } as never)
-    ).rejects.toThrow(/region is not a supported option/);
-    expect(calls).toHaveLength(0);
+    ).rejects.toThrow(/Aex\.openSession: a provider API key is required/);
   });
 
   it("serializes outputs when only capture overrides are supplied", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       outputs: {
         captureTimeoutMs: 120000,
         maxFileBytes: 1_000_000_000_000,
@@ -238,15 +208,14 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       }
     });
 
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       tools: [tool],
-      secrets: { apiKeys: { anthropic: "k" } }
+      apiKeys: { anthropic: "k" }
     });
 
-    const submitCall = calls.find((call) => call.url === "https://x/api/runs")!;
-    const body = submitCall.body as Record<string, unknown>;
+    const createCall = calls.find((call) => call.url === "https://x/api/sessions")!;
+    const body = createCall.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
     expect(submission.tools).toEqual([
       {
@@ -263,17 +232,16 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       }
     ]);
 
-    // The draft is reusable across submits: a second submit reuses the cached
+    // The draft is reusable across sessions: a second create reuses the cached
     // asset id (no re-upload) and produces the identical wire ref.
     calls.length = 0;
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p2",
       tools: [tool],
-      secrets: { apiKeys: { anthropic: "k" } }
+      apiKeys: { anthropic: "k" }
     });
     expect(calls.some((c) => c.url.endsWith("/assets/presign"))).toBe(false);
-    const second = calls.find((c) => c.url === "https://x/api/runs")!.body as Record<string, unknown>;
+    const second = calls.find((c) => c.url === "https://x/api/sessions")!.body as Record<string, unknown>;
     expect((second.submission as Record<string, unknown>).tools).toEqual([
       {
         kind: "asset",
@@ -301,17 +269,16 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
       files: { "index.js": "export default async () => ({ content: [] });\n" }
     });
 
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       includeBuiltinTools: false,
       // BuiltinTools.notebook_edit is just the name string "notebook_edit".
       tools: [BuiltinTools.notebook_edit, tool],
-      secrets: { apiKeys: { anthropic: "k" } }
+      apiKeys: { anthropic: "k" }
     });
 
-    const submitCall = calls.find((call) => call.url === "https://x/api/runs")!;
-    const submission = (submitCall.body as Record<string, unknown>).submission as Record<string, unknown>;
+    const createCall = calls.find((call) => call.url === "https://x/api/sessions")!;
+    const submission = (createCall.body as Record<string, unknown>).submission as Record<string, unknown>;
     expect(submission.includeBuiltinTools).toBe(false);
     // Builtin string refs first, then the custom tool ref object.
     const wireTools = submission.tools as unknown[];
@@ -319,14 +286,13 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect((wireTools[1] as { name: string }).name).toBe("calendar_lookup");
   });
 
-  it("submits DeepSeek provider runs with per-provider apiKeys", async () => {
+  it("creates DeepSeek provider sessions with per-provider apiKeys", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
+    await client.openSession({
       provider: "deepseek",
       model: "deepseek-v4-flash",
-      prompt: "p",
-      secrets: { apiKeys: { deepseek: "sk-ds-test" } },
+      apiKeys: { deepseek: "sk-ds-test" },
       idempotencyKey: "idem-deepseek"
     });
 
@@ -347,7 +313,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     for (const [model, expectedProvider] of cases) {
       const { fetch, calls } = makeStubFetch();
       const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-      await client.submit({ model, prompt: "p", secrets: { apiKeys: { [expectedProvider]: "sk-x" } } });
+      await client.openSession({ model, apiKeys: { [expectedProvider]: "sk-x" } });
       const body = calls[0]!.body as Record<string, unknown>;
       expect(body.provider, `model ${model}`).toBe(expectedProvider);
     }
@@ -357,11 +323,10 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         provider: "anthropic",
         model: "gpt-4.1",
-        prompt: "p",
-        secrets: { apiKeys: { anthropic: "sk-x" } }
+        apiKeys: { anthropic: "sk-x" }
       })
     ).rejects.toThrow(/is not available for model "gpt-4\.1" \(supported: openai\)/);
   });
@@ -372,11 +337,10 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     // gpt-4o-mini is served by openai (default) and openrouter; the canonical
     // model id is sent on the wire untranslated — the platform maps it to the
     // provider-native id (openrouter → "openai/gpt-4o-mini").
-    await client.submit({
+    await client.openSession({
       provider: "openrouter",
       model: Models.GPT_4O_MINI,
-      prompt: "p",
-      secrets: { apiKeys: { openrouter: "sk-or-test" } }
+      apiKeys: { openrouter: "sk-or-test" }
     });
     const body = calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("openrouter");
@@ -386,11 +350,10 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
   it("includes webhook on the top-level request body when supplied", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       webhook: { url: "https://hooks.example.com/aex" },
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-webhook"
     });
 
@@ -401,10 +364,9 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
   it("omits webhook from the request body when not supplied", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-no-webhook"
     });
 
@@ -412,142 +374,38 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect("webhook" in body).toBe(false);
   });
 
-  it("includes limits on the top-level request body when supplied", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      limits: { maxConcurrentChildRuns: 200, maxSubagentDepth: 3 },
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "idem-limits"
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.limits).toEqual({ maxConcurrentChildRuns: 200, maxSubagentDepth: 3 });
-    // Operational dial: lives top-level, not inside the hashed submission.
-    expect("limits" in (body.submission as Record<string, unknown>)).toBe(false);
-  });
-
-  it("omits limits from the request body when not supplied", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "idem-no-limits"
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect("limits" in body).toBe(false);
-  });
-
-  it("passes a partial (single-field) limits override through verbatim", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      limits: { maxSubagentDepth: 4 },
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "idem-limits-partial"
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    // Verbatim: the SDK spreads the option as-is (no field injected/dropped),
-    // and it lives top-level, not inside the hashed submission.
-    expect(body.limits).toEqual({ maxSubagentDepth: 4 });
-    expect("limits" in (body.submission as Record<string, unknown>)).toBe(false);
-  });
-
-  it("rejects an invalid limits override before posting (fail fast)", async () => {
+  it("rejects an empty one-shot message before any HTTP request", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.run({
         model: "claude-haiku-4-5",
-        prompt: "p",
-        limits: { maxConcurrentChildRuns: 0 },
-        secrets: { apiKeys: { anthropic: "k" } }
-      } as never)
-    ).rejects.toThrow(/AgentExecutor\.submit: limits\.maxConcurrentChildRuns must be a positive/);
-    expect(calls).toHaveLength(0);
-  });
-
-  it("rejects an unknown limits subfield before posting (fail fast)", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await expect(
-      client.submit({
-        model: "claude-haiku-4-5",
-        prompt: "p",
-        limits: { maxDepth: 5 },
-        secrets: { apiKeys: { anthropic: "k" } }
-      } as never)
-    ).rejects.toThrow(/AgentExecutor\.submit: limits\.maxDepth is not an allowed field/);
-    expect(calls).toHaveLength(0);
-  });
-
-  it("normalizes an empty limits override away (no limits key on the body)", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      limits: {},
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "idem-limits-empty"
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect("limits" in body).toBe(false);
-  });
-
-  it("rejects empty prompts", async () => {
-    const { fetch } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await expect(
-      client.submit({
-        model: "claude-haiku-4-5",
-        prompt: "",
-        secrets: { apiKeys: { anthropic: "k" } }
+        message: "",
+        apiKeys: { anthropic: "k" }
       })
-    ).rejects.toThrow(/prompt/);
+    ).rejects.toThrow(/message must be a non-empty string/);
+    expect(calls).toHaveLength(0);
   });
 
-  it("accepts prompt arrays", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: ["one", "two"],
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "i"
-    });
-    const submission = (calls[0]!.body as Record<string, unknown>).submission as Record<string, unknown>;
-    expect(submission.prompt).toEqual(["one", "two"]);
-  });
-
-  it("rejects mismatched MCP urls between run request server and explicit secret", async () => {
+  it("rejects two same-named MCP servers whose urls conflict", async () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         model: "claude-haiku-4-5",
-        prompt: "p",
+        apiKeys: { anthropic: "k" },
         mcpServers: [
           McpServer.remote({
             name: "github",
             url: "https://a.example/github",
             headers: { Authorization: "Bearer t" }
+          }),
+          McpServer.remote({
+            name: "github",
+            url: "https://b.example/github",
+            headers: { Authorization: "Bearer u" }
           })
-        ],
-        secrets: { apiKeys: { anthropic: "k" } ,
-          mcpServers: [
-            { name: "github", url: "https://b.example/github", headers: { Authorization: "Bearer u" } }
-          ]
-        }
+        ]
       })
     ).rejects.toThrow(/conflicts/);
   });
@@ -556,11 +414,10 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         model: "claude-haiku-4-5",
-        prompt: "p",
         skills: [{ kind: "workspace", id: "skl_x" } as unknown as Skill],
-        secrets: { apiKeys: { anthropic: "k" } }
+        apiKeys: { anthropic: "k" }
       })
     ).rejects.toThrow(/skills\[0\] must be a Skill instance/);
   });
@@ -569,20 +426,19 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       agentsMd: [draft],
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-asset-agentsmd"
     });
-    // The draft staged through the content-addressable asset path before submit.
+    // The draft staged through the content-addressable asset path before create.
     expect(calls.some((c) => c.url.endsWith("/assets/presign"))).toBe(true);
     expect(calls.some((c) => c.url.includes("object-storage.example.test") && c.method === "PUT")).toBe(true);
     expect(calls.some((c) => c.url.endsWith("/assets/finalize"))).toBe(true);
-    const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
-    expect(runCalls).toHaveLength(1);
-    const body = runCalls[0]!.body as {
+    const createCalls = calls.filter((c) => c.url.endsWith("/api/sessions"));
+    expect(createCalls).toHaveLength(1);
+    const body = createCalls[0]!.body as {
       bootstrapMode?: unknown;
       directInputs?: unknown;
       submission: { agentsMd: ReadonlyArray<{ kind: string; name?: string; assetId?: string }> };
@@ -593,7 +449,7 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect(body.submission.agentsMd[0]!.assetId).toMatch(/^asset_[0-9a-f]{64}$/);
   });
 
-  it("auto-uploads draft Skill, AgentsMd, and File refs as assets before submitting", async () => {
+  it("auto-uploads draft Skill, AgentsMd, and File refs as assets before creating", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const skill = await Skill.fromFiles({
@@ -612,13 +468,12 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const agentsMdHash = agentsMd.ref.kind === "draft" ? agentsMd.ref.contentHash : "";
     const fileHash = file.ref.kind === "draft" ? file.ref.contentHash : "";
 
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       skills: [skill],
       agentsMd: [agentsMd],
       files: [file],
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-assets"
     });
 
@@ -627,21 +482,21 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const presignCalls = calls.filter((c) => c.url.endsWith("/assets/presign"));
     const storagePutCalls = calls.filter((c) => c.url.includes("object-storage.example.test") && c.method === "PUT");
     const finalizeCalls = calls.filter((c) => c.url.endsWith("/assets/finalize"));
-    const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
+    const createCalls = calls.filter((c) => c.url.endsWith("/api/sessions"));
     expect(presignCalls).toHaveLength(3);
     expect(storagePutCalls).toHaveLength(3);
     expect(finalizeCalls).toHaveLength(3);
-    expect(runCalls).toHaveLength(1);
+    expect(createCalls).toHaveLength(1);
 
-    const runBody = runCalls[0]!.body as {
+    const createBody = createCalls[0]!.body as {
       bootstrapMode?: unknown;
       directInputs?: unknown;
       submission: Record<string, unknown>;
     };
-    expect("bootstrapMode" in runBody).toBe(false);
-    expect("directInputs" in runBody).toBe(false);
+    expect("bootstrapMode" in createBody).toBe(false);
+    expect("directInputs" in createBody).toBe(false);
 
-    const submission = runBody.submission;
+    const submission = createBody.submission;
     const assetRef = (name: string, hash: string, extra: Record<string, string> = {}) => {
       return {
         kind: "asset",
@@ -673,28 +528,27 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const assetCallsBefore = calls.filter((c) => c.url.includes("/assets")).length;
     expect(assetCallsBefore).toBeGreaterThan(0);
 
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       skills: [uploaded],
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-preuploaded"
     });
 
-    const runCalls = calls.filter((c) => c.url.endsWith("/api/runs"));
-    expect(runCalls).toHaveLength(1);
-    const runBody = runCalls[0]!.body as {
+    const createCalls = calls.filter((c) => c.url.endsWith("/api/sessions"));
+    expect(createCalls).toHaveLength(1);
+    const createBody = createCalls[0]!.body as {
       bootstrapMode?: unknown;
       directInputs?: unknown;
       submission: { skills: ReadonlyArray<Record<string, unknown>> };
     };
     // A pre-uploaded skill submits as a plain asset ref — no direct bootstrap.
-    expect("bootstrapMode" in runBody).toBe(false);
-    expect("directInputs" in runBody).toBe(false);
-    expect(runBody.submission.skills).toEqual([
+    expect("bootstrapMode" in createBody).toBe(false);
+    expect("directInputs" in createBody).toBe(false);
+    expect(createBody.submission.skills).toEqual([
       { kind: "asset", assetId: `asset_${draftHex}`, name: "rules" }
     ]);
-    // Submit performed no bootstrap round-trips.
+    // Create performed no bootstrap round-trips.
     expect(calls.filter((c) => c.url.includes("bootstrap")).length).toBe(0);
   });
 
@@ -704,11 +558,10 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const draft = await Skill.fromFiles({ name: "rules", files: { "SKILL.md": "# rules\n" } });
     const draftHex = draft.ref.kind === "draft" ? draft.ref.contentHash.slice("sha256:".length) : "";
 
-    await client.submit({
+    await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
       skills: [draft],
-      secrets: { apiKeys: { anthropic: "k" } },
+      apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-draft-inline"
     });
 
@@ -716,14 +569,14 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect(calls.some((c) => c.url.endsWith("/assets/presign"))).toBe(true);
     expect(calls.some((c) => c.url.includes("object-storage.example.test") && c.method === "PUT")).toBe(true);
     expect(calls.some((c) => c.url.endsWith("/assets/finalize"))).toBe(true);
-    const runBody = calls.find((c) => c.url.endsWith("/api/runs"))!.body as {
+    const createBody = calls.find((c) => c.url.endsWith("/api/sessions"))!.body as {
       bootstrapMode?: unknown;
       directInputs?: unknown;
       submission: { skills: ReadonlyArray<Record<string, unknown>> };
     };
-    expect("bootstrapMode" in runBody).toBe(false);
-    expect("directInputs" in runBody).toBe(false);
-    expect(runBody.submission.skills).toEqual([
+    expect("bootstrapMode" in createBody).toBe(false);
+    expect("directInputs" in createBody).toBe(false);
+    expect(createBody.submission.skills).toEqual([
       { kind: "asset", assetId: `asset_${draftHex}`, name: "rules" }
     ]);
   });
@@ -732,11 +585,10 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     const { fetch } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.submit({
+      client.openSession({
         model: "claude-haiku-4-5",
-        prompt: "p",
         agentsMd: [{ kind: "not_asset", id: "amd_x" } as unknown as AgentsMd],
-        secrets: { apiKeys: { anthropic: "k" } }
+        apiKeys: { anthropic: "k" }
       })
     ).rejects.toThrow(/agentsMd\[0\] must be an AgentsMd instance/);
   });

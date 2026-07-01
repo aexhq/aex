@@ -24,7 +24,7 @@ export interface SecretUploader {
  * EPHEMERAL per-run by default, PROMOTABLE to a persisted, name-searchable
  * workspace secret you can reference and reuse.
  *
- *   - `Secret.value(v)` — EPHEMERAL per-run: the value is vaulted at submit and
+ *   - `Secret.value(v)` — EPHEMERAL per-run: the value is vaulted when the session is created and
  *     excluded from the idempotency hash; only a `{ ephemeral: true }`
  *     placeholder rides the (hashed) submission. Deleted when the run finishes.
  *     Clean, no workspace dependency. ≙ `Skill.fromFiles(...)` (a draft).
@@ -66,7 +66,7 @@ export class Secret {
     this.#value = args.value;
   }
 
-  /** Ephemeral per-run value. Vaulted at submit; never in the spec/hash; gone at terminal. */
+  /** Ephemeral per-run value. Vaulted when the session is created; never in the spec/hash; gone at terminal. */
   static value(value: string | SecretString): Secret {
     const wrapped = value instanceof SecretString ? value : new SecretString(value, "secret");
     if (!wrapped.unwrap()) {
@@ -75,7 +75,7 @@ export class Secret {
     return new Secret({ kind: "value", value: wrapped });
   }
 
-  /** Reference a workspace secret by handle; resolved server-side at submit. */
+  /** Reference a workspace secret by handle; resolved server-side when the session is created. */
   static ref(handle: string): Secret {
     return new Secret({ kind: "ref", handle });
   }

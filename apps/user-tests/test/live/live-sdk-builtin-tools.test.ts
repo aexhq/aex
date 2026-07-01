@@ -111,27 +111,21 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const runId = await client.submit({
+    const result = await client.run({
       provider: ${JSON.stringify(cell.provider)},      model: ${JSON.stringify(cell.model)},
-      prompt: ${JSON.stringify(prompt)},
+      message: ${JSON.stringify(prompt)},
       includeBuiltinTools: ${includeBuiltinToolsLiteral},
-      secrets: { apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} } },
+      apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
-    });
+    }, { timeoutMs: 5 * 60_000 });
+    const runId = result.runId;
+    const run = {
+      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      runtime: "managed",
+      provider: ${JSON.stringify(cell.provider)}
+    };
 
-    const deadline = Date.now() + 5 * 60_000;
-    let run = null;
-    while (Date.now() < deadline) {
-      run = await client.getRun(runId);
-      if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") break;
-      await new Promise((r) => setTimeout(r, 2_500));
-    }
-    if (!run || (run.status !== "succeeded" && run.status !== "failed" && run.status !== "cancelled")) {
-      process.stderr.write(JSON.stringify({ kind: "timeout", run }, null, 2));
-      process.exit(2);
-    }
-
-    const events = await client.listEvents(runId);
+    const events = Array.isArray(result.events) ? result.events : [];
 
     const toolRequestNames = events
       .filter((e) => e.type === "TOOL_CALL_START")

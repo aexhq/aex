@@ -10,51 +10,47 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   return { fetch: f, calls };
 }
 
-describe("AgentExecutor.submit — removed field validation", () => {
-  it("rejects credentialMode without an HTTP call", async () => {
+describe("Aex.openSession — removed field validation", () => {
+  it("rejects the legacy runtimeSize field without an HTTP call", async () => {
     const rec = recordingFetch();
     const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.submit({
-        credentialMode: "managed",
+      client.openSession({
+        runtimeSize: "shared-1x-4gb",
         model: "claude-haiku-4-5",
-        prompt: "hi",
+        apiKeys: { anthropic: "sk-x" }
+      } as never)
+    ).rejects.toThrow(/runtimeSize is not a supported option; use runtime/);
+
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("rejects the legacy secretEnv field without an HTTP call", async () => {
+    const rec = recordingFetch();
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        secretEnv: { SERPER_API_KEY: { ref: "serper" } }
+      } as never)
+    ).rejects.toThrow(/secretEnv is not a supported option; use environment\.secrets/);
+
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("rejects the legacy nested secrets object without an HTTP call", async () => {
+    const rec = recordingFetch();
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
         secrets: { apiKeys: { anthropic: "sk-x" } }
-      } as unknown as Parameters<AgentExecutor["submit"]>[0])
-    ).rejects.toThrow(/credentialMode is not a supported option/);
-
-    expect(rec.calls).toHaveLength(0);
-  });
-
-  it("rejects runtime without an HTTP call", async () => {
-    const rec = recordingFetch();
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
-
-    await expect(
-      client.submit({
-        provider: "deepseek",
-        runtime: "native",
-        model: "deepseek-v4-flash",
-        prompt: "hi",
-        secrets: { apiKeys: { deepseek: "sk-x" } }
-      } as unknown as Parameters<AgentExecutor["submit"]>[0])
-    ).rejects.toThrow(/runtime is not a supported option/);
-
-    expect(rec.calls).toHaveLength(0);
-  });
-
-  it("rejects secrets.apiKey without an HTTP call", async () => {
-    const rec = recordingFetch();
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
-
-    await expect(
-      client.submit({
-        model: "claude-haiku-4-5",
-        prompt: "hi",
-        secrets: { apiKey: "sk-x" }
-      } as unknown as Parameters<AgentExecutor["submit"]>[0])
-    ).rejects.toThrow(/secrets\.apiKey is not supported/);
+      } as never)
+    ).rejects.toThrow(/secrets is not a supported option/);
 
     expect(rec.calls).toHaveLength(0);
   });

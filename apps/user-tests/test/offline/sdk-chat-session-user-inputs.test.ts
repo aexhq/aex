@@ -328,8 +328,8 @@ await session.cancel({ idempotencyKey: "idem-cancel" });
 await session.resume({ idempotencyKey: "idem-resume" });
 await client.sessions.get(session.id);
 await client.sessions.list({ status: "idle", limit: 5 });
-await session.listEvents();
-await session.listOutputs({ filename: "answer.txt" });
+await session.events().list();
+await session.outputs().list({ filename: "answer.txt" });
 await session.delete({ idempotencyKey: "idem-delete" });
 
 strictEqual(onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/suspend").headers["idempotency-key"], "idem-suspend");
@@ -395,11 +395,11 @@ await expectReject("removed postHook", () => client.openSession({
   postHook: { command: "bun test" },
   apiKeys: { anthropic: "sk-ant" }
 }), /postHook is not a supported option/);
-await expectReject("removed webhook", () => client.openSession({
+await expectReject("removed runtimeSize", () => client.openSession({
   model: "claude-haiku-4-5",
-  webhook: { url: "https://hooks.example.test/aex" },
+  runtimeSize: "shared-0.06x-256mb",
   apiKeys: { anthropic: "sk-ant" }
-}), /webhook|not a supported option|unexpected/i);
+}), /runtimeSize is not a supported option/);
 await expectReject("removed idleSuspendAfter override", () => client.openSession({
   model: "claude-haiku-4-5",
   overrides: { idleSuspendAfter: "3m" },

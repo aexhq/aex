@@ -4,6 +4,54 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.34.0
+
+### Changed (breaking)
+
+- Sessions are now the low-level API and `run()` is the one-shot convenience
+  wrapper over them. Open a session with `aex.openSession(options)`, drive it with
+  `session.send(...).done()`, and resume it later with
+  `aex.openSession(sessionId)`. A `SessionHandle` keeps lifecycle verbs flat
+  (`send`, `suspend`, `resume`, `cancel`, `delete`, `refresh`, `wait`, `unit`,
+  `download` / `downloadMetadata`) and groups its reads/streams/downloads into
+  accessor sub-resources: `session.messages()`, `session.events()`,
+  `session.outputs()`, and `session.webhooks()`. Each read accessor exposes
+  `list()` / `last()` / `first()`, with `events()` adding `stream()` /
+  `streamEnvelopes()` / `archiveLink()` / `download()`, `outputs()` adding
+  `read()` / `find()` / `findOne()` / `link()` / `fetch()` / `download()`, and
+  `webhooks()` adding `redeliver()`. (e.g. `session.listEvents()` is now
+  `session.events().list()`; "get the last message" is
+  `await session.messages().last()`.)
+- Moved workspace/session reads onto `aex.sessions`: `list(query)` (returns
+  `{ sessions, nextCursor }`), `get(id)`, `outputs(id)`, `readOutput(id, sel)`,
+  and `searchOutputs(query)`.
+- Renamed submission options: provider keys move to a top-level `apiKeys` map
+  (was `secrets.apiKeys`); `prompt` becomes `run({ message })` / `session.send()`;
+  `secretEnv` becomes `environment.secrets`; `runtimeSize` becomes `runtime`;
+  `timeout` becomes `overrides.timeout`.
+- Moved webhooks onto sessions: pass `webhook: { url }` to `openSession` / `run`
+  and inspect delivery with `session.webhookDeliveries()` /
+  `session.redeliverWebhook(id)`. Verify inbound deliveries with
+  `verifyAexWebhook`.
+- Renamed the data-source chat tools to session vocabulary: `list_runs` →
+  `list_sessions`, `get_run` → `get_session`, and their `run_id` argument →
+  `session_id` (`list_outputs` / `read_output` / `search_outputs` keep their
+  names). `ChatCorpus.runIds` → `sessionIds`.
+
+### Removed
+
+- Removed `submit()` and the entire run-id-addressed client surface
+  (`wait` / `stream` / `streamEnvelopes` / `getRun` / `getRunUnit` / `listRuns` /
+  `listOutputs` / `readOutputText` / `download*` / `cancel` / `searchOutputs` /
+  `getRunWebhookDeliveries` / `redeliverRunWebhook` on the client). Use the
+  session-handle and `aex.sessions.*` equivalents.
+- Removed the `RuntimeSizes` export; use the `Sizes` symbol const (e.g.
+  `Sizes.SHARED_0_25X_1GB`).
+- Removed the `parentRunId` and `limits` submission options. Subagents run
+  in-process; use `overrides` (e.g. `overrides.maxSpendUsd`) for per-session caps.
+- Removed the `SubmitOptions`, `RunListPage`, `RunListQuery`, and `RunSummary`
+  types.
+
 ## 0.33.1
 
 ### Fixed

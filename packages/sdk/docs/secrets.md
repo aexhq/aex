@@ -16,14 +16,14 @@ provider key, such as `ANTHROPIC_API_KEY` for Claude.
 ### TypeScript
 
 ```ts
-import { AgentExecutor, Models } from "@aexhq/sdk";
+import { Aex, Models } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
-await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Write a short report and save it as a file.",
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  message: "Write a short report and save it as a file.",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -43,20 +43,20 @@ Use `Secret.value(...).upload(...)` when you start with an ephemeral value and
 want to persist it as a named workspace secret for later runs.
 
 ```ts
-import { AgentExecutor, Models, Providers, Secret } from "@aexhq/sdk";
+import { Aex, Models, Providers, Secret } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
 const githubToken = await Secret.value(process.env.GITHUB_TOKEN!).upload(aex, {
   name: "github-token"
 });
 
-await aex.submit({
+await aex.run({
   provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Inspect the repository issues.",
-  secretEnv: { GITHUB_TOKEN: githubToken },
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  message: "Inspect the repository issues.",
+  environment: { secrets: { GITHUB_TOKEN: githubToken } },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
@@ -104,14 +104,14 @@ server-side and is injected as the named environment variable.
 ```ts
 import { Models, Providers, Secret } from "@aexhq/sdk";
 
-await aex.submit({
+await aex.run({
   provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Use SERPER_API_KEY for web search.",
-  secretEnv: {
-    SERPER_API_KEY: Secret.ref("serper-api-key")
+  message: "Use SERPER_API_KEY for web search.",
+  environment: {
+    secrets: { SERPER_API_KEY: Secret.ref("serper-api-key") }
   },
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 

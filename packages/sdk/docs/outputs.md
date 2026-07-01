@@ -4,42 +4,48 @@ title: Outputs
 
 # Outputs
 
-Every run produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the run creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `aex.download(runId)` returns the public run record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`downloadOutputs` / `downloadEvents` / `downloadMetadata`) return one slice each.
+Every session produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the agent creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `session.download()` returns the public session record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`session.outputs().download()` / `session.events().download()` / `session.downloadMetadata()`) return one slice each.
+
+The output verbs below hang off the session's `outputs()` accessor
+(`session.outputs().list()`, `.read()`, `.download()`, …). Reach a handle from a
+live session (`openSession` / `run`) or reopen one later with
+`aex.openSession(sessionId)`; the client also exposes cross-session reads under
+`aex.sessions.*`.
 
 ## Quickstart
 
 ```ts
 import { Models } from "@aexhq/sdk";
 
-const runId = await aex.submit({
+const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Produce a report and save it as a file.",
-  secrets: { apiKeys: { anthropic: apiKey } }
+  apiKeys: { anthropic: apiKey }
 });
 
-await aex.wait(runId);
-await aex.download(runId, { to: "./run.zip" });
+await session.send("Produce a report and save it as a file.").done();
+await session.wait();
+await session.download({ to: "./session.zip" });
 ```
 
 ```bash
-aex download <run-id> --out ./run.zip --api-token …
+aex download <session-id> --out ./session.zip --api-token …
 ```
 
 ## The three namespaces
 
-A run's downloadable content is organised into three logical namespaces, each with a matching verb. Every zip is assembled **client-side** from the public read endpoints (`getRun` + `listEvents` + `listOutputs` + per-output `/download`) — there is no server-side archive route.
+A session's downloadable content is organised into three logical namespaces, each with a matching verb. Every zip is assembled **client-side** from the public read endpoints (session record + `session.events().list()` + `session.outputs().list()` + per-output `/download`) — there is no server-side archive route.
 
 | Namespace | What it holds | Verb | CLI |
 | --- | --- | --- | --- |
-| `outputs` | The run's real deliverables. | `downloadOutputs(runId)` | `download <id> --only outputs` |
-| `events` | Typed event-channel records (`events.jsonl`). | `downloadEvents(runId)` | `download <id> --only events` |
-| `metadata` | The run record (`run.json`). | `downloadMetadata(runId)` | `download <id> --only metadata` |
+| `outputs` | The session's real deliverables. | `session.outputs().download()` | `download <id> --only outputs` |
+| `events` | Typed event-channel records (`events.jsonl`). | `session.events().download()` | `download <id> --only events` |
+| `metadata` | The session record (`run.json`). | `session.downloadMetadata()` | `download <id> --only metadata` |
 
 Platform diagnostics are stored outside the public archive under `runs/<runId>/internal/logs/` for internal/admin access only. They are not exposed by the SDK download helpers or the public CLI.
 
-## What `download()` returns
+## What `session.download()` returns
 
-`download(runId)` is the **whole-run** verb — it bundles the public namespaces as top-level folders. It is distinct from `downloadOutput(runId, selector)`, which fetches a single file. Layout:
+`session.download()` is the **whole-session** verb — it bundles the public namespaces as top-level folders. It is distinct from `session.outputs().download(selector)`, which fetches a single file. Layout:
 
 ```
 metadata/run.json     # run record (status, runId, timestamps, snapshot)
@@ -60,30 +66,29 @@ manifest.json         # RunRecordManifestV1
 | `outputs[]` | `{ id, filename, sizeBytes?, contentType? }` — one row per file successfully written under `outputs/`. |
 | `errors[]` | `{ namespace, id, filename, message }` — per-artifact byte fetches that failed during assembly. Best-effort: a failure records an entry here and is skipped from the tree rather than aborting the whole zip. |
 
-The single-namespace verbs return the same per-file bytes at the zip root (e.g. `downloadOutputs(runId)` -> `report.txt` + a `manifest.json`; `downloadEvents(runId)` -> `events.jsonl`).
+The single-namespace verbs return the same per-file bytes at the zip root (e.g. `session.outputs().download()` -> `report.txt` + a `manifest.json`; `session.events().download()` -> `events.jsonl`).
 
 ## Downloading one output
 
-`downloadOutput(runId, selector)` returns a `Uint8Array`. Omit the selector to download the whole outputs namespace as a zip; pass an output from `aex.outputs(runId)`, an `{ id }`, or a path selector against the listed `Output.filename` values to download one file:
+`session.outputs().download(selector)` returns a `Uint8Array`. Omit the selector to download the whole outputs namespace as a zip; pass an output from `session.outputs().list()`, an `{ id }`, or a path selector against the listed `Output.filename` values to download one file:
 
 ```ts
-const allOutputs = await aex.downloadOutput(runId);
-await aex.downloadOutput(runId, undefined, { to: "./outputs.zip" });
+const allOutputs = await session.outputs().download();
+await session.outputs().download(undefined, { to: "./outputs.zip" });
 
-const report = await aex.downloadOutput(runId, { path: "reports/report.txt" });
+const report = await session.outputs().download({ path: "reports/report.txt" });
 console.log(new TextDecoder().decode(report));
 
-const looseReport = await aex.downloadOutput(runId, { path: "report.txt", match: "suffix" });
+const looseReport = await session.outputs().download({ path: "report.txt", match: "suffix" });
 console.log(looseReport.byteLength);
 ```
 
 ## Reading one output as text
 
-`readOutputText(runId, selector, options?)` reads ONE output file as byte-capped, decoded UTF-8 text. It streams the file and stops at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a large deliverable never fully buffers — this is the read built for handing a run's output to an LLM tool. Select the file the same way as `downloadOutput`: by `{ path }` (suffix-matchable) or `{ id }`.
+`session.outputs().read(selector, options?)` reads ONE output file as byte-capped, decoded UTF-8 text. It streams the file and stops at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a large deliverable never fully buffers — this is the read built for handing a session's output to an LLM tool. Select the file by `{ path }` (suffix-matchable) or `{ id }`. To read from a session id without a live handle, use `aex.sessions.readOutput(sessionId, selector, options?)`.
 
 ```ts
-const { text, truncated, totalBytes } = await aex.readOutputText(
-  runId,
+const { text, truncated, totalBytes } = await session.outputs().read(
   { path: "report.md", match: "suffix" },
   { maxBytes: 50_000, grep: "error" }
 );
@@ -97,25 +102,25 @@ Check `truncated` before treating `text` as complete. Pass `options.grep` (a sub
 
 ### Chatting over a workspace's outputs
 
-`createDataTools(client)` packages the read surface (`listRuns` + `listOutputs` + `readOutputText`) as a vendor-neutral LLM tool set (`{ tools, instructions, execute }`) so you can build a search-then-fetch chat over your runs and their outputs in a few lines on top of the public SDK. The `tools` are plain JSON-Schema definitions (the shape every major LLM tool API accepts); `execute(name, input)` dispatches a tool call against the workspace-scoped client. See the runnable `examples/data-chat/` example.
+`createDataTools(client)` packages the read surface (`sessions.list` + `sessions.outputs` + `sessions.readOutput`) as a vendor-neutral LLM tool set (`{ tools, instructions, execute }`) so you can build a search-then-fetch chat over your sessions and their outputs in a few lines on top of the public SDK. The `tools` are plain JSON-Schema definitions (the shape every major LLM tool API accepts); `execute(name, input)` dispatches a tool call against the workspace-scoped client. See the runnable `examples/data-chat/` example.
 
 ## Finding outputs
 
-`listOutputs(runId, query?)` and its alias `outputs(runId, query?)` can filter the captured output list client-side. Use `findOutputs` when you want discovery to be explicit, or `findOutput` when exactly one file is expected:
+`session.outputs().list(query?)` can filter the captured output list client-side. Use `session.outputs().find(query)` when you want discovery to be explicit, or `session.outputs().findOne(query)` when exactly one file is expected:
 
 ```ts
-const images = await aex.findOutputs(runId, { type: "image" });
-const jsonReports = await aex.outputs(runId, {
+const images = await session.outputs().find({ type: "image" });
+const jsonReports = await session.outputs().list({
   dir: "reports",
   extension: ".json"
 });
 
-const report = await aex.findOutput(runId, {
+const report = await session.outputs().findOne({
   filename: "summary.json",
   contentType: "application/json"
 });
 if (report) {
-  const bytes = await aex.downloadOutput(runId, report);
+  const bytes = await session.outputs().download(report);
 }
 ```
 
@@ -130,15 +135,14 @@ Query fields compose with AND semantics:
 | `contentType` | Exact content type or a prefix wildcard such as `image/*`. |
 | `type` | High-level type: `text`, `json`, `image`, `audio`, `video`, `pdf`, `archive`, `binary`, or `unknown`. |
 
-`findOutput` returns `null` when nothing matches and throws `RunStateError` when the query matches more than one output.
+`session.outputs().findOne(query)` returns `null` when nothing matches and throws `RunStateError` when the query matches more than one output.
 
 ## Temporary output links
 
-Use `outputLink(runId, selectorOrQuery, options?)` when another process, browser, media tag, or downloader needs a direct artifact URL instead of bytes buffered through the SDK. `createOutputLink` remains as the compatibility name.
+Use `session.outputs().link(selectorOrQuery, options?)` when another process, browser, media tag, or downloader needs a direct artifact URL instead of bytes buffered through the SDK.
 
 ```ts
-const link = await aex.outputLink(
-  runId,
+const link = await session.outputs().link(
   { path: "reports/summary.json" },
   { expiresIn: "15m" }
 );
@@ -150,16 +154,16 @@ Selectors can be an output id, an `Output` object, a path selector, or an `Outpu
 
 The returned URL is a reusable bearer URL until it expires. Anyone who has it can read that artifact during the TTL. aex does not promise one-time use or early revocation for these direct artifact URLs.
 
-For large files, `fetchOutput` mints the same temporary URL and returns the `Response` from fetching it directly, without adding the SDK API token to that second request:
+For large files, `session.outputs().fetch()` mints the same temporary URL and returns the `Response` from fetching it directly, without adding the SDK API token to that second request:
 
 ```ts
-const response = await aex.fetchOutput(runId, { type: "video", filename: /clip\.mp4$/ });
+const response = await session.outputs().fetch({ type: "video", filename: /clip\.mp4$/ });
 const stream = response.body;
 ```
 
 ## Lifecycle behaviour
 
-`download()` works at any run state — it reads whatever the public endpoints currently expose, so the zip reflects the run as of the call:
+`session.download()` works at any session state — it reads whatever the public endpoints currently expose, so the zip reflects the session as of the call:
 
 | Run state | Behaviour |
 | --- | --- |
@@ -170,8 +174,8 @@ const stream = response.body;
 ## `outputs.allowedDirs` — override capture roots
 
 ```ts
-aex.submit({
-  /* ... */,
+aex.openSession({
+  /* ... */
   outputs: {
     allowedDirs: ["/workspace/reports", "/workspace/state"]
   }
@@ -195,8 +199,8 @@ Runtime notes:
 ## `outputs.deniedDirs` — subtract noise
 
 ```ts
-aex.submit({
-  /* ... */,
+aex.openSession({
+  /* ... */
   outputs: {
     deniedDirs: ["node_modules", "/var/cache", "*.tmp"]
   }
@@ -227,7 +231,7 @@ Metadata still gets the full treatment. aex captures every regular file the run 
 
 ## Mid-session download semantics
 
-Mid-session calls are **best-effort and side-effect-free**: they expose whatever artifacts have already been uploaded. Files written by the agent are normally uploaded near terminal, after the filesystem diff. If you need the full output set, wait for the run to reach terminal status and call `download()` again.
+Mid-session calls are **best-effort and side-effect-free**: they expose whatever artifacts have already been uploaded. Files written by the agent are normally uploaded near terminal, after the filesystem diff. If you need the full output set, wait for the session to park and call `session.download()` again.
 
 ## Safety
 

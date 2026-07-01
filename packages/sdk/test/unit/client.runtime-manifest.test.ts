@@ -2,15 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentExecutor } from "../../src/index.js";
 
 /**
- * SDK contract: runtimeManifest is accessed on the Run record returned by
- * `client.get(runId)` / `client.getRun(runId)`. Older BFFs may omit it, so
- * callers must treat the field as optional rather than relying on submit echo.
+ * SDK contract: runtimeManifest is accessed on the self-contained unit read
+ * (`session.unit()` → GET /api/runs/:id). Older BFFs may omit it, so callers
+ * must treat the field as optional rather than relying on the create echo.
  */
 
-function stubFetchReturning(args: { readonly submitBody: unknown; readonly getBody: unknown }): typeof fetch {
+function stubFetchReturning(args: { readonly createBody: unknown; readonly unitBody: unknown }): typeof fetch {
   return vi.fn(async (input, init) => {
     const method = init?.method ?? "GET";
-    const body = method === "POST" ? args.submitBody : args.getBody;
+    const body = method === "POST" ? args.createBody : args.unitBody;
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "content-type": "application/json" }
@@ -18,8 +18,8 @@ function stubFetchReturning(args: { readonly submitBody: unknown; readonly getBo
   }) as typeof fetch;
 }
 
-describe("Run.runtimeManifest — read from the run record", () => {
-  it("populates runtimeManifest when the BFF includes it on get", async () => {
+describe("RunUnit.runtimeManifest — read from the unit record", () => {
+  it("populates runtimeManifest when the BFF includes it on the unit read", async () => {
     const manifest = {
       provider: "anthropic" as const,
       skillsRoot: "/workspace/skills",
@@ -36,39 +36,37 @@ describe("Run.runtimeManifest — read from the run record", () => {
       }
     };
     const fetchStub = stubFetchReturning({
-      submitBody: { id: "run_with_manifest", status: "queued" },
-      getBody: {
+      createBody: { id: "run_with_manifest", status: "queued" },
+      unitBody: {
         id: "run_with_manifest",
         status: "queued",
         runtimeManifest: manifest
       }
     });
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
-    const runId = await client.submit({
+    const session = await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "k" } },
-      environment: { envVars: { BROLL_STORE: "/mnt/session/broll/store" } }
+      apiKeys: { anthropic: "k" },
+      environment: { variables: { BROLL_STORE: "/mnt/session/broll/store" } }
     });
-    expect(runId).toBe("run_with_manifest");
-    const run = await client.get(runId);
-    expect(run.runtimeManifest).toEqual(manifest);
-    expect(run.runtimeManifest?.envVars.BROLL_STORE).toBe("/mnt/session/broll/store");
+    expect(session.id).toBe("run_with_manifest");
+    const unit = await session.unit();
+    expect(unit.runtimeManifest).toEqual(manifest);
+    expect(unit.runtimeManifest?.envVars.BROLL_STORE).toBe("/mnt/session/broll/store");
   });
 
   it("leaves runtimeManifest undefined when the BFF omits it (deployment skew)", async () => {
     const fetchStub = stubFetchReturning({
-      submitBody: { id: "run_no_manifest", status: "queued" },
-      getBody: { id: "run_no_manifest", status: "queued" }
+      createBody: { id: "run_no_manifest", status: "queued" },
+      unitBody: { id: "run_no_manifest", status: "queued" }
     });
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
-    const runId = await client.submit({
+    const session = await client.openSession({
       model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "k" } }
+      apiKeys: { anthropic: "k" }
     });
-    expect(runId).toBe("run_no_manifest");
-    const run = await client.getRun(runId);
-    expect(run.runtimeManifest).toBeUndefined();
+    expect(session.id).toBe("run_no_manifest");
+    const unit = await session.unit();
+    expect(unit.runtimeManifest).toBeUndefined();
   });
 });

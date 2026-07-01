@@ -8,8 +8,8 @@ aex has no built-in vision tool. The agent's `provider`/`model` selects the
 *reasoning* model — it is not an endpoint a skill can POST an image to mid-run.
 To give a run image understanding (or to call any other model/HTTP API), ship a
 **skill** that POSTs to the provider's OpenAI-compatible endpoint **through the
-managed proxy**, with the key supplied via `secrets.proxyEndpointAuth`. The raw
-key never enters the container.
+managed proxy**, with the key supplied on a `ProxyEndpoint.bearer(...)` instance.
+The raw key never enters the container.
 
 This is the same proxy described in `credentials.md` — this page is the worked
 recipe for the model-API case, which has two wrinkles a plain JSON call does not:
@@ -18,54 +18,44 @@ large enough to need a raised `maxRequestBytes`.
 
 The canonical, runnable example lives in the repo at
 [`examples/vision-skill/`](../../../examples/vision-skill) (`SKILL.md`,
-`caption_frame.py`, `verify_frame.py`, `submit_with_vision_skill.mjs`). It
+`caption_frame.py`, `verify_frame.py`, `run_with_vision_skill.mjs`). It
 captions a frame with ByteDance Doubao Seed Vision (Ark) and returns a per-noun
 "does the frame depict X?" verdict. Everything below is taken from it.
 
 ## 1. Declare the model endpoint as a proxy endpoint
 
-The vision provider's API is just an HTTPS host. Declare it as a `bearer` proxy
-endpoint and supply the key in `secrets.proxyEndpointAuth`. The two model-specific
-settings are `responseMode: "full"` (so the skill gets the upstream JSON back) and
-a raised `maxRequestBytes` (so the base64 image fits):
+The vision provider's API is just an HTTPS host. Declare it with
+`ProxyEndpoint.bearer(...)`, which carries the key on the instance. The two
+model-specific settings are `responseMode: "full"` (so the skill gets the upstream
+JSON back) and a raised `maxRequestBytes` (so the base64 image fits):
 
 ```ts
-import { AgentExecutor, Models, Skill, ProxyEndpoint, validateProxyAuth } from "@aexhq/sdk";
+import { Aex, Models, Skill, ProxyEndpoint } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
-const proxyEndpoints = [
-  ProxyEndpoint.bearer({
-    name: "doubao-ark",
-    baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
-    allowMethods: ["POST"],
-    allowPathPrefixes: ["/api/v3/chat/completions"],
-    maxRequestBytes: 2_000_000, // base64 image POSTs — see note below
-    responseMode: "full",
-    timeoutMs: 60_000
-  })
-];
+const doubaoArk = ProxyEndpoint.bearer({
+  name: "doubao-ark",
+  baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
+  token: process.env.DOUBAO_API_KEY!,
+  allowMethods: ["POST"],
+  allowPathPrefixes: ["/api/v3/chat/completions"],
+  maxRequestBytes: 2_000_000, // base64 image POSTs — see note below
+  responseMode: "full",
+  timeoutMs: 60_000
+});
 
-const proxyEndpointAuth = [
-  { name: "doubao-ark", value: { type: "bearer", token: process.env.DOUBAO_API_KEY! } }
-];
-
-validateProxyAuth(proxyEndpoints, proxyEndpointAuth); // fail fast at submit time
-
-const runId = await aex.submit({
+await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "…read skills/frame-vision-gate/SKILL.md, then caption + verify the frame…",
+  message: "…read skills/frame-vision-gate/SKILL.md, then caption + verify the frame…",
   skills: [await Skill.fromPath("./vision-skill", { name: "frame-vision-gate" })],
-  proxyEndpoints,
-  secrets: {
-    apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
-    proxyEndpointAuth
-  }
+  proxyEndpoints: [doubaoArk],
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
 `Skill.fromPath("./vision-skill", …)` is resolved relative to the process CWD, so
-run the submit script from the directory that *contains* `vision-skill/` (in the
+run the script from the directory that *contains* `vision-skill/` (in the
 repo, that is `examples/`). The same pattern works for OpenAI, Gemini's
 OpenAI-compatible endpoint, or any other OpenAI-chat-shaped vision API — only
 `baseUrl` and the path prefix change.
@@ -147,8 +137,7 @@ so full-res frames do not add payload and model cost without useful signal.
 - **Host selection.** Use the provider endpoint that matches your account and
   declare it as the proxy endpoint `baseUrl`.
 - **Keyless model hosts.** If the upstream takes no credential, declare the
-  endpoint with `authShape: { type: "none" }` and omit the `proxyEndpointAuth`
-  entry (see `credentials.md`).
+  endpoint with `ProxyEndpoint.none(...)` (see `credentials.md`).
 - **Response size.** `responseMode: "full"` is required to read the model's reply
   back. Leave `maxResponseBytes` at its default (`0` = unlimited, streamed) unless
   you want a truncation cap.

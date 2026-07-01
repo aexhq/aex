@@ -24,7 +24,7 @@ export interface ToolManifestInput {
 export class Tool {
   readonly #ref: ToolRef | DraftToolRef;
   readonly #inlineBytes: Uint8Array | undefined;
-  /** Asset id cached after the first submit, so reuse skips a re-upload. */
+  /** Asset id cached after the first use, so reuse skips a re-upload. */
   #assetId: string | undefined;
 
   private constructor(ref: ToolRef | DraftToolRef, inlineBytes?: Uint8Array) {
@@ -40,7 +40,7 @@ export class Tool {
     return this.#ref.kind === "draft";
   }
 
-  /** Internal: the asset id resolved on a prior submit, or undefined. */
+  /** Internal: the asset id resolved on a prior use, or undefined. */
   get _cachedAssetId(): string | undefined {
     return this.#assetId;
   }
@@ -121,7 +121,7 @@ export class Tool {
   toJSON(): ToolRef {
     if (this.#ref.kind === "draft") {
       throw new Error(
-        "Tool: draft Tools cannot be JSON-serialised — they only become wire refs when client.submit uploads the bytes as an asset."
+        "Tool: draft Tools cannot be JSON-serialised — they only become wire refs when aex.run / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;

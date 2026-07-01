@@ -4,9 +4,9 @@
  * Verifies the run-artifact download surface ships in the *installed*
  * package — no live API required:
  *
- *   - `AgentExecutor` exposes the whole-run verb `download` plus the public
- *     per-namespace verbs `downloadOutputs` / `downloadEvents` /
- *     `downloadMetadata`.
+ *   - `SessionHandle` exposes the whole-run verb `download` and the metadata
+ *     verb `downloadMetadata` flat, plus the per-namespace download verbs via
+ *     its `outputs().download()` / `events().download()` accessors.
  *   - The installed SDK assembles a public run archive from metadata, events,
  *     and outputs only; it must not call the removed logs namespace or event
  *     channel opt-in routes.
@@ -36,32 +36,61 @@ describe("download namespaces surface (offline)", () => {
     install?.cleanup();
   });
 
-  it("AgentExecutor exposes the whole-run + per-namespace download verbs", async () => {
+  it("SessionHandle exposes the whole-run + per-namespace download verbs", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
-      const c = new AgentExecutor({ apiToken: "t", baseUrl: "https://example.test" });
-      const verbs = ["download", "downloadOutputs", "downloadEvents", "downloadMetadata"];
-      const result = {};
-      for (const v of verbs) result[v] = typeof c[v];
-      for (const removed of ["downloadLogs", "getRunDebugLogs", "debugLogs"]) {
-        result[removed] = typeof c[removed];
+      const fetch = async (input) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const parsed = new URL(url);
+        if (parsed.pathname === "/api/sessions/sess-1") {
+          return new Response(JSON.stringify({ session: { id: "sess-1", status: "idle" } }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      };
+      const c = new AgentExecutor({ apiToken: "t", baseUrl: "https://example.test", fetch });
+      const session = await c.sessions.open("sess-1");
+      const result = {
+        session: {
+          download: typeof session.download,
+          downloadMetadata: typeof session.downloadMetadata,
+          outputsDownload: typeof session.outputs().download,
+          eventsDownload: typeof session.events().download
+        },
+        // The whole download surface moved off the client onto the session handle.
+        client: {
+          download: typeof c.download,
+          downloadMetadata: typeof c.downloadMetadata
+        }
+      };
+      // The old flat per-namespace verbs folded into the outputs()/events()
+      // accessors; the removed logs verbs stay gone everywhere.
+      for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getRunDebugLogs", "debugLogs"]) {
+        result.session[removed] = typeof session[removed];
+        result.client[removed] = typeof c[removed];
       }
       process.stdout.write(JSON.stringify(result));
     `;
     const path = join(install.installDir, "download-verbs.mjs");
     writeFileSync(path, script);
     const child = await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
-    expect(child.exitCode).toBe(0);
-    const result = JSON.parse(child.stdout) as Record<string, string>;
-    for (const v of ["download", "downloadOutputs", "downloadEvents", "downloadMetadata"]) {
-      expect(result[v], `AgentExecutor.${v} should be a function`).toBe("function");
+    expect(child.exitCode, child.stderr).toBe(0);
+    const result = JSON.parse(child.stdout) as { session: Record<string, string>; client: Record<string, string> };
+    for (const v of ["download", "downloadMetadata", "outputsDownload", "eventsDownload"]) {
+      expect(result.session[v], `SessionHandle ${v} should be a function`).toBe("function");
     }
-    for (const removed of ["downloadLogs", "getRunDebugLogs", "debugLogs"]) {
-      expect(result[removed], `AgentExecutor.${removed} should not be exposed`).toBe("undefined");
+    for (const v of ["download", "downloadMetadata"]) {
+      expect(result.client[v], `AgentExecutor.${v} should not be exposed`).toBe("undefined");
+    }
+    for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getRunDebugLogs", "debugLogs"]) {
+      expect(result.session[removed], `SessionHandle.${removed} should not be exposed`).toBe("undefined");
+      expect(result.client[removed], `AgentExecutor.${removed} should not be exposed`).toBe("undefined");
     }
   });
 
-  it("AgentExecutor.download assembles only public namespaces from the installed SDK", async () => {
+  it("SessionHandle.download assembles only public namespaces from the installed SDK", async () => {
     const script = `
       const { AgentExecutor } = await import("@aexhq/sdk");
       const { strFromU8, unzipSync } = await import("fflate");
@@ -70,10 +99,18 @@ describe("download namespaces surface (offline)", () => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url);
         const key = parsed.pathname + parsed.search;
-        calls.push(key);
         if (key.includes("/logs") || key.includes("channel=")) {
           throw new Error("unexpected non-public download route: " + key);
         }
+        // Opening the session handle reads the session record; keep it out of
+        // the asserted archive-assembly call set.
+        if (key === "/api/sessions/run-1") {
+          return new Response(JSON.stringify({ session: { id: "run-1", status: "succeeded" } }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        calls.push(key);
         if (key === "/api/runs/run-1") {
           return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
             status: 200,
@@ -101,7 +138,8 @@ describe("download namespaces surface (offline)", () => {
       };
 
       const client = new AgentExecutor({ apiToken: "t", baseUrl: "https://example.test", fetch });
-      const entries = unzipSync(await client.download("run-1"));
+      const session = await client.sessions.open("run-1");
+      const entries = unzipSync(await session.download());
       const manifest = JSON.parse(strFromU8(entries["manifest.json"]));
       process.stdout.write(JSON.stringify({
         calls,
