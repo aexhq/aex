@@ -21,6 +21,7 @@
  *     - `aex cancel <session-id>`
  *     - `aex delete <session-id>`
  *     - `aex whoami`
+ *     - `aex redeem <code>`
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
@@ -53,6 +54,7 @@ import {
   runDeliveriesCmd,
   runWaitCmd,
   runWhoamiCmd,
+  runRedeemCmd,
   runDebugCmd,
   runLoginCmd,
   runLogoutCmd,
@@ -134,6 +136,10 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runDeleteAssetCmd(io, rest);
     case "whoami":
       return runWhoamiCmd(io, rest);
+    case "redeem":
+      // Redeem a single-use coupon code to fund the workspace prepaid balance.
+      // CLI-only (direct fetch); intentionally not a public SDK method.
+      return runRedeemCmd(io, rest);
     case "login":
       return runLoginCmd(io, rest);
     case "logout":
@@ -200,6 +206,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex delete <session-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
   io.stdout("  aex whoami --api-token T\n");
+  io.stdout("  aex redeem <code> --api-token T             Redeem a coupon code into the workspace prepaid balance\n");
   io.stdout("  aex login --api-token T [--aex-url U]      Persist token + url (then other verbs need no --api-token)\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");

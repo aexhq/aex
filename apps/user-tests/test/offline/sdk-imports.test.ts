@@ -80,6 +80,12 @@ describe("sdk imports", () => {
       result.ChatClient_present = (typeof mod.ChatClient !== "undefined");
       result.ChatSession_present = (typeof mod.ChatSession !== "undefined");
       result.ChatTurnStream_present = (typeof mod.ChatTurnStream !== "undefined");
+      // Coupon redemption is a CLI-only affordance — it must NOT be reachable
+      // from the public SDK: no top-level export and no method on the client.
+      result.redeem_present = (typeof mod.redeem !== "undefined");
+      result.billing_present = (typeof mod.billing !== "undefined");
+      result.Aex_redeem_method = (typeof mod.Aex?.prototype?.redeem);
+      result.AgentExecutor_redeem_method = (typeof mod.AgentExecutor?.prototype?.redeem);
       process.stdout.write(JSON.stringify(result));
     `;
     const child = await runChild(script, "esm-import.mjs");
@@ -114,6 +120,11 @@ describe("sdk imports", () => {
     expect(result["ChatClient_present"]).toBe(false);
     expect(result["ChatSession_present"]).toBe(false);
     expect(result["ChatTurnStream_present"]).toBe(false);
+    // redeem is CLI-only: it must not leak onto the public SDK surface.
+    expect(result["redeem_present"]).toBe(false);
+    expect(result["billing_present"]).toBe(false);
+    expect(result["Aex_redeem_method"]).toBe("undefined");
+    expect(result["AgentExecutor_redeem_method"]).toBe("undefined");
   });
 
   it("require(\"@aexhq/sdk\") fails with a clear no-CJS error", async () => {
