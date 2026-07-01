@@ -3,8 +3,7 @@
  *
  * Combines the public `@aexhq/sdk` corpus read-tools (`createCorpusTools`) with a
  * direct Claude chat loop (`@anthropic-ai/sdk`). The importable `@aexhq/sdk` stays
- * LLM-vendor-free; the vendor dependency lives only here in the example (and in
- * the bundled `aex chat` CLI command).
+ * LLM-vendor-free; the vendor dependency lives only here in the example.
  *
  * Run (Bun): ANTHROPIC_API_KEY=… AEX_TOKEN=… bun examples/chat-corpus.ts <runId> [runId…]
  *
