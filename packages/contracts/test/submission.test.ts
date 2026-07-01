@@ -152,7 +152,10 @@ describe("submission parser - providers and secrets", () => {
 });
 
 describe("submission parser - removed choice fields", () => {
-  it.each(["runtime", "region", "credentialMode"] as const)(
+  // `parentRunId` was the legacy lineage field for API-submitted child runs.
+  // Child runs are now in-brain threads, so the top-level submit contract no
+  // longer accepts it — the strict allow-list rejects it like any unknown field.
+  it.each(["runtime", "region", "credentialMode", "parentRunId"] as const)(
     "rejects top-level %s",
     (field) => {
       expect(() =>
