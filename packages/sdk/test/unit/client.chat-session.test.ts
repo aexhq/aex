@@ -61,7 +61,7 @@ function json(body: unknown): Response {
   });
 }
 
-function makeClient(): {
+function makeClient(options: { readonly getSessionStatus?: string } = {}): {
   readonly client: Aex;
   readonly calls: CapturedRequest[];
   readonly sockets: FakeWebSocket[];
@@ -100,7 +100,7 @@ function makeClient(): {
       return json({ outputs: [{ id: "out_1", filename: "answer.txt" }] });
     }
     if (url.endsWith("/api/sessions/sess_1")) {
-      return json({ session: { id: "sess_1", status: "idle", turnSeq: 1 } });
+      return json({ session: { id: "sess_1", status: options.getSessionStatus ?? "idle", turnSeq: 1 } });
     }
     return json({});
   };
@@ -145,6 +145,28 @@ describe("Aex sessions", () => {
     const create = calls.find((call) => call.method === "POST" && call.url.endsWith("/api/sessions"));
     expect((create!.body as Record<string, unknown>).retention).toEqual({ idleTtl: "3m" });
     expect(calls.some((call) => call.url.endsWith("/api/runs"))).toBe(false);
+  });
+
+  it("uses the terminal session event status when the post-stream session read is stale", async () => {
+    const { client, sockets, webSocketFactory } = makeClient({ getSessionStatus: "running" });
+    const promise = client.sessions.run({
+      model: "claude-haiku-4-5",
+      message: "say hello",
+      apiKeys: { anthropic: "sk-ant" },
+      stream: { webSocketFactory }
+    });
+
+    await flush();
+    sockets[0]!.message(event(4));
+    sockets[0]!.message(event(5, {
+      source: "runtime",
+      type: "CUSTOM",
+      data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
+    }));
+
+    const result = await promise;
+    expect(result.status).toBe("idle");
+    expect(result.session.status).toBe("idle");
   });
 
   it("session.send can be consumed as an async event stream", async () => {

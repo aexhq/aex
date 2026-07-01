@@ -52,9 +52,11 @@ interface ChatSessionLiveResult {
   readonly probe: string;
   readonly idleTtl: string;
   readonly firstStatus: string;
+  readonly firstPolledStatus: string;
   readonly suspendedStatus: string;
   readonly resumedStatus: string;
   readonly secondStatus: string;
+  readonly secondPolledStatus: string;
   readonly listed: boolean;
   readonly firstText: string;
   readonly secondText: string;
@@ -177,9 +179,11 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           probe,
           idleTtl: session.record.idleTtl,
           firstStatus: first.status,
+          firstPolledStatus: firstIdle.status,
           suspendedStatus: suspendedRecord.status,
           resumedStatus: resumedRecord.status,
           secondStatus: second.status,
+          secondPolledStatus: secondIdle.status,
           listed: Array.isArray(page.sessions) && page.sessions.some((s) => s.id === session.id || s.sessionId === session.id),
           firstText: first.text,
           secondText: second.text,
@@ -209,10 +213,12 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       const dump = (): string => JSON.stringify(result, null, 2);
 
       expect(result.firstStatus, dump()).toBe("idle");
+      expect(result.firstPolledStatus, dump()).toBe("idle");
       expect(result.idleTtl, dump()).toBe("1d");
       expect(result.suspendedStatus, dump()).toBe("suspended");
       expect(result.resumedStatus, dump()).toBe("idle");
       expect(result.secondStatus, dump()).toBe("idle");
+      expect(result.secondPolledStatus, dump()).toBe("idle");
       expect(result.listed, dump()).toBe(true);
       expect(result.firstText.replace(/\s+/g, ""), dump()).toContain(result.probe);
       expect(result.secondText.replace(/\s+/g, ""), dump()).toContain(result.probe);
@@ -292,6 +298,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           apiKeys: { deepseek: deepseekKey },
           idempotencyKey: "chat-raw-create-" + Date.now()
         });
+        const createStatus = session.record.status;
 
         const key = "chat-raw-message-" + Date.now();
         const first = await api("/api/sessions/" + encodeURIComponent(session.id) + "/messages", {
@@ -317,7 +324,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         const serialized = JSON.stringify({ first, replay, busy, finalSession, events });
         process.stdout.write(JSON.stringify({
           sessionId: session.id,
-          createStatus: session.record.status,
+          createStatus,
           firstStatus: first.status,
           replayStatus: replay.status,
           busyStatus: busy.status,

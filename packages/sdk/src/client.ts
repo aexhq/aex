@@ -453,7 +453,9 @@ export class SessionHandle {
       events.push(event);
       yield event;
     }
-    this.#session = await operations.getSession(this.#http, this.id).catch(() => this.#session);
+    const terminalStatus = terminalSessionStatusFromEvents(events, turn.turnSeq);
+    const readSession = await operations.getSession(this.#http, this.id).catch(() => this.#session);
+    this.#session = withTerminalSessionStatus(readSession, terminalStatus);
     const outputs = await operations.listSessionOutputs(this.#http, this.id).catch(() => [] as readonly Output[]);
     return {
       sessionId: this.id,
@@ -590,6 +592,31 @@ function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boole
   }
   const eventTurnSeq = (value as { readonly turnSeq?: unknown }).turnSeq;
   return typeof eventTurnSeq !== "number" || eventTurnSeq === turnSeq;
+}
+
+function terminalSessionStatusFromEvents(events: readonly SessionEvent[], turnSeq: number): string | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (!isSessionTurnTerminalEvent(event, turnSeq)) continue;
+    const name = customName(event);
+    if (name === "aex.session.idle") return "idle";
+    if (name === "aex.session.suspended") return "suspended";
+    if (name === "aex.session.error") return "error";
+  }
+  return undefined;
+}
+
+function withTerminalSessionStatus(session: Session, terminalStatus: string | undefined): Session {
+  if (terminalStatus === undefined || session.status === terminalStatus) return session;
+  if (
+    session.status !== "creating" &&
+    session.status !== "running" &&
+    session.status !== "suspending" &&
+    session.status !== "cancelling"
+  ) {
+    return session;
+  }
+  return { ...session, status: terminalStatus };
 }
 
 export interface StreamEventsOptions {

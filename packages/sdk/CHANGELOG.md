@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.33.1
+
+### Fixed
+
+- Made session `send(...).done()` report the terminal session status observed in
+  the session event stream when the immediate follow-up session read is still a
+  stale active snapshot.
+
 ## 0.33.0
 
 ### Added
