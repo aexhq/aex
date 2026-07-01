@@ -91,7 +91,7 @@
     },
     "packages/sdk": {
       "name": "@aexhq/sdk",
-      "version": "0.34.0",
+      "version": "0.35.0",
       "bin": {
         "aex": "./dist/cli.mjs",
       },

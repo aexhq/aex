@@ -4,6 +4,27 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.35.0
+
+### Added
+
+- Added built-in retry/backoff for transient API failures, including HTTP
+  `429`, `5xx`, `529`, and network errors. The retry loop honors
+  `Retry-After`, uses bounded exponential backoff with full jitter, and can be
+  tuned or disabled with the client `retry` option.
+- Added `AexRateLimitError`, `isRateLimited`, provider fault parsing, and
+  `RetryOptions` so callers can handle persistent API/provider throttling
+  without parsing raw error bodies.
+- Added stable idempotency handling for billable session create/send requests
+  and `replayLast` coverage so SDK retries do not double-submit billable turns.
+- Added the `machine.spot` run-submission intent for opting into interruptible
+  managed capacity.
+
+### Changed (breaking)
+
+- Removed the legacy public `parentRunId` submission field from the typed
+  contract. Subagents run through the managed in-process tool path.
+
 ## 0.34.0
 
 ### Changed (breaking)
