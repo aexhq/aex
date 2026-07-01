@@ -176,6 +176,12 @@ Required env is `AEX_API_URL`, `AEX_API_TOKEN`, `AEX_USER_TEST_TARBALL` or
 `AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`; model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
+Because this gate is a single file, its parallelism lever is running the seeded
+cells concurrently within the file (each cell is an independent live run with a
+uniquely-named runner script and idempotency key). `AEX_USER_TEST_TOOL_FUZZ_CONCURRENCY`
+bounds how many cells run at once (default `4`; the deploy suite raises it) — it
+is the deliberate cap on concurrent live-run spend and provider rate limits.
+
 ## Per-provider correctness suite
 
 `test/live/providers/` holds one minimal round-trip per **extra** provider
