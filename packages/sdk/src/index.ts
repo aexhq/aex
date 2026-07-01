@@ -80,6 +80,14 @@ export {
   RunStateError
 } from "@aexhq/contracts";
 
+// Built-in transport resilience. Every BFF request is retried on transient
+// failures (429/5xx/529 + network errors) with bounded backoff + jitter,
+// honoring `Retry-After`; tune or disable via the client's `retry` option.
+// A persistent throttle surfaces as `AexRateLimitError` (narrow with
+// `isRateLimited`), which can carry an upstream `ProviderFault`.
+export { AexRateLimitError, isRateLimited, isThrottleFault, parseProviderFault } from "./retry.js";
+export type { ProviderFault, RetryOptions } from "./retry.js";
+
 // Skill-bundle / MCP wire types
 export {
   MCP_SERVER_NAME_PATTERN,
