@@ -72,6 +72,14 @@ import { uploadAsset, type AssetFetch, type UploadedAsset } from "./asset-upload
 import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
+import {
+  AexRateLimitError,
+  isThrottleFault,
+  parseProviderFault,
+  withRetry,
+  type ProviderFault,
+  type RetryOptions
+} from "./retry.js";
 import { Secret, splitSecretEnv } from "./secret.js";
 import { SkillTool } from "./skill-tool.js";
 import { Tool } from "./tool.js";
@@ -93,6 +101,16 @@ export interface AgentExecutorOptions {
    * route the traces elsewhere. Purely local — nothing is uploaded.
    */
   readonly debug?: boolean | DebugSink;
+  /**
+   * Built-in transport retry policy. Every BFF request is retried on transient
+   * failures (HTTP 429/500/502/503/504/529 and network errors) with bounded
+   * exponential backoff + jitter, honoring `Retry-After`. Billable submits carry
+   * a stable idempotency key, so a retry never creates a duplicate billable run.
+   *
+   * Omit for sensible defaults (4 attempts, ~2 min budget); pass an object to
+   * tune `maxAttempts` / delays / `maxElapsedMs`; pass `false` to disable.
+   */
+  readonly retry?: RetryOptions | false;
 }
 
 /**
@@ -367,6 +385,8 @@ export class SessionHandle {
   readonly #http: HttpClient;
   readonly #fetch: FetchLike | undefined;
   #session: Session;
+  /** The last message sent on this handle, for {@link SessionHandle.replayLast}. */
+  #lastSend: { readonly input: SessionInput; readonly idempotencyKey: string } | undefined;
 
   constructor(http: HttpClient, session: Session, fetch?: FetchLike) {
     this.#http = http;
@@ -388,12 +408,33 @@ export class SessionHandle {
     return sendSessionInternal(this, input, options);
   }
 
+  /**
+   * Re-send the last message on this session — the clean way to retry a turn a
+   * throttle or transient failure interrupted. By default it REUSES the previous
+   * message's idempotency key, so if the original turn actually landed
+   * server-side the replay de-duplicates instead of creating a second billable
+   * turn; pass a fresh `idempotencyKey` to force a brand-new turn.
+   */
+  replayLast(options: SessionSendOptions = {}): SessionTurnStream {
+    assertNoSessionSendSignal(options, "SessionHandle.replayLast");
+    const last = this.#lastSend;
+    if (last === undefined) {
+      throw new RunStateError("SessionHandle.replayLast: no message has been sent on this session yet");
+    }
+    return sendSessionInternal(this, last.input, {
+      ...options,
+      idempotencyKey: options.idempotencyKey ?? last.idempotencyKey
+    });
+  }
+
   async *#send(input: SessionInput, options: InternalSessionSendOptions): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+    const idempotencyKey = options.idempotencyKey ?? generateIdempotencyKey();
+    this.#lastSend = { input, idempotencyKey };
     const accepted = await operations.sendSessionMessage(
       this.#http,
       this.id,
       { input },
-      { idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey() }
+      { idempotencyKey }
     );
     this.#session = accepted.session;
     const turn = accepted.turn;
@@ -670,10 +711,15 @@ export class SessionClient {
     const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
     assertNoLegacySessionFields(options, "Aex.sessions.run");
     const input = normaliseSessionInput(message, "Aex.sessions.run", "message");
-    const session = await this.create(createOptions);
+    // Derive the message key from the create key (like the CLI) so a retried run
+    // with the same `idempotencyKey` de-duplicates BOTH the create and the
+    // billable turn — never a duplicate billable run.
+    const createKey = createOptions.idempotencyKey ?? generateIdempotencyKey();
+    const messageKey = messageIdempotencyKey ?? deriveMessageKey(createKey);
+    const session = await this.create({ ...createOptions, idempotencyKey: createKey });
     const result = await session.send(input, {
       ...(stream ?? {}),
-      idempotencyKey: messageIdempotencyKey ?? generateIdempotencyKey()
+      idempotencyKey: messageKey
     }).done();
     if (deleteAfter) {
       await session.delete();
@@ -1044,10 +1090,16 @@ export class AgentExecutor {
     if (!options.apiToken) {
       throw new Error("AgentExecutor: apiToken is required");
     }
+    // Wrap the transport fetch (the caller's override, or global `fetch`) with
+    // the bounded-retry layer so every BFF request gets default resilience.
+    // The raw `#fetch` below stays unwrapped for the direct-to-storage asset PUT
+    // and presigned output GETs, which target object storage, not the API plane.
+    const baseFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
+    const retryingFetch = withRetry(baseFetch, options.retry);
     this.#http = new HttpClient({
       ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
       apiToken: options.apiToken,
-      ...(options.fetch ? { fetch: options.fetch } : {}),
+      fetch: retryingFetch,
       // Opt-in local diagnostics: emit a redacted per-request trace to
       // stderr. Uploads nothing. A caller wanting a custom sink can pass
       // a function instead of `true`.
@@ -1114,10 +1166,15 @@ export class AgentExecutor {
         ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
         ...(opts.pingIntervalMs !== undefined ? { pingIntervalMs: opts.pingIntervalMs } : {})
       };
-      const session = await this.sessions.create(createOptions);
+      // Derive the message key from the create key (like the CLI) so a retried
+      // run with the same `idempotencyKey` de-duplicates BOTH the create and the
+      // billable turn server-side — never a duplicate billable run (sdk-dx-3).
+      const createKey = createOptions.idempotencyKey ?? generateIdempotencyKey();
+      const messageKey = messageIdempotencyKey ?? deriveMessageKey(createKey);
+      const session = await this.sessions.create({ ...createOptions, idempotencyKey: createKey });
       const turnResult = await sendSessionInternal(session, input, {
         ...streamOptions,
-        idempotencyKey: messageIdempotencyKey ?? generateIdempotencyKey()
+        idempotencyKey: messageKey
       }).done();
       if (deleteAfter) {
         await session.delete();
@@ -1146,6 +1203,19 @@ export class AgentExecutor {
         ...(!ok && errorMessage ? { error: errorMessage } : {})
       };
       if (opts.throwOnFailure && !ok) {
+        // A turn that failed because the upstream provider throttled us surfaces
+        // as a structured, non-leaky AexRateLimitError carrying the provider
+        // fault, so callers can branch on `isRateLimited(err)` and replay.
+        const throttle = throttleFromSession(turnResult.session);
+        if (throttle) {
+          throw new AexRateLimitError({
+            status: throttle.status ?? 429,
+            attempts: 1,
+            source: "provider",
+            providerFault: throttle,
+            ...(throttle.retryAfterMs !== undefined ? { retryAfterMs: throttle.retryAfterMs } : {})
+          });
+        }
         throw new RunStateError(
           `AgentExecutor.run: session ${runId} ended ${turnResult.status}${errorMessage ? `: ${errorMessage}` : ""}`,
           { runId, status: turnResult.status }
@@ -1417,6 +1487,43 @@ function generateIdempotencyKey(): string {
   const cryptoObj = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
   return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Derive the message idempotency key from the session-create key. Mirrors the
+ * CLI (`<createKey>:message`) so a retried `run` / `sessions.run` that reuses
+ * one `idempotencyKey` de-duplicates BOTH the create and the billable turn.
+ */
+function deriveMessageKey(createKey: string): string {
+  return `${createKey}:message`;
+}
+
+/**
+ * Extract a throttle-class {@link ProviderFault} from a failed session record.
+ * Reads a structured `providerFault` / `error` field first (the shape the
+ * runtime is expected to emit on a throttled turn), then falls back to a
+ * heuristic scan of `errorMessage`. Returns `undefined` when the failure is not
+ * a throttle.
+ */
+function throttleFromSession(session: Session): ProviderFault | undefined {
+  const fault =
+    parseProviderFault((session as { readonly providerFault?: unknown }).providerFault) ??
+    parseProviderFault((session as { readonly error?: unknown }).error) ??
+    faultFromErrorMessage(typeof session.errorMessage === "string" ? session.errorMessage : undefined);
+  return fault && isThrottleFault(fault) ? fault : undefined;
+}
+
+/** Last-resort throttle detection from a free-text run error message. */
+function faultFromErrorMessage(message: string | undefined): ProviderFault | undefined {
+  if (message === undefined || message.length === 0) return undefined;
+  const lower = message.toLowerCase();
+  if (/\b429\b|rate.?limit|too many requests/.test(lower)) {
+    return { kind: "rate_limit", message };
+  }
+  if (/\b529\b|overloaded/.test(lower)) {
+    return { kind: "overloaded", message };
+  }
+  return undefined;
 }
 
 function normaliseSessionInput(
