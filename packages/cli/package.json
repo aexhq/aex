@@ -46,7 +46,6 @@
     "@aws-sdk/client-sfn": "^3.0.0"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.106.0",
     "esbuild": "^0.28.0"
   }
 }

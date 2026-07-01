@@ -126,16 +126,7 @@ Turn a selected set of sessions into a read-only chat.
 read tools (`list_sessions` / `get_session` / `list_outputs` / `read_output` /
 `search_outputs`) — every tool refuses a session outside the corpus. Drive them
 with any LLM; `examples/chat-corpus.ts` shows the direct-Claude loop
-(`@anthropic-ai/sdk`), and the CLI ships it as a one-shot command (BYOK; the
-importable SDK stays LLM-vendor-free):
-
-```bash
-aex chat --session ses_<A> --session ses_<B> \
-  --anthropic-api-key "$ANTHROPIC_API_KEY" \
-  --model claude-opus-4-8 \
-  --prompt "Across these sessions, which produced a report.md and what's its headline finding?" \
-  --api-token "$AEX_API_TOKEN"
-```
+(`@anthropic-ai/sdk`) on top of the LLM-vendor-free SDK.
 
 `aex.sessions.searchOutputs({ runIds, filename, extension, contentType, limit })`
 finds output files across sessions (scope with the `runIds` session-id allow-list)

@@ -20,7 +20,6 @@ export { runLoginCmd, runLogoutCmd, runAuthStatusCmd } from "./auth-cmd.js";
 export { runModelsCmd, runProvidersCmd, runToolsCmd, runRuntimeSizesCmd } from "./discover-cmd.js";
 export { runTailCmd } from "./tail.js";
 export { runInspectCmd } from "./inspect.js";
-export { runChatCmd } from "./chat.js";
 export {
   type CliExitCode,
   SUCCESS,

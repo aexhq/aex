@@ -12,9 +12,6 @@ export {
   Aex,
   AgentsMdClient,
   AgentExecutor,
-  ChatClient,
-  ChatSession,
-  ChatTurnStream,
   FilesClient,
   SecretsClient,
   SessionClient,
@@ -24,12 +21,6 @@ export {
 } from "./client.js";
 export type {
   AgentExecutorOptions,
-  ChatCreateOptions,
-  ChatInput,
-  ChatRunOptions,
-  ChatRunResult,
-  ChatSendOptions,
-  ChatTurnResult,
   OutputDownloadOptions,
   OutputFilePathMatch,
   OutputFilePathSelector,

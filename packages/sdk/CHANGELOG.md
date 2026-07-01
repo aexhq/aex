@@ -47,6 +47,11 @@ follows semantic versioning.
   `listOutputs` / `readOutputText` / `download*` / `cancel` / `searchOutputs` /
   `getRunWebhookDeliveries` / `redeliverRunWebhook` on the client). Use the
   session-handle and `aex.sessions.*` equivalents.
+- Normalized the `chat` surface into sessions: dropped the `ChatClient` /
+  `ChatSession` / `ChatTurnStream` aliases (and the `Chat*` option/result types)
+  and the `aex.chat` client field — use `SessionClient` / `SessionHandle` /
+  `SessionTurnStream` and `aex.sessions`. The `aex chat` CLI corpus command is
+  removed too; build a corpus chat programmatically with `createCorpusTools`.
 - Removed the `RuntimeSizes` export; use the `Sizes` symbol const (e.g.
   `Sizes.SHARED_0_25X_1GB`).
 - Removed the `parentRunId` and `limits` submission options. Subagents run

@@ -143,7 +143,6 @@ export interface RunCollectOptions {
 }
 
 export type SessionInput = string | readonly string[];
-export type ChatInput = SessionInput;
 
 export interface SessionEnvironmentOptions extends Omit<PlatformEnvironmentInput, "envVars"> {
   readonly variables?: Readonly<Record<string, string>>;
@@ -239,8 +238,6 @@ export interface SessionCreateOptions {
   readonly webhook?: { readonly url: string };
 }
 
-export type ChatCreateOptions = SessionCreateOptions;
-
 export interface SessionSendOptions {
   readonly idempotencyKey?: string;
   readonly from?: number;
@@ -253,16 +250,12 @@ interface InternalSessionSendOptions extends SessionSendOptions {
   readonly signal?: AbortSignal;
 }
 
-export type ChatSendOptions = SessionSendOptions;
-
 export interface SessionRunOptions extends SessionCreateOptions {
   readonly message: SessionInput;
   readonly deleteAfter?: boolean;
   readonly messageIdempotencyKey?: string;
   readonly stream?: Omit<SessionSendOptions, "idempotencyKey">;
 }
-
-export type ChatRunOptions = SessionRunOptions;
 
 export interface SessionTurnResult {
   readonly sessionId: string;
@@ -274,9 +267,7 @@ export interface SessionTurnResult {
   readonly outputs: readonly Output[];
 }
 
-export interface ChatTurnResult extends SessionTurnResult {}
 export interface SessionRunResult extends SessionTurnResult {}
-export interface ChatRunResult extends SessionRunResult {}
 
 export class SessionTurnStream implements AsyncIterable<SessionEvent> {
   readonly #run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>;
@@ -302,9 +293,6 @@ export class SessionTurnStream implements AsyncIterable<SessionEvent> {
     return this.#done;
   }
 }
-
-export const ChatTurnStream = SessionTurnStream;
-export type ChatTurnStream = SessionTurnStream;
 
 type InternalSessionSender = (input: SessionInput, options?: InternalSessionSendOptions) => SessionTurnStream;
 const internalSessionSenders = new WeakMap<SessionHandle, InternalSessionSender>();
@@ -570,9 +558,6 @@ export class SessionHandle {
   }
 }
 
-export const ChatSession = SessionHandle;
-export type ChatSession = SessionHandle;
-
 export class SessionClient {
   readonly #http: HttpClient;
   readonly #fetch: FetchLike | undefined;
@@ -693,9 +678,6 @@ export class SessionClient {
     return result;
   }
 }
-
-export const ChatClient = SessionClient;
-export type ChatClient = SessionClient;
 
 async function* streamSessionTurnEvents(
   http: HttpClient,
@@ -1112,7 +1094,6 @@ export class AgentExecutor {
   readonly files: FilesClient;
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
-  readonly chat: ChatClient;
 
   constructor(options: AgentExecutorOptions) {
     if (!options.apiToken) {
@@ -1134,8 +1115,7 @@ export class AgentExecutor {
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
-    this.chat = new ChatClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
-    this.sessions = this.chat;
+    this.sessions = new SessionClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
   }
 
   /**

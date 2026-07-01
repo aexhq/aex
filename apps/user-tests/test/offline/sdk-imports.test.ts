@@ -41,9 +41,6 @@ describe("sdk imports", () => {
       const names = [
         "Aex",
         "AgentExecutor",
-        "ChatClient",
-        "ChatSession",
-        "ChatTurnStream",
         "SessionClient",
         "SessionHandle",
         "SessionTurnStream",
@@ -74,6 +71,10 @@ describe("sdk imports", () => {
       result.compileTemplate_present = (typeof mod.compileTemplate !== "undefined");
       result.submitResolvedRun_present = (typeof mod.submitResolvedRun !== "undefined");
       result.RunRef_present = (typeof mod.RunRef !== "undefined");
+      // The Chat* aliases were normalized away into Session* — assert them GONE.
+      result.ChatClient_present = (typeof mod.ChatClient !== "undefined");
+      result.ChatSession_present = (typeof mod.ChatSession !== "undefined");
+      result.ChatTurnStream_present = (typeof mod.ChatTurnStream !== "undefined");
       process.stdout.write(JSON.stringify(result));
     `;
     const child = await runChild(script, "esm-import.mjs");
@@ -81,9 +82,6 @@ describe("sdk imports", () => {
     const result = JSON.parse(child.stdout) as Record<string, string | boolean>;
     expect(result["Aex"]).toBe("function");
     expect(result["AgentExecutor"]).toBe("function");
-    expect(result["ChatClient"]).toBe("function");
-    expect(result["ChatSession"]).toBe("function");
-    expect(result["ChatTurnStream"]).toBe("function");
     expect(result["SessionClient"]).toBe("function");
     expect(result["SessionHandle"]).toBe("function");
     expect(result["SessionTurnStream"]).toBe("function");
@@ -105,6 +103,9 @@ describe("sdk imports", () => {
     expect(result["compileTemplate_present"]).toBe(false);
     expect(result["submitResolvedRun_present"]).toBe(false);
     expect(result["RunRef_present"]).toBe(false);
+    expect(result["ChatClient_present"]).toBe(false);
+    expect(result["ChatSession_present"]).toBe(false);
+    expect(result["ChatTurnStream_present"]).toBe(false);
   });
 
   it("require(\"@aexhq/sdk\") fails with a clear no-CJS error", async () => {
