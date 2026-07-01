@@ -126,7 +126,8 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 interface CaseSpec {
-  readonly scriptName: string;  readonly provider: "deepseek";
+  readonly scriptName: string;
+  readonly provider: "deepseek";
   readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;

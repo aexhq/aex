@@ -5,8 +5,8 @@ and read its output files — driven by Claude with **your own** Anthropic key.
 
 It is built on nothing but the **public SDK**. The single aex dependency is
 `@aexhq/sdk`; the chat's tools come from `createDataTools(client)`, which only
-calls public read methods (`sessions.list`, `sessions.get`, `sessions.outputs`,
-`sessions.readOutput`). So the assistant can reach your sessions and their
+calls public read methods (`sessions.list`, `sessions.get`,
+`sessions.outputs(id).read(...)`). So the assistant can reach your sessions and their
 captured outputs **and nothing else** — there is no path to internal or operator
 data, by construction.
 

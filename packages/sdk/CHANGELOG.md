@@ -32,8 +32,8 @@ follows semantic versioning.
   `secretEnv` becomes `environment.secrets`; `runtimeSize` becomes `runtime`;
   `timeout` becomes `overrides.timeout`.
 - Moved webhooks onto sessions: pass `webhook: { url }` to `openSession` / `run`
-  and inspect delivery with `session.webhookDeliveries()` /
-  `session.redeliverWebhook(id)`. Verify inbound deliveries with
+  and inspect delivery with `session.webhooks().list()` /
+  `session.webhooks().redeliver(id)`. Verify inbound deliveries with
   `verifyAexWebhook`.
 - Renamed the data-source chat tools to session vocabulary: `list_runs` →
   `list_sessions`, `get_run` → `get_session`, and their `run_id` argument →

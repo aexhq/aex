@@ -46,7 +46,8 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v
 
 interface Cell {
   readonly id: string;
-  readonly provider: "deepseek";  readonly model: string;
+  readonly provider: "deepseek";
+  readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
@@ -174,7 +175,8 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     });
 
     const result = await client.run({
-      provider: ${JSON.stringify(cell.provider)},      model: ${JSON.stringify(cell.model)},
+      provider: ${JSON.stringify(cell.provider)},
+      model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
       message: ${JSON.stringify(prompt)},
       tools: [alpha, beta],

@@ -47,8 +47,8 @@ bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 Offline runs use `vitest.offline.config.ts` and default to 4 parallel test files.
 Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
 uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
-SDK artifact, splits the live sweep into 4 shards, and runs 2 file workers per
-shard.
+SDK artifact, splits the live sweep into 4 shards, and runs 2 test files
+concurrently per shard.
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
 `test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
@@ -97,10 +97,9 @@ Anthropic-managed for the default-provider proof and DeepSeek-managed for the
 broad feature-surface matrix, because those are the provider keys provisioned
 for the public live workflow.
 
-Each test installs the packed tarball into a tempdir, spawns
-`AgentExecutor.submit({ provider, ... })`, polls `getRun`,
-`listEvents`, and `listOutputs`, and asserts the user's probe
-string round-trips through a real upstream LLM call.
+Each test installs the packed tarball into a tempdir, opens a session or runs a
+one-shot `run({ message, apiKeys, ... })`, reads through the session accessors,
+and asserts the user's probe string round-trips through a real upstream LLM call.
 
 Required env:
 

@@ -5,7 +5,7 @@
  * direct Claude chat loop (`@anthropic-ai/sdk`). The importable `@aexhq/sdk` stays
  * LLM-vendor-free; the vendor dependency lives only here in the example.
  *
- * Run (Bun): ANTHROPIC_API_KEY=… AEX_TOKEN=… bun examples/chat-corpus.ts <runId> [runId…]
+ * Run (Bun): ANTHROPIC_API_KEY=… AEX_API_TOKEN=… bun examples/chat-corpus.ts <sessionId> [sessionId…]
  *
  * The model answers ONLY from the named runs' outputs (read via the corpus
  * tools); a run outside the corpus is refused by the tool layer.
@@ -13,17 +13,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentExecutor, createCorpusTools, DataToolError } from "@aexhq/sdk";
 
-const runIds = process.argv.slice(2);
-if (runIds.length === 0) {
-  console.error("usage: bun examples/chat-corpus.ts <runId> [runId…]");
+const sessionIds = process.argv.slice(2);
+if (sessionIds.length === 0) {
+  console.error("usage: bun examples/chat-corpus.ts <sessionId> [sessionId…]");
   process.exit(2);
 }
 
 const aex = new AgentExecutor({
-  apiToken: process.env.AEX_TOKEN!,
-  ...(process.env.AEX_URL ? { baseUrl: process.env.AEX_URL } : {})
+  apiToken: process.env.AEX_API_TOKEN!,
+  ...(process.env.AEX_API_URL ? { baseUrl: process.env.AEX_API_URL } : {})
 });
-const tools = createCorpusTools(aex, { runIds });
+const tools = createCorpusTools(aex, { sessionIds });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const SYSTEM =

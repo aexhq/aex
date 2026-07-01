@@ -3,12 +3,12 @@
 // secret-safe path: the Doubao key rides on the ProxyEndpoint.bearer instance and
 // is split into the vaulted secrets channel server-side (never in the container).
 //
-// Env required: AEX_WORKSPACE_TOKEN, DOUBAO_API_KEY, ANTHROPIC_API_KEY (or your
+// Env required: AEX_API_TOKEN, DOUBAO_API_KEY, ANTHROPIC_API_KEY (or your
 // chosen run provider key). Optional: AEX_API_URL for a non-default plane.
-import { Aex, Models, Skill, ProxyEndpoint } from "@aexhq/sdk";
+import { Aex, Models, Tools, ProxyEndpoint } from "@aexhq/sdk";
 
 const aex = new Aex({
-  apiToken: process.env.AEX_WORKSPACE_TOKEN,
+  apiToken: process.env.AEX_API_TOKEN,
   ...(process.env.AEX_API_URL ? { baseUrl: process.env.AEX_API_URL } : {})
 });
 
@@ -34,7 +34,7 @@ const result = await aex.run({
     "Read skills/frame-vision-gate/SKILL.md, then run caption_frame.py and",
     "verify_frame.py as it documents. Report the verdict JSON."
   ].join(" "),
-  skills: [await Skill.fromPath("./vision-skill", { name: "frame-vision-gate" })],
+  tools: [await Tools.fromSkillDir("./vision-skill", { name: "frame-vision-gate" })],
   proxyEndpoints: [doubaoArk],
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY }
 });

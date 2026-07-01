@@ -26,8 +26,8 @@ const client = new Aex({
 });
 
 // 2. The unified data interface as model tools. `data.execute` only ever calls
-//    public read methods (sessions.list / sessions.get / sessions.outputs /
-//    sessions.readOutput).
+//    public read methods (sessions.list / sessions.get /
+//    sessions.outputs(id).read(...)).
 const data = createDataTools(client);
 
 // 3. Your own LLM, your own key.

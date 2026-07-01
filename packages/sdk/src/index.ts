@@ -63,7 +63,7 @@ export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
 export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "./bundle.js";
 
 // Data-source chat tools — turn the sessions read surface (sessions.list /
-// sessions.outputs / sessions.readOutput) into vendor-neutral LLM tool
+// sessions.outputs(id).read(...)) into vendor-neutral LLM tool
 // definitions + an executor, so a chat over workspace/session data is a few
 // lines on top of the public SDK.
 export { createDataTools, createCorpusTools, DataToolError, DATA_TOOLS_INSTRUCTIONS } from "./data-tools.js";

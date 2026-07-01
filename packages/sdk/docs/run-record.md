@@ -8,7 +8,7 @@ The run record is the durable product primitive for one session. It is the publi
 
 ## Listing sessions
 
-`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API token, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: combine it with `aex.sessions.outputs` / `aex.sessions.readOutput` (see [Outputs](outputs.md)) to reach any session's deliverables.
+`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API token, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: combine it with `aex.sessions.outputs(id).list()` / `.read(...)` (see [Outputs](outputs.md)) to reach any session's deliverables.
 
 ```ts
 let cursor: string | undefined;

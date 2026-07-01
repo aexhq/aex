@@ -41,7 +41,8 @@ const SHELL_FAMILY = new Set(["shell", "bash"]);
 
 interface Cell {
   readonly id: string;
-  readonly provider: "deepseek";  readonly model: string;
+  readonly provider: "deepseek";
+  readonly model: string;
   readonly keyEnvName: string;
   readonly keyValue: string;
 }
@@ -112,7 +113,8 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
     });
 
     const result = await client.run({
-      provider: ${JSON.stringify(cell.provider)},      model: ${JSON.stringify(cell.model)},
+      provider: ${JSON.stringify(cell.provider)},
+      model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
       includeBuiltinTools: ${includeBuiltinToolsLiteral},
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
