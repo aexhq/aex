@@ -8,9 +8,8 @@
  * Two input modes (mutually exclusive):
  *
  *   1. `--config <path>` — plain run-request JSON:
- *      `{ model, system?, prompt, skills?, mcpServers?, environment?,
- *         runtimeSize?, timeout?, proxyEndpoints?, metadata? }`. Skill
- *      entries use storage-neutral asset refs (`{ kind: "asset", ... }`).
+ *      `{ model, system?, prompt, mcpServers?, environment?,
+ *         runtimeSize?, timeout?, proxyEndpoints?, metadata? }`.
  *      MCP entries may include `headers` — the CLI splits them into the
  *      `secrets.mcpServers` bag before posting.
  *
@@ -55,8 +54,7 @@ import {
   type PlatformProxyEndpointAuth,
   type RunModel,
   type RunProvider,
-  type RuntimeSize,
-  type SkillRef
+  type RuntimeSize
 } from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
@@ -375,11 +373,9 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   // The prompt is NOT part of the create submission — it is sent as the first
   // turn's message (mirroring the SDK's `sessions.create` + `session.send`).
   const promptArray = Array.isArray(runConfig.prompt) ? [...runConfig.prompt] : [runConfig.prompt];
-  const skills: SkillRef[] = runConfig.skills ? [...runConfig.skills] : [];
   const submission: SessionSubmission = {
     model: runConfig.model,
     ...(runConfig.system ? { system: runConfig.system } : {}),
-    skills,
     agentsMd: [],
     files: [],
     mcpServers: mcpServersForSubmission,

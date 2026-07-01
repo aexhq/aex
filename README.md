@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, and background command tools.
+- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, web fetch/search, background commands, code execution, git, and subagents.
 - **Durable infrastructure.** Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.

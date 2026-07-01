@@ -10,8 +10,8 @@ The package ships:
 
 - `Aex` / `AgentExecutor` for sessions, one-shot runs, inspect, download, cancel, and delete.
 - `sessions` / `openSession()` for durable, resumable agent sessions.
-- Typed run primitives: `Models`, `Providers`, `Sizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
-- A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, whoami, and skills operations.
+- Typed run primitives: `Models`, `Providers`, `Sizes`, `Tool` / `Tools` (skill-tools), `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
+- A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, and whoami operations.
 
 ## Install
 
@@ -109,7 +109,7 @@ by default, machine JSON under `--json`):
 ```bash
 aex models list           # canonical models + their default provider
 aex providers list        # providers + the models each serves
-aex tools list            # builtin tools (default vs opt-in, e.g. notebook_edit)
+aex tools list            # complete builtin tool set
 aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
 ```
 
@@ -134,7 +134,7 @@ and returns references (no bytes) you then read with `aex.sessions.outputs(id).r
 
 ## Feature Areas
 
-- **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, and optional notebook tools.
+- **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
 - **Durable infrastructure:** run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition:** skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
 - **Subagents:** typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.

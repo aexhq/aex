@@ -265,15 +265,9 @@ interface FailureCaseResult {
 
 function buildCorruptedSkillScript(): string {
   // PKZIP end-of-central-directory record with empty payload — passes
-  // magic-byte sniffing but is unparseable.
+  // magic-byte sniffing but is unparseable. Submitted via raw fetch (no SDK
+  // client), since the typed tools option won't reference a corrupted asset.
   return `
-    import { AgentExecutor } from "@aexhq/sdk";
-
-    const client = new AgentExecutor({
-      baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
-    });
-
     const corruptedZip = new Uint8Array([0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
     let submitOk = false;
@@ -292,9 +286,9 @@ function buildCorruptedSkillScript(): string {
 
     // Stage the corrupted bytes directly via the raw /assets
     // endpoint so we can submit a run that references a malformed
-    // bundle — Skill.fromFiles() would build a VALID zip we can't
+    // bundle — Tools.fromSkillDir() would build a VALID zip we can't
     // corrupt at the SDK layer.
-    let skillRef = null;
+    let corruptAssetId = null;
     try {
       const hashBuf = await crypto.subtle.digest("SHA-256", corruptedZip);
       const hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -310,7 +304,7 @@ function buildCorruptedSkillScript(): string {
       });
       if (res.status === 200 || res.status === 201) {
         const body = await res.json();
-        skillRef = { kind: "asset", assetId: body.assetId, name: "corrupt-skill" };
+        corruptAssetId = body.assetId;
       } else {
         // Upload rejected — that's also a structured failure path. Record it.
         submitStatus = res.status;
@@ -324,33 +318,43 @@ function buildCorruptedSkillScript(): string {
       errorMessage = e && e.message ? e.message : String(e);
     }
 
-    if (skillRef) {
+    if (corruptAssetId) {
       try {
-        const result = await client.run({
-          provider: "deepseek",
-          model: ${JSON.stringify(deepseekModel)},
-          message: "Hello.",
-          skills: [skillRef],
-          apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
-          idempotencyKey: "fail-corrupt-skill-" + Date.now()
-        }, { timeoutMs: 3 * 60_000 });
-        submitOk = true;
-        runId = result.runId;
-        const run = {
-          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
-          errorMessage: result.error ?? null
-        };
-        runStatus = run.status;
-        runErrorMessage = run.errorMessage;
-
-        const events = Array.isArray(result.events) ? result.events : [];
-        eventKinds = events.map((e) => e.type);
-        const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
-        terminalKind = terminal ? terminal.type : null;
-        terminalData = terminal ? terminal.data : null;
-        streamErrors = events
-          .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
-          .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
+        // Skills ride submission.tools now as
+        // { kind:"skill", assetId, name, description }. The SDK's typed tools
+        // option only accepts Tool/SkillTool instances (which build VALID
+        // bundles), so reference the corrupted asset through a raw /api/runs
+        // POST — the same hand-crafted wire path the stdio-mcp probe uses. An
+        // unparseable bundle is rejected when the BFF materializes the run
+        // manifest, giving a 4xx-at-submit structured failure.
+        const res = await fetch(process.env.AEX_API_URL + "/api/runs", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer " + process.env.AEX_API_TOKEN
+          },
+          body: JSON.stringify({
+            workspaceId: "ws-test",
+            idempotencyKey: "fail-corrupt-skill-" + Date.now(),
+            provider: "deepseek",
+            submission: {
+              model: ${JSON.stringify(deepseekModel)},
+              prompt: ["Hello."],
+              tools: [{ kind: "skill", assetId: corruptAssetId, name: "corrupt-skill", description: "Corrupted skill bundle probe." }],
+              agentsMd: [],
+              files: [],
+              mcpServers: []
+            },
+            secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } }
+          })
+        });
+        submitStatus = res.status;
+        submitBody = (await res.text()).slice(0, 800);
+        submitOk = res.status >= 200 && res.status < 300;
+        if (!submitOk) {
+          errorClass = "run-submit-rejected";
+          errorMessage = "corrupted skill bundle rejected at status " + res.status + ": " + submitBody.slice(0, 200);
+        }
       } catch (e) {
         errorClass = e && e.constructor ? e.constructor.name : "Error";
         errorCode = e && typeof e.code === "string" ? e.code : null;
@@ -468,7 +472,6 @@ function buildStdioMcpScript(): string {
           submission: {
             model: ${JSON.stringify(deepseekModel)},
             prompt: ["Hello."],
-            skills: [],
             agentsMd: [],
             files: [],
             mcpServers: [{ name: "bad-stdio", url: "stdio:///dev/null", transport: "stdio" }]

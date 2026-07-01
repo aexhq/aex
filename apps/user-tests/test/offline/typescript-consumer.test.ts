@@ -97,7 +97,8 @@ describe("typescript consumer", () => {
         Sizes,
         Secret,
         SecretString,
-        Skill,
+        SkillTool,
+        Tools,
         buildPlatformAllowedHosts,
         bundleSkillFiles,
         hashSkillBundle,
@@ -135,7 +136,7 @@ describe("typescript consumer", () => {
         type RuntimeSize,
         type SkillBundleManifest,
         type SkillFiles,
-        type SkillRef,
+        type SkillToolRef,
         type WaitForRunOptions
       } from "@aexhq/sdk";
 
@@ -183,7 +184,16 @@ describe("typescript consumer", () => {
       } satisfies SkillFiles;
       const skillBundle = bundleSkillFiles(skillFiles);
       const skillHash: Promise<string> = hashSkillBundle(skillBundle.zip);
-      const inlineSkill = await Skill.fromFiles({ name: "surface-skill", files: skillFiles });
+      // Skills are ingested as TOOLS now: a no-arg load-tool that pulls in the
+      // SKILL.md body; the bundle stages to /workspace/skills/<name>/.
+      const inlineSkill: SkillTool = await Tools.fromSkillDir("./surface-skill", { name: "surface-skill" });
+      const urlSkill: SkillTool = await Tools.fromSkillUrl("https://example.test/skill.zip", { name: "surface-skill-url" });
+      const surfaceSkillRef: SkillToolRef = {
+        kind: "skill",
+        assetId: "asset_" + "a".repeat(64),
+        name: "surface-skill",
+        description: "surface skill"
+      };
       const agentsMd = await AgentsMd.fromContent("# Rules\\nKeep outputs concise.", { name: "surface-rules" });
       const file = await File.fromBytes({
         name: "surface-file",
@@ -196,15 +206,14 @@ describe("typescript consumer", () => {
         model: Models.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
         message: ["Read the attached file.", "Reply with a short acknowledgement."],
-        skills: [inlineSkill],
         agentsMd: [agentsMd],
         files: [file],
         mcpServers: [mcp, workspaceMcp],
         proxyEndpoints: [proxy, publicProxy],
         outputs: { allowedDirs: ["/workspace/outputs"] },
-        // Default builtin set ON, plus the opt-in notebook tool (a builtin ref).
+        // Default builtin set ON, plus an explicit builtin ref and skill-tools.
         includeBuiltinTools: true,
-        tools: [BuiltinTools.notebook_edit],
+        tools: [BuiltinTools.git, inlineSkill, urlSkill],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
           packages: [{ name: "apt:jq" }],
@@ -241,7 +250,7 @@ describe("typescript consumer", () => {
           model: Models.CLAUDE_HAIKU_4_5,
           system: "Be precise.",
           prompt: ["hello"],
-          skills: [inlineSkill.ref as SkillRef],
+          skillTools: [surfaceSkillRef],
           agentsMd: [],
           files: [],
           mcpServers: [],
@@ -264,7 +273,7 @@ describe("typescript consumer", () => {
 
       const platformEndpoint: PlatformProxyEndpoint = proxy.declaration;
       const builtinCount: number = everyBuiltin.length;
-      const skillRef: SkillRef = inlineSkill.ref as SkillRef;
+      const skillRef: SkillToolRef = surfaceSkillRef;
       const agentsRef = agentsMd.ref as AgentsMdRef;
       const manifest = { schemaVersion: "1", files: [] } as unknown as SkillBundleManifest;
       const outputSelector: OutputFileSelector = { path: "report.txt", match: "suffix" };
@@ -286,12 +295,8 @@ describe("typescript consumer", () => {
         baseUrl: "https://example.invalid",
         fetch: fetchFake
       });
-      // run() returns a settle-consistent RunResult; runAndCollect is its alias.
+      // run() returns a settle-consistent RunResult.
       const runResultPromise: Promise<RunResult> = client.run(apiKeysOptions);
-      const collectPromise: Promise<RunResult> = client.runAndCollect(apiKeysOptions, {
-        throwOnFailure: false,
-        timeoutMs: 1_000
-      });
       const sessionOptions = {
         model: Models.CLAUDE_HAIKU_4_5,
         system: "Be precise.",
@@ -386,7 +391,6 @@ describe("typescript consumer", () => {
       void skillHash;
       void runViewPromise;
       void runResultPromise;
-      void collectPromise;
       void sessionOptions;
       void sessionPromise;
       void reopenedPromise;
@@ -419,6 +423,12 @@ describe("typescript consumer", () => {
       import type { SubmitOptions } from "@aexhq/sdk";
       // @ts-expect-error legacy runtime-sizes symbol was renamed to Sizes
       import { RuntimeSizes } from "@aexhq/sdk";
+      // @ts-expect-error skill class removed — skills are ingested as tools via Tools.fromSkill*
+      import { Skill } from "@aexhq/sdk";
+      // @ts-expect-error skill catalog client removed — no standalone skill catalog
+      import { SkillsClient } from "@aexhq/sdk";
+      // @ts-expect-error SkillRef renamed to SkillToolRef
+      import type { SkillRef } from "@aexhq/sdk";
       // @ts-expect-error removed run-list page type must stay absent from the root surface
       import type { RunListPage } from "@aexhq/sdk";
       // @ts-expect-error removed run-list query type must stay absent from the root surface
@@ -427,6 +437,8 @@ describe("typescript consumer", () => {
       import type { RunSummary } from "@aexhq/sdk";
       import { AgentExecutor } from "@aexhq/sdk";
       const client = new AgentExecutor({ apiToken: "ant_legacy_negative", baseUrl: "https://example.invalid" });
+      // @ts-expect-error skill catalog accessor removed from the client surface
+      void client.skills;
       // @ts-expect-error removed logs download helper must stay absent from AgentExecutor
       void client.downloadLogs("run_type_surface");
       // @ts-expect-error removed debug logs helper must stay absent from AgentExecutor

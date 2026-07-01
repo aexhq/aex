@@ -38,15 +38,17 @@ bun run --filter @aexhq/user-tests test:user
 # or from the repo root:
 bun run test:user
 
-# Explicit live suites kept out of the default sweep.
+# Explicit live suites kept out of the default public sweep.
 bun run test:user:fuzz
 bun run test:user:providers
+bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 ```
 
 Offline runs use `vitest.offline.config.ts` and default to 4 parallel test files.
 Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
-uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI sets it to
-4 after selecting a single SDK artifact for the whole run.
+uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
+SDK artifact, splits the live sweep into 4 shards, and runs 2 file workers per
+shard.
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
 `test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
@@ -63,6 +65,13 @@ or a missing tarball path is a **hard error**, never a silent skip. The
 post-publish gates must stay pinned to the exact published version through
 `AEX_USER_TEST_VERSION`.
 
+`test:user:tool-fuzz` is the explicit paid tool-capability gate. It uses seeded,
+reproducible inputs and real hosted runs to cover every builtin tool plus custom
+tool bundle upload, schema arguments, environment/secret access, result forms,
+failure propagation, and redaction. It is excluded from the default public live
+sweep, but it is a hard gate in the platform deploy suite, using the supplied
+published SDK candidate when present and npm `latest` otherwise.
+
 ## CI prerequisites
 
 CI runs the offline scenarios after the unit gate. The release workflow runs the
@@ -70,7 +79,8 @@ offline scenarios before publish and the live scenarios against the exact
 published version after npm visibility. The offline path needs no provider key.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
-the configured hosted API. They require:
+the configured hosted API. The workflow runs the default sweep as four shards.
+They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
 - **Secret `AEX_API_TOKEN`** — workspace API token for the selected API URL.
@@ -145,6 +155,28 @@ Required env is identical to the comprehensive scenario
 CI: it runs via the consolidated on-demand pipeline (see below), not the
 default sweep.
 
+## Tool capability fuzz gate
+
+`test/live/live-sdk-tool-capability-fuzz.test.ts` is the paid blackbox tool
+matrix. It drives seeded real hosted DeepSeek runs through a clean SDK install
+and covers every builtin tool: file read/write/edit/navigation, process tools,
+background bash, web fetch/search, the subagent/subagent_result protocol, and
+custom tool bundle upload/execution.
+
+It also covers custom tool schemas, structured arguments, environment and secret
+access, result forms, expected tool failures, and redaction. It is **excluded**
+from the default `test:user` sweep, runs in the platform deploy suite via
+`aex-platform/.github/workflows/aws-suite.yml`, and remains directly invokable
+for reproduction:
+
+```bash
+bun run --filter @aexhq/user-tests test:user:tool-fuzz
+```
+
+Required env is `AEX_API_URL`, `AEX_API_TOKEN`, `AEX_USER_TEST_TARBALL` or
+`AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`; model override is
+`AEX_USER_TEST_DEEPSEEK_MODEL`.
+
 ## Per-provider correctness suite
 
 `test/live/providers/` holds one minimal round-trip per **extra** provider
@@ -166,11 +198,13 @@ bun run --filter @aexhq/user-tests test:user:providers
 
 ## Consolidated on-demand pipeline
 
-Both optional, expensive suites above — the heavy full-feature session and the
-per-provider correctness matrix — are kept out of the default sweep and run
-together from a single manual trigger:
-`.github/workflows/live-on-demand-tests.yml`. One dispatch runs
-`test:user:providers` then `test:user:heavy`; the heavy step runs even if a
-provider check failed, so you get the full signal from one trigger. The default
-`live-user-tests.yml` workflow is purely the always-on workhorse sweep
+The optional suites above — the per-provider correctness matrix and the heavy
+full-feature session — are kept out of the default sweep and run together from a
+single manual trigger:
+`.github/workflows/live-on-demand-tests.yml`. One dispatch prepares the selected
+SDK artifact once, then runs `test:user:providers` and `test:user:heavy` as
+independent jobs so you get the full optional signal from one trigger.
+`test:user:tool-fuzz` belongs to the platform deploy suite instead, because it
+is a deterministic paid gate rather than a non-gating on-demand probe. The
+default `live-user-tests.yml` workflow is purely the always-on workhorse sweep
 (DeepSeek + Anthropic) and no longer carries a `run_heavy` toggle.

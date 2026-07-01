@@ -4,9 +4,7 @@ description: The default builtin tools available inside managed runs.
 icon: TerminalSquare
 ---
 
-Managed runs inject a DX-first set of builtin tools to the agent by default. The
-default set is every builtin tool EXCEPT `notebook_edit` (notebook editing is
-opt-in). It includes:
+Managed runs inject the complete builtin tool set into the agent by default:
 
 - `bash`, `code_execution` — run shell commands / model-written snippets
 - `read_file`, `write_file`, `edit_file` — file read/create/patch
@@ -28,28 +26,11 @@ or pure-custom run where every tool comes from `mcpServers` or `tools`.
 ## Cherry-picking builtins
 
 The `tools` list accepts both custom tool bundles and BUILTIN tool references
-(bare name strings, preferably `BuiltinTools.<name>`). Use a builtin reference
-to add a tool the default set omits (notebook editing), or to pick a narrow
-subset alongside `includeBuiltinTools: false`.
+(bare name strings, preferably `BuiltinTools.<name>`). Use builtin references
+to pick a narrow subset alongside `includeBuiltinTools: false`.
 
 The final tool list is ordered: resolved builtin tools, then custom tools, then
 MCP tools.
-
-## Optional notebook support
-
-`notebook_edit` edits Jupyter `.ipynb` cells as JSON. It is NOT in the default
-builtin set; add it via `tools`:
-
-```ts
-import { BuiltinTools, Models } from "@aexhq/sdk";
-
-await aex.run({
-  model: Models.CLAUDE_HAIKU_4_5,
-  message: "Edit the analysis notebook.",
-  tools: [BuiltinTools.notebook_edit],
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
-});
-```
 
 Networking is open by default: the agent may reach any public host, subject to a
 fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a

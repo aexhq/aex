@@ -30,7 +30,7 @@ model-specific settings are `responseMode: "full"` (so the skill gets the upstre
 JSON back) and a raised `maxRequestBytes` (so the base64 image fits):
 
 ```ts
-import { Aex, Models, Skill, ProxyEndpoint } from "@aexhq/sdk";
+import { Aex, Models, Tools, ProxyEndpoint } from "@aexhq/sdk";
 
 const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
@@ -48,13 +48,13 @@ const doubaoArk = ProxyEndpoint.bearer({
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "…read skills/frame-vision-gate/SKILL.md, then caption + verify the frame…",
-  skills: [await Skill.fromPath("./vision-skill", { name: "frame-vision-gate" })],
+  tools: [await Tools.fromSkillDir("./vision-skill", { name: "frame-vision-gate" })],
   proxyEndpoints: [doubaoArk],
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
-`Skill.fromPath("./vision-skill", …)` is resolved relative to the process CWD, so
+`Tools.fromSkillDir("./vision-skill", …)` is resolved relative to the process CWD, so
 run the script from the directory that *contains* `vision-skill/` (in the
 repo, that is `examples/`). The same pattern works for OpenAI, Gemini's
 OpenAI-compatible endpoint, or any other OpenAI-chat-shaped vision API — only

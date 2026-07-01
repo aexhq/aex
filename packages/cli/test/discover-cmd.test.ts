@@ -84,20 +84,42 @@ describe("aex providers list", () => {
 });
 
 describe("aex tools list", () => {
-  it("marks notebook_edit as opt-in and bash as default", async () => {
+  it("lists the complete closed builtin set in order and marks every tool default", async () => {
     const cap = makeIo(["tools", "list", "--json"]);
     await runCli(cap.io);
     expect(cap.exit()).toBe(0);
     const arr = JSON.parse(cap.out().trim()) as Array<{ tool: string; default: boolean }>;
-    expect(arr.find((e) => e.tool === "notebook_edit")!.default).toBe(false);
-    expect(arr.find((e) => e.tool === "bash")!.default).toBe(true);
+    expect(arr).toEqual([
+      "bash",
+      "read_file",
+      "write_file",
+      "edit_file",
+      "grep",
+      "glob",
+      "head",
+      "tail",
+      "todo_write",
+      "subagent",
+      "subagent_result",
+      "web_fetch",
+      "web_search",
+      "bash_output",
+      "bash_kill",
+      "code_execution",
+      "wait",
+      "git"
+    ].map((tool) => ({ tool, default: true })));
+    expect(arr.some((entry) => entry.tool === "notebook_edit")).toBe(false);
+    expect(cap.fetchCount()).toBe(0);
   });
 
-  it("renders opt-in vs yes in the human table", async () => {
+  it("renders every builtin as default in the human table", async () => {
     const cap = makeIo(["tools", "list"]);
     await runCli(cap.io);
-    expect(cap.out()).toContain("notebook_edit");
-    expect(cap.out()).toContain("opt-in");
+    expect(cap.out()).toContain("bash");
+    expect(cap.out()).toContain("git");
+    expect(cap.out()).not.toContain("notebook_edit");
+    expect(cap.out()).not.toContain("opt-in");
   });
 });
 

@@ -24,11 +24,12 @@ permissions:
   contents: read
 
 jobs:
-  live-user-tests:
-    name: Live user tests
+  prepare-artifact:
+    name: Prepare SDK artifact
     runs-on: ubuntu-latest
-    environment: live-user-tests
-    timeout-minutes: 240
+    outputs:
+      version: ${{ steps.artifact.outputs.version }}
+      tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -39,6 +40,7 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Install
+        if: ${{ inputs.artifact_source == 'pack-current' }}
         run: bun ci
 
       - name: Select SDK artifact
@@ -64,10 +66,67 @@ jobs:
               echo "No @aexhq/sdk tarball was produced." >&2
               exit 1
             fi
-            echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+            echo "tarball_artifact=live-user-tests-sdk-tarball" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload SDK tarball
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-user-tests-sdk-tarball
+          path: ${{ runner.temp }}/aex-pack/aexhq-sdk-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  live-user-tests:
+    name: Live user tests shard ${{ matrix.shard }}/4
+    needs: prepare-artifact
+    runs-on: ubuntu-latest
+    environment: live-user-tests
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Download SDK tarball
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: live-user-tests-sdk-tarball
+          path: ${{ runner.temp }}/aex-pack
+
+      - name: Use selected SDK artifact
+        shell: bash
+        env:
+          ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
+          PACKAGE_VERSION: ${{ needs['prepare-artifact'].outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
+            echo "AEX_USER_TEST_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          else
+            tarball="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
+            if [ -z "$tarball" ]; then
+              echo "No downloaded @aexhq/sdk tarball was found." >&2
+              exit 1
+            fi
+            echo "AEX_USER_TEST_TARBALL=${tarball}" >> "$GITHUB_ENV"
           fi
 
       - name: Live user tests
+        shell: bash
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
@@ -75,13 +134,12 @@ jobs:
           AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
-          AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
-          AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
-          AEX_USER_TEST_MAX_WORKERS: 4
+          AEX_USER_TEST_MAX_WORKERS: 2
+          RAW_LOG: .suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
         run: |
           set -euo pipefail
           mkdir -p .suite-diagnostics/raw
-          bun run test:user 2>&1 | tee .suite-diagnostics/raw/live-user-tests.log
+          bun run test:user -- --shard=${{ matrix.shard }}/4 2>&1 | tee "$RAW_LOG"
 
       - name: Redact live user test log
         if: ${{ always() }}
@@ -89,14 +147,19 @@ jobs:
           AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          RAW_LOG: .suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
+          REDACTED_LOG: .suite-diagnostics/redacted/live-user-tests-shard-${{ matrix.shard }}.log
         run: |
           set -euo pipefail
           mkdir -p .suite-diagnostics/redacted
           node --input-type=module <<'NODE'
           import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-          const rawPath = ".suite-diagnostics/raw/live-user-tests.log";
-          const outPath = ".suite-diagnostics/redacted/live-user-tests.log";
+          const rawPath = process.env.RAW_LOG;
+          const outPath = process.env.REDACTED_LOG;
+          if (!rawPath || !outPath) {
+            throw new Error("RAW_LOG and REDACTED_LOG are required.");
+          }
           let text = existsSync(rawPath)
             ? readFileSync(rawPath, "utf8")
             : "live-user-tests.log was not created before diagnostics collection.\n";
@@ -115,12 +178,12 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: live-user-tests-redacted-log
+          name: live-user-tests-shard-${{ matrix.shard }}-redacted-log
           path: .suite-diagnostics/redacted
           if-no-files-found: error
           retention-days: 14
 
-      # The expensive, optional suites (heavy full-feature session +
-      # per-provider correctness matrix) are NOT run here — they live in the
-      # manually-dispatched .github/workflows/live-on-demand-tests.yml so one
-      # trigger runs them all without piling spend onto the default sweep.
+      # The expensive, optional suites (per-provider matrix and heavy
+      # full-feature session) are NOT run here — they live in the
+      # manually-dispatched .github/workflows/live-on-demand-tests.yml. The
+      # deterministic tool-fuzz gate runs in the platform deploy suite.

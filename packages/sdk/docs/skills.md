@@ -4,132 +4,77 @@ title: Skills
 
 # Skills
 
-A skill is executable or instructional content that is mounted into a run before
-the first agent turn. Every accepted skill ends up as a storage-neutral
-`kind:"asset"` reference in the run submission, and the hosted platform snapshots
-that asset into durable run asset storage before dispatch.
+A skill is a bundle of instructional or executable content (`SKILL.md` plus any
+supporting files) that the agent can pull into context on demand. In the SDK a
+skill is expressed as a per-skill **load-tool**: it rides in the session's
+`tools` array next to builtin tool names and custom `Tool` bundles, and the model
+loads it by calling it.
 
-There are three sources for skill bytes:
+Build a skill-tool with the `Tools.fromSkill*` factories. Each factory reads a
+skill bundle, lifts the tool `name` and `description` from the `SKILL.md` YAML
+frontmatter (an explicit `{ name }` overrides the frontmatter), canonically
+zips + hashes the bytes, and returns a `SkillTool`:
 
-- **Inline/local draft:** `Skill.fromFiles(...)`, `Skill.fromPath(...)`, or
-  `Skill.fromUrl(...)` builds a draft in the SDK process. `openSession` / `run`
-  uploads it before the session lands.
-- **Pre-uploaded workspace asset:** call `await draft.upload(aex)` and reuse the
-  returned materialized `Skill`, or pass an existing `kind:"asset"` ref from a
-  config file.
-- **Workspace skill catalog:** upload with `aex skills upload` or the dashboard,
-  then pass the returned record to `Skill.fromCatalog(record)`.
-
-All three sources normalize to the same content-addressed asset. Identical bytes
-dedup by hash, so repeated submissions of the same bundle are no-op uploads.
-There is no per-run auto-suffixed `skl_*` row for inline skills.
-
-## Materialization
-
-For each run, the platform copies referenced skill assets into durable run asset
-storage (`runs/<runId>/assets/<hash>`) and the runner downloads them into the
-workspace under `skills/<name>/`.
-
-A bundle's `SKILL.md` is mounted at `skills/<name>/SKILL.md`, and the agent's
-instructions list each mounted skill with that path. The full skill body stays
-on disk, so prompts or `AGENTS.md` guidance that rely on a skill should tell the
-agent when to read or use it. Bundles without `SKILL.md` are still mounted as
-files at `skills/<name>/`, but nothing prompts the agent to read them; reference
-them explicitly from the prompt or your `AGENTS.md`.
-
-The platform also mounts the `aex` CLI and a per-run manifest into every run.
-Skills call managed HTTP proxy endpoints through the mounted CLI
-(`aex proxy ...`); see `credentials.md` for the policy and auth model.
-
-Run-scoped asset copies are part of the run record and are removed by run deletion
-or retention cleanup. Catalog assets are separate workspace records: deleting a
-catalog skill hard-deletes its metadata and removes the shared asset object only
-when no other catalog row still references those bytes. Existing run snapshots
-keep their run-scoped copy.
-
-## Inline And Local Drafts
-
-`Skill.fromFiles({ name, files })`, `Skill.fromPath(rootDir, { name })`, and
-`Skill.fromUrl(url, { name })` build an unstaged `Skill`. The instance carries
-canonical zip bytes and a `sha256:<hex>` content hash.
+- **Local directory:** `Tools.fromSkillDir(rootDir, { name? })` reads a folder
+  that has `SKILL.md` at its root (Bun/Node filesystem runtimes).
+- **Signed URL:** `Tools.fromSkillUrl(url, { name?, sha256?, timeoutMs?, fetch? })`
+  fetches a zip archive with `SKILL.md` at the archive root (universal — needs a
+  global `fetch`, or pass one).
 
 ```ts
-import { Aex, Models, Skill } from "@aexhq/sdk";
+import { Aex, Models, Tools } from "@aexhq/sdk";
 
 const aex = new Aex({ apiToken });
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
   message,
-  skills: [await Skill.fromPath("./skills/rules", { name: "rules" })],
+  tools: [await Tools.fromSkillDir("./skills/rules", { name: "rules" })],
   apiKeys: { anthropic: apiKey }
 });
 ```
 
-Before the session lands, the SDK uploads each draft through the asset upload
-flow:
+`Tools.fromSkillDir("./skills/rules", …)` resolves relative to the process CWD,
+so run the script from the directory that *contains* `skills/`. The `SKILL.md`
+frontmatter must supply a `description` (max 2048 chars) and, unless you pass
+`{ name }`, a `name`. Names must match the tool-name pattern and must not contain
+`__` (that separator is reserved for MCP tools).
+
+## How a skill-tool rides on the wire
+
+Before the session lands, `openSession` / `run` walks the `tools` array and
+uploads each draft skill-tool's bundle through the asset upload flow:
 
 1. `POST /assets/presign` checks for a dedup hit and, when needed, returns a
    signed upload URL.
 2. The SDK PUTs bytes directly to object storage with the signed checksum headers.
 3. `POST /assets/finalize` confirms the object exists.
 
-The runner re-verifies the content hash when it downloads the asset.
+The wire ref then becomes a `{ kind:"skill", assetId, name, description }` entry
+inside `submission.tools`. Identical bytes dedup by content hash, so re-submitting
+the same bundle is a no-op upload; a `SkillTool` instance also caches its resolved
+asset id, so reusing the same instance across sessions skips the re-upload. A URL
+is an ingestion source, not a persistent reference — the SDK snapshots the fetched
+bytes into the asset store, and the hosted platform never fetches the
+caller-controlled URL.
 
-## Pre-Upload For Reuse
+## Loading and materialization
 
-If you want to build a local skill once and reuse the materialized asset across
-multiple submissions, upload the draft explicitly:
+The skill-tool's `name` and `description` are what the agent sees in its tool
+list. At run time the model calls the **no-arg load-tool** to pull the skill's
+`SKILL.md` body into context — the description tells the agent when that is worth
+doing.
 
-```ts
-const draft = await Skill.fromFiles({ name: "rules", files });
-const uploaded = await draft.upload(aex);
+Independently of whether the model calls the load-tool, the platform copies the
+referenced skill asset into durable run asset storage
+(`runs/<runId>/assets/<hash>`) and the runner **eagerly stages** the bundle's
+files into the workspace under `/workspace/skills/<name>/`. So the `SKILL.md` body
+and every supporting file are on disk from the first turn; the load-tool call is
+how that body enters the model's context, not how the files get written.
 
-await aex.run({
-  model: Models.CLAUDE_HAIKU_4_5,
-  message,
-  skills: [uploaded],
-  apiKeys: { anthropic: apiKey }
-});
-```
+The platform also mounts the `aex` CLI and a per-run manifest into every run.
+Skills call managed HTTP proxy endpoints through the mounted CLI
+(`aex proxy ...`); see [Credentials](credentials.md) for the policy and auth model.
 
-The returned `uploaded` skill carries a plain `kind:"asset"` ref. Reusing it
-does not upload bytes again.
-
-## Fetch From A Signed URL
-
-When your app runs in the cloud with limited local storage, host the skill
-yourself as a zip archive with `SKILL.md` at the archive root and pass a
-temporary signed URL:
-
-```ts
-const skill = await Skill.fromUrl(signedUrl, {
-  name: "rules",
-  sha256: "sha256:<hex>"
-});
-```
-
-`Skill.fromUrl` fetches the archive in the SDK process. The hosted platform does
-not fetch the caller-controlled URL. The signed URL only needs to be valid for
-this call; the SDK snapshots the bytes into the asset store before the run is
-submitted.
-
-## Workspace Catalog
-
-Catalog skills are workspace records backed by the same content-addressed
-assets. Use them when a team wants a named, listed skill record:
-
-```ts
-const [record] = await aex.skills.list();
-
-await aex.run({
-  model: Models.CLAUDE_HAIKU_4_5,
-  message,
-  skills: [Skill.fromCatalog(record)],
-  apiKeys: { anthropic: apiKey }
-});
-```
-
-The record must be `ready` and carry a content hash. `Skill.fromCatalog` performs
-no upload; it produces a `kind:"asset"` ref directly against bytes already in
-the catalog.
+Run-scoped asset copies are part of the run record and are removed by run deletion
+or retention cleanup.

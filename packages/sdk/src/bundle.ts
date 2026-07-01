@@ -175,8 +175,8 @@ const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 
 /**
  * Compute `sha256:<hex>` of the given canonicalised zip bytes. Used by
- * `Skill.fromFiles` / `Skill.fromPath` to populate the
- * `InlineSkillRef.contentHash` field. The hash is advisory — the BFF
+ * `Tools.fromSkillDir` / `Tools.fromSkillUrl` to populate the draft
+ * skill-tool's `contentHash` field. The hash is advisory — the BFF
  * recomputes server-side after re-canonicalising the zip; a mismatch is
  * rejected. Web-Crypto-only so the SDK works in Bun, Node, edge runtimes,
  * and browsers without polyfills.

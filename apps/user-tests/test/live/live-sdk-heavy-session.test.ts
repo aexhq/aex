@@ -238,26 +238,33 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
   ];
 
   return `
-    import { AgentExecutor, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { AgentExecutor, Tools, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { mkdtempSync, writeFileSync } from "node:fs";
+    import { tmpdir } from "node:os";
+    import { join } from "node:path";
 
     const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    // SKILL.md starts with YAML frontmatter so each test skill is
-    // self-describing and produces a stable skill_loaded name.
-    const skillAlpha = await Skill.fromFiles({
-      name: ${JSON.stringify(managedHeavySkillName("alpha", spec.provider))},
-      files: { "SKILL.md": ${JSON.stringify(`---\nname: ${managedHeavySkillName("alpha", spec.provider)}\ndescription: Complete every numbered step the user lists, in order.\n---\n# alpha\nComplete every numbered step the user lists, in order.`)} }
+    // Skills are ingested as TOOLS now: write the SKILL.md (YAML frontmatter
+    // carries the tool name + description, so each skill is self-describing and
+    // produces a stable skill_loaded name) to a temp dir, then build a
+    // skill-tool from it.
+    function skillDir(md) {
+      const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
+      writeFileSync(join(dir, "SKILL.md"), md);
+      return dir;
+    }
+    const skillAlpha = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedHeavySkillName("alpha", spec.provider)}\ndescription: Complete every numbered step the user lists, in order.\n---\n# alpha\nComplete every numbered step the user lists, in order.`)}), {
+      name: ${JSON.stringify(managedHeavySkillName("alpha", spec.provider))}
     });
-    const skillBeta = await Skill.fromFiles({
-      name: ${JSON.stringify(managedHeavySkillName("beta", spec.provider))},
-      files: { "SKILL.md": ${JSON.stringify(`---\nname: ${managedHeavySkillName("beta", spec.provider)}\ndescription: Always follow the project tracking guidance.\n---\n# beta\nAlways follow the project tracking guidance.`)} }
+    const skillBeta = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedHeavySkillName("beta", spec.provider)}\ndescription: Always follow the project tracking guidance.\n---\n# beta\nAlways follow the project tracking guidance.`)}), {
+      name: ${JSON.stringify(managedHeavySkillName("beta", spec.provider))}
     });
-    const skillGamma = await Skill.fromFiles({
-      name: ${JSON.stringify(managedHeavySkillName("gamma", spec.provider))},
-      files: { "SKILL.md": ${JSON.stringify(`---\nname: ${managedHeavySkillName("gamma", spec.provider)}\ndescription: Write output files exactly as instructed, then acknowledge references.\n---\n# gamma\nWrite output files exactly as instructed, then acknowledge references.`)} }
+    const skillGamma = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedHeavySkillName("gamma", spec.provider)}\ndescription: Write output files exactly as instructed, then acknowledge references.\n---\n# gamma\nWrite output files exactly as instructed, then acknowledge references.`)}), {
+      name: ${JSON.stringify(managedHeavySkillName("gamma", spec.provider))}
     });
 
     const mcpPrimary = McpServer.remote({
@@ -279,7 +286,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
       message: ${JSON.stringify(promptSteps)},
-      skills: [skillAlpha, skillBeta, skillGamma],
+      tools: [skillAlpha, skillBeta, skillGamma],
       mcpServers: [mcpPrimary, mcpSecondary],
       agentsMd: [rules],
       outputs: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },

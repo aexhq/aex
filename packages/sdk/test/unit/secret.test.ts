@@ -12,8 +12,7 @@
  *                               headers into secrets.mcpServers. Deleted at the
  *                               run's terminal (no workspace dependency).
  *   - secret.upload(client,…) = PROMOTE that value into the workspace secret
- *                               store under a name; returns a Secret.ref. Mirrors
- *                               Skill.fromFiles(...).upload(client).
+ *                               store under a name; returns a Secret.ref.
  *   - Secret.ref("serper")    = WORKSPACE handle ref; wire { ref: "serper" }.
  *                               Value resolved server-side; NO value travels.
  *

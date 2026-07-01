@@ -71,4 +71,48 @@ describe("aex.sessions.searchOutputs", () => {
     expect(page.hits.map((h) => h.outputId)).toEqual(["a1", "b1"]);
     expect(calls.some((u) => /\/api\/sessions(\?|$)/.test(u))).toBe(true);
   });
+
+  it("pages the workspace session corpus with opaque listSessions cursors", async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      calls.push(url);
+      const parsed = new URL(url);
+      const m = /\/api\/sessions\/([^/]+)\/outputs$/.exec(parsed.pathname);
+      if (m) return jsonResponse({ outputs: OUTPUTS[m[1]!] ?? [] });
+      if (parsed.pathname === "/api/sessions" && !parsed.searchParams.has("cursor")) {
+        return jsonResponse({ sessions: [{ id: "run-a" }], nextCursor: "page_2" });
+      }
+      if (parsed.pathname === "/api/sessions" && parsed.searchParams.get("cursor") === "page_2") {
+        return jsonResponse({ sessions: [{ id: "run-b" }] });
+      }
+      throw new Error(`no responder for ${url}`);
+    });
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+
+    const page = await client.sessions.searchOutputs({ extension: "md" });
+
+    expect(page.hits.map((h) => h.outputId)).toEqual(["a1", "b1"]);
+    expect(calls.filter((u) => /\/api\/sessions(\?|$)/.test(u))).toEqual([
+      "https://dash.test/api/sessions",
+      "https://dash.test/api/sessions?cursor=page_2"
+    ]);
+  });
+
+  it("fails fast instead of looping forever when listSessions repeats a cursor", async () => {
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/sessions") {
+        return jsonResponse({ sessions: [{ id: "run-a" }], nextCursor: "same_cursor" });
+      }
+      if (/\/api\/sessions\/run-a\/outputs$/.test(parsed.pathname)) {
+        return jsonResponse({ outputs: [] });
+      }
+      throw new Error(`no responder for ${url}`);
+    });
+    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+
+    await expect(client.sessions.searchOutputs({ extension: "md" })).rejects.toThrow(/repeated cursor/);
+  });
 });

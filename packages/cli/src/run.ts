@@ -49,7 +49,6 @@ import {
   runEventsCmd,
   runOutputsCmd,
   runRunCmd,
-  runSkillsCmd,
   runStatusCmd,
   runDeliveriesCmd,
   runWaitCmd,
@@ -98,8 +97,6 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runProxy(io, rest);
     case "run":
       return runRunCmd(io, rest);
-    case "skills":
-      return runSkillsCmd(io, rest);
     case "status":
       return runStatusCmd(io, rest);
     case "deliveries":
@@ -191,11 +188,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("Usage:\n");
   io.stdout("  aex run --config <run.json> --<provider>-api-key K --api-token T [flags]\n");
   io.stdout("  aex run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-token T [flags]\n");
-  io.stdout("  aex skills upload --name N --from-path <dir> --api-token T\n");
-  io.stdout("  aex skills upload --name N --file <path> [--file <path> ...] --api-token T\n");
-  io.stdout("  aex skills list --api-token T\n");
-  io.stdout("  aex skills get <skill-id> --api-token T\n");
-  io.stdout("  aex skills delete <skill-id> --api-token T\n");
   io.stdout("  aex status <session-id> --api-token T\n");
   io.stdout("  aex deliveries <session-id> --api-token T\n");
   io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-token T\n");
@@ -213,7 +205,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");
   io.stdout("  aex models list [--json]                   List models + default provider (no token needed)\n");
   io.stdout("  aex providers list [--json]                List providers + their models (no token needed)\n");
-  io.stdout("  aex tools list [--json]                    List builtin tools (default vs opt-in; no token needed)\n");
+  io.stdout("  aex tools list [--json]                    List builtin tools (all default; no token needed)\n");
   io.stdout("  aex runtime-sizes list [--json]            List managed runtime presets (no token needed)\n");
   io.stdout("  aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]   (operator; AWS creds)\n");
   io.stdout("  aex --help\n\n");

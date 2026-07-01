@@ -1,8 +1,8 @@
 name: Live On-Demand Tests
 
-# Consolidated, manually-dispatched pipeline for the OPTIONAL, expensive live
-# suites that are deliberately kept out of the default Live User Tests sweep.
-# One trigger runs them all:
+# Consolidated, manually-dispatched pipeline for the OPTIONAL live suites that
+# are deliberately kept out of the default Live User Tests sweep. One trigger
+# runs them both:
 #   1. Per-provider correctness matrix (apps/user-tests/test/live/providers/) —
 #      one minimal round-trip per extra provider (doubao, future
 #      openai/gemini/mistral/openrouter); each self-skips when its key is unset.
@@ -38,11 +38,12 @@ permissions:
   contents: read
 
 jobs:
-  live-on-demand-tests:
-    name: Live on-demand tests
+  prepare-artifact:
+    name: Prepare SDK artifact
     runs-on: ubuntu-latest
-    environment: live-user-tests
-    timeout-minutes: 240
+    outputs:
+      version: ${{ steps.artifact.outputs.version }}
+      tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -53,6 +54,7 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Install
+        if: ${{ inputs.artifact_source == 'pack-current' }}
         run: bun ci
 
       - name: Select SDK artifact
@@ -78,7 +80,59 @@ jobs:
               echo "No @aexhq/sdk tarball was produced." >&2
               exit 1
             fi
-            echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+            echo "tarball_artifact=live-on-demand-sdk-tarball" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload SDK tarball
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-on-demand-sdk-tarball
+          path: ${{ runner.temp }}/aex-pack/aexhq-sdk-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  provider-tests:
+    name: Per-provider correctness tests
+    needs: prepare-artifact
+    runs-on: ubuntu-latest
+    environment: live-user-tests
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Download SDK tarball
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: live-on-demand-sdk-tarball
+          path: ${{ runner.temp }}/aex-pack
+
+      - name: Use selected SDK artifact
+        shell: bash
+        env:
+          ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
+          PACKAGE_VERSION: ${{ needs['prepare-artifact'].outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
+            echo "AEX_USER_TEST_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          else
+            tarball="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
+            if [ -z "$tarball" ]; then
+              echo "No downloaded @aexhq/sdk tarball was found." >&2
+              exit 1
+            fi
+            echo "AEX_USER_TEST_TARBALL=${tarball}" >> "$GITHUB_ENV"
           fi
 
       - name: Per-provider correctness tests
@@ -91,14 +145,52 @@ jobs:
           DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
           AEX_USER_TEST_DOUBAO_MODEL: ${{ vars.AEX_USER_TEST_DOUBAO_MODEL }}
           AEX_USER_TEST_DOUBAO_PROVIDER: ${{ vars.AEX_USER_TEST_DOUBAO_PROVIDER }}
-          AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
-          AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
         run: bun run test:user:providers
 
+  heavy-session:
+    name: Heavy full-feature long session
+    needs: prepare-artifact
+    runs-on: ubuntu-latest
+    environment: live-user-tests
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Download SDK tarball
+        if: ${{ inputs.artifact_source == 'pack-current' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: live-on-demand-sdk-tarball
+          path: ${{ runner.temp }}/aex-pack
+
+      - name: Use selected SDK artifact
+        shell: bash
+        env:
+          ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
+          PACKAGE_VERSION: ${{ needs['prepare-artifact'].outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
+            echo "AEX_USER_TEST_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          else
+            tarball="$(find "$RUNNER_TEMP/aex-pack" -maxdepth 1 -name 'aexhq-sdk-*.tgz' -print -quit)"
+            if [ -z "$tarball" ]; then
+              echo "No downloaded @aexhq/sdk tarball was found." >&2
+              exit 1
+            fi
+            echo "AEX_USER_TEST_TARBALL=${tarball}" >> "$GITHUB_ENV"
+          fi
+
       - name: Heavy full-feature long session
-        # Run even if the provider step failed, so one dispatch yields the full
-        # signal from both suites (only skip if the job was cancelled).
-        if: ${{ !cancelled() }}
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
@@ -106,6 +198,4 @@ jobs:
           AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
-          AEX_USER_TEST_TARBALL: ${{ steps.artifact.outputs.tarball }}
-          AEX_USER_TEST_VERSION: ${{ steps.artifact.outputs.version }}
         run: bun run test:user:heavy

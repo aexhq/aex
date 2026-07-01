@@ -18,9 +18,7 @@ const base = {
   idempotencyKey: "idem-1",
   submission: {
     model: "claude-haiku-4-5",
-    prompt: ["hi"],
-    skills: [],
-    agentsMd: [],
+    prompt: ["hi"],    agentsMd: [],
     files: [],
     mcpServers: []
   },

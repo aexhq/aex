@@ -90,7 +90,7 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
       return json({
         session: { id: "sess_1", status: "running", turnSeq: 1 },
         turn: { sessionId: "sess_1", turnSeq: 1 },
-        eventCursor: 4
+        eventCursor: 4096
       });
     }
     if (url.endsWith("/api/sessions/sess_1/events/ticket")) {
@@ -125,9 +125,9 @@ describe("Aex sessions", () => {
 
     await flush();
     expect(sockets).toHaveLength(1);
-    expect(sockets[0]!.url).toBe("wss://events.example.test/sessions/sess_1?ticket=ticket&from=4");
-    sockets[0]!.message(event(4));
-    sockets[0]!.message(event(5, {
+    expect(sockets[0]!.url).toBe("wss://events.example.test/sessions/sess_1?ticket=ticket&from=4096");
+    sockets[0]!.message(event(4096));
+    sockets[0]!.message(event(4097, {
       source: "runtime",
       type: "CUSTOM",
       data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
@@ -137,7 +137,7 @@ describe("Aex sessions", () => {
     expect(result.sessionId).toBe("sess_1");
     expect(result.status).toBe("idle");
     expect(result.text).toBe("hello");
-    expect(result.events.map((evt) => evt.sequence)).toEqual([4, 5]);
+    expect(result.events.map((evt) => evt.sequence)).toEqual([4096, 4097]);
     expect(result.outputs).toEqual([{ id: "out_1", filename: "answer.txt" }]);
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
       "POST https://api.example.test/api/sessions/sess_1/messages"
@@ -157,8 +157,8 @@ describe("Aex sessions", () => {
     });
 
     await flush();
-    sockets[0]!.message(event(4));
-    sockets[0]!.message(event(5, {
+    sockets[0]!.message(event(4096));
+    sockets[0]!.message(event(4097, {
       source: "runtime",
       type: "CUSTOM",
       data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
@@ -183,15 +183,15 @@ describe("Aex sessions", () => {
     })();
 
     await flush();
-    sockets[0]!.message(event(4));
-    sockets[0]!.message(event(5, {
+    sockets[0]!.message(event(4096));
+    sockets[0]!.message(event(4097, {
       source: "runtime",
       type: "CUSTOM",
       data: { name: "aex.session.idle", value: { turnSeq: 1 } }
     }));
     await consume;
 
-    expect(seen).toEqual([4, 5]);
+    expect(seen).toEqual([4096, 4097]);
   });
 
   it("openSession rehydrates an existing session handle", async () => {

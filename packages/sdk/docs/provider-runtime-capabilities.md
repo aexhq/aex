@@ -40,7 +40,7 @@ All new submissions run on the managed runtime. Public support is expressed as s
 
 ## Skills
 
-Only asset-backed skills are accepted on submissions. Supply skill bytes through `Skill.fromFiles`, `Skill.fromPath`, `Skill.fromUrl`, or `Skill.fromCatalog`; each path normalizes to an asset that the platform snapshots into durable run asset storage.
+Skills are supplied as load-tools in the `tools` array. Build one with `Tools.fromSkillDir` or `Tools.fromSkillUrl`; each normalizes to an asset that the platform snapshots into durable run asset storage.
 
 Notes:
 

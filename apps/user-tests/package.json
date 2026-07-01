@@ -14,6 +14,8 @@
     "pretest:user:providers": "bun run --cwd ../.. --filter @aexhq/conformance build",
     "test:user:providers": "vitest run --config vitest.providers.config.ts",
     "test:user:fuzz": "vitest run --config vitest.fuzz.config.ts",
+    "pretest:user:tool-fuzz": "bun run --cwd ../.. --filter @aexhq/conformance build",
+    "test:user:tool-fuzz": "vitest run --config vitest.tool-fuzz.config.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

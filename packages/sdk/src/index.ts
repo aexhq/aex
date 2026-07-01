@@ -3,9 +3,9 @@
  *
  * ONE class (`AgentExecutor`) talks to the dashboard BFF. The CLI exposes
  * the SAME operations via subcommands. Composition primitives are
- * `Skill`, `McpServer`, and `ProxyEndpoint` — there is no saved-definition
- * wrapper. Everything else is types, errors, and event type guards re-exported
- * from `@aexhq/contracts`.
+ * `Tool` / `Tools` (skill-tools), `McpServer`, and `ProxyEndpoint` — there is
+ * no saved-definition wrapper. Everything else is types, errors, and event type
+ * guards re-exported from `@aexhq/contracts`.
  */
 
 export {
@@ -16,8 +16,7 @@ export {
   SecretsClient,
   SessionClient,
   SessionHandle,
-  SessionTurnStream,
-  SkillsClient
+  SessionTurnStream
 } from "./client.js";
 export type {
   AgentExecutorOptions,
@@ -45,8 +44,8 @@ export type {
 } from "./client.js";
 
 // Composition primitives
-export { Skill } from "./skill.js";
 export { Tool } from "./tool.js";
+export { SkillTool, Tools } from "./skill-tool.js";
 export { AgentsMd } from "./agents-md.js";
 export { File } from "./file.js";
 export { McpServer } from "./mcp-server.js";
@@ -81,7 +80,7 @@ export {
   RunStateError
 } from "@aexhq/contracts";
 
-// Skill / MCP wire types
+// Skill-bundle / MCP wire types
 export {
   MCP_SERVER_NAME_PATTERN,
   SKILL_BUNDLE_LIMITS,
@@ -99,7 +98,7 @@ export type {
   McpServerRef,
   SkillBundleEntry,
   SkillBundleManifest,
-  SkillRef,
+  SkillToolRef,
   ToolInputSchema,
   ToolRef
 } from "@aexhq/contracts";
@@ -144,8 +143,6 @@ export type {
   RunWebhookDeliveryStatus,
   RuntimeManifest,
   SecretRecord,
-  SecretReveal,
-  Skill as SkillRecord,
   UsageSummary,
   WhoAmI
 } from "@aexhq/contracts";
@@ -189,7 +186,7 @@ export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 // Builtin tools — the closed + default builtin tool sets. Toggle the standard
 // set with `includeBuiltinTools` on session create; cherry-pick individual tools by
 // listing their names in `tools`. Prefer the `BuiltinTools` const (e.g.
-// `BuiltinTools.notebook_edit`) so a typo is a compile error, not a runtime 400.
+// `BuiltinTools.web_search`) so a typo is a compile error, not a runtime 400.
 export { BUILTIN_TOOL_NAMES, BuiltinTools, DEFAULT_BUILTIN_TOOLS, resolveBuiltinToolNames } from "@aexhq/contracts";
 export type { BuiltinToolName } from "@aexhq/contracts";
 

@@ -49,7 +49,7 @@
       "slug": "agent-runtime",
       "href": "/docs/features/#agent-runtime",
       "title": "Agent runtime",
-      "description": "Managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, and optional notebook tools."
+      "description": "Managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents."
     },
     {
       "slug": "durable-infrastructure",

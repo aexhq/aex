@@ -12,9 +12,7 @@ const baseSubmission = {
   idempotencyKey: "idem-1",
   submission: {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],
-    skills: [],
-    agentsMd: [],
+    prompt: ["say hello"],    agentsMd: [],
     files: [],
     mcpServers: []
   },

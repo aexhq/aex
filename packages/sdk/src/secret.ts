@@ -20,19 +20,19 @@ export interface SecretUploader {
 }
 
 /**
- * A secret with the SAME lifecycle semantic as `Skill` / `File` / `AgentsMd`:
+ * A secret with the SAME lifecycle semantic as `File` / `AgentsMd`:
  * EPHEMERAL per-run by default, PROMOTABLE to a persisted, name-searchable
  * workspace secret you can reference and reuse.
  *
  *   - `Secret.value(v)` — EPHEMERAL per-run: the value is vaulted when the session is created and
  *     excluded from the idempotency hash; only a `{ ephemeral: true }`
  *     placeholder rides the (hashed) submission. Deleted when the run finishes.
- *     Clean, no workspace dependency. ≙ `Skill.fromFiles(...)` (a draft).
+ *     Clean, no workspace dependency. ≙ `File.fromBytes(...)` (a draft).
  *   - `secret.upload(client, { name })` — PROMOTE that value into the workspace
- *     secret store under `name`; resolves to a `Secret.ref`. ≙ `skill.upload(client)`.
+ *     secret store under `name`; resolves to a `Secret.ref`.
  *   - `Secret.ref(handle)` — WORKSPACE: only the handle rides the submission;
  *     the value is resolved server-side from the workspace secret store. No
- *     value ever travels. ≙ `Skill.fromCatalog(record)`.
+ *     value ever travels.
  *
  * The SDK splits each `Secret` BEFORE the wire payload is built (exactly how
  * `McpServer` splits `headers` into `secrets.mcpServers`): the env-var name keys
@@ -89,7 +89,7 @@ export class Secret {
    * Promote this EPHEMERAL secret into the workspace secret store under `name`
    * and return a `Secret.ref(name)` for reuse across runs. Blocking: the store
    * write completes before this resolves. Consumes this instance (an ephemeral
-   * value is promoted exactly once), mirroring `Skill.upload`.
+   * value is promoted exactly once).
    *
    * Only valid on a `Secret.value(...)`; a `Secret.ref(...)` is already
    * persisted.

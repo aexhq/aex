@@ -22,14 +22,13 @@ import {
   TOOL_NAME_PATTERN,
   normaliseSkillBundlePath,
   parseAssetRefFields,
-  parseMcpServerRef,
-  parseSkillRef
+  parseMcpServerRef
 } from "./run-config.js";
 import type {
   AgentsMdRef,
   FileRef,
   McpServerRef,
-  SkillRef,
+  SkillToolRef,
   ToolInputSchema,
   ToolRef
 } from "./run-config.js";
@@ -1308,16 +1307,24 @@ function isJsonValue(input: unknown): input is JsonValue {
  * only the non-secret half; bearer headers travel in
  * `secrets.mcpServers` keyed by `name`.
  *
- * `skills` is a list of `SkillRef`s. Launch workspace skills use
- * content-addressed asset refs; run submission snapshots the bytes into the
- * run-owned prefix before dispatch.
+ * `tools` is the union of builtin tool names, custom `ToolRef` bundles, and
+ * skill-tools (`{ kind:"skill", … }`); parsing splits them into `tools`,
+ * `builtinTools`, and `skillTools`. Skill bundles are content-addressed asset
+ * refs snapshotted into the run-owned prefix before dispatch.
  */
 export interface PlatformSubmission {
   readonly model: RunModel;
   readonly system?: string;
   readonly prompt: readonly string[];
-  readonly skills: readonly SkillRef[];
   readonly tools?: readonly ToolRef[];
+  /**
+   * Skill-tools: skills re-expressed as synthetic no-arg load-tools. Derived
+   * from the `tools` union at parse time (the `{ kind:"skill", … }` members),
+   * like {@link builtinTools}. Each becomes a model-visible tool whose call
+   * returns the skill's `SKILL.md` body; the bundle is eagerly staged to
+   * `/workspace/skills/<name>/`.
+   */
+  readonly skillTools?: readonly SkillToolRef[];
   readonly agentsMd: readonly AgentsMdRef[];
   readonly files: readonly FileRef[];
   readonly mcpServers: readonly McpServerRef[];
@@ -1345,9 +1352,9 @@ export interface PlatformSubmission {
    *   - omitted / `true` (default): inject the standard builtins.
    *   - `false`: inject NO builtins — useful for a pure-MCP / pure-custom run.
    *
-   * Cherry-pick individual builtins (e.g. opt the notebook in, or pick a narrow
-   * subset alongside `includeBuiltinTools: false`) by listing their names in
-   * `tools` (a bare-string builtin reference, prefer `BuiltinTools.<name>`).
+   * Pick a narrow subset alongside `includeBuiltinTools: false` by listing
+   * builtin names in `tools` (a bare-string builtin reference; prefer
+   * `BuiltinTools.<name>`).
    */
   readonly includeBuiltinTools?: boolean;
   /**
@@ -1731,7 +1738,6 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     "model",
     "system",
     "prompt",
-    "skills",
     "tools",
     "agentsMd",
     "files",
@@ -1753,8 +1759,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   const model = parseRunModel(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
-  const skills = parseSkills(value.skills);
-  const { tools, builtinTools } = parseTools(value.tools);
+  const { tools, skillTools, builtinTools } = parseTools(value.tools);
   const agentsMd = parseAgentsMd(value.agentsMd);
   const files = parseFiles(value.files);
   const mcpServers = parseMcpServers(value.mcpServers);
@@ -1771,8 +1776,8 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     model,
     ...(system ? { system } : {}),
     prompt,
-    skills,
     tools,
+    ...(skillTools.length > 0 ? { skillTools } : {}),
     agentsMd,
     files,
     mcpServers,
@@ -1875,7 +1880,6 @@ export const BUILTIN_TOOL_NAMES = [
   "subagent_result",
   "web_fetch",
   "web_search",
-  "notebook_edit",
   "bash_output",
   "bash_kill",
   "code_execution",
@@ -1887,7 +1891,7 @@ export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
 /**
  * Typo-safe accessors for the closed builtin tool set: each key maps to the
  * real tool NAME string. Reference a builtin in `submission.tools` via
- * `BuiltinTools.notebook_edit` rather than the bare string so a rename is a
+ * `BuiltinTools.web_search` rather than the bare string so a rename is a
  * compile error, not a runtime 400.
  *
  * Keys are the real tool names; a unit test asserts `Object.values(BuiltinTools)`
@@ -1907,7 +1911,6 @@ export const BuiltinTools = {
   subagent_result: "subagent_result",
   web_fetch: "web_fetch",
   web_search: "web_search",
-  notebook_edit: "notebook_edit",
   bash_output: "bash_output",
   bash_kill: "bash_kill",
   code_execution: "code_execution",
@@ -1916,15 +1919,10 @@ export const BuiltinTools = {
 } as const satisfies Readonly<Record<BuiltinToolName, BuiltinToolName>>;
 
 /**
- * The default builtin tool set injected when `includeBuiltinTools !== false`:
- * every builtin tool EXCEPT `notebook_edit` (notebook editing stays opt-in —
- * add `BuiltinTools.notebook_edit` to `tools` to enable it). Derived by
- * filtering {@link BUILTIN_TOOL_NAMES} so it can never drift from the closed
- * set.
+ * The default builtin tool set injected when `includeBuiltinTools !== false`.
+ * It is the complete closed builtin set.
  */
-export const DEFAULT_BUILTIN_TOOLS = BUILTIN_TOOL_NAMES.filter(
-  (name) => name !== "notebook_edit"
-) as readonly BuiltinToolName[];
+export const DEFAULT_BUILTIN_TOOLS: readonly BuiltinToolName[] = BUILTIN_TOOL_NAMES;
 
 /**
  * Resolve the set of builtin tool NAMES a submission injects, deduplicated and
@@ -1932,8 +1930,8 @@ export const DEFAULT_BUILTIN_TOOLS = BUILTIN_TOOL_NAMES.filter(
  *
  *   - `includeBuiltinTools !== false` ⇒ start from {@link DEFAULT_BUILTIN_TOOLS}
  *     (the standard set); `false` ⇒ start from none (pure-MCP / pure-custom).
- *   - union in every builtin-name string the caller listed in `tools` (a
- *     cherry-pick, e.g. `BuiltinTools.notebook_edit` to opt the notebook in).
+ *   - union in every builtin-name string the caller listed in `tools` (used to
+ *     cherry-pick a narrow subset when `includeBuiltinTools` is false).
  *
  * Every `toolRefs` string MUST be a member of {@link BUILTIN_TOOL_NAMES}; the
  * union is validated ⊆ the closed set so an invalid name can never leak through.
@@ -2180,37 +2178,25 @@ function parsePrompt(input: unknown): readonly string[] {
   return parts;
 }
 
-function parseSkills(input: unknown): readonly SkillRef[] {
-  if (input === undefined) {
-    return [];
-  }
-  if (!Array.isArray(input)) {
-    throw new Error("submission.skills must be an array of SkillRef objects");
-  }
-  const seenAssetId = new Set<string>();
-  return input.map((item, index) => {
-    const ref = parseSkillRef(item, `submission.skills[${index}]`);
-    if (seenAssetId.has(ref.assetId)) {
-      throw new Error(`submission.skills duplicate assetId: ${ref.assetId}`);
-    }
-    seenAssetId.add(ref.assetId);
-    return ref;
-  });
-}
-
 /**
- * Parse the `submission.tools` union: each entry is either a BARE STRING (a
- * builtin tool reference, validated against {@link BUILTIN_TOOL_NAMES}) or a
- * custom tool bundle OBJECT ({@link ToolRef}). Returns the two groups split:
- * `tools` (custom bundles, the existing downstream shape) and `builtinTools`
- * (the deduped builtin-name references, in {@link BUILTIN_TOOL_NAMES} order).
+ * Parse the `submission.tools` union: each entry is one of THREE shapes —
+ *   (a) a BARE STRING: a builtin tool reference (validated against
+ *       {@link BUILTIN_TOOL_NAMES}).
+ *   (b) `{ kind:"asset", … }`: a custom tool bundle ({@link ToolRef}).
+ *   (c) `{ kind:"skill", assetId, name, description }`: a skill re-expressed as
+ *       a synthetic no-arg load-tool ({@link SkillToolRef}).
+ * Returns the three groups split: `tools` (custom bundles), `skillTools`
+ * (skill-tools), and `builtinTools` (the deduped builtin-name references, in
+ * {@link BUILTIN_TOOL_NAMES} order). Tool `name`s and `assetId`s are deduped
+ * across ALL object kinds so a name/asset names at most one tool.
  */
 function parseTools(input: unknown): {
   readonly tools: readonly ToolRef[];
+  readonly skillTools: readonly SkillToolRef[];
   readonly builtinTools: readonly BuiltinToolName[];
 } {
   if (input === undefined) {
-    return { tools: [], builtinTools: [] };
+    return { tools: [], skillTools: [], builtinTools: [] };
   }
   if (!Array.isArray(input)) {
     throw new Error("submission.tools must be an array of builtin tool names or ToolRef objects");
@@ -2219,9 +2205,10 @@ function parseTools(input: unknown): {
   const seenAssetIds = new Set<string>();
   const seenBuiltins = new Set<string>();
   const tools: ToolRef[] = [];
+  const skillTools: SkillToolRef[] = [];
   input.forEach((item, index) => {
     const path = `submission.tools[${index}]`;
-    // A bare string is a builtin tool reference (e.g. BuiltinTools.notebook_edit).
+    // A bare string is a builtin tool reference (e.g. BuiltinTools.web_search).
     if (typeof item === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(item)) {
         throw new Error(
@@ -2233,6 +2220,47 @@ function parseTools(input: unknown): {
       return;
     }
     const raw = requireRecord(item, path);
+    // A skill-tool is a synthetic no-arg load-tool: { kind:"skill", assetId,
+    // name, description }. Its call returns the skill's SKILL.md body; it carries
+    // no input_schema / entry (unlike a custom ToolRef).
+    if (raw.kind === "skill") {
+      for (const key of Object.keys(raw)) {
+        if (key !== "kind" && key !== "assetId" && key !== "name" && key !== "description") {
+          throw new Error(
+            `${path}.${key} is not an allowed field for a skill tool; permitted: kind, assetId, name, description`
+          );
+        }
+      }
+      const skillFields = parseAssetRefFields(
+        { kind: "asset", assetId: raw.assetId, name: raw.name },
+        path
+      );
+      if (!TOOL_NAME_PATTERN.test(skillFields.name)) {
+        throw new Error(`${path}.name must match ${TOOL_NAME_PATTERN.source}`);
+      }
+      if (skillFields.name.includes("__")) {
+        throw new Error(`${path}.name must not contain "__"; that separator is reserved for MCP tools`);
+      }
+      if (seenNames.has(skillFields.name)) {
+        throw new Error(`submission.tools duplicate name: ${skillFields.name}`);
+      }
+      seenNames.add(skillFields.name);
+      if (seenAssetIds.has(skillFields.assetId)) {
+        throw new Error(`submission.tools duplicate assetId: ${skillFields.assetId}`);
+      }
+      seenAssetIds.add(skillFields.assetId);
+      const skillDescription = requireString(raw.description, `${path}.description`);
+      if (skillDescription.trim().length === 0 || skillDescription.length > 2048) {
+        throw new Error(`${path}.description must be non-empty and <= 2048 chars`);
+      }
+      skillTools.push({
+        kind: "skill",
+        assetId: skillFields.assetId,
+        name: skillFields.name,
+        description: skillDescription
+      });
+      return;
+    }
     for (const key of Object.keys(raw)) {
       if (
         key !== "kind" &&
@@ -2248,7 +2276,7 @@ function parseTools(input: unknown): {
       }
     }
     if (raw.kind !== "asset") {
-      throw new Error(`${path}.kind must be 'asset' (got ${JSON.stringify(raw.kind)})`);
+      throw new Error(`${path}.kind must be 'asset' or 'skill' (got ${JSON.stringify(raw.kind)})`);
     }
     const fields = parseAssetRefFields(
       { kind: raw.kind, assetId: raw.assetId, name: raw.name },
@@ -2290,7 +2318,7 @@ function parseTools(input: unknown): {
     });
   });
   const builtinTools = BUILTIN_TOOL_NAMES.filter((name) => seenBuiltins.has(name));
-  return { tools, builtinTools };
+  return { tools, skillTools, builtinTools };
 }
 
 function parseAgentsMd(input: unknown): readonly AgentsMdRef[] {

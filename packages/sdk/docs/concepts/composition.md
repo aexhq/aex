@@ -10,7 +10,7 @@ runtime before the first agent turn.
 
 | Need | Primitive |
 | --- | --- |
-| Executable or instructional bundles | `Skill.fromPath`, `Skill.fromFiles`, `Skill.fromUrl`, `Skill.fromCatalog` |
+| Executable or instructional skill bundles (load-tools) | `Tools.fromSkillDir`, `Tools.fromSkillUrl` |
 | Agent instructions | `AgentsMd.fromPath`, `AgentsMd.fromContent` |
 | Reference files and folders | `File.fromPath`, `File.fromBytes` |
 | Remote tools | `McpServer.remote`, `McpServer.fromId` |
@@ -18,14 +18,14 @@ runtime before the first agent turn.
 | Non-secret runtime settings | `environment.variables`, `environment.packages`, `environment.networking` |
 
 ```ts
-import { AgentsMd, File, McpServer, Models, ProxyEndpoint, Skill } from "@aexhq/sdk";
+import { AgentsMd, File, McpServer, Models, ProxyEndpoint, Tools } from "@aexhq/sdk";
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Use the attached docs and tools to produce a report.",
   agentsMd: [AgentsMd.fromContent("Follow the repo conventions.")],
   files: [await File.fromPath("./input")],
-  skills: [await Skill.fromPath("./skills/report-writer", { name: "report-writer" })],
+  tools: [await Tools.fromSkillDir("./skills/report-writer", { name: "report-writer" })],
   mcpServers: [McpServer.remote({ name: "github", url: "https://example.com/mcp" })],
   proxyEndpoints: [
     ProxyEndpoint.bearer({

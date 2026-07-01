@@ -4,8 +4,7 @@
  * One canonical struct that captures every non-secret artifact persisted
  * for a single run: parsed submission inputs, status/lifecycle, attempts,
  * indexed events, raw-event Storage manifest, outputs (+ capture
- * failures), proxy-call audit log, pinned workspace skills, provider
- * built-in skills, and transient (Anthropic Files) skill records.
+ * failures), and the proxy-call audit log.
  *
  * Wire contract for `GET /api/runs/:runId`, the per-run archive's
  * `run.json`/`submission.json`/`caps.json`, and the SDK/CLI
@@ -20,11 +19,8 @@
  * detail response stays bounded). The archive zip carries the bytes.
  */
 
-import type { McpServerRef, SkillRef } from "./run-config.js";
-import {
-  parseMcpServerRef,
-  parseSkillRef
-} from "./run-config.js";
+import type { McpServerRef } from "./run-config.js";
+import { parseMcpServerRef } from "./run-config.js";
 import type { CleanupStatus } from "./status.js";
 import type {
   JsonValue,
@@ -153,37 +149,6 @@ export interface RunUnitProxyCallPage {
   readonly nextCursor?: string;
 }
 
-/**
- * Workspace skill bundle pinned at submission. `liveSkillId` is `null`
- * when the corresponding `skill_bundles` row no longer exists after a
- * hard delete; run snapshots keep the submitted metadata.
- */
-export interface RunUnitSkillSnapshot {
-  readonly skillId: string;
-  readonly name: string;
-  readonly hash: string;
-  readonly sizeBytes: number;
-  readonly fileCount: number;
-  readonly liveSkillId: string | null;
-}
-
-export interface RunUnitProviderSkill {
-  readonly vendor: string;
-  readonly skillId: string;
-  readonly version?: string;
-}
-
-export interface RunUnitInlineSkill {
-  readonly id: string;
-  readonly slotId: string;
-  readonly skillName: string;
-  readonly contentHash: string;
-  readonly anthropicFileId: string | null;
-  readonly status: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-
 // ---------------------------------------------------------------------------
 // Top-level RunUnit
 // ---------------------------------------------------------------------------
@@ -210,9 +175,6 @@ export interface RunUnit {
   readonly outputCaptureFailures: readonly RunUnitOutputCaptureFailure[];
   readonly costTelemetry?: import("./run-cost.js").RunCostTelemetry;
   readonly proxyCalls: RunUnitProxyCallPage;
-  readonly skillSnapshots: readonly RunUnitSkillSnapshot[];
-  readonly providerSkills: readonly RunUnitProviderSkill[];
-  readonly inlineSkills: readonly RunUnitInlineSkill[];
   /**
    * Per-run, per-provider runtime manifest — derived from the validated
    * submission + the chosen provider (`buildRuntimeManifest`). Tells
@@ -263,7 +225,6 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
     model: coerceRunUnitModel(submissionRaw.model),
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
     prompt: toStringArray(submissionRaw.prompt),
-    skills: toSkillRefArray(submissionRaw.skills),
     agentsMd: [],
     files: [],
     mcpServers: toMcpServerRefArray(submissionRaw.mcpServers),
@@ -314,7 +275,6 @@ function fallbackFlat(): RunUnitFlatSubmission {
     submission: {
       model: Models.CLAUDE_HAIKU_4_5,
       prompt: [],
-      skills: [],
       agentsMd: [],
       files: [],
       mcpServers: [],
@@ -359,22 +319,6 @@ function toOptionalStringArray(value: unknown): readonly string[] | undefined {
   }
   const filtered = value.filter((item): item is string => typeof item === "string");
   return filtered.length === 0 ? undefined : filtered;
-}
-
-function toSkillRefArray(value: unknown): readonly SkillRef[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: SkillRef[] = [];
-  for (let i = 0; i < value.length; i++) {
-    try {
-      out.push(parseSkillRef(value[i], `submission.skills[${i}]`));
-    } catch {
-      // Skip malformed entries rather than failing the whole detail
-      // read. Hosted API enrichment may add fields we don't recognise.
-    }
-  }
-  return out;
 }
 
 function toMcpServerRefArray(value: unknown): readonly McpServerRef[] {

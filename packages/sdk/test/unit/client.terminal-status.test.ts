@@ -34,6 +34,18 @@ function makeSessionFetch(status: string): { fetch: typeof fetch; calls: number 
 }
 
 describe("SessionHandle.wait — terminal statuses", () => {
+  it("returns immediately for deleted and expired sessions", async () => {
+    for (const status of ["deleted", "expired"]) {
+      const f = makeSessionFetch(status);
+      const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+      const session = await client.openSession("run-abc");
+      const before = f.calls;
+      const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
+      expect(run.status).toBe(status);
+      expect(f.calls - before).toBe(1);
+    }
+  });
+
   it("returns immediately for a timed_out session instead of hanging", async () => {
     const f = makeSessionFetch("timed_out");
     const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });

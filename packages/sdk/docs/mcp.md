@@ -29,8 +29,8 @@ For ingestion-style tools that return large JSON blobs (search results,
 catalogue dumps, bulk reads), use the **CLI-as-skill + managed proxy**
 pattern instead of MCP:
 
-1. Package the upstream as a `Skill` — a CLI binary the agent invokes
-   with its bash tool.
+1. Package the upstream as a skill-tool (`Tools.fromSkillDir` /
+   `Tools.fromSkillUrl`) — a CLI binary the agent invokes with its bash tool.
 2. Route every upstream HTTPS call through a per-run `ProxyEndpoint`
    (audit, byte caps, budget enforcement).
 3. Have the CLI write the full payload to the session filesystem. By default,

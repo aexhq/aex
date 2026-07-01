@@ -4,7 +4,6 @@
  * detail.
  */
 export { runRunCmd } from "./run-cmd.js";
-export { runSkillsCmd } from "./skills-cmd.js";
 export { runStatusCmd } from "./status.js";
 export { runDeliveriesCmd } from "./deliveries.js";
 export { runWaitCmd } from "./wait.js";

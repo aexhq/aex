@@ -40,9 +40,7 @@ describe("platform run submission schema", () => {
   const baseSecrets = { apiKeys: { anthropic: "sk-ant-test" } } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],
-    skills: [],
-    agentsMd: [],
+    prompt: ["say hello"],    agentsMd: [],
     files: [],
     mcpServers: []
   } as const;
@@ -169,7 +167,6 @@ describe("platform run submission schema", () => {
       submission: {
         model: "claude-haiku-4-5",
         prompt: "use the lookup tool",
-        skills: [],
         agentsMd: [],
         files: [],
         tools: [
@@ -215,7 +212,6 @@ describe("platform run submission schema", () => {
         submission: {
           model: "claude-haiku-4-5",
           prompt: "use the lookup tool",
-          skills: [],
           agentsMd: [],
           files: [],
           tools: [
@@ -306,9 +302,7 @@ describe("environment.packages ecosystem parsing", () => {
   } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],
-    skills: [],
-    agentsMd: [],
+    prompt: ["say hello"],    agentsMd: [],
     files: [],
     mcpServers: []
   } as const;

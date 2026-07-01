@@ -22,9 +22,7 @@ function baseRequest(overrides: { agentsMd?: unknown[]; files?: unknown[] } = {}
     provider: "anthropic" as const,
     submission: {
       model: "claude-haiku-4-5",
-      prompt: ["hi"],
-      skills: [],
-      agentsMd: overrides.agentsMd ?? [],
+      prompt: ["hi"],      agentsMd: overrides.agentsMd ?? [],
       files: overrides.files ?? [],
       mcpServers: []
     },

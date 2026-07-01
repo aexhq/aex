@@ -12,6 +12,26 @@ import { getBunCommand, installAex, runCommand, type InstallResult } from "../_f
 
 const CHILD_HARNESS = String.raw`
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Skills are ingested as TOOLS now: build a skill-tool from a temp directory
+// containing a SKILL.md whose YAML frontmatter carries the tool name +
+// description, then pass it via Tools.fromSkillDir.
+function makeSkillDir(name, description) {
+  const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
+  writeFileSync(
+    join(dir, "SKILL.md"),
+    "---\nname: " + name + "\ndescription: " + description + "\n---\n# " + name + "\n" + description + "\n"
+  );
+  return dir;
+}
+
+function assetIdFromHash(hash) {
+  const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
+  return "asset_" + hex;
+}
 
 function headersToObject(headers) {
   const out = {};
@@ -249,11 +269,11 @@ describe("SDK sessions (installed package)", () => {
 
   it("serializes openSession and session state operations on the public session routes", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, AgentsMd, File, ProxyEndpoint, Secret, Skill } = await import("@aexhq/sdk");
+const { Aex, AgentsMd, File, ProxyEndpoint, Secret, Tools } = await import("@aexhq/sdk");
 
 const h = makeHarness();
 const client = new Aex({ apiToken: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
-const skill = await Skill.fromFiles({ name: "chat-skill", files: { "SKILL.md": "# chat\nFollow instructions.\n" } });
+const skill = await Tools.fromSkillDir(makeSkillDir("chat-skill", "Follow instructions."), { name: "chat-skill" });
 const rules = await AgentsMd.fromContent("# Chat rules\nKeep it short.\n", { name: "chat-rules" });
 const file = await File.fromBytes({
   name: "chat-note",
@@ -265,7 +285,7 @@ const session = await client.openSession({
   provider: "anthropic",
   model: "claude-haiku-4-5",
   system: "System instructions for the whole session.",
-  skills: [skill],
+  tools: [skill],
   agentsMd: [rules],
   files: [file],
   environment: {
@@ -307,7 +327,14 @@ const submission = create.body.submission;
 strictEqual(submission.model, "claude-haiku-4-5");
 strictEqual(submission.system, "System instructions for the whole session.");
 ok(!("prompt" in submission));
-strictEqual(submission.skills.length, 1);
+ok(!("skills" in submission), "submission.skills is removed; skill-tools ride submission.tools");
+strictEqual(submission.tools.length, 1);
+deepStrictEqual(submission.tools[0], {
+  kind: "skill",
+  assetId: assetIdFromHash(skill.ref.contentHash),
+  name: "chat-skill",
+  description: "Follow instructions."
+});
 strictEqual(submission.agentsMd.length, 1);
 strictEqual(submission.files.length, 1);
 strictEqual(submission.includeBuiltinTools, false);

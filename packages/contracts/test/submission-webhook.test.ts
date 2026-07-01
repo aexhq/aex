@@ -8,9 +8,7 @@ function baseRequest() {
     provider: "anthropic" as const,
     submission: {
       model: "claude-haiku-4-5",
-      prompt: ["hello"],
-      skills: [],
-      agentsMd: [],
+      prompt: ["hello"],      agentsMd: [],
       files: [],
       mcpServers: []
     },

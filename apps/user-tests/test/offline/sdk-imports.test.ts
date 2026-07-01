@@ -45,7 +45,8 @@ describe("sdk imports", () => {
         "SessionHandle",
         "SessionTurnStream",
         "Sizes",
-        "Skill",
+        "SkillTool",
+        "Tools",
         "McpServer",
         "RUN_RECORD_SCHEMA_VERSION",
         "RUN_RECORD_MANIFEST_SCHEMA_VERSION",
@@ -60,6 +61,10 @@ describe("sdk imports", () => {
       // The legacy RuntimeSizes symbol was renamed to Sizes on the root
       // surface — only Sizes is exported now.
       result.RuntimeSizes_present = (typeof mod.RuntimeSizes !== "undefined");
+      // The standalone Skill class + skill catalog client were removed —
+      // skills are ingested as TOOLS now via Tools.fromSkillDir/fromSkillUrl.
+      result.Skill_present = (typeof mod.Skill !== "undefined");
+      result.SkillsClient_present = (typeof mod.SkillsClient !== "undefined");
       // Confirm the renamed SDK client and legacy platform export are GONE — single-surface invariant.
       result.AexClient_present = (typeof mod.AexClient !== "undefined");
       result.AexPlatformClient_present = (typeof mod.AexPlatformClient !== "undefined");
@@ -87,7 +92,10 @@ describe("sdk imports", () => {
     expect(result["SessionTurnStream"]).toBe("function");
     expect(result["Sizes"]).toBe("object");
     expect(result["RuntimeSizes_present"]).toBe(false);
-    expect(result["Skill"]).toBe("function");
+    expect(result["SkillTool"]).toBe("function");
+    expect(result["Tools"]).toBe("object");
+    expect(result["Skill_present"]).toBe(false);
+    expect(result["SkillsClient_present"]).toBe(false);
     expect(result["McpServer"]).toBe("function");
     expect(result["RUN_RECORD_SCHEMA_VERSION"]).toBe("string");
     expect(result["RUN_RECORD_MANIFEST_SCHEMA_VERSION"]).toBe("string");

@@ -86,16 +86,6 @@ const secrets = await aex.secrets.list();
 const metadata = await aex.secrets.get("serper-api-key");
 ```
 
-## Get A Secret Value
-
-Use `get_value` only when the value is intentionally needed outside a run. It is
-the explicit audited value-read path.
-
-```ts
-const secretValue = await aex.secrets.get_value("serper-api-key");
-console.log(secretValue.value);
-```
-
 ## Inject A Workspace Secret Into A Run
 
 Reference workspace secrets with `Secret.ref(name)`. The value resolves

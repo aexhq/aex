@@ -173,20 +173,29 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     `include this project tracking reference verbatim in your reply.`;
 
   return `
-    import { AgentExecutor, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { AgentExecutor, Tools, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { mkdtempSync, writeFileSync } from "node:fs";
+    import { tmpdir } from "node:os";
+    import { join } from "node:path";
 
     const client = new AgentExecutor({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const skillAlpha = await Skill.fromFiles({
-      name: ${JSON.stringify(managedSkillName("alpha", spec.provider))},
-      files: { "SKILL.md": "# alpha\\nReply with the requested probes verbatim." }
+    // Skills are ingested as TOOLS now: write the SKILL.md (YAML frontmatter
+    // carries the tool name + description) to a temp dir, then build a
+    // skill-tool from it.
+    function skillDir(md) {
+      const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
+      writeFileSync(join(dir, "SKILL.md"), md);
+      return dir;
+    }
+    const skillAlpha = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedSkillName("alpha", spec.provider)}\ndescription: Reply with the requested probes verbatim.\n---\n# alpha\nReply with the requested probes verbatim.`)}), {
+      name: ${JSON.stringify(managedSkillName("alpha", spec.provider))}
     });
-    const skillBeta = await Skill.fromFiles({
-      name: ${JSON.stringify(managedSkillName("beta", spec.provider))},
-      files: { "SKILL.md": "# beta\\nAlways comply with the AGENTS.md rules." }
+    const skillBeta = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedSkillName("beta", spec.provider)}\ndescription: Always comply with the AGENTS.md rules.\n---\n# beta\nAlways comply with the AGENTS.md rules.`)}), {
+      name: ${JSON.stringify(managedSkillName("beta", spec.provider))}
     });
 
     const mcpPrimary = McpServer.remote({
@@ -213,7 +222,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
-    runOpts.skills = [skillAlpha, skillBeta];
+    runOpts.tools = [skillAlpha, skillBeta];
     runOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
     const result = await client.run(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });

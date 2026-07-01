@@ -1,31 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, unzipSync } from "fflate";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import { runCli } from "../src/run.js";
 import { parseDuration } from "../src/host/common.js";
 import type { CliIO } from "../src/internal.js";
 
 const CWD = "/tmp/cli-test";
-
-/**
- * Make a real temp directory containing a SKILL.md file so the
- * `aex skills upload --file ...` path can read actual bytes.
- * The skills-cmd module reads from `node:fs/promises` directly (not the
- * CliIO abstraction), so virtualizing files via `makeHostIo({files})`
- * does not work for this path. The test is responsible for cleanup.
- */
-function makeSkillsTmpDir(skillBody: string): { dir: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), "aex-cli-skills-"));
-  writeFileSync(join(dir, "SKILL.md"), skillBody, "utf8");
-  return {
-    dir,
-    cleanup: () => {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-    }
-  };
-}
 
 /** Compute the absolute path the run-config loader will produce for a
  * given input — keeps tests cross-platform between Windows and POSIX. */
@@ -634,12 +614,10 @@ function sessionRunHandler(sessionId: string, status = "running"): (call: FetchC
 
 describe("aex run", () => {
   it("opens a session from --config, sends the prompt as the first turn, prints the session record", async () => {
-    const assetId = `asset_${"a".repeat(64)}`;
     const runConfig = {
       model: "claude-haiku-4-5",
       system: "be helpful",
       prompt: ["hi"],
-      skills: [{ kind: "asset", assetId, name: "pdf" }],
       mcpServers: [
         {
           name: "github",
@@ -681,9 +659,7 @@ describe("aex run", () => {
     expect(submission.model).toBe("claude-haiku-4-5");
     // the prompt is NOT part of the create submission — it rides the first turn.
     expect("prompt" in submission).toBe(false);
-    expect(submission.skills).toEqual([
-      { kind: "asset", assetId, name: "pdf" }
-    ]);
+    expect(submission.tools).toEqual([]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);
@@ -702,29 +678,6 @@ describe("aex run", () => {
     expect((message.body as Record<string, unknown>).input).toEqual(["hi"]);
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
     expect(printed).toMatchObject({ id: "sess-1", status: "running" });
-  });
-
-  it("rejects an invalid skill asset id in --config before posting", async () => {
-    const runConfig = {
-      model: "claude-haiku-4-5",
-      prompt: ["hi"],
-      skills: [{ kind: "asset", assetId: "asset_pdf", name: "pdf" }]
-    };
-    const cap = makeHostIo({
-      argv: [
-        "run",
-        "--config",
-        "/abs/run-invalid-skill.json",
-        "--anthropic-api-key",
-        "sk-ant-1",
-        ...COMMON
-      ],
-      files: { [resolvedFromCwd("/abs/run-invalid-skill.json")]: JSON.stringify(runConfig) }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.calls).toHaveLength(0);
-    expect(cap.stderr).toContain("assetId must match");
   });
 
   it("opens a session from --model/--prompt/--mcp/--mcp-auth flags", async () => {
@@ -751,7 +704,7 @@ describe("aex run", () => {
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
-    expect(submission.skills).toEqual([]);
+    expect(submission.tools).toEqual([]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);
@@ -996,249 +949,5 @@ describe("aex run", () => {
     // the escaped literal rides the first-turn message input.
     const message = cap.calls[1]!.body as Record<string, unknown>;
     expect(message.input).toEqual(["@alice please look at this"]);
-  });
-});
-
-describe("aex skills", () => {
-  it("lists skills as NDJSON", async () => {
-    const cap = makeHostIo({
-      argv: ["skills", "list", ...COMMON],
-      fetchHandler: () =>
-        new Response(
-          JSON.stringify({
-            skills: [
-              { id: "skl_a", name: "alpha", hash: "h1", state: "ready" },
-              { id: "skl_b", name: "beta", hash: "h2", state: "ready" }
-            ]
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        )
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/skills");
-    expect(cap.calls[0]!.init.method ?? "GET").toBe("GET");
-    const lines = cap.stdout.trim().split("\n");
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]!)).toMatchObject({ id: "skl_a" });
-    expect(JSON.parse(lines[1]!)).toMatchObject({ id: "skl_b" });
-  });
-
-  it("fetches a single skill by id", async () => {
-    const cap = makeHostIo({
-      argv: ["skills", "get", "skl_x", ...COMMON],
-      fetchHandler: () =>
-        new Response(
-          JSON.stringify({ skill: { id: "skl_x", name: "x", hash: "h", state: "ready" } }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        )
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/skills/skl_x");
-    expect(JSON.parse(cap.stdout.trim())).toMatchObject({ id: "skl_x" });
-  });
-
-  it("DELETEs a skill", async () => {
-    const cap = makeHostIo({
-      argv: ["skills", "delete", "skl_y_long_id", ...COMMON],
-      fetchHandler: () => new Response(null, { status: 204 })
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/skills/skl_y_long_id");
-    expect(cap.calls[0]!.init.method).toBe("DELETE");
-    expect(JSON.parse(cap.stdout.trim())).toEqual({ skillId: "skl_y_long_id", deleted: true });
-  });
-
-  it("requires --name on upload", async () => {
-    const cap = makeHostIo({
-      argv: ["skills", "upload", "--file", "SKILL.md", ...COMMON]
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--name is required");
-  });
-
-  it("rejects upload without --from-path or --file", async () => {
-    const cap = makeHostIo({
-      argv: ["skills", "upload", "--name", "x", ...COMMON]
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--from-path");
-  });
-
-  it("rejects upload combining --from-path and --file", async () => {
-    const cap = makeHostIo({
-      argv: [
-        "skills",
-        "upload",
-        "--name",
-        "x",
-        "--from-path",
-        "./d",
-        "--file",
-        "SKILL.md",
-        ...COMMON
-      ]
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--from-path");
-  });
-
-  it("rejects unknown skills verb", async () => {
-    const cap = makeHostIo({ argv: ["skills", "frobnicate", ...COMMON] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("unknown skills verb");
-  });
-
-  it("rejects unknown flags on skills list", async () => {
-    const cap = makeHostIo({ argv: ["skills", "list", "--typo", ...COMMON] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("unknown flag: --typo");
-  });
-
-  it("upload --file: runs the direct-to-storage flow (presign → object storage PUT → finalize) and prints the skill record", async () => {
-    // The CLI catalog upload now goes direct-to-storage: the bytes never transit
-    // the hosted API. Assert the three-step wire shape (presign → PUT → finalize)
-    // and that the signed checksum header rides the object storage PUT.
-    const tmp = makeSkillsTmpDir(
-      "---\nname: rules-cli\ndescription: cli upload skill\n---\n# rules-cli\n"
-    );
-    const cap = makeHostIo({
-      argv: [
-        "skills",
-        "upload",
-        "--name",
-        "rules-cli",
-        "--file",
-        join(tmp.dir, "SKILL.md"),
-        ...COMMON
-      ],
-      fetchHandler: (call) => {
-        if (call.url.endsWith("/api/skills/presign")) {
-          const reqBody = JSON.parse(call.init.body as string) as { name: string; hash: string; sizeBytes: number };
-          if (reqBody.name !== "rules-cli" || !/^sha256:[0-9a-f]{64}$/.test(reqBody.hash)) {
-            return new Response(JSON.stringify({ error: { message: "bad presign body" } }), { status: 400, headers: { "content-type": "application/json" } });
-          }
-          return new Response(
-            JSON.stringify({
-              ok: true,
-              skillId: "skl_cli_42",
-              uploadUrl: "https://object-storage.example.test/bucket/assets/ws/hash?X-Amz-Signature=sig",
-              requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" },
-              expiresInSeconds: 300
-            }),
-            { status: 201, headers: { "content-type": "application/json" } }
-          );
-        }
-        if (call.url.includes("object-storage.example.test")) {
-          return new Response("", { status: 200 }); // object storage accepts the direct PUT
-        }
-        if (call.url.endsWith("/api/skills/skl_cli_42/finalize")) {
-          return new Response(
-            JSON.stringify({
-              skill: { id: "skl_cli_42", name: "rules-cli", state: "ready", hash: "sha256:" + "a".repeat(64), fileCount: 1 }
-            }),
-            { status: 200, headers: { "content-type": "application/json" } }
-          );
-        }
-        return new Response(JSON.stringify({ error: { message: `unexpected url ${call.url}` } }), { status: 400, headers: { "content-type": "application/json" } });
-      }
-    });
-    try {
-      await runCli(cap.io);
-      expect(cap.stderr).toBe("");
-      expect(cap.exitCode).toBe(0);
-      const urls = cap.calls.map((c) => c.url);
-      expect(urls).toContain("https://dash.example/api/skills/presign");
-      expect(urls.some((u) => u.includes("object-storage.example.test"))).toBe(true);
-      expect(urls).toContain("https://dash.example/api/skills/skl_cli_42/finalize");
-      const storagePut = cap.calls.find((c) => c.url.includes("object-storage.example.test"))!;
-      expect(storagePut.init.method).toBe("PUT");
-      expect((storagePut.init.headers as Record<string, string>)["x-amz-checksum-sha256"]).toBe("Y2hlY2tzdW0=");
-      const printed = JSON.parse(cap.stdout.trim()) as { id: string; name: string };
-      expect(printed.id).toBe("skl_cli_42");
-      expect(printed.name).toBe("rules-cli");
-    } finally {
-      tmp.cleanup();
-    }
-  });
-
-  it("upload: treats presign_unconfigured as terminal and does not POST a bundle to the API", async () => {
-    const tmp = makeSkillsTmpDir(
-      "---\nname: rules-direct\ndescription: cli upload skill\n---\n# rules-direct\n"
-    );
-    const cap = makeHostIo({
-      argv: ["skills", "upload", "--name", "rules-direct", "--file", join(tmp.dir, "SKILL.md"), ...COMMON],
-      fetchHandler: (call) => {
-        if (call.url.endsWith("/api/skills/presign")) {
-          return new Response(JSON.stringify({ ok: false, code: "presign_unconfigured", message: "object storage S3 creds not configured" }), { status: 503, headers: { "content-type": "application/json" } });
-        }
-        return new Response(JSON.stringify({ error: { message: `unexpected url ${call.url}` } }), { status: 400, headers: { "content-type": "application/json" } });
-      }
-    });
-    try {
-      await runCli(cap.io);
-      expect(cap.exitCode).toBe(1);
-      const urls = cap.calls.map((c) => c.url);
-      expect(urls).toEqual(["https://dash.example/api/skills/presign"]);
-      expect(urls.some((u) => u.includes("object-storage.example.test"))).toBe(false);
-      const errJson = JSON.parse(cap.stderr.trim()) as { error: string; message: string; status?: number };
-      expect(errJson.error).toBe("skill_upload_failed");
-      expect(errJson.status).toBe(503);
-      expect(errJson.message).toContain("object storage S3 creds not configured");
-    } finally {
-      tmp.cleanup();
-    }
-  });
-
-  it("upload: propagates the server's verbose error message (so 'Bucket not found' reaches the user)", async () => {
-    // Customer regression coverage (Bug 1, the user-visible half):
-    // when object storage returns a 400 with a body like
-    // `{"statusCode":"404","error":"Bucket not found"}`, the API
-    // wraps it into a 500 carrying that body verbatim. The CLI must
-    // forward the verbose detail to the user — otherwise the operator
-    // sees only "skill_upload_failed: upload failed" and cannot
-    // diagnose the missing-bucket cause.
-    const tmp = makeSkillsTmpDir(
-      "---\nname: broken\ndescription: broken upload\n---\n# broken\n"
-    );
-    const cap = makeHostIo({
-      argv: [
-        "skills",
-        "upload",
-        "--name",
-        "broken",
-        "--file",
-        join(tmp.dir, "SKILL.md"),
-        ...COMMON
-      ],
-      fetchHandler: () =>
-        new Response(
-          JSON.stringify({
-            error:
-              "Object storage upload failed with HTTP 400: " +
-              '{"statusCode":"404","error":"Bucket not found","message":"Bucket not found"}'
-          }),
-          { status: 500, headers: { "content-type": "application/json" } }
-        )
-    });
-    try {
-      await runCli(cap.io);
-      expect(cap.exitCode).toBe(1);
-      // The CLI emits JSON errors on stderr; the verbose message must
-      // travel through unmodified.
-      const errLine = cap.stderr.trim();
-      const errJson = JSON.parse(errLine) as { error: string; message: string };
-      expect(errJson.error).toBe("skill_upload_failed");
-      expect(errJson.message).toMatch(/Bucket not found/i);
-    } finally {
-      tmp.cleanup();
-    }
   });
 });

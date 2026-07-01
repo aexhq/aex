@@ -38,7 +38,6 @@ import type {
   RunWebhookDelivery,
   SecretRecord,
   SecretReveal,
-  Skill,
   WhoAmI
 } from "./runtime-types.js";
 import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
@@ -66,8 +65,7 @@ export async function getRun(http: HttpClient, runId: string): Promise<Run> {
  * Strongly-typed accessor for the full self-contained run unit:
  * parsed submission inputs, attempts, indexed events (with
  * pagination cursor for large runs), raw-event Storage manifest,
- * outputs, capture failures, proxy-call audit, pinned skills,
- * provider skills, inline skills.
+ * outputs, capture failures, and the proxy-call audit.
  *
  * Backed by the same `GET /api/runs/:runId` endpoint that
  * `getRun` calls; this variant just narrows the return type to
@@ -967,7 +965,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 // ===========================================================================
-// Run submission operations (Skill / McpServer / run config composition)
+// Run submission operations (McpServer / run config composition)
 // ===========================================================================
 
 export async function submitRun(
@@ -978,119 +976,6 @@ export async function submitRun(
     method: "POST",
     body: JSON.stringify(request)
   });
-}
-
-/**
- * Upload a workspace skill bundle DIRECTLY to object storage via the presign
- * flow, so the bytes never transit the hosted API (bundle size bounded by the
- * object store, not API memory). Presign errors are terminal.
- *
- *   1. POST /api/skills/presign     { name, hash, sizeBytes } → { uploadUrl, requiredHeaders, skillId }
- *   2. PUT bytes → uploadUrl        (signed checksum; the store rejects a mismatch)
- *   3. POST /api/skills/:id/finalize { manifest } → finalized Skill
- *
- * `manifest` is the client-computed bundle manifest (the caller already
- * validated the zip shape before hashing); the hosted API records it on finalize
- * without re-buffering the object.
- */
-export async function createSkillBundleDirect(
-  http: HttpClient,
-  fetchImpl: (input: string, init?: RequestInit) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
-  args: {
-    readonly name: string;
-    readonly body: Uint8Array;
-    readonly contentHash: string; // `sha256:<hex>`
-    readonly manifest: ReadonlyArray<{ readonly path: string; readonly size: number; readonly mode?: number }>;
-    readonly contentType?: string;
-  }
-): Promise<Skill> {
-  const presign = await http.request<{
-    ok: boolean;
-    skillId: string;
-    uploadUrl: string;
-    requiredHeaders?: Record<string, string>;
-  }>("/api/skills/presign", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: args.name, hash: args.contentHash, sizeBytes: args.body.byteLength })
-  });
-
-  const putRes = await fetchImpl(presign.uploadUrl, {
-    method: "PUT",
-    headers: { "content-type": args.contentType ?? "application/zip", ...(presign.requiredHeaders ?? {}) },
-    body: args.body as unknown as BodyInit
-  });
-  if (!putRes.ok) {
-    const detail = await putRes.text().catch(() => "");
-    throw new Error(`createSkillBundleDirect: direct upload PUT failed (status ${putRes.status})${detail ? `: ${detail.slice(0, 500)}` : ""}`);
-  }
-
-  const result = await http.request<{ readonly skill: Skill } | Skill>(
-    `/api/skills/${encodeURIComponent(presign.skillId)}/finalize`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ manifest: args.manifest })
-    }
-  );
-  return unwrapSkill(result);
-}
-
-export async function listSkills(http: HttpClient): Promise<readonly Skill[]> {
-  const result = await http.request<{ readonly skills: readonly Skill[] } | readonly Skill[]>(
-    "/api/skills"
-  );
-  if (Array.isArray(result)) {
-    return result;
-  }
-  return (result as { readonly skills: readonly Skill[] }).skills;
-}
-
-export async function getSkill(http: HttpClient, skillId: string): Promise<Skill> {
-  const result = await http.request<{ readonly skill: Skill } | Skill>(
-    `/api/skills/${encodeURIComponent(skillId)}`
-  );
-  return unwrapSkill(result);
-}
-
-export async function deleteSkill(http: HttpClient, skillId: string): Promise<void> {
-  await http.request<unknown>(`/api/skills/${encodeURIComponent(skillId)}`, {
-    method: "DELETE"
-  });
-}
-
-/**
- * Lookup a live workspace skill by `(name, contentHash)`. Returns the
- * matching `Skill` record or null when no live row carries that hash.
- *
- * `contentHash` is the wire format `sha256:<hex>` as returned by
- * `hashSkillBundle`. This powers `Skill.uploadIfChanged` — the SDK
- * computes the hash locally and calls this function to skip the upload
- * when the bytes already exist.
- */
-export async function findSkillByHash(
-  http: HttpClient,
-  args: { readonly name: string; readonly contentHash: string }
-): Promise<Skill | null> {
-  const params = new URLSearchParams({
-    name: args.name,
-    content_hash: args.contentHash
-  });
-  const result = await http.request<{ readonly skill: Skill | null }>(
-    `/api/skills/by-hash?${params.toString()}`
-  );
-  return result.skill ?? null;
-}
-
-/**
- * Lookup a live workspace skill by `name`. Returns the matching `Skill`
- * record or null when no live row carries that name. Implemented as a
- * list-and-filter on the existing `/api/skills` endpoint — the
- * indexed by-hash route is reserved for `uploadIfChanged`.
- */
-export async function findSkillByName(http: HttpClient, name: string): Promise<Skill | null> {
-  const skills = await listSkills(http);
-  return skills.find((skill) => skill.name === name) ?? null;
 }
 
 // ===========================================================================
@@ -1232,13 +1117,6 @@ function unwrapSecret(result: { readonly secret: SecretRecord } | SecretRecord):
     return (result as { readonly secret: SecretRecord }).secret;
   }
   return result as SecretRecord;
-}
-
-function unwrapSkill(result: { readonly skill: Skill } | Skill): Skill {
-  if (result && typeof result === "object" && "skill" in (result as object)) {
-    return (result as { readonly skill: Skill }).skill;
-  }
-  return result as Skill;
 }
 
 function hasRun(value: Run | { readonly run: Run }): value is { readonly run: Run } {

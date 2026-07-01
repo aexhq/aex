@@ -73,7 +73,7 @@ function runClient(session: Record<string, unknown>): {
       return json({
         session: { id: "run-1", status: "running", turnSeq: 1 },
         turn: { sessionId: "run-1", turnSeq: 1 },
-        eventCursor: 1
+        eventCursor: 1024
       });
     }
     if (url.endsWith("/api/sessions/run-1")) {
@@ -107,9 +107,9 @@ async function collectRun(session: Record<string, unknown>): Promise<{
   );
 
   await flush();
-  sockets[0]!.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "hello ", messageId: "m1" }));
-  sockets[0]!.message(evt(2, "TEXT_MESSAGE_CONTENT", { text: "world", messageId: "m1" }));
-  sockets[0]!.message(evt(3, "CUSTOM", { name: session.status === "error" ? "aex.session.error" : "aex.session.idle", value: { turnSeq: 1 } }));
+  sockets[0]!.message(evt(1024, "TEXT_MESSAGE_CONTENT", { text: "hello ", messageId: "m1" }));
+  sockets[0]!.message(evt(1025, "TEXT_MESSAGE_CONTENT", { text: "world", messageId: "m1" }));
+  sockets[0]!.message(evt(1026, "CUSTOM", { name: session.status === "error" ? "aex.session.error" : "aex.session.idle", value: { turnSeq: 1 } }));
 
   return { result: await promise, urls };
 }
@@ -138,26 +138,6 @@ describe("AgentExecutor.run -> one-shot session RunResult", () => {
     expect(urls.some((url) => url.includes("/api/runs"))).toBe(false);
   });
 
-  it("runAndCollect is an alias for run", async () => {
-    const { client, sockets, webSocketFactory } = runClient({ id: "run-1", status: "idle" });
-    const promise = client.runAndCollect(
-      {
-        model: "claude-haiku-4-5",
-        message: "p",
-        apiKeys: { anthropic: "sk-ant" }
-      },
-      { webSocketFactory }
-    );
-
-    await flush();
-    sockets[0]!.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "hello world" }));
-    sockets[0]!.message(evt(2, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } }));
-
-    const result = await promise;
-    expect(result.ok).toBe(true);
-    expect(result.text).toBe("hello world");
-  });
-
   it("returns ok:false with error for an error session by default", async () => {
     const { result } = await collectRun({ id: "run-1", status: "error", errorMessage: "boom" });
     expect(result.ok).toBe(false);
@@ -177,7 +157,7 @@ describe("AgentExecutor.run -> one-shot session RunResult", () => {
     );
 
     await flush();
-    sockets[0]!.message(evt(1, "CUSTOM", { name: "aex.session.error", value: { turnSeq: 1 } }));
+    sockets[0]!.message(evt(1024, "CUSTOM", { name: "aex.session.error", value: { turnSeq: 1 } }));
 
     await expect(promise).rejects.toThrow(/session run-1 ended error: boom/);
   });

@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  isAssetRef,
   MCP_SERVER_NAME_PATTERN,
   normaliseSkillBundlePath,
   normaliseRunRequestConfig,
   parseRunRequestConfig,
   parseRunSubmissionRequest,
   parseMcpServerRef,
-  parseSkillRef,
   SKILL_BUNDLE_LIMITS,
   SKILL_ID_PATTERN,
   SKILL_NAME_PATTERN,
@@ -15,17 +13,11 @@ import {
   INLINE_CONTENT_HASH_PATTERN,
   validateSkillBundleEntry,
   validateSkillBundleManifest,
-  type RunRequestConfig,
-  type SkillRef
+  type RunRequestConfig
 } from "../src/index.js";
 
 const goodSkillId = "skl_abcdefgh01234567";
 const goodInlineHash = `sha256:${"a".repeat(64)}`;
-const goodAssetRef = {
-  kind: "asset",
-  assetId: `asset_${"a".repeat(64)}`,
-  name: "rules"
-} as const;
 const goodMcpRef = { name: "github", url: "https://github.example.com/mcp" } as const;
 
 const baseSubmission = {
@@ -61,28 +53,7 @@ describe("run-config — id and name patterns", () => {
   });
 });
 
-describe("run-config — parseSkillRef", () => {
-  it("parses an asset ref round-trip", () => {
-    const parsed = parseSkillRef(goodAssetRef, "ref");
-    expect(parsed).toEqual(goodAssetRef);
-    expect(isAssetRef(parsed)).toBe(true);
-  });
-
-  it("rejects an unknown kind", () => {
-    expect(() => parseSkillRef({ kind: "workspace", id: goodSkillId }, "ref")).toThrow(/kind/i);
-    expect(() => parseSkillRef({ kind: "inline", slot: "x", name: "n", contentHash: goodInlineHash }, "ref")).toThrow(/kind/i);
-  });
-
-  it("rejects a provider ref", () => {
-    expect(() =>
-      parseSkillRef({ kind: "provider", vendor: "openai", skillId: "x" }, "ref")
-    ).toThrow(/kind must be 'asset'/i);
-  });
-
-  it("rejects an asset ref with extra fields", () => {
-    expect(() => parseSkillRef({ ...goodAssetRef, extra: 1 } as unknown, "ref")).toThrow(/unexpected/i);
-  });
-
+describe("run-config — content hash pattern", () => {
   it("INLINE_CONTENT_HASH_PATTERN is exported + matches sha256:<64-hex>", () => {
     expect(INLINE_CONTENT_HASH_PATTERN.test(goodInlineHash)).toBe(true);
     expect(INLINE_CONTENT_HASH_PATTERN.test("sha256:notlongenough")).toBe(false);
@@ -275,9 +246,7 @@ describe("run-config — parseRunRequestConfig", () => {
   it("preserves a string prompt verbatim (normalisation happens at submission time)", () => {
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",
-      prompt: "do it",
-      skills: [],
-      mcpServers: []
+      prompt: "do it",      mcpServers: []
     });
     expect(config.prompt).toBe("do it");
   });
@@ -285,16 +254,14 @@ describe("run-config — parseRunRequestConfig", () => {
   it("preserves a multi-part prompt array", () => {
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",
-      prompt: ["first turn", "follow up"],
-      skills: [],
-      mcpServers: []
+      prompt: ["first turn", "follow up"],      mcpServers: []
     });
     expect(config.prompt).toEqual(["first turn", "follow up"]);
   });
 
   it("rejects an empty string prompt at the run-config boundary", () => {
     expect(() =>
-      parseRunRequestConfig({ model: "claude-haiku-4-5", prompt: "", skills: [], mcpServers: [] })
+      parseRunRequestConfig({ model: "claude-haiku-4-5", prompt: "", mcpServers: [] })
     ).toThrow(/prompt/i);
   });
 
@@ -302,9 +269,7 @@ describe("run-config — parseRunRequestConfig", () => {
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
-        prompt: ["first", ""],
-        skills: [],
-        mcpServers: []
+        prompt: ["first", ""],        mcpServers: []
       })
     ).toThrow(/prompt/i);
   });
@@ -313,9 +278,7 @@ describe("run-config — parseRunRequestConfig", () => {
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
-        prompt: "x",
-        skills: [],
-        mcpServers: [],
+        prompt: "x",        mcpServers: [],
         extra: 1
       } as unknown)
     ).toThrow(/extra/i);
@@ -335,9 +298,7 @@ describe("run-config — parseRunRequestConfig", () => {
     const metadata = { ticket: "ANT-1" };
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",
-      prompt: "x",
-      skills: [],
-      mcpServers: [],
+      prompt: "x",      mcpServers: [],
       environment: env,
       proxyEndpoints,
       metadata
@@ -381,9 +342,7 @@ describe("run-config — parseRunRequestConfig", () => {
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
-        prompt: "x",
-        skills: [],
-        mcpServers: [
+        prompt: "x",        mcpServers: [
           { name: "gh", url: "https://x" },
           { name: "gh", url: "https://y" }
         ]
@@ -391,26 +350,13 @@ describe("run-config — parseRunRequestConfig", () => {
     ).toThrow(/duplicate/i);
   });
 
-  it("accepts asset skills", () => {
-    const config = parseRunRequestConfig({
-      model: "claude-haiku-4-5",
-      prompt: "x",
-      skills: [goodAssetRef],
-      mcpServers: []
-    });
-    expect(config.skills).toHaveLength(1);
-    const skills = config.skills ?? [];
-    expect(isAssetRef(skills[0]!)).toBe(true);
-  });
 });
 
 describe("run-config — normaliseRunRequestConfig", () => {
   it("splits MCP headers out of the public field into the secret bundle", () => {
     const config: RunRequestConfig = {
       model: "claude-haiku-4-5",
-      prompt: ["x"],
-      skills: [],
-      mcpServers: [
+      prompt: ["x"],      mcpServers: [
         { name: "gh", url: "https://x", headers: { Authorization: "Bearer y" } }
       ]
     };
@@ -424,9 +370,7 @@ describe("run-config — normaliseRunRequestConfig", () => {
   it("returns an empty mcpServerSecrets array when no headers were provided", () => {
     const config: RunRequestConfig = {
       model: "claude-haiku-4-5",
-      prompt: "x",
-      skills: [],
-      mcpServers: [{ name: "noauth", url: "https://x" }]
+      prompt: "x",      mcpServers: [{ name: "noauth", url: "https://x" }]
     };
     const norm = normaliseRunRequestConfig(config);
     expect(norm.mcpServers).toEqual([{ name: "noauth", url: "https://x" }]);
@@ -436,9 +380,7 @@ describe("run-config — normaliseRunRequestConfig", () => {
   it("includes only entries whose run-config entry had headers in mcpServerSecrets", () => {
     const config: RunRequestConfig = {
       model: "claude-haiku-4-5",
-      prompt: "x",
-      skills: [],
-      mcpServers: [
+      prompt: "x",      mcpServers: [
         { name: "noauth", url: "https://x" },
         { name: "gh", url: "https://y", headers: { Authorization: "Bearer z" } }
       ]
@@ -459,7 +401,6 @@ describe("run-config — parseRunSubmissionRequest", () => {
     expect(parsed.workspaceId).toBe("workspace-1");
     expect(parsed.idempotencyKey).toBe("idem-1");
     expect(parsed.submission.prompt).toEqual(["do the thing"]);
-    expect(parsed.submission.skills).toEqual([]);
     expect(parsed.submission.mcpServers).toEqual([]);
     expect(parsed.secrets.apiKeys?.anthropic).toBe("sk-ant-x");
   });
@@ -562,18 +503,6 @@ describe("run-config — parseRunSubmissionRequest", () => {
     ).toThrow(/duplicate/i);
   });
 
-  it("rejects provider-hosted skills in the submission", () => {
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseSubmission,
-        submission: {
-          ...baseSubmission.submission,
-          skills: [goodAssetRef, { kind: "provider", vendor: "anthropic", skillId: "pdf" }]
-        }
-      })
-    ).toThrow(/kind must be 'asset'/i);
-  });
-
   it("rejects an empty string prompt", () => {
     expect(() =>
       parseRunSubmissionRequest({
@@ -584,18 +513,6 @@ describe("run-config — parseRunSubmissionRequest", () => {
         }
       })
     ).toThrow(/prompt/i);
-  });
-
-  it("rejects duplicate asset skill ids", () => {
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseSubmission,
-        submission: {
-          ...baseSubmission.submission,
-          skills: [goodAssetRef, goodAssetRef]
-        }
-      })
-    ).toThrow(/duplicate/i);
   });
 
   it("accepts valid outputs.allowedDirs and normalises duplicates / trailing slashes", () => {

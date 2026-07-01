@@ -3,9 +3,11 @@
  *
  * Public composition concepts:
  *
- *   - `SkillRef` is the wire-level reference to a skill. Public run
- *     configs use storage-neutral `kind:"asset"` refs produced by the SDK
- *     upload path or by workspace catalog records.
+ *   - `SkillToolRef` is the wire-level reference to a skill, re-expressed as a
+ *     synthetic no-arg "load-tool" the model calls to pull in the skill's
+ *     `SKILL.md` body. It carries the uploaded bundle's `assetId` (produced by
+ *     the SDK upload path) plus the tool `name` + `description`, and travels in
+ *     `submission.tools`.
  *
  *   - `McpServerRef` is the non-secret part of an MCP server declaration:
  *     `name` and `url`. Bearer / cookie / per-request headers travel in
@@ -98,10 +100,21 @@ export const SKILL_BUNDLE_LIMITS = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// SkillRef (discriminated)
+// SkillToolRef — a skill re-expressed as a synthetic no-arg "load-tool"
 // ---------------------------------------------------------------------------
 
-export type SkillRef = AssetRef;
+/**
+ * A skill re-expressed as a TOOL. The model calls this no-arg load-tool to pull
+ * the skill's `SKILL.md` body into context; the bundle's files are eagerly
+ * staged to `/workspace/skills/<name>/`. It travels in `submission.tools`
+ * alongside builtin names and custom {@link ToolRef}s.
+ */
+export interface SkillToolRef {
+  readonly kind: "skill";
+  readonly assetId: string;      // asset_<sha256hex>; the uploaded skill bundle (zip w/ SKILL.md at root)
+  readonly name: string;         // TOOL_NAME_PATTERN, must not contain "__"
+  readonly description: string;  // 1..2048 chars; lifted from SKILL.md YAML frontmatter SDK-side
+}
 
 /**
  * Storage-neutral uploaded asset reference. Runtime materialization resolves
@@ -132,7 +145,7 @@ export interface ToolRef extends AssetRef {
 /** Content-hash format: `sha256:<64 lowercase hex>`. */
 export const INLINE_CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
-export function isAssetRef(ref: SkillRef | AgentsMdRef | FileRef): ref is AssetRef {
+export function isAssetRef(ref: AgentsMdRef | FileRef): ref is AssetRef {
   return ref.kind === "asset";
 }
 
@@ -211,23 +224,7 @@ export function assertValidMountPath(value: string, field: string): void {
 }
 
 /**
- * Parse a `SkillRef` from untrusted input. Only asset-backed skill refs are
- * accepted on the public surface.
- */
-export function parseSkillRef(input: unknown, path: string): SkillRef {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error(`${path} must be a SkillRef object`);
-  }
-  const record = input as Record<string, unknown>;
-  const kind = record.kind;
-  if (kind === "asset") {
-    return parseAssetRefFields(record, path);
-  }
-  throw new Error(`${path}.kind must be 'asset'`);
-}
-
-/**
- * Common parser for any `kind: "asset"` ref (skill / agentsMd / file).
+ * Common parser for any `kind: "asset"` ref (agentsMd / file / tool bundle).
  */
 export function parseAssetRefFields(
   record: Record<string, unknown>,
@@ -771,7 +768,6 @@ export interface RunRequestConfig {
   readonly model: RunModel;
   readonly system?: string;
   readonly prompt: string | readonly string[];
-  readonly skills?: readonly SkillRef[];
   readonly mcpServers?: readonly RunConfigMcpServer[];
   readonly environment?: PlatformEnvironment;
   /** Managed runtime size preset (see {@link RuntimeSize}). */
@@ -801,7 +797,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "model",
     "system",
     "prompt",
-    "skills",
     "mcpServers",
     "environment",
     "runtimeSize",
@@ -820,13 +815,11 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     throw new Error("run request config system, when provided, must be a string");
   }
   const prompt = parseRunRequestConfigPrompt(record.prompt);
-  const skills = parseRunRequestConfigSkills(record.skills);
   const mcpServers = parseRunRequestConfigMcpServers(record.mcpServers);
   return {
     model,
     ...(system !== undefined ? { system } : {}),
     prompt,
-    ...(skills !== undefined ? { skills } : {}),
     ...(mcpServers !== undefined ? { mcpServers } : {}),
     // environment / proxyEndpoints / metadata: passed through
     // as-is — the BFF revalidates them via `parseRunSubmissionRequest`,
@@ -874,18 +867,6 @@ function parseRunRequestConfigPrompt(value: unknown): string | readonly string[]
   throw new Error("run request config prompt must be a string or array of strings");
 }
 
-function parseRunRequestConfigSkills(value: unknown): readonly SkillRef[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    throw new Error("run request config skills must be an array");
-  }
-  return value.map((item, index) =>
-    parseSkillRef(item, `run request config skills[${index}]`)
-  );
-}
-
 function parseRunRequestConfigMcpServers(value: unknown): readonly RunConfigMcpServer[] | undefined {
   if (value === undefined) {
     return undefined;
@@ -922,7 +903,6 @@ export interface NormalisedRunRequestConfig {
   readonly model: RunModel;
   readonly system?: string;
   readonly prompt: readonly string[];
-  readonly skills: readonly SkillRef[];
   readonly mcpServers: readonly McpServerRef[];
   readonly environment?: PlatformEnvironment;
   readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
@@ -941,7 +921,6 @@ export interface NormalisedRunRequestConfig {
 export function normaliseRunRequestConfig(config: RunRequestConfig): NormalisedRunRequestConfig {
   const prompt: readonly string[] =
     typeof config.prompt === "string" ? [config.prompt] : config.prompt;
-  const skills: readonly SkillRef[] = config.skills ?? [];
   const mcpServers: McpServerRef[] = [];
   const mcpServerSecrets: NormalisedRunRequestConfig["mcpServerSecrets"][number][] = [];
   for (const entry of config.mcpServers ?? []) {
@@ -954,7 +933,6 @@ export function normaliseRunRequestConfig(config: RunRequestConfig): NormalisedR
     model: config.model,
     ...(config.system !== undefined ? { system: config.system } : {}),
     prompt,
-    skills,
     mcpServers,
     ...(config.environment !== undefined ? { environment: config.environment } : {}),
     ...(config.proxyEndpoints !== undefined ? { proxyEndpoints: config.proxyEndpoints } : {}),

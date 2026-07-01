@@ -16,7 +16,6 @@ const SAMPLE_UNIT: RunUnit = {
       model: "claude-haiku-4-5",
       system: "be helpful",
       prompt: ["hi"],
-      skills: [],
       agentsMd: [],
       files: [],
       mcpServers: []
@@ -27,10 +26,7 @@ const SAMPLE_UNIT: RunUnit = {
   rawEventPages: [],
   outputs: [],
   outputCaptureFailures: [],
-  proxyCalls: { entries: [], totalCount: 0, truncated: false },
-  skillSnapshots: [],
-  providerSkills: [],
-  inlineSkills: []
+  proxyCalls: { entries: [], totalCount: 0, truncated: false }
 };
 
 describe("SessionHandle.unit", () => {

@@ -2,13 +2,6 @@ import { describe, expect, it } from "vitest";
 import { Models } from "../src/models.js";
 import { parseRunUnitSubmission } from "../src/run-unit.js";
 
-const HASH_HEX = "a".repeat(64);
-const ASSET_SKILL = {
-  kind: "asset",
-  assetId: `asset_${HASH_HEX}`,
-  name: "rules"
-} as const;
-
 describe("parseRunUnitSubmission", () => {
   it("parses a flat-shape snapshot verbatim", () => {
     const snapshot = {
@@ -17,7 +10,6 @@ describe("parseRunUnitSubmission", () => {
         model: "claude-haiku-4-5",
         system: "You are a helpful assistant.",
         prompt: ["build a thing"],
-        skills: [ASSET_SKILL],
         mcpServers: [{ name: "context7", url: "https://example.test/mcp" }],
         environment: {
           networking: { mode: "limited", allowedHosts: ["example.test"] },
@@ -41,7 +33,6 @@ describe("parseRunUnitSubmission", () => {
     expect(parsed.submission.model).toBe("claude-haiku-4-5");
     expect(parsed.submission.system).toBe("You are a helpful assistant.");
     expect(parsed.submission.prompt).toEqual(["build a thing"]);
-    expect(parsed.submission.skills).toEqual([ASSET_SKILL]);
     expect(parsed.submission.mcpServers).toEqual([
       { name: "context7", url: "https://example.test/mcp" }
     ]);
@@ -64,18 +55,16 @@ describe("parseRunUnitSubmission", () => {
       if (parsed.kind !== "submission") return;
       expect(parsed.submission.model).toBe(Models.CLAUDE_HAIKU_4_5);
       expect(parsed.submission.prompt).toEqual([]);
-      expect(parsed.submission.skills).toEqual([]);
       expect(parsed.submission.mcpServers).toEqual([]);
     }
   });
 
-  it("drops malformed skills/mcpServers entries without failing the whole parse", () => {
+  it("drops malformed mcpServers entries without failing the whole parse", () => {
     const snapshot = {
       kind: "submission",
       submission: {
         model: "claude-haiku-4-5",
         prompt: ["hello"],
-        skills: [ASSET_SKILL, { kind: "nonsense" }, "not-an-object"],
         mcpServers: [
           { name: "ok", url: "https://example.test/mcp" },
           { url: "missing-name" }
@@ -85,7 +74,6 @@ describe("parseRunUnitSubmission", () => {
     const parsed = parseRunUnitSubmission(snapshot);
     expect(parsed.kind).toBe("submission");
     if (parsed.kind !== "submission") return;
-    expect(parsed.submission.skills).toHaveLength(1);
     expect(parsed.submission.mcpServers).toHaveLength(1);
     expect(parsed.submission.mcpServers[0]?.name).toBe("ok");
   });
@@ -96,7 +84,6 @@ describe("parseRunUnitSubmission", () => {
       submission: {
         model: "claude-haiku-4-5",
         prompt: ["first", 42, null, "second"],
-        skills: [],
         mcpServers: []
       }
     };

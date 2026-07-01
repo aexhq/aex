@@ -1,14 +1,14 @@
 /**
  * `aex.secrets` — the workspace secret MANAGEMENT client, mirroring
- * `aex.skills` / `aex.files` / `aex.agentsMd`.
+ * `aex.files` / `aex.agentsMd`.
  *
- * Lifecycle parity with assets/skills: a `Secret.value(...)` is per-run and
+ * Lifecycle parity with assets: a `Secret.value(...)` is per-run and
  * gone at terminal; promoting it (or `aex.secrets.set`) persists a named,
- * searchable workspace secret you can `get` (metadata), `get_value` (audited
- * value), `rotate`, `list`, and `delete`.
+ * searchable workspace secret you can `get` (metadata), `rotate`, `list`, and
+ * `delete`.
  *
- * Posture (confirmed): `get` returns METADATA only (no value); `get_value` is the
- * explicit, audited value read (POST, not GET, so it's a logged action).
+ * Posture (confirmed): `get` returns METADATA only (no value). Secret values are
+ * write-only through the public SDK after create/rotate.
  */
 import { describe, expect, it, vi } from "vitest";
 import { AgentExecutor, Secret } from "../../src/index.js";
@@ -90,14 +90,6 @@ describe("aex.secrets management client", () => {
     expect(calls[0]!.url).toBe("https://x/api/secrets/serper");
   });
 
-  it("get_value: explicit audited value read (POST, not GET)", async () => {
-    const { client: c, calls } = client(() => json({ name: "serper", value: "sk-live-XYZ" }));
-    const value = await c.secrets.get_value("serper");
-    expect(value).toEqual({ name: "serper", value: "sk-live-XYZ" });
-    expect(calls[0]!.method).toBe("POST");
-    expect(calls[0]!.url).toBe("https://x/api/secrets/serper/get_value");
-  });
-
   it("rotate: replaces the value (value in body)", async () => {
     const { client: c, calls } = client(() => json({ secret: { ...REC, version: 2 } }));
     const rec = await c.secrets.rotate({ name: "serper", value: "sk-new-1" });
@@ -115,13 +107,13 @@ describe("aex.secrets management client", () => {
   });
 
   it("never puts a secret value in a URL or query string", async () => {
-    const { client: c, calls } = client((req) =>
-      req.url.endsWith("/get_value") ? json({ name: "serper", value: "sk-live-XYZ" }) : json({ secret: REC })
-    );
+    const { client: c, calls } = client(() => json({ secret: REC }));
     await c.secrets.set({ name: "serper", value: "sk-live-XYZ" });
-    await c.secrets.get_value("serper");
+    await c.secrets.rotate({ name: "serper", value: "sk-new-1" });
+    await c.secrets.get("serper");
     for (const call of calls) {
       expect(call.url).not.toContain("sk-live-XYZ");
+      expect(call.url).not.toContain("sk-new-1");
     }
   });
 });

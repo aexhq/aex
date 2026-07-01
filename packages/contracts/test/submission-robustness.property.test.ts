@@ -19,7 +19,6 @@ function makeValid(): PlatformRunSubmissionRequest {
     submission: {
       model: "claude-haiku-4-5",
       prompt: ["hello"],
-      skills: [],
       agentsMd: [],
       files: [],
       mcpServers: []

@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  public:
-    name: Install, lint, test, pack
+  contract-parity:
+    name: Contract parity
     runs-on: ubuntu-latest
     # Secrets can't be referenced in step-level `if`; surface the platform PAT
     # presence as a job-level flag so the parity checkout can gate on it.
@@ -54,19 +54,127 @@ jobs:
         env:
           AEX_PLATFORM_DIR: ${{ github.workspace }}/_platform
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
       - name: Lint
         run: bun run lint
 
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
       - name: Test
         run: bun run test
+
+  offline-user-tests:
+    name: Offline user tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
 
       - name: Offline user tests
         env:
           AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
         run: bun run test:user:offline
 
+  docs-build:
+    name: Docs build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
       - name: Docs build
         run: bun run docs:build
 
+  pack-sdk:
+    name: Pack SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
       - name: Pack SDK
         run: bun run pack:sdk
+
+  public:
+    name: Install, lint, test, pack
+    runs-on: ubuntu-latest
+    needs:
+      - contract-parity
+      - lint
+      - unit-tests
+      - offline-user-tests
+      - docs-build
+      - pack-sdk
+    if: ${{ always() }}
+    steps:
+      - name: Check gate results
+        env:
+          CONTRACT_PARITY_RESULT: ${{ needs['contract-parity'].result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          UNIT_TESTS_RESULT: ${{ needs['unit-tests'].result }}
+          OFFLINE_USER_TESTS_RESULT: ${{ needs['offline-user-tests'].result }}
+          DOCS_BUILD_RESULT: ${{ needs['docs-build'].result }}
+          PACK_SDK_RESULT: ${{ needs['pack-sdk'].result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for name in CONTRACT_PARITY LINT UNIT_TESTS OFFLINE_USER_TESTS DOCS_BUILD PACK_SDK; do
+            var="${name}_RESULT"
+            result="${!var}"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ]; then
+              failed=1
+            fi
+          done
+          exit "${failed}"

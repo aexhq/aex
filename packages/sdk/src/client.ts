@@ -61,8 +61,7 @@ import {
   BUILTIN_TOOL_NAMES,
   type BuiltinToolName,
   type RuntimeSize,
-  type Skill as SkillRecord,
-  type SkillRef,
+  type SkillToolRef,
   type ToolRef,
   type WebSocketFactory,
   type WhoAmI,
@@ -74,7 +73,7 @@ import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
 import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
 import { Secret, splitSecretEnv } from "./secret.js";
-import { Skill } from "./skill.js";
+import { SkillTool } from "./skill-tool.js";
 import { Tool } from "./tool.js";
 
 export interface AgentExecutorOptions {
@@ -160,9 +159,13 @@ export interface SessionOverrides {
  * Everything the agent needs is spelled out at the call site:
  *
  *   - `model` / `system` — the agent's brief.
- *   - `skills` / `agentsMd` / `files` — local composition instances
- *     (`Skill.fromFiles` / `AgentsMd.fromContent` / `File.fromBytes`, …),
- *     materialized to the hosted asset store before the session lands.
+ *   - `tools` — custom `Tool` bundles, skill-tools
+ *     (`Tools.fromSkillDir` / `Tools.fromSkillUrl`), and builtin tool-name
+ *     references; local composition instances are materialized to the hosted
+ *     asset store before the session lands.
+ *   - `agentsMd` / `files` — local composition instances
+ *     (`AgentsMd.fromContent` / `File.fromBytes`, …), materialized to the
+ *     hosted asset store before the session lands.
  *   - `mcpServers` / `proxyEndpoints` — instances whose secrets are split into
  *     the vaulted secrets channel server-side; the public submission carries
  *     only the declarations.
@@ -183,13 +186,13 @@ export interface SessionCreateOptions {
    */
   readonly model: RunModel;
   readonly system?: string;
-  readonly skills?: readonly Skill[];
   /**
-   * Tools available to the agent. Each entry is either a custom {@link Tool}
-   * bundle, or a BUILTIN tool reference — a bare name string, preferably
+   * Tools available to the agent. Each entry is a custom {@link Tool} bundle, a
+   * skill-tool ({@link SkillTool} from `Tools.fromSkillDir` / `Tools.fromSkillUrl`),
+   * or a BUILTIN tool reference — a bare name string, preferably
    * `BuiltinTools.<name>` so a typo is a compile error.
    */
-  readonly tools?: readonly (Tool | BuiltinToolName)[];
+  readonly tools?: readonly (Tool | SkillTool | BuiltinToolName)[];
   readonly agentsMd?: readonly AgentsMd[];
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
@@ -898,63 +901,6 @@ export interface OutputDownloadOptions {
 }
 
 /**
- * Workspace skill admin operations exposed under `client.skills`.
- *
- * New sessions usually use `Skill.fromFiles(...)` or
- * `Skill.fromPath(...)` directly on `openSession` / `run`; the SDK materializes
- * those bytes to the hosted asset store before the session starts. This namespace is the read/delete
- * surface for workspace skill records and the internal transport used by the
- * legacy CLI upload command.
- */
-export class SkillsClient {
-  readonly #http: HttpClient;
-
-  constructor(http: HttpClient) {
-    this.#http = http;
-  }
-
-  list(): Promise<readonly SkillRecord[]> {
-    return operations.listSkills(this.#http) as Promise<readonly SkillRecord[]>;
-  }
-
-  get(skillId: string): Promise<SkillRecord> {
-    return operations.getSkill(this.#http, skillId);
-  }
-
-  delete(skillId: string): Promise<void> {
-    return operations.deleteSkill(this.#http, skillId);
-  }
-
-  /**
-   * Lookup a live workspace skill by `(name, contentHash)`.
-   *
-   * Returns the matching `Skill` record or `null` when no live row
-   * carries that hash. The `contentHash` is the wire format
-   * `sha256:<hex>` returned by `hashSkillBundle` (and stored verbatim
-   * on every skill row). The hash space is unique enough that one
-   * row at most can match, so this is a single keyed lookup.
-   *
-   * Consumers can call this directly when they already have a hash in hand
-   * and want to know whether the skill is already persisted.
-   */
-  findByHash(args: { readonly name: string; readonly contentHash: string }): Promise<SkillRecord | null> {
-    return operations.findSkillByHash(this.#http, args);
-  }
-
-  /**
-   * Lookup a live workspace skill by `name`. Returns the matching
-   * `Skill` record or `null` when no live row carries that name.
-   * Implemented as a list-and-filter against the existing `/api/skills`
-   * endpoint — typical workspace skill counts are small enough that
-   * the cost is negligible.
-   */
-  findByName(name: string): Promise<SkillRecord | null> {
-    return operations.findSkillByName(this.#http, name);
-  }
-
-}
-
-/**
  * Workspace AgentsMd admin operations exposed under `client.agentsMd`.
  *
  * New sessions usually use `AgentsMd.fromContent(...)` or
@@ -1012,9 +958,9 @@ export class FilesClient {
 
 /**
  * Workspace secret management exposed under `client.secrets`, mirroring
- * `client.skills` / `client.files`.
+ * `client.agentsMd` / `client.files`.
  *
- * Lifecycle parity with assets/skills: a `Secret.value(...)` is per-run and
+ * Lifecycle parity with assets: a `Secret.value(...)` is per-run and
  * gone at terminal; `set` (or promoting an ephemeral via `secret.upload`)
  * persists a named, searchable workspace secret you can `get` (metadata),
  * `rotate`, `list`, and `delete`. The identity is the `name`; the value rotates
@@ -1089,7 +1035,6 @@ export class AgentExecutor {
   readonly #http: HttpClient;
   /** The same fetch the HttpClient uses, threaded into `_uploadAsset`. */
   readonly #fetch: FetchLike | undefined;
-  readonly skills: SkillsClient;
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
   readonly secrets: SecretsClient;
@@ -1111,7 +1056,6 @@ export class AgentExecutor {
         : {})
     });
     this.#fetch = options.fetch;
-    this.skills = new SkillsClient(this.#http);
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
@@ -1130,9 +1074,10 @@ export class AgentExecutor {
 
   /**
    * Internal: materialize raw bytes to the content-addressable asset store
-   * (`/assets/presign` → PUT → `/assets/finalize`). Used by `Skill.upload(this)`
-   * to pre-upload a draft skill bundle so a later run carries only a plain
-   * `kind:"asset"` ref. NOT part of the public API.
+   * (`/assets/presign` → PUT → `/assets/finalize`). Used by the session-create
+   * prepare step to upload draft skill-tool / tool / agentsMd / file bundles so
+   * the wire submission carries only plain `kind:"asset"` / `kind:"skill"` refs.
+   * NOT part of the public API.
    */
   async _uploadAsset(args: {
     readonly bytes: Uint8Array;
@@ -1262,7 +1207,6 @@ export class AgentExecutor {
     }
 
     const uploader: AssetUploader = (args) => this._uploadAsset(args);
-    const preparedSkills = await prepareSkills(options.skills ?? [], uploader);
     const preparedTools = await prepareTools(options.tools ?? [], uploader);
     const preparedAgentsMd = await prepareAgentsMd(options.agentsMd ?? [], uploader);
     const preparedFiles = await prepareFiles(options.files ?? [], uploader);
@@ -1276,8 +1220,13 @@ export class AgentExecutor {
     const submission: SessionCreateRequest["submission"] = {
       model: options.model,
       ...(options.system ? { system: options.system } : {}),
-      skills: preparedSkills,
-      tools: [...preparedTools.builtinNames, ...preparedTools.refs] as unknown as readonly ToolRef[],
+      // Builtin name strings + custom tool refs + skill-tool refs all ride the
+      // one `tools` union; the BFF parser splits them back apart by kind.
+      tools: [
+        ...preparedTools.builtinNames,
+        ...preparedTools.refs,
+        ...preparedTools.skillToolRefs
+      ] as unknown as readonly ToolRef[],
       agentsMd: preparedAgentsMd,
       files: preparedFiles,
       mcpServers: submissionMcpServers as readonly McpServerRef[],
@@ -1502,6 +1451,7 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     idleTtl: "use overrides.idleTtl.",
     retention: "use overrides.idleTtl.",
     secretEnv: "use environment.secrets.",
+    skills: "skills are now tools; build one with Tools.fromSkillDir/fromSkillUrl and pass it in tools.",
     secrets: "use top-level apiKeys for provider keys and environment.secrets for run secrets.",
     runtimeSize: "use runtime.",
     parentRunId: "subagents are session-internal; parentRunId is not part of the session API.",
@@ -1634,49 +1584,24 @@ async function resolveAssetId(
   return uploaded.assetId;
 }
 
-/** Walk Skill[], eagerly upload drafts as assets, and return plain asset refs. */
-async function prepareSkills(
-  skills: readonly Skill[],
-  uploader: AssetUploader
-): Promise<readonly SkillRef[]> {
-  const refs: SkillRef[] = [];
-  for (let i = 0; i < skills.length; i++) {
-    const entry = skills[i];
-    if (!(entry instanceof Skill)) {
-      throw new RunConfigValidationError(`aex: skills[${i}] must be a Skill instance`);
-    }
-    const ref = entry.ref;
-    if (ref.kind === "draft") {
-      const bundle = entry._takeDraftBundle();
-      if (!bundle) {
-        throw new RunConfigValidationError(`aex: skills[${i}] is draft but has no bytes`);
-      }
-      const assetId = await resolveAssetId(entry, bundle, uploader);
-      refs.push({
-        kind: "asset",
-        assetId,
-        name: bundle.name
-      });
-      continue;
-    }
-    // Already-materialized asset ref.
-    refs.push(ref);
-  }
-  return refs;
-}
-
 /**
  * Split the `tools` union into custom tool refs (drafts eagerly uploaded as
- * assets) and builtin tool-name references (bare strings, validated against the
- * closed {@link BUILTIN_TOOL_NAMES} set). Builtin names are deduped, in input
- * order; the two groups are recombined on the wire (builtins first) by the
- * caller.
+ * assets), skill-tool refs (skill bundles eagerly uploaded as assets), and
+ * builtin tool-name references (bare strings, validated against the closed
+ * {@link BUILTIN_TOOL_NAMES} set). Builtin names are deduped, in input order;
+ * the three groups are recombined on the wire by the caller (the BFF parser
+ * splits them back apart by kind).
  */
 async function prepareTools(
-  tools: readonly (Tool | BuiltinToolName)[],
+  tools: readonly (Tool | SkillTool | BuiltinToolName)[],
   uploader: AssetUploader
-): Promise<{ readonly refs: readonly ToolRef[]; readonly builtinNames: readonly BuiltinToolName[] }> {
+): Promise<{
+  readonly refs: readonly ToolRef[];
+  readonly skillToolRefs: readonly SkillToolRef[];
+  readonly builtinNames: readonly BuiltinToolName[];
+}> {
   const refs: ToolRef[] = [];
+  const skillToolRefs: SkillToolRef[] = [];
   const seenBuiltins = new Set<BuiltinToolName>();
   const builtinNames: BuiltinToolName[] = [];
   for (let i = 0; i < tools.length; i++) {
@@ -1686,7 +1611,7 @@ async function prepareTools(
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
         throw new RunConfigValidationError(
           `aex: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
-            `expected a Tool instance or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
+            `expected a Tool, a SkillTool, or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
         );
       }
       if (!seenBuiltins.has(entry)) {
@@ -1695,8 +1620,23 @@ async function prepareTools(
       }
       continue;
     }
+    // A skill-tool: upload its bundle (if a draft) and emit a `kind:"skill"` ref.
+    if (entry instanceof SkillTool) {
+      const ref = entry.ref;
+      if (ref.kind === "draft") {
+        const bundle = entry._takeDraftBundle();
+        if (!bundle) {
+          throw new RunConfigValidationError(`aex: tools[${i}] is a draft skill-tool but has no bytes`);
+        }
+        const assetId = await resolveAssetId(entry, bundle, uploader);
+        skillToolRefs.push({ kind: "skill", assetId, name: bundle.name, description: bundle.description });
+        continue;
+      }
+      skillToolRefs.push(ref);
+      continue;
+    }
     if (!(entry instanceof Tool)) {
-      throw new RunConfigValidationError(`aex: tools[${i}] must be a Tool instance or a builtin tool name`);
+      throw new RunConfigValidationError(`aex: tools[${i}] must be a Tool, a SkillTool, or a builtin tool name`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
@@ -1710,7 +1650,7 @@ async function prepareTools(
     }
     refs.push(ref);
   }
-  return { refs, builtinNames };
+  return { refs, skillToolRefs, builtinNames };
 }
 
 /** Walk AgentsMd[], eagerly upload drafts as assets, and return plain asset refs. */

@@ -53,7 +53,6 @@ const submission = fc.record({
     model: fc.constant("claude-haiku-4-5"),
     system: fc.option(nonEmptyString, { nil: undefined }),
     prompt: fc.array(nonEmptyString, { minLength: 1, maxLength: 5 }),
-    skills: fc.constant([] as never[]),
     agentsMd: fc.constant([] as never[]),
     files: fc.constant([] as never[]),
     mcpServers: fc.constant([] as never[]),
@@ -123,7 +122,6 @@ function makeValidSubmission(): PlatformRunSubmissionRequest {
     submission: {
       model: "claude-haiku-4-5",
       prompt: ["hello"],
-      skills: [],
       agentsMd: [],
       files: [],
       mcpServers: []

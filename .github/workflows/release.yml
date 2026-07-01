@@ -22,12 +22,140 @@ permissions:
   id-token: write
 
 jobs:
+  version:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Resolve package version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/sdk/package.json').version")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert npm version is unused
+        run: node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Lint
+        run: bun run lint
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Test
+        run: bun run test
+
+  offline-user-tests:
+    name: Offline user tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Offline user tests
+        env:
+          AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
+        run: bun run test:user:offline
+
+  docs-build:
+    name: Docs build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Docs build
+        run: bun run docs:build
+
+  pack-sdk:
+    name: Pack SDK gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install
+        run: bun ci
+
+      - name: Pack SDK gate
+        run: bun run pack:sdk
+
   publish:
     name: Publish @aexhq/sdk
+    needs:
+      - version
+      - lint
+      - unit-tests
+      - offline-user-tests
+      - docs-build
+      - pack-sdk
     runs-on: ubuntu-latest
     environment: npm-release
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ needs.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -48,33 +176,6 @@ jobs:
 
       - name: Install
         run: bun ci
-
-      - name: Resolve package version
-        id: version
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./packages/sdk/package.json').version")"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Assert npm version is unused
-        run: node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Test
-        run: bun run test
-
-      - name: Offline user tests
-        env:
-          AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
-        run: bun run test:user:offline
-
-      - name: Docs build
-        run: bun run docs:build
-
-      - name: Pack SDK gate
-        run: bun run pack:sdk
 
       - name: Pack publish tarball
         id: pack
@@ -110,17 +211,21 @@ jobs:
             --provenance
 
       - name: Wait for npm visibility
-        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
+        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
 
       - name: Wait for Bun install visibility
-        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ steps.version.outputs.version }}"
+        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
 
   live-user-tests:
-    name: Live user tests against published SDK
+    name: Live user tests shard ${{ matrix.shard }}/4
     needs: publish
     runs-on: ubuntu-latest
     environment: live-user-tests
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -137,6 +242,7 @@ jobs:
         run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.publish.outputs.version }}"
 
       - name: Live user tests
+        shell: bash
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
@@ -145,5 +251,5 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
-          AEX_USER_TEST_MAX_WORKERS: 4
-        run: bun run test:user
+          AEX_USER_TEST_MAX_WORKERS: 2
+        run: bun run test:user -- --shard=${{ matrix.shard }}/4

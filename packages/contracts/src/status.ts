@@ -34,6 +34,7 @@ export const SESSION_STATUSES = [
   "cancelling",
   "deleting",
   "deleted",
+  "expired",
   "error"
 ] as const;
 
@@ -46,6 +47,8 @@ export const TERMINAL_RUN_STATUSES = [
   "failed",
   "timed_out",
   "cancelled",
+  "deleted",
+  "expired",
   "cleanup_failed"
 ] as const satisfies readonly RunStatus[];
 
