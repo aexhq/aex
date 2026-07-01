@@ -14,6 +14,7 @@ export { runCancelCmd } from "./cancel.js";
 export { runDeleteCmd } from "./delete.js";
 export { runDeleteAssetCmd } from "./delete-asset.js";
 export { runWhoamiCmd } from "./whoami.js";
+export { runRedeemCmd } from "./redeem.js";
 export { runDebugCmd } from "./debug.js";
 export { runLoginCmd, runLogoutCmd, runAuthStatusCmd } from "./auth-cmd.js";
 export { runModelsCmd, runProvidersCmd, runToolsCmd, runRuntimeSizesCmd } from "./discover-cmd.js";
