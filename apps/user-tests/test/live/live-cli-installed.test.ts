@@ -83,6 +83,23 @@ function eventText(events: readonly Record<string, unknown>[]): string {
     .join("");
 }
 
+function customNames(events: readonly Record<string, unknown>[]): string[] {
+  return events
+    .filter((event) => event["type"] === "CUSTOM")
+    .map((event) => {
+      const data = event["data"];
+      if (!data || typeof data !== "object" || Array.isArray(data)) return "";
+      const name = (data as Record<string, unknown>)["name"];
+      return typeof name === "string" ? name : "";
+    })
+    .filter(Boolean);
+}
+
+function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
+  const kinds = events.map((event) => event["type"]);
+  return kinds.includes("RUN_FINISHED") || customNames(events).includes("aex.session.idle");
+}
+
 describe("live hosted API via installed CLI", () => {
   let install: InstallResult;
   let binPath: string;
@@ -155,7 +172,7 @@ describe("live hosted API via installed CLI", () => {
     const eventRows = parseJsonLines(events.stdout);
     const eventKinds = eventRows.map((event) => event["type"]);
     expect(eventKinds, commandDiagnostic("aex events", events)).toContain("RUN_STARTED");
-    expect(eventKinds, commandDiagnostic("aex events", events)).toContain("RUN_FINISHED");
+    expect(hasCleanTerminal(eventRows), commandDiagnostic("aex events", events)).toBe(true);
     expect(eventText(eventRows).replace(/\s+/g, ""), commandDiagnostic("aex events", events)).toContain(marker);
 
     const outputs = await runCli(["outputs", sessionId as string, ...commonArgs()]);
@@ -176,6 +193,7 @@ describe("live hosted API via installed CLI", () => {
     expect(existsSync(archivePath)).toBe(true);
     const entries = unzipSync(new Uint8Array(readFileSync(archivePath)));
     expect(Object.keys(entries).sort()).toEqual(["events.jsonl"]);
-    expect(new TextDecoder().decode(entries["events.jsonl"]!).trim()).toContain("RUN_FINISHED");
+    const archivedEvents = parseJsonLines(new TextDecoder().decode(entries["events.jsonl"]!));
+    expect(hasCleanTerminal(archivedEvents)).toBe(true);
   }, 12 * 60_000);
 });

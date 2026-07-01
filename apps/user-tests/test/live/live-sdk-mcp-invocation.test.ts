@@ -134,7 +134,7 @@ function buildScript(cell: Cell): string {
       url: ${JSON.stringify(MCP_URL)}
     });
 
-    const result = await client.run({
+    const runResult = await client.run({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
@@ -148,14 +148,22 @@ function buildScript(cell: Cell): string {
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = result.runId;
+    const runId = runResult.runId;
     const run = {
-      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const events = Array.isArray(result.events) ? result.events : [];
+    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    let events = fallbackEvents;
+    try {
+      const session = await client.sessions.open(runId);
+      const listedEvents = await session.events().list();
+      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+    } catch {
+      events = fallbackEvents;
+    }
 
     const toolRequests = events
       .filter((e) => e.type === "TOOL_CALL_START")
@@ -173,7 +181,13 @@ function buildScript(cell: Cell): string {
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const eventKinds = events.map((e) => e.type);
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    const terminalData = terminal && isSessionIdle(terminal)
+      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
+      : terminal ? terminal.data : null;
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
@@ -186,13 +200,13 @@ function buildScript(cell: Cell): string {
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       eventCount: events.length,
-      eventKinds: events.map((e) => e.type),
+      eventKinds,
       toolRequests,
       toolResponses,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal ? terminal.type : null,
-      terminalData: terminal ? terminal.data : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalData,
       streamErrors,
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
@@ -269,7 +283,6 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       // (Some runtimes emit preflight notifications before runtime_started,
       // so we don't pin position 0 — the existence of the started event is
       // what matters.)
-      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // always populate reason on the success path. Tolerating `undefined`

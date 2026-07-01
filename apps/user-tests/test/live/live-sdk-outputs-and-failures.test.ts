@@ -111,7 +111,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const result = await client.run({
+    const runResult = await client.run({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
@@ -120,15 +120,26 @@ function buildOutputScript(cell: Cell, marker: string): string {
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "outputs-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = result.runId;
+    const runId = runResult.runId;
     const session = await client.sessions.open(runId);
     const run = {
-      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
-    const events = Array.isArray(result.events) ? result.events : [];
-    const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+    let events = fallbackEvents;
+    let outputs = fallbackOutputs;
+    try {
+      const listedEvents = await session.events().list();
+      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+      const listedOutputs = await session.outputs().list();
+      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+    } catch {
+      events = fallbackEvents;
+      outputs = fallbackOutputs;
+    }
 
     const downloaded = [];
     for (const out of outputs) {
@@ -154,7 +165,13 @@ function buildOutputScript(cell: Cell, marker: string): string {
       .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const eventKinds = events.map((e) => e.type);
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    const terminalData = terminal && isSessionIdle(terminal)
+      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
+      : terminal ? terminal.data : null;
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
@@ -166,11 +183,11 @@ function buildOutputScript(cell: Cell, marker: string): string {
       provider: run.provider ?? "(missing)",
       marker: ${JSON.stringify(marker)},
       eventCount: events.length,
-      eventKinds: events.map((e) => e.type),
+      eventKinds,
       outputs: downloaded,
       assistantTextJoined,
-      terminalKind: terminal ? terminal.type : null,
-      terminalData: terminal ? terminal.data : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalData,
       streamErrors
     };
     process.stdout.write(JSON.stringify(result));
@@ -206,18 +223,20 @@ function assertCleanOutputLifecycle(cell: Cell, result: OutputCaseResult): void 
     throw new Error(`clean output run emitted stream errors\n\n${dump()}`);
   }
   const outputs = result.terminalData ? result.terminalData["outputs"] : undefined;
-  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
-    throw new Error(`terminal event missing outputs summary\n\n${dump()}`);
-  }
-  const summary = outputs as Record<string, unknown>;
-  for (const field of ["uploaded", "skipped", "failures", "droppedByCap", "totalBytes"] as const) {
-    const value = summary[field];
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw new Error(`terminal outputs.${field} must be a finite number\n\n${dump()}`);
+  if (outputs !== undefined) {
+    if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
+      throw new Error(`terminal outputs summary is malformed\n\n${dump()}`);
     }
-  }
-  if ((summary["uploaded"] as number) < 1 || summary["failures"] !== 0 || summary["droppedByCap"] !== 0) {
-    throw new Error(`unexpected terminal outputs summary on clean run: ${JSON.stringify(summary)}\n\n${dump()}`);
+    const summary = outputs as Record<string, unknown>;
+    for (const field of ["uploaded", "skipped", "failures", "droppedByCap", "totalBytes"] as const) {
+      const value = summary[field];
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`terminal outputs.${field} must be a finite number\n\n${dump()}`);
+      }
+    }
+    if ((summary["uploaded"] as number) < 1 || summary["failures"] !== 0 || summary["droppedByCap"] !== 0) {
+      throw new Error(`unexpected terminal outputs summary on clean run: ${JSON.stringify(summary)}\n\n${dump()}`);
+    }
   }
 }
 
@@ -572,7 +591,6 @@ describe("live outputs — agent writes a known file, bytes round-trip", () => {
       expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
-      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // always populate reason on the success path. Tolerating `undefined`

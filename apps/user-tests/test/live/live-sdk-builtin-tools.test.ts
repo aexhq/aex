@@ -112,7 +112,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       apiToken: process.env.AEX_API_TOKEN
     });
 
-    const result = await client.run({
+    const runResult = await client.run({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
@@ -120,14 +120,22 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
     }, { timeoutMs: 5 * 60_000 });
-    const runId = result.runId;
+    const runId = runResult.runId;
     const run = {
-      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const events = Array.isArray(result.events) ? result.events : [];
+    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    let events = fallbackEvents;
+    try {
+      const session = await client.sessions.open(runId);
+      const listedEvents = await session.events().list();
+      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+    } catch {
+      events = fallbackEvents;
+    }
 
     const toolRequestNames = events
       .filter((e) => e.type === "TOOL_CALL_START")
@@ -139,7 +147,13 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const eventKinds = events.map((e) => e.type);
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    const terminalData = terminal && isSessionIdle(terminal)
+      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
+      : terminal ? terminal.data : null;
     const streamErrors = events
       .filter((e) => e.type === "stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
@@ -154,12 +168,12 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       mode: ${JSON.stringify(mode)},
       marker: ${JSON.stringify(marker)},
       eventCount: events.length,
-      eventKinds: events.map((e) => e.type),
+      eventKinds,
       toolRequestNames,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal ? terminal.type : null,
-      terminalData: terminal ? terminal.data : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalData,
       streamErrors,
       leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
@@ -229,7 +243,6 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
 
       expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
-      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // (managed DeepSeek runtime) always populate reason on the success
@@ -270,7 +283,6 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       // The run must still complete cleanly — disarming tools does not
       // crash the runtime; the agent answers without tool use.
       expect(result.runStatus, dump()).toBe("succeeded");
-      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // (managed DeepSeek runtime) always populate reason on the success

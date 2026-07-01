@@ -306,8 +306,19 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     };
     const session = await client.sessions.open(runId);
 
-    const events = Array.isArray(result.events) ? result.events : [];
-    const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+    const fallbackEvents = Array.isArray(result.events) ? result.events : [];
+    const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
+    let events = fallbackEvents;
+    let outputs = fallbackOutputs;
+    try {
+      const listedEvents = await session.events().list();
+      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+      const listedOutputs = await session.outputs().list();
+      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+    } catch {
+      events = fallbackEvents;
+      outputs = fallbackOutputs;
+    }
 
     // CUSTOM envelopes nest the original payload under data.value.
     function customName(e) {

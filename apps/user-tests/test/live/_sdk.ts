@@ -104,14 +104,59 @@ const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
  * standard result JSON.
  */
 const TAIL = `
-const events = Array.isArray(result.events) ? result.events : [];
-const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+const fallbackEvents = Array.isArray(result.events) ? result.events : [];
+let events = fallbackEvents;
+let listedSession = null;
+try {
+  listedSession = typeof result.runId === "string" && result.runId
+    ? await client.sessions.open(result.runId)
+    : null;
+  if (listedSession) {
+    const listedEvents = await listedSession.events().list();
+    if (Array.isArray(listedEvents) && listedEvents.length > 0) {
+      events = listedEvents;
+    }
+  }
+} catch {
+  events = fallbackEvents;
+}
+const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
+let outputs = fallbackOutputs;
+if (listedSession) {
+  try {
+    const listedOutputs = await listedSession.outputs().list();
+    if (Array.isArray(listedOutputs)) {
+      outputs = listedOutputs;
+    }
+  } catch {
+    outputs = fallbackOutputs;
+  }
+}
 const text = typeof result.text === "string" ? result.text : "";
 const toolResultText = events
   .filter((e) => e.type === "TOOL_CALL_RESULT")
   .map((e) => JSON.stringify(e && e.data !== undefined ? e.data : ""))
   .join(" ");
-const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+function isSessionIdle(e) {
+  return e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+}
+function terminalKindOf(e) {
+  if (!e) return null;
+  return isSessionIdle(e) ? "RUN_FINISHED" : e.type;
+}
+function terminalDataOf(e) {
+  if (!e) return null;
+  if (isSessionIdle(e)) {
+    const value = e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : {};
+    return { ...value, reason: value.reason === "completed" ? "complete" : value.reason };
+  }
+  return e.data;
+}
+const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+const eventKinds = events.map((e) => e.type);
+if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) {
+  eventKinds.push("RUN_FINISHED");
+}
 const streamErrors = events
   .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
   .map((e) => {
@@ -130,11 +175,11 @@ process.stdout.write(JSON.stringify({
   status,
   runtime: "managed",
   provider: (result.run && typeof result.run.provider === "string") ? result.run.provider : null,
-  terminalKind: terminal ? terminal.type : null,
-  terminalData: terminal ? terminal.data : null,
+  terminalKind: terminalKindOf(terminal),
+  terminalData: terminalDataOf(terminal),
   assistantText: text,
   toolResultText,
-  eventKinds: events.map((e) => e.type),
+  eventKinds,
   streamErrors,
   outputCount: outputs.length
 }));

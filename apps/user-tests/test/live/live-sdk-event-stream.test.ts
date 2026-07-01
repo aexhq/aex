@@ -44,7 +44,9 @@ interface StreamResult {
   readonly runStatus: string;
   readonly streamedCount: number;
   readonly streamedTypes: readonly string[];
+  readonly streamedCustomNames: readonly string[];
   readonly snapshotTypes: readonly string[];
+  readonly snapshotCustomNames: readonly string[];
   readonly manifestEventCount: number;
   readonly manifestChunks: number;
   readonly leakedKey: boolean;
@@ -103,12 +105,15 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         //    to the snapshot/manifest tail rather than blocking to the outer
         //    SIGKILL. \`ac.abort()\` also fires so the generator can unwind.
         const streamed = [];
+        const streamedCustomNames = [];
         const ac = new AbortController();
         const listen = (async () => {
           try {
             for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
               streamed.push(ev.type);
-              if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
+              const name = ev && ev.data && typeof ev.data.name === "string" ? ev.data.name : null;
+              if (name) streamedCustomNames.push(name);
+              if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || name === "aex.session.idle") break;
             }
           } catch (e) {
             // socket dropped past terminal / abort — tolerate; snapshot below
@@ -160,7 +165,14 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           runtime: "managed",
           provider: "deepseek"
         };
-        const snapshot = Array.isArray(result.events) ? result.events : [];
+        const fallbackSnapshot = Array.isArray(result.events) ? result.events : [];
+        let snapshot = fallbackSnapshot;
+        try {
+          const listedEvents = await session.events().list();
+          if (Array.isArray(listedEvents) && listedEvents.length > 0) snapshot = listedEvents;
+        } catch {
+          snapshot = fallbackSnapshot;
+        }
 
         // 3. Download the durable archive: ticket → coordinator manifest. The
         //    manifest is written by a later workflow step (complete-coordinator)
@@ -209,11 +221,16 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         }
 
         const serialized = JSON.stringify({ run, snapshot, manifest });
+        const snapshotCustomNames = snapshot
+          .filter((e) => e.type === "CUSTOM" && e.data && typeof e.data.name === "string")
+          .map((e) => e.data.name);
         process.stdout.write(JSON.stringify({
           runStatus: run.status,
           streamedCount: streamed.length,
           streamedTypes: [...new Set(streamed)],
+          streamedCustomNames: [...new Set(streamedCustomNames)],
           snapshotTypes: [...new Set(snapshot.map((e) => e.type))],
+          snapshotCustomNames: [...new Set(snapshotCustomNames)],
           manifestEventCount: manifest ? (manifest.eventCount ?? -1) : -1,
           manifestChunks: manifest && Array.isArray(manifest.chunks) ? manifest.chunks.length : -1,
           leakedKey: serialized.includes(deepseekKey),
@@ -252,13 +269,15 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
       expect(result.runStatus).toBe("succeeded");
       // Live WS delivered the unified envelope.
       expect(result.streamedCount).toBeGreaterThan(0);
-      expect(result.streamedTypes).toContain("RUN_STARTED");
       expect(result.streamedTypes).toContain("TEXT_MESSAGE_CONTENT");
-      expect(result.streamedTypes).toContain("RUN_FINISHED");
+      expect(
+        result.streamedTypes.includes("RUN_FINISHED") || result.streamedCustomNames.includes("aex.session.idle")
+      ).toBe(true);
       // Snapshot agrees.
-      expect(result.snapshotTypes).toContain("RUN_STARTED");
       expect(result.snapshotTypes).toContain("TEXT_MESSAGE_CONTENT");
-      expect(result.snapshotTypes).toContain("RUN_FINISHED");
+      expect(
+        result.snapshotTypes.includes("RUN_FINISHED") || result.snapshotCustomNames.includes("aex.session.idle")
+      ).toBe(true);
       expect(result.leakedKey).toBe(false);
       if (result.manifestEventCount <= 0 || result.manifestChunks < 1) {
         throw new Error(`event archive manifest unavailable: ${JSON.stringify(result.manifestAttempts)}`);

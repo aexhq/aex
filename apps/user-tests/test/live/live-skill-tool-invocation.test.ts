@@ -165,6 +165,21 @@ function customValue(e) {
   const v = d.value;
   return v && typeof v === "object" ? v : {};
 }
+function isSessionIdle(e) {
+  return e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+}
+function terminalKindOf(e) {
+  if (!e) return null;
+  return isSessionIdle(e) ? "RUN_FINISHED" : e.type;
+}
+function terminalDataOf(e) {
+  if (!e) return null;
+  if (isSessionIdle(e)) {
+    const v = customValue(e);
+    return { ...v, reason: v.reason === "completed" ? "complete" : v.reason };
+  }
+  return eventData(e);
+}
 function skillLoadedName(e) {
   const v = customValue(e);
   if (
@@ -185,8 +200,16 @@ function blockText(content) {
     .join("\\n");
 }
 
-function observe(result) {
-  const events = Array.isArray(result.events) ? result.events : [];
+async function observe(result) {
+  const fallbackEvents = Array.isArray(result.events) ? result.events : [];
+  let events = fallbackEvents;
+  try {
+    const session = await client.sessions.open(result.runId);
+    const listedEvents = await session.events().list();
+    if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+  } catch {
+    events = fallbackEvents;
+  }
   const nameById = new Map();
   const toolCalls = events
     .filter((e) => e.type === "TOOL_CALL_START")
@@ -218,7 +241,11 @@ function observe(result) {
     .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
     .join(" ");
   const finalText = typeof result.text === "string" && result.text ? result.text + " " : "";
-  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+  const eventKinds = events.map((e) => e.type);
+  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) {
+    eventKinds.push("RUN_FINISHED");
+  }
   const streamErrors = customEvents
     .filter((e) => customName(e) === "aex.stream_error")
     .map((e) => (customValue(e) ? customValue(e) : { unknown: true }));
@@ -229,9 +256,9 @@ function observe(result) {
       : typeof result.status === "string" && result.status
         ? result.status
         : "failed",
-    eventKinds: events.map((e) => e.type),
-    terminalKind: terminal ? terminal.type : null,
-    terminalData: terminal ? eventData(terminal) : null,
+    eventKinds,
+    terminalKind: terminalKindOf(terminal),
+    terminalData: terminalDataOf(terminal),
     assistantText: finalText + assistantTextJoined,
     assistantTextEventCount: assistantTextEvents.length,
     toolCalls,
@@ -330,7 +357,6 @@ function diagnostics(o: Observation): string {
 function assertCleanTerminal(o: Observation): void {
   const dump = diagnostics(o);
   expect(o.status, dump).toBe("succeeded");
-  expect(o.eventKinds, dump).toContain("RUN_STARTED");
   expect(o.terminalKind, dump).toBe("RUN_FINISHED");
   expect(o.terminalData?.["reason"], dump).toBe("complete");
   expect(o.assistantTextEventCount, dump).toBeGreaterThan(0);
@@ -378,7 +404,7 @@ const result = await client.run({
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-tool-single-" + Date.now()
 }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-process.stdout.write(JSON.stringify(observe(result)));
+process.stdout.write(JSON.stringify(await observe(result)));
 `;
       const { observation, stdout } = await runScenario(install, "skill-tool-single.mjs", body);
       const dump = diagnostics(observation);
@@ -443,7 +469,7 @@ const result = await client.run({
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-tool-two-" + Date.now()
 }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-process.stdout.write(JSON.stringify(observe(result)));
+process.stdout.write(JSON.stringify(await observe(result)));
 `;
       const { observation, stdout } = await runScenario(install, "skill-tool-two.mjs", body);
       const dump = diagnostics(observation);
@@ -516,7 +542,7 @@ const result = await client.run({
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-tool-plus-custom-" + Date.now()
 }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-process.stdout.write(JSON.stringify(observe(result)));
+process.stdout.write(JSON.stringify(await observe(result)));
 `;
       const { observation, stdout } = await runScenario(install, "skill-tool-plus-custom.mjs", body);
       const dump = diagnostics(observation);

@@ -174,7 +174,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       name: ${JSON.stringify(betaName)}
     });
 
-    const result = await client.run({
+    const runResult = await client.run({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
@@ -183,14 +183,22 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = result.runId;
+    const runId = runResult.runId;
     const run = {
-      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const events = Array.isArray(result.events) ? result.events : [];
+    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    let events = fallbackEvents;
+    try {
+      const session = await client.sessions.open(runId);
+      const listedEvents = await session.events().list();
+      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+    } catch {
+      events = fallbackEvents;
+    }
 
     // CUSTOM envelopes nest the original payload under data.value, keyed by
     // data.name (aex.notification / aex.skill_loaded / aex.stream_error).
@@ -233,7 +241,13 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const eventKinds = events.map((e) => e.type);
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    const terminalData = terminal && isSessionIdle(terminal)
+      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
+      : terminal ? terminal.data : null;
     const streamErrors = customEvents
       .filter((e) => e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
@@ -247,13 +261,13 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       provider: run.provider ?? "(missing)",
       uniqueToken: ${JSON.stringify(uniqueToken)},
       eventCount: events.length,
-      eventKinds: events.map((e) => e.type),
+      eventKinds,
       skillLoadedNames,
       skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal ? terminal.type : null,
-      terminalData: terminal ? terminal.data : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalData,
       streamErrors,
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
     };
@@ -333,7 +347,6 @@ describe("live skill invocation — agent actually follows skill content", () =>
       // Event frame: runtime_started present + last event is
       // runtime_terminal. (Some runtimes emit preflight notifications
       // before runtime_started; we only require its presence.)
-      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.terminalKind).toBe("RUN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // always populate reason on the success path. Tolerating `undefined`

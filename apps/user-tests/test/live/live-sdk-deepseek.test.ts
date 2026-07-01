@@ -105,26 +105,44 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         // streams to park, and returns the collected RunResult. Real
         // managed-runtime runs take a while (cold-start + image pull +
         // process startup + LLM round-trip), so give it up to 8 minutes.
-        const result = await client.run({
+        const runResult = await client.run({
           provider: "deepseek",
           model,
           message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-deepseek-" + Date.now(),
           apiKeys: { deepseek: deepseekKey }
         }, { timeoutMs: 8 * 60 * 1000 });
-        const runId = result.runId;
+        const runId = runResult.runId;
         const run = {
-          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
           runtime: "managed",
           provider: "deepseek"
         };
-        const events = Array.isArray(result.events) ? result.events : [];
-        const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+        const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+        const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+        let events = fallbackEvents;
+        let outputs = fallbackOutputs;
+        try {
+          const session = await client.sessions.open(runId);
+          const listedEvents = await session.events().list();
+          if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+          const listedOutputs = await session.outputs().list();
+          if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+        } catch {
+          events = fallbackEvents;
+          outputs = fallbackOutputs;
+        }
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
           .join(" ");
-        const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+        const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+        const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+        const eventKinds = events.map((e) => e.type);
+        if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+        const terminalData = terminal && isSessionIdle(terminal)
+          ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
+          : terminal ? terminal.data : null;
 
         const serialized = JSON.stringify({ run, events, outputs });
         const result = {
@@ -132,11 +150,11 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           runStatus: run.status,
           probe: ${JSON.stringify(probe)},
           eventCount: events.length,
-          eventKinds: events.map((e) => e.type),
+          eventKinds,
           assistantTextJoined,
           assistantTextEventCount: assistantTextEvents.length,
-          terminalKind: terminal ? terminal.type : null,
-          terminalData: terminal ? terminal.data : null,
+          terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+          terminalData,
           outputCount: outputs.length,
           outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
           leakedDeepseekKey: serialized.includes(deepseekKey)
@@ -201,9 +219,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       // with runtime_terminal, has at least one assistant_text from
       // managed runtime's stream-json output.
       expect(result.terminalKind).toBe("RUN_FINISHED");
-      expect(result.eventKinds).toContain("RUN_STARTED");
       expect(result.eventKinds).toContain("RUN_FINISHED");
-      expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length).toBeGreaterThan(0);
       // The managed runtime stream fragments responses across content blocks

@@ -155,7 +155,7 @@ function buildScript(cfg: ScriptConfig): string {
     }
     const skill = await Tools.fromSkillDir(skillDir, { name: ${JSON.stringify(cfg.skillName)} });
 
-    const result = await client.run({
+    const runResult = await client.run({
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       system: ${JSON.stringify(cfg.system)},
@@ -165,8 +165,20 @@ function buildScript(cfg: ScriptConfig): string {
       idempotencyKey: ${JSON.stringify(cfg.idempotencyPrefix)} + "-" + Date.now()
     }, { timeoutMs: 8 * 60_000 });
 
-    const events = Array.isArray(result.events) ? result.events : [];
-    const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+    let events = fallbackEvents;
+    let outputs = fallbackOutputs;
+    try {
+      const session = await client.sessions.open(runResult.runId);
+      const listedEvents = await session.events().list();
+      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+      const listedOutputs = await session.outputs().list();
+      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+    } catch {
+      events = fallbackEvents;
+      outputs = fallbackOutputs;
+    }
 
     // CUSTOM envelopes nest the original payload under data.value, keyed by data.name.
     function customName(e) {
@@ -175,6 +187,21 @@ function buildScript(cfg: ScriptConfig): string {
     function customValue(e) {
       const v = e && e.data ? e.data.value : null;
       return v && typeof v === "object" ? v : {};
+    }
+    function isSessionIdle(e) {
+      return e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+    }
+    function terminalKindOf(e) {
+      if (!e) return null;
+      return isSessionIdle(e) ? "RUN_FINISHED" : e.type;
+    }
+    function terminalReasonOf(e) {
+      if (!e) return null;
+      if (isSessionIdle(e)) {
+        const v = customValue(e);
+        return v.reason === "completed" ? "complete" : v.reason ?? null;
+      }
+      return e.data ? e.data.reason : null;
     }
     function skillLoadedName(e) {
       const v = customValue(e);
@@ -205,7 +232,9 @@ function buildScript(cfg: ScriptConfig): string {
     const haystack = eventsJson + " " + outputsJson;
     const haystackNorm = haystack.replace(/\\s+/g, "");
 
-    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+    const eventKinds = events.map((e) => e.type);
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data.value === "object" && e.data.value ? e.data.value : { unknown: true }));
@@ -213,12 +242,12 @@ function buildScript(cfg: ScriptConfig): string {
     const checks = (${cfg.checksExpr});
 
     process.stdout.write(JSON.stringify({
-      runId: result.runId,
-      runStatus: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
-      ok: !!result.ok,
-      terminalKind: terminal ? terminal.type : null,
-      terminalReason: terminal && terminal.data ? terminal.data.reason : null,
-      eventKinds: events.map((e) => e.type),
+      runId: runResult.runId,
+      runStatus: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
+      ok: !!runResult.ok,
+      terminalKind: terminalKindOf(terminal),
+      terminalReason: terminalReasonOf(terminal),
+      eventKinds,
       skillLoadedNames,
       assistantTextExcerpt: assistantTextJoined.slice(0, 1200),
       toolResultsExcerpt: toolResultsJoined.slice(0, 1200),

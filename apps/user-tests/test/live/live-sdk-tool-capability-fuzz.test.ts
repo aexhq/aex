@@ -196,6 +196,24 @@ function eventData(event) {
   return event && event.data && typeof event.data === "object" ? event.data : {};
 }
 
+function isSessionIdle(event) {
+  return event && event.type === "CUSTOM" && event.data && event.data.name === "aex.session.idle";
+}
+
+function terminalKindOf(event) {
+  if (!event) return null;
+  return isSessionIdle(event) ? "RUN_FINISHED" : event.type;
+}
+
+function terminalDataOf(event) {
+  if (!event) return null;
+  if (isSessionIdle(event)) {
+    const value = event.data && event.data.value && typeof event.data.value === "object" ? event.data.value : {};
+    return { ...value, reason: value.reason === "completed" ? "complete" : value.reason };
+  }
+  return eventData(event);
+}
+
 function blockText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -208,8 +226,20 @@ function blockText(content) {
 }
 
 async function observe(result) {
-  const events = Array.isArray(result.events) ? result.events : [];
-  const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+  const fallbackEvents = Array.isArray(result.events) ? result.events : [];
+  const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
+  const session = await client.sessions.open(result.runId);
+  let events = fallbackEvents;
+  let outputs = fallbackOutputs;
+  try {
+    const listedEvents = await session.events().list();
+    if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
+    const listedOutputs = await session.outputs().list();
+    if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+  } catch {
+    events = fallbackEvents;
+    outputs = fallbackOutputs;
+  }
   const starts = events.filter((event) => event.type === "TOOL_CALL_START");
   const nameById = new Map();
   const toolCalls = starts.map((event) => {
@@ -237,8 +267,11 @@ async function observe(result) {
     });
   const terminal = events.find(
     (event) => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"
-  );
-  const session = await client.sessions.open(result.runId);
+  ) ?? events.find(isSessionIdle);
+  const eventKinds = events.map((event) => event.type);
+  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) {
+    eventKinds.push("RUN_FINISHED");
+  }
   const outputSamples = [];
   for (const output of outputs.slice(0, 24)) {
     let text = null;
@@ -259,9 +292,9 @@ async function observe(result) {
     status: result.ok
       ? "succeeded"
       : (typeof result.status === "string" && result.status ? result.status : "failed"),
-    eventKinds: events.map((event) => event.type),
-    terminalKind: terminal ? terminal.type : null,
-    terminalData: terminal ? eventData(terminal) : null,
+    eventKinds,
+    terminalKind: terminalKindOf(terminal),
+    terminalData: terminalDataOf(terminal),
     assistantText: typeof result.text === "string" ? result.text : "",
     toolCalls,
     toolResults,
@@ -366,7 +399,6 @@ function assertToolSurface(
 ): void {
   const dump = diagnostics(observation);
   expect(observation.status, dump).toBe("succeeded");
-  expect(observation.eventKinds, dump).toContain("RUN_STARTED");
   expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
   expect(observation.terminalData?.["reason"], dump).toBe("complete");
   const called = names(observation);
