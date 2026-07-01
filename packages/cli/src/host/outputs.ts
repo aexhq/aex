@@ -1,9 +1,9 @@
 /**
- * `aex outputs <run-id>` — list captured outputs for a run.
- * Prints one Output as JSON per line.
+ * `aex outputs <session-id>` — list captured outputs for a session via GET
+ * /api/sessions/{id}/outputs. Prints one Output as JSON per line.
  *
- * `aex download <run-id> <output-id> [--out path]` is in a
- * separate file (download.ts) to keep concerns tight.
+ * `aex download <session-id> [--out path]` is in a separate file
+ * (download.ts) to keep concerns tight.
  */
 import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
@@ -28,14 +28,14 @@ export async function runOutputsCmd(io: CliIO, argv: readonly string[]): Promise
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex outputs <run-id> [common flags]\n");
+    io.stderr("usage: aex outputs <session-id> [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
   try {
-    const outputs = await operations.listOutputs(http, runId);
+    const outputs = await operations.listSessionOutputs(http, sessionId);
     for (const out of outputs) {
       io.stdout(JSON.stringify(out) + "\n");
     }
@@ -43,7 +43,7 @@ export async function runOutputsCmd(io: CliIO, argv: readonly string[]): Promise
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "outputs_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });

@@ -23,8 +23,10 @@ follows semantic versioning.
   `session.events().list()`; "get the last message" is
   `await session.messages().last()`.)
 - Moved workspace/session reads onto `aex.sessions`: `list(query)` (returns
-  `{ sessions, nextCursor }`), `get(id)`, `outputs(id)`, `readOutput(id, sel)`,
-  and `searchOutputs(query)`.
+  `{ sessions, nextCursor }`), `get(id)`, `searchOutputs(query)`, and
+  `outputs(id)` — which returns the SAME rich accessor as `session.outputs()`
+  (`aex.sessions.outputs(id).list()` / `.read(sel)` / `.download()` / …), so the
+  id-addressed workspace reads and the live handle share one accessor convention.
 - Renamed submission options: provider keys move to a top-level `apiKeys` map
   (was `secrets.apiKeys`); `prompt` becomes `run({ message })` / `session.send()`;
   `secretEnv` becomes `environment.secrets`; `runtimeSize` becomes `runtime`;

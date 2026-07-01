@@ -28,14 +28,22 @@ function stubClient(overrides: Partial<Record<string, (...args: unknown[]) => un
         // a field that MUST NOT leak into the summary:
         template_snapshot: { prompt: "secret prompt" }
       }),
-      outputs: record("outputs", [
-        { id: "out-1", filename: "report.md", sizeBytes: 12, contentType: "text/markdown", extra: "drop-me" }
-      ]),
-      readOutput: record("readOutput", {
-        output: { id: "out-1", filename: "report.md" },
-        text: "# Report",
-        truncated: false,
-        totalBytes: 8
+      // `outputs(id)` returns the rich accessor (mirrors the real SDK), so the
+      // executor reaches outputs via `.list()` / `.read(sel, opts)`. Each verb
+      // records the id-folded call so assertions stay `[id, ...args]`-shaped.
+      outputs: (id: unknown) => ({
+        list: (...args: unknown[]) => {
+          calls.push({ method: "outputs", args: [id, ...args] });
+          return overrides.outputs
+            ? overrides.outputs(id, ...args)
+            : [{ id: "out-1", filename: "report.md", sizeBytes: 12, contentType: "text/markdown", extra: "drop-me" }];
+        },
+        read: (...args: unknown[]) => {
+          calls.push({ method: "readOutput", args: [id, ...args] });
+          return overrides.readOutput
+            ? overrides.readOutput(id, ...args)
+            : { output: { id: "out-1", filename: "report.md" }, text: "# Report", truncated: false, totalBytes: 8 };
+        }
       })
     }
   } as unknown as AgentExecutor;

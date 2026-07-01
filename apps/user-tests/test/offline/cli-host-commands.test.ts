@@ -18,6 +18,7 @@ interface CapturedRequest {
   readonly method: string;
   readonly path: string;
   readonly authorization: string | undefined;
+  readonly idempotencyKey: string | undefined;
   readonly body: unknown;
 }
 
@@ -68,21 +69,50 @@ async function startFakeApi(): Promise<FakeApi> {
       method: req.method ?? "GET",
       path: url.pathname + url.search,
       authorization: req.headers.authorization,
+      idempotencyKey: typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : undefined,
       body: parsedBody
     });
 
-    if (req.method === "POST" && url.pathname === "/api/runs") {
-      json(res, 200, { id: "run-cli-1", status: "queued", provider: "deepseek", runtime: "managed" });
+    // --- session endpoints (run/status/events/wait/cancel speak these) ---
+    if (req.method === "POST" && url.pathname === "/api/sessions") {
+      json(res, 200, { id: "run-cli-1", status: "creating", provider: "deepseek", runtime: "managed" });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1") {
+    if (req.method === "POST" && url.pathname === "/api/sessions/run-cli-1/messages") {
+      json(res, 200, {
+        session: { id: "run-cli-1", status: "running", provider: "deepseek", runtime: "managed" },
+        turn: { turnSeq: 0 }
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/sessions/run-cli-1") {
       statusPolls += 1;
       json(res, 200, {
         id: "run-cli-1",
-        status: statusPolls > 1 ? "succeeded" : "running",
+        status: statusPolls > 1 ? "idle" : "running",
         provider: "deepseek",
         runtime: "managed"
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/sessions/run-cli-1/events") {
+      json(res, 200, {
+        events: [
+          { id: "evt-1", type: "RUN_STARTED", data: { phase: "start" } },
+          { id: "evt-2", type: "RUN_FINISHED", data: { reason: "complete" } }
+        ]
+      });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/sessions/run-cli-1/cancel") {
+      json(res, 200, { session: { id: "run-cli-1", status: "cancelling" } });
+      return;
+    }
+
+    // --- run endpoints (download assembles the public zip client-side from
+    // these; the session id doubles as the run id) ---
+    if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1") {
+      json(res, 200, { id: "run-cli-1", status: "succeeded", provider: "deepseek", runtime: "managed" });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1/events") {
@@ -102,10 +132,6 @@ async function startFakeApi(): Promise<FakeApi> {
     }
     if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1/outputs/out-1/download") {
       bytes(res, 200, strToU8("hello world"), "text/plain");
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/runs/run-cli-1/cancel") {
-      json(res, 200, {});
       return;
     }
 
@@ -163,9 +189,10 @@ describe("installed CLI host commands", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(run.exitCode, `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
+    // `aex run` prints the session record from the accepted first turn.
     expect(JSON.parse(run.stdout.trim())).toEqual({
       id: "run-cli-1",
-      status: "queued",
+      status: "running",
       provider: "deepseek",
       runtime: "managed"
     });
@@ -198,7 +225,7 @@ describe("installed CLI host commands", () => {
     expect(wait.exitCode, `stdout:\n${wait.stdout}\nstderr:\n${wait.stderr}`).toBe(0);
     expect(JSON.parse(wait.stdout.trim())).toEqual({
       id: "run-cli-1",
-      status: "succeeded",
+      status: "idle",
       provider: "deepseek",
       runtime: "managed"
     });
@@ -210,7 +237,7 @@ describe("installed CLI host commands", () => {
     });
     expect(download.exitCode, `stdout:\n${download.stdout}\nstderr:\n${download.stderr}`).toBe(0);
     expect(JSON.parse(download.stdout.trim())).toMatchObject({
-      runId: "run-cli-1",
+      sessionId: "run-cli-1",
       namespace: "all",
       path: outPath
     });
@@ -229,31 +256,44 @@ describe("installed CLI host commands", () => {
       timeoutMs: 30_000
     });
     expect(cancel.exitCode, `stdout:\n${cancel.stdout}\nstderr:\n${cancel.stderr}`).toBe(0);
-    expect(JSON.parse(cancel.stdout.trim())).toEqual({ runId: "run-cli-1", status: "cancel_requested" });
+    expect(JSON.parse(cancel.stdout.trim())).toEqual({ sessionId: "run-cli-1", status: "cancelling" });
 
     expect(api.requests.every((request) => request.authorization === "Bearer tok-installed-cli")).toBe(true);
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
-    expect(methodPaths[0]).toBe("POST /api/runs");
+    // `aex run` opens a session, then sends the first turn.
+    expect(methodPaths[0]).toBe("POST /api/sessions");
     expect(methodPaths).toEqual(
       expect.arrayContaining([
+        "POST /api/sessions",
+        "POST /api/sessions/run-cli-1/messages",
+        "GET /api/sessions/run-cli-1",
+        "GET /api/sessions/run-cli-1/events",
+        "POST /api/sessions/run-cli-1/cancel",
+        // download assembles the public zip from the run-namespaced read endpoints
         "GET /api/runs/run-cli-1",
         "GET /api/runs/run-cli-1/events",
         "GET /api/runs/run-cli-1/outputs",
-        "GET /api/runs/run-cli-1/outputs/out-1/download",
-        "POST /api/runs/run-cli-1/cancel"
+        "GET /api/runs/run-cli-1/outputs/out-1/download"
       ])
     );
-    expect(methodPaths.filter((path) => path === "GET /api/runs/run-cli-1/events").length).toBeGreaterThanOrEqual(2);
 
-    const submit = api.requests[0]!.body as Record<string, unknown>;
+    // create request: the session-create body carries no prompt (nor the
+    // idempotency key — that rides the Idempotency-Key header).
+    const createReq = api.requests[0]!;
+    const submit = createReq.body as Record<string, unknown>;
     expect(submit.workspaceId).toBeUndefined();
     expect(submit.provider).toBe("deepseek");
     expect(submit).not.toHaveProperty("region");
-    expect(submit.idempotencyKey).toBe("cli-host-installed-shape");
+    expect(submit).not.toHaveProperty("idempotencyKey");
+    expect(createReq.idempotencyKey).toBe("cli-host-installed-shape");
+    expect(submit.retention).toEqual({ idleTtl: "3m" });
     expect(submit.secrets).toEqual({ apiKeys: { deepseek: "sk-deepseek-test" } });
-    expect(submit.submission).toMatchObject({
-      model: "deepseek-v4-flash",
-      prompt: ["hello_from_installed_cli"]
-    });
+    expect(submit.submission).toMatchObject({ model: "deepseek-v4-flash" });
+    expect(submit.submission).not.toHaveProperty("prompt");
+
+    // first-turn message: the prompt rides the message input.
+    const messageReq = api.requests.find((r) => r.path === "/api/sessions/run-cli-1/messages");
+    expect(messageReq, "expected a POST to the session messages endpoint").toBeDefined();
+    expect((messageReq!.body as Record<string, unknown>).input).toEqual(["hello_from_installed_cli"]);
   });
 });

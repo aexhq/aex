@@ -10,18 +10,18 @@
  *
  *   Host (manifest absent):
  *     - `aex run --config <run.json> [flags]`
- *     - `aex status <run-id>`
- *     - `aex deliveries <run-id>`
- *     - `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
- *     - `aex events <run-id> [--follow] [--timeout <dur>]`
- *     - `aex tail <run-id> [--json] [--filter ...] [--logs] [--settle] [--timeout <dur>]`
- *     - `aex inspect <run-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
- *     - `aex outputs <run-id>`
- *     - `aex download <run-id> [--only outputs|events|metadata] [--out path]`
- *     - `aex cancel <run-id>`
- *     - `aex delete <run-id>`
+ *     - `aex status <session-id>`
+ *     - `aex deliveries <session-id>`
+ *     - `aex wait <session-id> [--timeout <dur>] [--interval <dur>]`
+ *     - `aex events <session-id> [--follow] [--timeout <dur>]`
+ *     - `aex tail <session-id> [--json] [--filter ...] [--logs] [--settle] [--timeout <dur>]`
+ *     - `aex inspect <session-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
+ *     - `aex outputs <session-id>`
+ *     - `aex download <session-id> [--only outputs|events|metadata] [--out path]`
+ *     - `aex cancel <session-id>`
+ *     - `aex delete <session-id>`
  *     - `aex whoami`
- *     - `aex chat --run <id> [...] --anthropic-api-key K --prompt P` (read-only multi-run chat)
+ *     - `aex chat --session <id> [...] --anthropic-api-key K --prompt P` (read-only multi-session chat)
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
@@ -201,19 +201,19 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex skills list --api-token T\n");
   io.stdout("  aex skills get <skill-id> --api-token T\n");
   io.stdout("  aex skills delete <skill-id> --api-token T\n");
-  io.stdout("  aex status <run-id> --api-token T\n");
-  io.stdout("  aex deliveries <run-id> --api-token T\n");
-  io.stdout("  aex wait <run-id> [--timeout 8m] [--interval 2s] --api-token T\n");
-  io.stdout("  aex events <run-id> [--follow] [--timeout 8m] --api-token T\n");
-  io.stdout("  aex tail <run-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token T\n");
-  io.stdout("  aex inspect <run-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token T\n");
-  io.stdout("  aex outputs <run-id> --api-token T\n");
-  io.stdout("  aex download <run-id> [--only outputs|events|metadata] [--out path] --api-token T\n");
-  io.stdout("  aex cancel <run-id> --api-token T\n");
-  io.stdout("  aex delete <run-id> --api-token T\n");
+  io.stdout("  aex status <session-id> --api-token T\n");
+  io.stdout("  aex deliveries <session-id> --api-token T\n");
+  io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-token T\n");
+  io.stdout("  aex events <session-id> [--follow] [--timeout 8m] --api-token T\n");
+  io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token T\n");
+  io.stdout("  aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token T\n");
+  io.stdout("  aex outputs <session-id> --api-token T\n");
+  io.stdout("  aex download <session-id> [--only outputs|events|metadata] [--out path] --api-token T\n");
+  io.stdout("  aex cancel <session-id> --api-token T\n");
+  io.stdout("  aex delete <session-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
   io.stdout("  aex whoami --api-token T\n");
-  io.stdout("  aex chat --run <id> [--run <id> ...] --anthropic-api-key K [--model M] --prompt P --api-token T\n");
+  io.stdout("  aex chat --session <id> [--session <id> ...] --anthropic-api-key K [--model M] --prompt P --api-token T\n");
   io.stdout("  aex login --api-token T [--aex-url U]      Persist token + url (then other verbs need no --api-token)\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");

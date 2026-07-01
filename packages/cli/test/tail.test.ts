@@ -1,7 +1,7 @@
 /**
  * DX3: `aex tail` / `aex inspect` over the coordinator WS envelope stream.
  * Fully offline — a fake `webSocketFactory` drives frames and a fake `fetchImpl`
- * answers the ticket broker + getRun.
+ * answers the ticket broker + getSession.
  */
 import { describe, expect, it } from "vitest";
 import { runCli } from "../src/run.js";
@@ -88,7 +88,7 @@ function makeIo(opts: {
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      // getRun
+      // getSession (final record read; runId === sessionId)
       return new Response(JSON.stringify({ id: "run-x", status: opts.runStatus ?? "succeeded", model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" }), {
         status: 200,
         headers: { "content-type": "application/json" }
@@ -266,7 +266,7 @@ describe("aex inspect", () => {
     await done;
     expect(cap.exit()).toBe(0);
     const out = cap.out();
-    expect(out).toContain("run run-x · succeeded");
+    expect(out).toContain("session run-x · succeeded");
     expect(out).toContain("run started");
     expect(out).toContain("done");
   });
@@ -278,8 +278,8 @@ describe("aex inspect", () => {
     ws.message(evt(0, "TEXT_MESSAGE_CONTENT", { text: "x" }));
     ws.message(evt(1, "CUSTOM", { name: "aex.run.settled", value: {} }, { source: "aex" }));
     await done;
-    const doc = JSON.parse(cap.out().trim()) as { run: { id: string }; events: AexEvent[] };
-    expect(doc.run.id).toBe("run-x");
+    const doc = JSON.parse(cap.out().trim()) as { session: { id: string }; events: AexEvent[] };
+    expect(doc.session.id).toBe("run-x");
     expect(doc.events.length).toBeGreaterThanOrEqual(1);
   });
 

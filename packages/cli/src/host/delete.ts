@@ -1,5 +1,5 @@
 /**
- * `aex delete <run-id>` — DELETE /api/runs/{id}.
+ * `aex delete <session-id>` — DELETE /api/sessions/{id}.
  */
 import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
@@ -24,20 +24,20 @@ export async function runDeleteCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex delete <run-id> [common flags]\n");
+    io.stderr("usage: aex delete <session-id> [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
   try {
-    await operations.deleteRun(http, runId);
-    io.stdout(JSON.stringify({ runId, deleted: true }) + "\n");
+    await operations.deleteSession(http, sessionId);
+    io.stdout(JSON.stringify({ sessionId, deleted: true }) + "\n");
     return SUCCESS;
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "delete_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });

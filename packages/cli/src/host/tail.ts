@@ -1,13 +1,14 @@
 /**
- * `aex tail <run-id>` (DX3) — live, human-readable follow over the coordinator
- * WebSocket envelope stream (replay-from-cursor + tail + exactly-once resume),
- * NOT polling. `--json` is the raw-NDJSON escape hatch; `--filter` narrows by
- * AG-UI type/source; `RUN_ERROR` is surfaced as a jump-to-failure line.
+ * `aex tail <session-id>` (DX3) — live, human-readable follow over the
+ * coordinator WebSocket envelope stream (replay-from-cursor + tail +
+ * exactly-once resume), NOT polling. `--json` is the raw-NDJSON escape hatch;
+ * `--filter` narrows by AG-UI type/source; `RUN_ERROR` is surfaced as a
+ * jump-to-failure line.
  *
  * stdout carries the event/JSON stream (clean for piping); all diagnostics go to
- * stderr. Exit: 0 succeeded / 1 other terminal (or transport give-up) / 3 timeout.
+ * stderr. Exit: 0 parked cleanly / 1 error park (or transport give-up) / 3 timeout.
  */
-import { operations, TERMINAL_RUN_STATUSES, type AexEvent } from "@aexhq/contracts";
+import { operations, type AexEvent } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -18,6 +19,8 @@ import {
   collectRepeated,
   describeApiError,
   emitJsonError,
+  isSessionOk,
+  isSessionParked,
   makeHttpClient,
   parseDuration,
   refuseInsideManagedRun,
@@ -26,8 +29,6 @@ import {
   takeOptionFlag
 } from "./common.js";
 import { openEnvelopeStream, parseFilters, renderEnvelope } from "./stream-render.js";
-
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "tail")) return USAGE_ERR;
@@ -69,17 +70,17 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
 
   const positional = timeoutFlag.remaining.filter((a) => !a.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex tail <run-id> [--json] [--filter <type|source>] [--logs] [--from <seq>] [--settle] [--timeout <dur>] [common flags]\n");
+    io.stderr("usage: aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--from <seq>] [--settle] [--timeout <dur>] [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   if (!io.webSocketFactory) {
     io.stderr(
       JSON.stringify({
         error: "websocket_unavailable",
         message: "`aex tail` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
-        runId
+        sessionId
       }) + "\n"
     );
     return USAGE_ERR;
@@ -113,7 +114,7 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   let runErrorLine: string | null = null;
   const startMs = Date.now();
   try {
-    const stream = openEnvelopeStream(io, http, runId, {
+    const stream = openEnvelopeStream(io, http, sessionId, {
       from,
       ...(settleFlag.present ? { settleConsistent: true } : {}),
       signal: controller.signal,
@@ -143,7 +144,7 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
     if (timer) clearTimeout(timer);
     const d = describeApiError(err);
     return emitJsonError(io, "tail_failed", d.message, {
-      runId,
+      sessionId,
       lastSeq,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
@@ -152,7 +153,7 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   if (timer) clearTimeout(timer);
 
   if (timedOut) {
-    emitJsonError(io, "tail_timeout", `timed out after ${timeoutMs}ms following run events`, { runId, lastSeq });
+    emitJsonError(io, "tail_timeout", `timed out after ${timeoutMs}ms following session events`, { sessionId, lastSeq });
     return TIMEOUT_ERR;
   }
   if (interrupted) {
@@ -161,12 +162,12 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   }
   if (runErrorLine) io.stderr(runErrorLine + "\n");
 
-  // The terminal EVENT precedes the authoritative run RECORD; read it back so
-  // the exit code reflects the real outcome (not just "a terminal frame seen").
+  // The terminal EVENT precedes the authoritative session RECORD; read it back
+  // so the exit code reflects the real outcome (not just "a terminal frame seen").
   let finalStatus = "unknown";
   try {
-    const run = await operations.getRun(http, runId);
-    finalStatus = run.status;
+    const session = await operations.getSession(http, sessionId);
+    finalStatus = session.status;
   } catch (err) {
     io.stderr(`final status fetch failed: ${(err as Error).message}\n`);
   }
@@ -174,16 +175,16 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
     debug(`tail done: events=${eventCount} lastSeq=${lastSeq} durationMs=${Date.now() - startMs} finalStatus=${finalStatus}`);
   }
 
-  if (finalStatus === "succeeded") return SUCCESS;
-  if (TERMINAL_STATUSES.has(finalStatus)) return RUNTIME_ERR;
-  // Stream ended without a terminal record (e.g. transport give-up) — never let
+  if (isSessionOk(finalStatus)) return SUCCESS;
+  if (isSessionParked(finalStatus)) return RUNTIME_ERR;
+  // Stream ended without a parked record (e.g. transport give-up) — never let
   // a script mistake a silent give-up for a clean finish.
   io.stderr(
     JSON.stringify({
       error: "tail_ended_before_terminal",
-      runId,
+      sessionId,
       lastSeq,
-      hint: `aex status ${runId} | aex tail ${runId} --from ${lastSeq + 1}`
+      hint: `aex status ${sessionId} | aex tail ${sessionId} --from ${lastSeq + 1}`
     }) + "\n"
   );
   return RUNTIME_ERR;

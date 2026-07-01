@@ -1,17 +1,18 @@
 /**
- * `aex wait <run-id> [--timeout <dur>] [--interval <dur>]`
+ * `aex wait <session-id> [--timeout <dur>] [--interval <dur>]`
  *
- * Block until the run reaches a terminal status (the host-side mirror of
- * the SDK's `client.waitForRun` / `client.wait`), then print the final
- * `Run` record as JSON. Exits 0 when the run `succeeded`, RUNTIME_ERR
- * when it reached a non-succeeded terminal status, and TIMEOUT_ERR when
- * the `--timeout` deadline elapsed first.
+ * Block until the session parks — reaches `idle`/`suspended`/`error` or a
+ * terminal run status (the host-side mirror of the SDK's `session.wait()`),
+ * then print the final `Session` record as JSON. Exits 0 when the session
+ * parked cleanly (`idle`/`suspended`), RUNTIME_ERR on a non-clean park
+ * (`error`/`failed`/…), and TIMEOUT_ERR when the `--timeout` deadline elapsed
+ * first.
  *
  * Where `events --follow` streams the event log, `wait` is the quiet
  * "tell me when it's done and what the outcome was" verb — one final
  * line of JSON, script-friendly exit code.
  */
-import { operations, TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -20,16 +21,14 @@ import {
   TIMEOUT_ERR,
   USAGE_ERR,
   emitJsonError,
+  isSessionOk,
+  isSessionParked,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
   refuseInsideManagedRun,
   takeOptionFlag
 } from "./common.js";
-
-// Membership-tested against the loose `string` run status from the BFF, so we
-// back it with the canonical terminal set rather than a drift-prone local list.
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 const DEFAULT_INTERVAL_MS = 2_000;
 
@@ -67,10 +66,10 @@ export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<Cl
 
   const positional = intervalFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex wait <run-id> [--timeout <dur>] [--interval <dur>] [common flags]\n");
+    io.stderr("usage: aex wait <session-id> [--timeout <dur>] [--interval <dur>] [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
   const deadline = timeoutMs === null ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
@@ -78,14 +77,14 @@ export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   // Emit the timeout JSON error body (via emitJsonError's side effect)
   // but return the dedicated TIMEOUT_ERR code rather than its RUNTIME_ERR.
   const timeout = (extra: Record<string, unknown>): CliExitCode => {
-    emitJsonError(io, "wait_timeout", `timed out after ${timeoutMs}ms waiting for run to finish`, { runId, ...extra });
+    emitJsonError(io, "wait_timeout", `timed out after ${timeoutMs}ms waiting for session to park`, { sessionId, ...extra });
     return TIMEOUT_ERR;
   };
 
   while (true) {
-    let run;
+    let session;
     try {
-      run = await operations.getRun(http, runId);
+      session = await operations.getSession(http, sessionId);
     } catch (err) {
       // Transient read failures are non-fatal until the deadline — a slow
       // BFF or a brief network blip shouldn't abort a multi-minute wait.
@@ -95,12 +94,12 @@ export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<Cl
       continue;
     }
 
-    if (TERMINAL_STATUSES.has(run.status)) {
-      io.stdout(JSON.stringify(run) + "\n");
-      return run.status === "succeeded" ? SUCCESS : RUNTIME_ERR;
+    if (isSessionParked(session.status)) {
+      io.stdout(JSON.stringify(session) + "\n");
+      return isSessionOk(session.status) ? SUCCESS : RUNTIME_ERR;
     }
 
-    if (Date.now() >= deadline) return timeout({ lastStatus: run.status });
+    if (Date.now() >= deadline) return timeout({ lastStatus: session.status });
     await sleep(intervalMs);
   }
 }

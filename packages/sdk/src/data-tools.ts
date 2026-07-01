@@ -54,8 +54,8 @@ export interface CreateDataToolsOptions {
 
 /**
  * Scopes a chat to a fixed set of sessions. Either pin explicit `sessionIds`
- * (the primary path — needs only `sessions.get`/`sessions.outputs`/
- * `sessions.readOutput`, no `sessions.list`), or supply a `filter`
+ * (the primary path — needs only `sessions.get` / `sessions.outputs(id).read`,
+ * no `sessions.list`), or supply a `filter`
  * (status/since/limit) resolved to a concrete allow-list via `sessions.list`
  * (owner-gated). Every corpus read tool refuses a session outside the resolved
  * set.
@@ -191,7 +191,7 @@ function makeExecute(
       case "list_outputs": {
         const sessionId = requireString(args.session_id, "session_id");
         if (corpus) await corpus.ensure(sessionId);
-        const outputs = await client.sessions.outputs(sessionId);
+        const outputs = await client.sessions.outputs(sessionId).list();
         return outputs.map((o) => ({
           id: o.id,
           filename: o.filename,
@@ -203,7 +203,7 @@ function makeExecute(
         const sessionId = requireString(args.session_id, "session_id");
         if (corpus) await corpus.ensure(sessionId);
         const selector = readSelector(args);
-        const result = await client.sessions.readOutput(sessionId, selector, {
+        const result = await client.sessions.outputs(sessionId).read(selector, {
           maxBytes: typeof args.max_bytes === "number" ? args.max_bytes : defaultReadBytes,
           ...(typeof args.grep === "string" && args.grep.length > 0 ? { grep: args.grep } : {})
         });

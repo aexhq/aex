@@ -1,10 +1,11 @@
 /**
- * `aex chat` — read-only, multi-run chat over a CORPUS of runs (chat-mvp).
+ * `aex chat` — read-only, multi-session chat over a CORPUS of sessions (chat-mvp).
  *
- * A thin direct-Claude loop: corpus-scoped read tools (list_runs / get_run /
- * list_outputs / read_output / search_outputs) backed by `@aexhq/contracts`
- * operations, driven by `@anthropic-ai/sdk`. The model answers ONLY from the
- * named runs' outputs; a run outside the corpus is refused by the tool layer.
+ * A thin direct-Claude loop: corpus-scoped read tools (list_sessions /
+ * get_session / list_outputs / read_output / search_outputs) backed by
+ * `@aexhq/contracts` operations, driven by `@anthropic-ai/sdk`. The model
+ * answers ONLY from the named sessions' outputs; a session outside the corpus is
+ * refused by the tool layer.
  *
  * `@anthropic-ai/sdk` is a CLI devDependency, esbuild-inlined into the shipped
  * bundle — it is NOT a runtime dep of the importable `@aexhq/sdk`. (The CLI is
@@ -15,7 +16,7 @@
  * the interactive REPL is deferred (the CLI IO surface has no stdin reader).
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { HttpClient, operations, type OutputQuery, type Run } from "@aexhq/contracts";
+import { HttpClient, operations, type OutputQuery, type Session } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -45,9 +46,9 @@ export async function runChatCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   }
   let rest = common.rest;
 
-  const runs = collectRepeated(rest, "--run");
-  if (runs.error) { io.stderr(`${runs.error}\n`); return USAGE_ERR; }
-  rest = runs.remaining;
+  const sessionsFlag = collectRepeated(rest, "--session");
+  if (sessionsFlag.error) { io.stderr(`${sessionsFlag.error}\n`); return USAGE_ERR; }
+  rest = sessionsFlag.remaining;
 
   const keyFlag = takeFlagValue(rest, "--anthropic-api-key");
   if (keyFlag.error) { io.stderr(`${keyFlag.error}\n`); return USAGE_ERR; }
@@ -72,9 +73,9 @@ export async function runChatCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   const stray = rest.filter((a) => a.startsWith("--"));
   if (stray.length > 0) { io.stderr(`unknown flag: ${stray[0]}\n`); return USAGE_ERR; }
 
-  const corpus = runs.values;
+  const corpus = sessionsFlag.values;
   if (corpus.length === 0) {
-    io.stderr("aex chat requires at least one --run <runId> (the corpus to chat over)\n");
+    io.stderr("aex chat requires at least one --session <sessionId> (the corpus to chat over)\n");
     return USAGE_ERR;
   }
   if (!keyFlag.value) {
@@ -93,7 +94,7 @@ export async function runChatCmd(io: CliIO, argv: readonly string[]): Promise<Cl
 
   const http = makeHttpClient(io, common.flags);
   const allow = new Set(corpus);
-  log({ event: "corpus.resolved", source: "runIds", runCount: corpus.length, sampleIds: corpus.slice(0, 5) });
+  log({ event: "corpus.resolved", source: "sessionIds", sessionCount: corpus.length, sampleIds: corpus.slice(0, 5) });
 
   const tools = corpusTools();
   const execute = makeExecutor(io, http, allow, log);
@@ -112,9 +113,9 @@ export async function runChatCmd(io: CliIO, argv: readonly string[]): Promise<Cl
   for (const s of mcpServers) log({ event: "mcp.attach", name: s.name, url: safeHost(s.url) });
 
   const system =
-    "You answer questions about a fixed set of aex agent runs using the provided tools. " +
+    "You answer questions about a fixed set of aex agent sessions using the provided tools. " +
     "Search-then-fetch: list outputs, then read only the files you need. " +
-    "Never assume a run or file exists without listing first.";
+    "Never assume a session or file exists without listing first.";
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: promptFlag.value }];
 
@@ -222,31 +223,31 @@ async function runOneTurn(anthropic: Anthropic, p: TurnParams): Promise<Anthropi
 function corpusTools(): readonly Anthropic.Tool[] {
   return [
     {
-      name: "list_runs",
-      description: "List the runs in this chat's corpus (id/status/timestamps + cost when settled). No prompts or outputs.",
+      name: "list_sessions",
+      description: "List the sessions in this chat's corpus (id/status/timestamps + cost when settled). No prompts or outputs.",
       input_schema: { type: "object", additionalProperties: false, properties: {} }
     },
     {
-      name: "get_run",
-      description: "Get one corpus run's status, timing, and cost summary by id.",
-      input_schema: { type: "object", additionalProperties: false, required: ["run_id"], properties: { run_id: { type: "string" } } }
+      name: "get_session",
+      description: "Get one corpus session's status, timing, and cost summary by id.",
+      input_schema: { type: "object", additionalProperties: false, required: ["session_id"], properties: { session_id: { type: "string" } } }
     },
     {
       name: "list_outputs",
-      description: "List a corpus run's captured output files (id, filename, size, content type). Metadata only.",
-      input_schema: { type: "object", additionalProperties: false, required: ["run_id"], properties: { run_id: { type: "string" } } }
+      description: "List a corpus session's captured output files (id, filename, size, content type). Metadata only.",
+      input_schema: { type: "object", additionalProperties: false, required: ["session_id"], properties: { session_id: { type: "string" } } }
     },
     {
       name: "read_output",
       description:
-        "Read one output file of a corpus run as text. Byte-capped (truncated:true when larger). " +
+        "Read one output file of a corpus session as text. Byte-capped (truncated:true when larger). " +
         "Select by `path` (suffix) or `id`.",
       input_schema: {
         type: "object",
         additionalProperties: false,
-        required: ["run_id"],
+        required: ["session_id"],
         properties: {
-          run_id: { type: "string" },
+          session_id: { type: "string" },
           path: { type: "string" },
           id: { type: "string" },
           max_bytes: { type: "integer" },
@@ -277,31 +278,31 @@ function makeExecutor(
   allow: ReadonlySet<string>,
   log: (obj: Record<string, unknown>) => void
 ): (name: string, input: Record<string, unknown>) => Promise<unknown> {
-  const ensure = (runId: string): void => {
-    if (!allow.has(runId)) {
-      log({ event: "corpus.reject", runId });
-      throw new Error(`run ${runId} is not in this chat's corpus`);
+  const ensure = (sessionId: string): void => {
+    if (!allow.has(sessionId)) {
+      log({ event: "corpus.reject", sessionId });
+      throw new Error(`session ${sessionId} is not in this chat's corpus`);
     }
   };
   void io;
   return async (name, input) => {
     switch (name) {
-      case "list_runs":
-        return { runs: await Promise.all([...allow].map(async (id) => summarizeRun(await operations.getRun(http, id)))) };
-      case "get_run": {
-        const runId = requireString(input.run_id, "run_id");
-        ensure(runId);
-        return summarizeRun(await operations.getRun(http, runId));
+      case "list_sessions":
+        return { sessions: await Promise.all([...allow].map(async (id) => summarizeSession(await operations.getSession(http, id)))) };
+      case "get_session": {
+        const sessionId = requireString(input.session_id, "session_id");
+        ensure(sessionId);
+        return summarizeSession(await operations.getSession(http, sessionId));
       }
       case "list_outputs": {
-        const runId = requireString(input.run_id, "run_id");
-        ensure(runId);
-        const outputs = await operations.listOutputs(http, runId);
+        const sessionId = requireString(input.session_id, "session_id");
+        ensure(sessionId);
+        const outputs = await operations.listSessionOutputs(http, sessionId);
         return outputs.map((o) => ({ id: o.id, filename: o.filename, sizeBytes: o.sizeBytes, contentType: o.contentType }));
       }
       case "read_output": {
-        const runId = requireString(input.run_id, "run_id");
-        ensure(runId);
+        const sessionId = requireString(input.session_id, "session_id");
+        ensure(sessionId);
         const selector =
           typeof input.path === "string" && input.path.length > 0
             ? { path: input.path, match: "suffix" as const }
@@ -309,7 +310,7 @@ function makeExecutor(
               ? { id: input.id }
               : null;
         if (!selector) throw new Error("read_output requires either `path` or `id`");
-        const result = await operations.readOutputText(http, runId, selector, {
+        const result = await operations.readOutputText(http, sessionId, selector, {
           maxBytes: typeof input.max_bytes === "number" ? input.max_bytes : DEFAULT_READ_BYTES,
           ...(typeof input.grep === "string" && input.grep.length > 0 ? { grep: input.grep } : {})
         });
@@ -324,10 +325,12 @@ function makeExecutor(
         };
         const hasFilter = Object.keys(query).length > 0;
         const hits: Array<Record<string, unknown>> = [];
-        for (const runId of allow) {
-          const outputs = hasFilter ? await operations.listOutputs(http, runId, query) : await operations.listOutputs(http, runId);
+        for (const sessionId of allow) {
+          const outputs = hasFilter
+            ? await operations.listSessionOutputs(http, sessionId, query)
+            : await operations.listSessionOutputs(http, sessionId);
           for (const o of outputs) {
-            hits.push({ runId, outputId: o.id, filename: o.filename, sizeBytes: o.sizeBytes, contentType: o.contentType });
+            hits.push({ sessionId, outputId: o.id, filename: o.filename, sizeBytes: o.sizeBytes, contentType: o.contentType });
             if (hits.length >= limit) return { hits };
           }
         }
@@ -339,15 +342,14 @@ function makeExecutor(
   };
 }
 
-function summarizeRun(run: Run): Record<string, unknown> {
+function summarizeSession(session: Session): Record<string, unknown> {
   return {
-    id: run.id,
-    status: run.status,
-    createdAt: run.createdAt,
-    startedAt: run.startedAt,
-    terminalAt: run.terminalAt ?? undefined,
-    errorMessage: run.errorMessage ?? undefined,
-    costUsd: run.costTelemetry?.billedCostUsd
+    id: session.id,
+    status: session.status,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    errorMessage: session.errorMessage ?? undefined,
+    costUsd: session.costUsd
   };
 }
 

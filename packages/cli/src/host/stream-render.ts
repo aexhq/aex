@@ -4,8 +4,8 @@
  * human-readable line.
  *
  * The stream reuses the SAME `@aexhq/contracts` primitives the SDK's
- * `streamEnvelopes` does (`operations.getCoordinatorTicket` +
- * `streamCoordinatorEvents`), so reconnect / replay-from-seq / idle-watchdog /
+ * `session.events().streamEnvelopes()` does (`operations.getSessionCoordinatorTicket`
+ * + `streamCoordinatorEvents`), so reconnect / replay-from-seq / idle-watchdog /
  * ping behaviour is byte-identical to the SDK — zero drift, no `@aexhq/sdk`
  * dependency. The WebSocket is dependency-injected via `io.webSocketFactory`
  * (real global `WebSocket` in production, a fake in tests).
@@ -29,7 +29,7 @@ export interface OpenEnvelopeStreamOptions {
   readonly from?: number;
   /**
    * End on the post-mirror `aex.run.settled` barrier instead of RUN_FINISHED,
-   * so when the stream ends a subsequent `getRun` is guaranteed terminal.
+   * so when the stream ends a subsequent `getSession` is guaranteed parked.
    */
   readonly settleConsistent?: boolean;
   readonly signal?: AbortSignal;
@@ -38,17 +38,18 @@ export interface OpenEnvelopeStreamOptions {
 }
 
 /**
- * Open the live envelope stream for a run. Mirrors `client.streamEnvelopes`
- * (`packages/sdk/src/client.ts`) but reads the WS factory from {@link CliIO}.
- * The caller MUST have verified `io.webSocketFactory` is present.
+ * Open the live envelope stream for a session. Mirrors
+ * `session.events().streamEnvelopes()` (`packages/sdk/src/client.ts`) but reads
+ * the WS factory from {@link CliIO}. The caller MUST have verified
+ * `io.webSocketFactory` is present.
  */
 export async function* openEnvelopeStream(
   io: CliIO,
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   options: OpenEnvelopeStreamOptions = {}
 ): AsyncGenerator<AexEvent, void, void> {
-  const first = await operations.getCoordinatorTicket(http, runId);
+  const first = await operations.getSessionCoordinatorTicket(http, sessionId);
   if (options.debug) {
     let host = "(invalid)";
     try {
@@ -62,7 +63,7 @@ export async function* openEnvelopeStream(
   yield* streamCoordinatorEvents({
     wsUrl: first.wsUrl,
     from: options.from ?? 0,
-    fetchTicket: async () => (await operations.getCoordinatorTicket(http, runId)).ticket,
+    fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, sessionId)).ticket,
     ...(io.webSocketFactory ? { webSocketFactory: io.webSocketFactory } : {}),
     ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
     ...(options.signal ? { signal: options.signal } : {})

@@ -85,7 +85,7 @@ console.log(looseReport.byteLength);
 
 ## Reading one output as text
 
-`session.outputs().read(selector, options?)` reads ONE output file as byte-capped, decoded UTF-8 text. It streams the file and stops at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a large deliverable never fully buffers — this is the read built for handing a session's output to an LLM tool. Select the file by `{ path }` (suffix-matchable) or `{ id }`. To read from a session id without a live handle, use `aex.sessions.readOutput(sessionId, selector, options?)`.
+`session.outputs().read(selector, options?)` reads ONE output file as byte-capped, decoded UTF-8 text. It streams the file and stops at `options.maxBytes` (default 50 KB, ceiling 10 MB), so a large deliverable never fully buffers — this is the read built for handing a session's output to an LLM tool. Select the file by `{ path }` (suffix-matchable) or `{ id }`. To read from a session id without a live handle, use `aex.sessions.outputs(sessionId).read(selector, options?)` — the same accessor, addressed by id.
 
 ```ts
 const { text, truncated, totalBytes } = await session.outputs().read(
@@ -102,7 +102,7 @@ Check `truncated` before treating `text` as complete. Pass `options.grep` (a sub
 
 ### Chatting over a workspace's outputs
 
-`createDataTools(client)` packages the read surface (`sessions.list` + `sessions.outputs` + `sessions.readOutput`) as a vendor-neutral LLM tool set (`{ tools, instructions, execute }`) so you can build a search-then-fetch chat over your sessions and their outputs in a few lines on top of the public SDK. The `tools` are plain JSON-Schema definitions (the shape every major LLM tool API accepts); `execute(name, input)` dispatches a tool call against the workspace-scoped client. See the runnable `examples/data-chat/` example.
+`createDataTools(client)` packages the read surface (`sessions.list` + `sessions.outputs(id).list` + `sessions.outputs(id).read`) as a vendor-neutral LLM tool set (`{ tools, instructions, execute }`) so you can build a search-then-fetch chat over your sessions and their outputs in a few lines on top of the public SDK. The `tools` are plain JSON-Schema definitions (the shape every major LLM tool API accepts); `execute(name, input)` dispatches a tool call against the workspace-scoped client. See the runnable `examples/data-chat/` example.
 
 ## Finding outputs
 

@@ -1,7 +1,8 @@
 /**
- * `aex download <run-id> [--only namespace] [--out path]` — download
- * a run's content as a zip, assembled client-side from the public read
- * endpoints (no per-output id required).
+ * `aex download <session-id> [--only namespace] [--out path]` — download
+ * a session's content as a zip, assembled client-side from the public read
+ * endpoints (no per-output id required), matching the SDK's
+ * `session.download()`.
  *
  * Without `--only`, downloads everything public — organised into
  * `metadata/run.json`, typed `events/events.jsonl`, `outputs/<rel>`
@@ -11,7 +12,7 @@
  * namespace (files at the zip root).
  *
  * `--out` resolves relative to the host CWD; if omitted the file is
- * written to `aex-run-<run-id>[-<namespace>].zip` in the current
+ * written to `aex-session-<session-id>[-<namespace>].zip` in the current
  * directory.
  */
 import { resolve as resolvePath } from "node:path";
@@ -63,41 +64,41 @@ export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promis
 
   const positional = onlyFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex download <run-id> [--only outputs|events|metadata] [--out path] [common flags]\n");
+    io.stderr("usage: aex download <session-id> [--only outputs|events|metadata] [--out path] [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
   const downloader = namespace ? NAMESPACE_DOWNLOADERS[namespace] : operations.download;
 
   let bytes: Uint8Array;
   try {
-    bytes = await downloader(http, runId);
+    bytes = await downloader(http, sessionId);
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "download_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });
   }
 
-  const destination = resolveDestination(io, outFlag.value, runId, namespace);
+  const destination = resolveDestination(io, outFlag.value, sessionId, namespace);
   try {
     await io.writeFile(destination, bytes);
   } catch (err) {
     return emitJsonError(io, "write_failed", `failed to write archive: ${(err as Error).message}`, { destination });
   }
 
-  io.stdout(JSON.stringify({ runId, namespace: namespace ?? "all", path: destination, bytes: bytes.byteLength }) + "\n");
+  io.stdout(JSON.stringify({ sessionId, namespace: namespace ?? "all", path: destination, bytes: bytes.byteLength }) + "\n");
   return SUCCESS;
 }
 
-function resolveDestination(io: CliIO, out: string | null, runId: string, namespace: Namespace | null): string {
+function resolveDestination(io: CliIO, out: string | null, sessionId: string, namespace: Namespace | null): string {
   if (out) {
     return resolvePath(io.cwd(), out);
   }
   const suffix = namespace ? `-${namespace}` : "";
-  return resolvePath(io.cwd(), `aex-run-${runId}${suffix}.zip`);
+  return resolvePath(io.cwd(), `aex-session-${sessionId}${suffix}.zip`);
 }

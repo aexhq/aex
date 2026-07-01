@@ -1,12 +1,12 @@
 /**
- * `aex events <run-id> [--follow] [--transport=auto|sse|polling]`
+ * `aex events <session-id> [--follow] [--timeout <dur>]`
  *
- * Without `--follow`: lists events recorded so far and exits.
+ * Without `--follow`: lists the session's events recorded so far and exits.
  *
- * With `--follow`: polls the coordinator-backed `/events` endpoint and
- * prints new events as NDJSON until the run reaches a terminal status.
+ * With `--follow`: polls the session `/events` endpoint and prints new events
+ * as NDJSON until the session parks.
  */
-import { operations, TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -15,6 +15,7 @@ import {
   USAGE_ERR,
   describeApiError,
   emitJsonError,
+  isSessionParked,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
@@ -22,10 +23,6 @@ import {
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
-
-// Membership-tested against the loose `string` run status from the BFF, so we
-// back it with the canonical terminal set rather than a drift-prone local list.
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "events")) return USAGE_ERR;
@@ -48,16 +45,16 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = timeoutFlag.remaining.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex events <run-id> [--follow] [--timeout <dur>] [common flags]\n");
+    io.stderr("usage: aex events <session-id> [--follow] [--timeout <dur>] [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
 
   if (!followResult.present) {
     try {
-      const events = await operations.listRunEvents(http, runId);
+      const events = await operations.listSessionEvents(http, sessionId);
       for (const event of events) {
         io.stdout(JSON.stringify(event) + "\n");
       }
@@ -65,7 +62,7 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
     } catch (err) {
       const d = describeApiError(err);
       return emitJsonError(io, "events_failed", d.message, {
-        runId,
+        sessionId,
         ...(d.status !== undefined ? { status: d.status } : {}),
         ...(d.remedy ? { remedy: d.remedy } : {})
       });
@@ -75,14 +72,14 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
   const seen = new Set<string>();
   const deadline = timeoutMs === null ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
 
-  // Follow: poll the coordinator-backed /events endpoint until terminal.
+  // Follow: poll the session /events endpoint until the session parks.
   while (true) {
     let events;
     try {
-      events = await operations.listRunEvents(http, runId);
+      events = await operations.listSessionEvents(http, sessionId);
     } catch (err) {
       io.stderr(`(transient) event poll failed: ${(err as Error).message}\n`);
-      if (Date.now() >= deadline) return emitTimeout(io, runId, timeoutMs);
+      if (Date.now() >= deadline) return emitTimeout(io, sessionId, timeoutMs);
       await sleep(2000);
       continue;
     }
@@ -94,14 +91,14 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
     }
 
     try {
-      const run = await operations.getRun(http, runId);
-      if (TERMINAL_STATUSES.has(run.status)) {
+      const session = await operations.getSession(http, sessionId);
+      if (isSessionParked(session.status)) {
         return SUCCESS;
       }
     } catch (err) {
       io.stderr(`(transient) status poll failed: ${(err as Error).message}\n`);
     }
-    if (Date.now() >= deadline) return emitTimeout(io, runId, timeoutMs);
+    if (Date.now() >= deadline) return emitTimeout(io, sessionId, timeoutMs);
     await sleep(2000);
   }
 }
@@ -109,8 +106,8 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
 // Emit the timeout JSON error (RUNTIME_ERR side effect) but return the
 // dedicated TIMEOUT_ERR code so scripts can distinguish a follow that ran
 // out of time from a transport failure.
-function emitTimeout(io: CliIO, runId: string, timeoutMs: number | null): CliExitCode {
-  emitJsonError(io, "events_follow_timeout", `timed out after ${timeoutMs}ms following run events`, { runId });
+function emitTimeout(io: CliIO, sessionId: string, timeoutMs: number | null): CliExitCode {
+  emitJsonError(io, "events_follow_timeout", `timed out after ${timeoutMs}ms following session events`, { sessionId });
   return TIMEOUT_ERR;
 }
 

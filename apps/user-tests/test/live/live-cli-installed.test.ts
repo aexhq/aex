@@ -48,6 +48,11 @@ function requireLiveCliEnv(): LiveCliEnv {
 
 const env = requireLiveCliEnv();
 
+// `aex run` opens a session; a completed one-shot turn parks the session
+// cleanly (idle/suspended), or surfaces a terminal run status when the
+// deployment projects one. Any of these is a clean, exit-0 outcome.
+const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
+
 function redactSecrets(text: string): string {
   return text.split(env.apiToken).join("[REDACTED_AEX_API_TOKEN]").split(env.deepseekKey).join("[REDACTED_DEEPSEEK_API_KEY]");
 }
@@ -128,20 +133,24 @@ describe("live hosted API via installed CLI", () => {
 
     const runLines = parseJsonLines(run.stdout);
     const initial = runLines[0]!;
-    const runId = initial["id"];
-    expect(typeof runId, commandDiagnostic("aex run --follow", run)).toBe("string");
-    const finalFromFollow = [...runLines].reverse().find((line) => line["id"] === runId && typeof line["status"] === "string");
-    expect(finalFromFollow?.["status"], commandDiagnostic("aex run --follow", run)).toBe("succeeded");
+    const sessionId = initial["id"];
+    expect(typeof sessionId, commandDiagnostic("aex run --follow", run)).toBe("string");
+    const finalFromFollow = [...runLines].reverse().find((line) => line["id"] === sessionId && typeof line["status"] === "string");
+    expect(SESSION_PARKED_OK, commandDiagnostic("aex run --follow", run)).toContain(finalFromFollow?.["status"]);
 
-    const status = await runCli(["status", runId as string, ...commonArgs()]);
+    const status = await runCli(["status", sessionId as string, ...commonArgs()]);
     expect(status.exitCode, commandDiagnostic("aex status", status)).toBe(0);
-    expect(JSON.parse(status.stdout.trim())).toMatchObject({ id: runId, status: "succeeded" });
+    const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
+    expect(statusDoc["id"], commandDiagnostic("aex status", status)).toBe(sessionId);
+    expect(SESSION_PARKED_OK, commandDiagnostic("aex status", status)).toContain(statusDoc["status"]);
 
-    const wait = await runCli(["wait", runId as string, "--timeout", "1m", "--interval", "1s", ...commonArgs()], 90_000);
+    const wait = await runCli(["wait", sessionId as string, "--timeout", "1m", "--interval", "1s", ...commonArgs()], 90_000);
     expect(wait.exitCode, commandDiagnostic("aex wait", wait)).toBe(0);
-    expect(JSON.parse(wait.stdout.trim())).toMatchObject({ id: runId, status: "succeeded" });
+    const waitDoc = JSON.parse(wait.stdout.trim()) as Record<string, unknown>;
+    expect(waitDoc["id"], commandDiagnostic("aex wait", wait)).toBe(sessionId);
+    expect(SESSION_PARKED_OK, commandDiagnostic("aex wait", wait)).toContain(waitDoc["status"]);
 
-    const events = await runCli(["events", runId as string, ...commonArgs()]);
+    const events = await runCli(["events", sessionId as string, ...commonArgs()]);
     expect(events.exitCode, commandDiagnostic("aex events", events)).toBe(0);
     const eventRows = parseJsonLines(events.stdout);
     const eventKinds = eventRows.map((event) => event["type"]);
@@ -149,18 +158,18 @@ describe("live hosted API via installed CLI", () => {
     expect(eventKinds, commandDiagnostic("aex events", events)).toContain("RUN_FINISHED");
     expect(eventText(eventRows).replace(/\s+/g, ""), commandDiagnostic("aex events", events)).toContain(marker);
 
-    const outputs = await runCli(["outputs", runId as string, ...commonArgs()]);
+    const outputs = await runCli(["outputs", sessionId as string, ...commonArgs()]);
     expect(outputs.exitCode, commandDiagnostic("aex outputs", outputs)).toBe(0);
     const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
     for (const output of outputRows) {
       expect(typeof output["id"], commandDiagnostic("aex outputs", outputs)).toBe("string");
     }
 
-    const archivePath = join(install.installDir, `live-cli-events-${runId}.zip`);
-    const download = await runCli(["download", runId as string, "--only", "events", "--out", archivePath, ...commonArgs()]);
+    const archivePath = join(install.installDir, `live-cli-events-${sessionId}.zip`);
+    const download = await runCli(["download", sessionId as string, "--only", "events", "--out", archivePath, ...commonArgs()]);
     expect(download.exitCode, commandDiagnostic("aex download --only events", download)).toBe(0);
     expect(JSON.parse(download.stdout.trim())).toMatchObject({
-      runId,
+      sessionId,
       namespace: "events",
       path: archivePath
     });

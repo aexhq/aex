@@ -1,6 +1,9 @@
 /**
- * `aex run` — submit a flat run via the dashboard BFF using the
- * same operations module the SDK uses.
+ * `aex run` — one-shot convenience over the session API, mirroring the SDK's
+ * `AgentExecutor.run`: it opens a session (`POST /api/sessions`), sends the
+ * prompt as the first turn (`POST /api/sessions/{id}/messages`), prints the
+ * session record, and (with `--follow`) streams the turn's events until the
+ * session parks. Uses the same session operations the SDK does.
  *
  * Two input modes (mutually exclusive):
  *
@@ -40,12 +43,11 @@ import {
   RUN_MODELS,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
-  TERMINAL_RUN_STATUSES,
   validateProxyAuth,
   type RunRequestConfig,
   type McpServerRef,
-  type PlatformRunSubmissionInput,
-  type PlatformSubmission,
+  type SessionCreateRequest,
+  type SessionSubmission,
   type PlatformInlineSecrets,
   type PlatformMcpServerSecret,
   type PlatformProxyAuthValue,
@@ -69,6 +71,8 @@ import {
   collectRepeatedKvList,
   describeApiError,
   emitJsonError,
+  isSessionOk,
+  isSessionParked,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
@@ -79,9 +83,8 @@ import {
   takeOptionFlag
 } from "./common.js";
 
-// Membership-tested against the loose `string` run status from the BFF, so we
-// back it with the canonical terminal set rather than a drift-prone local list.
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
+/** Default idle window a one-shot session may sit before the platform reaps it. Mirrors the SDK. */
+const DEFAULT_SESSION_IDLE_TTL = "3m";
 
 /* eslint-disable @typescript-eslint/no-unused-vars */ // AEX_DEFAULT_BASE_URL is re-exported only for assertion clarity.
 void AEX_DEFAULT_BASE_URL;
@@ -368,13 +371,14 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     }
   }
 
-  // ---------------- Build submission ----------------
+  // ---------------- Build the session-create request ----------------
+  // The prompt is NOT part of the create submission — it is sent as the first
+  // turn's message (mirroring the SDK's `sessions.create` + `session.send`).
   const promptArray = Array.isArray(runConfig.prompt) ? [...runConfig.prompt] : [runConfig.prompt];
   const skills: SkillRef[] = runConfig.skills ? [...runConfig.skills] : [];
-  const submission: PlatformSubmission = {
+  const submission: SessionSubmission = {
     model: runConfig.model,
     ...(runConfig.system ? { system: runConfig.system } : {}),
-    prompt: promptArray,
     skills,
     agentsMd: [],
     files: [],
@@ -391,11 +395,11 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     ...(proxyAuth.length > 0 ? { proxyEndpointAuth: proxyAuth } : {})
   };
 
-  const request: PlatformRunSubmissionInput = {
-    idempotencyKey: idempotency.value ?? generateIdempotencyKey(),
+  const request: SessionCreateRequest = {
     provider,
     submission,
     secrets,
+    retention: { idleTtl: DEFAULT_SESSION_IDLE_TTL },
     ...(runtimeSizeFlag.value
       ? { runtimeSize: runtimeSizeFlag.value as RuntimeSize }
       : runConfig.runtimeSize
@@ -410,61 +414,81 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     ...(proxyEndpoints.length > 0 ? { proxyEndpoints } : {})
   };
 
+  // The create idempotency key is header-carried; the message reuses a derived,
+  // deterministic key so a retried `--idempotency-key` invocation is idempotent
+  // across both calls.
+  const createKey = idempotency.value ?? generateIdempotencyKey();
+  const messageKey = `${createKey}:message`;
+
   const http = makeHttpClient(io, common.flags);
-  let run;
+  let session;
   try {
-    run = await operations.submitRun(http, request);
+    session = await operations.createSession(http, request, { idempotencyKey: createKey });
   } catch (err) {
     const d = describeApiError(err);
-    return emitJsonError(io, "submit_failed", d.message, {
+    return emitJsonError(io, "create_failed", d.message, {
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });
   }
 
-  io.stdout(JSON.stringify(run) + "\n");
+  let accepted;
+  try {
+    accepted = await operations.sendSessionMessage(http, session.id, { input: promptArray }, { idempotencyKey: messageKey });
+  } catch (err) {
+    const d = describeApiError(err);
+    return emitJsonError(io, "send_failed", d.message, {
+      sessionId: session.id,
+      ...(d.status !== undefined ? { status: d.status } : {}),
+      ...(d.remedy ? { remedy: d.remedy } : {})
+    });
+  }
+
+  io.stdout(JSON.stringify(accepted.session) + "\n");
   if (!follow.present) return SUCCESS;
 
-  let emittedEventCount = 0;
-  let currentStatus = run.status;
+  const seen = new Set<string>();
+  let currentStatus = accepted.session.status;
   const deadline = followTimeoutMs === null ? Number.POSITIVE_INFINITY : Date.now() + followTimeoutMs;
-  while (!TERMINAL_STATUSES.has(currentStatus)) {
+  while (!isSessionParked(currentStatus)) {
     await sleep(2000);
     try {
-      const events = await operations.listRunEvents(http, run.id);
-      for (let i = emittedEventCount; i < events.length; i++) {
-        io.stdout(JSON.stringify(events[i]) + "\n");
+      const events = await operations.listSessionEvents(http, session.id);
+      for (const event of events) {
+        if (!seen.has(event.id)) {
+          seen.add(event.id);
+          io.stdout(JSON.stringify(event) + "\n");
+        }
       }
-      emittedEventCount = events.length;
     } catch (err) {
       io.stderr(`(transient) event poll failed: ${(err as Error).message}\n`);
     }
     try {
-      const updated = await operations.getRun(http, run.id);
+      const updated = await operations.getSession(http, session.id);
       currentStatus = updated.status;
     } catch (err) {
       io.stderr(`(transient) status poll failed: ${(err as Error).message}\n`);
     }
-    if (!TERMINAL_STATUSES.has(currentStatus) && Date.now() >= deadline) {
-      emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following run`, {
-        runId: run.id,
-        hint: `aex status ${run.id} | aex events ${run.id} | aex download ${run.id}`
+    if (!isSessionParked(currentStatus) && Date.now() >= deadline) {
+      emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
+        sessionId: session.id,
+        hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
       });
       return TIMEOUT_ERR;
     }
   }
   try {
-    const final = await operations.getRun(http, run.id);
+    const final = await operations.getSession(http, session.id);
     io.stdout(JSON.stringify(final) + "\n");
-    if (final.status === "succeeded") return SUCCESS;
-    // Non-succeeded terminal: surface a non-secret inspect hint so the operator
-    // knows the next move instead of just an exit code.
+    if (isSessionOk(final.status)) return SUCCESS;
+    // Non-clean park: surface a non-secret inspect hint so the operator knows
+    // the next move instead of just an exit code.
     io.stderr(
       JSON.stringify({
-        error: "run_not_succeeded",
-        runId: run.id,
+        error: "session_not_ok",
+        sessionId: session.id,
         status: final.status,
-        hint: `aex status ${run.id} | aex events ${run.id} | aex download ${run.id}`
+        hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
       }) + "\n"
     );
     return RUNTIME_ERR;

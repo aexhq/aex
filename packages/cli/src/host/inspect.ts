@@ -1,13 +1,14 @@
 /**
- * `aex inspect <run-id>` (DX3) — one-shot, settle-consistent render of a run's
- * FULL timeline plus a header and a footer (jump-to-failure + cost/usage). Built
- * on the same coordinator envelope stream as `aex tail` (replay from seq 0 with
- * the `aex.run.settled` barrier, so the final `getRun` is read-consistent).
+ * `aex inspect <session-id>` (DX3) — one-shot, settle-consistent render of a
+ * session's FULL timeline plus a header and a footer (jump-to-failure +
+ * cost/usage). Built on the same coordinator envelope stream as `aex tail`
+ * (replay from seq 0 with the `aex.run.settled` barrier, so the final
+ * `getSession` is read-consistent).
  *
  * Human view: header → timeline → footer. `--json` emits one machine document
- * `{ run, events }`. Exit mirrors `wait`: 0 succeeded / 1 other terminal / 3 timeout.
+ * `{ session, events }`. Exit mirrors `wait`: 0 parked cleanly / 1 error park / 3 timeout.
  */
-import { operations, type AexEvent, type Run } from "@aexhq/contracts";
+import { operations, type AexEvent, type Session } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -18,6 +19,7 @@ import {
   collectRepeated,
   describeApiError,
   emitJsonError,
+  isSessionOk,
   makeHttpClient,
   parseDuration,
   refuseInsideManagedRun,
@@ -56,17 +58,17 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
 
   const positional = timeoutFlag.remaining.filter((a) => !a.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex inspect <run-id> [--json] [--filter <type|source>] [--logs] [--timeout <dur>] [common flags]\n");
+    io.stderr("usage: aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout <dur>] [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   if (!io.webSocketFactory) {
     io.stderr(
       JSON.stringify({
         error: "websocket_unavailable",
         message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
-        runId
+        sessionId
       }) + "\n"
     );
     return USAGE_ERR;
@@ -81,14 +83,14 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
   const debug = common.flags.debug ? (line: string) => io.stderr(`[aex] ${line}\n`) : undefined;
   const http = makeHttpClient(io, common.flags);
 
-  // Header: read the record first so even an empty/early run prints something.
-  let header: Run | null = null;
+  // Header: read the record first so even an empty/early session prints something.
+  let header: Session | null = null;
   try {
-    header = await operations.getRun(http, runId);
+    header = await operations.getSession(http, sessionId);
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "inspect_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });
@@ -96,7 +98,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
   if (!jsonFlag.present) {
     const model = typeof header.model === "string" ? ` · ${header.model}` : "";
     const created = header.createdAt ? ` · ${header.createdAt}` : "";
-    io.stdout(`run ${runId} · ${header.status}${model}${created}\n`);
+    io.stdout(`session ${sessionId} · ${header.status}${model}${created}\n`);
   }
 
   const controller = new AbortController();
@@ -112,7 +114,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
   const collected: AexEvent[] = [];
   let runErrorEvent: AexEvent | null = null;
   try {
-    const stream = openEnvelopeStream(io, http, runId, {
+    const stream = openEnvelopeStream(io, http, sessionId, {
       from: 0,
       settleConsistent: true,
       signal: controller.signal,
@@ -132,7 +134,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     if (timer) clearTimeout(timer);
     const d = describeApiError(err);
     return emitJsonError(io, "inspect_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });
@@ -140,20 +142,20 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
   if (timer) clearTimeout(timer);
 
   if (timedOut) {
-    emitJsonError(io, "inspect_timeout", `timed out after ${timeoutMs}ms inspecting run`, { runId });
+    emitJsonError(io, "inspect_timeout", `timed out after ${timeoutMs}ms inspecting session`, { sessionId });
     return TIMEOUT_ERR;
   }
 
   // Settle-consistent stream ended ⇒ the record is read-consistent.
-  let finalRun: Run = header;
+  let finalSession: Session = header;
   try {
-    finalRun = await operations.getRun(http, runId);
+    finalSession = await operations.getSession(http, sessionId);
   } catch {
     /* keep header */
   }
 
   if (jsonFlag.present) {
-    io.stdout(JSON.stringify({ run: finalRun, events: collected }) + "\n");
+    io.stdout(JSON.stringify({ session: finalSession, events: collected }) + "\n");
   } else {
     // Footer: jump-to-failure + cost/usage.
     if (runErrorEvent) {
@@ -162,10 +164,10 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
       const failureClass = typeof d.failureClass === "string" ? ` [${d.failureClass}]` : "";
       io.stdout(`\n✗ ${failureMessage}${failureClass}\n`);
     }
-    const costUsd = finalRun.costTelemetry?.billedCostUsd;
-    const usage = finalRun.usage;
+    const costUsd = finalSession.costUsd;
+    const usage = finalSession.usage;
     if (costUsd !== undefined || usage) {
-      const parts: string[] = [`status=${finalRun.status}`];
+      const parts: string[] = [`status=${finalSession.status}`];
       if (costUsd !== undefined) parts.push(`costUsd=${costUsd}`);
       if (usage?.inputTokens !== undefined) parts.push(`in=${usage.inputTokens}`);
       if (usage?.outputTokens !== undefined) parts.push(`out=${usage.outputTokens}`);
@@ -174,6 +176,6 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     }
   }
 
-  if (finalRun.status === "succeeded") return SUCCESS;
+  if (isSessionOk(finalSession.status)) return SUCCESS;
   return RUNTIME_ERR;
 }

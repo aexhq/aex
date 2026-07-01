@@ -157,16 +157,16 @@ describe("aex status", () => {
     const cap = makeHostIo({
       argv: ["status", "run-42", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-42", status: "succeeded" }), {
+        new Response(JSON.stringify({ id: "run-42", status: "idle" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toContain("/api/runs/run-42");
+    expect(cap.calls[0]!.url).toContain("/api/sessions/run-42");
     expect(cap.calls[0]!.url).not.toContain("workspaceId=");
-    expect(JSON.parse(cap.stdout)).toEqual({ id: "run-42", status: "succeeded" });
+    expect(JSON.parse(cap.stdout)).toEqual({ id: "run-42", status: "idle" });
   });
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
@@ -308,13 +308,13 @@ describe("parseDuration", () => {
 });
 
 describe("aex wait", () => {
-  it("polls GET /runs/{id} until terminal, prints the final run, exits 0 on succeeded", async () => {
+  it("polls GET /sessions/{id} until parked, prints the final session, exits 0 on idle", async () => {
     let polls = 0;
     const cap = makeHostIo({
       argv: ["wait", "run-w", "--interval", "1ms", ...COMMON],
       fetchHandler: () => {
         polls++;
-        const status = polls < 3 ? "running" : "succeeded";
+        const status = polls < 3 ? "running" : "idle";
         return new Response(JSON.stringify({ id: "run-w", status }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -324,39 +324,40 @@ describe("aex wait", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(polls).toBe(3);
+    expect(cap.calls[0]!.url).toContain("/api/sessions/run-w");
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
-    expect(printed).toMatchObject({ id: "run-w", status: "succeeded" });
+    expect(printed).toMatchObject({ id: "run-w", status: "idle" });
   });
 
-  it("exits 1 (RUNTIME_ERR) when the run reaches a non-succeeded terminal status", async () => {
+  it("exits 1 (RUNTIME_ERR) when the session parks with error", async () => {
     const cap = makeHostIo({
       argv: ["wait", "run-f", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-f", status: "failed" }), {
+        new Response(JSON.stringify({ id: "run-f", status: "error" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(1);
-    expect(JSON.parse(cap.stdout.trim())).toMatchObject({ status: "failed" });
+    expect(JSON.parse(cap.stdout.trim())).toMatchObject({ status: "error" });
   });
 
-  it("exits 3 (TIMEOUT_ERR) with a JSON error when --timeout elapses before terminal", async () => {
+  it("exits 3 (TIMEOUT_ERR) with a JSON error when --timeout elapses before parked", async () => {
     const cap = makeHostIo({
       argv: ["wait", "run-slow", "--timeout", "0ms", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-slow", status: "queued" }), {
+        new Response(JSON.stringify({ id: "run-slow", status: "running" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(3);
-    const err = JSON.parse(cap.stderr.trim()) as { error: string; runId: string; lastStatus: string };
+    const err = JSON.parse(cap.stderr.trim()) as { error: string; sessionId: string; lastStatus: string };
     expect(err.error).toBe("wait_timeout");
-    expect(err.runId).toBe("run-slow");
-    expect(err.lastStatus).toBe("queued");
+    expect(err.sessionId).toBe("run-slow");
+    expect(err.lastStatus).toBe("running");
   });
 
   it("rejects a malformed --timeout with USAGE_ERR", async () => {
@@ -393,7 +394,7 @@ describe("aex events --follow --timeout", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(3);
-    expect(JSON.parse(cap.stderr.trim())).toMatchObject({ error: "events_follow_timeout", runId: "run-ev" });
+    expect(JSON.parse(cap.stderr.trim())).toMatchObject({ error: "events_follow_timeout", sessionId: "run-ev" });
   });
 });
 
@@ -417,13 +418,17 @@ describe("aex cancel + delete", () => {
   it("cancel POSTs and prints the result", async () => {
     const cap = makeHostIo({
       argv: ["cancel", "run-x", ...COMMON],
-      fetchHandler: () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+      fetchHandler: () =>
+        new Response(JSON.stringify({ session: { id: "run-x", status: "cancelling" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.init.method).toBe("POST");
-    expect(cap.calls[0]!.url).toContain("/api/runs/run-x/cancel");
-    expect(JSON.parse(cap.stdout)).toEqual({ runId: "run-x", status: "cancel_requested" });
+    expect(cap.calls[0]!.url).toContain("/api/sessions/run-x/cancel");
+    expect(JSON.parse(cap.stdout)).toEqual({ sessionId: "run-x", status: "cancelling" });
   });
 
   it("delete DELETEs and prints the result", async () => {
@@ -434,7 +439,8 @@ describe("aex cancel + delete", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.init.method).toBe("DELETE");
-    expect(JSON.parse(cap.stdout)).toEqual({ runId: "run-x", deleted: true });
+    expect(cap.calls[0]!.url).toContain("/api/sessions/run-x");
+    expect(JSON.parse(cap.stdout)).toEqual({ sessionId: "run-x", deleted: true });
   });
 
   it("delete-asset DELETEs a normalized workspace asset id and prints the result", async () => {
@@ -535,13 +541,13 @@ describe("aex download", () => {
     expect(new TextDecoder().decode(entries["outputs/report.txt"]!)).toBe("hello");
     expect(JSON.parse(new TextDecoder().decode(entries["metadata/run.json"]!)).id).toBe("run-1");
 
-    const printed = JSON.parse(cap.stdout.trim()) as { runId: string; namespace: string; bytes: number };
-    expect(printed.runId).toBe("run-1");
+    const printed = JSON.parse(cap.stdout.trim()) as { sessionId: string; namespace: string; bytes: number };
+    expect(printed.sessionId).toBe("run-1");
     expect(printed.namespace).toBe("all");
     expect(printed.bytes).toBe(writes.get(writtenKey)!.byteLength);
   });
 
-  it("defaults the output path to aex-run-<run-id>.zip when --out is omitted", async () => {
+  it("defaults the output path to aex-session-<session-id>.zip when --out is omitted", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
       argv: ["download", "run-2", ...COMMON],
@@ -551,7 +557,7 @@ describe("aex download", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/aex-run-run-2\.zip$/);
+    expect(writtenKey).toMatch(/aex-session-run-2\.zip$/);
   });
 
   it("--only outputs zips just the deliverables (no logs, no metadata/events)", async () => {
@@ -564,7 +570,7 @@ describe("aex download", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/aex-run-run-1-outputs\.zip$/);
+    expect(writtenKey).toMatch(/aex-session-run-1-outputs\.zip$/);
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual(["manifest.json", "report.txt"]);
     expect(new TextDecoder().decode(entries["report.txt"]!)).toBe("hello");
@@ -609,8 +615,25 @@ describe("aex download", () => {
   });
 });
 
+// `aex run` now opens a session and sends the prompt as the first turn (mirroring
+// the SDK's `run()`): POST /api/sessions, then POST /api/sessions/{id}/messages.
+// The prompt rides the message body, NOT the create submission.
+function sessionRunHandler(sessionId: string, status = "running"): (call: FetchCall) => Response {
+  const ok = (body: unknown): Response =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  return (call) => {
+    if (call.url.endsWith(`/api/sessions/${sessionId}/messages`)) {
+      return ok({ session: { id: sessionId, status }, turn: { turnSeq: 0 } });
+    }
+    if (call.url.endsWith("/api/sessions")) {
+      return ok({ id: sessionId, status: "creating" });
+    }
+    return ok({});
+  };
+}
+
 describe("aex run", () => {
-  it("submits a run config loaded from --config and prints the run record", async () => {
+  it("opens a session from --config, sends the prompt as the first turn, prints the session record", async () => {
     const assetId = `asset_${"a".repeat(64)}`;
     const runConfig = {
       model: "claude-haiku-4-5",
@@ -637,31 +660,34 @@ describe("aex run", () => {
         ...COMMON
       ],
       files: { [resolvedFromCwd("/abs/run.json")]: JSON.stringify(runConfig) },
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-new", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-1")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls).toHaveLength(1);
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/runs");
-    expect(cap.calls[0]!.init.method).toBe("POST");
-    const body = cap.calls[0]!.body as Record<string, unknown>;
-    expect(body.workspaceId).toBeUndefined();
-    expect(body.idempotencyKey).toBe("idem-deterministic");
-    expect("postHook" in body).toBe(false);
-    const submission = body.submission as Record<string, unknown>;
+    // create session + first-turn message
+    expect(cap.calls).toHaveLength(2);
+    const create = cap.calls[0]!;
+    const message = cap.calls[1]!;
+    expect(create.url).toBe("https://dash.example/api/sessions");
+    expect(create.init.method).toBe("POST");
+    // idempotency is header-carried on create (not in the body).
+    expect((create.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-deterministic");
+    const createBody = create.body as Record<string, unknown>;
+    expect(createBody.workspaceId).toBeUndefined();
+    expect("idempotencyKey" in createBody).toBe(false);
+    expect("postHook" in createBody).toBe(false);
+    expect(createBody.retention).toEqual({ idleTtl: "3m" });
+    const submission = createBody.submission as Record<string, unknown>;
     expect(submission.model).toBe("claude-haiku-4-5");
-    expect(submission.prompt).toEqual(["hi"]);
+    // the prompt is NOT part of the create submission — it rides the first turn.
+    expect("prompt" in submission).toBe(false);
     expect(submission.skills).toEqual([
       { kind: "asset", assetId, name: "pdf" }
     ]);
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);
-    const secrets = body.secrets as Record<string, unknown>;
+    const secrets = createBody.secrets as Record<string, unknown>;
     expect(secrets.apiKeys).toEqual({ anthropic: "sk-ant-1" });
     expect(secrets.mcpServers).toEqual([
       {
@@ -670,8 +696,12 @@ describe("aex run", () => {
         headers: { Authorization: "Bearer t-from-config" }
       }
     ]);
+    // the first turn carries the prompt as its input.
+    expect(message.url).toBe("https://dash.example/api/sessions/sess-1/messages");
+    expect(message.init.method).toBe("POST");
+    expect((message.body as Record<string, unknown>).input).toEqual(["hi"]);
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
-    expect(printed).toMatchObject({ id: "run-new", status: "queued" });
+    expect(printed).toMatchObject({ id: "sess-1", status: "running" });
   });
 
   it("rejects an invalid skill asset id in --config before posting", async () => {
@@ -697,7 +727,7 @@ describe("aex run", () => {
     expect(cap.stderr).toContain("assetId must match");
   });
 
-  it("submits a run request built from --model/--prompt/--mcp/--mcp-auth flags", async () => {
+  it("opens a session from --model/--prompt/--mcp/--mcp-auth flags", async () => {
     const cap = makeHostIo({
       argv: [
         "run",
@@ -715,11 +745,7 @@ describe("aex run", () => {
         "idem-flat",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "r-flat", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-flat")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -737,9 +763,11 @@ describe("aex run", () => {
         headers: { Authorization: "Bearer t" }
       }
     ]);
+    // prompt rode the first-turn message, not the submission.
+    expect((cap.calls[1]!.body as Record<string, unknown>).input).toEqual(["hello"]);
   });
 
-  it("submits DeepSeek runs with --provider deepseek and --deepseek-api-key", async () => {
+  it("opens DeepSeek sessions with --provider deepseek and --deepseek-api-key", async () => {
     const cap = makeHostIo({
       argv: [
         "run",
@@ -755,11 +783,7 @@ describe("aex run", () => {
         "idem-ds",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "r-deepseek", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-ds")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -784,11 +808,7 @@ describe("aex run", () => {
         "idem-webhook",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "r-webhook", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-webhook")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -828,11 +848,7 @@ describe("aex run", () => {
         "stripe=bearer:sk_test",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "r1", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-proxy")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -913,11 +929,7 @@ describe("aex run", () => {
         "sk-ant-1",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "r-merge", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-merge")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -977,17 +989,13 @@ describe("aex run", () => {
         "sk-ant-1",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "r-esc", status: "queued" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: sessionRunHandler("sess-esc")
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    const body = cap.calls[0]!.body as Record<string, unknown>;
-    const submission = body.submission as Record<string, unknown>;
-    expect(submission.prompt).toEqual(["@alice please look at this"]);
+    // the escaped literal rides the first-turn message input.
+    const message = cap.calls[1]!.body as Record<string, unknown>;
+    expect(message.input).toEqual(["@alice please look at this"]);
   });
 });
 

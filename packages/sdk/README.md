@@ -130,7 +130,7 @@ with any LLM; `examples/chat-corpus.ts` shows the direct-Claude loop
 importable SDK stays LLM-vendor-free):
 
 ```bash
-aex chat --run ses_<A> --run ses_<B> \
+aex chat --session ses_<A> --session ses_<B> \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-opus-4-8 \
   --prompt "Across these sessions, which produced a report.md and what's its headline finding?" \
@@ -139,7 +139,7 @@ aex chat --run ses_<A> --run ses_<B> \
 
 `aex.sessions.searchOutputs({ runIds, filename, extension, contentType, limit })`
 finds output files across sessions (scope with the `runIds` session-id allow-list)
-and returns references (no bytes) you then read with `aex.sessions.readOutput`.
+and returns references (no bytes) you then read with `aex.sessions.outputs(id).read(...)`.
 
 ## Feature Areas
 

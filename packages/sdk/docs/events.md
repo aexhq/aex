@@ -60,29 +60,29 @@ is now `await session.messages().last()`.
 The CLI mirrors the same surface:
 
 ```bash
-aex events  <run-id> --api-token … [--aex-url …]                      # snapshot (polling)
-aex events  <run-id> --follow [--timeout 8m] --api-token … [--aex-url …]  # stream until terminal (polling)
-aex tail    <run-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token …  # live, human-readable, over the WS envelope stream
-aex inspect <run-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token …             # one-shot full timeline + jump-to-failure + cost/usage
-aex wait    <run-id> [--timeout 8m] [--interval 2s] --api-token …          # block, print final run
+aex events  <session-id> --api-token … [--aex-url …]                      # snapshot (polling)
+aex events  <session-id> --follow [--timeout 8m] --api-token … [--aex-url …]  # stream until the session parks (polling)
+aex tail    <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token …  # live, human-readable, over the WS envelope stream
+aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token …             # one-shot full timeline + jump-to-failure + cost/usage
+aex wait    <session-id> [--timeout 8m] [--interval 2s] --api-token …          # block, print final session
 ```
 
 `aex tail` and `aex inspect` consume the same coordinator WebSocket envelope
-stream as `streamEnvelopes()` (replay-from-cursor + tail + exactly-once resume),
-so they are the low-latency equivalents of `events --follow`'s polling. `--json`
-is the raw-NDJSON escape hatch; `--filter` keeps only the named AG-UI types
-(`TEXT_MESSAGE_CONTENT`, `TOOL_CALL_START`, …) or sources (`agent`/`runtime`/…);
-a `RUN_ERROR` is surfaced as a jump-to-failure line. `aex inspect` adds a header,
-a settle-consistent full timeline, and a cost/usage footer. Both exit `0`
-succeeded / `1` other terminal / `3` timeout. They need a global `WebSocket`
-(Bun or Node ≥ 22).
+stream as `session.events().streamEnvelopes()` (replay-from-cursor + tail +
+exactly-once resume), so they are the low-latency equivalents of
+`events --follow`'s polling. `--json` is the raw-NDJSON escape hatch; `--filter`
+keeps only the named AG-UI types (`TEXT_MESSAGE_CONTENT`, `TOOL_CALL_START`, …)
+or sources (`agent`/`runtime`/…); a `RUN_ERROR` is surfaced as a jump-to-failure
+line. `aex inspect` adds a header, a settle-consistent full timeline, and a
+cost/usage footer. Both exit `0` parked cleanly / `1` error park / `3` timeout.
+They need a global `WebSocket` (Bun or Node ≥ 22).
 
 `aex wait` is the host mirror of `session.wait()`:
-it polls until the run reaches a terminal status and prints the final `Run`
-record. Exit `0` when the run `succeeded`, `1` for any other terminal status,
-and `3` when `--timeout` elapses first (a `--timeout` on `events --follow` /
-`run --follow` uses the same exit-`3` convention). Durations accept `ms`/`s`/`m`/`h`
-suffixes or a bare millisecond integer.
+it polls until the session parks and prints the final `Session` record. Exit `0`
+when the session parked cleanly (`idle`/`suspended`), `1` for any other park
+(`error` / a non-clean terminal status), and `3` when `--timeout` elapses first
+(a `--timeout` on `events --follow` / `run --follow` uses the same exit-`3`
+convention). Durations accept `ms`/`s`/`m`/`h` suffixes or a bare millisecond integer.
 
 Both surfaces observe the same events. A subscriber attached after a session
 message is accepted replays the events it missed, then continues live.

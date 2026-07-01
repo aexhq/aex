@@ -4,7 +4,7 @@
  * to run host commands inside a managed run container, and exit codes
  * shared with the in-container proxy command.
  */
-import { AEX_DEFAULT_BASE_URL, AexApiError, AexError, HttpClient, type FetchLike } from "@aexhq/contracts";
+import { AEX_DEFAULT_BASE_URL, AexApiError, AexError, HttpClient, TERMINAL_RUN_STATUSES, type FetchLike } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
 
 export interface CliExitCode {
@@ -22,6 +22,31 @@ export const RUNTIME_ERR: CliExitCode = { code: 1 };
  * dedicated timeout error.
  */
 export const TIMEOUT_ERR: CliExitCode = { code: 3 };
+
+// Membership-tested against the loose `string` status the BFF returns, backed by
+// the canonical terminal set rather than a drift-prone local list.
+const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
+
+/**
+ * A session is "parked" once its turn stops making progress — it reached one of
+ * the turn-terminal statuses (`idle` / `suspended` / `error`) or a terminal run
+ * status. Mirrors the SDK's `SessionHandle.wait` / stream stop condition, so
+ * `aex wait` / `events --follow` / `tail` / `inspect` / `run --follow` all stop
+ * on the same boundary.
+ */
+export function isSessionParked(status: string): boolean {
+  return status === "idle" || status === "suspended" || status === "error" || TERMINAL_STATUSES.has(status);
+}
+
+/**
+ * Whether a parked session ended cleanly (exit code 0). A session parks at
+ * `idle`/`suspended` on a good turn; `succeeded` covers a session that surfaces
+ * a terminal run status. Everything else parked (`error`/`failed`/`timed_out`/
+ * `cancelled`/`expired`/…) is a non-clean exit.
+ */
+export function isSessionOk(status: string): boolean {
+  return status === "idle" || status === "suspended" || status === "succeeded";
+}
 
 export interface CommonHostFlags {
   readonly apiToken: string;

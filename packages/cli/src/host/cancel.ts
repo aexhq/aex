@@ -1,5 +1,5 @@
 /**
- * `aex cancel <run-id>` — POST /api/runs/{id}/cancel.
+ * `aex cancel <session-id>` — POST /api/sessions/{id}/cancel.
  */
 import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
@@ -24,20 +24,20 @@ export async function runCancelCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex cancel <run-id> [common flags]\n");
+    io.stderr("usage: aex cancel <session-id> [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
   try {
-    await operations.cancelRun(http, runId);
-    io.stdout(JSON.stringify({ runId, status: "cancel_requested" }) + "\n");
+    const accepted = await operations.cancelSession(http, sessionId);
+    io.stdout(JSON.stringify({ sessionId, status: accepted.session.status }) + "\n");
     return SUCCESS;
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "cancel_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });

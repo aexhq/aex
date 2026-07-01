@@ -57,7 +57,6 @@ import {
   type RunWebhookDelivery,
   type RunProvider,
   type SecretRecord,
-  type SecretReveal,
   type RunUnit,
   BUILTIN_TOOL_NAMES,
   type BuiltinToolName,
@@ -98,7 +97,7 @@ export interface AgentExecutorOptions {
 }
 
 /**
- * The settle-consistent result of {@link AgentExecutor.run} / `runAndCollect`:
+ * The settle-consistent result of {@link AgentExecutor.run}:
  * the one-shot session record plus its events, decoded trace, assistant text,
  * and captured outputs — everything a "do it and give me the result" caller
  * needs without hand-rolling a session/message/stream loop.
@@ -132,7 +131,7 @@ export interface RunResult {
   readonly error?: string;
 }
 
-/** Options for {@link AgentExecutor.run} / `runAndCollect`. */
+/** Options for {@link AgentExecutor.run}. */
 export interface RunCollectOptions {
   /** Overall wait budget (ms) for the one-shot session turn to park. */
   readonly timeoutMs?: number;
@@ -501,25 +500,7 @@ export class SessionHandle {
    * zip (no selector) or one file's raw bytes (with selector).
    */
   outputs(): SessionOutputs {
-    const http = this.#http;
-    const id = this.id;
-    const fetchLike = this.#fetch;
-    const list = (query?: OutputQuery): Promise<readonly Output[]> =>
-      operations.listSessionOutputs(http, id, query);
-    return {
-      list,
-      last: async () => (await list()).at(-1),
-      first: async () => (await list())[0],
-      read: (selector, options) => operations.readOutputText(http, id, selector, options),
-      find: (query) => operations.findOutputs(http, id, query),
-      findOne: (query) => operations.findOutput(http, id, query),
-      link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
-      fetch: async (selectorOrQuery, options) => {
-        const link = await operations.outputLink(http, id, selectorOrQuery, options);
-        return (fetchLike ?? globalThis.fetch)(link.url);
-      },
-      download: (selector, options) => downloadSessionOutput(http, id, selector, options)
-    };
+    return sessionOutputs(this.#http, this.id, this.#fetch);
   }
 
   /**
@@ -629,14 +610,15 @@ export class SessionClient {
     return operations.listSessions(this.#http, query);
   }
 
-  /** List a session's captured output files. */
-  outputs(sessionId: string, query?: OutputQuery): Promise<readonly Output[]> {
-    return operations.listSessionOutputs(this.#http, sessionId, query);
-  }
-
-  /** Read ONE output file of a session as byte-capped, decoded UTF-8 text. */
-  readOutput(sessionId: string, selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText> {
-    return operations.readOutputText(this.#http, sessionId, selector, options);
+  /**
+   * Accessor over one session's captured output files, addressed by id without
+   * opening a handle. Returns the SAME rich {@link SessionOutputs} surface as
+   * `session.outputs()` — `aex.sessions.outputs(id).list()` /
+   * `.read(selector)` / `.download()` / … — so the workspace client and the
+   * live handle share one accessor convention.
+   */
+  outputs(sessionId: string): SessionOutputs {
+    return sessionOutputs(this.#http, sessionId, this.#fetch);
   }
 
   /**
@@ -680,8 +662,15 @@ export class SessionClient {
   /** Enumerate every session id in the workspace by paging `listSessions`. */
   async #allSessionIds(): Promise<readonly string[]> {
     const ids: string[] = [];
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
+      if (cursor !== undefined) {
+        if (seenCursors.has(cursor)) {
+          throw new Error("Aex.sessions.searchOutputs: listSessions returned a repeated cursor");
+        }
+        seenCursors.add(cursor);
+      }
       const page = await operations.listSessions(this.#http, cursor ? { cursor } : {});
       for (const session of page.sessions) ids.push(session.id);
       cursor = page.nextCursor;
@@ -807,6 +796,32 @@ async function downloadSessionOutput(
     bytes = new Uint8Array(await response.arrayBuffer());
   }
   return writeOptionalFile(bytes, options?.to);
+}
+
+/**
+ * Build the outputs accessor for a session id. Shared by
+ * `SessionHandle.outputs()` (bound to the live handle) and
+ * `SessionClient.outputs(id)` (addressed by id without opening a handle), so both
+ * expose the identical rich {@link SessionOutputs} surface — one accessor
+ * convention, one implementation.
+ */
+function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | undefined): SessionOutputs {
+  const list = (query?: OutputQuery): Promise<readonly Output[]> =>
+    operations.listSessionOutputs(http, id, query);
+  return {
+    list,
+    last: async () => (await list()).at(-1),
+    first: async () => (await list())[0],
+    read: (selector, options) => operations.readOutputText(http, id, selector, options),
+    find: (query) => operations.findOutputs(http, id, query),
+    findOne: (query) => operations.findOutput(http, id, query),
+    link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
+    fetch: async (selectorOrQuery, options) => {
+      const link = await operations.outputLink(http, id, selectorOrQuery, options);
+      return (fetchLike ?? globalThis.fetch)(link.url);
+    },
+    download: (selector, options) => downloadSessionOutput(http, id, selector, options)
+  };
 }
 
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
@@ -1020,12 +1035,11 @@ export class FilesClient {
  * Lifecycle parity with assets/skills: a `Secret.value(...)` is per-run and
  * gone at terminal; `set` (or promoting an ephemeral via `secret.upload`)
  * persists a named, searchable workspace secret you can `get` (metadata),
- * `get_value` (audited value), `rotate`, `list`, and `delete`. The identity is the
- * `name`; the value rotates under that stable name.
+ * `rotate`, `list`, and `delete`. The identity is the `name`; the value rotates
+ * under that stable name.
  *
- * Values are write-only: `set`/`rotate` send the value in the request BODY (never
- * the URL); `get`/`list` return metadata only; `get_value` is the explicit audited
- * value read.
+ * Values are write-only through the public SDK: `set`/`rotate` send the value in
+ * the request BODY (never the URL); `get`/`list` return metadata only.
  */
 export class SecretsClient {
   readonly #http: HttpClient;
@@ -1047,11 +1061,6 @@ export class SecretsClient {
   /** Metadata for one workspace secret by name. Never returns the value. */
   get(name: string): Promise<SecretRecord> {
     return operations.getSecret(this.#http, name);
-  }
-
-  /** Audited value read — the preferred path that returns a workspace secret value. */
-  get_value(name: string): Promise<SecretReveal> {
-    return operations.getSecretValue(this.#http, name);
   }
 
   /** Replace the value of an existing workspace secret; bumps its version. */
@@ -1223,14 +1232,6 @@ export class AgentExecutor {
     }
   }
 
-  /**
-   * Explicit, discoverable alias for {@link run}: open a one-shot session turn
-   * and collect the full {@link RunResult} in one call.
-   */
-  runAndCollect(options: SessionRunOptions, opts?: RunCollectOptions): Promise<RunResult> {
-    return this.run(options, opts);
-  }
-
   openSession(options: SessionCreateOptions): Promise<SessionHandle>;
   openSession(sessionId: string): Promise<SessionHandle>;
   openSession(optionsOrId: SessionCreateOptions | string): Promise<SessionHandle> {
@@ -1368,7 +1369,14 @@ function isTerminal(status: string | undefined): boolean {
  * status. `SessionHandle.wait` / `streamEvents` stop here.
  */
 function isSessionParked(status: string | undefined): boolean {
-  return status === "idle" || status === "suspended" || status === "error" || isTerminal(status);
+  return (
+    status === "idle" ||
+    status === "suspended" ||
+    status === "error" ||
+    status === "deleted" ||
+    status === "expired" ||
+    isTerminal(status)
+  );
 }
 
 function sessionToRun(session: Session): Run {

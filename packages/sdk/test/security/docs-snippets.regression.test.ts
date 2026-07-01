@@ -82,11 +82,13 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const missing: string[] = [];
 
     // Client-level operations the docs call as `aex.<method>(...)`.
-    for (const key of ["openSession", "run", "runAndCollect", "whoami", "deleteWorkspaceAsset"]) {
+    for (const key of ["openSession", "run", "whoami", "deleteWorkspaceAsset"]) {
       if (!isFn(AgentExecutor.prototype, key)) missing.push(`AgentExecutor.prototype.${key}`);
     }
     // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
-    for (const key of ["create", "open", "get", "list", "outputs", "readOutput", "searchOutputs", "run"]) {
+    // `outputs(id)` returns the SAME accessor as `session.outputs()` (shape
+    // checked below), so id-addressed reads use `sessions.outputs(id).read(...)`.
+    for (const key of ["create", "open", "get", "list", "outputs", "searchOutputs", "run"]) {
       if (!isFn(SessionClient.prototype, key)) missing.push(`SessionClient.prototype.${key}`);
     }
     // The lifecycle verbs a `session` handle keeps FLAT in the docs. The read /
@@ -176,6 +178,8 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       // Removed RunRef / ref-style run API.
       { name: "RunRef type", needle: /\bRunRef\b/ },
       { name: "ref.runId", needle: /\bref\.runId\b/ },
+      { name: "runAndCollect alias", needle: /\brunAndCollect\b/ },
+      { name: "secrets.get_value plaintext read", needle: /\.secrets\.get_value\s*\(/ },
       {
         name: "ref method",
         needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadEvents|downloadMetadata|cancel|delete)\s*\(/

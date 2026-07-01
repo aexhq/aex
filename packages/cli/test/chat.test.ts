@@ -41,30 +41,30 @@ function makeIo(opts: { argv: readonly string[]; files?: Record<string, string> 
 const TOKEN = ["--api-token", "tok", "--aex-url", "https://dash.example"];
 
 describe("aex chat (offline validation)", () => {
-  it("requires at least one --run", async () => {
+  it("requires at least one --session", async () => {
     const cap = makeIo({ argv: ["chat", ...TOKEN, "--anthropic-api-key", "sk", "--prompt", "hi"] });
     await runCli(cap.io);
     expect(cap.exit()).toBe(2);
-    expect(cap.err()).toContain("requires at least one --run");
+    expect(cap.err()).toContain("requires at least one --session");
     expect(cap.fetchCount()).toBe(0);
   });
 
   it("requires --anthropic-api-key", async () => {
-    const cap = makeIo({ argv: ["chat", ...TOKEN, "--run", "run-1", "--prompt", "hi"] });
+    const cap = makeIo({ argv: ["chat", ...TOKEN, "--session", "sess-1", "--prompt", "hi"] });
     await runCli(cap.io);
     expect(cap.exit()).toBe(2);
     expect(cap.err()).toContain("--anthropic-api-key is required");
   });
 
   it("requires --prompt", async () => {
-    const cap = makeIo({ argv: ["chat", ...TOKEN, "--run", "run-1", "--anthropic-api-key", "sk"] });
+    const cap = makeIo({ argv: ["chat", ...TOKEN, "--session", "sess-1", "--anthropic-api-key", "sk"] });
     await runCli(cap.io);
     expect(cap.exit()).toBe(2);
     expect(cap.err()).toContain("--prompt");
   });
 
   it("requires an API token (no stored config)", async () => {
-    const cap = makeIo({ argv: ["chat", "--run", "run-1", "--anthropic-api-key", "sk", "--prompt", "hi"] });
+    const cap = makeIo({ argv: ["chat", "--session", "sess-1", "--anthropic-api-key", "sk", "--prompt", "hi"] });
     await runCli(cap.io);
     expect(cap.exit()).toBe(2);
     expect(cap.err()).toContain("run `aex login`");
@@ -72,7 +72,7 @@ describe("aex chat (offline validation)", () => {
 
   it("refuses to run inside a managed run container", async () => {
     const cap = makeIo({
-      argv: ["chat", ...TOKEN, "--run", "run-1", "--anthropic-api-key", "sk", "--prompt", "hi"],
+      argv: ["chat", ...TOKEN, "--session", "sess-1", "--anthropic-api-key", "sk", "--prompt", "hi"],
       files: { [AEX_INDEX_PATH]: "{}" }
     });
     await runCli(cap.io);

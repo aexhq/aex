@@ -1,6 +1,6 @@
 /**
- * `aex status <run-id>` — fetch a single run record via GET
- * /api/runs/{id} and print it as JSON.
+ * `aex status <session-id>` — fetch a single session record via GET
+ * /api/sessions/{id} and print it as JSON.
  */
 import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
@@ -25,20 +25,20 @@ export async function runStatusCmd(io: CliIO, argv: readonly string[]): Promise<
   }
   const positional = common.rest.filter((arg) => !arg.startsWith("--"));
   if (positional.length !== 1) {
-    io.stderr("usage: aex status <run-id> [common flags]\n");
+    io.stderr("usage: aex status <session-id> [common flags]\n");
     return USAGE_ERR;
   }
-  const runId = positional[0]!;
+  const sessionId = positional[0]!;
 
   const http = makeHttpClient(io, common.flags);
   try {
-    const run = await operations.getRun(http, runId);
-    io.stdout(JSON.stringify(run) + "\n");
+    const session = await operations.getSession(http, sessionId);
+    io.stdout(JSON.stringify(session) + "\n");
     return SUCCESS;
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "status_failed", d.message, {
-      runId,
+      sessionId,
       ...(d.status !== undefined ? { status: d.status } : {}),
       ...(d.remedy ? { remedy: d.remedy } : {})
     });
