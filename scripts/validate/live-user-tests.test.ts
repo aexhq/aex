@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -24,6 +24,41 @@ describe("live user-test release gate", () => {
     expect(workflow).toContain('["AEX_API_TOKEN", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"]');
     expect(workflow).toContain("text.split(value).join(`[REDACTED:${name}]`)");
     expect(workflow).not.toContain("path: .suite-diagnostics/raw");
+  });
+
+  it("keeps shard flags out of conformance prebuilds", () => {
+    const packageJson = JSON.parse(read("apps/user-tests/package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const wrapper = read("apps/user-tests/scripts/run-user-vitest.mjs");
+
+    for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {
+      expect(name.startsWith("pretest:user"), name).toBe(false);
+      expect(script, name).not.toContain("pretest:user");
+    }
+    expect(wrapper).toContain("await buildConformance();");
+    expect(wrapper).toContain('["run", "--cwd", repoRoot, "--filter", "@aexhq/conformance", "build"]');
+    expect(wrapper).toContain("const vitestArgs = process.argv.slice(2);");
+    expect(wrapper).toContain('["run", "vitest", "run", ...vitestArgs]');
+  });
+
+  it("treats blank live-test model vars as missing", () => {
+    const liveDir = resolve(repoRoot, "apps/user-tests/test/live");
+    const sources = readdirSync(liveDir)
+      .filter((name) => name.endsWith(".ts"))
+      .map((file) => ({ file, source: read(`apps/user-tests/test/live/${file}`) }));
+
+    for (const { file, source } of sources) {
+      expect(source, file).not.toContain('AEX_USER_TEST_DEEPSEEK_MODEL"] ??');
+      expect(source, file).not.toContain("AEX_USER_TEST_DEEPSEEK_MODEL ??");
+      expect(source, file).not.toContain('AEX_USER_TEST_ANTHROPIC_MODEL"] ??');
+    }
+    for (const { file, source } of sources.filter(({ source }) => source.includes("AEX_USER_TEST_DEEPSEEK_MODEL"))) {
+      expect(source, file).toContain('?.trim() || "deepseek-v4-flash"');
+    }
+    for (const { file, source } of sources.filter(({ source }) => source.includes("AEX_USER_TEST_ANTHROPIC_MODEL"))) {
+      expect(source, file).toContain('?.trim() || "claude-haiku-4-5"');
+    }
   });
 
   it("fans out provider and heavy on-demand suites after one artifact preparation", () => {

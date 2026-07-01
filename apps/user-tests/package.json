@@ -5,17 +5,12 @@
   "type": "module",
   "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. Product SDK/CLI access goes through a child process whose cwd is a fresh `bun install` tempdir; the harness may import shared conformance matchers.",
   "scripts": {
-    "pretest:user": "bun run --cwd ../.. --filter @aexhq/conformance build",
     "test:user": "bun scripts/run-user-vitest.mjs --config vitest.config.ts test",
-    "pretest:user:offline": "bun run --cwd ../.. --filter @aexhq/conformance build",
     "test:user:offline": "bun scripts/run-user-vitest.mjs --config vitest.offline.config.ts",
-    "pretest:user:heavy": "bun run --cwd ../.. --filter @aexhq/conformance build",
-    "test:user:heavy": "vitest run --config vitest.heavy.config.ts",
-    "pretest:user:providers": "bun run --cwd ../.. --filter @aexhq/conformance build",
-    "test:user:providers": "vitest run --config vitest.providers.config.ts",
+    "test:user:heavy": "bun scripts/run-user-vitest.mjs --config vitest.heavy.config.ts",
+    "test:user:providers": "bun scripts/run-user-vitest.mjs --config vitest.providers.config.ts",
     "test:user:fuzz": "vitest run --config vitest.fuzz.config.ts",
-    "pretest:user:tool-fuzz": "bun run --cwd ../.. --filter @aexhq/conformance build",
-    "test:user:tool-fuzz": "vitest run --config vitest.tool-fuzz.config.ts",
+    "test:user:tool-fuzz": "bun scripts/run-user-vitest.mjs --config vitest.tool-fuzz.config.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

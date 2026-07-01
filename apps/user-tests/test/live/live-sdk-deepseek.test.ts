@@ -45,7 +45,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
+const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 interface LiveResult {
   readonly runId: string;

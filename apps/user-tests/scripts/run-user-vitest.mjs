@@ -20,6 +20,8 @@ if (tarball && version) {
 }
 
 let packDir;
+await buildConformance();
+
 if (!tarball && !version) {
   try {
     const packed = await packCurrentSdk();
@@ -46,6 +48,13 @@ child.on("close", (code, signal) => {
   }
   process.exit(code ?? 1);
 });
+
+async function buildConformance() {
+  await run(getBunCommand(), ["run", "--cwd", repoRoot, "--filter", "@aexhq/conformance", "build"], {
+    cwd: repoRoot,
+    timeoutMs: 120_000
+  });
+}
 
 async function packCurrentSdk() {
   packDir = mkdtempSync(join(tmpdir(), "aex-user-test-sdk-pack-"));

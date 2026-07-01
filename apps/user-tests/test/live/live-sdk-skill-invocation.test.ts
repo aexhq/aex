@@ -42,7 +42,7 @@ function requireEnv(name: string): string {
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 interface Cell {
   readonly id: string;

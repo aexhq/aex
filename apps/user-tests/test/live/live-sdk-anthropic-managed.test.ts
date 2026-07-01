@@ -42,7 +42,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"] ?? "claude-haiku-4-5";
+const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
 
 interface LiveResult {
   readonly runId: string;

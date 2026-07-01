@@ -51,7 +51,7 @@ import { getBunCommand, installAex, runCommand, type InstallResult } from "../_f
 const apiUrl = process.env["AEX_API_URL"] ?? "";
 const apiToken = process.env["AEX_API_TOKEN"] ?? "";
 const deepseekKey = process.env["DEEPSEEK_API_KEY"] ?? "";
-const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"] ?? "deepseek-v4-flash";
+const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 // The single gate: no creds ⇒ skip the whole suite cleanly (never throw).
 const hasCreds = apiUrl.length > 0 && apiToken.length > 0 && deepseekKey.length > 0;
