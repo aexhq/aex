@@ -21,6 +21,7 @@
     "dev": "next dev",
     "prebuild": "bun run generate",
     "build": "next build",
+    "postbuild": "bun scripts/check-support-footer.mjs",
     "prepreview": "bun run generate",
     "preview": "next start",
     "source": "fumadocs-mdx",
