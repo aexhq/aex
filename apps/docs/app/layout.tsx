@@ -4,6 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { Provider } from "@/app/provider";
+import { SupportFooter } from "@/components/support-footer";
 import { baseOptions } from "@/lib/layout.shared";
 import { source } from "@/lib/source";
 import "./global.css";
@@ -28,7 +29,8 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
             tabs={false}
             sidebar={{
               defaultOpenLevel: 1,
-              prefetch: false
+              prefetch: false,
+              footer: <SupportFooter />
             }}
           >
             {children}
