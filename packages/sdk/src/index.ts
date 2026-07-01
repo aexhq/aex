@@ -8,9 +8,28 @@
  * from `@aexhq/contracts`.
  */
 
-export { AgentsMdClient, AgentExecutor, FilesClient, SecretsClient, SkillsClient } from "./client.js";
+export {
+  Aex,
+  AgentsMdClient,
+  AgentExecutor,
+  ChatClient,
+  ChatSession,
+  ChatTurnStream,
+  FilesClient,
+  SecretsClient,
+  SessionClient,
+  SessionHandle,
+  SessionTurnStream,
+  SkillsClient
+} from "./client.js";
 export type {
   AgentExecutorOptions,
+  ChatCreateOptions,
+  ChatInput,
+  ChatRunOptions,
+  ChatRunResult,
+  ChatSendOptions,
+  ChatTurnResult,
   OutputDownloadOptions,
   OutputFilePathMatch,
   OutputFilePathSelector,
@@ -18,6 +37,14 @@ export type {
   OutputLinkSelector,
   RunCollectOptions,
   RunResult,
+  SessionCreateOptions,
+  SessionEnvironmentOptions,
+  SessionInput,
+  SessionOverrides,
+  SessionRunOptions,
+  SessionRunResult,
+  SessionSendOptions,
+  SessionTurnResult,
   StreamEventsOptions,
   SubmitOptions,
   WaitForRunOptions
@@ -101,6 +128,14 @@ export type {
   RunListPage,
   RunListQuery,
   RunSummary,
+  Session,
+  SessionEvent,
+  SessionListPage,
+  SessionListQuery,
+  SessionRetentionPolicy,
+  SessionStatus,
+  SessionSummary,
+  SessionTurn,
   RunRecordArchiveFileV1,
   RunRecordArchiveFileRoleV1,
   RunRecordArchiveNamespaceV1,
@@ -157,6 +192,7 @@ export {
   RUNTIME_SIZES,
   RuntimeSizes
 } from "@aexhq/contracts";
+export { RuntimeSizes as Sizes } from "@aexhq/contracts";
 export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
 // Builtin tools — the closed + default builtin tool sets. Toggle the standard

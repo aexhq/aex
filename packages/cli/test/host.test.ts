@@ -623,13 +623,7 @@ describe("aex run", () => {
           url: "https://example.com/mcp",
           headers: { Authorization: "Bearer t-from-config" }
         }
-      ],
-      postHook: {
-        command: "bun test",
-        timeout: "2m",
-        maxTurns: 2,
-        maxChars: 2048
-      }
+      ]
     };
     const cap = makeHostIo({
       argv: [
@@ -657,12 +651,7 @@ describe("aex run", () => {
     const body = cap.calls[0]!.body as Record<string, unknown>;
     expect(body.workspaceId).toBeUndefined();
     expect(body.idempotencyKey).toBe("idem-deterministic");
-    expect(body.postHook).toEqual({
-      command: "bun test",
-      timeout: "2m",
-      maxTurns: 2,
-      maxChars: 2048
-    });
+    expect("postHook" in body).toBe(false);
     const submission = body.submission as Record<string, unknown>;
     expect(submission.model).toBe("claude-haiku-4-5");
     expect(submission.prompt).toEqual(["hi"]);

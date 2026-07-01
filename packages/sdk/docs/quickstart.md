@@ -23,27 +23,52 @@ export AEX_API_TOKEN="<your-aex-token>"
 export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
-## 3. Run a prompt
+## 3. Open a session
 
 ```ts
-import { AgentExecutor, Models } from "@aexhq/sdk";
+import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
-// run() submits, waits for the run to settle, and returns the result.
-// `provider` is derived from the model; `secrets.apiKeys` carries your BYOK provider key.
-const { text, ok } = await aex.run({
+const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
-  prompt: "Write a short report and save it as a file."
+  system: "You are a concise engineering assistant.",
+  runtime: Sizes.SHARED_0_25X_1GB,
+  overrides: { idleTtl: "3m" },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-console.log(ok, text);
+const first = await session.send("Write a short report and save it as a file.").done();
+console.log(first.status, first.text);
 ```
 
-## 4. Submit, stream, wait, and download
+The session parks as `idle` between turns and automatically moves to
+`suspended` after the idle window. Keep the session id and resume later:
 
-When you need the run id, live events, or downloads, drive the lifecycle yourself:
+```ts
+const resumed = await aex.openSession(session.id);
+await resumed.send("Now run the validation command and summarize the result.").done();
+```
+
+## 4. One-shot convenience
+
+`run()` opens a session, sends `message` as one turn, and returns the collected
+result. Its `runId` is the session id.
+
+```ts
+const result = await aex.run({
+  model: Models.CLAUDE_HAIKU_4_5,
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
+  message: "Write a short report and save it as a file."
+});
+
+console.log(result.runId, result.status, result.text);
+```
+
+## 5. Low-level run control
+
+The lower-level `submit` path remains available for explicit run-record
+workflows:
 
 ```ts
 const runId = await aex.submit({

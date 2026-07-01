@@ -4,7 +4,11 @@ title: Events
 
 # Events
 
-aex runs agent sessions on the managed runtime. Runs are **non-blocking**: the managed runtime advances the agent while aex observes lifecycle state, maps runtime output into one event shape, and persists every captured event. The SDK and CLI observe the durable event timeline from aex — there is no in-process tool-approval hook.
+aex runs agent sessions on the managed runtime. Sessions are **non-blocking**:
+the managed runtime advances the agent while aex observes lifecycle state, maps
+runtime output into one event shape, and persists every captured event. The SDK
+and CLI observe the durable event timeline from aex — there is no in-process
+tool-approval hook.
 
 ## Two ways to consume events
 
@@ -60,11 +64,34 @@ and `3` when `--timeout` elapses first (a `--timeout` on `events --follow` /
 `run --follow` uses the same exit-`3` convention). Durations accept `ms`/`s`/`m`/`h`
 suffixes or a bare millisecond integer.
 
-Both surfaces observe the same events. A subscriber attached after `submit()` returns replays the events it missed, then continues live.
+Both surfaces observe the same events. A subscriber attached after `submit()` or
+a session message is accepted replays the events it missed, then continues live.
+
+## Session turn events
+
+The canonical SDK session surface stops a turn on session lifecycle events, not
+terminal run events:
+
+```ts
+const session = await aex.openSession(config);
+const turn = session.send("Continue the task.");
+
+for await (const event of turn) {
+  console.log(event.sequence, event.type);
+}
+
+const result = await turn.done(); // status is usually "idle"
+```
+
+The turn stream ends when it sees `aex.session.idle`, `aex.session.suspended`, or
+`aex.session.error` for that turn. `aex.run(config)` is a convenience wrapper
+over the same flow: it opens a session, sends `message` once, and returns the
+collected session turn. The returned `runId` is the session id.
 
 ## Terminal events vs. the run record
 
-A run emits a terminal **event** — `RUN_FINISHED` (success) or `RUN_ERROR` — when
+The low-level `submit()` run path emits a terminal **event** — `RUN_FINISHED`
+(success) or `RUN_ERROR` — when
 the agent's stream ends. This is an AG-UI *render-complete* signal: the runner
 emits it **before** aex commits the authoritative run record, so a `getRun(runId)`
 issued the instant you observe `RUN_FINISHED` can still read `status: "running"`
@@ -81,10 +108,8 @@ Two facts make this easy to work with:
   consistently, don't key off the terminal event — use one of:
 
 ```ts
-// Blocking: submit + wait + collect. Resolves once the RECORD is terminal
-// (polls getRun, not the event) and returns a settle-consistent RunResult
-// (status, ok, text, events, trace, outputs, costUsd).
-const result = await aex.run(runConfig);
+// Low-level run record path: submit + wait.
+const runId = await aex.submit(runConfig);
 const sameRun = await aex.waitForRun(runId); // or wait on an already-submitted run for the bare Run record
 ```
 
@@ -117,12 +142,6 @@ const jsonl = await response.text();
 ## Event shape
 
 Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied to `submit`.
-
-Runs submitted with `postHook` include a `postHook` summary on the terminal event
-data. The summary records `attempts`, `repairTurns`, `finalResult`, and a
-`failures` array with capped hook output. If the hook exhausts `maxTurns`, the
-terminal event is `RUN_ERROR` with `data.reason: "failed"` and
-`data.failureClass: "post_hook_failed"`.
 
 ## Typed helpers
 

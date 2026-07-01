@@ -1,3 +1,9 @@
+import type { SessionStatus } from "./status.js";
+import type {
+  PlatformRunSubmissionInput,
+  PlatformSubmission
+} from "./submission.js";
+
 /**
  * Loose record describing a run as the dashboard BFF returns it. Concrete
  * dashboard-managed fields appear in the index signature; the SDK and CLI
@@ -38,6 +44,113 @@ export interface Run {
   readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;
   readonly [key: string]: unknown;
 }
+
+export type SessionTurnStatus =
+  | "none"
+  | "launching"
+  | "running"
+  | "parking"
+  | "idle"
+  | "suspended"
+  | "failed";
+
+export interface SessionTurn {
+  readonly sessionId: string;
+  readonly turnSeq: number;
+  readonly turnId?: string;
+  readonly status?: SessionTurnStatus;
+  readonly startedAt?: string;
+  readonly endedAt?: string | null;
+  readonly eventCursor?: number;
+}
+
+export interface Session {
+  readonly id: string;
+  readonly sessionId?: string;
+  readonly status: SessionStatus | string;
+  readonly turnSeq?: number;
+  readonly turnStatus?: SessionTurnStatus;
+  /** How long the session may remain idle before it is suspended. */
+  readonly idleTtl?: string;
+  readonly idleTtlMs?: number;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+  readonly idleAt?: string | null;
+  readonly suspendedAt?: string | null;
+  readonly activeDurationMs?: number;
+  readonly lastTurnDurationMs?: number;
+  readonly retainedStorageBytes?: number;
+  readonly usage?: UsageSummary;
+  readonly costUsd?: number;
+  readonly errorMessage?: string | null;
+  readonly [key: string]: unknown;
+}
+
+export interface SessionSummary {
+  readonly id: string;
+  readonly sessionId?: string;
+  readonly status: SessionStatus | string;
+  readonly turnSeq?: number;
+  /** How long the session may remain idle before it is suspended. */
+  readonly idleTtl?: string;
+  readonly idleTtlMs?: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly idleAt?: string | null;
+  readonly suspendedAt?: string | null;
+  readonly activeDurationMs?: number;
+  readonly retainedStorageBytes?: number;
+  readonly costUsd?: number;
+}
+
+export interface SessionListQuery {
+  readonly status?: string;
+  readonly since?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface SessionListPage {
+  readonly sessions: readonly SessionSummary[];
+  readonly nextCursor?: string;
+}
+
+export interface SessionRetentionPolicy {
+  /** How long the session may remain idle before it is suspended. */
+  readonly idleTtl?: string;
+}
+
+export type SessionSubmission = Omit<PlatformSubmission, "prompt"> & {
+  readonly prompt?: readonly string[];
+};
+
+export type SessionCreateRequest = Omit<
+  PlatformRunSubmissionInput,
+  "idempotencyKey" | "submission"
+> & {
+  readonly submission: SessionSubmission;
+  readonly input?: string | readonly string[];
+  readonly retention?: SessionRetentionPolicy;
+};
+
+export interface SessionMessageRequest {
+  readonly input: string | readonly string[];
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface SessionMessageAccepted {
+  readonly session: Session;
+  readonly turn: SessionTurn;
+  readonly eventCursor?: number;
+}
+
+export interface SessionStateChangeAccepted {
+  readonly session: Session;
+  readonly turn?: SessionTurn;
+  readonly eventCursor?: number;
+}
+
+export type SessionEvent = import("./event-envelope.js").AexEvent;
 
 export interface UsageSummary {
   readonly inputTokens?: number;

@@ -33,7 +33,7 @@ export default defineConfig({
     // Unbounded parallelism multiplies disk usage and piles concurrent
     // live-run spend + managed runtime pressure, so default local runs cap at
     // 2 files at once. CI can raise AEX_USER_TEST_MAX_WORKERS after selecting
-    // one artifact tarball/version for all workers.
+    // one artifact tarball/version for all parallel file slots.
     fileParallelism: true,
     maxWorkers,
     minWorkers: 1,

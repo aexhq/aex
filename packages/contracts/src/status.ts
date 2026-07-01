@@ -7,6 +7,12 @@ export const RUN_STATUSES = [
   "provider_running",
   "provider_idle",
   "provider_rescheduled",
+  "idle",
+  "suspending",
+  "suspended",
+  "deleting",
+  "deleted",
+  "expired",
   "cancelling",
   "capturing_outputs",
   "cleaning_up",
@@ -18,6 +24,20 @@ export const RUN_STATUSES = [
 ] as const;
 
 export type RunStatus = typeof RUN_STATUSES[number];
+
+export const SESSION_STATUSES = [
+  "creating",
+  "running",
+  "idle",
+  "suspending",
+  "suspended",
+  "cancelling",
+  "deleting",
+  "deleted",
+  "error"
+] as const;
+
+export type SessionStatus = typeof SESSION_STATUSES[number];
 
 export type RunStatusKind = "active" | "terminal";
 

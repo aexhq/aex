@@ -97,7 +97,6 @@ const RESERVED = new Set([
   "submission",
   "runtimeSize",
   "timeout",
-  "postHook",
   "parentRunId",
   "webhook",
   "limits",

@@ -4,6 +4,25 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.33.0
+
+### Added
+
+- Added the session-first SDK surface: `Aex`, `openSession()`, `sessions`,
+  `chat`, `SessionHandle`, and one-shot `run({ message })` convenience on top of
+  resumable sessions.
+- Added public session contract types and `/api/sessions` operation helpers for
+  create, open, list, message, events, outputs, suspend, resume, cancel, and
+  delete.
+
+### Changed (breaking)
+
+- `AgentExecutor.run()` now opens a resumable session and treats the returned
+  `runId` as the session id. Use `submit()` plus `wait()` / `stream()` when a
+  low-level run-record workflow is required.
+- Removed the public `postHook` submission option; validation or repair should
+  be expressed as a follow-up session turn instead of an after-run hook.
+
 ## 0.32.0
 
 ### Changed (breaking)

@@ -448,84 +448,13 @@ describe("submission parser - outputMode", () => {
   });
 });
 
-describe("submission parser - postHook", () => {
-  it("accepts postHook.command and applies defaults", () => {
-    const parsed = parseRunSubmissionRequest({
-      ...baseRequest(),
-      postHook: { command: "bun test" }
-    });
-    expect(parsed.postHook).toEqual({
-      command: "bun test",
-      timeoutMs: 300_000,
-      maxTurns: 10,
-      maxChars: null
-    });
-  });
-
-  it("omits postHook when command is empty", () => {
-    const parsed = parseRunSubmissionRequest({
-      ...baseRequest(),
-      postHook: { command: "   " }
-    });
-    expect(parsed.postHook).toBeUndefined();
-  });
-
-  it("accepts timeout, maxTurns, and maxChars", () => {
-    const parsed = parseRunSubmissionRequest({
-      ...baseRequest(),
-      postHook: {
-        command: "npm run verify",
-        timeout: "30s",
-        maxTurns: 2,
-        maxChars: 4096
-      }
-    });
-    expect(parsed.postHook).toEqual({
-      command: "npm run verify",
-      timeoutMs: 30_000,
-      maxTurns: 2,
-      maxChars: 4096
-    });
-  });
-
-  it("accepts maxChars null as an explicit unbounded output budget", () => {
-    const parsed = parseRunSubmissionRequest({
-      ...baseRequest(),
-      postHook: {
-        command: "npm test",
-        maxChars: null
-      }
-    });
-    expect(parsed.postHook?.maxChars).toBeNull();
-  });
-
-  it("rejects unknown nested fields", () => {
+describe("submission parser - removed postHook", () => {
+  it("rejects postHook on the public submission surface", () => {
     expect(() =>
       parseRunSubmissionRequest({
         ...baseRequest(),
-        postHook: { command: "npm test", env: { CI: "1" } }
+        postHook: { command: "bun test" }
       })
-    ).toThrow(/submission\.postHook\.env is not an allowed field/);
-  });
-
-  it("rejects invalid postHook budgets", () => {
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseRequest(),
-        postHook: { command: "npm test", timeout: "0ms" }
-      })
-    ).toThrow(/postHook\.timeout must be greater than 0ms/);
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseRequest(),
-        postHook: { command: "npm test", maxTurns: -1 }
-      })
-    ).toThrow(/postHook\.maxTurns must be a non-negative integer/);
-    expect(() =>
-      parseRunSubmissionRequest({
-        ...baseRequest(),
-        postHook: { command: "npm test", maxChars: 1.5 }
-      })
-    ).toThrow(/postHook\.maxChars must be a non-negative integer/);
+    ).toThrow(/submission\.postHook is not an allowed field/);
   });
 });

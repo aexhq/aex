@@ -357,49 +357,14 @@ describe("run-config — parseRunRequestConfig", () => {
     ).toThrow(/unexpected field: region/);
   });
 
-  it("accepts postHook config and preserves the public wire shape", () => {
-    const config = parseRunRequestConfig({
-      model: "claude-haiku-4-5",
-      prompt: "x",
-      postHook: {
-        command: "bun test",
-        timeout: "2m",
-        maxTurns: 3,
-        maxChars: 1000
-      }
-    });
-    expect(config.postHook).toEqual({
-      command: "bun test",
-      timeout: "2m",
-      maxTurns: 3,
-      maxChars: 1000
-    });
-  });
-
-  it("omits postHook config when command is empty", () => {
-    const config = parseRunRequestConfig({
-      model: "claude-haiku-4-5",
-      prompt: "x",
-      postHook: { command: "" }
-    });
-    expect(config.postHook).toBeUndefined();
-  });
-
-  it("rejects invalid postHook config at the run-config boundary", () => {
+  it("rejects postHook config at the run-config boundary", () => {
     expect(() =>
       parseRunRequestConfig({
         model: "claude-haiku-4-5",
         prompt: "x",
-        postHook: { command: "bun test", maxTurns: -1 }
+        postHook: { command: "bun test" }
       })
-    ).toThrow(/postHook\.maxTurns/);
-    expect(() =>
-      parseRunRequestConfig({
-        model: "claude-haiku-4-5",
-        prompt: "x",
-        postHook: { command: "bun test", extra: true }
-      })
-    ).toThrow(/postHook\.extra/);
+    ).toThrow(/unexpected field: postHook/);
   });
 
   it("rejects removed cleanup config", () => {
@@ -486,14 +451,6 @@ describe("run-config — normaliseRunRequestConfig", () => {
     expect(norm.mcpServerSecrets.map((s) => s.name)).toEqual(["gh"]);
   });
 
-  it("carries postHook through normalisation", () => {
-    const config: RunRequestConfig = {
-      model: "claude-haiku-4-5",
-      prompt: "x",
-      postHook: { command: "bun test", timeout: "1m", maxTurns: 1, maxChars: null }
-    };
-    expect(normaliseRunRequestConfig(config).postHook).toEqual(config.postHook);
-  });
 });
 
 describe("run-config — parseRunSubmissionRequest", () => {

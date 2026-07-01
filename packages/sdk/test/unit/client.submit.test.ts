@@ -383,31 +383,6 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
     expect((body.submission as Record<string, unknown>).model).toBe("gpt-4o-mini");
   });
 
-  it("forwards postHook on the top-level submission wire shape", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      postHook: {
-        command: "bun test",
-        timeout: "2m",
-        maxTurns: 3,
-        maxChars: null
-      },
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "idem-post-hook"
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.postHook).toEqual({
-      command: "bun test",
-      timeout: "2m",
-      maxTurns: 3,
-      maxChars: null
-    });
-  });
-
   it("includes webhook on the top-level request body when supplied", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
@@ -527,21 +502,6 @@ describe("AgentExecutor.submit (flat surface, wire shape)", () => {
 
     const body = calls[0]!.body as Record<string, unknown>;
     expect("limits" in body).toBe(false);
-  });
-
-  it("omits postHook when the command is empty", async () => {
-    const { fetch, calls } = makeStubFetch();
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch });
-    await client.submit({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      postHook: { command: " " },
-      secrets: { apiKeys: { anthropic: "k" } },
-      idempotencyKey: "idem-empty-post-hook"
-    });
-
-    const body = calls[0]!.body as Record<string, unknown>;
-    expect(body.postHook).toBeUndefined();
   });
 
   it("rejects empty prompts", async () => {

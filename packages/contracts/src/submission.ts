@@ -35,11 +35,6 @@ import type {
 } from "./run-config.js";
 import { parseRunTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import {
-  parsePostHook,
-  type PlatformPostHook,
-  type PlatformPostHookInput
-} from "./post-hook.js";
-import {
   assertRunModelMatchesProvider,
   parseRunModel,
   type RunModel
@@ -1437,13 +1432,6 @@ export interface PlatformRunSubmissionRequest {
    */
   readonly timeoutMs?: number;
   /**
-   * Optional post-agent-run verifier. Parsed from the public `postHook`
-   * duration/string shape into fixed runner budgets. The runner executes it
-   * after a successful agent process and sends failures back through the model
-   * for repair until this budget is exhausted.
-   */
-  readonly postHook?: PlatformPostHook;
-  /**
    * Lineage parent (agent-session §9). When present the server admits this
    * run as a CHILD of `parentRunId`: it walks the parent's lineage, enforces
    * the max-subagent-depth + per-root concurrency caps, and persists
@@ -1512,7 +1500,7 @@ export interface RunLimits {
  */
 export type PlatformRunSubmissionInput = Omit<
   PlatformRunSubmissionRequest,
-  "workspaceId" | "provider" | "timeoutMs" | "postHook"
+  "workspaceId" | "provider" | "timeoutMs"
 > & {
   readonly workspaceId?: string;
   readonly provider?: RunProvider;
@@ -1522,7 +1510,6 @@ export type PlatformRunSubmissionInput = Omit<
    * {@link PlatformRunSubmissionRequest.timeoutMs}. Absent ⇒ 1h default.
    */
   readonly timeout?: string;
-  readonly postHook?: PlatformPostHookInput;
 };
 
 export interface ParseRunSubmissionOptions {}
@@ -1539,7 +1526,6 @@ export function parseRunSubmissionRequest(
     "submission",
     "runtimeSize",
     "timeout",
-    "postHook",
     "proxyEndpoints",
     "parentRunId",
     "webhook",
@@ -1572,7 +1558,6 @@ export function parseRunSubmissionRequest(
   const parentRunId = optionalString(value.parentRunId, "submission.parentRunId");
   const webhook = parseRunWebhook(value.webhook);
   const limits = parseRunLimits(value.limits);
-  const postHook = parsePostHook(value.postHook, "submission.postHook");
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
   enforceCredentialSecretPolicy(secrets, provider, {
@@ -1616,7 +1601,6 @@ export function parseRunSubmissionRequest(
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(postHook !== undefined ? { postHook } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
     ...(parentRunId !== undefined ? { parentRunId } : {}),
     ...(webhook !== undefined ? { webhook } : {}),

@@ -8,7 +8,8 @@ aex is an agent execution platform for launching autonomous agents from a simple
 
 The package ships:
 
-- `AgentExecutor` for submit, run, wait, stream, inspect, download, cancel, and delete.
+- `Aex` / `AgentExecutor` for sessions, one-shot runs, inspect, download, cancel, and delete.
+- `sessions` / `openSession()` for durable, resumable agent sessions.
 - Typed run primitives: `Models`, `Providers`, `RuntimeSizes`, `Skill`, `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, whoami, and skills operations.
 
@@ -27,56 +28,53 @@ export AEX_API_TOKEN="<your-aex-token>"
 export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
-## First Run
+## First Session
 
 ```ts
-import { AgentExecutor, Models } from "@aexhq/sdk";
+import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
-// run() submits, waits for the run to settle, and returns the result —
-// no manual poll loop. `provider` is derived from the model.
-const { text, ok } = await aex.run({
+const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
-  prompt: "Summarize this repo."
+  system: "You are a concise engineering assistant.",
+  runtime: Sizes.SHARED_0_25X_1GB,
+  // Default is "3m"; set it explicitly when you want a different idle window.
+  overrides: { idleTtl: "3m" },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-console.log(ok, text);
+const first = await session.send("Summarize this repo.").done();
+console.log(first.status, first.text);
+
+const resumed = await aex.openSession(session.id);
+await resumed.send("Continue with the follow-up validation.").done();
 ```
 
-Need the run id, live events, or downloads? Use `submit` + `stream` + `wait`:
+Need a one-shot convenience? `run()` opens a session, sends `message` as one
+turn, and returns the collected result. The returned `runId` is the session id,
+so it can be resumed later with `openSession(runId)`.
 
 ```ts
-const runId = await aex.submit({
+const result = await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } },
-  prompt: "Write the report and save outputs."
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
+  message: "Write the report and save outputs."
 });
 
-for await (const event of aex.stream(runId)) {
-  console.log(event.type);
-}
-
-const run = await aex.wait(runId);
-console.log(run.status);
-
-await aex.download(runId, { to: "./run.zip" });
+console.log(result.runId, result.status, result.text);
 ```
 
-For multiple providers (e.g. subagents on a different model family), include
-each BYOK key in `secrets.apiKeys`:
+For multiple providers, include each BYOK key in `apiKeys`:
 
 ```ts
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
-  secrets: {
-    apiKeys: {
-      anthropic: process.env.ANTHROPIC_API_KEY!,
-      openai: process.env.OPENAI_API_KEY!
-    }
+  apiKeys: {
+    anthropic: process.env.ANTHROPIC_API_KEY!,
+    openai: process.env.OPENAI_API_KEY!
   },
-  prompt: "Delegate research to a subagent."
+  message: "Delegate research to a subagent."
 });
 ```
 
@@ -144,7 +142,7 @@ finds output files across runs and returns references (no bytes) you then
 
 ## Feature Areas
 
-- **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, optional notebook tools, and post-hook repair.
+- **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search defaults, and optional notebook tools.
 - **Durable infrastructure:** run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition:** skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
 - **Subagents:** typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.

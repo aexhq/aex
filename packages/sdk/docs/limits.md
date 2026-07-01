@@ -4,8 +4,9 @@ title: Limits
 
 # Limits
 
-aex runs autonomous agents on the hosted managed runtime. The SDK and CLI submit
-runs, stream events, capture outputs, and expose auth-gated reads and downloads.
+aex runs autonomous agents on the hosted managed runtime. The SDK opens durable
+sessions, sends turns, streams events, captures outputs, and exposes auth-gated
+reads and downloads.
 
 For what the product supports, see [Features](https://aex.dev/docs/features/).
 For the current provider/model set, see the generated
@@ -31,7 +32,7 @@ For the current provider/model set, see the generated
 | Proxy endpoints | The proxy enforces declared host/path/method/auth policy for calls routed through it. Upstream side effects and data handling remain with the upstream service and customer. |
 | Outputs | Captured outputs, events, and metadata are stored under the run record and downloaded through auth-gated routes. Output content is customer content. |
 | Human review | Runs execute after submission. Cancellation is available, but aex does not pause a run for platform-mediated approval or interactive clarification. |
-| Agent identity | The durable product primitive is the run record. Persistent agent profiles, stateful memory, reusable sessions, and saved agent definitions are out of scope. |
+| Sessions | The durable product primitive is the session/run record. Sessions can be resumed by id and auto-suspend after the configured idle window; persistent named agent profiles and saved agent definitions are out of scope. |
 | Deployment | The supported product is the hosted aex service plus the SDK and CLI. Alternate `baseUrl` values are for local, staging, or hosted aex API planes, not a self-host product promise. |
 | Cost | BYOK provider-token charges accrue to the customer's provider account. aex records report-only telemetry for runtime, storage, and proxy usage; free trials, billing-grade invoices, and public pricing documents are not shipped unless documented later. |
 

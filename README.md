@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, background command, and post-hook repair tools.
+- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, notebook, web fetch/search, and background command tools.
 - **Durable infrastructure.** Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
@@ -28,26 +28,44 @@ export AEX_API_TOKEN="<your-aex-token>"
 export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
-## First Run
+## First Session
 
 ```ts
-import { AgentExecutor, Models } from "@aexhq/sdk";
+import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new AgentExecutor({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
 
-const runId = await aex.submit({
+const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
-  prompt: "Write a short report and save it as a file.",
-  secrets: { apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! } }
+  system: "You are a concise engineering assistant.",
+  runtime: Sizes.SHARED_0_25X_1GB,
+  overrides: { idleTtl: "3m" },
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-for await (const event of aex.stream(runId)) console.log(event.type);
+const first = await session.send("Write a short report and save it as a file.").done();
+console.log(first.text);
 
-await aex.wait(runId);
-await aex.download(runId, { to: "./run.zip" });
+// Later, even in another process:
+const resumed = await aex.openSession(session.id);
+await resumed.send("Now run the validation command and summarize the result.").done();
 ```
 
-Same shape from the bundled CLI:
+For one-shot convenience, `run()` opens a resumable session, sends one message,
+and returns the collected turn:
+
+```ts
+const result = await aex.run({
+  model: Models.CLAUDE_HAIKU_4_5,
+  message: "Summarize this repo.",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+
+console.log(result.runId); // session id; pass to openSession(...) to continue
+console.log(result.text);
+```
+
+The bundled CLI keeps the familiar one-shot command:
 
 ```bash
 aex run \

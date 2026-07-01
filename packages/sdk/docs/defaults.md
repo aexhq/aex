@@ -23,8 +23,6 @@ For the hard ceilings and who can raise them, see
 | --- | --- | --- | --- |
 | `timeout` (run deadline) | 1 hour | Per-run via `options.timeout` (e.g. `"30m"`, `"2h"`), clamped to the run-timeout floor/ceiling. | `RUN_DEFAULT_TIMEOUT_MS` |
 | `runtimeSize` (machine size) | `shared-0.25x-1gb` — 0.25 vCPU, 1 GB | Per-run via `options.runtimeSize` (use `RuntimeSizes.*` in TypeScript). | `RUN_DEFAULT_RUNTIME_SIZE` |
-| `postHook.timeout` | 60 minutes | Per-run via the hook's `timeoutMs`. | `RUN_DEFAULT_POST_HOOK_TIMEOUT_MS` |
-| `postHook.maxTurns` (repair budget) | 10 turns | Per-run via the hook's `maxTurns`. | `RUN_DEFAULT_POST_HOOK_MAX_TURNS` |
 | `limits.maxSpendUsd` (per-run spend cap) | None — no per-run spend cap (the run is still bounded by its `timeout` and any workspace-level cap) | Per-run via `options.limits.maxSpendUsd` (a positive USD amount); the run is stopped once its spend would exceed the cap. | — |
 
 ## Tools

@@ -90,7 +90,6 @@
       "./status.js",
       "./submission.js",
       "./runtime-sizes.js",
-      "./post-hook.js",
       "./runner-event.js",
       "./event-envelope.js",
       "./connection-ticket.js",

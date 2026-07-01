@@ -4,7 +4,6 @@ export * from "./models.js";
 export * from "./status.js";
 export * from "./submission.js";
 export * from "./runtime-sizes.js";
-export * from "./post-hook.js";
 export * from "./runner-event.js";
 export * from "./event-envelope.js";
 export * from "./connection-ticket.js";

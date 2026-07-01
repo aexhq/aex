@@ -27,6 +27,14 @@ import type {
   RunEvent,
   RunListPage,
   RunListQuery,
+  Session,
+  SessionCreateRequest,
+  SessionEvent,
+  SessionListPage,
+  SessionListQuery,
+  SessionMessageAccepted,
+  SessionMessageRequest,
+  SessionStateChangeAccepted,
   RunWebhookDelivery,
   SecretRecord,
   SecretReveal,
@@ -86,6 +94,154 @@ export async function listRuns(http: HttpClient, query?: RunListQuery): Promise<
   if (query?.limit !== undefined) params.limit = String(query.limit);
   if (query?.cursor !== undefined) params.cursor = query.cursor;
   return http.request<RunListPage>("/api/runs", {}, params);
+}
+
+export interface IdempotencyOptions {
+  readonly idempotencyKey?: string;
+}
+
+function idempotencyHeaders(options?: IdempotencyOptions): HeadersInit | undefined {
+  return options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : undefined;
+}
+
+export async function createSession(
+  http: HttpClient,
+  request: SessionCreateRequest,
+  options?: IdempotencyOptions
+): Promise<Session> {
+  const headers = idempotencyHeaders(options);
+  const result = await http.request<Session | { readonly session: Session }>("/api/sessions", {
+    method: "POST",
+    ...(headers ? { headers } : {}),
+    body: JSON.stringify(request)
+  });
+  return unwrapSession(result);
+}
+
+export async function getSession(http: HttpClient, sessionId: string): Promise<Session> {
+  const result = await http.request<Session | { readonly session: Session }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`
+  );
+  return unwrapSession(result);
+}
+
+export async function listSessions(
+  http: HttpClient,
+  query?: SessionListQuery
+): Promise<SessionListPage> {
+  const params: Record<string, string> = {};
+  if (query?.status !== undefined) params.status = query.status;
+  if (query?.since !== undefined) params.since = query.since;
+  if (query?.limit !== undefined) params.limit = String(query.limit);
+  if (query?.cursor !== undefined) params.cursor = query.cursor;
+  return http.request<SessionListPage>("/api/sessions", {}, params);
+}
+
+export async function sendSessionMessage(
+  http: HttpClient,
+  sessionId: string,
+  request: SessionMessageRequest,
+  options?: IdempotencyOptions
+): Promise<SessionMessageAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionMessageAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      method: "POST",
+      ...(headers ? { headers } : {}),
+      body: JSON.stringify(request)
+    }
+  );
+}
+
+export async function suspendSession(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/suspend`,
+    { method: "POST", ...(headers ? { headers } : {}) }
+  );
+}
+
+export async function cancelSession(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    { method: "POST", ...(headers ? { headers } : {}) }
+  );
+}
+
+export async function resumeSession(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/resume`,
+    { method: "POST", ...(headers ? { headers } : {}) }
+  );
+}
+
+export async function deleteSession(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted | void> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted | void>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE", ...(headers ? { headers } : {}) }
+  );
+}
+
+export async function listSessionEvents(
+  http: HttpClient,
+  sessionId: string
+): Promise<readonly SessionEvent[]> {
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
+  const all: SessionEvent[] = [];
+  let cursor: number | undefined;
+  for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
+    const query = cursor !== undefined ? { cursor: String(cursor) } : {};
+    const result = await http.request<{ readonly events: readonly SessionEvent[]; readonly nextCursor?: number | null }>(
+      path,
+      {},
+      query
+    );
+    all.push(...result.events);
+    if (typeof result.nextCursor !== "number") break;
+    cursor = result.nextCursor;
+  }
+  return all;
+}
+
+export async function listSessionOutputs(
+  http: HttpClient,
+  sessionId: string,
+  query?: OutputQuery
+): Promise<readonly Output[]> {
+  const result = await http.request<{ readonly outputs: readonly Output[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/outputs`
+  );
+  return query === undefined ? result.outputs : filterOutputs(result.outputs, query);
+}
+
+export async function getSessionCoordinatorTicket(
+  http: HttpClient,
+  sessionId: string
+): Promise<CoordinatorTicket> {
+  return http.request<CoordinatorTicket>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/events/ticket`,
+    { method: "POST" }
+  );
 }
 
 // Bound the transparent pager: the read route caps each page at 1000, so this
@@ -1087,6 +1243,13 @@ function unwrapSkill(result: { readonly skill: Skill } | Skill): Skill {
 
 function hasRun(value: Run | { readonly run: Run }): value is { readonly run: Run } {
   return Boolean(value && typeof value === "object" && "run" in value);
+}
+
+function unwrapSession(result: { readonly session: Session } | Session): Session {
+  if (result && typeof result === "object" && "session" in result) {
+    return (result as { readonly session: Session }).session;
+  }
+  return result as Session;
 }
 
 // ===========================================================================

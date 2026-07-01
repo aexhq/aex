@@ -5,6 +5,7 @@ import {
   RunConfigValidationError,
   RunStateError,
   SecretString,
+  customName,
   isRunSettled,
   operations,
   providersForModel,
@@ -32,6 +33,14 @@ import {
   type OutputSearchQuery,
   type OutputSearchHit,
   type OutputSearchPage,
+  type Session,
+  type SessionCreateRequest,
+  type SessionEvent,
+  type SessionListPage,
+  type SessionListQuery,
+  type SessionRetentionPolicy,
+  type SessionStateChangeAccepted,
+  type SessionTurn,
   type PlatformEnvironmentInput,
   type PlatformRunSubmissionInput,
   type PlatformSubmission,
@@ -39,7 +48,6 @@ import {
   type PlatformMcpServerSecret,
   type PlatformProxyEndpoint,
   type PlatformProxyEndpointAuth,
-  type PlatformPostHookInput,
   type Run,
   type RunModel,
   type RunEvent,
@@ -58,6 +66,7 @@ import {
   type Skill as SkillRecord,
   type SkillRef,
   type ToolRef,
+  type WebSocketFactory,
   type WhoAmI,
   TERMINAL_RUN_STATUSES
 } from "@aexhq/contracts";
@@ -174,12 +183,6 @@ export interface SubmitOptions {
    * [1m, 6h]; omit for the 1h default. Applies to both runtimes.
    */
   readonly timeout?: string;
-  /**
-   * Command to run after the agent process exits successfully. A non-zero exit
-   * or timeout is sent back to the model as a repair prompt until `maxTurns`
-   * is exhausted. Empty commands are treated as omitted.
-   */
-  readonly postHook?: PlatformPostHookInput;
   readonly proxyEndpoints?: readonly ProxyEndpoint[];
   /**
    * Output capture policy for the run's output files.
@@ -248,25 +251,30 @@ export interface SubmitOptions {
    * shape + positivity are validated client-side.
    */
   readonly limits?: RunLimits;
-  readonly signal?: AbortSignal;
 }
 
 /**
  * The settle-consistent result of {@link AgentExecutor.run} / `runAndCollect`:
- * the terminal run record plus its settle-bracketed events, decoded trace,
- * assistant text, and captured outputs — everything a "do it and give me the
- * result" caller needs without hand-rolling a poll loop.
+ * the one-shot session record plus its events, decoded trace, assistant text,
+ * and captured outputs — everything a "do it and give me the result" caller
+ * needs without hand-rolling a session/message/stream loop.
  */
 export interface RunResult {
   readonly runId: string;
-  /** The full terminal run record (status, costTelemetry, timings). */
+  /** The session id used as the run-compatible handle. */
+  readonly sessionId?: string;
+  /** Run-compatible view of the underlying session record. */
   readonly run: Run;
+  /** The underlying resumable session record. */
+  readonly session?: Session;
+  /** The turn accepted for this one-shot run. */
+  readonly turn?: SessionTurn;
   readonly status: string;
-  /** `true` when `status === "succeeded"`. */
+  /** `true` when the one-shot turn parked the session cleanly (`idle` or `suspended`). */
   readonly ok: boolean;
-  /** The assistant's final text (decoded over the settled events). */
+  /** The assistant's final text. */
   readonly text: string;
-  /** The settle-bracketed event stream (RUN_STARTED … terminal). */
+  /** The session turn event stream. */
   readonly events: readonly RunEvent[];
   /** Decoded view of the events: tool calls + usage + assistant text. */
   readonly trace: RunTrace;
@@ -282,11 +290,306 @@ export interface RunResult {
 
 /** Options for {@link AgentExecutor.run} / `runAndCollect`. */
 export interface RunCollectOptions {
-  /** Overall wait budget (ms) for the run to reach a terminal record. */
+  /** Overall wait budget (ms) for the one-shot session turn to park. */
   readonly timeoutMs?: number;
-  readonly signal?: AbortSignal;
+  readonly webSocketFactory?: WebSocketFactory;
+  readonly idleTimeoutMs?: number;
+  readonly pingIntervalMs?: number;
   /** Throw a {@link RunStateError} when the run does not succeed. Default false. */
   readonly throwOnFailure?: boolean;
+}
+
+export type SessionInput = string | readonly string[];
+export type ChatInput = SessionInput;
+
+export interface SessionEnvironmentOptions extends Omit<PlatformEnvironmentInput, "envVars"> {
+  readonly variables?: Readonly<Record<string, string>>;
+  readonly secrets?: Readonly<Record<string, Secret>>;
+}
+
+export interface SessionOverrides {
+  readonly idleTtl?: string;
+  readonly timeout?: string;
+  readonly maxSpendUsd?: number;
+}
+
+export interface SessionCreateOptions extends Omit<
+  SubmitOptions,
+  | "prompt"
+  | "webhook"
+  | "environment"
+  | "secretEnv"
+  | "secrets"
+  | "runtimeSize"
+  | "parentRunId"
+  | "limits"
+  | "timeout"
+> {
+  readonly apiKeys?: Partial<Record<RunProvider, string>>;
+  readonly environment?: SessionEnvironmentOptions;
+  readonly runtime?: RuntimeSize;
+  readonly overrides?: SessionOverrides;
+}
+
+export type ChatCreateOptions = SessionCreateOptions;
+
+export interface SessionSendOptions {
+  readonly idempotencyKey?: string;
+  readonly from?: number;
+  readonly webSocketFactory?: WebSocketFactory;
+  readonly idleTimeoutMs?: number;
+  readonly pingIntervalMs?: number;
+}
+
+interface InternalSessionSendOptions extends SessionSendOptions {
+  readonly signal?: AbortSignal;
+}
+
+export type ChatSendOptions = SessionSendOptions;
+
+export interface SessionRunOptions extends SessionCreateOptions {
+  readonly message: SessionInput;
+  readonly deleteAfter?: boolean;
+  readonly messageIdempotencyKey?: string;
+  readonly stream?: Omit<SessionSendOptions, "idempotencyKey">;
+}
+
+export type ChatRunOptions = SessionRunOptions;
+
+export interface SessionTurnResult {
+  readonly sessionId: string;
+  readonly session: Session;
+  readonly turn: SessionTurn;
+  readonly status: string;
+  readonly text: string;
+  readonly events: readonly SessionEvent[];
+  readonly outputs: readonly Output[];
+}
+
+export interface ChatTurnResult extends SessionTurnResult {}
+export interface SessionRunResult extends SessionTurnResult {}
+export interface ChatRunResult extends SessionRunResult {}
+
+export class SessionTurnStream implements AsyncIterable<SessionEvent> {
+  readonly #run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>;
+  #done: Promise<SessionTurnResult> | undefined;
+
+  constructor(run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>) {
+    this.#run = run;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
+    return this.#run();
+  }
+
+  done(): Promise<SessionTurnResult> {
+    this.#done ??= (async () => {
+      const iterator = this.#run();
+      let next = await iterator.next();
+      while (!next.done) {
+        next = await iterator.next();
+      }
+      return next.value;
+    })();
+    return this.#done;
+  }
+}
+
+export const ChatTurnStream = SessionTurnStream;
+export type ChatTurnStream = SessionTurnStream;
+
+type InternalSessionSender = (input: SessionInput, options?: InternalSessionSendOptions) => SessionTurnStream;
+const internalSessionSenders = new WeakMap<SessionHandle, InternalSessionSender>();
+
+function sendSessionInternal(
+  session: SessionHandle,
+  input: SessionInput,
+  options: InternalSessionSendOptions = {}
+): SessionTurnStream {
+  const sender = internalSessionSenders.get(session);
+  if (sender === undefined) {
+    throw new Error("Aex: invalid session handle");
+  }
+  return sender(normaliseSessionInput(input, "SessionHandle.send", "input"), options);
+}
+
+export class SessionHandle {
+  readonly #http: HttpClient;
+  #session: Session;
+
+  constructor(http: HttpClient, session: Session) {
+    this.#http = http;
+    this.#session = session;
+    internalSessionSenders.set(this, (input, options = {}) => new SessionTurnStream(() => this.#send(input, options)));
+  }
+
+  get id(): string {
+    return this.#session.sessionId ?? this.#session.id;
+  }
+
+  get record(): Session {
+    return this.#session;
+  }
+
+  send(input: SessionInput, options: SessionSendOptions = {}): SessionTurnStream {
+    assertNoSessionSendSignal(options, "SessionHandle.send");
+    return sendSessionInternal(this, input, options);
+  }
+
+  async *#send(input: SessionInput, options: InternalSessionSendOptions): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+    const accepted = await operations.sendSessionMessage(
+      this.#http,
+      this.id,
+      { input },
+      { idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey() }
+    );
+    this.#session = accepted.session;
+    const turn = accepted.turn;
+    const events: SessionEvent[] = [];
+    for await (const event of streamSessionTurnEvents(this.#http, this.id, turn, {
+      ...options,
+      from: options.from ?? accepted.eventCursor ?? turn.eventCursor ?? 0
+    })) {
+      events.push(event);
+      yield event;
+    }
+    this.#session = await operations.getSession(this.#http, this.id).catch(() => this.#session);
+    const outputs = await operations.listSessionOutputs(this.#http, this.id).catch(() => [] as readonly Output[]);
+    return {
+      sessionId: this.id,
+      session: this.#session,
+      turn,
+      status: this.#session.status,
+      text: textOf(events as unknown as readonly RunEvent[]),
+      events,
+      outputs
+    };
+  }
+
+  async suspend(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
+    const accepted = await operations.suspendSession(this.#http, this.id, options);
+    this.#session = accepted.session;
+    return accepted;
+  }
+
+  async cancel(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
+    const accepted = await operations.cancelSession(this.#http, this.id, options);
+    this.#session = accepted.session;
+    return accepted;
+  }
+
+  async resume(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
+    const accepted = await operations.resumeSession(this.#http, this.id, options);
+    this.#session = accepted.session;
+    return accepted;
+  }
+
+  async delete(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<void> {
+    const accepted = await operations.deleteSession(this.#http, this.id, options);
+    if (accepted && typeof accepted === "object" && "session" in accepted) {
+      this.#session = accepted.session;
+    }
+  }
+
+  listEvents(): Promise<readonly SessionEvent[]> {
+    return operations.listSessionEvents(this.#http, this.id);
+  }
+
+  listOutputs(query?: OutputQuery): Promise<readonly Output[]> {
+    return operations.listSessionOutputs(this.#http, this.id, query);
+  }
+}
+
+export const ChatSession = SessionHandle;
+export type ChatSession = SessionHandle;
+
+export class SessionClient {
+  readonly #http: HttpClient;
+  readonly #buildCreateRequest: (options: SessionCreateOptions) => Promise<SessionCreateRequest>;
+
+  constructor(
+    http: HttpClient,
+    buildCreateRequest: (options: SessionCreateOptions) => Promise<SessionCreateRequest>
+  ) {
+    this.#http = http;
+    this.#buildCreateRequest = buildCreateRequest;
+  }
+
+  async create(options: SessionCreateOptions): Promise<SessionHandle> {
+    const request = await this.#buildCreateRequest(options);
+    const session = await operations.createSession(
+      this.#http,
+      request,
+      { idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey() }
+    );
+    return new SessionHandle(this.#http, session);
+  }
+
+  async open(sessionId: string): Promise<SessionHandle> {
+    return new SessionHandle(this.#http, await operations.getSession(this.#http, sessionId));
+  }
+
+  get(sessionId: string): Promise<Session> {
+    return operations.getSession(this.#http, sessionId);
+  }
+
+  list(query?: SessionListQuery): Promise<SessionListPage> {
+    return operations.listSessions(this.#http, query);
+  }
+
+  async run(options: SessionRunOptions): Promise<SessionRunResult> {
+    const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
+    assertNoLegacySessionFields(options, "Aex.sessions.run");
+    const input = normaliseSessionInput(message, "Aex.sessions.run", "message");
+    const session = await this.create(createOptions);
+    const result = await session.send(input, {
+      ...(stream ?? {}),
+      idempotencyKey: messageIdempotencyKey ?? generateIdempotencyKey()
+    }).done();
+    if (deleteAfter) {
+      await session.delete();
+    }
+    return result;
+  }
+}
+
+export const ChatClient = SessionClient;
+export type ChatClient = SessionClient;
+
+async function* streamSessionTurnEvents(
+  http: HttpClient,
+  sessionId: string,
+  turn: SessionTurn,
+  options: InternalSessionSendOptions
+): AsyncGenerator<SessionEvent, void, void> {
+  const first = await operations.getSessionCoordinatorTicket(http, sessionId);
+  yield* streamCoordinatorEvents({
+    wsUrl: first.wsUrl,
+    from: options.from ?? 0,
+    fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, sessionId)).ticket,
+    isTerminal: (event) => isSessionTurnTerminalEvent(event, turn.turnSeq),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.webSocketFactory ? { webSocketFactory: options.webSocketFactory } : {}),
+    ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
+    ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {})
+  });
+}
+
+function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
+  const name = customName(event);
+  if (
+    name !== "aex.session.idle" &&
+    name !== "aex.session.suspended" &&
+    name !== "aex.session.error"
+  ) {
+    return false;
+  }
+  const value = event.data.value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return true;
+  }
+  const eventTurnSeq = (value as { readonly turnSeq?: unknown }).turnSeq;
+  return typeof eventTurnSeq !== "number" || eventTurnSeq === turnSeq;
 }
 
 export interface StreamEventsOptions {
@@ -540,6 +843,8 @@ export class AgentExecutor {
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
   readonly secrets: SecretsClient;
+  readonly sessions: SessionClient;
+  readonly chat: ChatClient;
 
   constructor(options: AgentExecutorOptions) {
     if (!options.apiToken) {
@@ -561,6 +866,8 @@ export class AgentExecutor {
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
+    this.chat = new ChatClient(this.#http, (options) => this.#buildSessionCreateRequest(options));
+    this.sessions = this.chat;
   }
 
   /**
@@ -594,60 +901,83 @@ export class AgentExecutor {
   }
 
   /**
-   * Submit a run, wait until its RECORD is terminal, and collect the full
-   * {@link RunResult} — the settle-consistent "do it and give me the result"
-   * primitive. Folds the poll loop every consumer hand-rolled into one call:
-   * submit → {@link waitForRun} (polls `getRun`, NOT the earlier RUN_FINISHED
-   * event) → poll `listEvents` until the snapshot is settle-bracketed
-   * (RUN_STARTED + a terminal event present) → `listOutputs` → decode the trace
-   * and assistant text. On resolve, `getRun`/`listOutputs` are guaranteed
-   * consistent.
-   *
-   * Uses polling (portable across backends), NOT the coordinator WebSocket. By
-   * default a failed run resolves with `ok: false` and a populated `error`; pass
-   * `{ throwOnFailure: true }` to throw instead. For live events prefer `submit`
-   * + `streamEnvelopes(runId, { settleConsistent: true })`.
+   * Convenience one-shot on top of the canonical session API:
+   * open a session, send `message` as the first turn, stream until the session
+   * parks (`idle` / `suspended` / `error`), then return the collected text,
+   * events, outputs, and session record. The returned `runId` is the session id,
+   * so callers can resume later with `openSession(runId)`.
    */
-  async run(options: SubmitOptions, opts: RunCollectOptions = {}): Promise<RunResult> {
-    const signal = opts.signal ?? options.signal;
-    const runId = await this.submit(options);
-    const run = await this.waitForRun(runId, {
-      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
-      ...(signal ? { signal } : {})
-    });
-    const events = await this.#collectSettledEvents(runId, signal);
-    const outputs = await this.listOutputs(runId);
-    const ok = run.status === "succeeded";
-    const costUsd = run.costTelemetry?.billedCostUsd;
-    const errorMessage = typeof run.errorMessage === "string" && run.errorMessage ? run.errorMessage : undefined;
-    const result: RunResult = {
-      runId,
-      run,
-      status: run.status,
-      ok,
-      text: textOf(events),
-      events,
-      trace: summarizeRunTrace(events),
-      outputs,
-      ...(run.usage ? { usage: run.usage } : {}),
-      ...(typeof costUsd === "number" ? { costUsd } : {}),
-      ...(!ok && errorMessage ? { error: errorMessage } : {})
-    };
-    if (opts.throwOnFailure && !ok) {
-      throw new RunStateError(
-        `AgentExecutor.run: run ${runId} ended ${run.status}${errorMessage ? `: ${errorMessage}` : ""}`,
-        { runId, status: run.status }
-      );
+  async run(options: SessionRunOptions, opts: RunCollectOptions = {}): Promise<RunResult> {
+    const scopedSignal = scopedAbortSignal(opts.timeoutMs);
+    try {
+      const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
+      assertNoLegacySessionFields(options, "Aex.run");
+      const input = normaliseSessionInput(message, "Aex.run", "message");
+      assertNoSessionSendSignal(stream, "Aex.run stream");
+      const streamOptions: Omit<InternalSessionSendOptions, "idempotencyKey"> = {
+        ...(stream ?? {}),
+        ...(scopedSignal?.signal ? { signal: scopedSignal.signal } : {}),
+        ...(opts.webSocketFactory ? { webSocketFactory: opts.webSocketFactory } : {}),
+        ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
+        ...(opts.pingIntervalMs !== undefined ? { pingIntervalMs: opts.pingIntervalMs } : {})
+      };
+      const session = await this.sessions.create(createOptions);
+      const turnResult = await sendSessionInternal(session, input, {
+        ...streamOptions,
+        idempotencyKey: messageIdempotencyKey ?? generateIdempotencyKey()
+      }).done();
+      if (deleteAfter) {
+        await session.delete();
+      }
+      const runId = turnResult.sessionId;
+      const run = sessionToRun(turnResult.session);
+      const events = turnResult.events as unknown as readonly RunEvent[];
+      const outputs = turnResult.outputs;
+      const ok = turnResult.status === "idle" || turnResult.status === "suspended";
+      const costUsd = typeof turnResult.session.costUsd === "number" ? turnResult.session.costUsd : undefined;
+      const errorMessage = typeof turnResult.session.errorMessage === "string" && turnResult.session.errorMessage ? turnResult.session.errorMessage : undefined;
+      const result: RunResult = {
+        runId,
+        run,
+        sessionId: runId,
+        session: turnResult.session,
+        turn: turnResult.turn,
+        status: turnResult.status,
+        ok,
+        text: turnResult.text,
+        events,
+        trace: summarizeRunTrace(events),
+        outputs,
+        ...(turnResult.session.usage ? { usage: turnResult.session.usage } : {}),
+        ...(typeof costUsd === "number" ? { costUsd } : {}),
+        ...(!ok && errorMessage ? { error: errorMessage } : {})
+      };
+      if (opts.throwOnFailure && !ok) {
+        throw new RunStateError(
+          `AgentExecutor.run: session ${runId} ended ${turnResult.status}${errorMessage ? `: ${errorMessage}` : ""}`,
+          { runId, status: turnResult.status }
+        );
+      }
+      return result;
+    } finally {
+      scopedSignal?.clear();
     }
-    return result;
   }
 
   /**
-   * Explicit, discoverable alias for {@link run}: submit, wait, and collect the
-   * full {@link RunResult} in one call.
+   * Explicit, discoverable alias for {@link run}: open a one-shot session turn
+   * and collect the full {@link RunResult} in one call.
    */
-  runAndCollect(options: SubmitOptions, opts?: RunCollectOptions): Promise<RunResult> {
+  runAndCollect(options: SessionRunOptions, opts?: RunCollectOptions): Promise<RunResult> {
     return this.run(options, opts);
+  }
+
+  openSession(options: SessionCreateOptions): Promise<SessionHandle>;
+  openSession(sessionId: string): Promise<SessionHandle>;
+  openSession(optionsOrId: SessionCreateOptions | string): Promise<SessionHandle> {
+    return typeof optionsOrId === "string"
+      ? this.sessions.open(optionsOrId)
+      : this.sessions.create(optionsOrId);
   }
 
   /**
@@ -698,7 +1028,7 @@ export class AgentExecutor {
     if (!options || typeof options !== "object") {
       throw new RunConfigValidationError("AgentExecutor.submit: options is required");
     }
-    assertNoRemovedSubmitFields(options);
+    assertNoRemovedSubmitFields(options, "AgentExecutor.submit");
     // A model maps to one or more upstream providers (see MODEL_PROVIDER_IDS).
     // `providersForModel` returns the supported providers in priority order, or
     // `[]` for an unknown model string (the model check below then rejects it).
@@ -716,11 +1046,11 @@ export class AgentExecutor {
       );
     }
     const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
-    validateSubmitCredentials(options, provider);
+    validateSubmitCredentials(options, provider, "AgentExecutor.submit");
     if (typeof options.model !== "string" || !options.model) {
       throw new RunConfigValidationError("AgentExecutor.submit: model is required");
     }
-    const prompt = normalisePrompt(options.prompt);
+    const prompt = normalisePrompt(options.prompt, "AgentExecutor.submit", "prompt");
     const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
       splitProxyEndpoints(options.proxyEndpoints ?? []);
     const mergedProxyAuth = mergeProxyEndpointAuth(
@@ -805,7 +1135,6 @@ export class AgentExecutor {
       ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
     };
 
-    const postHook = postHookForWire(options.postHook);
     const request: PlatformRunSubmissionInput = {
       idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey(),
       // Always include `provider` on the wire so dashboard / proxy
@@ -816,7 +1145,6 @@ export class AgentExecutor {
       submission,
       ...(options.runtimeSize ? { runtimeSize: options.runtimeSize } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
-      ...(postHook ? { postHook } : {}),
       ...(options.parentRunId ? { parentRunId: options.parentRunId } : {}),
       // Operational/delivery concern — sibling of idempotencyKey, NOT part of
       // the hashed brief. The idempotency key here is randomly generated, so
@@ -834,6 +1162,100 @@ export class AgentExecutor {
 
     const run = await operations.submitRun(this.#http, request);
     return getSubmittedRunId(run);
+  }
+
+  async #buildSessionCreateRequest(options: SessionCreateOptions): Promise<SessionCreateRequest> {
+    if (!options || typeof options !== "object") {
+      throw new RunConfigValidationError("Aex.openSession: options is required");
+    }
+    assertNoLegacySessionFields(options, "Aex.openSession");
+    const supportedProviders = providersForModel(options.model);
+    if (
+      options.provider &&
+      supportedProviders.length > 0 &&
+      !supportedProviders.includes(options.provider)
+    ) {
+      throw new RunConfigValidationError(
+        `Aex.openSession: provider ${JSON.stringify(options.provider)} is not available for ` +
+          `model ${JSON.stringify(options.model)} (supported: ${supportedProviders.join(", ")})`
+      );
+    }
+    const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
+    validateApiKeys(options.apiKeys, provider, "Aex.openSession");
+    if (typeof options.model !== "string" || !options.model) {
+      throw new RunConfigValidationError("Aex.openSession: model is required");
+    }
+    const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
+      splitProxyEndpoints(options.proxyEndpoints ?? []);
+    const mergedProxyAuth = mergeProxyEndpointAuth(proxyEndpointAuthFromInstances, []);
+    const { declarations: secretEnvDeclarations, values: envSecretValues } =
+      splitSecretEnv(options.environment?.secrets);
+
+    let limits: RunLimits | undefined;
+    try {
+      limits = parseRunLimits(
+        options.overrides?.maxSpendUsd === undefined
+          ? undefined
+          : { maxSpendUsd: options.overrides.maxSpendUsd }
+      );
+    } catch (err) {
+      throw new AexError(
+        "RUN_CONFIG_INVALID",
+        `Aex.openSession: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    const uploader: AssetUploader = (args) => this._uploadAsset(args);
+    const preparedSkills = await prepareSkills(options.skills ?? [], uploader);
+    const preparedTools = await prepareTools(options.tools ?? [], uploader);
+    const preparedAgentsMd = await prepareAgentsMd(options.agentsMd ?? [], uploader);
+    const preparedFiles = await prepareFiles(options.files ?? [], uploader);
+    const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
+      options.mcpServers ?? [],
+      []
+    );
+    const outputCapture = outputsForWire(options.outputs);
+    const environment = sessionEnvironmentForWire(options.environment);
+
+    const submission: SessionCreateRequest["submission"] = {
+      model: options.model,
+      ...(options.system ? { system: options.system } : {}),
+      skills: preparedSkills,
+      tools: [...preparedTools.builtinNames, ...preparedTools.refs] as unknown as readonly ToolRef[],
+      agentsMd: preparedAgentsMd,
+      files: preparedFiles,
+      mcpServers: submissionMcpServers as readonly McpServerRef[],
+      ...(Object.keys(secretEnvDeclarations).length > 0 ? { secretEnv: secretEnvDeclarations } : {}),
+      ...(environment ? { environment: environment as NonNullable<PlatformSubmission["environment"]> } : {}),
+      ...(options.metadata ? { metadata: options.metadata } : {}),
+      ...(outputCapture ? { outputs: outputCapture } : {}),
+      ...(options.includeBuiltinTools !== undefined
+        ? { includeBuiltinTools: options.includeBuiltinTools }
+        : {}),
+      ...(options.outputMode !== undefined ? { outputMode: options.outputMode } : {})
+    };
+
+    const secrets: PlatformInlineSecrets = {
+      ...(options.apiKeys ? { apiKeys: options.apiKeys } : {}),
+      ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
+      ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {}),
+      ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
+    };
+
+    const retention = sessionRetentionForWire(options);
+
+    return {
+      provider,
+      submission,
+      ...(options.runtime ? { runtimeSize: options.runtime } : {}),
+      ...(options.overrides?.timeout ? { timeout: options.overrides.timeout } : {}),
+      ...(limits ? { limits } : {}),
+      retention,
+      secrets,
+      ...(proxyEndpointDeclarations.length > 0
+        ? { proxyEndpoints: proxyEndpointDeclarations }
+        : {})
+    };
   }
 
   getRun(runId: string): Promise<Run> {
@@ -1185,6 +1607,9 @@ export class AgentExecutor {
   }
 }
 
+/** Canonical SDK client name. `AgentExecutor` remains as a compatibility alias. */
+export class Aex extends AgentExecutor {}
+
 // `Run.status` is a loose `string` on the wire shape, so we membership-test
 // against the canonical terminal set rather than re-deriving one (which is how
 // `timed_out` got dropped from the old hardcoded list).
@@ -1192,6 +1617,33 @@ const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 function isTerminal(status: string | undefined): boolean {
   return typeof status === "string" && TERMINAL_STATUSES.has(status);
+}
+
+function sessionToRun(session: Session): Run {
+  const id = session.sessionId ?? session.id;
+  return {
+    id,
+    status: String(session.status),
+    ...(typeof session.workspaceId === "string" ? { workspaceId: session.workspaceId } : {}),
+    ...(typeof session.createdAt === "string" ? { createdAt: session.createdAt } : {}),
+    ...(typeof session.updatedAt === "string" ? { updatedAt: session.updatedAt } : {}),
+    ...(session.errorMessage !== undefined ? { errorMessage: session.errorMessage } : {}),
+    ...(session.usage ? { usage: session.usage } : {})
+  };
+}
+
+function scopedAbortSignal(timeoutMs: number | undefined): { readonly signal: AbortSignal; clear(): void } | undefined {
+  if (timeoutMs === undefined) {
+    return undefined;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(0, timeoutMs));
+  return {
+    signal: controller.signal,
+    clear() {
+      clearTimeout(timer);
+    }
+  };
 }
 
 /** Escape a literal string for safe interpolation into a RegExp. */
@@ -1290,58 +1742,136 @@ function generateIdempotencyKey(): string {
   return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-function normalisePrompt(input: string | readonly string[]): readonly string[] {
+function normalisePrompt(
+  input: string | readonly string[],
+  surface = "AgentExecutor.submit",
+  field = "prompt"
+): readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new RunConfigValidationError("AgentExecutor.submit: prompt must be a non-empty string");
+      throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string`);
     }
     return [input];
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new RunConfigValidationError("AgentExecutor.submit: prompt must be a non-empty string or string array");
+    throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string or string array`);
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new RunConfigValidationError("AgentExecutor.submit: prompt segments must be non-empty strings");
+      throw new RunConfigValidationError(`${surface}: ${field} segments must be non-empty strings`);
     }
   }
   return [...input];
 }
 
-function assertNoRemovedSubmitFields(options: SubmitOptions): void {
+function normaliseSessionInput(
+  input: string | readonly string[],
+  surface: string,
+  field: string
+): string | readonly string[] {
+  if (typeof input === "string") {
+    if (!input) {
+      throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string`);
+    }
+    return input;
+  }
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string or string array`);
+  }
+  for (const segment of input) {
+    if (typeof segment !== "string" || !segment) {
+      throw new RunConfigValidationError(`${surface}: ${field} segments must be non-empty strings`);
+    }
+  }
+  return [...input];
+}
+
+function assertNoRemovedSubmitFields(
+  options: SubmitOptions,
+  surface: string,
+  extraFields: readonly string[] = []
+): void {
   const record = options as unknown as Record<string, unknown>;
-  for (const field of ["credentialMode", "runtime", "region", "apiKey", "credentials"]) {
+  for (const field of ["credentialMode", "runtime", "region", "apiKey", "credentials", "postHook", ...extraFields]) {
     if (Object.prototype.hasOwnProperty.call(record, field)) {
       throw new RunConfigValidationError(
-        `AgentExecutor.submit: ${field} is not a supported option; use the managed path with secrets.apiKeys[provider].`
+        `${surface}: ${field} is not a supported option; use the managed path with secrets.apiKeys[provider].`
       );
     }
   }
   const secrets = record.secrets;
   if (secrets && typeof secrets === "object" && !Array.isArray(secrets) && Object.prototype.hasOwnProperty.call(secrets, "apiKey")) {
     throw new RunConfigValidationError(
-      "AgentExecutor.submit: secrets.apiKey is not supported; use secrets.apiKeys[provider]."
+      `${surface}: secrets.apiKey is not supported; use secrets.apiKeys[provider].`
     );
   }
 }
 
-function validateSubmitCredentials(options: SubmitOptions, provider: RunProvider): void {
+function assertNoLegacySessionFields(options: SessionCreateOptions, surface: string): void {
+  const record = options as unknown as Record<string, unknown>;
+  const messages: Record<string, string> = {
+    input: "send user messages with session.send(...) or use run({ message }).",
+    prompt: "use message for one-shot run input or session.send(...) for follow-up messages.",
+    instructions: "use system.",
+    idleSuspendAfter: "use overrides.idleTtl.",
+    idleTtl: "use overrides.idleTtl.",
+    retention: "use overrides.idleTtl.",
+    secretEnv: "use environment.secrets.",
+    secrets: "use top-level apiKeys for provider keys and environment.secrets for run secrets.",
+    runtimeSize: "use runtime.",
+    parentRunId: "subagents are session-internal; parentRunId is not part of the session API.",
+    limits: "use overrides.",
+    timeout: "use overrides.timeout.",
+    signal: "use session.cancel() / session.suspend() for remote control.",
+    postHook: "send a follow-up validation message when the session returns idle.",
+    webhook: "send a follow-up validation message instead of a submit webhook."
+  };
+  for (const [field, message] of Object.entries(messages)) {
+    if (Object.prototype.hasOwnProperty.call(record, field)) {
+      throw new RunConfigValidationError(`${surface}: ${field} is not a supported option; ${message}`);
+    }
+  }
+  const overrides = record.overrides;
+  if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
+    const overrideRecord = overrides as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(overrideRecord, "idleSuspendAfter")) {
+      throw new RunConfigValidationError(
+        `${surface}: overrides.idleSuspendAfter is not a supported option; use overrides.idleTtl.`
+      );
+    }
+  }
+}
+
+function assertNoSessionSendSignal(options: unknown, surface: string): void {
+  const record = options as Record<string, unknown> | undefined;
+  if (record && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, "signal")) {
+    throw new RunConfigValidationError(`${surface}: signal is not a supported option; use session.cancel() / session.suspend() for remote control.`);
+  }
+}
+
+function validateSubmitCredentials(options: SubmitOptions, provider: RunProvider, surface: string): void {
   if (options.parentRunId) {
     return;
   }
   const key = options.secrets?.apiKeys?.[provider];
   if (typeof key !== "string" || key.length === 0) {
     throw new RunConfigValidationError(
-      `AgentExecutor.submit: a provider API key is required — pass secrets.apiKeys[${JSON.stringify(provider)}].`
+      `${surface}: a provider API key is required — pass secrets.apiKeys[${JSON.stringify(provider)}].`
     );
   }
 }
 
-function postHookForWire(input: PlatformPostHookInput | undefined): PlatformPostHookInput | undefined {
-  if (input === undefined || typeof input.command !== "string" || input.command.trim().length === 0) {
-    return undefined;
+function validateApiKeys(
+  apiKeys: Partial<Record<RunProvider, string>> | undefined,
+  provider: RunProvider,
+  surface: string
+): void {
+  const key = apiKeys?.[provider];
+  if (typeof key !== "string" || key.length === 0) {
+    throw new RunConfigValidationError(
+      `${surface}: a provider API key is required — pass apiKeys[${JSON.stringify(provider)}].`
+    );
   }
-  return input;
 }
 
 function outputsForWire(outputs: SubmitOptions["outputs"]): PlatformSubmission["outputs"] | undefined {
@@ -1366,6 +1896,29 @@ function outputsForWire(outputs: SubmitOptions["outputs"]): PlatformSubmission["
     ...(outputs.maxTotalBytes !== undefined ? { maxTotalBytes: outputs.maxTotalBytes } : {}),
     ...(outputs.maxFiles !== undefined ? { maxFiles: outputs.maxFiles } : {})
   };
+}
+
+const DEFAULT_SESSION_IDLE_TTL = "3m";
+
+function sessionRetentionForWire(options: SessionCreateOptions): SessionRetentionPolicy {
+  return {
+    idleTtl: options.overrides?.idleTtl ?? DEFAULT_SESSION_IDLE_TTL
+  };
+}
+
+function sessionEnvironmentForWire(
+  environment: SessionEnvironmentOptions | undefined
+): PlatformEnvironmentInput | undefined {
+  if (environment === undefined) {
+    return undefined;
+  }
+  const { variables, secrets: _secrets, ...rest } = environment;
+  void _secrets;
+  const out: PlatformEnvironmentInput = {
+    ...rest,
+    ...(variables !== undefined ? { envVars: variables } : {})
+  };
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 /**

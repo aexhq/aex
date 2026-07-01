@@ -39,7 +39,16 @@ describe("sdk imports", () => {
     const script = `
       const mod = await import("@aexhq/sdk");
       const names = [
+        "Aex",
         "AgentExecutor",
+        "ChatClient",
+        "ChatSession",
+        "ChatTurnStream",
+        "SessionClient",
+        "SessionHandle",
+        "SessionTurnStream",
+        "Sizes",
+        "RuntimeSizes",
         "Skill",
         "McpServer",
         "RUN_RECORD_SCHEMA_VERSION",
@@ -52,6 +61,7 @@ describe("sdk imports", () => {
       for (const name of names) {
         result[name] = typeof mod[name];
       }
+      result.Sizes_eq_RuntimeSizes = mod.Sizes === mod.RuntimeSizes;
       // Confirm the renamed SDK client and legacy platform export are GONE — single-surface invariant.
       result.AexClient_present = (typeof mod.AexClient !== "undefined");
       result.AexPlatformClient_present = (typeof mod.AexPlatformClient !== "undefined");
@@ -68,7 +78,17 @@ describe("sdk imports", () => {
     const child = await runChild(script, "esm-import.mjs");
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout) as Record<string, string | boolean>;
+    expect(result["Aex"]).toBe("function");
     expect(result["AgentExecutor"]).toBe("function");
+    expect(result["ChatClient"]).toBe("function");
+    expect(result["ChatSession"]).toBe("function");
+    expect(result["ChatTurnStream"]).toBe("function");
+    expect(result["SessionClient"]).toBe("function");
+    expect(result["SessionHandle"]).toBe("function");
+    expect(result["SessionTurnStream"]).toBe("function");
+    expect(result["Sizes"]).toBe("object");
+    expect(result["RuntimeSizes"]).toBe("object");
+    expect(result["Sizes_eq_RuntimeSizes"]).toBe(true);
     expect(result["Skill"]).toBe("function");
     expect(result["McpServer"]).toBe("function");
     expect(result["RUN_RECORD_SCHEMA_VERSION"]).toBe("string");

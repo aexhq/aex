@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AgentExecutor, type RunResult } from "../../src/index.js";
+import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -8,95 +9,176 @@ function json(body: unknown): Response {
   });
 }
 
-const SETTLED_EVENTS = [
-  { id: "e0", type: "RUN_STARTED", data: {} },
-  { id: "e1", type: "TEXT_MESSAGE_CONTENT", data: { text: "hello ", messageId: "m1" } },
-  { id: "e2", type: "TEXT_MESSAGE_CONTENT", data: { text: "world", messageId: "m1" } },
-  { id: "e3", type: "RUN_FINISHED", data: { reason: "complete" } }
-];
+function evt(sequence: number, type: AexEvent["type"], data: Record<string, JsonValue> = {}): AexEvent {
+  return {
+    specversion: "1.0",
+    id: `run-1:${sequence}`,
+    source: type === "CUSTOM" ? "runtime" : "agent",
+    type,
+    subject: "run-1",
+    time: new Date(sequence).toISOString(),
+    sequence,
+    data
+  };
+}
 
-/** A fetch stub that drives one run to a terminal record + settled events. */
-function runClient(run: Record<string, unknown>): { client: AgentExecutor; urls: string[] } {
+class FakeWebSocket implements WebSocketLike {
+  readonly url: string;
+  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
+    (this.#listeners[type] ??= []).push(cb);
+  }
+
+  close(): void {
+    this.#emit("close", {});
+  }
+
+  message(event: AexEvent): void {
+    this.#emit("message", { data: JSON.stringify(event) });
+  }
+
+  #emit(type: string, ev: { data?: unknown }): void {
+    for (const cb of this.#listeners[type] ?? []) cb(ev);
+  }
+}
+
+const flush = async (n = 4): Promise<void> => {
+  for (let i = 0; i < n; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
+
+function runClient(session: Record<string, unknown>): {
+  readonly client: AgentExecutor;
+  readonly urls: string[];
+  readonly sockets: FakeWebSocket[];
+  readonly webSocketFactory: (url: string) => FakeWebSocket;
+} {
   const urls: string[] = [];
+  const sockets: FakeWebSocket[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const method = (init?.method ?? "GET").toString();
     urls.push(`${method} ${url}`);
-    if (url.endsWith("/api/runs/run-1/events")) return json({ events: SETTLED_EVENTS });
-    if (url.endsWith("/api/runs/run-1/outputs")) return json({ outputs: [{ id: "o1", filename: "report.txt" }] });
-    if (url.endsWith("/api/runs/run-1")) return json(run);
-    if (url.endsWith("/api/runs")) return json({ id: "run-1", status: "queued" }); // submit
+    if (url.endsWith("/api/sessions/run-1/events/ticket")) {
+      return json({ wsUrl: "wss://events.example.test/sessions/run-1", ticket: "ticket", expiresAtMs: 1 });
+    }
+    if (url.endsWith("/api/sessions/run-1/outputs")) {
+      return json({ outputs: [{ id: "o1", filename: "report.txt" }] });
+    }
+    if (url.endsWith("/api/sessions/run-1/messages")) {
+      return json({
+        session: { id: "run-1", status: "running", turnSeq: 1 },
+        turn: { sessionId: "run-1", turnSeq: 1 },
+        eventCursor: 1
+      });
+    }
+    if (url.endsWith("/api/sessions/run-1")) {
+      return json({ session });
+    }
+    if (url.endsWith("/api/sessions")) {
+      return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } });
+    }
     return json({});
   };
-  return { client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch }), urls };
+  const factory = (url: string): FakeWebSocket => {
+    const ws = new FakeWebSocket(url);
+    sockets.push(ws);
+    return ws;
+  };
+  return { client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch }), urls, sockets, webSocketFactory: factory };
 }
 
-describe("AgentExecutor.run → RunResult", () => {
-  it("returns a settle-consistent RunResult for a succeeded run", async () => {
-    const { client } = runClient({
-      id: "run-1",
-      status: "succeeded",
-      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-      costTelemetry: { schemaVersion: "1", billedCostUsd: 0.0123 }
-    });
-
-    const result: RunResult = await client.run({
+async function collectRun(session: Record<string, unknown>): Promise<{
+  readonly result: RunResult;
+  readonly urls: readonly string[];
+}> {
+  const { client, urls, sockets, webSocketFactory } = runClient(session);
+  const promise = client.run(
+    {
       model: "claude-haiku-4-5",
-      prompt: "say hello world",
-      secrets: { apiKeys: { anthropic: "sk-ant" } }
+      message: "say hello world",
+      apiKeys: { anthropic: "sk-ant" }
+    },
+    { webSocketFactory }
+  );
+
+  await flush();
+  sockets[0]!.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "hello ", messageId: "m1" }));
+  sockets[0]!.message(evt(2, "TEXT_MESSAGE_CONTENT", { text: "world", messageId: "m1" }));
+  sockets[0]!.message(evt(3, "CUSTOM", { name: session.status === "error" ? "aex.session.error" : "aex.session.idle", value: { turnSeq: 1 } }));
+
+  return { result: await promise, urls };
+}
+
+describe("AgentExecutor.run -> one-shot session RunResult", () => {
+  it("returns a run-compatible result for a parked session turn", async () => {
+    const { result, urls } = await collectRun({
+      id: "run-1",
+      status: "idle",
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      costUsd: 0.0123
     });
 
     expect(result.runId).toBe("run-1");
+    expect(result.sessionId).toBe("run-1");
     expect(result.ok).toBe(true);
-    expect(result.status).toBe("succeeded");
+    expect(result.status).toBe("idle");
+    expect(result.run.status).toBe("idle");
     expect(result.text).toBe("hello world");
-    expect(result.events.map((e) => e.type)).toEqual([
-      "RUN_STARTED",
-      "TEXT_MESSAGE_CONTENT",
-      "TEXT_MESSAGE_CONTENT",
-      "RUN_FINISHED"
-    ]);
+    expect(result.events.map((e) => e.type)).toEqual(["TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "CUSTOM"]);
     expect(result.trace.text.map((t) => t.text)).toEqual(["hello ", "world"]);
     expect(result.outputs).toEqual([{ id: "o1", filename: "report.txt" }]);
     expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
     expect(result.costUsd).toBe(0.0123);
     expect(result.error).toBeUndefined();
+    expect(urls.some((url) => url.includes("/api/runs"))).toBe(false);
   });
 
   it("runAndCollect is an alias for run", async () => {
-    const { client } = runClient({ id: "run-1", status: "succeeded" });
-    const result = await client.runAndCollect({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "sk-ant" } }
-    });
+    const { client, sockets, webSocketFactory } = runClient({ id: "run-1", status: "idle" });
+    const promise = client.runAndCollect(
+      {
+        model: "claude-haiku-4-5",
+        message: "p",
+        apiKeys: { anthropic: "sk-ant" }
+      },
+      { webSocketFactory }
+    );
+
+    await flush();
+    sockets[0]!.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "hello world" }));
+    sockets[0]!.message(evt(2, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } }));
+
+    const result = await promise;
     expect(result.ok).toBe(true);
     expect(result.text).toBe("hello world");
   });
 
-  it("returns ok:false with error for a failed run by default (no throw)", async () => {
-    const { client } = runClient({ id: "run-1", status: "failed", errorMessage: "boom" });
-    const result = await client.run({
-      model: "claude-haiku-4-5",
-      prompt: "p",
-      secrets: { apiKeys: { anthropic: "sk-ant" } }
-    });
+  it("returns ok:false with error for an error session by default", async () => {
+    const { result } = await collectRun({ id: "run-1", status: "error", errorMessage: "boom" });
     expect(result.ok).toBe(false);
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("error");
     expect(result.error).toBe("boom");
   });
 
-  it("throws when throwOnFailure is set and the run did not succeed", async () => {
-    const { client } = runClient({ id: "run-1", status: "failed", errorMessage: "boom" });
-    await expect(
-      client.run(
-        {
-          model: "claude-haiku-4-5",
-          prompt: "p",
-          secrets: { apiKeys: { anthropic: "sk-ant" } }
-        },
-        { throwOnFailure: true }
-      )
-    ).rejects.toThrow(/run run-1 ended failed: boom/);
+  it("throws when throwOnFailure is set and the session turn did not park cleanly", async () => {
+    const { client, sockets, webSocketFactory } = runClient({ id: "run-1", status: "error", errorMessage: "boom" });
+    const promise = client.run(
+      {
+        model: "claude-haiku-4-5",
+        message: "p",
+        apiKeys: { anthropic: "sk-ant" }
+      },
+      { throwOnFailure: true, webSocketFactory }
+    );
+
+    await flush();
+    sockets[0]!.message(evt(1, "CUSTOM", { name: "aex.session.error", value: { turnSeq: 1 } }));
+
+    await expect(promise).rejects.toThrow(/session run-1 ended error: boom/);
   });
 });

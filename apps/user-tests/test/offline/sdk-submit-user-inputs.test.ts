@@ -276,7 +276,6 @@ const runId = await client.submit({
   metadata: { suite: "sdk-submit-user-inputs", nested: { count: 2 } },
   runtimeSize: RuntimeSizes.SHARED_2X_8GB,
   timeout: "90m",
-  postHook: { command: "bun test", timeout: "2m", maxTurns: 2, maxChars: 4096 },
   proxyEndpoints: [
     ProxyEndpoint.bearer({
       name: "catalog",
@@ -328,7 +327,7 @@ strictEqual(body.timeout, "90m");
 strictEqual(body.parentRunId, "run_parent_123");
 deepStrictEqual(body.webhook, { url: "https://hooks.example.test/aex" });
 deepStrictEqual(body.limits, { maxConcurrentChildRuns: 8, maxSubagentDepth: 3 });
-deepStrictEqual(body.postHook, { command: "bun test", timeout: "2m", maxTurns: 2, maxChars: 4096 });
+ok(!("postHook" in body));
 
 const submission = body.submission;
 strictEqual(submission.model, "claude-haiku-4-5");
@@ -588,6 +587,7 @@ const submitCases = [
   ["removed credentialMode", () => client.submit({ ...validBase, credentialMode: "byok" }), /credentialMode is not a supported option/],
   ["removed apiKey", () => client.submit({ ...validBase, apiKey: "sk-ant" }), /apiKey is not a supported option/],
   ["removed credentials", () => client.submit({ ...validBase, credentials: { anthropic: "sk-ant" } }), /credentials is not a supported option/],
+  ["removed postHook", () => client.submit({ ...validBase, postHook: { command: "bun test" } }), /postHook is not a supported option/],
   ["removed secrets.apiKey", () => client.submit({
     model: "claude-haiku-4-5",
     prompt: "p",
@@ -694,7 +694,7 @@ console.log(JSON.stringify({
     const result = await runChild(script, "sdk-submit-user-inputs-invalid.mjs", 120_000);
     expect(result).toMatchObject({
       ok: true,
-      submitRejects: 22,
+      submitRejects: 23,
       builderRejects: 18,
       fuzzRejects: 12,
       calls: 0
@@ -773,7 +773,6 @@ await client.submit({
   model: "claude-haiku-4-5",
   prompt: "empty optional shapes normalize away",
   outputs: { allowedDirs: [""], deniedDirs: [""] },
-  postHook: { command: "   " },
   limits: {},
   secrets: { apiKeys: { anthropic: "sk-ant" } },
   idempotencyKey: "idem-normalize-empty"

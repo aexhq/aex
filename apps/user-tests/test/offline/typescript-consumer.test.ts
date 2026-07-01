@@ -95,6 +95,7 @@ describe("typescript consumer", () => {
         RUNTIME_SIZES,
         Models,
         RuntimeSizes,
+        Secret,
         SecretString,
         Skill,
         buildPlatformAllowedHosts,
@@ -125,6 +126,10 @@ describe("typescript consumer", () => {
         type RunEvent,
         type RunResult,
         type RunProvider,
+        type SessionCreateOptions,
+        type SessionRunOptions,
+        type SessionRunResult,
+        type SessionTurnResult,
         type TextMessageRunEvent,
         type RuntimeResources,
         type RuntimeSize,
@@ -229,9 +234,9 @@ describe("typescript consumer", () => {
 
       const apiKeysOptions = {
         model: Models.CLAUDE_HAIKU_4_5,
-        prompt: "hello",
-        secrets: { apiKeys: { anthropic: "sk-ant", openai: "sk-oai" } }
-      } satisfies SubmitOptions;
+        message: "hello",
+        apiKeys: { anthropic: "sk-ant", openai: "sk-oai" }
+      } satisfies SessionRunOptions;
 
       const wireRequest = {
         workspaceId: "ws_type_surface",
@@ -304,6 +309,27 @@ describe("typescript consumer", () => {
         throwOnFailure: false,
         timeoutMs: 1_000
       });
+      const sessionOptions = {
+        model: Models.CLAUDE_HAIKU_4_5,
+        system: "Be precise.",
+        runtime: RuntimeSizes.SHARED_0_25X_1GB,
+        overrides: { idleTtl: "3m" },
+        environment: {
+          variables: { USER_SURFACE_TEST: "1" },
+          secrets: { SESSION_TOKEN: Secret.value("session-secret") }
+        },
+        apiKeys: { anthropic: "sk-ant-session" }
+      } satisfies SessionCreateOptions;
+      const sessionPromise = client.openSession(sessionOptions);
+      const reopenedPromise = client.openSession("run_type_surface");
+      const sessionRunPromise: Promise<SessionRunResult> = client.sessions.run({
+        ...sessionOptions,
+        message: "hello"
+      });
+      const sessionTurnPromise: Promise<SessionTurnResult> = (async () => {
+        const session = await client.sessions.open("run_type_surface");
+        return await session.send("continue").done();
+      })();
       const finalTextPromise: Promise<string> = (async () => {
         const events = await client.events("run_type_surface");
         let acc = "";
@@ -359,6 +385,11 @@ describe("typescript consumer", () => {
       void downloadPromise;
       void runResultPromise;
       void collectPromise;
+      void sessionOptions;
+      void sessionPromise;
+      void reopenedPromise;
+      void sessionRunPromise;
+      void sessionTurnPromise;
       void finalTextPromise;
       void apiKeysOptions;
       void errors;
