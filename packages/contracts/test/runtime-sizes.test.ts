@@ -167,9 +167,9 @@ describe("submission contract — runtimeSize + timeout round-trip", () => {
     expect(parsed.timeoutMs).toBeUndefined();
   });
 
-  it("rejects the old machine field", () => {
+  it("rejects the old machine field spelling (a runtimeSize string) — machine is now a {spot} object", () => {
     expect(() => parseRunSubmissionRequest(baseRequest({ machine: "shared-2x-8gb" }))).toThrow(
-      /submission\.machine is not an allowed field/
+      /machine must be an object/
     );
   });
 

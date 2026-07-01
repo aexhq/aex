@@ -96,9 +96,9 @@ const RESERVED = new Set([
   "submission",
   "runtimeSize",
   "timeout",
-  "parentRunId",
   "webhook",
   "limits",
+  "machine",
   "secrets",
   "proxyEndpoints"
 ]);

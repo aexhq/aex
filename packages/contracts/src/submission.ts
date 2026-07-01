@@ -926,8 +926,9 @@ export function crossValidateSecretEnvAndValues(
 }
 
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
-  // A child run (parentRunId set) inherits its provider keys server-side from
-  // the parent's vault, so it may omit `secrets` entirely.
+  // Absent/null secrets collapse to an empty bundle; the credential-policy gate
+  // (enforceCredentialSecretPolicy) decides whether that is admissible for the
+  // run's mode (a run inheriting keys server-side may legitimately omit them).
   if (input === undefined || input === null) return {};
   const value = requireRecord(input, "secrets");
   const allowedTopLevel = new Set<string>(["apiKeys", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
@@ -1439,32 +1440,30 @@ export interface PlatformRunSubmissionRequest {
    */
   readonly timeoutMs?: number;
   /**
-   * Lineage parent (agent-session §9). When present the server admits this
-   * run as a CHILD of `parentRunId`: it walks the parent's lineage, enforces
-   * the max-subagent-depth + per-root concurrency caps, and persists
-   * `parent_run_id` + a server-derived `depth`. The client may name a parent
-   * but NEVER the depth — depth is computed server-side from the parent row,
-   * so a forged value cannot bypass the cap.
-   */
-  readonly parentRunId?: string;
-  /**
    * Optional per-run callback URL. The platform delivers exactly the terminal
    * `run.finished` event to this URL at the settle-consistent barrier, signed
-   * Standard-Webhooks style. It is a sibling of {@link idempotencyKey} /
-   * {@link parentRunId} — an operational/delivery concern, NOT part of the
-   * hashed submission brief, so the same idempotency key with a different
-   * callback URL never 409s and the field never enters `request_hash`.
+   * Standard-Webhooks style. It is a sibling of {@link idempotencyKey} — an
+   * operational/delivery concern, NOT part of the hashed submission brief, so
+   * the same idempotency key with a different callback URL never 409s and the
+   * field never enters `request_hash`.
    */
   readonly webhook?: RunWebhookSpec;
   /**
    * Optional per-run override of the lineage limits (max concurrent child runs,
-   * max subagent depth). A sibling of {@link parentRunId} — these are dials the
-   * client may *request*; the server resolves them against the per-workspace
-   * ceiling and the hard platform ceiling (clamping happens in the resolver, NOT
-   * this parser). Absent fields fall back to the platform defaults. Only shape +
+   * max subagent depth, per-run spend cap). These are dials the client may
+   * *request*; the server resolves them against the per-workspace ceiling and
+   * the hard platform ceiling (clamping happens in the resolver, NOT this
+   * parser). Absent fields fall back to the platform defaults. Only shape +
    * positivity are validated here.
    */
   readonly limits?: RunLimits;
+  /**
+   * Optional capacity intent for the run's managed machine. `spot: true` opts
+   * the run into interruptible capacity; absent / `spot: false` requests
+   * standard capacity (the default). Intent only — the managed runtime selects
+   * capacity from it.
+   */
+  readonly machine?: RunMachine;
 }
 
 /** Per-run webhook callback. v1: terminal-only; the URL must be https. */
@@ -1482,14 +1481,26 @@ export interface RunLimits {
   readonly maxConcurrentChildRuns?: number;
   readonly maxSubagentDepth?: number;
   /**
-   * Per-run spend cap in USD (defense-in-depth). The platform converts it to a
-   * wall-clock budget (priced compute is wall-time; BYOK provider tokens cost the
-   * platform nothing) and kills the run once it would out-spend the cap. A
-   * positive number; omitted ⇒ unbounded per-run (only the run's wall-clock
-   * `timeout` + the per-workspace spend cap apply). Only shape/positivity are
-   * validated here.
+   * Per-run spend cap in USD (defense-in-depth). The platform kills the run once
+   * it would out-spend the cap. A positive number; omitted ⇒ unbounded per-run
+   * (only the run's wall-clock `timeout` + the per-workspace spend cap apply).
+   * Only shape/positivity are validated here.
+   *
+   * The frozen boot session config the managed runtime folds the loop against
+   * names this same USD value `budgetUsd`; {@link sessionBudgetLimits} is the
+   * single source of truth for that wire→boot name mapping.
    */
   readonly maxSpendUsd?: number;
+}
+
+/**
+ * Per-run machine/capacity intent. v1 exposes only `spot`: opt the run into
+ * interruptible capacity (`spot: true`) vs standard capacity (absent /
+ * `spot: false`, the default). Only the boolean intent is public — capacity
+ * selection is a runtime concern.
+ */
+export interface RunMachine {
+  readonly spot?: boolean;
 }
 
 /**
@@ -1534,9 +1545,9 @@ export function parseRunSubmissionRequest(
     "runtimeSize",
     "timeout",
     "proxyEndpoints",
-    "parentRunId",
     "webhook",
     "limits",
+    "machine",
     SECRETS_KEY
   ]);
   for (const key of Object.keys(value)) {
@@ -1560,16 +1571,12 @@ export function parseRunSubmissionRequest(
   void options;
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
-  // Lineage parent only. `depth` is NEVER accepted from the wire — the server
-  // derives it from the parent row (a forged depth must not bypass the cap).
-  const parentRunId = optionalString(value.parentRunId, "submission.parentRunId");
   const webhook = parseRunWebhook(value.webhook);
   const limits = parseRunLimits(value.limits);
+  const machine = parseRunMachine(value.machine);
   const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
-  enforceCredentialSecretPolicy(secrets, provider, {
-    inheritsFromParent: parentRunId !== undefined
-  });
+  enforceCredentialSecretPolicy(secrets, provider);
 
   crossValidateProxyEndpointsAndAuth(proxyEndpoints, secrets.proxyEndpointAuth);
 
@@ -1609,9 +1616,9 @@ export function parseRunSubmissionRequest(
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(proxyEndpoints ? { proxyEndpoints } : {}),
-    ...(parentRunId !== undefined ? { parentRunId } : {}),
     ...(webhook !== undefined ? { webhook } : {}),
     ...(limits !== undefined ? { limits } : {}),
+    ...(machine !== undefined ? { machine } : {}),
     secrets
   };
 }
@@ -1693,6 +1700,55 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
     ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
     ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {})
   };
+}
+
+/**
+ * Boot-session budget fragment. The public submit surface names a run's spend
+ * cap `limits.maxSpendUsd`; the frozen boot session config the managed runtime
+ * folds the loop against names the SAME USD value `budgetUsd` — the field the
+ * session planner reads to enforce/terminate a run that would out-spend its cap.
+ * This is the single source of truth for that wire→boot name mapping so the two
+ * layers can never drift.
+ *
+ * Returns a fragment safe to spread into `sessionConfig.limits`: `{ budgetUsd }`
+ * when a cap is set, `{}` when none is (an absent cap stays absent — the run is
+ * unbounded per-run, subject only to the run timeout + the per-workspace cap).
+ * Pure: same input ⇒ same output.
+ */
+export function sessionBudgetLimits(limits: RunLimits | undefined): { budgetUsd?: number } {
+  if (limits?.maxSpendUsd === undefined) {
+    return {};
+  }
+  return { budgetUsd: limits.maxSpendUsd };
+}
+
+/**
+ * Parse the optional per-run `machine` capacity intent. Mirrors
+ * {@link parseRunWebhook}: absent ⇒ `undefined`; a non-object or any unknown
+ * subfield is rejected so the strict top-level allow-list extends to the nested
+ * object. `spot` must be a boolean when present. A no-signal object (e.g.
+ * `machine: {}`) collapses to `undefined` so it never lands an empty object on
+ * the request. An explicit `spot` (true or false) is preserved verbatim. Only
+ * shape is validated here — capacity selection is a runtime concern.
+ */
+export function parseRunMachine(input: unknown): RunMachine | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  const value = requireRecord(input, "machine");
+  const allowed = new Set(["spot"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(`machine.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
+    }
+  }
+  if (value.spot !== undefined && typeof value.spot !== "boolean") {
+    throw new Error("machine.spot must be a boolean");
+  }
+  if (value.spot === undefined) {
+    return undefined;
+  }
+  return { spot: value.spot };
 }
 
 export function parseRunProvider(input: unknown): RunProvider {
