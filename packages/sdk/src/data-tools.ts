@@ -6,7 +6,7 @@
  * JSON-Schema `input_schema`, the Anthropic/OpenAI tool shape) plus an
  * `execute(name, input)` dispatcher. A chat backend wires `tools` into its
  * Messages loop and calls `execute` on each `tool_use`. There is no LLM-vendor
- * dependency here: the executor only ever calls public `AgentExecutor` session
+ * dependency here: the executor only ever calls public `Aex` session
  * methods, so a chat built on these tools can reach a workspace's sessions and
  * outputs and NOTHING else — internal/operator data is unreachable by construction.
  *
@@ -14,7 +14,7 @@
  * lean references and metadata; only `read_output` returns file content, and it
  * is byte-capped so a large deliverable never floods the context window.
  */
-import type { AgentExecutor } from "./client.js";
+import type { Aex } from "./client.js";
 import type { OutputFileSelector } from "./client.js";
 import type { SessionListQuery } from "@aexhq/contracts";
 
@@ -163,7 +163,7 @@ function buildToolDefs(defaultReadBytes: number): readonly DataChatTool[] {
 
 /** Shared executor over the read surface; `corpus` (when present) enforces the allow-list. */
 function makeExecute(
-  client: AgentExecutor,
+  client: Aex,
   defaultReadBytes: number,
   corpus?: CorpusGuard
 ): (name: string, input: Record<string, unknown>) => Promise<unknown> {
@@ -248,10 +248,10 @@ interface CorpusGuard {
 }
 
 /**
- * Build the data-source chat tool set bound to one {@link AgentExecutor}.
+ * Build the data-source chat tool set bound to one {@link Aex}.
  * Everything the tools can reach is scoped to the client's workspace token.
  */
-export function createDataTools(client: AgentExecutor, options?: CreateDataToolsOptions): DataTools {
+export function createDataTools(client: Aex, options?: CreateDataToolsOptions): DataTools {
   const defaultReadBytes = options?.defaultReadBytes ?? DEFAULT_READ_BYTES;
   return {
     tools: buildToolDefs(defaultReadBytes),
@@ -270,7 +270,7 @@ export function createDataTools(client: AgentExecutor, options?: CreateDataTools
  * workspace-token data scope.
  */
 export function createCorpusTools(
-  client: AgentExecutor,
+  client: Aex,
   corpus: ChatCorpus,
   options?: CreateDataToolsOptions
 ): DataTools {

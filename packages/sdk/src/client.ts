@@ -10,13 +10,11 @@ import {
   operations,
   providersForModel,
   streamCoordinatorEvents,
-  decodeAssistantText,
   summarizeRunTrace,
   textOf,
   type AexEvent,
   type AgentsMdRecord,
   type AgentsMdRef,
-  type AssistantTextEntry,
   type DebugSink,
   type FetchLike,
   type FileRecord,
@@ -45,8 +43,6 @@ import {
   type PlatformSubmission,
   type PlatformInlineSecrets,
   type PlatformMcpServerSecret,
-  type PlatformProxyEndpoint,
-  type PlatformProxyEndpointAuth,
   type Run,
   type RunModel,
   type RunEvent,
@@ -71,7 +67,6 @@ import { AgentsMd } from "./agents-md.js";
 import { uploadAsset, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
 import { File } from "./file.js";
 import { McpServer } from "./mcp-server.js";
-import { ProxyEndpoint, splitProxyEndpoints } from "./proxy-endpoint.js";
 import {
   AexRateLimitError,
   isThrottleFault,
@@ -84,9 +79,9 @@ import { Secret, splitSecretEnv } from "./secret.js";
 import { SkillTool } from "./skill-tool.js";
 import { Tool } from "./tool.js";
 
-export interface AgentExecutorOptions {
+export interface AexOptions {
   /** Workspace-scoped SDK API token. */
-  readonly apiToken: string;
+  readonly apiKey: string;
   /**
    * API plane root, e.g. `https://aex.example.com`. Optional —
    * defaults to the canonical hosted URL (`https://api.aex.dev`).
@@ -114,7 +109,7 @@ export interface AgentExecutorOptions {
 }
 
 /**
- * The settle-consistent result of {@link AgentExecutor.run}:
+ * The settle-consistent result of {@link Aex.run}:
  * the one-shot session record plus its events, decoded trace, assistant text,
  * and captured outputs — everything a "do it and give me the result" caller
  * needs without hand-rolling a session/message/stream loop.
@@ -134,6 +129,8 @@ export interface RunResult {
   readonly ok: boolean;
   /** The assistant's final text. */
   readonly text: string;
+  /** Assistant messages projected from the settled event stream. */
+  readonly messages: readonly Message[];
   /** The session turn event stream. */
   readonly events: readonly RunEvent[];
   /** Decoded view of the events: tool calls + usage + assistant text. */
@@ -148,7 +145,7 @@ export interface RunResult {
   readonly error?: string;
 }
 
-/** Options for {@link AgentExecutor.run}. */
+/** Options for {@link Aex.run}. */
 export interface RunCollectOptions {
   /** Overall wait budget (ms) for the one-shot session turn to park. */
   readonly timeoutMs?: number;
@@ -184,9 +181,8 @@ export interface SessionOverrides {
  *   - `agentsMd` / `files` — local composition instances
  *     (`AgentsMd.fromContent` / `File.fromBytes`, …), materialized to the
  *     hosted asset store before the session lands.
- *   - `mcpServers` / `proxyEndpoints` — instances whose secrets are split into
- *     the vaulted secrets channel server-side; the public submission carries
- *     only the declarations.
+ *   - `mcpServers` — instances whose secrets are split into the vaulted secrets
+ *     channel server-side; the public submission carries only the declarations.
  *   - `apiKeys` — the BYOK provider key(s), keyed by provider. A key for the
  *     selected provider is REQUIRED. The platform never holds a long-lived
  *     provider key on your behalf.
@@ -240,7 +236,6 @@ export interface SessionCreateOptions {
   readonly outputMode?: OutputMode;
   readonly metadata?: PlatformSubmission["metadata"];
   readonly idempotencyKey?: string;
-  readonly proxyEndpoints?: readonly ProxyEndpoint[];
   /** BYOK provider key(s), keyed by provider. */
   readonly apiKeys?: Partial<Record<RunProvider, string>>;
   readonly environment?: SessionEnvironmentOptions;
@@ -286,6 +281,7 @@ export interface SessionTurnResult {
   readonly text: string;
   readonly events: readonly SessionEvent[];
   readonly outputs: readonly Output[];
+  readonly messages: readonly Message[];
 }
 
 export interface SessionRunResult extends SessionTurnResult {}
@@ -317,6 +313,7 @@ export class SessionTurnStream implements AsyncIterable<SessionEvent> {
 
 type InternalSessionSender = (input: SessionInput, options?: InternalSessionSendOptions) => SessionTurnStream;
 const internalSessionSenders = new WeakMap<SessionHandle, InternalSessionSender>();
+type CallableSessionMessages = SessionMessages & (() => SessionMessages);
 
 function sendSessionInternal(
   session: SessionHandle,
@@ -330,14 +327,25 @@ function sendSessionInternal(
   return sender(normaliseSessionInput(input, "SessionHandle.send", "input"), options);
 }
 
+export interface Message {
+  readonly id: string;
+  readonly sender: "assistant" | "user" | "system" | "tool";
+  readonly text: string;
+  readonly timestamp?: string;
+  readonly turnSeq?: number;
+  readonly sequence?: number;
+}
+
 /**
- * Accessor over the session's decoded assistant messages. `session.messages()`
- * returns this synchronously; each method fetches on call.
+ * Accessor over the session's assistant messages. `session.messages` returns
+ * this synchronously; each method fetches on call.
  */
 export interface SessionMessages {
-  list(): Promise<readonly AssistantTextEntry[]>;
-  last(): Promise<AssistantTextEntry | undefined>;
-  first(): Promise<AssistantTextEntry | undefined>;
+  all(): Promise<readonly Message[]>;
+  /** Compatibility alias for {@link SessionMessages.all}. */
+  list(): Promise<readonly Message[]>;
+  last(): Promise<Message | undefined>;
+  first(): Promise<Message | undefined>;
 }
 
 /**
@@ -450,6 +458,7 @@ export class SessionHandle {
     const readSession = await operations.getSession(this.#http, this.id).catch(() => this.#session);
     this.#session = withTerminalSessionStatus(readSession, terminalStatus);
     const outputs = await operations.listSessionOutputs(this.#http, this.id).catch(() => [] as readonly Output[]);
+    const messages = projectAssistantMessages(events);
     return {
       sessionId: this.id,
       session: this.#session,
@@ -457,7 +466,8 @@ export class SessionHandle {
       status: this.#session.status,
       text: textOf(events as unknown as readonly RunEvent[]),
       events,
-      outputs
+      outputs,
+      messages
     };
   }
 
@@ -487,20 +497,25 @@ export class SessionHandle {
   }
 
   /**
-   * Accessor for the session's decoded assistant messages (buffered output
-   * mode: one entry per assistant message). `list()` returns them oldest-first;
-   * `last()`/`first()` return a single entry or `undefined` when empty.
+   * Accessor for the session's assistant messages. `all()` returns them
+   * oldest-first; `last()`/`first()` return a single entry or `undefined` when
+   * empty. The accessor is callable as a compatibility shim for older
+   * `session.messages().list()` callers.
    */
-  messages(): SessionMessages {
+  get messages(): CallableSessionMessages {
     const http = this.#http;
     const id = this.id;
-    const list = async (): Promise<readonly AssistantTextEntry[]> =>
-      decodeAssistantText((await operations.listSessionEvents(http, id)) as unknown as readonly RunEvent[]);
-    return {
-      list,
-      last: async () => (await list()).at(-1),
-      first: async () => (await list())[0]
-    };
+    const all = async (): Promise<readonly Message[]> =>
+      projectAssistantMessages(await operations.listSessionEvents(http, id));
+    let accessor: CallableSessionMessages;
+    accessor = (() => accessor) as unknown as CallableSessionMessages;
+    Object.assign(accessor, {
+      all,
+      list: all,
+      last: async () => (await all()).at(-1),
+      first: async () => (await all())[0]
+    });
+    return accessor;
   }
 
   /**
@@ -739,7 +754,7 @@ async function* streamSessionTurnEvents(
     wsUrl: first.wsUrl,
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, sessionId)).ticket,
-    isTerminal: (event) => isSessionTurnTerminalEvent(event, turn.turnSeq),
+    isTerminal: (event: SessionEvent) => isSessionTurnTerminalEvent(event, turn.turnSeq),
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.webSocketFactory ? { webSocketFactory: options.webSocketFactory } : {}),
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
@@ -853,6 +868,69 @@ function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | und
     },
     download: (selector, options) => downloadSessionOutput(http, id, selector, options)
   };
+}
+
+function projectAssistantMessages(events: readonly (SessionEvent | RunEvent)[]): readonly Message[] {
+  const out: Message[] = [];
+  const byMessageId = new Map<string, number>();
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i] as MessageEventLike;
+    if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
+    const data = asRecord(event.data);
+    const text = typeof data.text === "string" ? data.text : undefined;
+    if (text === undefined) continue;
+    const messageId = typeof data.messageId === "string" && data.messageId ? data.messageId : undefined;
+    const sequence = event.sequence ?? event.seq;
+    const timestamp = event.time ?? event.recordedAt ?? timestampFromEpochMs(event.receivedAt);
+    const turnSeq = typeof data.turnSeq === "number" ? data.turnSeq : undefined;
+    if (messageId !== undefined) {
+      const existing = byMessageId.get(messageId);
+      if (existing !== undefined) {
+        const current = out[existing]!;
+        out[existing] = {
+          ...current,
+          text: `${current.text}${text}`,
+          ...(timestamp !== undefined ? { timestamp } : {}),
+          ...(sequence !== undefined ? { sequence } : {}),
+          ...(turnSeq !== undefined ? { turnSeq } : {})
+        };
+        continue;
+      }
+      byMessageId.set(messageId, out.length);
+    }
+    out.push({
+      id: messageId ?? (typeof event.id === "string" && event.id ? event.id : `message-${i}`),
+      sender: "assistant",
+      text,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+      ...(sequence !== undefined ? { sequence } : {}),
+      ...(turnSeq !== undefined ? { turnSeq } : {})
+    });
+  }
+  return out;
+}
+
+interface MessageEventLike {
+  readonly id?: string;
+  readonly type?: string;
+  readonly seq?: number;
+  readonly sequence?: number;
+  readonly recordedAt?: string;
+  readonly time?: string;
+  readonly receivedAt?: number;
+  readonly data?: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function timestampFromEpochMs(value: unknown): string | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : undefined;
 }
 
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
@@ -1077,7 +1155,7 @@ function unwrapSecretValue(value: string | SecretString): string {
  * `client.whoami()` if you want to introspect which workspace the
  * token resolves to.
  */
-export class AgentExecutor {
+export class Aex {
   readonly #http: HttpClient;
   /** The same fetch the HttpClient uses, threaded into `_uploadAsset`. */
   readonly #fetch: FetchLike | undefined;
@@ -1086,28 +1164,29 @@ export class AgentExecutor {
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
 
-  constructor(options: AgentExecutorOptions) {
-    if (!options.apiToken) {
-      throw new Error("AgentExecutor: apiToken is required");
+  constructor(options: string | AexOptions) {
+    const resolved = typeof options === "string" ? { apiKey: options } : options;
+    if (!resolved.apiKey) {
+      throw new Error("Aex: apiKey is required");
     }
     // Wrap the transport fetch (the caller's override, or global `fetch`) with
     // the bounded-retry layer so every BFF request gets default resilience.
     // The raw `#fetch` below stays unwrapped for the direct-to-storage asset PUT
     // and presigned output GETs, which target object storage, not the API plane.
-    const baseFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
-    const retryingFetch = withRetry(baseFetch, options.retry);
+    const baseFetch: FetchLike = resolved.fetch ?? ((input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]) => fetch(input, init));
+    const retryingFetch = withRetry(baseFetch, resolved.retry);
     this.#http = new HttpClient({
-      ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
-      apiToken: options.apiToken,
+      ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {}),
+      apiToken: resolved.apiKey,
       fetch: retryingFetch,
       // Opt-in local diagnostics: emit a redacted per-request trace to
       // stderr. Uploads nothing. A caller wanting a custom sink can pass
       // a function instead of `true`.
-      ...(options.debug
-        ? { debug: typeof options.debug === "function" ? options.debug : (line: string) => console.error(line) }
+      ...(resolved.debug
+        ? { debug: typeof resolved.debug === "function" ? resolved.debug : (line: string) => console.error(line) }
         : {})
     });
-    this.#fetch = options.fetch;
+    this.#fetch = resolved.fetch;
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
@@ -1195,6 +1274,7 @@ export class AgentExecutor {
         status: turnResult.status,
         ok,
         text: turnResult.text,
+        messages: turnResult.messages,
         events,
         trace: summarizeRunTrace(events),
         outputs,
@@ -1217,7 +1297,7 @@ export class AgentExecutor {
           });
         }
         throw new RunStateError(
-          `AgentExecutor.run: session ${runId} ended ${turnResult.status}${errorMessage ? `: ${errorMessage}` : ""}`,
+          `Aex.run: session ${runId} ended ${turnResult.status}${errorMessage ? `: ${errorMessage}` : ""}`,
           { runId, status: turnResult.status }
         );
       }
@@ -1256,9 +1336,6 @@ export class AgentExecutor {
     if (typeof options.model !== "string" || !options.model) {
       throw new RunConfigValidationError("Aex.openSession: model is required");
     }
-    const { endpoints: proxyEndpointDeclarations, auth: proxyEndpointAuthFromInstances } =
-      splitProxyEndpoints(options.proxyEndpoints ?? []);
-    const mergedProxyAuth = mergeProxyEndpointAuth(proxyEndpointAuthFromInstances, []);
     const { declarations: secretEnvDeclarations, values: envSecretValues } =
       splitSecretEnv(options.environment?.secrets);
 
@@ -1313,7 +1390,6 @@ export class AgentExecutor {
     const secrets: PlatformInlineSecrets = {
       ...(options.apiKeys ? { apiKeys: options.apiKeys } : {}),
       ...(mergedMcpSecrets.length > 0 ? { mcpServers: mergedMcpSecrets } : {}),
-      ...(mergedProxyAuth.length > 0 ? { proxyEndpointAuth: mergedProxyAuth } : {}),
       ...(Object.keys(envSecretValues).length > 0 ? { envSecrets: envSecretValues } : {})
     };
 
@@ -1329,10 +1405,7 @@ export class AgentExecutor {
       // Operational/delivery concern — sibling of secrets, NOT part of the
       // hashed submission. Delivered at the settle-consistent barrier.
       ...(options.webhook ? { webhook: options.webhook } : {}),
-      secrets,
-      ...(proxyEndpointDeclarations.length > 0
-        ? { proxyEndpoints: proxyEndpointDeclarations }
-        : {})
+      secrets
     };
   }
 
@@ -1349,9 +1422,6 @@ export class AgentExecutor {
     return operations.whoami(this.#http);
   }
 }
-
-/** Canonical SDK client name. `AgentExecutor` remains as a compatibility alias. */
-export class Aex extends AgentExecutor {}
 
 // `Run.status` is a loose `string` on the wire shape, so we membership-test
 // against the canonical terminal set rather than re-deriving one (which is how
@@ -1422,7 +1492,7 @@ function resolveOutputFileSelector(
   if (isOutputPathSelector(selector)) {
     const target = normalizeOutputLookupPath(selector.path);
     if (!target) {
-      throw new RunStateError("AgentExecutor.downloadOutput: output path must be non-empty", {
+      throw new RunStateError("Aex.downloadOutput: output path must be non-empty", {
         runId,
         path: selector.path
       });
@@ -1438,17 +1508,17 @@ function resolveOutputFileSelector(
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new RunStateError(
-        `AgentExecutor.downloadOutput: output path "${selector.path}" matched multiple files`,
+        `Aex.downloadOutput: output path "${selector.path}" matched multiple files`,
         { runId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
       );
     }
-    throw new RunStateError(`AgentExecutor.downloadOutput: output path "${selector.path}" was not found`, {
+    throw new RunStateError(`Aex.downloadOutput: output path "${selector.path}" was not found`, {
       runId,
       path: selector.path
     });
   }
   if (typeof selector.id !== "string" || selector.id.length === 0) {
-    throw new RunStateError("AgentExecutor.downloadOutput: selector must include an output id or path", { runId });
+    throw new RunStateError("Aex.downloadOutput: selector must include an output id or path", { runId });
   }
   return { ...selector, id: selector.id };
 }
@@ -1565,7 +1635,8 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     limits: "use overrides.",
     timeout: "use overrides.timeout.",
     signal: "use session.cancel() / session.suspend() for remote control.",
-    postHook: "send a follow-up validation message when the session returns idle."
+    postHook: "send a follow-up validation message when the session returns idle.",
+    proxyEndpoints: "proxy endpoints are not part of the public SDK session API."
   };
   for (const [field, message] of Object.entries(messages)) {
     if (Object.prototype.hasOwnProperty.call(record, field)) {
@@ -1652,7 +1723,7 @@ function sessionEnvironmentForWire(
 
 /**
  * Stages a draft bundle's bytes to the content-addressable asset store and
- * returns the resulting asset id. Satisfied by `AgentExecutor._uploadAsset`.
+ * returns the resulting asset id. Satisfied by `Aex._uploadAsset`.
  */
 type AssetUploader = (args: {
   readonly bytes: Uint8Array;
@@ -1856,37 +1927,4 @@ function mergeMcpServers(
   };
 }
 
-/**
- * Merge `ProxyEndpoint`-derived auth entries with any
- * `secrets.proxyEndpointAuth` the caller passed explicitly. Per-instance
- * auth values win on the same `name`; a type mismatch (e.g. instance
- * declares `bearer` but secrets carry `header` for the same name) is a
- * call-site error and we throw at the SDK boundary instead of letting
- * the BFF reject the submission an HTTP request later.
- */
-function mergeProxyEndpointAuth(
-  fromInstances: readonly PlatformProxyEndpointAuth[],
-  fromExplicitSecrets: readonly PlatformProxyEndpointAuth[]
-): readonly PlatformProxyEndpointAuth[] {
-  if (fromInstances.length === 0 && fromExplicitSecrets.length === 0) return [];
-  const byName = new Map<string, PlatformProxyEndpointAuth>();
-  for (const entry of fromExplicitSecrets) {
-    byName.set(entry.name, entry);
-  }
-  for (const entry of fromInstances) {
-    const existing = byName.get(entry.name);
-    if (existing && existing.value.type !== entry.value.type) {
-      throw new RunConfigValidationError(
-        `aex: proxyEndpoint "${entry.name}" auth type conflicts ` +
-          `with secrets.proxyEndpointAuth (instance=${entry.value.type}, secrets=${existing.value.type})`
-      );
-    }
-    byName.set(entry.name, entry);
-  }
-  return Array.from(byName.values());
-}
-
-// Side-channel re-exports keep the proxy wire types reachable from
-// `import type { … } from "aex/client"` without forcing consumers
-// to learn an additional entry point.
-export type { OutputFileType, OutputLink, OutputLinkOptions, OutputQuery, PlatformProxyEndpoint, PlatformProxyEndpointAuth };
+export type { OutputFileType, OutputLink, OutputLinkOptions, OutputQuery };

@@ -10,7 +10,7 @@ export type SecretEnvSubmissionEntry = { readonly ref: string } | { readonly eph
 
 /**
  * Minimal client surface `secret.upload` needs to promote an ephemeral secret
- * into the workspace store. `AgentExecutor` satisfies it via its `secrets`
+ * into the workspace store. `Aex` satisfies it via its `secrets`
  * client; defined structurally here so `secret.ts` does not import `client.ts`
  * (which would be circular — `client.ts` imports `Secret`). Mirrors
  * {@link SkillUploader}.
@@ -146,7 +146,7 @@ export class Secret {
 /**
  * Split `secretEnv: Record<envName, Secret>` into the value-free declarations
  * (`submission.secretEnv`) and the per-run vaulted values
- * (`secrets.envSecrets`). Mirrors {@link splitProxyEndpoints}: declarations ride
+ * (`secrets.envSecrets`). Secret declarations ride
  * the hashed submission, ephemeral values ride the secrets channel
  * (hash-excluded). Refs contribute only a declaration.
  *
