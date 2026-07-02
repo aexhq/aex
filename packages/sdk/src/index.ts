@@ -1,17 +1,14 @@
 /**
  * Public surface of the `aex` SDK.
  *
- * ONE class (`AgentExecutor`) talks to the dashboard BFF. The CLI exposes
- * the SAME operations via subcommands. Composition primitives are
- * `Tool` / `Tools` (skill-tools), `McpServer`, and `ProxyEndpoint` — there is
- * no saved-definition wrapper. Everything else is types, errors, and event type
- * guards re-exported from `@aexhq/contracts`.
+ * `Aex` is the single SDK client. Composition primitives are `Tool` / `Tools`
+ * (skill-tools), `McpServer`, `AgentsMd`, `File`, and `Secret`. Everything else
+ * is types, errors, and event type guards re-exported from `@aexhq/contracts`.
  */
 
 export {
   Aex,
   AgentsMdClient,
-  AgentExecutor,
   FilesClient,
   SecretsClient,
   SessionClient,
@@ -19,7 +16,8 @@ export {
   SessionTurnStream
 } from "./client.js";
 export type {
-  AgentExecutorOptions,
+  AexOptions,
+  Message,
   OutputDownloadOptions,
   OutputFilePathMatch,
   OutputFilePathSelector,
@@ -49,25 +47,10 @@ export { SkillTool, Tools } from "./skill-tool.js";
 export { AgentsMd } from "./agents-md.js";
 export { File } from "./file.js";
 export { McpServer } from "./mcp-server.js";
-export { ProxyEndpoint } from "./proxy-endpoint.js";
 export { Secret } from "./secret.js";
 export type { SecretEnvSubmissionEntry } from "./secret.js";
-export type {
-  BearerProxyEndpointOptions,
-  BasicProxyEndpointOptions,
-  HeaderProxyEndpointOptions,
-  ProxyEndpointCommonOptions,
-  QueryProxyEndpointOptions
-} from "./proxy-endpoint.js";
 export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
 export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "./bundle.js";
-
-// Data-source chat tools — turn the sessions read surface (sessions.list /
-// sessions.outputs(id).read(...)) into vendor-neutral LLM tool
-// definitions + an executor, so a chat over workspace/session data is a few
-// lines on top of the public SDK.
-export { createDataTools, createCorpusTools, DataToolError, DATA_TOOLS_INSTRUCTIONS } from "./data-tools.js";
-export type { ChatCorpus, CreateDataToolsOptions, DataChatTool, DataChatToolSchema, DataTools } from "./data-tools.js";
 
 // Errors
 export {
@@ -96,8 +79,7 @@ export {
   buildPlatformAllowedHosts,
   normaliseSkillBundlePath,
   validateSkillBundleEntry,
-  validateSkillBundleManifest,
-  validateProxyAuth
+  validateSkillBundleManifest
 } from "@aexhq/contracts";
 export type {
   AssetRef,
@@ -155,26 +137,15 @@ export type {
   WhoAmI
 } from "@aexhq/contracts";
 
-// Platform submission types — exposed so callers can build typed `secrets`
-// arrays without depending on `@aexhq/contracts` directly. The raw
-// `PlatformProxyEndpoint` wire shape is intentionally re-exported under
-// its full name; the user-facing constructor for proxy endpoints is the
-// `ProxyEndpoint` class (above), which prevents the wire-format
-// mistakes agents hit when authoring the wire shape by hand.
+// Platform submission types exposed so callers can build typed environment and
+// MCP secret values without depending on `@aexhq/contracts` directly.
 export type {
   PlatformInlineSecrets as InlineSecrets,
   PlatformMcpServerSecret as McpServerSecret,
-  PlatformProxyEndpoint,
-  PlatformProxyEndpointAuth,
-  PlatformProxyAuthValue as ProxyAuthValue,
   PlatformEnvironment as RunEnvironment,
   PlatformRunSubmissionRequest,
   RunLimits,
   RunWebhookSpec,
-  ProxyAuthShape,
-  ProxyMethod,
-  ProxyRetryPolicy,
-  ProxyResponseMode
 } from "@aexhq/contracts";
 
 // Runtime sizing — the closed set of valid managed runtime presets.
@@ -245,18 +216,13 @@ export type {
   ToolCallStartRunEvent
 } from "@aexhq/contracts";
 
-// Typed `listEvents` decoders — correlate TOOL_CALL_START/RESULT into tool-call
-// traces, tolerate historical/internal `aex.usage` records when present, and
-// decode assistant text, so consumers don't hand-roll the `data.id` correlation.
+// Typed trace helpers for lower-level event consumers.
 export {
-  decodeAssistantText,
   decodeToolCalls,
   summarizeRunTrace,
-  summarizeRunUsage,
-  textOf
+  summarizeRunUsage
 } from "@aexhq/contracts";
 export type {
-  AssistantTextEntry,
   RunTrace,
   ToolCallResult,
   ToolCallTrace
