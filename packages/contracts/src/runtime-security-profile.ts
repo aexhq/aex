@@ -7,7 +7,6 @@ export interface RuntimeSecurityProfile {
   readonly allowOpenNetworking: boolean;
   readonly allowRuntimePackages: boolean;
   readonly allowCustomerEnvVars: boolean;
-  readonly allowProxyEndpoints: boolean;
   readonly allowMcpServers: boolean;
 }
 
@@ -15,7 +14,6 @@ export interface RuntimeSecurityProfileEvaluationInput {
   readonly networkingMode?: "limited" | "open";
   readonly packageCount?: number;
   readonly customerEnvVarCount?: number;
-  readonly proxyEndpointCount?: number;
   readonly mcpServerCount?: number;
 }
 
@@ -32,7 +30,6 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
       allowOpenNetworking: false,
       allowRuntimePackages: false,
       allowCustomerEnvVars: true,
-      allowProxyEndpoints: true,
       allowMcpServers: true
     }),
     standard: Object.freeze({
@@ -41,7 +38,6 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
       allowOpenNetworking: true,
       allowRuntimePackages: true,
       allowCustomerEnvVars: true,
-      allowProxyEndpoints: true,
       allowMcpServers: true
     }),
     developer: Object.freeze({
@@ -50,7 +46,6 @@ export const RUNTIME_SECURITY_PROFILE_CONFIG: Readonly<Record<RuntimeSecurityPro
       allowOpenNetworking: true,
       allowRuntimePackages: true,
       allowCustomerEnvVars: true,
-      allowProxyEndpoints: true,
       allowMcpServers: true
     })
   });
@@ -100,12 +95,6 @@ export function evaluateRuntimeSecurityProfile(
     violations.push({
       field: "environment.envVars",
       reason: `${profile.name} does not allow customer runtime env vars`
-    });
-  }
-  if ((input.proxyEndpointCount ?? 0) > 0 && !profile.allowProxyEndpoints) {
-    violations.push({
-      field: "proxyEndpoints",
-      reason: `${profile.name} does not allow HTTP proxy endpoints`
     });
   }
   if ((input.mcpServerCount ?? 0) > 0 && !profile.allowMcpServers) {

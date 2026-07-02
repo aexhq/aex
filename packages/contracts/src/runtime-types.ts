@@ -144,6 +144,31 @@ export interface SessionMessageAccepted {
   readonly eventCursor?: number;
 }
 
+export type SessionMessageSender = "user" | "assistant" | "system" | "tool";
+
+export interface SessionMessage {
+  readonly id: string;
+  readonly sender: SessionMessageSender;
+  readonly text: string;
+  readonly timestamp?: string;
+  readonly turnSeq?: number;
+  readonly sequence?: number;
+  readonly messageId?: string;
+  readonly content?: unknown;
+  readonly [key: string]: unknown;
+}
+
+export interface SessionMessagesQuery {
+  readonly limit?: number;
+  readonly cursor?: string;
+  readonly since?: string;
+}
+
+export interface SessionMessagesPage {
+  readonly messages: readonly SessionMessage[];
+  readonly nextCursor?: string;
+}
+
 export interface SessionStateChangeAccepted {
   readonly session: Session;
   readonly turn?: SessionTurn;

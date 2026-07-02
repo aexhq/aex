@@ -123,7 +123,7 @@ describe("submission parser - providers and secrets", () => {
         secrets: { ...req.secrets, openai: { apiKey: "sk-openai-x" } }
       })
     ).toThrow(
-      /secrets\.openai is not an allowed field; permitted: apiKeys, mcpServers, proxyEndpointAuth, envSecrets/
+      /secrets\.openai is not an allowed field; permitted: apiKeys, mcpServers, envSecrets/
     );
   });
 

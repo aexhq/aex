@@ -6,4 +6,6 @@
 // `@aexhq/contracts/internal` subpath.
 export * from "./models.js";
 export * from "./post-hook.js";
+export * from "./proxy-protocol.js";
+export * from "./proxy-validation.js";
 export * from "./submission.js";

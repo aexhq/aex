@@ -33,7 +33,6 @@
 
 import {
   type JsonValue,
-  type PlatformProxyEndpoint,
   type PlatformEnvironment
 } from "./submission.js";
 import { parseRunModel, type RunModel } from "./models.js";
@@ -774,7 +773,6 @@ export interface RunRequestConfig {
   readonly runtimeSize?: RuntimeSize;
   /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
   readonly timeout?: string;
-  readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
 
@@ -801,7 +799,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     "environment",
     "runtimeSize",
     "timeout",
-    "proxyEndpoints",
     "metadata"
   ]);
   for (const key of Object.keys(record)) {
@@ -821,8 +818,8 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
     ...(system !== undefined ? { system } : {}),
     prompt,
     ...(mcpServers !== undefined ? { mcpServers } : {}),
-    // environment / proxyEndpoints / metadata: passed through
-    // as-is — the BFF revalidates them via `parseRunSubmissionRequest`,
+    // environment / metadata: passed through as-is — the BFF revalidates
+    // them via `parseRunSubmissionRequest`,
     // so duplicating the heavyweight parsers here would mean two sources
     // of truth. The CLI surfaces structural errors at submission time.
     ...(record.environment !== undefined
@@ -833,9 +830,6 @@ export function parseRunRequestConfig(input: unknown): RunRequestConfig {
       : {}),
     ...(record.timeout !== undefined
       ? { timeout: record.timeout as NonNullable<RunRequestConfig["timeout"]> }
-      : {}),
-    ...(record.proxyEndpoints !== undefined
-      ? { proxyEndpoints: record.proxyEndpoints as NonNullable<RunRequestConfig["proxyEndpoints"]> }
       : {}),
     ...(record.metadata !== undefined
       ? { metadata: record.metadata as NonNullable<RunRequestConfig["metadata"]> }
@@ -905,7 +899,6 @@ export interface NormalisedRunRequestConfig {
   readonly prompt: readonly string[];
   readonly mcpServers: readonly McpServerRef[];
   readonly environment?: PlatformEnvironment;
-  readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
   /**
    * MCP servers whose run-config entry carried `headers`. Keyed by the `name`
@@ -935,7 +928,6 @@ export function normaliseRunRequestConfig(config: RunRequestConfig): NormalisedR
     prompt,
     mcpServers,
     ...(config.environment !== undefined ? { environment: config.environment } : {}),
-    ...(config.proxyEndpoints !== undefined ? { proxyEndpoints: config.proxyEndpoints } : {}),
     ...(config.metadata !== undefined ? { metadata: config.metadata } : {}),
     mcpServerSecrets
   };

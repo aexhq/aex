@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { parseProxyAuthShape, validateProxyAuth } from "../src/index.js";
+import { parseProxyAuthShape, validateProxyAuth } from "../src/internal.js";
 
 /**
  * Property fuzz for the proxy cross-field validators:
