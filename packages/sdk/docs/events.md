@@ -53,9 +53,9 @@ for the string:
 const lastText = (await session.messages().last())?.text;
 ```
 
-`decodeAssistantText`, `textOf`, and `summarizeRunTrace` remain exported as the
-power-user escape hatch over a raw `RunEvent` list, but "get the last message"
-is now `await session.messages().last()`.
+Prefer `session.messages().list()` or the collected `result.messages` /
+`result.text` fields for assistant text. Low-level event helpers remain exported
+for callers that build custom collectors.
 
 The CLI mirrors the same surface:
 
@@ -162,7 +162,7 @@ const jsonl = await response.text();
 
 ## Event shape
 
-Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain the provider key, MCP credentials, or proxy bearer that were supplied when the session was opened.
+Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain provider keys, MCP credentials, or runtime secrets supplied when the session was opened.
 
 ## Typed helpers
 

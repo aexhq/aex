@@ -72,9 +72,9 @@ files into the workspace under `/workspace/skills/<name>/`. So the `SKILL.md` bo
 and every supporting file are on disk from the first turn; the load-tool call is
 how that body enters the model's context, not how the files get written.
 
-The platform also mounts the `aex` CLI and a per-run manifest into every run.
-Skills call managed HTTP proxy endpoints through the mounted CLI
-(`aex proxy ...`); see [Credentials](credentials.md) for the policy and auth model.
+Skills that call external HTTP APIs should read credentials from
+`environment.secrets` and use the normal client for that service. See
+[Credentials](credentials.md) for the secret model.
 
 Run-scoped asset copies are part of the run record and are removed by run deletion
 or retention cleanup.

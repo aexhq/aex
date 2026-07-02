@@ -14,11 +14,11 @@ runtime before the first agent turn.
 | Agent instructions | `AgentsMd.fromPath`, `AgentsMd.fromContent` |
 | Reference files and folders | `File.fromPath`, `File.fromBytes` |
 | Remote tools | `McpServer.remote`, `McpServer.fromId` |
-| Credentialed HTTP APIs | `ProxyEndpoint.none`, `bearer`, `basic`, `header`, `query` |
 | Non-secret runtime settings | `environment.variables`, `environment.packages`, `environment.networking` |
+| Runtime secrets for your code | `Secret.value`, `Secret.ref`, `environment.secrets` |
 
 ```ts
-import { AgentsMd, File, McpServer, Models, ProxyEndpoint, Tools } from "@aexhq/sdk";
+import { AgentsMd, File, McpServer, Models, Secret, Tools } from "@aexhq/sdk";
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -27,20 +27,14 @@ await aex.run({
   files: [await File.fromPath("./input")],
   tools: [await Tools.fromSkillDir("./skills/report-writer", { name: "report-writer" })],
   mcpServers: [McpServer.remote({ name: "github", url: "https://example.com/mcp" })],
-  proxyEndpoints: [
-    ProxyEndpoint.bearer({
-      name: "internal-api",
-      baseUrl: "https://api.example.com",
-      token: process.env.INTERNAL_API_TOKEN!,
-      allowMethods: ["GET"],
-      allowPathPrefixes: ["/v1/"]
-    })
-  ],
+  environment: {
+    secrets: { INTERNAL_API_TOKEN: Secret.value(process.env.INTERNAL_API_TOKEN!) },
+    networking: { mode: "limited", allowedHosts: ["api.example.com"] }
+  },
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 ```
 
 Secrets stay out of reusable configs. Provider keys go in the top-level `apiKeys`
-map; MCP auth rides on each `McpServer` instance and proxy auth on each
-`ProxyEndpoint` instance — the SDK splits them into the vaulted secrets channel
-server-side, so they never live in a shareable config object.
+map; reusable or per-run values for your own code go in `environment.secrets`.
+Your code then makes normal HTTP calls with the standard client for that service.

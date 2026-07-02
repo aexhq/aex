@@ -8,9 +8,9 @@ aex is an agent execution platform for launching autonomous agents from a simple
 
 The package ships:
 
-- `Aex` / `AgentExecutor` for sessions, one-shot runs, inspect, download, cancel, and delete.
+- `Aex` for sessions, one-shot runs, inspect, download, cancel, and delete.
 - `sessions` / `openSession()` for durable, resumable agent sessions.
-- Typed run primitives: `Models`, `Providers`, `Sizes`, `Tool` / `Tools` (skill-tools), `AgentsMd`, `File`, `McpServer`, `ProxyEndpoint`, and `Secret`.
+- Typed run primitives: `Models`, `Providers`, `Sizes`, `Tool` / `Tools` (skill-tools), `AgentsMd`, `File`, `McpServer`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, and whoami operations.
 
 ## Install
@@ -119,33 +119,34 @@ you can `catch` by code; CLI failures print a JSON envelope carrying the HTTP
 `status`, a one-line `remedy`, and the `runId` where known, and a wrong `--model`,
 `--provider`, or `--runtime-size` gets a "did you mean?" suggestion.
 
-## Chat over a corpus of sessions
+## Continue with sessions
 
-Turn a selected set of sessions into a read-only chat.
-`createCorpusTools(client, { sessionIds })` returns vendor-neutral, corpus-scoped
-read tools (`list_sessions` / `get_session` / `list_outputs` / `read_output` /
-`search_outputs`) — every tool refuses a session outside the corpus. Drive them
-with any LLM; `examples/chat-corpus.ts` shows the direct-Claude loop
-(`@anthropic-ai/sdk`) on top of the LLM-vendor-free SDK.
+Use sessions for conversational flows. `run()` is the one-shot convenience; a
+`SessionHandle` is the lower-level surface when you want multiple turns,
+streaming, messages, events, outputs, or downloads.
 
-`aex.sessions.searchOutputs({ runIds, filename, extension, contentType, limit })`
-finds output files across sessions (scope with the `runIds` session-id allow-list)
-and returns references (no bytes) you then read with `aex.sessions.outputs(id).read(...)`.
+```ts
+const session = await aex.openSession(result.runId);
+const next = await session.send("Turn this into a checklist.").done();
+console.log(next.text);
+
+const messages = await session.messages().list();
+const outputs = await aex.sessions.outputs(session.id).list();
+```
 
 ## Feature Areas
 
 - **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
 - **Durable infrastructure:** run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
-- **Agent composition:** skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
+- **Agent composition:** skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
 - **Subagents:** typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
 - **Models and providers:** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
-- **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK secrets, scoped proxy auth, redaction, and output modes.
+- **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 
 ## Docs
 
 - [Quickstart](docs/quickstart.md)
 - [Run configuration](docs/run-config.md)
-- [Agent tools](docs/concepts/agent-tools.md)
 - [Composition](docs/concepts/composition.md)
 - [Secrets](docs/secrets.md)
 - [Limits](docs/limits.md)

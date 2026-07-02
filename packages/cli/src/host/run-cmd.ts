@@ -1,6 +1,6 @@
 /**
  * `aex run` — one-shot convenience over the session API, mirroring the SDK's
- * `AgentExecutor.run`: it opens a session (`POST /api/sessions`), sends the
+ * `Aex.run`: it opens a session (`POST /api/sessions`), sends the
  * prompt as the first turn (`POST /api/sessions/{id}/messages`), prints the
  * session record, and (with `--follow`) streams the turn's events until the
  * session parks. Uses the same session operations the SDK does.
@@ -9,7 +9,7 @@
  *
  *   1. `--config <path>` — plain run-request JSON:
  *      `{ model, system?, prompt, mcpServers?, environment?,
- *         runtimeSize?, timeout?, proxyEndpoints?, metadata? }`.
+ *         runtimeSize?, timeout?, metadata? }`.
  *      MCP entries may include `headers` — the CLI splits them into the
  *      `secrets.mcpServers` bag before posting.
  *
@@ -29,8 +29,6 @@
  *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-8gb); default shared-0.25x-1gb
  *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
  *   --idempotency-key <key>        defaults to a fresh UUID
- *   --proxy-endpoint '<json>'      PlatformProxyEndpoint JSON (repeatable)
- *   --proxy-auth name=<spec>       bearer:tok | basic:u:p | header:v | query:v (repeatable)
  *   --follow                       poll events to stdout until terminal status
  *   --timeout <dur>                with --follow: give up after this long (e.g. 8m); exit code 3
  */

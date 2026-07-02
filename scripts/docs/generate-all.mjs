@@ -36,7 +36,6 @@ const guideSources = [
 
 const conceptSources = [
   ["runs.md", "runs"],
-  ["agent-tools.md", "agent-tools"],
   ["composition.md", "composition"],
   ["providers-and-runtimes.md", "providers-and-runtimes"]
 ];
@@ -104,7 +103,6 @@ async function syncOverviewPages() {
       "",
       "- [Quickstart](/docs/guides/quickstart/)",
       "- [Features](/docs/features/)",
-      "- [Agent tools](/docs/concepts/agent-tools/)",
       "- [Composition](/docs/concepts/composition/)",
       "- [Provider/runtime capability matrix](/docs/reference/provider-runtime-capabilities/)",
       ""
@@ -332,7 +330,6 @@ async function generateLlmsFiles() {
     `- [Features](${publicDocsBase}/features/)`,
     `- [Quickstart](${publicDocsBase}/guides/quickstart/)`,
     `- [Runs](${publicDocsBase}/concepts/runs/)`,
-    `- [Agent tools](${publicDocsBase}/concepts/agent-tools/)`,
     `- [Composition](${publicDocsBase}/concepts/composition/)`,
     `- [Providers & Runtimes](${publicDocsBase}/concepts/providers-and-runtimes/)`,
     `- [Secrets](${publicDocsBase}/guides/secrets/)`,

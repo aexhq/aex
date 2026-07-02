@@ -1,28 +1,14 @@
 // Run a session that mounts the frame-vision-gate skill and lets the agent
-// caption/verify image frames with Doubao via the MANAGED PROXY. This is the
-// secret-safe path: the Doubao key rides on the ProxyEndpoint.bearer instance and
-// is split into the vaulted secrets channel server-side (never in the container).
+// caption/verify image frames with Doubao. The Doubao key is passed as a runtime
+// secret and the skill makes a normal HTTPS call to the provider.
 //
 // Env required: AEX_API_TOKEN, DOUBAO_API_KEY, ANTHROPIC_API_KEY (or your
 // chosen run provider key). Optional: AEX_API_URL for a non-default plane.
-import { Aex, Models, Tools, ProxyEndpoint } from "@aexhq/sdk";
+import { Aex, Models, Secret, Tools } from "@aexhq/sdk";
 
 const aex = new Aex({
   apiToken: process.env.AEX_API_TOKEN,
   ...(process.env.AEX_API_URL ? { baseUrl: process.env.AEX_API_URL } : {})
-});
-
-// The Doubao Ark vision endpoint, reached through the managed proxy. The key is
-// injected by the proxy and never enters the container.
-const doubaoArk = ProxyEndpoint.bearer({
-  name: "doubao-ark",
-  baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
-  token: process.env.DOUBAO_API_KEY,
-  allowMethods: ["POST"],
-  allowPathPrefixes: ["/api/v3/chat/completions"],
-  maxRequestBytes: 2_000_000, // base64 image ~1.33x raw; mind the request-size cap (default 10 MiB)
-  responseMode: "full",
-  timeoutMs: 60_000
 });
 
 const result = await aex.run({
@@ -35,7 +21,15 @@ const result = await aex.run({
     "verify_frame.py as it documents. Report the verdict JSON."
   ].join(" "),
   tools: [await Tools.fromSkillDir("./vision-skill", { name: "frame-vision-gate" })],
-  proxyEndpoints: [doubaoArk],
+  environment: {
+    secrets: {
+      DOUBAO_API_KEY: Secret.value(process.env.DOUBAO_API_KEY)
+    },
+    networking: {
+      mode: "limited",
+      allowedHosts: ["ark.ap-southeast.bytepluses.com"]
+    }
+  },
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY }
 });
 

@@ -39,14 +39,6 @@ For the hard ceilings and who can raise them, see
 | MCP connect timeout (register + initialize + discover) | 30 seconds | Per-port via `connectTimeoutMs`. | `RUN_DEFAULT_MCP_CONNECT_TIMEOUT_MS` |
 | MCP `tools/call` timeout | 30 minutes | Per-port via `callTimeoutMs`. | `RUN_DEFAULT_MCP_CALL_TIMEOUT_MS` |
 
-## Proxy endpoints
-
-| Option | Default | How to override | Source |
-| --- | --- | --- | --- |
-| `maxRequestBytes` | 10 MiB | Per-endpoint via the endpoint's `maxRequestBytes`. | `REQUEST_PROXY_DEFAULT_MAX_REQUEST_BYTES` |
-| `maxResponseBytes` | `0` (unlimited — the response is streamed unbuffered) | Per-endpoint via the endpoint's `maxResponseBytes`. | `REQUEST_PROXY_DEFAULT_MAX_RESPONSE_BYTES` |
-| `timeoutMs` (upstream) | 5 minutes | Per-endpoint via the endpoint's `timeoutMs`. | `REQUEST_PROXY_DEFAULT_TIMEOUT_MS` |
-
 ## Links (signed URLs and tickets)
 
 | Option | Default | How to override | Source |

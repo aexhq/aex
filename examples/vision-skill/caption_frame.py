@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
-"""Caption one image frame with Doubao Seed 1.6 Vision and return per-noun depiction
-verdicts. Ported from project-broll's broll_builder/tools/caption_visual.py (the
-Doubao / OpenAI-compatible vision path) and core/shared/llm/doubao_json.py, reduced
-to a single bounded prompt->JSON call.
+"""Caption one image frame with Doubao Seed 1.6 Vision and return per-noun
+depiction verdicts.
 
-Two transports, auto-selected:
-  - MANAGED PROXY (default, secret-safe): POSTs the Ark chat/completions request
-    through `aex proxy doubao-ark`. The API key is injected by the platform proxy;
-    it never enters this container. Requires the run to declare a `doubao-ark`
-    proxy endpoint (see SKILL.md).
-  - DIRECT (fallback): plain HTTPS POST to the Ark host, reading the key from
-    DOUBAO_API_KEY (supplied via the run's `environment.secrets`). Requires the
-    Ark host to be reachable under the run's networking mode.
-
-Output schema mirrors broll_builder.caption_visual.v1 so an existing verify step
-consumes it unchanged.
+The run supplies DOUBAO_API_KEY through environment.secrets. This script makes a
+normal HTTPS POST to the Ark OpenAI-compatible endpoint, so the run's networking
+policy must allow that host.
 """
 from __future__ import annotations
 
@@ -24,7 +14,6 @@ import json
 import mimetypes
 import os
 import re
-import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -34,10 +23,6 @@ from typing import Any
 DEFAULT_VISION_MODEL = "doubao-seed-1-6-vision-250815"
 ARK_PATH = "/api/v3/chat/completions"
 DIRECT_BASE_URL = os.getenv("DOUBAO_BASE_URL", "https://ark.ap-southeast.bytepluses.com")
-
-# Path the platform mounts the aex CLI at inside every run (credentials.md).
-AEX_CLI = "/mnt/session/uploads/aex/aex"
-PROXY_ENDPOINT = "doubao-ark"
 
 
 def main() -> None:
@@ -95,7 +80,7 @@ def caption_image(image_path: Path, must_depict: list[str], model: str) -> dict[
         "response_format": {"type": "json_object"},
     }
 
-    raw = _post_via_proxy(request_body) if _proxy_available() else _post_direct(request_body)
+    raw = _post_direct(request_body)
     text = raw["choices"][0]["message"]["content"]
     facts = _parse_caption_text(text)
     facts["provider"] = "doubao"
@@ -105,73 +90,12 @@ def caption_image(image_path: Path, must_depict: list[str], model: str) -> dict[
     return facts
 
 
-# ---- transport: managed proxy (secret-safe) -------------------------------------
-
-def _proxy_available() -> bool:
-    """The platform always mounts an index.json; the doubao-ark endpoint is present
-    only if the caller declared it. Check before choosing the transport."""
-    index = Path("/mnt/session/uploads/aex/index.json")
-    if not index.exists():
-        return False
-    try:
-        manifest = json.loads(index.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    return any(e.get("name") == PROXY_ENDPOINT for e in (manifest.get("endpoints") or []))
-
-
-def _post_via_proxy(request_body: dict[str, Any]) -> dict[str, Any]:
-    # Write the (large, base64) body to a file and hand it to the CLI via --data @file.
-    body_path = Path("/workspace/.aex/_ark_request.json")
-    body_path.parent.mkdir(parents=True, exist_ok=True)
-    body_path.write_text(json.dumps(request_body), encoding="utf-8")
-    # The mount has no execute bit, so invoke through bun (credentials.md).
-    result = subprocess.run(
-        ["bun", AEX_CLI, "proxy", PROXY_ENDPOINT,
-         "--method", "POST",
-         "--path", ARK_PATH,
-         "--header", "content-type=application/json",
-         "--data", f"@{body_path}",
-         "--response-mode", "full"],
-        capture_output=True, text=True, timeout=90,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"aex proxy doubao-ark failed: {result.stderr.strip() or result.stdout.strip()}")
-    envelope = json.loads(result.stdout)
-    # `aex proxy --response-mode full` returns a ProxyResponseEnvelope
-    # (aex/packages/contracts/src/proxy-protocol.ts:402). The upstream Ark JSON is
-    # in `upstreamBodyBase64` (always base64 in `full` mode). Unwrap it.
-    return _unwrap_proxy_envelope(envelope)
-
-
-def _unwrap_proxy_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
-    # Error envelopes (ProxyErrorBody) carry an `error` field instead.
-    if "error" in envelope:
-        raise RuntimeError(f"aex proxy error: {envelope.get('error')}: {envelope.get('message')}")
-    status = envelope.get("upstreamStatus")
-    body_b64 = envelope.get("upstreamBodyBase64")
-    if body_b64 is None:
-        raise RuntimeError(
-            f"proxy envelope has no upstreamBodyBase64 (status={status}); "
-            "ensure the endpoint policy allows responseMode 'full'"
-        )
-    body_text = base64.b64decode(body_b64).decode("utf-8")
-    if isinstance(status, int) and status >= 400:
-        raise RuntimeError(f"Ark returned HTTP {status}: {body_text[:200]}")
-    if envelope.get("truncated"):
-        raise RuntimeError("Ark response was truncated by maxResponseBytes; raise the cap")
-    return json.loads(body_text)
-
-
-# ---- transport: direct egress (fallback) ----------------------------------------
+# ---- transport -----------------------------------------------------------------
 
 def _post_direct(request_body: dict[str, Any]) -> dict[str, Any]:
     api_key = (os.getenv("DOUBAO_API_KEY") or "").strip()
     if not api_key:
-        raise RuntimeError(
-            "no doubao-ark proxy endpoint declared and DOUBAO_API_KEY not set; "
-            "declare the proxy endpoint or supply the key via environment.secrets"
-        )
+        raise RuntimeError("DOUBAO_API_KEY is not set; supply it via environment.secrets")
     req = urllib.request.Request(
         f"{DIRECT_BASE_URL.rstrip('/')}{ARK_PATH}",
         data=json.dumps(request_body).encode("utf-8"),
