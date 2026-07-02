@@ -162,7 +162,8 @@ function checkPublicSurfaceLanguage() {
     { name: "Blueprint", pattern: /\bBlueprint\b/ },
     { name: "defineRun", pattern: /\bdefineRun\b/ },
     { name: "compileTemplate", pattern: /\bcompileTemplate\b/ },
-    { name: "Template", pattern: /\b[Tt]emplate(?:Definition|ValidationError)?\b|\bTEMPLATE_INVALID\b|\btemplate(?:Name|Hash)\b/ }
+    { name: "Template", pattern: /\b[Tt]emplate(?:Definition|ValidationError)?\b|\bTEMPLATE_INVALID\b|\btemplate(?:Name|Hash)\b/ },
+    ...removedSlimSurfaceTerms()
   ];
   const riskyClaimTerms = [
     { name: "unqualified cleanup destruction claim", pattern: /\b(?:destroyed|purged)\s+at\s+cleanup\b/i },
@@ -365,7 +366,26 @@ function packedSurfacePatterns() {
     { name: "Blueprint", pattern: /\bBlueprint\b/ },
     { name: "defineRun", pattern: /\bdefineRun\b/ },
     { name: "compileTemplate", pattern: /\bcompileTemplate\b/ },
-    { name: "Template", pattern: /\b[Tt]emplate(?:Definition|ValidationError)?\b|\bTEMPLATE_INVALID\b|\btemplate(?:Name|Hash)\b/ }
+    { name: "Template", pattern: /\b[Tt]emplate(?:Definition|ValidationError)?\b|\bTEMPLATE_INVALID\b|\btemplate(?:Name|Hash)\b/ },
+    ...removedSlimSurfaceTerms()
+  ];
+}
+
+function removedSlimSurfaceTerms() {
+  return [
+    { name: "AgentExecutor", pattern: /\bAgentExecutor\b/ },
+    { name: "createDataTools", pattern: /\bcreateDataTools\b/ },
+    { name: "createCorpusTools", pattern: /\bcreateCorpusTools\b/ },
+    { name: "DataTools", pattern: /\bDataTools\b/ },
+    { name: "DataToolError", pattern: /\bDataToolError\b/ },
+    { name: "DATA_TOOLS_INSTRUCTIONS", pattern: /\bDATA_TOOLS_INSTRUCTIONS\b/ },
+    { name: "ProxyEndpoint", pattern: /\b(?:Platform)?ProxyEndpoint(?:Auth)?\b/ },
+    { name: "proxyEndpoints", pattern: /\bproxyEndpoints\b/ },
+    { name: "decodeAssistantText", pattern: /\bdecodeAssistantText\b/ },
+    { name: "decodeToolCalls", pattern: /\bdecodeToolCalls\b/ },
+    { name: "summarizeRunTrace", pattern: /\bsummarizeRunTrace\b/ },
+    { name: "summarizeRunUsage", pattern: /\bsummarizeRunUsage\b/ },
+    { name: "textOf", pattern: /\btextOf\b/ }
   ];
 }
 

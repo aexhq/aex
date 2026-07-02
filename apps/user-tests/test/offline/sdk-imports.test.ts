@@ -3,7 +3,7 @@
  *
  * Verifies the single-surface invariant on the *installed* package:
  *   - `await import("@aexhq/sdk")` resolves at runtime and exports the
- *     canonical named bindings.
+ *     slim launch root bindings.
  *   - `require("@aexhq/sdk")` fails with ERR_REQUIRE_ESM (the package is
  *     ESM-only — that's the contract).
  *   - Subpath imports such as `@aexhq/sdk/platform` or `@aexhq/sdk/proxy`
@@ -35,96 +35,77 @@ describe("sdk imports", () => {
     return await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
-  it("await import(\"@aexhq/sdk\") resolves and exports the canonical names", async () => {
+  it("await import(\"@aexhq/sdk\") resolves to the slim launch surface", async () => {
     const script = `
       const mod = await import("@aexhq/sdk");
-      const names = [
-        "Aex",
+      const forbidden = [
         "AgentExecutor",
-        "SessionClient",
-        "SessionHandle",
-        "SessionTurnStream",
-        "Sizes",
-        "SkillTool",
-        "Tools",
-        "McpServer",
-        "RUN_RECORD_SCHEMA_VERSION",
-        "RUN_RECORD_MANIFEST_SCHEMA_VERSION",
-        "validateProxyAuth",
-        "buildPlatformAllowedHosts",
-        "textOf"
+        "createDataTools",
+        "createCorpusTools",
+        "DataTools",
+        "DataToolError",
+        "DATA_TOOLS_INSTRUCTIONS",
+        "ProxyEndpoint",
+        "decodeAssistantText",
+        "decodeToolCalls",
+        "summarizeRunTrace",
+        "summarizeRunUsage",
+        "textOf",
+        "AexClient",
+        "AexPlatformClient",
+        "Template",
+        "TemplateDefinition",
+        "Blueprint",
+        "defineRun",
+        "compileTemplate",
+        "submitResolvedRun",
+        "RunRef",
+        "ChatClient",
+        "ChatSession",
+        "ChatTurnStream",
+        "redeem",
+        "billing"
       ];
-      const result = {};
-      for (const name of names) {
-        result[name] = typeof mod[name];
+      const result = {
+        Aex: typeof mod.Aex,
+        forbidden: {},
+        constructString: false,
+        constructStringAndOptions: false
+      };
+      for (const name of forbidden) {
+        result.forbidden[name] = typeof mod[name];
       }
-      // The legacy RuntimeSizes symbol was renamed to Sizes on the root
-      // surface — only Sizes is exported now.
-      result.RuntimeSizes_present = (typeof mod.RuntimeSizes !== "undefined");
-      // The standalone Skill class + skill catalog client were removed —
-      // skills are ingested as TOOLS now via Tools.fromSkillDir/fromSkillUrl.
-      result.Skill_present = (typeof mod.Skill !== "undefined");
-      result.SkillsClient_present = (typeof mod.SkillsClient !== "undefined");
-      // Confirm the renamed SDK client and legacy platform export are GONE — single-surface invariant.
-      result.AexClient_present = (typeof mod.AexClient !== "undefined");
-      result.AexPlatformClient_present = (typeof mod.AexPlatformClient !== "undefined");
-      // Confirm the legacy Template/compileTemplate exports are GONE — flat surface invariant (P5).
-      result.Template_present = (typeof mod.Template !== "undefined");
-      result.TemplateDefinition_present = (typeof mod.TemplateDefinition !== "undefined");
-      result.Blueprint_present = (typeof mod.Blueprint !== "undefined");
-      result.defineRun_present = (typeof mod.defineRun !== "undefined");
-      result.compileTemplate_present = (typeof mod.compileTemplate !== "undefined");
-      result.submitResolvedRun_present = (typeof mod.submitResolvedRun !== "undefined");
-      result.RunRef_present = (typeof mod.RunRef !== "undefined");
-      // The Chat* aliases were normalized away into Session* — assert them GONE.
-      result.ChatClient_present = (typeof mod.ChatClient !== "undefined");
-      result.ChatSession_present = (typeof mod.ChatSession !== "undefined");
-      result.ChatTurnStream_present = (typeof mod.ChatTurnStream !== "undefined");
-      // Coupon redemption is a CLI-only affordance — it must NOT be reachable
-      // from the public SDK: no top-level export and no method on the client.
-      result.redeem_present = (typeof mod.redeem !== "undefined");
-      result.billing_present = (typeof mod.billing !== "undefined");
-      result.Aex_redeem_method = (typeof mod.Aex?.prototype?.redeem);
-      result.AgentExecutor_redeem_method = (typeof mod.AgentExecutor?.prototype?.redeem);
+      const fetch = async () => new Response("{}", { headers: { "content-type": "application/json" } });
+      try {
+        new mod.Aex("aex_runtime_surface");
+        result.constructString = true;
+      } catch (err) {
+        result.constructStringError = String(err?.message ?? err);
+      }
+      try {
+        new mod.Aex("aex_runtime_surface", { baseUrl: "https://example.invalid", fetch });
+        result.constructStringAndOptions = true;
+      } catch (err) {
+        result.constructStringAndOptionsError = String(err?.message ?? err);
+      }
       process.stdout.write(JSON.stringify(result));
     `;
     const child = await runChild(script, "esm-import.mjs");
     expect(child.exitCode).toBe(0);
-    const result = JSON.parse(child.stdout) as Record<string, string | boolean>;
+    const result = JSON.parse(child.stdout) as {
+      Aex: string;
+      forbidden: Record<string, string>;
+      constructString: boolean;
+      constructStringError?: string;
+      constructStringAndOptions: boolean;
+      constructStringAndOptionsError?: string;
+    };
     expect(result["Aex"]).toBe("function");
-    expect(result["AgentExecutor"]).toBe("function");
-    expect(result["SessionClient"]).toBe("function");
-    expect(result["SessionHandle"]).toBe("function");
-    expect(result["SessionTurnStream"]).toBe("function");
-    expect(result["Sizes"]).toBe("object");
-    expect(result["RuntimeSizes_present"]).toBe(false);
-    expect(result["SkillTool"]).toBe("function");
-    expect(result["Tools"]).toBe("object");
-    expect(result["Skill_present"]).toBe(false);
-    expect(result["SkillsClient_present"]).toBe(false);
-    expect(result["McpServer"]).toBe("function");
-    expect(result["RUN_RECORD_SCHEMA_VERSION"]).toBe("string");
-    expect(result["RUN_RECORD_MANIFEST_SCHEMA_VERSION"]).toBe("string");
-    expect(result["validateProxyAuth"]).toBe("function");
-    expect(result["buildPlatformAllowedHosts"]).toBe("function");
-    expect(result["textOf"]).toBe("function");
-    expect(result["AexClient_present"]).toBe(false);
-    expect(result["AexPlatformClient_present"]).toBe(false);
-    expect(result["Template_present"]).toBe(false);
-    expect(result["TemplateDefinition_present"]).toBe(false);
-    expect(result["Blueprint_present"]).toBe(false);
-    expect(result["defineRun_present"]).toBe(false);
-    expect(result["compileTemplate_present"]).toBe(false);
-    expect(result["submitResolvedRun_present"]).toBe(false);
-    expect(result["RunRef_present"]).toBe(false);
-    expect(result["ChatClient_present"]).toBe(false);
-    expect(result["ChatSession_present"]).toBe(false);
-    expect(result["ChatTurnStream_present"]).toBe(false);
-    // redeem is CLI-only: it must not leak onto the public SDK surface.
-    expect(result["redeem_present"]).toBe(false);
-    expect(result["billing_present"]).toBe(false);
-    expect(result["Aex_redeem_method"]).toBe("undefined");
-    expect(result["AgentExecutor_redeem_method"]).toBe("undefined");
+    expect(result.constructString, result.constructStringError).toBe(true);
+    expect(result.constructStringAndOptions, result.constructStringAndOptionsError).toBe(true);
+    for (const [name, type] of Object.entries(result.forbidden)) {
+      expect(type, `${name} should not be exported from the slim root surface`).toBe("undefined");
+    }
   });
 
   it("require(\"@aexhq/sdk\") fails with a clear no-CJS error", async () => {
