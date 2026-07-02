@@ -41,7 +41,7 @@ export interface RuntimeManifest {
   readonly assetsRoot: string;
   /** Absolute path of the in-container aex runtime bridge (invoke via `bun`). */
   readonly aexCli: string;
-  /** Absolute path of the per-run proxy-endpoints manifest. */
+  /** Absolute path of the in-container aex runtime index. */
   readonly indexJson: string;
   /** Absolute path of the always-mounted aex runtime contract README. */
   readonly readme: string;

@@ -82,7 +82,6 @@ describe("runtime security profiles", () => {
         networkingMode: "open",
         packageCount: 1,
         customerEnvVarCount: 1,
-        proxyEndpointCount: 1,
         mcpServerCount: 1
       })
     ).toEqual([]);

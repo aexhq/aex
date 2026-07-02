@@ -34,6 +34,8 @@ import type {
   SessionListQuery,
   SessionMessageAccepted,
   SessionMessageRequest,
+  SessionMessagesPage,
+  SessionMessagesQuery,
   SessionStateChangeAccepted,
   RunWebhookDelivery,
   SecretRecord,
@@ -149,6 +151,22 @@ export async function sendSessionMessage(
       ...(headers ? { headers } : {}),
       body: JSON.stringify(request)
     }
+  );
+}
+
+export async function listSessionMessages(
+  http: HttpClient,
+  sessionId: string,
+  query?: SessionMessagesQuery
+): Promise<SessionMessagesPage> {
+  const params: Record<string, string> = {};
+  if (query?.limit !== undefined) params.limit = String(query.limit);
+  if (query?.cursor !== undefined) params.cursor = query.cursor;
+  if (query?.since !== undefined) params.since = query.since;
+  return http.request<SessionMessagesPage>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+    {},
+    params
   );
 }
 

@@ -10,8 +10,7 @@ import { parseRunSubmissionRequest } from "../src/index.js";
  *   secretEnv[ENV] = { ephemeral: true }   → paired with secrets.envSecrets[ENV]
  *                                            (per-run, deleted at terminal).
  *
- * Cross-validation mirrors proxyEndpoints ↔ secrets.proxyEndpointAuth: no orphan
- * values, and a `ref` never ships a value.
+ * Cross-validation rejects orphan values, and a `ref` never ships a value.
  */
 const base = {
   workspaceId: "workspace-1",

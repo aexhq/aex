@@ -245,14 +245,13 @@ export type PlatformProxyAuthValue =
  * by {@link RunProvider}. A run REQUIRES a key for its own `provider`; it MAY
  * carry keys for additional providers so a subagent spawned with a
  * different-family model inherits them server-side from the vault (the keys
- * never transit the container). `mcpServers` and `proxyEndpointAuth` are
- * cross-provider (an MCP credential is the same secret whichever model is
- * driving the MCP client).
+ * never transit the container). `mcpServers` credentials are cross-provider
+ * (an MCP credential is the same secret whichever model is driving the MCP
+ * client).
  */
 export interface PlatformInlineSecrets {
   readonly apiKeys?: Partial<Record<RunProvider, string>>;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
-  readonly proxyEndpointAuth?: readonly PlatformProxyEndpointAuth[];
   /**
    * Per-run env-var secret VALUES, keyed by env name. Each entry pairs with a
    * `submission.secretEnv[<envName>] = { ephemeral: true }` declaration. Lives
@@ -931,7 +930,7 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   // run's mode (a run inheriting keys server-side may legitimately omit them).
   if (input === undefined || input === null) return {};
   const value = requireRecord(input, "secrets");
-  const allowedTopLevel = new Set<string>(["apiKeys", "mcpServers", "proxyEndpointAuth", "envSecrets"]);
+  const allowedTopLevel = new Set<string>(["apiKeys", "mcpServers", "envSecrets"]);
   for (const key of Object.keys(value)) {
     if (key.startsWith("__aex_")) {
       // Platform-internal namespace (e.g. __aex_proxy_token). The BFF
@@ -950,13 +949,11 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   }
   const apiKeys = parseApiKeys(value.apiKeys);
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
-  const proxyEndpointAuth = parseProxyEndpointAuth(value.proxyEndpointAuth);
   const envSecrets = parseEnvSecrets(value.envSecrets);
 
   return {
     ...(apiKeys ? { apiKeys } : {}),
     ...(mcpServers ? { mcpServers } : {}),
-    ...(proxyEndpointAuth ? { proxyEndpointAuth } : {}),
     ...(envSecrets ? { envSecrets } : {})
   };
 }
@@ -1426,7 +1423,6 @@ export interface PlatformRunSubmissionRequest {
   readonly provider: RunProvider;
   readonly submission: PlatformSubmission;
   readonly secrets: PlatformInlineSecrets;
-  readonly proxyEndpoints?: readonly PlatformProxyEndpoint[];
   /**
    * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens
    * or absent (downstream applies the default).
@@ -1544,7 +1540,6 @@ export function parseRunSubmissionRequest(
     "submission",
     "runtimeSize",
     "timeout",
-    "proxyEndpoints",
     "webhook",
     "limits",
     "machine",
@@ -1574,11 +1569,8 @@ export function parseRunSubmissionRequest(
   const webhook = parseRunWebhook(value.webhook);
   const limits = parseRunLimits(value.limits);
   const machine = parseRunMachine(value.machine);
-  const proxyEndpoints = parseProxyEndpoints(value.proxyEndpoints);
   const secrets = parseInlineSecrets(value.secrets);
   enforceCredentialSecretPolicy(secrets, provider);
-
-  crossValidateProxyEndpointsAndAuth(proxyEndpoints, secrets.proxyEndpointAuth);
 
   const submission = parseSubmission(value.submission);
   assertRunModelMatchesProvider(provider, submission.model);
@@ -1615,7 +1607,6 @@ export function parseRunSubmissionRequest(
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(proxyEndpoints ? { proxyEndpoints } : {}),
     ...(webhook !== undefined ? { webhook } : {}),
     ...(limits !== undefined ? { limits } : {}),
     ...(machine !== undefined ? { machine } : {}),

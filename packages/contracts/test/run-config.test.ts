@@ -284,28 +284,27 @@ describe("run-config — parseRunRequestConfig", () => {
     ).toThrow(/extra/i);
   });
 
-  it("preserves environment, proxyEndpoints, and metadata pass-through fields", () => {
+  it("preserves environment and metadata pass-through fields", () => {
     const env = { networking: { mode: "limited" as const, allowedHosts: ["api.x.com"] } };
-    const proxyEndpoints = [
-      {
-        name: "stripe",
-        baseUrl: "https://api.stripe.com",
-        authShape: { type: "bearer" as const },
-        allowMethods: ["GET"],
-        allowPathPrefixes: ["/v1/"]
-      }
-    ];
     const metadata = { ticket: "ANT-1" };
     const config = parseRunRequestConfig({
       model: "claude-haiku-4-5",
       prompt: "x",      mcpServers: [],
       environment: env,
-      proxyEndpoints,
       metadata
     });
     expect(config.environment).toEqual(env);
-    expect(config.proxyEndpoints).toEqual(proxyEndpoints);
     expect(config.metadata).toEqual(metadata);
+  });
+
+  it("rejects proxyEndpoints as a removed run-config field", () => {
+    expect(() =>
+      parseRunRequestConfig({
+        model: "claude-haiku-4-5",
+        prompt: "x",
+        proxyEndpoints: []
+      })
+    ).toThrow(/unexpected field: proxyEndpoints/);
   });
 
   it("rejects region as a removed choice field", () => {

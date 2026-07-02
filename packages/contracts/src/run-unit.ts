@@ -3,8 +3,7 @@
  *
  * One canonical struct that captures every non-secret artifact persisted
  * for a single run: parsed submission inputs, status/lifecycle, attempts,
- * indexed events, raw-event Storage manifest, outputs (+ capture
- * failures), and the proxy-call audit log.
+ * indexed events, raw-event Storage manifest, outputs, and capture failures.
  *
  * Wire contract for `GET /api/runs/:runId`, the per-run archive's
  * `run.json`/`submission.json`/`caps.json`, and the SDK/CLI
@@ -27,7 +26,6 @@ import type {
   PlatformPackage,
   PlatformPackageEcosystem,
   PlatformSubmission,
-  PlatformProxyEndpoint,
   PlatformEnvironment
 } from "./submission.js";
 import type { RuntimeSecurityProfileName } from "./runtime-security-profile.js";
@@ -127,28 +125,6 @@ export interface RunUnitOutputCaptureFailure {
   readonly createdAt: string;
 }
 
-export interface RunUnitProxyCall {
-  readonly id: string;
-  readonly endpointName: string;
-  readonly method: string;
-  readonly requestPathRedacted: string | null;
-  readonly requestByteSize: number;
-  readonly responseStatus: number | null;
-  readonly responseByteSize: number;
-  readonly outcome: string;
-  readonly errorClass: string | null;
-  readonly startedAt: string;
-  readonly finishedAt: string | null;
-  readonly durationMs: number | null;
-}
-
-export interface RunUnitProxyCallPage {
-  readonly entries: readonly RunUnitProxyCall[];
-  readonly totalCount: number;
-  readonly truncated: boolean;
-  readonly nextCursor?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Top-level RunUnit
 // ---------------------------------------------------------------------------
@@ -167,14 +143,12 @@ export interface RunUnit {
   readonly attemptCount: number;
   readonly submission: RunUnitSubmission;
   readonly capsSnapshot?: Record<string, JsonValue>;
-  readonly proxyEndpointsSnapshot?: readonly PlatformProxyEndpoint[];
   readonly attempts: readonly RunUnitAttempt[];
   readonly events: RunUnitEventPage;
   readonly rawEventPages: readonly RunUnitRawEventPage[];
   readonly outputs: readonly RunUnitOutput[];
   readonly outputCaptureFailures: readonly RunUnitOutputCaptureFailure[];
   readonly costTelemetry?: import("./run-cost.js").RunCostTelemetry;
-  readonly proxyCalls: RunUnitProxyCallPage;
   /**
    * Per-run, per-provider runtime manifest — derived from the validated
    * submission + the chosen provider (`buildRuntimeManifest`). Tells

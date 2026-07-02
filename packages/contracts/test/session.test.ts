@@ -17,6 +17,22 @@ function httpStub(): { readonly http: HttpClient; readonly calls: Array<{ readon
         return { session: { id: "sess_1", status: "idle" } } as T;
       }
       if (path.endsWith("/messages")) {
+        if (init.method !== "POST") {
+          return {
+            messages: [
+              {
+                id: "msg_1",
+                sender: "assistant",
+                text: "hello",
+                timestamp: "2026-07-02T12:00:00.000Z",
+                turnSeq: 1,
+                sequence: 1,
+                messageId: "provider-msg-1"
+              }
+            ],
+            nextCursor: "cursor-2"
+          } as T;
+        }
         return {
           session: { id: "sess_1", status: "running" },
           turn: { sessionId: "sess_1", turnSeq: 1 },
@@ -66,6 +82,33 @@ describe("session contracts", () => {
     expect(ticket.ticket).toBe("ticket");
     expect(calls[0]!.path).toBe("/api/sessions/sess_1/events/ticket");
     expect(calls[0]!.init.method).toBe("POST");
+  });
+
+  it("lists session messages from the transcript route", async () => {
+    const { http, calls } = httpStub();
+    const page = await operations.listSessionMessages(http, "sess_1", {
+      limit: 10,
+      cursor: "cursor-1",
+      since: "2026-07-02T00:00:00.000Z"
+    });
+
+    expect(calls[0]!.path).toBe("/api/sessions/sess_1/messages");
+    expect(calls[0]!.init).toEqual({});
+    expect(calls[0]!.query).toEqual({
+      limit: "10",
+      cursor: "cursor-1",
+      since: "2026-07-02T00:00:00.000Z"
+    });
+    expect(page.messages[0]).toEqual({
+      id: "msg_1",
+      sender: "assistant",
+      text: "hello",
+      timestamp: "2026-07-02T12:00:00.000Z",
+      turnSeq: 1,
+      sequence: 1,
+      messageId: "provider-msg-1"
+    });
+    expect(page.nextCursor).toBe("cursor-2");
   });
 
   it("posts session cancel with an Idempotency-Key header", async () => {

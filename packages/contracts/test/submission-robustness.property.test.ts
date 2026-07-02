@@ -99,6 +99,5 @@ const RESERVED = new Set([
   "webhook",
   "limits",
   "machine",
-  "secrets",
-  "proxyEndpoints"
+  "secrets"
 ]);
