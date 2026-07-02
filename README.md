@@ -6,10 +6,10 @@
 
 - **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, web fetch/search, background commands, code execution, git, and subagents.
 - **Durable infrastructure.** Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
-- **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
+- **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
 - **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
-- **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK secrets, scoped proxy auth, redaction, and output modes.
+- **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 
 ## Install
 
@@ -79,7 +79,6 @@ aex run \
 ## Docs
 
 - [Quickstart](packages/sdk/docs/quickstart.md)
-- [Agent tools](packages/sdk/docs/concepts/agent-tools.md)
 - [Composition](packages/sdk/docs/concepts/composition.md)
 - [Secrets](packages/sdk/docs/secrets.md)
 - [Limits](packages/sdk/docs/limits.md)

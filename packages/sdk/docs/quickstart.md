@@ -83,11 +83,8 @@ for await (const event of turn) {
 }
 await turn.done();
 
-// Reads/streams/downloads are grouped into accessor sub-resources:
-// session.messages() / events() / outputs() / webhooks(). Grab the last
-// assistant message (an AssistantTextEntry; use ?.text for the string).
-const lastText = (await session.messages().last())?.text;
-console.log(lastText);
+const messages = await session.messages().list();
+console.log(messages.at(-1)?.text);
 
 // Poll the record until the session parks (idle / suspended / error).
 const record = await session.wait();
@@ -110,8 +107,7 @@ aex run \
 
 ## Add capabilities
 
-- Add files, skills, AGENTS.md, MCP servers, proxy endpoints, packages, and networking controls with [Composition](concepts/composition.md).
-- Inspect runtime tools with [Agent tools](concepts/agent-tools.md).
+- Add files, skills, AGENTS.md, MCP servers, packages, and networking controls with [Composition](concepts/composition.md).
 - Use parent/child run delegation from the [Features](https://aex.dev/docs/features/#subagents) page.
 - Narrow output capture or download individual files with [Outputs](outputs.md).
 - Check supported providers and models in the [provider/runtime capability matrix](provider-runtime-capabilities.md).

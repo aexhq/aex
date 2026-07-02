@@ -2,7 +2,7 @@
  * SDK feature tour: one managed session that uses typed model/runtime constants,
  * inline AGENTS.md guidance, uploaded files, a custom tool bundle, selected
  * built-in tools, runtime env vars/secrets, streamed events, output reads, and
- * corpus-scoped data tools.
+ * a follow-up session turn.
  *
  * Run from the repository root after building the workspace package:
  *
@@ -20,13 +20,11 @@ import {
   AgentsMd,
   Aex,
   BuiltinTools,
-  createCorpusTools,
   File,
   isRateLimited,
   isTextMessage,
   McpServer,
   Models,
-  ProxyEndpoint,
   Providers,
   Secret,
   Sizes,
@@ -132,17 +130,6 @@ const environmentSecrets = demoRuntimeSecret
   ? { DEMO_RUNTIME_SECRET: Secret.value(demoRuntimeSecret) }
   : undefined;
 
-const proxyEndpoints = [
-  ProxyEndpoint.none({
-    name: "httpbin",
-    baseUrl: "https://httpbin.org",
-    allowMethods: ["GET"],
-    allowPathPrefixes: ["/json"],
-    responseMode: "full",
-    timeoutMs: 10_000
-  })
-];
-
 console.log("creating feature-tour session...");
 console.log(`optional mcp: ${mcpServers.length > 0 ? "enabled" : "disabled"}`);
 console.log(`optional runtime secret: ${environmentSecrets ? "enabled" : "disabled"}`);
@@ -165,7 +152,6 @@ const session = await aex.openSession({
     BuiltinTools.code_execution,
     metricLookup
   ],
-  proxyEndpoints,
   mcpServers,
   environment: {
     networking: { mode: "open" },
@@ -201,8 +187,7 @@ const prompt = [
   "Analyze the attached quarterly metrics.",
   "Call metric_lookup for atlas, beacon, and cinder.",
   "Create /workspace/outputs/feature-tour-report.md with a short table, a ranking by q2_revenue_usd, and two risks.",
-  "Create /workspace/outputs/summary.json with keys topProduct, totalQ2RevenueUsd, highestActivationProduct, and riskCount.",
-  "Mention whether the httpbin proxy endpoint is declared, but do not call it unless you need to."
+  "Create /workspace/outputs/summary.json with keys topProduct, totalQ2RevenueUsd, highestActivationProduct, and riskCount."
 ].join(" ");
 
 const firstTurn = session.send(prompt);
@@ -272,10 +257,8 @@ if (report) {
   console.log(reportPreview.text || "(no risk lines found)");
 }
 
-const corpusTools = createCorpusTools(aex, { sessionIds: [session.id] }, { defaultReadBytes: 4_000 });
-const corpusOutputs = await corpusTools.execute("list_outputs", { session_id: session.id });
-console.log("corpus-scoped list_outputs result:");
-console.log(JSON.stringify(corpusOutputs, null, 2));
+const reopenedOutputs = await aex.sessions.outputs(session.id).list();
+console.log(`outputs via aex.sessions.outputs(...): ${reopenedOutputs.length}`);
 
 if (downloadPath) {
   const bytes = await session.download({ to: downloadPath });

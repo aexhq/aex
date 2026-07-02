@@ -330,7 +330,7 @@ export function emitJsonError(io: CliIO, code: string, message: string, extra: R
 
 /**
  * Repeatable `--var key=value` / `--mcp-secret name=value` /
- * `--proxy-auth name=value`-style flag parser. Returns the values in
+ * `--name=value`-style flag parser. Returns the values in
  * insertion order (last-wins on duplicate keys).
  */
 export function collectRepeatedKv(rest: readonly string[], flag: string): {

@@ -17,9 +17,6 @@ For the current provider/model set, see the generated
 | Area | Default |
 | --- | --- |
 | Workspace storage | 50 GiB per workspace for captured outputs and workspace artifacts. aex-maintainer admin workspaces may be unlimited for internal dogfooding; this is not a customer entitlement. |
-| Proxy request body | 10 MiB per proxy endpoint unless the endpoint declares a different `maxRequestBytes`. |
-| Proxy timeout | 5 minutes per proxy endpoint unless the endpoint declares a different `timeoutMs`. |
-| Proxy telemetry | Proxy calls emit report-only usage telemetry for call count, failed calls, request bytes, response bytes when known, and duration. Public proxy pricing is not shipped unless documented later. |
 
 ## Product Boundaries
 
@@ -27,14 +24,13 @@ For the current provider/model set, see the generated
 | --- | --- |
 | Runtime | New submissions run on the managed runtime. There is no public runtime selector. |
 | Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
-| Secrets | Provider keys, MCP credentials, proxy auth, and env secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
+| Secrets | Provider keys, MCP credentials, and env secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
 | MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |
-| Proxy endpoints | The proxy enforces declared host/path/method/auth policy for calls routed through it. Upstream side effects and data handling remain with the upstream service and customer. |
 | Outputs | Captured outputs, events, and metadata are stored under the run record and downloaded through auth-gated routes. Output content is customer content. |
 | Human review | Runs execute after submission. Cancellation is available, but aex does not pause a run for platform-mediated approval or interactive clarification. |
 | Sessions | The durable product primitive is the session/run record. Sessions can be resumed by id and auto-suspend after the configured idle window; persistent named agent profiles and saved agent definitions are out of scope. |
 | Deployment | The supported product is the hosted aex service plus the SDK and CLI. Alternate `baseUrl` values are for local, staging, or hosted aex API planes, not a self-host product promise. |
-| Cost | BYOK provider-token charges accrue to the customer's provider account. aex records report-only telemetry for runtime, storage, and proxy usage; free trials, billing-grade invoices, and public pricing documents are not shipped unless documented later. |
+| Cost | BYOK provider-token charges accrue to the customer's provider account. aex records report-only telemetry for runtime and storage usage; free trials, billing-grade invoices, and public pricing documents are not shipped unless documented later. |
 
 ## Provider Policy Links
 

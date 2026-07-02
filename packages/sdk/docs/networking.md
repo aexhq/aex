@@ -26,7 +26,6 @@ These reach the network over managed paths and are **not** subject to
 - The model / provider call for the run (and its subagents).
 - The built-in `web_search` and `web_fetch` tools (still SSRF-guarded).
 - Any remote MCP servers you declare in `mcpServers` — see [MCP](mcp.md).
-- Any `proxyEndpoints` you declare — see [Credentials](credentials.md).
 - The package registries for any `environment.packages` you declare (pip → PyPI,
   apt → the distribution mirrors). Declaring a package implicitly allows the
   registry it installs from.
@@ -135,7 +134,7 @@ your client succeeds without extra setup.
 - **`allowedHosts` only applies in `limited` mode.** It is ignored in `open`
   mode, where the SSRF deny-list is the only gate.
 
-For routing credentialed HTTP calls through the managed proxy without putting the
-secret in the container, use proxy endpoints — see
-[Credentials](credentials.md). For remote tool servers, see [MCP](mcp.md). For
-the full set of run-config fields, see [Run configuration](run-config.md).
+For credentialed HTTP calls, pass the credential as an `environment.secrets`
+entry and let your code use its normal HTTP client. For remote tool servers, see
+[MCP](mcp.md). For the full set of run-config fields, see
+[Run configuration](run-config.md).

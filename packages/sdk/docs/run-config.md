@@ -13,13 +13,16 @@ Allowed fields:
 - `mcpServers` - array of `McpServerRef`; headers are split into the vaulted secrets channel server-side.
 - `environment` - `{ networking?, packages?, variables? }`. Networking is open by default; set `networking.mode` to `limited` only when you want an allowlist. `variables` are merged into the in-container `RUNTIME.env` / `RUNTIME.json` mounts. (Run secrets go in `environment.secrets`, which carries live `Secret` instances and is not part of a shareable config.)
 - `runtime` - optional managed-runtime preset. Prefer `Sizes` in TypeScript.
-- `proxyEndpoints` - array of `ProxyEndpoint` instances; endpoint-level `retry` is allowed here and remains declaration-based.
 - `metadata` - non-secret structured metadata.
 - `overrides` - `{ idleTtl?, timeout?, maxSpendUsd? }`. `timeout` is an optional session deadline (e.g. `"30m"`, `"2h"`); `maxSpendUsd` stops the session once its spend would exceed the cap (see [Limits & quotas](limits-and-quotas.md)).
 
 `message` (the one-shot `run` input), `agentsMd`, `files`, `outputs`, `tools`, `includeBuiltinTools`, and `outputMode` are `openSession` / `run` options, not reusable run-config fields. They carry the turn input, bytes, capture behavior, or agent tool/output controls that belong on a concrete call. Skill bundles are `tools` entries built with `Tools.fromSkillDir(...)` / `Tools.fromSkillUrl(...)`, so they too are SDK-code options rather than config fields. Subagents run in-process; there is no `limits` / `parentRunId` option.
 
-Secrets never live in run config. Pass provider keys through the top-level `apiKeys` map (and run secrets through `environment.secrets`) in the SDK, or the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`, `--proxy-auth`) in the CLI. See [Secrets](secrets.md) for secret lifecycles and [Credentials](credentials.md) for the proxy endpoint policy/auth split and retry fields.
+Secrets never live in run config. Pass provider keys through the top-level
+`apiKeys` map and runtime secrets through `environment.secrets` in the SDK, or
+the equivalent host-mode flags (`--anthropic-api-key`, `--mcp-auth`) in the CLI.
+See [Secrets](secrets.md) for secret lifecycles and [Credentials](credentials.md)
+for credential handling.
 
 ## Reuse in code
 
@@ -52,4 +55,4 @@ aex run --config ./run.json \
   --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 
-...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--runtime-size`, `--run-timeout`, `--proxy-endpoint`, `--proxy-auth`, `--metadata`). The two modes are mutually exclusive.
+...or as explicit flags (`--model`, `--system`, `--prompt`, `--mcp`, `--mcp-auth`, `--runtime-size`, `--run-timeout`, `--metadata`). The two modes are mutually exclusive.

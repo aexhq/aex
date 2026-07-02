@@ -5,63 +5,39 @@ description: |
   frame ACTUALLY DEPICTS named target nouns (frame-grounded verification), not
   merely mentions/relates to them. Use this whenever the task requires proving a
   candidate image is visually on-target (e.g. b-roll selection, evidence gating).
-  Reads no secret from disk: the Doubao Ark key is injected by the managed proxy.
+  Reads the Doubao key from DOUBAO_API_KEY supplied as a runtime secret.
 ---
 
-# frame-vision-gate — does this frame depict X?
+# frame-vision-gate
 
 This skill answers one question about one image: **"does the frame literally show
 these things?"** It captions the pixels with a vision-language model (Doubao Seed
 1.6 Vision on the ByteDance Ark API) and returns a per-noun depiction verdict the
-agent can gate on. It replaces substring/title matching — a stat block that
-*mentions* "owlbear", a book cover, or a talking-head *about* X never passes as a
-shot of X.
+agent can gate on.
 
-## When to use
+## Prerequisites
 
-- You have a candidate image on the local filesystem (downloaded image, or a
-  keyframe you extracted from a video with `ffmpeg`).
-- You need a hard accept/reject on "the frame visibly depicts <nouns>".
+The run must provide:
 
-## Prerequisites the run must declare
+- `DOUBAO_API_KEY` in `environment.secrets`.
+- Networking access to `ark.ap-southeast.bytepluses.com`, or the matching host
+  for your Doubao account.
 
-This skill calls the Doubao Ark vision endpoint **through the aex managed proxy**,
-so the API key never touches the container. At submit time the caller MUST declare:
-
-A proxy endpoint named `doubao-ark`, declared with `ProxyEndpoint.bearer(...)`.
-The instance carries the key as `token`; the SDK splits it into the vaulted
-secrets channel server-side, so no separate auth array is needed:
+Example:
 
 ```ts
-import { ProxyEndpoint } from "@aexhq/sdk";
-
-const doubaoArk = ProxyEndpoint.bearer({
-  name: "doubao-ark",
-  baseUrl: "https://ark.ap-southeast.bytepluses.com", // intl BytePlus gateway
-  token: process.env.DOUBAO_API_KEY!,
-  allowMethods: ["POST"],
-  allowPathPrefixes: ["/api/v3/chat/completions"],
-  maxRequestBytes: 2_000_000, // base64 image is ~1.33x raw; mind the request-size cap (default 10 MiB)
-  responseMode: "full",
-  timeoutMs: 60_000
-});
+environment: {
+  secrets: {
+    DOUBAO_API_KEY: Secret.value(process.env.DOUBAO_API_KEY!)
+  },
+  networking: {
+    mode: "limited",
+    allowedHosts: ["ark.ap-southeast.bytepluses.com"]
+  }
+}
 ```
 
-Pass it as `proxyEndpoints: [doubaoArk]` on the `openSession` / `run` call.
-
-(China gateway: set `baseUrl` to `https://ark.cn-beijing.volces.com` and declare
-`doubao-ark` against it — same path prefix. Note the China host's reachability
-from the platform egress is currently unverified; prefer the BytePlus host.)
-
-The skill auto-detects the endpoint and falls back to **direct egress** (a plain
-HTTPS POST from `python`) when the proxy endpoint is absent — in that mode the run
-must instead expose the key as
-`environment: { secrets: { DOUBAO_API_KEY: Secret.value(...) } }` and allow-list
-the Ark host under `environment.networking`.
-
 ## How to call it
-
-The skill ships at `skills/frame-vision-gate/`. Run the two steps with `bash`:
 
 ### 1. Caption + per-noun depiction verdict
 
@@ -89,12 +65,13 @@ Writes a JSON `visual_facts` object:
       "an owlbear": {"depicts": true, "confidence": 0.9, "evidence": "feathered bear-owl in frame"},
       "a tabletop RPG miniature": {"depicts": true, "confidence": 0.85, "evidence": "painted mini on grid"}
     },
-    "provider": "doubao", "model": "doubao-seed-1-6-vision-250815"
+    "provider": "doubao",
+    "model": "doubao-seed-1-6-vision-250815"
   }
 }
 ```
 
-### 2. Accept / reject the candidate
+### 2. Accept or reject the candidate
 
 ```bash
 python skills/frame-vision-gate/verify_frame.py \
@@ -105,21 +82,14 @@ python skills/frame-vision-gate/verify_frame.py \
   --out /workspace/.aex/verdict.json
 ```
 
-`verify_frame.py` accepts only when EVERY `--visual-must-depict` noun has a VLM
-verdict `depicts:true` with `confidence >= 0.5` (it never substring-matches the
-title/url), the frame has a real caption, and the need-type class is satisfied.
-Output: `{ "accepted": true|false, "frame_grounded": true|false,
-"rejection_reasons": [...], "score": <float> }`.
+`verify_frame.py` accepts only when every `--visual-must-depict` noun has a VLM
+verdict `depicts:true` with `confidence >= 0.5`, the frame has a real caption,
+and the need-type class is satisfied. It never substring-matches a title or URL.
 
 ## Pitfalls
 
-- **One image per call.** To verify a video, extract keyframes first
-  (`ffmpeg -i source.mp4 -vf fps=1,scale=480:-1 frame_%03d.jpg`) and caption each.
-- **Scale frames to ~480px** before captioning. It keeps the base64 payload under
-  the proxy `maxRequestBytes` and is what the model needs — full-res adds cost,
-  not signal.
-- **`depicts:true` from the VLM governs**, not the title. If a candidate's title
-  says "Owlbear" but the frame is a title card, `verify_frame.py` rejects it with
-  `FRAME_DOES_NOT_DEPICT:an owlbear`. That is the point.
-- The model judges PIXELS ONLY. Do not pass the candidate title into the caption
-  prompt — the script keeps the caption blind by design.
+- One image per call. To verify a video, extract keyframes first.
+- Scale frames to roughly 480-960px before captioning. Full-res frames add cost
+  without much extra signal.
+- The model judges pixels only. Do not pass the candidate title into the caption
+  prompt.

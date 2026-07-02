@@ -232,8 +232,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --mcp name=url              MCP server entry (repeatable)\n");
   io.stdout("  --mcp-auth name=Hdr:Val     Auth header on the matching --mcp; routed into vaulted secrets (repeatable)\n");
   io.stdout("  --metadata key=value        Submission metadata entry (repeatable)\n");
-  io.stdout("  --proxy-endpoint '<json>'   PlatformProxyEndpoint JSON (repeatable)\n");
-  io.stdout("  --proxy-auth name=<spec>    bearer:tok | basic:u:p | header:v | query:v (repeatable)\n");
   io.stdout("  --runtime-size <size>       managed runtime preset\n");
   io.stdout("  --run-timeout <dur>         Server-side run deadline (e.g. 1h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");

@@ -100,10 +100,6 @@ if (truncated) {
 
 Check `truncated` before treating `text` as complete. Pass `options.grep` (a substring or `RegExp`) to keep only matching lines of the capped text. The returned `output` is the matched `Output` record, and `totalBytes` is the file's full size when the server reports it.
 
-### Chatting over a workspace's outputs
-
-`createDataTools(client)` packages the read surface (`sessions.list` + `sessions.outputs(id).list` + `sessions.outputs(id).read`) as a vendor-neutral LLM tool set (`{ tools, instructions, execute }`) so you can build a search-then-fetch chat over your sessions and their outputs in a few lines on top of the public SDK. The `tools` are plain JSON-Schema definitions (the shape every major LLM tool API accepts); `execute(name, input)` dispatches a tool call against the workspace-scoped client. See the runnable `examples/data-chat/` example.
-
 ## Finding outputs
 
 `session.outputs().list(query?)` can filter the captured output list client-side. Use `session.outputs().find(query)` when you want discovery to be explicit, or `session.outputs().findOne(query)` when exactly one file is expected:

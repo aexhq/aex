@@ -25,14 +25,13 @@ server, so we cannot elide MCP responses or write them to the session
 filesystem on the user's behalf. Anything an MCP tool returns lands
 directly in the model's context.
 
-For ingestion-style tools that return large JSON blobs (search results,
-catalogue dumps, bulk reads), use the **CLI-as-skill + managed proxy**
-pattern instead of MCP:
+For ingestion-style MCP servers that return large JSON blobs (search results,
+catalogue dumps, bulk reads), prefer a skill that writes files instead of
+putting the whole response in model context:
 
 1. Package the upstream as a skill-tool (`Tools.fromSkillDir` /
    `Tools.fromSkillUrl`) — a CLI binary the agent invokes with its bash tool.
-2. Route every upstream HTTPS call through a per-run `ProxyEndpoint`
-   (audit, byte caps, budget enforcement).
+2. Keep any upstream HTTPS credentials in `environment.secrets`.
 3. Have the CLI write the full payload to the session filesystem. By default,
    files it creates or modifies are captured automatically; pass
    `outputs.allowedDirs` only when you want to narrow capture to specific roots.

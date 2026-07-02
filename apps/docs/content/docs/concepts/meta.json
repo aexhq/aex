@@ -4,7 +4,6 @@
   "defaultOpen": true,
   "pages": [
     "runs",
-    "agent-tools",
     "composition",
     "providers-and-runtimes"
   ]

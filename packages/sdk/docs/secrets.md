@@ -111,5 +111,5 @@ await aex.run({
 await aex.secrets.delete("serper-api-key");
 ```
 
-The CLI supports per-run provider, MCP, and proxy credentials. Workspace secret
+The CLI supports per-run provider and MCP credentials. Workspace secret
 administration is exposed through the SDK.

@@ -17,7 +17,7 @@ Run records, status, wait/cancel/delete, idempotency, typed events, output captu
 
 ## Agent composition
 
-Skills, files, AGENTS.md, remote MCP servers, proxy endpoints, environment variables, packages, and networking controls.
+Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, secrets, and networking controls.
 
 ## Subagents
 
@@ -29,6 +29,6 @@ Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao Chi
 
 ## Typed control surface
 
-Strongly typed SDK inputs, CLI parity, BYOK secrets, scoped proxy auth, redaction, and output modes.
+Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 
 For product boundaries and unsupported claims, see [Limits](/docs/guides/limits/).
