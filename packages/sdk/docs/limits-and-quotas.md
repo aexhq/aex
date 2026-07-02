@@ -96,12 +96,9 @@ Default values; each is overridable per-plane via the matching
 | API token create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API token delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 
-## Request scope (proxy and egress)
+## Request Scope
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Proxy request body | 10 MiB | aex policy | Per-endpoint via `maxRequestBytes` | `REQUEST_PROXY_DEFAULT_MAX_REQUEST_BYTES` |
-| Proxy response body | `0` = unlimited (streamed unbuffered) | aex policy | Per-endpoint via `maxResponseBytes` | `REQUEST_PROXY_DEFAULT_MAX_RESPONSE_BYTES` |
-| Proxy upstream timeout | 5 minutes | aex policy | Per-endpoint via `timeoutMs` | `REQUEST_PROXY_DEFAULT_TIMEOUT_MS` |
 | Signed output URL TTL | 300 seconds | aex policy | Per-call via `expiresSeconds` | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
 | Event-stream connection ticket TTL | 60 seconds | aex policy | Per-mint via `ttlMs` | `REQUEST_TICKET_DEFAULT_TTL_MS` |

@@ -238,12 +238,12 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
   ];
 
   return `
-    import { AgentExecutor, Tools, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { Aex, Tools, McpServer, AgentsMd } from "@aexhq/sdk";
     import { mkdtempSync, writeFileSync } from "node:fs";
     import { tmpdir } from "node:os";
     import { join } from "node:path";
 
-    const client = new AgentExecutor({
+    const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

@@ -7,13 +7,13 @@ import {
   providersForModel,
   type RunModel
 } from "@aexhq/contracts";
-import { AgentExecutor, Secret, type SessionCreateOptions } from "../../src/index.js";
+import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
 
 /**
  * SDK ⇄ API WIRE-CONFORMANCE property (the prompt-delivery wire-shape bug class).
  *
  * The invariant: for ANY fuzzed session-create options, the REAL
- * `AgentExecutor.openSession` either
+ * `Aex.openSession` either
  *   (a) rejects synchronously with a typed error (AexError / Error), OR
  *   (b) builds a POST /api/sessions body whose non-message wire pieces the REAL
  *       contracts validator (`parseRunSubmissionRequest`) accepts.
@@ -28,7 +28,7 @@ import { AgentExecutor, Secret, type SessionCreateOptions } from "../../src/inde
  * request and is out of scope here.
  */
 
-function captureClient(): { client: AgentExecutor; bodies: unknown[] } {
+function captureClient(): { client: Aex; bodies: unknown[] } {
   const bodies: unknown[] = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -43,7 +43,7 @@ function captureClient(): { client: AgentExecutor; bodies: unknown[] } {
     throw new Error(`unexpected SDK network call (asset upload not expected in this fuzz): ${url}`);
   };
   return {
-    client: new AgentExecutor({ apiToken: "tkn_fuzz", baseUrl: "https://example.test", fetch: fetchImpl }),
+    client: new Aex({ apiToken: "tkn_fuzz", baseUrl: "https://example.test", fetch: fetchImpl }),
     bodies
   };
 }
@@ -54,7 +54,7 @@ function captureClient(): { client: AgentExecutor; bodies: unknown[] } {
  * `idempotencyKey` (a header on this route) and the message `prompt` (which
  * rides /messages), PLUS a `retention` policy. We adapt those framing
  * differences back to a run-submission shape and let the REAL parser vet every
- * wire piece the SDK actually assembled (secrets, proxyEndpoints, mcp,
+ * wire piece the SDK actually assembled (secrets, MCP,
  * runtimeSize, timeout, limits, metadata, outputs, secretEnv, environment).
  */
 function validateWire(body: unknown): void {

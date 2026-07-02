@@ -89,10 +89,10 @@ describe("SDK built-in retry (installed package)", () => {
     const script =
       CHILD_HARNESS +
       String.raw`
-const { AgentExecutor, isRateLimited, AexRateLimitError, AexApiError } = await import("@aexhq/sdk");
+const { Aex, isRateLimited, AexRateLimitError, AexApiError } = await import("@aexhq/sdk");
 
 function client(fetch) {
-  return new AgentExecutor({
+  return new Aex({
     apiToken: "aex_retry_token",
     baseUrl: "https://example.invalid",
     fetch,
@@ -148,7 +148,7 @@ strictEqual(isRateLimited(badRequest), false);
 
 // 5) retry:false disables the layer — a 429 is a single plain AexApiError.
 const e = makeFetch([429]);
-const off = new AgentExecutor({
+const off = new Aex({
   apiToken: "aex_retry_token",
   baseUrl: "https://example.invalid",
   fetch: e.fetch,

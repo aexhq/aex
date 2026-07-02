@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentExecutor, type RunResult } from "../../src/index.js";
+import { Aex, type RunResult } from "../../src/index.js";
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 
 function json(body: unknown): Response {
@@ -52,7 +52,7 @@ const flush = async (n = 4): Promise<void> => {
 };
 
 function runClient(session: Record<string, unknown>): {
-  readonly client: AgentExecutor;
+  readonly client: Aex;
   readonly urls: string[];
   readonly sockets: FakeWebSocket[];
   readonly webSocketFactory: (url: string) => FakeWebSocket;
@@ -89,7 +89,7 @@ function runClient(session: Record<string, unknown>): {
     sockets.push(ws);
     return ws;
   };
-  return { client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch }), urls, sockets, webSocketFactory: factory };
+  return { client: new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch }), urls, sockets, webSocketFactory: factory };
 }
 
 async function collectRun(session: Record<string, unknown>): Promise<{
@@ -114,7 +114,7 @@ async function collectRun(session: Record<string, unknown>): Promise<{
   return { result: await promise, urls };
 }
 
-describe("AgentExecutor.run -> one-shot session RunResult", () => {
+describe("Aex.run -> one-shot session RunResult", () => {
   it("returns a run-compatible result for a parked session turn", async () => {
     const { result, urls } = await collectRun({
       id: "run-1",

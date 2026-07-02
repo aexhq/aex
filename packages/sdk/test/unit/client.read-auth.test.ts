@@ -11,7 +11,7 @@
  * these turns red BEFORE it can break against the gated routes in production.
  */
 import { describe, expect, it } from "vitest";
-import { AgentExecutor, type SessionHandle } from "../../src/index.js";
+import { Aex, type SessionHandle } from "../../src/index.js";
 
 const TOKEN = "apt_read_auth_token";
 const BASE = "https://example.test";
@@ -52,12 +52,12 @@ function recordingClient(body: unknown, contentType = "application/json") {
       headers: { "content-type": contentType }
     });
   };
-  const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+  const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
   return { client, calls };
 }
 
 /** Open the session handle, then drop the rehydrate read so tests assert only the op under test. */
-async function openHandle(client: AgentExecutor, calls: RecordedCall[]): Promise<SessionHandle> {
+async function openHandle(client: Aex, calls: RecordedCall[]): Promise<SessionHandle> {
   const session = await client.openSession(SID);
   calls.length = 0;
   return session;
@@ -126,7 +126,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
         headers: { "content-type": "application/json" }
       });
     };
-    const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
     const session = await client.openSession(SID);
     calls.length = 0;
 
@@ -174,7 +174,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       }
       return new Response("direct-bytes", { status: 200, headers: { "content-type": "text/plain" } });
     };
-    const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
     const session = await client.openSession(SID);
     calls.length = 0;
 
@@ -230,7 +230,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       }
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
     };
-    const client = new AgentExecutor({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
     const session = await client.openSession(SID);
     calls.length = 0;
 

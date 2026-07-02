@@ -86,7 +86,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       // installed tarball — not the monorepo workspace symlink.
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AgentExecutor } from "@aexhq/sdk";
+        import { Aex } from "@aexhq/sdk";
 
         const apiBase = process.env.AEX_API_URL;
         const deepseekKey = process.env.DEEPSEEK_KEY;
@@ -96,7 +96,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         // Phase 7 wired workspace-token auth on POST /runs; the apiToken
         // is now a real, workspace-scoped credential. The live runner
         // gets it via env from the spawning test.
-        const client = new AgentExecutor({
+        const client = new Aex({
           baseUrl: apiBase,
           apiToken
         });

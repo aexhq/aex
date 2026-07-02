@@ -133,12 +133,12 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 //   - CUSTOM aex.skill_loaded → which skills were staged into the container
 //   - TEXT_MESSAGE_CONTENT + result.text → the model's answer
 const SCRIPT_PREAMBLE = `
-import { AgentExecutor, Tools, Tool } from "@aexhq/sdk";
+import { Aex, Tools, Tool } from "@aexhq/sdk";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const client = new AgentExecutor({
+const client = new Aex({
   baseUrl: process.env.AEX_API_URL,
   apiToken: process.env.AEX_API_TOKEN
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   const calls: string[] = [];
@@ -13,7 +13,7 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
 describe("Aex.openSession — removed field validation", () => {
   it("rejects the legacy runtimeSize field without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({
@@ -28,7 +28,7 @@ describe("Aex.openSession — removed field validation", () => {
 
   it("rejects the legacy secretEnv field without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({
@@ -43,7 +43,7 @@ describe("Aex.openSession — removed field validation", () => {
 
   it("rejects the legacy nested secrets object without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({

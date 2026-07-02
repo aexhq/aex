@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 import type { RunUnit } from "@aexhq/contracts";
 
 const SAMPLE_UNIT: RunUnit = {
@@ -25,8 +25,7 @@ const SAMPLE_UNIT: RunUnit = {
   events: { entries: [], totalCount: 0, truncated: false },
   rawEventPages: [],
   outputs: [],
-  outputCaptureFailures: [],
-  proxyCalls: { entries: [], totalCount: 0, truncated: false }
+  outputCaptureFailures: []
 };
 
 describe("SessionHandle.unit", () => {
@@ -48,7 +47,7 @@ describe("SessionHandle.unit", () => {
         headers: { "content-type": "application/json" }
       });
     };
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
     const session = await client.openSession("run-1");
     const unit = await session.unit();
     // The unit read hits the run-keyed endpoint.

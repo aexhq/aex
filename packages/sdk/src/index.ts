@@ -76,7 +76,6 @@ export {
   MCP_SERVER_NAME_PATTERN,
   SKILL_BUNDLE_LIMITS,
   SkillBundleValidationError,
-  buildPlatformAllowedHosts,
   normaliseSkillBundlePath,
   validateSkillBundleEntry,
   validateSkillBundleManifest
@@ -214,18 +213,6 @@ export type {
   TextMessageRunEvent,
   ToolCallResultRunEvent,
   ToolCallStartRunEvent
-} from "@aexhq/contracts";
-
-// Typed trace helpers for lower-level event consumers.
-export {
-  decodeToolCalls,
-  summarizeRunTrace,
-  summarizeRunUsage
-} from "@aexhq/contracts";
-export type {
-  RunTrace,
-  ToolCallResult,
-  ToolCallTrace
 } from "@aexhq/contracts";
 
 // Secret utilities

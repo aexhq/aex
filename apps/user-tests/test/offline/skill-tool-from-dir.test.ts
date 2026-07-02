@@ -219,11 +219,11 @@ describe("Tools.fromSkillDir filesystem + frontmatter robustness (installed pack
 
   it("bundles nested dirs + binary files into one deterministic, content-addressed asset", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { AgentExecutor, Tools } = await import("@aexhq/sdk");
+const { Aex, Tools } = await import("@aexhq/sdk");
 
 function makeClient() {
   const harness = makeFetch();
-  const client = new AgentExecutor({
+  const client = new Aex({
     apiToken: "aex_skilltool_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
@@ -386,11 +386,11 @@ console.log(JSON.stringify({ ok: true, symlinkSupported, skipped }));
 
   it("lifts + overrides name/description across CRLF, BOM, quoted, and extra-key frontmatter", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { AgentExecutor, Tools } = await import("@aexhq/sdk");
+const { Aex, Tools } = await import("@aexhq/sdk");
 
 function makeClient() {
   const harness = makeFetch();
-  const client = new AgentExecutor({
+  const client = new Aex({
     apiToken: "aex_skilltool_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch

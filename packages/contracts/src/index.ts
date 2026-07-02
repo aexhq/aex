@@ -21,6 +21,7 @@ export {
   crossValidateSecretEnvAndValues,
   packageInstallString,
   parseInlineSecrets,
+  parseRunLimits,
   parseRunProvider,
   parseRunSubmissionRequest,
   parseRunWebhook,
@@ -58,13 +59,8 @@ export * from "./event-envelope.js";
 export * from "./connection-ticket.js";
 export * from "./event-stream-client.js";
 export * from "./run-unit.js";
-export {
-  decodeToolCalls,
-  summarizeRunTrace,
-  summarizeRunUsage,
-  textOf
-} from "./run-trace.js";
 export type {
+  AssistantTextEntry,
   RunTrace,
   ToolCallResult,
   ToolCallTrace

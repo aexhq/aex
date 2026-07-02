@@ -134,12 +134,12 @@ function skillName(base: string): string {
 
 function buildScript(cfg: ScriptConfig): string {
   return `
-    import { AgentExecutor, Tools } from "@aexhq/sdk";
+    import { Aex, Tools } from "@aexhq/sdk";
     import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
     import { tmpdir } from "node:os";
     import { join, dirname } from "node:path";
 
-    const client = new AgentExecutor({
+    const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

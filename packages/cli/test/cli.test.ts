@@ -1,7 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { PROXY_PROTOCOL_VERSION, PROXY_PROTOCOL_VERSION_V2 } from "@aexhq/contracts";
+import { describe, expect, it } from "vitest";
 import { runCli } from "../src/run.js";
-import { AEX_INDEX_PATH, AEX_RUN_TOKEN_PATH, type CliIO } from "../src/internal.js";
+import type { CliIO } from "../src/internal.js";
 
 interface IoCapture {
   io: CliIO;
@@ -55,37 +54,8 @@ function makeIo(opts: {
   return cap;
 }
 
-function manifestJson(opts: {
-  endpoints?: Array<{
-    name: string;
-    allowMethods?: string[];
-    allowPathPrefixes?: string[];
-    retry?: Record<string, unknown>;
-  }>;
-  proxyBaseUrl?: string | null;
-}): string {
-  return JSON.stringify({
-    protocolVersion: PROXY_PROTOCOL_VERSION,
-    runId: "run-1",
-    proxyBaseUrl: opts.proxyBaseUrl === undefined ? "https://dash.example.com/api/runs/run-1/proxy" : opts.proxyBaseUrl,
-    endpoints: (opts.endpoints ?? []).map((e) => ({
-      name: e.name,
-      baseUrl: "https://upstream.example.com",
-      authShape: { type: "bearer" },
-      allowMethods: e.allowMethods ?? ["GET"],
-      allowPathPrefixes: e.allowPathPrefixes ?? ["/"],
-      allowHeaders: [],
-      responseMode: "headers_only",
-      maxRequestBytes: 65536,
-      maxResponseBytes: 65536,
-      timeoutMs: 10000,
-      ...(e.retry ? { retry: e.retry } : {})
-    }))
-  });
-}
-
 describe("aex --help", () => {
-  it("prints host-mode usage and exits 0 without a manifest", async () => {
+  it("prints host-mode usage and exits 0", async () => {
     const cap = makeIo({ argv: ["--help"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -96,13 +66,13 @@ describe("aex --help", () => {
     expect(cap.stdout).toContain("Usage:");
   });
 
-  it("does not advertise --workspace anywhere in host help", async () => {
-    // The workspace is derived 1:1 from the API token; --workspace is rejected
-    // at parse time. The help text must not contradict that contract.
+  it("does not advertise removed launch flags or commands", async () => {
     const cap = makeIo({ argv: ["--help"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).not.toContain("--workspace");
+    expect(cap.stdout).not.toContain("proxy");
+    expect(cap.stdout).not.toContain("--proxy-endpoint");
   });
 
   it("advertises --aex-url as optional with the api.aex.dev default", async () => {
@@ -111,411 +81,20 @@ describe("aex --help", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("https://api.aex.dev");
   });
-
-  it("lists declared endpoints when manifest is present", async () => {
-    const cap = makeIo({
-      argv: [],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }, { name: "internal" }] })
-      }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("stripe");
-    expect(cap.stdout).toContain("internal");
-  });
-
-  it("shows declared retry policy for manifest endpoints", async () => {
-    const cap = makeIo({
-      argv: ["proxy", "--help"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({
-          endpoints: [
-            {
-              name: "stripe",
-              retry: {
-                maxAttempts: 4,
-                initialDelayMs: 100,
-                maxDelayMs: 1000,
-                jitter: "none",
-                retryOnStatuses: [429, 503],
-                retryOnMethods: ["GET"],
-                respectRetryAfter: true
-              }
-            }
-          ]
-        })
-      }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("retry=4x GET 429/503");
-    expect(cap.stdout).toContain("delay=100-1000ms");
-  });
-
-  it("notes when no proxy endpoints were declared", async () => {
-    const cap = makeIo({
-      argv: ["--help"],
-      files: { [AEX_INDEX_PATH]: manifestJson({ endpoints: [], proxyBaseUrl: null }) }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("no proxy endpoints");
-  });
 });
 
-describe("aex proxy — argument validation", () => {
+describe("removed commands", () => {
+  it("treats the old proxy verb as an unknown subcommand", async () => {
+    const cap = makeIo({ argv: ["proxy", "--help"] });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("unknown subcommand: proxy");
+  });
+
   it("exits 2 on unknown subcommand", async () => {
     const cap = makeIo({ argv: ["snorlax"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown subcommand");
-  });
-
-  it("exits 2 with missing endpoint-name", async () => {
-    const cap = makeIo({ argv: ["proxy"] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("missing endpoint-name");
-  });
-
-  it("exits 2 on unknown flag", async () => {
-    const cap = makeIo({ argv: ["proxy", "--bogus", "x", "stripe"] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toMatch(/unknown flag/);
-  });
-
-  it("exits 2 on invalid --response-mode", async () => {
-    const cap = makeIo({ argv: ["proxy", "stripe", "--response-mode", "everything"] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--response-mode");
-  });
-
-  it("rejects --header without =", async () => {
-    const cap = makeIo({ argv: ["proxy", "stripe", "--header", "boom"] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("KEY=VALUE");
-  });
-});
-
-describe("aex proxy — IO contract", () => {
-  it("fails when the manifest is missing", async () => {
-    const cap = makeIo({ argv: ["proxy", "stripe"] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(1);
-    expect(cap.stderr).toContain("manifest not mounted");
-  });
-
-  it("fails when the run has no proxyBaseUrl declared", async () => {
-    const cap = makeIo({
-      argv: ["proxy", "stripe"],
-      files: { [AEX_INDEX_PATH]: manifestJson({ endpoints: [], proxyBaseUrl: null }) }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(1);
-    const body = JSON.parse(cap.stderr.trim());
-    expect(body.error).toBe("endpoint_not_found");
-  });
-
-  it("fails when the run-token file is missing", async () => {
-    const cap = makeIo({
-      argv: ["proxy", "stripe"],
-      files: { [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }) }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(1);
-    const body = JSON.parse(cap.stderr.trim());
-    expect(body.error).toBe("unauthorized");
-  });
-});
-
-describe("aex proxy — successful call", () => {
-  it("sends the protocol headers and writes the response envelope to stdout", async () => {
-    const upstreamBody = {
-      endpointName: "stripe",
-      upstreamStatus: 200,
-      upstreamHeaders: { "content-type": "application/json" },
-      effectiveResponseMode: "headers_only",
-      modeClamped: false
-    };
-    const cap = makeIo({
-      argv: ["proxy", "stripe", "--method", "POST", "--path", "/v1/refunds"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
-        [AEX_RUN_TOKEN_PATH]: "bearer-xyz"
-      },
-      fetchHandler: async () =>
-        new Response(JSON.stringify(upstreamBody), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.fetchCalls).toHaveLength(1);
-    const call = cap.fetchCalls[0]!;
-    expect(call.url).toBe("https://dash.example.com/api/runs/run-1/proxy/stripe");
-    const headers = new Headers((call.init as RequestInit).headers);
-    expect(headers.get("authorization")).toBe("Bearer bearer-xyz");
-    expect(headers.get("x-aex-proxy-protocol")).toBe(PROXY_PROTOCOL_VERSION_V2);
-    expect(headers.get("x-aex-method")).toBe("POST");
-    expect(headers.get("x-aex-path")).toBe("/v1/refunds");
-    const body = JSON.parse(cap.stdout.trim());
-    expect(body.upstreamStatus).toBe(200);
-    expect(body.effectiveResponseMode).toBe("headers_only");
-    expect(body.upstreamHeaders).toEqual({ "content-type": "application/json" });
-  });
-
-  it("reconstructs the envelope from a v2 streamed response (headers + raw body)", async () => {
-    const upstreamPayload = JSON.stringify({ streamed: true });
-    const cap = makeIo({
-      argv: ["proxy", "stripe", "--method", "POST", "--path", "/v1/refunds", "--response-mode", "full"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
-        [AEX_RUN_TOKEN_PATH]: "bearer-xyz"
-      },
-      // Mirror the hosted API v2 streamed response: raw upstream body + the
-      // x-aex-proxy-* metadata headers (no JSON envelope, no base64).
-      fetchHandler: async () =>
-        new Response(upstreamPayload, {
-          status: 200,
-          headers: {
-            "x-aex-proxy-status": "200",
-            "x-aex-proxy-effective-mode": "full",
-            "x-aex-proxy-truncated": "false",
-            "x-aex-proxy-upstream-headers": JSON.stringify({ "content-type": "application/json" }),
-            "content-type": "application/octet-stream"
-          }
-        })
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    const body = JSON.parse(cap.stdout.trim());
-    expect(body.upstreamStatus).toBe(200);
-    expect(body.effectiveResponseMode).toBe("full");
-    expect(body.upstreamHeaders["content-type"]).toBe("application/json");
-    // Body round-trips through the same base64 field v1 used.
-    expect(Buffer.from(body.upstreamBodyBase64, "base64").toString("utf8")).toBe(upstreamPayload);
-  });
-
-  it("forwards --header K=V via the X-Aex-Headers JSON record", async () => {
-    let captured: Headers | null = null;
-    const cap = makeIo({
-      argv: ["proxy", "stripe", "--header", "accept=application/json"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [AEX_RUN_TOKEN_PATH]: "tok"
-      },
-      fetchHandler: async (_url, init) => {
-        captured = new Headers((init as RequestInit).headers);
-        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-      }
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    const json = JSON.parse(captured!.get("x-aex-headers")!);
-    expect(json.accept).toBe("application/json");
-  });
-
-  it("propagates --query as the X-Aex-Query header", async () => {
-    let captured: Headers | null = null;
-    const cap = makeIo({
-      argv: ["proxy", "stripe", "--query", '{"limit":"10"}'],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [AEX_RUN_TOKEN_PATH]: "tok"
-      },
-      fetchHandler: async (_url, init) => {
-        captured = new Headers((init as RequestInit).headers);
-        return new Response("{}", { status: 200 });
-      }
-    });
-    await runCli(cap.io);
-    expect(captured!.get("x-aex-query")).toBe('{"limit":"10"}');
-  });
-
-  it("forwards --data inline as the request body", async () => {
-    let bodyCaptured: string | null = null;
-    const cap = makeIo({
-      argv: ["proxy", "stripe", "--method", "POST", "--data", "hello"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe", allowMethods: ["POST"] }] }),
-        [AEX_RUN_TOKEN_PATH]: "tok"
-      },
-      fetchHandler: async (_url, init) => {
-        const b = (init as RequestInit).body;
-        bodyCaptured = b ? Buffer.from(b as Uint8Array).toString("utf8") : null;
-        return new Response("{}", { status: 200 });
-      }
-    });
-    await runCli(cap.io);
-    expect(bodyCaptured).toBe("hello");
-  });
-});
-
-describe("aex proxy — error envelope", () => {
-  it("exits 1 with a stable error body on a 4xx from the BFF", async () => {
-    const cap = makeIo({
-      argv: ["proxy", "stripe", "--method", "GET", "--path", "/x"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [AEX_RUN_TOKEN_PATH]: "tok"
-      },
-      fetchHandler: async () =>
-        new Response(JSON.stringify({ error: "policy_denied", message: "[redacted]" }), {
-          status: 403,
-          headers: { "content-type": "application/json" }
-        })
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(1);
-    const body = JSON.parse(cap.stderr.trim());
-    expect(body.error).toBe("policy_denied");
-  });
-
-  it("exits 1 with unauthorized on a 401 from the BFF", async () => {
-    const cap = makeIo({
-      argv: ["proxy", "stripe"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [AEX_RUN_TOKEN_PATH]: "tok"
-      },
-      fetchHandler: async () =>
-        new Response(JSON.stringify({ error: "unauthorized", message: "[redacted]" }), { status: 401 })
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(1);
-    const body = JSON.parse(cap.stderr.trim());
-    expect(body.error).toBe("unauthorized");
-  });
-
-  // Locks the agent-visible CLI contract: every BFF-returned error code
-  // exits non-zero with a structured stderr envelope that matches the
-  // BFF's `error` field exactly. The agent reads stderr — drift here
-  // means the agent has to learn a second error-code vocabulary.
-  const errorTable: ReadonlyArray<{
-    name: string;
-    httpStatus: number;
-    errorCode: string;
-  }> = [
-    { name: "bad_request", httpStatus: 400, errorCode: "bad_request" },
-    { name: "endpoint_not_found", httpStatus: 404, errorCode: "endpoint_not_found" },
-    { name: "rate_limited", httpStatus: 429, errorCode: "rate_limited" },
-    { name: "upstream_error", httpStatus: 502, errorCode: "upstream_error" },
-    { name: "upstream_timeout", httpStatus: 504, errorCode: "upstream_timeout" },
-    { name: "exceeded_cap", httpStatus: 502, errorCode: "exceeded_cap" },
-    { name: "internal_error", httpStatus: 500, errorCode: "internal_error" },
-    { name: "ssrf_denied", httpStatus: 403, errorCode: "ssrf_denied" },
-    { name: "unsupported_protocol", httpStatus: 426, errorCode: "unsupported_protocol" }
-  ];
-
-  for (const tc of errorTable) {
-    it(`exits 1 and surfaces ${tc.errorCode} on HTTP ${tc.httpStatus}`, async () => {
-      const cap = makeIo({
-        argv: ["proxy", "stripe"],
-        files: {
-          [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-          [AEX_RUN_TOKEN_PATH]: "tok"
-        },
-        fetchHandler: async () =>
-          new Response(JSON.stringify({ error: tc.errorCode, message: "[redacted]" }), {
-            status: tc.httpStatus,
-            headers: { "content-type": "application/json" }
-          })
-      });
-      await runCli(cap.io);
-      expect(cap.exitCode).toBe(1);
-      const body = JSON.parse(cap.stderr.trim());
-      expect(body.error).toBe(tc.errorCode);
-      // The agent must never see upstream-derived strings — the BFF's
-      // sanitization rule mandates `message: "[redacted]"`.
-      expect(body.message).toBe("[redacted]");
-    });
-  }
-
-  it("falls back to a stable error envelope when the BFF body is not JSON", async () => {
-    const cap = makeIo({
-      argv: ["proxy", "stripe"],
-      files: {
-        [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-        [AEX_RUN_TOKEN_PATH]: "tok"
-      },
-      fetchHandler: async () =>
-        new Response("not json at all", { status: 502, headers: { "content-type": "text/plain" } })
-    });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(1);
-    // CLI must produce a structured stderr line even when the BFF
-    // misbehaves. The contract: the FIRST line of stderr is parseable
-    // JSON with an `error` field.
-    const envelopeLine = cap.stderr.split("\n").find((l) => l.startsWith("{"));
-    expect(envelopeLine, `expected a JSON envelope line in stderr; got:\n${cap.stderr}`).toBeDefined();
-    const body = JSON.parse(envelopeLine!);
-    expect(typeof body.error).toBe("string");
-  });
-
-  it(
-    "reproduces the customer's canonical-host redirect regression: HTTP 307 + 'Redirecting...' body, " +
-      "and the new diagnostic message exposes HTTP status + body snippet",
-    async () => {
-      // This mirrors the response shape captured when a proxy public base
-      // URL pointed at a host that canonicalized to another host:
-      //
-      //   HTTP/2 307
-      //   cache-control: public, max-age=0, must-revalidate
-      //   content-type: text/plain
-      //   location: https://aex.dev/api/runs/<runId>/proxy/<name>
-      //   server: edge
-      //
-      //   Redirecting...
-      //
-      // The bug: in-container CLI uses `redirect: "manual"` (SSRF
-      // guard) and parses "Redirecting...\n" as JSON, surfacing
-      // "proxy returned non-JSON response" with no actionable detail.
-      // Fix: the error message now embeds HTTP status + first 200
-      // chars of the body so triage doesn't require another live run.
-      const cap = makeIo({
-        argv: ["proxy", "stripe"],
-        files: {
-          [AEX_INDEX_PATH]: manifestJson({ endpoints: [{ name: "stripe" }] }),
-          [AEX_RUN_TOKEN_PATH]: "tok"
-        },
-        fetchHandler: async () =>
-          new Response("Redirecting...\n", {
-            status: 307,
-            headers: {
-              "content-type": "text/plain",
-              "cache-control": "public, max-age=0, must-revalidate",
-              location: "https://www.dashboard.example.com/api/runs/run-1/proxy/stripe",
-              server: "edge"
-            }
-          })
-      });
-      await runCli(cap.io);
-      expect(cap.exitCode).toBe(1);
-      const envelopeLine = cap.stderr.split("\n").find((l) => l.startsWith("{"));
-      expect(envelopeLine, `expected JSON envelope line in stderr; got:\n${cap.stderr}`).toBeDefined();
-      const body = JSON.parse(envelopeLine!) as { error: string; message: string };
-      expect(body.error).toBe("internal_error");
-      // Load-bearing assertions — these would have FAILED against the
-      // pre-fix CLI which only emitted a generic
-      // "proxy returned non-JSON response" with no detail. Triage
-      // signal is in the message itself.
-      expect(body.message).toMatch(/HTTP 307/);
-      expect(body.message).toMatch(/Redirecting/);
-    }
-  );
-});
-
-describe("aex proxy --help", () => {
-  it("renders proxy help and exits 0", async () => {
-    const cap = makeIo({ argv: ["proxy", "--help"] });
-    await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("--method");
-    expect(cap.stdout).toContain("--response-mode");
   });
 });

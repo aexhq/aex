@@ -11,7 +11,7 @@
  * write-only through the public SDK after create/rotate.
  */
 import { describe, expect, it, vi } from "vitest";
-import { AgentExecutor, Secret } from "../../src/index.js";
+import { Aex, Secret } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly url: string;
@@ -58,7 +58,7 @@ const REC = {
 
 function client(routes: (req: CapturedRequest) => Response) {
   const { fetch, calls } = makeStubFetch(routes);
-  return { client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch }), calls };
+  return { client: new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch }), calls };
 }
 
 describe("aex.secrets management client", () => {

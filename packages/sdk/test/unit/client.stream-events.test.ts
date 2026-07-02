@@ -6,7 +6,7 @@
  * coordinator WS, shared event-stream-client tests).
  */
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -58,7 +58,7 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
       }
     ]);
 
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
     const session = await client.openSession("run-abc");
     const events: string[] = [];
     for await (const ev of session.events().stream({ intervalMs: 1 })) {
@@ -74,7 +74,7 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
       { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
     ]);
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
     const session = await client.openSession("run-abc");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 5);

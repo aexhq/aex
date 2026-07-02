@@ -891,7 +891,7 @@ describe("aex run", () => {
     expect(cap.stderr).toContain("--anthropic-api-key");
   });
 
-  it("parses --proxy-auth and validates it against --proxy-endpoint", async () => {
+  it("rejects removed proxy endpoint flags", async () => {
     const endpoint = {
       name: "stripe",
       baseUrl: "https://api.stripe.com",
@@ -917,23 +917,12 @@ describe("aex run", () => {
       fetchHandler: sessionRunHandler("sess-proxy")
     });
     await runCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    const body = cap.calls[0]!.body as Record<string, unknown>;
-    expect((body.proxyEndpoints as Array<{ name: string }>)[0]!.name).toBe("stripe");
-    const secrets = body.secrets as Record<string, unknown>;
-    const auth = secrets.proxyEndpointAuth as Array<{ name: string; value: { type: string; token: string } }>;
-    expect(auth[0]!.name).toBe("stripe");
-    expect(auth[0]!.value).toEqual({ type: "bearer", token: "sk_test" });
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("--proxy-endpoint and --proxy-auth are no longer supported");
+    expect(cap.calls).toHaveLength(0);
   });
 
-  it("rejects when --proxy-endpoint shape disagrees with --proxy-auth shape", async () => {
-    const endpoint = {
-      name: "stripe",
-      baseUrl: "https://api.stripe.com",
-      authShape: { type: "bearer" },
-      allowMethods: ["GET"],
-      allowPathPrefixes: ["/v1"]
-    };
+  it("rejects removed proxy auth flags even without a proxy endpoint", async () => {
     const cap = makeHostIo({
       argv: [
         "run",
@@ -943,8 +932,6 @@ describe("aex run", () => {
         "x",
         "--anthropic-api-key",
         "sk-ant-1",
-        "--proxy-endpoint",
-        JSON.stringify(endpoint),
         "--proxy-auth",
         "stripe=basic:u:p",
         ...COMMON
@@ -952,7 +939,7 @@ describe("aex run", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("proxy auth validation failed");
+    expect(cap.stderr).toContain("--proxy-endpoint and --proxy-auth are no longer supported");
   });
 
   it("rejects --mcp-auth that does not match a declared --mcp", async () => {

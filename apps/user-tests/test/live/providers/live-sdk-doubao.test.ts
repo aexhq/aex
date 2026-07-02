@@ -100,7 +100,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
       // not the monorepo workspace symlink.
       const probe = "e2e-marker-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AgentExecutor } from "@aexhq/sdk";
+        import { Aex } from "@aexhq/sdk";
 
         const apiBase = process.env.AEX_API_URL;
         const doubaoKey = process.env.DOUBAO_KEY;
@@ -108,7 +108,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         const provider = process.env.PROVIDER;
         const apiToken = process.env.AEX_API_TOKEN;
 
-        const client = new AgentExecutor({
+        const client = new Aex({
           baseUrl: apiBase,
           apiToken
         });

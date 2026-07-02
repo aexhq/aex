@@ -69,17 +69,8 @@ non-default port when you need one (`api.example.com:8443`); a bare host name
 covers HTTPS on 443. Matching is exact per host — it is not a wildcard or suffix
 match, so list each host you need.
 
-To validate your allowlist before submitting, `buildPlatformAllowedHosts` returns
-the host set the platform will enforce given a base URL plus your extra hosts:
-
-```ts
-import { buildPlatformAllowedHosts } from "@aexhq/sdk";
-
-const allowedHosts = buildPlatformAllowedHosts({
-  baseUrl: "https://api.aex.dev",
-  extraHosts: ["api.example.com"]
-});
-```
+Keep the allowlist in your session options so the submitted network policy is
+visible at the same call site as the code that needs it.
 
 ## Open mode
 

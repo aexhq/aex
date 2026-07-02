@@ -108,7 +108,7 @@ describe("typescript consumer", () => {
       const session = await client.sessions.open("sess_type_surface");
       const messages: readonly Message[] = await session.messages.all();
       const renderedMessages: readonly string[] = messages.map((message) => {
-        const role: Message["role"] = message.role;
+        const role: Message["sender"] = message.sender;
         const text: string = message.text;
         return role + ": " + text;
       });

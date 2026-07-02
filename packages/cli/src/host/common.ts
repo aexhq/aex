@@ -1,8 +1,7 @@
 /**
  * Shared helpers for every host-side aex subcommand. Common flag
  * parsing, HttpClient construction, manifest detection so we can refuse
- * to run host commands inside a managed run container, and exit codes
- * shared with the in-container proxy command.
+ * to run host commands inside a managed run container, and exit codes.
  */
 import { AEX_DEFAULT_BASE_URL, AexApiError, AexError, HttpClient, TERMINAL_RUN_STATUSES, type FetchLike } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
@@ -288,7 +287,7 @@ export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
  * Host subcommands refuse to run inside a managed run container. The
  * heuristic: presence of the per-run manifest at AEX_INDEX_PATH
  * (`/mnt/session/uploads/aex/index.json`) means we're inside a
- * run and should expose `proxy`, not the platform-management verbs.
+ * run, not on a developer host.
  *
  * Fails *closed* on read errors that are not "file not found": if the
  * manifest exists but is unreadable for any other reason (permissions,
@@ -300,7 +299,7 @@ export async function refuseInsideManagedRun(io: CliIO, verb: string): Promise<b
     await io.readFile(AEX_INDEX_PATH);
     io.stderr(
       `\`aex ${verb}\` is a host command and cannot run inside a managed run container.\n` +
-      "Use `aex proxy ...` to call your declared upstream endpoints from inside the run.\n"
+      "Make HTTP calls from your code and pass credentials through secrets.\n"
     );
     return true;
   } catch (err) {
@@ -319,9 +318,7 @@ export async function refuseInsideManagedRun(io: CliIO, verb: string): Promise<b
 }
 
 /**
- * Emit a JSON error body and return RUNTIME_ERR. The shape mirrors the
- * in-container proxy error envelope so a script-shaped consumer can
- * parse both surfaces the same way.
+ * Emit a JSON error body and return RUNTIME_ERR.
  */
 export function emitJsonError(io: CliIO, code: string, message: string, extra: Record<string, unknown> = {}): CliExitCode {
   io.stderr(JSON.stringify({ error: code, message, ...extra }) + "\n");

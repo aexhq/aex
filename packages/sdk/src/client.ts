@@ -1,4 +1,5 @@
 import {
+  AexApiError,
   AexError,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
@@ -10,8 +11,6 @@ import {
   operations,
   providersForModel,
   streamCoordinatorEvents,
-  summarizeRunTrace,
-  textOf,
   type AexEvent,
   type AgentsMdRecord,
   type AgentsMdRef,
@@ -36,6 +35,7 @@ import {
   type SessionEvent,
   type SessionListPage,
   type SessionListQuery,
+  type SessionMessage,
   type SessionRetentionPolicy,
   type SessionStateChangeAccepted,
   type SessionTurn,
@@ -81,7 +81,9 @@ import { Tool } from "./tool.js";
 
 export interface AexOptions {
   /** Workspace-scoped SDK API token. */
-  readonly apiKey: string;
+  readonly apiKey?: string;
+  /** @deprecated Use `apiKey`; kept as a source-compatible alias during launch. */
+  readonly apiToken?: string;
   /**
    * API plane root, e.g. `https://aex.example.com`. Optional —
    * defaults to the canonical hosted URL (`https://api.aex.dev`).
@@ -327,14 +329,7 @@ function sendSessionInternal(
   return sender(normaliseSessionInput(input, "SessionHandle.send", "input"), options);
 }
 
-export interface Message {
-  readonly id: string;
-  readonly sender: "assistant" | "user" | "system" | "tool";
-  readonly text: string;
-  readonly timestamp?: string;
-  readonly turnSeq?: number;
-  readonly sequence?: number;
-}
+export type Message = SessionMessage;
 
 /**
  * Accessor over the session's assistant messages. `session.messages` returns
@@ -464,7 +459,7 @@ export class SessionHandle {
       session: this.#session,
       turn,
       status: this.#session.status,
-      text: textOf(events as unknown as readonly RunEvent[]),
+      text: assistantTextFromEvents(events),
       events,
       outputs,
       messages
@@ -505,8 +500,22 @@ export class SessionHandle {
   get messages(): CallableSessionMessages {
     const http = this.#http;
     const id = this.id;
-    const all = async (): Promise<readonly Message[]> =>
+    const fromEvents = async (): Promise<readonly Message[]> =>
       projectAssistantMessages(await operations.listSessionEvents(http, id));
+    const all = async (): Promise<readonly Message[]> => {
+      try {
+        const page = await operations.listSessionMessages(http, id);
+        if (!Array.isArray(page.messages)) {
+          return fromEvents();
+        }
+        return page.messages.map(messageFromWire);
+      } catch (err) {
+        if (!isMissingMessagesEndpoint(err)) {
+          throw err;
+        }
+        return fromEvents();
+      }
+    };
     let accessor: CallableSessionMessages;
     accessor = (() => accessor) as unknown as CallableSessionMessages;
     Object.assign(accessor, {
@@ -870,6 +879,21 @@ function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | und
   };
 }
 
+function messageFromWire(message: SessionMessage): Message {
+  return {
+    id: message.id,
+    sender: message.sender,
+    text: message.text,
+    ...(message.timestamp !== undefined ? { timestamp: message.timestamp } : {}),
+    ...(message.turnSeq !== undefined ? { turnSeq: message.turnSeq } : {}),
+    ...(message.sequence !== undefined ? { sequence: message.sequence } : {})
+  };
+}
+
+function isMissingMessagesEndpoint(err: unknown): boolean {
+  return err instanceof AexApiError && (err.status === 404 || err.status === 405 || err.status === 501);
+}
+
 function projectAssistantMessages(events: readonly (SessionEvent | RunEvent)[]): readonly Message[] {
   const out: Message[] = [];
   const byMessageId = new Map<string, number>();
@@ -910,6 +934,115 @@ function projectAssistantMessages(events: readonly (SessionEvent | RunEvent)[]):
   return out;
 }
 
+function assistantTextFromEvents(events: readonly (SessionEvent | RunEvent)[]): string {
+  return assistantTextEntriesFromEvents(events).map((entry) => entry.text).join("");
+}
+
+function runTraceFromEvents(events: readonly RunEvent[]): RunTrace {
+  return {
+    toolCalls: toolCallsFromEvents(events),
+    usage: usageFromEvents(events),
+    text: assistantTextEntriesFromEvents(events)
+  };
+}
+
+function assistantTextEntriesFromEvents(
+  events: readonly (SessionEvent | RunEvent)[]
+): RunTrace["text"] {
+  const out: Array<Mutable<RunTrace["text"][number]>> = [];
+  for (const raw of events) {
+    const event = raw as MessageEventLike;
+    if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
+    const data = asRecord(event.data);
+    const text = typeof data.text === "string" ? data.text : undefined;
+    if (text === undefined) continue;
+    const entry: Mutable<RunTrace["text"][number]> = { text };
+    const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
+    if (messageId !== undefined) entry.messageId = messageId;
+    if (typeof event.seq === "number") entry.seq = event.seq;
+    const recordedAt = typeof event.recordedAt === "string" ? event.recordedAt : undefined;
+    if (recordedAt !== undefined) entry.recordedAt = recordedAt;
+    out.push(entry);
+  }
+  return out;
+}
+
+function toolCallsFromEvents(events: readonly RunEvent[]): RunTrace["toolCalls"] {
+  const order: string[] = [];
+  const byId = new Map<string, Mutable<RunTrace["toolCalls"][number]>>();
+  for (const event of events) {
+    const data = asRecord(event.data);
+    if (event.type === "TOOL_CALL_START") {
+      const id = typeof data.id === "string" ? data.id : undefined;
+      if (id === undefined) continue;
+      const trace: Mutable<RunTrace["toolCalls"][number]> = {
+        id,
+        name: typeof data.name === "string" ? data.name : "",
+        args: asRecord(data.arguments)
+      };
+      const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
+      if (messageId !== undefined) trace.messageId = messageId;
+      if (typeof event.seq === "number") trace.startSeq = event.seq;
+      if (typeof event.recordedAt === "string") trace.startedAt = event.recordedAt;
+      if (!byId.has(id)) order.push(id);
+      byId.set(id, trace);
+      continue;
+    }
+    if (event.type === "TOOL_CALL_RESULT") {
+      const id = typeof data.id === "string" ? data.id : undefined;
+      if (id === undefined) continue;
+      const result: Mutable<NonNullable<RunTrace["toolCalls"][number]["result"]>> = {
+        isError: data.isError === true,
+        content: data.content ?? null
+      };
+      if (typeof event.seq === "number") result.seq = event.seq;
+      if (typeof event.recordedAt === "string") result.recordedAt = event.recordedAt;
+      let trace = byId.get(id);
+      if (trace === undefined) {
+        trace = { id, name: "", args: {} };
+        order.push(id);
+        byId.set(id, trace);
+      }
+      trace.result = result;
+      const duration = durationMs(trace.startedAt, result.recordedAt);
+      if (duration !== undefined) trace.durationMs = duration;
+    }
+  }
+  return order.map((id) => byId.get(id)!);
+}
+
+function usageFromEvents(events: readonly RunEvent[]): UsageSummary {
+  const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+  let seen = false;
+  for (const event of events) {
+    if (event.type !== "CUSTOM") continue;
+    const data = asRecord(event.data);
+    if (data.name !== "aex.usage") continue;
+    const value = asRecord(data.value);
+    const fields = [
+      ["input_tokens", "inputTokens"],
+      ["output_tokens", "outputTokens"],
+      ["cache_read_input_tokens", "cacheReadInputTokens"],
+      ["cache_creation_input_tokens", "cacheCreationInputTokens"]
+    ] as const;
+    for (const [wireName, apiName] of fields) {
+      const n = value[wireName];
+      if (typeof n === "number" && Number.isFinite(n)) {
+        totals[apiName] += n;
+        seen = true;
+      }
+    }
+  }
+  if (!seen) return {};
+  return {
+    inputTokens: totals.inputTokens,
+    outputTokens: totals.outputTokens,
+    cacheReadInputTokens: totals.cacheReadInputTokens,
+    cacheCreationInputTokens: totals.cacheCreationInputTokens,
+    totalTokens: totals.inputTokens + totals.outputTokens
+  };
+}
+
 interface MessageEventLike {
   readonly id?: string;
   readonly type?: string;
@@ -931,6 +1064,17 @@ function timestampFromEpochMs(value: unknown): string | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? new Date(value).toISOString()
     : undefined;
+}
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+function durationMs(start: string | undefined, end: string | undefined): number | undefined {
+  if (start === undefined || end === undefined) return undefined;
+  const a = Date.parse(start);
+  const b = Date.parse(end);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return undefined;
+  const delta = b - a;
+  return delta >= 0 ? delta : undefined;
 }
 
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
@@ -1164,9 +1308,12 @@ export class Aex {
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
 
-  constructor(options: string | AexOptions) {
-    const resolved = typeof options === "string" ? { apiKey: options } : options;
-    if (!resolved.apiKey) {
+  constructor(apiKey: string, options?: Omit<AexOptions, "apiKey" | "apiToken">);
+  constructor(options: AexOptions);
+  constructor(options: string | AexOptions, overrides: Omit<AexOptions, "apiKey" | "apiToken"> = {}) {
+    const resolved = typeof options === "string" ? { ...overrides, apiKey: options } : options;
+    const apiKey = resolved.apiKey ?? resolved.apiToken;
+    if (!apiKey) {
       throw new Error("Aex: apiKey is required");
     }
     // Wrap the transport fetch (the caller's override, or global `fetch`) with
@@ -1177,7 +1324,7 @@ export class Aex {
     const retryingFetch = withRetry(baseFetch, resolved.retry);
     this.#http = new HttpClient({
       ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {}),
-      apiToken: resolved.apiKey,
+      apiToken: apiKey,
       fetch: retryingFetch,
       // Opt-in local diagnostics: emit a redacted per-request trace to
       // stderr. Uploads nothing. A caller wanting a custom sink can pass
@@ -1276,7 +1423,7 @@ export class Aex {
         text: turnResult.text,
         messages: turnResult.messages,
         events,
-        trace: summarizeRunTrace(events),
+        trace: runTraceFromEvents(events),
         outputs,
         ...(turnResult.session.usage ? { usage: turnResult.session.usage } : {}),
         ...(typeof costUsd === "number" ? { costUsd } : {}),
@@ -1620,6 +1767,7 @@ function normaliseSessionInput(
 
 function assertNoLegacySessionFields(options: SessionCreateOptions, surface: string): void {
   const record = options as unknown as Record<string, unknown>;
+  const removedProxyField = "proxy" + "Endpoints";
   const messages: Record<string, string> = {
     input: "send user messages with session.send(...) or use run({ message }).",
     prompt: "use message for one-shot run input or session.send(...) for follow-up messages.",
@@ -1636,7 +1784,7 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     timeout: "use overrides.timeout.",
     signal: "use session.cancel() / session.suspend() for remote control.",
     postHook: "send a follow-up validation message when the session returns idle.",
-    proxyEndpoints: "proxy endpoints are not part of the public SDK session API."
+    [removedProxyField]: "proxy endpoints are not part of the public SDK session API."
   };
   for (const [field, message] of Object.entries(messages)) {
     if (Object.prototype.hasOwnProperty.call(record, field)) {

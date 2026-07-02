@@ -4,6 +4,28 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.36.0
+
+### Added
+
+- Added first-class projected session messages to one-shot and session-turn
+  results. `RunResult`, `SessionTurnResult`, and `SessionRunResult` now include
+  `messages`, and `session.messages.all()` / `list()` return normalized message
+  objects.
+
+### Changed (breaking)
+
+- Slimmed the SDK root surface for launch around the single `Aex` client,
+  composition primitives, runtime constants, errors, event guards, and core
+  public contracts. Retired convenience/data-tool/debug trace exports are no
+  longer available from `@aexhq/sdk`.
+- Added `apiKey` as the preferred SDK constructor credential option, plus
+  `new Aex(apiKey)` and `new Aex(apiKey, options)` shortcuts. The existing
+  `apiToken` option remains accepted as a launch compatibility alias.
+- `session.messages` is now a callable accessor property, so both
+  `session.messages.all()` and older `session.messages().list()` style calls
+  resolve through the same message accessor.
+
 ## 0.35.0
 
 ### Added

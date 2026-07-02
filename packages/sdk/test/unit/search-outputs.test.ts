@@ -1,10 +1,10 @@
 /**
  * `aex.sessions.searchOutputs` (chat-mvp) — client-side cross-session output
- * search. Drives a real AgentExecutor with a fake fetch so the contracts output
+ * search. Drives a real Aex with a fake fetch so the contracts output
  * filter (filename / extension / contentType) runs end-to-end.
  */
 import { describe, expect, it, vi } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -21,7 +21,7 @@ const OUTPUTS: Record<string, Array<Record<string, unknown>>> = {
   ]
 };
 
-function makeClient(): { client: AgentExecutor; calls: string[] } {
+function makeClient(): { client: Aex; calls: string[] } {
   const calls: string[] = [];
   const fetchImpl: typeof fetch = vi.fn(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -33,7 +33,7 @@ function makeClient(): { client: AgentExecutor; calls: string[] } {
     }
     throw new Error(`no responder for ${url}`);
   });
-  return { client: new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl }), calls };
+  return { client: new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl }), calls };
 }
 
 describe("aex.sessions.searchOutputs", () => {
@@ -88,7 +88,7 @@ describe("aex.sessions.searchOutputs", () => {
       }
       throw new Error(`no responder for ${url}`);
     });
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
 
     const page = await client.sessions.searchOutputs({ extension: "md" });
 
@@ -111,7 +111,7 @@ describe("aex.sessions.searchOutputs", () => {
       }
       throw new Error(`no responder for ${url}`);
     });
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
 
     await expect(client.sessions.searchOutputs({ extension: "md" })).rejects.toThrow(/repeated cursor/);
   });

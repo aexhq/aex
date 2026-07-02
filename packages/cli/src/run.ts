@@ -4,11 +4,7 @@
  * `cli.ts` wires real stdin/stdout/fetch/readFile and calls `runCli()`.
  *
  * Subcommands:
- *   In-container (manifest at AEX_INDEX_PATH —
- *   `/mnt/session/uploads/aex/index.json` — present):
- *     - `aex proxy <endpoint-name> [flags]`
- *
- *   Host (manifest absent):
+ *   Host:
  *     - `aex run --config <run.json> [flags]`
  *     - `aex status <session-id>`
  *     - `aex deliveries <session-id>`
@@ -34,10 +30,9 @@
  * `--workspace` flag — the workspace is derived server-side from the
  * API token.
  */
-import { RUN_PROVIDERS, type ProxyErrorBody } from "@aexhq/contracts";
+import { RUN_PROVIDERS } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
 import { runOutputsSyncCmd } from "./outputs-sync.js";
-import { formatProxyEndpointSummary, printProxyHelp, runProxy, tryReadManifest } from "./proxy.js";
 import {
   RUNTIME_ERR,
   SUCCESS,
@@ -82,7 +77,7 @@ export async function runCli(io: CliIO): Promise<void> {
   } catch (err) {
     // Defense in depth — runCli should never throw. If it does, emit a
     // stable error envelope rather than a stack trace.
-    const body: ProxyErrorBody = { error: "internal_error", message: (err as Error).message ?? "unknown error" };
+    const body = { error: "internal_error", message: (err as Error).message ?? "unknown error" };
     io.stderr(JSON.stringify(body) + "\n");
     io.exit(RUNTIME_ERR.code);
   }
@@ -95,8 +90,6 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
   const sub = args[0];
   const rest = args.slice(1);
   switch (sub) {
-    case "proxy":
-      return runProxy(io, rest);
     case "run":
       return runRunCmd(io, rest);
     case "status":
@@ -170,25 +163,6 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
 }
 
 async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
-  const manifest = await tryReadManifest(io);
-  if (manifest) {
-    // In-container help — only `proxy` is reachable from inside a run.
-    io.stdout("aex — in-container CLI for managed run sessions\n\n");
-    io.stdout("Usage:\n");
-    io.stdout("  aex proxy <endpoint-name> [flags]\n");
-    io.stdout("  aex proxy --help\n\n");
-    if (manifest.endpoints.length === 0) {
-      io.stdout("This run declared no proxy endpoints.\n");
-    } else {
-      io.stdout("Declared proxy endpoints for this run:\n");
-      for (const ep of manifest.endpoints) {
-        io.stdout(`  • ${formatProxyEndpointSummary(ep)}\n`);
-      }
-    }
-    io.stdout(`\nProtocol version: ${manifest.protocolVersion}\n`);
-    return SUCCESS;
-  }
-
   // Host-side help: the unified surface mirroring the SDK 1:1.
   io.stdout("aex — unified CLI for the aex platform (mirrors the SDK 1:1)\n\n");
   io.stdout("Usage:\n");
@@ -240,6 +214,3 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --timeout <dur>             With --follow: give up after this long (e.g. 8m, 30s, 500ms); exit code 3\n");
   return SUCCESS;
 }
-
-// Re-export the proxy printer so existing imports keep working.
-export { printProxyHelp };

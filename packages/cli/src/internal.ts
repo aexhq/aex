@@ -8,10 +8,6 @@
  * (mechanical test in Phase 9 enforces this against the built bundle).
  */
 import type {
-  ProxyIndexFile,
-  ProxyIndexEntry,
-  ProxyMethod,
-  ProxyResponseMode,
   WebSocketLike
 } from "@aexhq/contracts";
 
@@ -22,9 +18,6 @@ import type {
  * in-container `aex` commands.
  */
 export const AEX_INDEX_PATH = "/mnt/session/uploads/aex/index.json";
-
-/** Per-run bearer file path (only present when proxyEndpoints declared). */
-export const AEX_RUN_TOKEN_PATH = "/mnt/session/uploads/aex/run-token";
 
 /**
  * IO surface the CLI depends on. The production entrypoint passes real
@@ -111,6 +104,3 @@ export interface OutputsSyncFileEntry {
   /** File size in bytes. */
   readonly sizeBytes: number;
 }
-
-/** Re-exported helpers used by CLI consumers. */
-export type { ProxyIndexFile, ProxyIndexEntry, ProxyMethod, ProxyResponseMode };

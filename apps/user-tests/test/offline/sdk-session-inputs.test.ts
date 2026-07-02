@@ -239,12 +239,11 @@ describe("SDK session inputs (installed package)", () => {
   it("serializes every major session input into the public /api/sessions wire request", async () => {
     const script = CHILD_HARNESS + String.raw`
 const {
-  AgentExecutor,
+  Aex,
   AgentsMd,
   BuiltinTools,
   File,
   McpServer,
-  ProxyEndpoint,
   Secret,
   Sizes,
   Tool,
@@ -252,7 +251,7 @@ const {
 } = await import("@aexhq/sdk");
 
 const { calls, fetch } = makeFetch();
-const client = new AgentExecutor({
+const client = new Aex({
   apiToken: "aex_user_inputs_token",
   baseUrl: "https://example.invalid",
   fetch
@@ -303,27 +302,6 @@ const session = await client.sessions.create({
   },
   metadata: { suite: "sdk-session-inputs", nested: { count: 2 } },
   runtime: Sizes.SHARED_2X_8GB,
-  proxyEndpoints: [
-    ProxyEndpoint.bearer({
-      name: "catalog",
-      baseUrl: "https://api.example.test",
-      token: "proxy-bearer-secret",
-      allowMethods: ["GET", "POST"],
-      allowPathPrefixes: ["/v1"],
-      allowHeaders: ["accept"],
-      responseMode: "headers_only",
-      maxRequestBytes: 12345,
-      maxResponseBytes: 67890,
-      timeoutMs: 5000,
-      retry: { maxAttempts: 2, backoffMs: 100 }
-    }),
-    ProxyEndpoint.none({
-      name: "public",
-      baseUrl: "https://public.example.test",
-      allowMethods: ["GET"],
-      allowPathPrefixes: ["/"]
-    })
-  ],
   outputs: {
     allowedDirs: ["/workspace/out", ""],
     deniedDirs: ["", "/workspace/out/tmp"],
@@ -410,15 +388,13 @@ deepStrictEqual(submission.secretEnv, {
 });
 ok(!JSON.stringify(submission).includes("ephemeral-secret-value"));
 
-deepStrictEqual(body.proxyEndpoints.map((endpoint) => endpoint.name), ["catalog", "public"]);
+ok(!("proxyEndpoints" in body));
 deepStrictEqual(body.secrets.apiKeys, { anthropic: "sk-ant-user-inputs" });
 deepStrictEqual(body.secrets.envSecrets, { EPHEMERAL_TOKEN: "ephemeral-secret-value" });
 deepStrictEqual(body.secrets.mcpServers, [
   { name: "docs", url: "https://mcp.example.test/sse", headers: { Authorization: "Bearer mcp-secret" } }
 ]);
-deepStrictEqual(body.secrets.proxyEndpointAuth, [
-  { name: "catalog", value: { type: "bearer", token: "proxy-bearer-secret" } }
-]);
+ok(!("proxyEndpointAuth" in body.secrets));
 
 console.log(JSON.stringify({
   ok: true,
@@ -440,11 +416,11 @@ console.log(JSON.stringify({
 
   it("covers skill-tool absence, bad tool entries, ordering, reuse, and many-skill stress", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { AgentExecutor, Tools } = await import("@aexhq/sdk");
+const { Aex, Tools } = await import("@aexhq/sdk");
 
 function makeClient() {
   const harness = makeFetch();
-  const client = new AgentExecutor({
+  const client = new Aex({
     apiToken: "aex_skill_inputs_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
@@ -557,18 +533,17 @@ console.log(JSON.stringify({
   it("rejects invalid session input and primitive-builder edge cases before posting", async () => {
     const script = CHILD_HARNESS + String.raw`
 const {
-  AgentExecutor,
+  Aex,
   AgentsMd,
   File,
   McpServer,
-  ProxyEndpoint,
   Secret,
   Tool,
   Tools
 } = await import("@aexhq/sdk");
 
 const { calls, fetch } = makeFetch();
-const client = new AgentExecutor({
+const client = new Aex({
   apiToken: "aex_invalid_inputs_token",
   baseUrl: "https://example.invalid",
   fetch
@@ -603,7 +578,7 @@ const createCases = [
   ["bad agentsMd entry", () => client.openSession({ ...validCreate, agentsMd: [{}] }), /agentsMd\[0\] must be an AgentsMd instance/],
   ["bad file entry", () => client.openSession({ ...validCreate, files: [{}] }), /files\[0\] must be a File instance/],
   ["bad mcp entry", () => client.openSession({ ...validCreate, mcpServers: [{}] }), /mcpServers\[0\] must be an McpServer instance/],
-  ["bad proxy entry", () => client.openSession({ ...validCreate, proxyEndpoints: [{}] }), /proxyEndpoints\[0\] must be a ProxyEndpoint/],
+  ["removed proxyEndpoints", () => client.openSession({ ...validCreate, proxyEndpoints: [{}] }), /proxyEndpoints is not a supported option/],
   ["bad env secret name", () => client.openSession({ ...validCreate, environment: { secrets: { "bad-name": Secret.value("secret") } } }), /env var name/],
   ["bad env secret value", () => client.openSession({ ...validCreate, environment: { secrets: { VALID_NAME: "secret" } } }), /must be a Secret/]
 ];
@@ -671,19 +646,6 @@ const builderCases = [
   }), /description/],
   ["mcp bad id", () => McpServer.fromId("missing_prefix"), /id must match/],
   ["mcp stdio rejected", () => McpServer.remote({ name: "stdio", url: "stdio://server", transport: "stdio" }), /stdio/i],
-  ["proxy empty methods", () => ProxyEndpoint.none({
-    name: "proxy",
-    baseUrl: "https://example.test",
-    allowMethods: [],
-    allowPathPrefixes: ["/"]
-  }), /allowMethods/],
-  ["proxy bad response mode", () => ProxyEndpoint.none({
-    name: "proxy",
-    baseUrl: "https://example.test",
-    allowMethods: ["GET"],
-    allowPathPrefixes: ["/"],
-    responseMode: "json"
-  }), /responseMode/],
   ["secret empty value", () => Secret.value(""), /required|non-empty string/],
   ["secret bad ref", () => Secret.ref("bad handle"), /handle must match/]
 ];
@@ -726,7 +688,7 @@ console.log(JSON.stringify({
       ok: true,
       createRejects: 21,
       runRejects: 3,
-      builderRejects: 18,
+      builderRejects: 16,
       fuzzRejects: 12,
       calls: 0
     });
@@ -734,9 +696,9 @@ console.log(JSON.stringify({
 
   it("covers provider/outputs extremes and empty-shape normalization", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { AgentExecutor, Models, Sizes } = await import("@aexhq/sdk");
+const { Aex, Models, Sizes } = await import("@aexhq/sdk");
 const { calls, fetch } = makeFetch();
-const client = new AgentExecutor({
+const client = new Aex({
   apiToken: "aex_extreme_inputs_token",
   baseUrl: "https://example.invalid",
   fetch

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -10,12 +10,12 @@ function fileResponse(text: string, contentLength = text.length): Response {
   return new Response(text, { status: 200, headers: { "content-length": String(contentLength) } });
 }
 
-function clientFor(handler: (url: string) => Response): AgentExecutor {
+function clientFor(handler: (url: string) => Response): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     return handler(url);
   };
-  return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+  return new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
 }
 
 describe("aex.sessions.outputs(id).read", () => {

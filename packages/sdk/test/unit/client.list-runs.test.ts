@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 interface RecordedCall {
   readonly url: string;
@@ -13,7 +13,7 @@ function json(body: unknown): Response {
   });
 }
 
-function listClient(page: unknown): { readonly client: AgentExecutor; readonly calls: RecordedCall[] } {
+function listClient(page: unknown): { readonly client: Aex; readonly calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -21,7 +21,7 @@ function listClient(page: unknown): { readonly client: AgentExecutor; readonly c
     return json(page);
   };
   return {
-    client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
+    client: new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
     calls
   };
 }

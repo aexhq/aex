@@ -6,7 +6,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AexError,
-  AgentExecutor,
+  Aex,
   RunConfigValidationError
 } from "../../src/index.js";
 
@@ -26,8 +26,8 @@ function noNetworkFetch(): { fetch: typeof fetch; calls: number } {
   };
 }
 
-function makeClient(fetchImpl: typeof fetch): AgentExecutor {
-  return new AgentExecutor({ apiToken: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
+function makeClient(fetchImpl: typeof fetch): Aex {
+  return new Aex({ apiToken: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
 }
 
 describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {

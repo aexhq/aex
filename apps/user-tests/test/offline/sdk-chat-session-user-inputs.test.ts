@@ -269,7 +269,7 @@ describe("SDK sessions (installed package)", () => {
 
   it("serializes openSession and session state operations on the public session routes", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, AgentsMd, File, ProxyEndpoint, Secret, Tools } = await import("@aexhq/sdk");
+const { Aex, AgentsMd, File, Secret, Tools } = await import("@aexhq/sdk");
 
 const h = makeHarness();
 const client = new Aex({ apiToken: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
@@ -292,15 +292,6 @@ const session = await client.openSession({
     variables: { CHAT_MODE: "test" },
     secrets: { CHAT_SECRET: Secret.value("ephemeral-chat-secret") }
   },
-  proxyEndpoints: [
-    ProxyEndpoint.bearer({
-      name: "chat-proxy",
-      baseUrl: "https://api.example.test",
-      token: "proxy-token",
-      allowMethods: ["GET"],
-      allowPathPrefixes: ["/v1"]
-    })
-  ],
   outputs: { allowedDirs: ["/workspace/out"], deniedDirs: [""] },
   includeBuiltinTools: false,
   outputMode: "stream",
@@ -345,9 +336,7 @@ deepStrictEqual(submission.environment, { envVars: { CHAT_MODE: "test" } });
 deepStrictEqual(submission.secretEnv, { CHAT_SECRET: { ephemeral: true } });
 deepStrictEqual(create.body.secrets.apiKeys, { anthropic: "sk-ant-chat" });
 deepStrictEqual(create.body.secrets.envSecrets, { CHAT_SECRET: "ephemeral-chat-secret" });
-deepStrictEqual(create.body.secrets.proxyEndpointAuth, [
-  { name: "chat-proxy", value: { type: "bearer", token: "proxy-token" } }
-]);
+ok(!("proxyEndpointAuth" in create.body.secrets));
 ok(!JSON.stringify(submission).includes("ephemeral-chat-secret"));
 
 await session.suspend({ idempotencyKey: "idem-suspend" });

@@ -241,13 +241,13 @@ describe("Tools.fromSkillUrl (installed package)", () => {
 
   it("ingests a URL skill end-to-end: download, unzip, name override, folder strip, dir<->url dedup", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { AgentExecutor, Tools, bundleSkillFiles, hashSkillBundle } = await import("@aexhq/sdk");
+const { Aex, Tools, bundleSkillFiles, hashSkillBundle } = await import("@aexhq/sdk");
 const { zipSync } = await import("fflate");
 const enc = new TextEncoder();
 
 function makeClient(archives) {
   const harness = makeFetch(archives);
-  const client = new AgentExecutor({
+  const client = new Aex({
     apiToken: "aex_skill_url_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
@@ -392,7 +392,7 @@ console.log(JSON.stringify({
 
   it("enforces sha256 integrity on the fetched archive (prefixed + bare hex, mismatch, tamper)", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { AgentExecutor, Tools, bundleSkillFiles, hashSkillBundle } = await import("@aexhq/sdk");
+const { Aex, Tools, bundleSkillFiles, hashSkillBundle } = await import("@aexhq/sdk");
 
 const files = { "SKILL.md": SKILL_MD };
 const zip = bundleSkillFiles(files).zip;
@@ -402,7 +402,7 @@ const url = "https://skills.example.test/integrity.zip";
 
 // Correct hash, prefixed form -> accepted, and flows through to the wire.
 const prefixed = makeFetch({ [url]: { status: 200, bytes: zip } });
-const prefixedClient = new AgentExecutor({
+const prefixedClient = new Aex({
   apiToken: "aex_integrity_token",
   baseUrl: "https://example.invalid",
   fetch: prefixed.fetch

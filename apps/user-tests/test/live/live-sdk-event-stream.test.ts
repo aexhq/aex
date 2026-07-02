@@ -79,14 +79,14 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
     async () => {
       const probe = "evt-stream-" + Math.random().toString(36).slice(2, 8);
       const script = `
-        import { AgentExecutor } from "@aexhq/sdk";
+        import { Aex } from "@aexhq/sdk";
 
         const baseUrl = process.env.AEX_API_URL;
         const apiToken = process.env.AEX_API_TOKEN;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
 
-        const client = new AgentExecutor({ baseUrl, apiToken });
+        const client = new Aex({ baseUrl, apiToken });
         const result = await client.run({
           provider: "deepseek",
           model,

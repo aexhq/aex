@@ -186,7 +186,7 @@ export interface UsageSummary {
 }
 
 /**
- * Filters for {@link import("./operations.js").listRuns} / `AgentExecutor.listRuns`.
+ * Filters for {@link import("./operations.js").listRuns} / `Aex.runs.list`.
  * Every field is optional; omitting all of them lists the most recent runs in the
  * token's workspace. Workspace identity is derived server-side from the API token,
  * so there is no `workspaceId` here — a token can only ever enumerate its own runs.
@@ -223,7 +223,7 @@ export interface RunListPage {
 }
 
 /**
- * Cross-run output search query (`AgentExecutor.searchOutputs`). Restrict to a
+ * Cross-run output search query (`Aex.outputs.search`). Restrict to a
  * corpus with `runIds`; filter by filename substring / extension / content type.
  * The MVP composes this client-side (per-run `listOutputs` + filter) — a future
  * server-side `GET /api/outputs/search` can back the same contract with a real
@@ -388,7 +388,7 @@ export interface OutputFileDownload {
   readonly bytes: Uint8Array;
 }
 
-/** Options for `AgentExecutor.readOutputText` / {@link import("./operations.js").readOutputText}. */
+/** Options for `Aex.outputs.read` / {@link import("./operations.js").readOutputText}. */
 export interface ReadOutputTextOptions {
   /**
    * Stop reading after this many bytes. Defaults to 50_000; clamped server-side
@@ -405,7 +405,7 @@ export interface ReadOutputTextOptions {
 
 /**
  * A byte-capped, decoded text read of one output file, as returned by
- * `AgentExecutor.readOutputText`. Built for feeding run deliverables to an LLM
+ * `Aex.outputs.read`. Built for feeding run deliverables to an LLM
  * without loading the whole (possibly very large) file into memory or context:
  * the read streams and stops at `maxBytes`, so `text` is at most that many bytes
  * decoded as UTF-8. Check {@link truncated} before treating `text` as complete.

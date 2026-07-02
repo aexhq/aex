@@ -180,8 +180,7 @@ import {
   isToolCallResult,
   isCustom,
   isLog,
-  isEventChannel,
-  textOf
+  isEventChannel
 } from "@aexhq/sdk";
 ```
 
@@ -191,6 +190,6 @@ All guards test the `type` discriminant at runtime. `isTextMessage`,
 `event.data` to the fields that event type carries — e.g. inside
 `if (isTextMessage(e))`, `e.data.text` is typed `string`. The lifecycle/channel
 guards (`isRunStarted`, `isRunError`, `isCustom`, `isLog`, …) operate on the
-coordinator envelope and narrow only the discriminant. `textOf(events)` returns
-the run's final assistant text concatenated from the `TEXT_MESSAGE_CONTENT`
-blocks.
+coordinator envelope and narrow only the discriminant. Use `result.text` or
+`session.messages.all()` when you need assistant text without inspecting the
+event stream directly.

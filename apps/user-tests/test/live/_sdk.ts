@@ -6,7 +6,7 @@
  *
  * Each test installs the SDK (install fixture), then runs a small Bun script
  * IN the install dir that builds a submission via the SDK's classes
- * (AgentExecutor/AgentsMd/ProxyEndpoint/…), submits, polls to terminal, and
+ * (Aex/AgentsMd/…), submits, polls to terminal, and
  * prints a standard result JSON which the test asserts on.
  *
  * They validate the FIXED behaviour and so only pass once the fixes are
@@ -88,12 +88,11 @@ export interface SdkRunResult {
 
 /**
  * Script preamble: imports the SDK + builds the client from env. Available
- * in-script: `client`, `DEEPSEEK_KEY`, `MODEL_DEEPSEEK`, and the classes
- * `AgentsMd` / `ProxyEndpoint`.
+ * in-script: `client`, `DEEPSEEK_KEY`, `MODEL_DEEPSEEK`, and `AgentsMd`.
  */
 const PREAMBLE = `
-import { AgentExecutor, AgentsMd, ProxyEndpoint } from "@aexhq/sdk";
-const client = new AgentExecutor({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+import { Aex, AgentsMd } from "@aexhq/sdk";
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;

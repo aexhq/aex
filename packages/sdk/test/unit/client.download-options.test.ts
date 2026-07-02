@@ -2,9 +2,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
-function downloadClient(): AgentExecutor {
+function downloadClient(): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     if (url.endsWith("/api/runs/run-1/outputs/abc/download")) {
@@ -37,7 +37,7 @@ function downloadClient(): AgentExecutor {
     }
     throw new Error(`No fake responder for ${url}`);
   };
-  return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+  return new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
 }
 
 describe("SessionHandle download { to } options", () => {

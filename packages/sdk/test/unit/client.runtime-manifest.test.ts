@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 /**
  * SDK contract: runtimeManifest is accessed on the self-contained unit read
@@ -43,7 +43,7 @@ describe("RunUnit.runtimeManifest — read from the unit record", () => {
         runtimeManifest: manifest
       }
     });
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
+    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const session = await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "k" },
@@ -60,7 +60,7 @@ describe("RunUnit.runtimeManifest — read from the unit record", () => {
       createBody: { id: "run_no_manifest", status: "queued" },
       unitBody: { id: "run_no_manifest", status: "queued" }
     });
-    const client = new AgentExecutor({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
+    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const session = await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "k" }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 interface RecordedCall {
   readonly url: string;
@@ -13,7 +13,7 @@ function json(body: unknown): Response {
   });
 }
 
-function aliasClient(): { readonly client: AgentExecutor; readonly calls: RecordedCall[] } {
+function aliasClient(): { readonly client: Aex; readonly calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -31,7 +31,7 @@ function aliasClient(): { readonly client: AgentExecutor; readonly calls: Record
     return json({ id: "sess-1", status: "idle" });
   };
   return {
-    client: new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
+    client: new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
     calls
   };
 }
@@ -72,13 +72,13 @@ describe("SessionHandle operations delegate to the session/run endpoints", () =>
 });
 
 describe("SessionHandle.messages / lastMessage decode assistant text", () => {
-  function textClient(events: readonly unknown[]): AgentExecutor {
+  function textClient(events: readonly unknown[]): Aex {
     const fetch: typeof globalThis.fetch = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       if (url.endsWith("/api/sessions/sess-1/events")) return json({ events });
       return json({ id: "sess-1", status: "idle" });
     };
-    return new AgentExecutor({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+    return new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
   }
 
   it("returns assistant messages oldest-first and lastMessage is the latest", async () => {

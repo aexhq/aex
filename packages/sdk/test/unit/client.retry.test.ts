@@ -1,5 +1,5 @@
 /**
- * AgentExecutor-level resilience coverage: the built-in transport retry, the
+ * Aex-level resilience coverage: the built-in transport retry, the
  * STABLE idempotency key that keeps a retried submit from creating a duplicate
  * billable run (defect sdk-dx-3), `session.replayLast()`, and the structured
  * throttle error surfaced on a provider-throttled turn.
@@ -9,7 +9,7 @@
  * deterministically without a live backend.
  */
 import { describe, expect, it } from "vitest";
-import { AgentExecutor, isRateLimited, AexRateLimitError, RunStateError } from "../../src/index.js";
+import { Aex, isRateLimited, AexRateLimitError, RunStateError } from "../../src/index.js";
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 
 interface RecordedCall {
@@ -89,7 +89,7 @@ async function waitForSocket(sockets: readonly FakeWebSocket[], count: number): 
 }
 
 interface Harness {
-  readonly client: AgentExecutor;
+  readonly client: Aex;
   readonly calls: RecordedCall[];
   readonly sockets: FakeWebSocket[];
   readonly webSocketFactory: (url: string) => FakeWebSocket;
@@ -146,7 +146,7 @@ function harness(
     return ws;
   };
 
-  const client = new AgentExecutor({
+  const client = new Aex({
     apiToken: "tkn",
     baseUrl: "https://x",
     fetch: fetchImpl,
@@ -166,7 +166,7 @@ function harness(
   };
 }
 
-describe("AgentExecutor idempotency (sdk-dx-3)", () => {
+describe("Aex idempotency (sdk-dx-3)", () => {
   it("run() derives the message key from the create key so a retried run never double-bills", async () => {
     const h = harness();
     const promise = h.client.run(
@@ -217,7 +217,7 @@ describe("AgentExecutor idempotency (sdk-dx-3)", () => {
   });
 });
 
-describe("AgentExecutor built-in transport retry", () => {
+describe("Aex built-in transport retry", () => {
   it("retries a throttled create with the SAME idempotency key (no duplicate billable run)", async () => {
     const h = harness({ id: "run-1", status: "idle", turnSeq: 1 }, [429, 201]);
     const promise = h.client.run(
@@ -296,7 +296,7 @@ describe("SessionHandle.replayLast", () => {
   });
 });
 
-describe("AgentExecutor throttle error on a provider-throttled turn", () => {
+describe("Aex throttle error on a provider-throttled turn", () => {
   it("throwOnFailure raises AexRateLimitError from a structured provider fault", async () => {
     const h = harness({
       id: "run-1",

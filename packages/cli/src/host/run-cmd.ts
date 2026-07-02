@@ -40,16 +40,12 @@ import {
   RUN_MODELS,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
-  validateProxyAuth,
   type RunRequestConfig,
   type McpServerRef,
   type SessionCreateRequest,
   type SessionSubmission,
   type PlatformInlineSecrets,
   type PlatformMcpServerSecret,
-  type PlatformProxyAuthValue,
-  type PlatformProxyEndpoint,
-  type PlatformProxyEndpointAuth,
   type RunModel,
   type RunProvider,
   type RuntimeSize
@@ -214,6 +210,10 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   const proxyAuthFlags = collectRepeatedKv(rest, "--proxy-auth");
   if (proxyAuthFlags.error) { io.stderr(`${proxyAuthFlags.error}\n`); return USAGE_ERR; }
   rest = proxyAuthFlags.remaining;
+  if (proxyEndpointFlags.values.length > 0 || Object.keys(proxyAuthFlags.entries).length > 0) {
+    io.stderr("--proxy-endpoint and --proxy-auth are no longer supported; make HTTP calls from your code and pass credentials via secrets.\n");
+    return USAGE_ERR;
+  }
 
   const positional = rest.filter((a) => !a.startsWith("--"));
   const unknownFlags = rest.filter((a) => a.startsWith("--"));
@@ -337,36 +337,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     }
   }
 
-  // ---------------- Proxy endpoints + auth ----------------
-  let proxyEndpoints: readonly PlatformProxyEndpoint[] = runConfig.proxyEndpoints ?? [];
-  if (proxyEndpointFlags.values.length > 0) {
-    try {
-      proxyEndpoints = proxyEndpointFlags.values.map((raw, i) =>
-        parseJsonOrThrow<PlatformProxyEndpoint>(raw, `--proxy-endpoint[${i}]`)
-      );
-    } catch (err) {
-      io.stderr(`${(err as Error).message}\n`);
-      return USAGE_ERR;
-    }
-  }
-  const proxyAuth: PlatformProxyEndpointAuth[] = [];
-  for (const [name, spec] of Object.entries(proxyAuthFlags.entries)) {
-    const parsed = parseProxyAuth(spec);
-    if (!parsed.ok) {
-      io.stderr(`--proxy-auth ${name}: ${parsed.reason}\n`);
-      return USAGE_ERR;
-    }
-    proxyAuth.push({ name, value: parsed.value });
-  }
-  if (proxyEndpoints.length > 0) {
-    try {
-      validateProxyAuth(proxyEndpoints, proxyAuth);
-    } catch (err) {
-      io.stderr(`proxy auth validation failed: ${(err as Error).message}\n`);
-      return USAGE_ERR;
-    }
-  }
-
   // ---------------- Build the session-create request ----------------
   // The prompt is NOT part of the create submission — it is sent as the first
   // turn's message (mirroring the SDK's `sessions.create` + `session.send`).
@@ -385,8 +355,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   const hasAdditionalProviderKeys = Object.keys(providerKeyValues).some((p) => p !== provider);
   const secrets: PlatformInlineSecrets = {
     apiKeys: hasAdditionalProviderKeys ? providerKeyValues : { [provider]: providerKeyValues[provider] as string },
-    ...(mcpServerSecrets.length > 0 ? { mcpServers: mcpServerSecrets } : {}),
-    ...(proxyAuth.length > 0 ? { proxyEndpointAuth: proxyAuth } : {})
+    ...(mcpServerSecrets.length > 0 ? { mcpServers: mcpServerSecrets } : {})
   };
 
   const request: SessionCreateRequest = {
@@ -404,8 +373,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       : runConfig.timeout
         ? { timeout: runConfig.timeout }
         : {}),
-    ...(webhookFlag.value ? { webhook: { url: webhookFlag.value } } : {}),
-    ...(proxyEndpoints.length > 0 ? { proxyEndpoints } : {})
+    ...(webhookFlag.value ? { webhook: { url: webhookFlag.value } } : {})
   };
 
   // The create idempotency key is header-carried; the message reuses a derived,
@@ -493,41 +461,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
 }
 
 /* ---------- helpers ---------- */
-
-interface ProxyAuthOk { ok: true; value: PlatformProxyAuthValue; }
-interface ProxyAuthErr { ok: false; reason: string; }
-
-function parseProxyAuth(spec: string): ProxyAuthOk | ProxyAuthErr {
-  const idx = spec.indexOf(":");
-  if (idx <= 0) {
-    return { ok: false, reason: `expected '<type>:<value>' (got: ${spec})` };
-  }
-  const type = spec.slice(0, idx);
-  const restValue = spec.slice(idx + 1);
-  switch (type) {
-    case "bearer":
-      if (!restValue) return { ok: false, reason: "bearer requires a token value" };
-      return { ok: true, value: { type: "bearer", token: restValue } };
-    case "header":
-      if (!restValue) return { ok: false, reason: "header requires a value" };
-      return { ok: true, value: { type: "header", value: restValue } };
-    case "query":
-      if (!restValue) return { ok: false, reason: "query requires a value" };
-      return { ok: true, value: { type: "query", value: restValue } };
-    case "basic": {
-      const sep = restValue.indexOf(":");
-      if (sep <= 0 || sep >= restValue.length - 1) {
-        return { ok: false, reason: "basic requires <username>:<password>" };
-      }
-      return {
-        ok: true,
-        value: { type: "basic", username: restValue.slice(0, sep), password: restValue.slice(sep + 1) }
-      };
-    }
-    default:
-      return { ok: false, reason: `unknown auth type '${type}' (expected bearer|basic|header|query)` };
-  }
-}
 
 function parseJsonOrThrow<T>(raw: string, label: string): T {
   try {

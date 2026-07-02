@@ -93,9 +93,9 @@ function buildScript(cell: Cell, marker: string): string {
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
-    import { AgentExecutor } from "@aexhq/sdk";
+    import { Aex } from "@aexhq/sdk";
 
-    const client = new AgentExecutor({
+    const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
       apiToken: process.env.AEX_API_TOKEN
     });

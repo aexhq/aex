@@ -178,14 +178,14 @@ interface Observation {
 
 const SCRIPT_PREAMBLE = `
 import {
-  AgentExecutor,
+  Aex,
   BuiltinTools,
   File,
   Secret,
   Tool
 } from "@aexhq/sdk";
 
-const client = new AgentExecutor({
+const client = new Aex({
   baseUrl: process.env.AEX_API_URL,
   apiToken: process.env.AEX_API_TOKEN
 });

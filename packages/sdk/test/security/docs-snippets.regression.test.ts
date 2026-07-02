@@ -25,7 +25,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import {
-  AgentExecutor,
+  Aex,
   SessionClient,
   SessionHandle,
   AgentsMd,
@@ -83,7 +83,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
 
     // Client-level operations the docs call as `aex.<method>(...)`.
     for (const key of ["openSession", "run", "whoami", "deleteWorkspaceAsset"]) {
-      if (!isFn(AgentExecutor.prototype, key)) missing.push(`AgentExecutor.prototype.${key}`);
+      if (!isFn(Aex.prototype, key)) missing.push(`Aex.prototype.${key}`);
     }
     // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
     // `outputs(id)` returns the SAME accessor as `session.outputs()` (shape
@@ -105,7 +105,6 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       "delete",
       "download",
       "downloadMetadata",
-      "messages",
       "events",
       "outputs",
       "webhooks"
@@ -113,13 +112,13 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       if (!isFn(SessionHandle.prototype, key)) missing.push(`SessionHandle.prototype.${key}`);
     }
 
-    // The docs now teach `session.<group>().<verb>()` — verify each accessor
-    // returns an object exposing the verbs the guides chain onto it. Accessors
-    // build their object literal synchronously (no I/O), so a bare handle over a
-    // stub HTTP client is enough to assert the shape.
+    // The docs now teach accessor groups — verify each accessor returns an
+    // object exposing the verbs the guides chain onto it. Accessors build their
+    // object literal synchronously (no I/O), so a bare handle over a stub HTTP
+    // client is enough to assert the shape.
     const handle = new SessionHandle({} as never, { id: "ses_regression" } as never);
     const accessorVerbs: ReadonlyArray<{ readonly group: string; readonly verbs: readonly string[] }> = [
-      { group: "messages", verbs: ["list", "last", "first"] },
+      { group: "messages", verbs: ["all", "list", "last", "first"] },
       { group: "events", verbs: ["list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
       { group: "outputs", verbs: ["list", "last", "first", "read", "find", "findOne", "link", "fetch", "download"] },
       { group: "webhooks", verbs: ["list", "redeliver"] }
@@ -127,12 +126,12 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     for (const { group, verbs } of accessorVerbs) {
       const factory = (handle as unknown as Record<string, (() => object) | undefined>)[group];
       if (typeof factory !== "function") {
-        missing.push(`session.${group}()`);
+        missing.push(`session.${group}`);
         continue;
       }
       const accessor = factory.call(handle);
       for (const verb of verbs) {
-        if (!isFn(accessor, verb)) missing.push(`session.${group}().${verb}`);
+        if (!isFn(accessor, verb)) missing.push(`session.${group}.${verb}`);
       }
     }
 

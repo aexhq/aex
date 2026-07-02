@@ -38,7 +38,7 @@ describe("download namespaces surface (offline)", () => {
 
   it("SessionHandle exposes the whole-run + per-namespace download verbs", async () => {
     const script = `
-      const { AgentExecutor } = await import("@aexhq/sdk");
+      const { Aex } = await import("@aexhq/sdk");
       const fetch = async (input) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url);
@@ -50,7 +50,7 @@ describe("download namespaces surface (offline)", () => {
         }
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       };
-      const c = new AgentExecutor({ apiToken: "t", baseUrl: "https://example.test", fetch });
+      const c = new Aex({ apiToken: "t", baseUrl: "https://example.test", fetch });
       const session = await c.sessions.open("sess-1");
       const result = {
         session: {
@@ -82,17 +82,17 @@ describe("download namespaces surface (offline)", () => {
       expect(result.session[v], `SessionHandle ${v} should be a function`).toBe("function");
     }
     for (const v of ["download", "downloadMetadata"]) {
-      expect(result.client[v], `AgentExecutor.${v} should not be exposed`).toBe("undefined");
+      expect(result.client[v], `Aex.${v} should not be exposed`).toBe("undefined");
     }
     for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getRunDebugLogs", "debugLogs"]) {
       expect(result.session[removed], `SessionHandle.${removed} should not be exposed`).toBe("undefined");
-      expect(result.client[removed], `AgentExecutor.${removed} should not be exposed`).toBe("undefined");
+      expect(result.client[removed], `Aex.${removed} should not be exposed`).toBe("undefined");
     }
   });
 
   it("SessionHandle.download assembles only public namespaces from the installed SDK", async () => {
     const script = `
-      const { AgentExecutor } = await import("@aexhq/sdk");
+      const { Aex } = await import("@aexhq/sdk");
       const { strFromU8, unzipSync } = await import("fflate");
       const calls = [];
       const fetch = async (input) => {
@@ -137,7 +137,7 @@ describe("download namespaces surface (offline)", () => {
         throw new Error("unexpected route: " + key);
       };
 
-      const client = new AgentExecutor({ apiToken: "t", baseUrl: "https://example.test", fetch });
+      const client = new Aex({ apiToken: "t", baseUrl: "https://example.test", fetch });
       const session = await client.sessions.open("run-1");
       const entries = unzipSync(await session.download());
       const manifest = JSON.parse(strFromU8(entries["manifest.json"]));

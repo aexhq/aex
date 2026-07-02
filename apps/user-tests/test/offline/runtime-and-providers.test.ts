@@ -50,10 +50,10 @@ describe("managed-only provider surface (published package)", () => {
 
   it("openSession rejects removed legacy options before any HTTP call", async () => {
     const script = `
-      const { AgentExecutor } = await import("@aexhq/sdk");
+      const { Aex } = await import("@aexhq/sdk");
       const calls = [];
       const fetchFake = async (...args) => { calls.push(args); return new Response("never", { status: 500 }); };
-      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new Aex({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       // The one-shot/submit surface folded into sessions: these fields are the
       // legacy submit inputs that no longer exist on the session API. Each must
       // be rejected at the SDK boundary before any HTTP call.
@@ -90,7 +90,7 @@ describe("managed-only provider surface (published package)", () => {
 
   it("sessions.create posts canonical top-level apiKeys secrets only", async () => {
     const script = `
-      const { AgentExecutor } = await import("@aexhq/sdk");
+      const { Aex } = await import("@aexhq/sdk");
       const requests = [];
       const fetchFake = async (url, init) => {
         let body = init?.body;
@@ -100,7 +100,7 @@ describe("managed-only provider surface (published package)", () => {
           session: { id: "sess_test_user_e2e", status: "idle", turnSeq: 0 }
         }), { status: 201, headers: { "content-type": "application/json" } });
       };
-      const client = new AgentExecutor({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
+      const client = new Aex({ apiToken: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });
       await client.sessions.create({
         provider: "anthropic",
         model: "claude-haiku-4-5",

@@ -25,10 +25,10 @@ describe("user/SDK: postHook is rejected at the public boundary", () => {
   it("rejects postHook before the SDK sends any HTTP request", async () => {
     const script = `
       import { strictEqual, match } from "node:assert/strict";
-      import { AgentExecutor } from "@aexhq/sdk";
+      import { Aex } from "@aexhq/sdk";
 
       const calls = [];
-      const client = new AgentExecutor({
+      const client = new Aex({
         baseUrl: "https://example.invalid",
         apiToken: "aex_user_posthook_token",
         fetch: async (input, init) => {

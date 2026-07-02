@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { TERMINAL_RUN_STATUSES } from "@aexhq/contracts";
-import { AgentExecutor } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
 
 function makeSessionFetch(status: string): { fetch: typeof fetch; calls: number } {
   const state = { calls: 0 };
@@ -37,7 +37,7 @@ describe("SessionHandle.wait — terminal statuses", () => {
   it("returns immediately for deleted and expired sessions", async () => {
     for (const status of ["deleted", "expired"]) {
       const f = makeSessionFetch(status);
-      const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+      const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
       const session = await client.openSession("run-abc");
       const before = f.calls;
       const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
@@ -48,7 +48,7 @@ describe("SessionHandle.wait — terminal statuses", () => {
 
   it("returns immediately for a timed_out session instead of hanging", async () => {
     const f = makeSessionFetch("timed_out");
-    const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
     const session = await client.openSession("run-abc");
     const before = f.calls; // the openSession rehydrate read
     const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
@@ -60,7 +60,7 @@ describe("SessionHandle.wait — terminal statuses", () => {
   it("treats every shared TERMINAL_RUN_STATUSES value as terminal", async () => {
     for (const status of TERMINAL_RUN_STATUSES) {
       const f = makeSessionFetch(status);
-      const client = new AgentExecutor({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
+      const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f.fetch });
       const session = await client.openSession("run-abc");
       const before = f.calls;
       const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
