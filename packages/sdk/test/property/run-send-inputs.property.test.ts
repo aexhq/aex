@@ -419,11 +419,7 @@ describe("SDK run/send SessionInput properties", () => {
 
         expect(messages).toHaveLength(1);
         expect(messages[0]!.body).toEqual({ input });
-        if (providedKey !== undefined) {
-          expect(idempotencyKey(messages[0]!)).toBe(providedKey);
-        } else {
-          expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(/\S+/));
-        }
+        expect(idempotencyKey(messages[0]!)).toEqual(providedKey ?? expect.stringMatching(/\S+/));
         expect(result.text).toBe("");
         expect(createCalls(harness)).toHaveLength(0);
       }),
@@ -518,9 +514,8 @@ describe("SDK run/send SessionInput properties", () => {
         expect(messages).toHaveLength(2);
         expect(messages[0]!.body).toEqual({ input });
         expect(messages[1]!.body).toEqual({ input });
-        expect(idempotencyKey(messages[0]!)).toEqual(expect.stringMatching(/\S+/));
+        expect(idempotencyKey(messages[0]!)).toEqual(providedKey ?? expect.stringMatching(/\S+/));
         expect(idempotencyKey(messages[1]!)).toBe(idempotencyKey(messages[0]!));
-        if (providedKey !== undefined) expect(idempotencyKey(messages[0]!)).toBe(providedKey);
       }),
       PROPERTY_RUNS
     );
