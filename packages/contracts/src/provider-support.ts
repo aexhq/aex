@@ -27,7 +27,7 @@ const COMMON_EVIDENCE = [
 const ANTHROPIC_LIVE_USER_EVIDENCE = [
   {
     label: "Installed-SDK Anthropic live user test",
-    href: "../../../apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts"
+    href: "../../../apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts"
   }
 ] as const satisfies readonly SupportPointer[];
 

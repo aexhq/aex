@@ -85,18 +85,18 @@ They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
 - **Secret `AEX_API_TOKEN`** — workspace API token for the selected API URL.
-- **Secret `ANTHROPIC_API_KEY`** — customer Anthropic key for the managed
-  Anthropic live scenario.
-- **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key for the managed live
-  scenarios.
+- **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key. DeepSeek is the
+  single RELEASE-GATING provider (SSoT `test/_fixtures/provider.ts`): gating
+  shards must never depend on another provider account's billing state.
+  `ANTHROPIC_API_KEY` is needed only by the non-gating providers suite
+  (`live-on-demand-tests.yml`).
 
 ## Live SDK siblings (2026 rebuild)
 
 The `test/live/live-sdk-*.test.ts` files exercise the packed tarball
-end-to-end against the configured hosted API. Current CI coverage is
-Anthropic-managed for the default-provider proof and DeepSeek-managed for the
-broad feature-surface matrix, because those are the provider keys provisioned
-for the public live workflow.
+end-to-end against the configured hosted API. All gating live
+coverage runs DeepSeek-managed (the gate provider); Anthropic-managed is a
+per-provider correctness round-trip in `test/live/providers/` (non-gating).
 
 Each test installs the packed tarball into a tempdir, opens a session or runs a
 one-shot `run({ message, apiKeys, ... })`, reads through the session accessors,
@@ -185,15 +185,16 @@ is the deliberate cap on concurrent live-run spend and provider rate limits.
 
 ## Per-provider correctness suite
 
-`test/live/providers/` holds one minimal round-trip per **extra** provider
-(`live-sdk-doubao.test.ts`, and future openai/gemini/mistral/openrouter). Each
+`test/live/providers/` holds one minimal round-trip per NON-GATE provider
+(`live-sdk-anthropic-managed.test.ts`, `live-sdk-doubao.test.ts`, and future
+openai/gemini/mistral/openrouter). Each
 proves only that the provider's adapter/routing/registry wiring reaches its
-real upstream and returns a valid response — feature depth is already covered
-on the two wire shapes by the DeepSeek (openai-chat) and Anthropic
-(anthropic-messages) workhorse suites, so a wire-shape-equivalent provider
-needs only this connectivity check, not the full scenario matrix.
+real upstream and returns a valid response — feature depth is covered by the
+DeepSeek (openai-chat) gate suites; a non-gate provider (including Anthropic,
+anthropic-messages) needs only this connectivity check, not the full scenario
+matrix, so the release gate never depends on its account's billing state.
 
-Each file hard-fails when its provider key is absent (e.g. `DOUBAO_API_KEY`);
+Each file hard-fails when its provider key is absent (e.g. `ANTHROPIC_API_KEY`, `DOUBAO_API_KEY`);
 run the suite only in an environment provisioned for the provider matrix. The suite is **excluded**
 from the default `test:user` sweep (see `vitest.config.ts`) and runs via its
 own config:
@@ -213,4 +214,4 @@ independent jobs so you get the full optional signal from one trigger.
 `test:user:tool-fuzz` belongs to the platform deploy suite instead, because it
 is a deterministic paid gate rather than a non-gating on-demand probe. The
 default `live-user-tests.yml` workflow is purely the always-on workhorse sweep
-(DeepSeek + Anthropic) and no longer carries a `run_heavy` toggle.
+(DeepSeek only) and no longer carries a `run_heavy` toggle.

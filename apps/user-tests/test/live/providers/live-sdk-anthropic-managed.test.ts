@@ -1,8 +1,13 @@
 /**
  * Live scenario: live-sdk-anthropic-managed.test.ts
  *
- * Sibling of live-sdk-deepseek.test.ts. Same installed SDK and managed
- * runtime path, swapped provider — Anthropic via the BYOK provider-proxy.
+ * Per-provider correctness round-trip for Anthropic (the anthropic-messages
+ * wire shape) — same installed SDK and managed runtime path as the DeepSeek
+ * gate suite, swapped provider, via the BYOK provider-proxy. It lives under
+ * test/live/providers/ — the on-demand provider suite EXCLUDED from the
+ * default release-gating `test:user` sweep (see vitest.providers.config.ts);
+ * it runs only via `test:user:providers` (live-on-demand-tests.yml), so the
+ * release gate never depends on the Anthropic account billing state.
  *
  *   SDK → POST /api/runs { provider: "anthropic" }
  *      → hosted run-lifecycle → managed runtime
@@ -28,7 +33,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../../_fixtures/install.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];

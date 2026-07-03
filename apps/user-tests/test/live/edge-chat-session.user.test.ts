@@ -12,15 +12,16 @@
  * catch everything and always `emit(...)` so the raw behaviour is captured as
  * evidence even when an assertion later fails.
  *
- * Model: claude-haiku-4-5, tiny prompts. Provider key via apiKeys.anthropic.
+ * Model: deepseek-v4-flash, tiny prompts. Provider key via the gate-provider apiKeys map.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 import { formatChildFailure, redactKnownValues } from "../_fixtures/live-diagnostics.js";
 
 function requireEnv(name: string): string {
@@ -33,8 +34,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-chat-session");
+const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -64,14 +65,15 @@ const PRE = `
 import { Aex } from "@aexhq/sdk";
 const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
 const apiToken = process.env.AEX_API_TOKEN;
-const anthropicKey = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const providerKey = process.env.PROVIDER_KEY;
 const model = process.env.MODEL;
 const client = new Aex({ baseUrl, apiToken });
 const CREATE = {
-  provider: "anthropic",
+  provider: PROVIDER,
   model,
   includeBuiltinTools: false,
-  apiKeys: { anthropic: anthropicKey },
+  apiKeys: { [PROVIDER]: providerKey },
   system: "You are a terse assistant. Follow the user's instructions exactly and reply with as few words as possible.",
   overrides: { idleTtl: "10m" }
 };
@@ -99,7 +101,7 @@ async function settleIdle(session, timeoutMs){
 }
 function leaks(obj){
   const s = JSON.stringify(obj);
-  return (anthropicKey && s.includes(anthropicKey)) || (apiToken && s.includes(apiToken));
+  return (providerKey && s.includes(providerKey)) || (apiToken && s.includes(apiToken));
 }
 function emit(o){ process.stdout.write(JSON.stringify(o)); process.exit(0); }
 `;
@@ -111,17 +113,17 @@ async function runChild(scriptName: string, body: string, timeoutMs = 8 * 60_000
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, ANTHROPIC_KEY: anthropicKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
-    throw new Error(formatChildFailure(scriptName, child, [apiToken, anthropicKey]));
+    throw new Error(formatChildFailure(scriptName, child, [apiToken, providerKey]));
   }
   const out = child.stdout.trim();
   try {
     return JSON.parse(out) as Record<string, unknown>;
   } catch {
     throw new Error(
-      `${scriptName}: child stdout was not JSON:\n${redactKnownValues(out, [apiToken, anthropicKey])}\n--- stderr ---\n${redactKnownValues(child.stderr, [apiToken, anthropicKey])}`
+      `${scriptName}: child stdout was not JSON:\n${redactKnownValues(out, [apiToken, providerKey])}\n--- stderr ---\n${redactKnownValues(child.stderr, [apiToken, providerKey])}`
     );
   }
 }

@@ -16,15 +16,16 @@
  *
  * Cost: ONE billable run total (case A creates a single marker deliverable;
  * cases B and C are pure read/introspection against the existing workspace and
- * spend nothing). Model claude-haiku-4-5, tiny prompt.
+ * spend nothing). Model deepseek-v4-flash, tiny prompt.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -36,8 +37,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-list-search");
+const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -77,14 +78,15 @@ const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const API_URL = process.env.AEX_API_URL;
   const API_TOKEN = process.env.AEX_API_TOKEN;
-  const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+  const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const client = new Aex({ baseUrl: API_URL, apiToken: API_TOKEN });
 
   function scrub(s) {
     let out = String(s == null ? "" : s);
     if (API_TOKEN) out = out.split(API_TOKEN).join("***TOKEN***");
-    if (ANTHROPIC_KEY) out = out.split(ANTHROPIC_KEY).join("***KEY***");
+    if (PROVIDER_KEY) out = out.split(PROVIDER_KEY).join("***KEY***");
     return out;
   }
   async function probe(label, fn, ms) {
@@ -124,7 +126,7 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_TOKEN: apiToken,
-      ANTHROPIC_KEY: anthropicKey,
+      PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
       MODEL: model
     })
   });
@@ -172,12 +174,12 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
         `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
       const body = `
         const runResult = await client.run({
-          provider: "anthropic",
+          provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
           outputs: { allowedDirs: ["/workspace/outputs"] },
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-ls-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const runId = runResult.runId;
@@ -234,7 +236,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
             topRuntimeSize: u.runtimeSize ?? null,
             hasCostTelemetry: u.costTelemetry != null,
             leakedToken: !!(API_TOKEN && s.includes(API_TOKEN)),
-            leakedKey: !!(ANTHROPIC_KEY && s.includes(ANTHROPIC_KEY)),
+            leakedKey: !!(PROVIDER_KEY && s.includes(PROVIDER_KEY)),
             bytes: s.length
           };
         }, 120000));
@@ -599,7 +601,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
           await c1c.sessions.list({ status: "idle", limit: 2 });
         } catch (e) { c1err = scrub(e && e.message ? e.message : String(e)); } finally { console.error = origErr; }
         const c1leakToken = c1lines.some((l) => API_TOKEN && l.includes(API_TOKEN));
-        const c1leakKey = c1lines.some((l) => ANTHROPIC_KEY && l.includes(ANTHROPIC_KEY));
+        const c1leakKey = c1lines.some((l) => PROVIDER_KEY && l.includes(PROVIDER_KEY));
         const c1 = {
           count: c1lines.length,
           hasAexPrefix: c1lines.some((l) => l.includes("[aex]")),
@@ -628,7 +630,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
           hasAexPrefix: c2lines.some((l) => l.includes("[aex]")),
           usedConsoleErrorToo: c2console.some((l) => l.includes("[aex]")),
           leakToken: c2leakToken,
-          leakKey: c2lines.some((l) => ANTHROPIC_KEY && l.includes(ANTHROPIC_KEY)),
+          leakKey: c2lines.some((l) => PROVIDER_KEY && l.includes(PROVIDER_KEY)),
           sample: c2lines.length ? scrub(c2lines[0]).slice(0, 200) : null,
           err: c2err
         };

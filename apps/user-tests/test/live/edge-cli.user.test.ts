@@ -3,8 +3,8 @@
  *
  * Blackbox: installs the packed/published SDK artifact and spawns the shipped
  * `aex` bin against the real API. Focuses on the CLI's real-world day-one
- * surface that the happy-path `live-cli-installed.test.ts` (deepseek) does not
- * cover on the anthropic key we have here:
+ * surface that the happy-path `live-cli-installed.test.ts` does not
+ * cover:
  *   - a real one-shot `aex run --follow` reaches a clean terminal + prints the
  *     assistant text and session id (with a UNICODE prompt round-trip),
  *   - the read verbs (status/events/outputs/download) work on that session,
@@ -16,13 +16,14 @@
  * read-only or auth call.
  *
  * Required env (wired by run-live.sh): AEX_API_URL, AEX_API_TOKEN,
- * ANTHROPIC_API_KEY, AEX_USER_TEST_TARBALL.
+ * DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type RunResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -32,8 +33,8 @@ function requireEnv(name: string): string {
 
 const apiBase = requireEnv("AEX_API_URL").replace(/\/+$/, "");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-cli");
+const model = gateModel();
 
 // A completed one-shot turn parks the session cleanly (idle/suspended) or, when
 // the deployment projects a terminal run status, `succeeded`. Any of these is a
@@ -41,7 +42,7 @@ const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-ha
 const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
 
 function redact(text: string): string {
-  return text.split(apiToken).join("[REDACTED_TOKEN]").split(anthropicKey).join("[REDACTED_KEY]");
+  return text.split(apiToken).join("[REDACTED_TOKEN]").split(providerKey).join("[REDACTED_KEY]");
 }
 
 function diag(label: string, r: RunResult): string {
@@ -51,7 +52,7 @@ function diag(label: string, r: RunResult): string {
 function assertNoSecretLeak(label: string, r: RunResult): void {
   const combined = r.stdout + r.stderr;
   expect(combined.includes(apiToken), `${label}: api token leaked to output`).toBe(false);
-  expect(combined.includes(anthropicKey), `${label}: provider key leaked to output`).toBe(false);
+  expect(combined.includes(providerKey), `${label}: provider key leaked to output`).toBe(false);
 }
 
 function parseJsonLines(stdout: string): Record<string, unknown>[] {
@@ -205,10 +206,10 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
       const run = await runCli(
         [
           "run",
-          "--provider", "anthropic",
+          "--provider", GATE_PROVIDER,
           "--model", model,
           "--prompt", `@${promptPath}`,
-          "--anthropic-api-key", anthropicKey,
+          "--deepseek-api-key", providerKey,
           "--idempotency-key", `edge-cli-${asciiId.toLowerCase()}`,
           "--follow",
           "--timeout", "8m",

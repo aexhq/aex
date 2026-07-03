@@ -16,7 +16,7 @@ All new submissions run on the managed runtime. Public support is expressed as s
 
 | Provider | Selector | Supported models | Docs | Evidence |
 | --- | --- | --- | --- | --- |
-| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts) |
+| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts) |
 | [DeepSeek](#deepseek) | `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK DeepSeek live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
 | [OpenAI](#openai) | `openai` | `gpt-4.1`, `gpt-4o-mini` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | [Gemini](#gemini) | `gemini` | `gemini-2.0-flash`, `gemini-2.5-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
@@ -29,7 +29,7 @@ All new submissions run on the managed runtime. Public support is expressed as s
 
 | Provider | Enforcement path | Evidence |
 | --- | --- | --- |
-| `anthropic` | submission parser + managed execution | [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts) |
+| `anthropic` | submission parser + managed execution | [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts) |
 | `deepseek` | submission parser + managed execution | [Installed-SDK DeepSeek live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-deepseek.test.ts); [Installed-SDK DeepSeek comprehensive live user matrix](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-comprehensive.test.ts) |
 | `openai` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | `gemini` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
@@ -54,7 +54,7 @@ Notes:
 - Wire provider: `anthropic`
 - Supported models: `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6`
 - Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/live-sdk-anthropic-managed.test.ts)
+- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts); [Installed-SDK Anthropic live user test](https://github.com/aexhq/aex/blob/main/apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts)
 
 ### DeepSeek
 

@@ -5,29 +5,30 @@
  * Surface area: `Aex.run` / `SessionRunOptions` in packages/sdk/src/client.ts.
  * Each `it` installs the packed SDK (shared per worker) and drives a real run in
  * a child Bun process that `import { Aex } from "@aexhq/sdk"`, then asserts on the
- * printed JSON. Prompts are tiny and the model is claude-haiku-4-5 to keep spend
+ * printed JSON. Prompts are tiny and the model is deepseek-v4-flash to keep spend
  * and time low. Cases that only exercise CLIENT-side validation make no HTTP call.
  *
  * Required env (wired by the shared live runner):
- *   AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY, AEX_USER_TEST_TARBALL
+ *   AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
-    throw new Error(`edge-run-lifecycle: required env ${name} is missing (needs a real dev-plane URL + Anthropic key).`);
+    throw new Error(`edge-run-lifecycle: required env ${name} is missing (needs a real dev-plane URL + gate-provider key).`);
   }
   return value;
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const providerKey = requireGateKey("edge-run-lifecycle");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const model = gateModel();
 
 // Shared in-child preamble: build the client + tiny helpers. No dynamic values
 // are interpolated in — everything unique (idempotency keys, probes) is minted
@@ -37,8 +38,9 @@ const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
 const MODEL = process.env.MODEL;
-const KEY = process.env.ANTHROPIC_KEY;
-const anthropic = { anthropic: KEY };
+const KEY = process.env.PROVIDER_KEY;
+const PROVIDER = process.env.PROVIDER;
+const gateKeys = { [PROVIDER]: KEY };
 const WAIT = Number(process.env.WAIT_MS || "240000");
 function uid(p){ return p + "-" + Date.now() + "-" + Math.random().toString(36).slice(2,8); }
 function dense(s){ return (s || "").replace(/\\s+/g, ""); }
@@ -58,7 +60,7 @@ function buildEnv(waitMs: number): Record<string, string> {
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_TOKEN: apiToken,
-    ANTHROPIC_KEY: anthropicKey,
+    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     WAIT_MS: String(waitMs)
   };
@@ -112,12 +114,12 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
     async () => {
       const body = `
         async function rej(fn){ try { await fn(); return "__RESOLVED__"; } catch(e){ return e && e.message ? e.message : String(e); } }
-        const emptyMsg     = await rej(() => client.run({ provider:"anthropic", model:MODEL, message:"", apiKeys:anthropic }));
-        const emptyArr     = await rej(() => client.run({ provider:"anthropic", model:MODEL, message:[], apiKeys:anthropic }));
-        const emptySegment = await rej(() => client.run({ provider:"anthropic", model:MODEL, message:["ok",""], apiKeys:anthropic }));
-        const missingKey   = await rej(() => client.run({ provider:"anthropic", model:MODEL, message:"hi" }));
+        const emptyMsg     = await rej(() => client.run({ provider:PROVIDER, model:MODEL, message:"", apiKeys:gateKeys }));
+        const emptyArr     = await rej(() => client.run({ provider:PROVIDER, model:MODEL, message:[], apiKeys:gateKeys }));
+        const emptySegment = await rej(() => client.run({ provider:PROVIDER, model:MODEL, message:["ok",""], apiKeys:gateKeys }));
+        const missingKey   = await rej(() => client.run({ provider:PROVIDER, model:MODEL, message:"hi" }));
         const badProvider  = await rej(() => client.run({ provider:"acme", model:MODEL, message:"hi", apiKeys:{ acme:"k" } }));
-        const legacyPrompt = await rej(() => client.run({ provider:"anthropic", model:MODEL, message:"hi", apiKeys:anthropic, prompt:"x" }));
+        const legacyPrompt = await rej(() => client.run({ provider:PROVIDER, model:MODEL, message:"hi", apiKeys:gateKeys, prompt:"x" }));
         print({ emptyMsg, emptyArr, emptySegment, missingKey, badProvider, legacyPrompt });
       `;
       const r = await runChild("edge-clientside-validation.mjs", body, { childTimeoutMs: 120_000, waitMs: 60_000 });
@@ -138,10 +140,10 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
       const body = `
         const probe = "OK-" + Math.random().toString(36).slice(2,8);
         const r = await client.run({
-          provider:"anthropic", model:MODEL,
+          provider:PROVIDER, model:MODEL,
           message:"Output verbatim: " + probe,
           idempotencyKey: uid("edge-baseline"),
-          apiKeys: anthropic,
+          apiKeys: gateKeys,
           totallyUnknownOption: { nope: 1 } // must be ignored, not rejected
         }, { timeoutMs: WAIT });
         const out = {
@@ -170,7 +172,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
     async () => {
       const body = `
         const key = uid("edge-idem-seq");
-        const opts = () => ({ provider:"anthropic", model:MODEL, message:"Output verbatim: SEQ", idempotencyKey:key, apiKeys:anthropic });
+        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"Output verbatim: SEQ", idempotencyKey:key, apiKeys:gateKeys });
         const first = await client.run(opts(), { timeoutMs: WAIT });
         const second = await client.run(opts(), { timeoutMs: WAIT });
         print({ runId1:first.runId, runId2:second.runId, same:(first.runId === second.runId), ok1:first.ok, ok2:second.ok, status1:first.status, status2:second.status });
@@ -189,7 +191,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
     async () => {
       const body = `
         const key = uid("edge-idem-conc");
-        const opts = () => ({ provider:"anthropic", model:MODEL, message:"Output verbatim: CONC", idempotencyKey:key, apiKeys:anthropic });
+        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"Output verbatim: CONC", idempotencyKey:key, apiKeys:gateKeys });
         const settled = await Promise.allSettled([
           client.run(opts(), { timeoutMs: WAIT }),
           client.run(opts(), { timeoutMs: WAIT })
@@ -214,10 +216,10 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
     async () => {
       const body = `
         const r = await client.run({
-          provider:"anthropic", model:MODEL,
+          provider:PROVIDER, model:MODEL,
           message:"Output verbatim: DEL",
           idempotencyKey: uid("edge-del"),
-          apiKeys: anthropic,
+          apiKeys: gateKeys,
           deleteAfter: true
         }, { timeoutMs: WAIT });
         let openOutcome, recordStatus=null, err=null;
@@ -248,7 +250,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
         const t0 = Date.now();
         let outcome, res=null, err=null;
         try {
-          const r = await client.run({ provider:"anthropic", model:MODEL, message:"   ", idempotencyKey: uid("edge-ws"), apiKeys:anthropic }, { timeoutMs: WAIT });
+          const r = await client.run({ provider:PROVIDER, model:MODEL, message:"   ", idempotencyKey: uid("edge-ws"), apiKeys:gateKeys }, { timeoutMs: WAIT });
           outcome = "resolved";
           const streamErrs = Array.isArray(r.events) ? r.events.filter(e => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error").length : 0;
           res = { ok:r.ok, status:r.status, hasError: !!r.error, error: (r.error||"").slice(0,300), denseTextLen: dense(r.text).length, streamErrs };
@@ -270,7 +272,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
       const body = `
         const probe = "u" + Math.random().toString(36).slice(2,6);
         const msg = "Output this token verbatim then stop: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
-        const r = await client.run({ provider:"anthropic", model:MODEL, message: msg, idempotencyKey: uid("edge-unicode"), apiKeys:anthropic }, { timeoutMs: WAIT });
+        const r = await client.run({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-unicode"), apiKeys:gateKeys }, { timeoutMs: WAIT });
         const out = { runId:r.runId, ok:r.ok, status:r.status, probe, denseText: dense(r.text).slice(0,200), textLen: (r.text||"").length };
         print({ ...out, leaked: leaks(out) });
       `;
@@ -294,7 +296,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
         const t0 = Date.now();
         let outcome, res=null, err=null;
         try {
-          const r = await client.run({ provider:"anthropic", model:MODEL, message: msg, idempotencyKey: uid("edge-big"), apiKeys:anthropic }, { timeoutMs: WAIT });
+          const r = await client.run({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-big"), apiKeys:gateKeys }, { timeoutMs: WAIT });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, denseText: dense(r.text).slice(0,80), textLen:(r.text||"").length, error:r.error||null };
         } catch(e) { outcome="threw"; err = errInfo(e); }
@@ -316,7 +318,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
     async () => {
       const body = `
         const probe = "arr" + Math.random().toString(36).slice(2,6);
-        const r = await client.run({ provider:"anthropic", model:MODEL, message:["Output verbatim:", probe], idempotencyKey: uid("edge-arr"), apiKeys:anthropic }, { timeoutMs: WAIT });
+        const r = await client.run({ provider:PROVIDER, model:MODEL, message:["Output verbatim:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
         const out = { runId:r.runId, ok:r.ok, status:r.status, probe, denseText: dense(r.text).slice(0,200), textLen:(r.text||"").length };
         print({ ...out, leaked: leaks(out) });
       `;
@@ -335,7 +337,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
       const body = `
         let outcome, res=null, err=null;
         try {
-          const r = await client.run({ provider:"anthropic", model:"not-a-model", message:"hi", idempotencyKey: uid("edge-badmodel"), apiKeys:anthropic }, { timeoutMs: 90_000 });
+          const r = await client.run({ provider:PROVIDER, model:"not-a-model", message:"hi", idempotencyKey: uid("edge-badmodel"), apiKeys:gateKeys }, { timeoutMs: 90_000 });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, error:r.error||null };
         } catch(e) { outcome = "threw"; err = errInfo(e); }
@@ -362,7 +364,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
         const t0 = Date.now();
         let outcome, res=null, err=null;
         try {
-          const r = await client.run({ provider:"anthropic", model:MODEL, message:"Output verbatim: TINY", idempotencyKey: uid("edge-tiny"), apiKeys:anthropic }, { timeoutMs: 1 });
+          const r = await client.run({ provider:PROVIDER, model:MODEL, message:"Output verbatim: TINY", idempotencyKey: uid("edge-tiny"), apiKeys:gateKeys }, { timeoutMs: 1 });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, eventCount: Array.isArray(r.events)?r.events.length:null, hasError: !!r.error, error:r.error||null };
         } catch(e) { outcome = "threw"; err = errInfo(e); }

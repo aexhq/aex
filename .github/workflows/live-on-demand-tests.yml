@@ -139,6 +139,8 @@ jobs:
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
           # One key env per extra provider. Each test self-skips when its key is
           # empty, so add a provider's secret here when you want this dispatch to
           # exercise it (future: OPENAI_API_KEY, GEMINI_API_KEY, etc.).

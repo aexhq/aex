@@ -1,8 +1,8 @@
 /**
  * Live edge-case sweep for the SKILLS & TOOLS composition surface, from a real
  * customer's seat, against the DEV plane via the installed `@aexhq/sdk` on the
- * Anthropic managed runtime (BYOK `apiKeys: { anthropic }`, model
- * `claude-haiku-4-5`, tiny prompts). Each case drives one live run and reduces
+ * managed runtime (gate provider DeepSeek, BYOK `apiKeys`, model
+ * `deepseek-v4-flash`, tiny prompts). Each case drives one live run and reduces
  * the event stream to observable assertions.
  *
  * Cases (5 live runs):
@@ -27,13 +27,14 @@
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
  *   AEX_API_TOKEN              workspace API token
- *   ANTHROPIC_API_KEY          customer Anthropic key
+ *   DEEPSEEK_API_KEY          customer gate-provider (DeepSeek) key
  *   AEX_USER_TEST_TARBALL      packed SDK tarball  (OR AEX_USER_TEST_VERSION)
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -45,8 +46,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-skills-tools");
+const model = gateModel();
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const CHILD_TIMEOUT_MS = 7 * 60_000;
@@ -95,13 +96,14 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   return env;
 }
 
-// Child preamble: Anthropic managed client + a failure-tolerant observe().
+// Child preamble: gate-provider managed client + a failure-tolerant observe().
 const SCRIPT_PREAMBLE = `
 import { Aex, BuiltinTools, Tool } from "@aexhq/sdk";
 
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
 const MODEL = process.env.MODEL;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
 
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
 function customName(e) { const d = eventData(e); return typeof d.name === "string" ? d.name : null; }
@@ -174,7 +176,7 @@ async function observe(result, threw) {
     terminalKind: terminalKindOf(terminal), terminalReason: terminalReasonOf(terminal),
     eventKinds, toolCalls, toolResults, skillLoadedNames,
     assistantText: assistantText.slice(0, 2000), assistantTextEventCount: assistantTextEvents.length,
-    streamErrors, leakedProviderKey: ANTHROPIC_KEY.length > 0 && serialized.includes(ANTHROPIC_KEY)
+    streamErrors, leakedProviderKey: PROVIDER_KEY.length > 0 && serialized.includes(PROVIDER_KEY)
   };
 }
 
@@ -193,7 +195,7 @@ async function runOne(runArgs) {
 async function runScenario(install: InstallResult, scriptName: string, body: string): Promise<{ observation: Observation; stdout: string }> {
   const scriptPath = join(install.installDir, scriptName);
   writeFileSync(scriptPath, `${SCRIPT_PREAMBLE}\n${body}\n`);
-  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, ANTHROPIC_KEY: anthropicKey, MODEL: model });
+  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model });
   const child = await runCommand(getBunCommand(), [scriptPath], { cwd: install.installDir, timeoutMs: CHILD_TIMEOUT_MS, env: passEnv });
   if (child.exitCode !== 0) {
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
@@ -231,7 +233,7 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("live edge: skills & tools composition (Anthropic managed)", () => {
+describe("live edge: skills & tools composition (gate provider, managed)", () => {
   it(
     "1. a throwing custom Tool surfaces an isError result and the run still finishes",
     async () => {
@@ -239,7 +241,7 @@ describe("live edge: skills & tools composition (Anthropic managed)", () => {
       const indexSrc = `export default async function ({ input }) { throw new Error(${JSON.stringify("boom-thrown " + marker)}); }`;
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "Call the boom_tool tool exactly once with x set to \\"go\\". It will return an error. After that, reply in one short sentence that the tool errored, and stop. Do not retry the tool.",
   message: "Call the boom_tool tool once with x=\\"go\\".",
@@ -251,7 +253,7 @@ await runOne({
     entry: "index.mjs",
     files: { "index.mjs": ${JSON.stringify(indexSrc)} }
   })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-throw-" + Date.now()
 });
 `;
@@ -276,7 +278,7 @@ await runOne({
 
       expect(observation.assistantTextEventCount, dump).toBeGreaterThan(0);
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -287,13 +289,13 @@ await runOne({
       const marker = "BLTN-" + tag();
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "You have exactly one tool: bash. Use it to run the requested command, then reply with the exact printed line.",
   message: "Using your bash tool, run: printf '${marker}\\\\n'  — then reply with the exact line you printed and nothing else.",
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-cherry-bash-" + Date.now()
 });
 `;
@@ -312,7 +314,7 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(marker);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -324,7 +326,7 @@ await runOne({
       const indexSrc = `export default async function ({ input }) { return ${JSON.stringify("stamp:")} + String(input.v); }`;
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "Use the echo_stamp tool for this task; do not answer from memory. After calling it, reply with its exact result on one line.",
   message: "Call the echo_stamp tool with v set to \\"${marker}\\", then reply with its exact result verbatim.",
@@ -336,7 +338,7 @@ await runOne({
     entry: "index.mjs",
     files: { "index.mjs": ${JSON.stringify(indexSrc)} }
   })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-custom-plus-builtins-" + Date.now()
 });
 `;
@@ -356,7 +358,7 @@ await runOne({
       expect(norm(r!.text), dump).toContain(norm(`stamp:${marker}`));
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -369,7 +371,7 @@ await runOne({
       const srcB = `export default async function () { return ${JSON.stringify("dup-BBB-" + marker)}; }`;
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "Call the dup_tool tool once with no arguments, then reply with its exact result.",
   message: "Call the dup_tool tool once (no arguments) and reply with its exact result.",
@@ -378,7 +380,7 @@ await runOne({
     await Tool.fromFiles({ name: "dup_tool", description: "Alpha variant.", inputSchema: { type: "object", properties: {} }, entry: "index.mjs", files: { "index.mjs": ${JSON.stringify(srcA)} } }),
     await Tool.fromFiles({ name: "dup_tool", description: "Bravo variant.", inputSchema: { type: "object", properties: {} }, entry: "index.mjs", files: { "index.mjs": ${JSON.stringify(srcB)} } })
   ],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-dup-name-" + Date.now()
 });
 `;
@@ -404,7 +406,7 @@ await runOne({
       expect(handledCleanly, dump).toBe(true);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
       // Diagnostic breadcrumb for the report (never fails the test).
       // eslint-disable-next-line no-console
       console.log(`[dup-name] outcome=${outcome}\n${dump}`);
@@ -418,12 +420,12 @@ await runOne({
       const marker = "EMPTY-" + tag();
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   message: "Output verbatim: ${marker}",
   includeBuiltinTools: false,
   tools: [],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-empty-tools-" + Date.now()
 });
 `;
@@ -439,7 +441,7 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(marker);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );

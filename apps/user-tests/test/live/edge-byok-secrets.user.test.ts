@@ -15,26 +15,27 @@
  * redacted out of model-facing output by design), so these tests mirror that
  * digest-proof pattern rather than echoing raw secrets.
  *
- * Provider: Anthropic (`claude-haiku-4-5`), tiny prompts. Each `it` spawns a
+ * Provider: the DeepSeek gate provider (`deepseek-v4-flash`), tiny prompts. Each `it` spawns a
  * small Bun script in the installed-SDK tempdir; the script imports the SDK,
  * submits, collects, and prints result JSON the test asserts on. Secrets and
  * per-test canaries are passed via the child ENV — never inlined into a script
  * source and never printed.
  *
  * Required env (exported by the live runner): AEX_API_URL, AEX_API_TOKEN,
- * ANTHROPIC_API_KEY, AEX_USER_TEST_TARBALL.
+ * DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `edge-byok-secrets: required env ${name} is missing. Run via the live runner so AEX_API_URL / AEX_API_TOKEN / ANTHROPIC_API_KEY are exported.`
+      `edge-byok-secrets: required env ${name} is missing. Run via the live runner so AEX_API_URL / AEX_API_TOKEN / DEEPSEEK_API_KEY are exported.`
     );
   }
   return value;
@@ -42,8 +43,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-byok-secrets");
+const model = gateModel();
 
 const RUN_TIMEOUT_MS = 6 * 60_000;
 const IT_TIMEOUT_MS = 8 * 60_000;
@@ -78,7 +79,7 @@ async function runScript(
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_TOKEN: apiToken,
-    ANTHROPIC_KEY: anthropicKey,
+    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     ...extraEnv
   };
@@ -112,7 +113,8 @@ async function runScript(
 const PREAMBLE = `
 import { Aex, Secret } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 async function gather(runId, runResult) {
   let events = Array.isArray(runResult?.events) ? runResult.events : [];
@@ -161,21 +163,21 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
 
   // ── CASE A (CRIT): provider key never leaks across ANY surface ────────────
   it(
-    "A: apiKeys{anthropic} run — raw provider key appears in NO event/output/record/message",
+    "A: apiKeys{gate provider} run — raw provider key appears in NO event/output/record/message",
     async () => {
       const probe = rand("keyleak-probe");
       const body = `${PREAMBLE}
         const probe = process.env.PROBE;
         const runResult = await client.run({
-          provider: "anthropic", model: MODEL,
+          provider: PROVIDER, model: MODEL,
           message: "Output verbatim: " + probe,
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-keyleak-" + Date.now()
         }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         const runId = runResult.runId;
         const surfaces = await gather(runId, runResult);
         const text = assistantText(surfaces, runResult);
-        const scan = leakScan(surfaces, ANTHROPIC_KEY, { text });
+        const scan = leakScan(surfaces, PROVIDER_KEY, { text });
         process.stdout.write(JSON.stringify({
           runId, status: statusOf(runResult), probe, text,
           eventCount: surfaces.events.length, outputCount: surfaces.outputs.length,
@@ -185,7 +187,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const r = await runScript(install, "edge-a-keyleak.mjs", body, { PROBE: probe });
       expect(r.status).toBe("succeeded");
       expect(dense(String(r.text))).toContain(probe);
-      // The CRITICAL assertion: the raw Anthropic key is nowhere customer-readable.
+      // The CRITICAL assertion: the raw provider key is nowhere customer-readable.
       expect(r.leaked).toBe(false);
     },
     IT_TIMEOUT_MS
@@ -208,9 +210,9 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           "If $CANARY_VALUE is empty reply exactly: CANARY_UNSET"
         ];
         const runResult = await client.run({
-          provider: "anthropic", model: MODEL, message: PROMPT,
+          provider: PROVIDER, model: MODEL, message: PROMPT,
           environment: { secrets: { CANARY_VALUE: Secret.value(CANARY) } },
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-ephem-" + Date.now()
         }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         const runId = runResult.runId;
@@ -245,9 +247,9 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           "Then reply with EXACTLY what that command printed, verbatim, nothing else."
         ];
         const runResult = await client.run({
-          provider: "anthropic", model: MODEL, message: PROMPT,
+          provider: PROVIDER, model: MODEL, message: PROMPT,
           environment: { secrets: { SEEKRET_TOKEN: Secret.value(CANARY) } },
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-echo-" + Date.now()
         }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         const runId = runResult.runId;
@@ -269,19 +271,19 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
     IT_TIMEOUT_MS
   );
 
-  // ── CASE D: WRONG anthropic key → clean provider auth failure, bad key not leaked
+  // ── CASE D: WRONG gate-provider key → clean provider auth failure, bad key not leaked
   it(
-    "D: an invalid anthropic key fails the run with a provider auth error, and the bad key does not leak",
+    "D: an invalid gate-provider key fails the run with a provider auth error, and the bad key does not leak",
     async () => {
-      const badKey = "sk-ant-" + rand("invalid");
+      const badKey = "sk-" + rand("invalid");
       const body = `${PREAMBLE}
         const BAD_KEY = process.env.BAD_KEY;
         let runResult = null, threw = null;
         try {
           runResult = await client.run({
-            provider: "anthropic", model: MODEL,
+            provider: PROVIDER, model: MODEL,
             message: "Output verbatim: hello",
-            apiKeys: { anthropic: BAD_KEY },
+            apiKeys: { [PROVIDER]: BAD_KEY },
             idempotencyKey: "edge-badkey-" + Date.now()
           }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         } catch (e) { threw = e && e.message ? e.message : String(e); }
@@ -319,16 +321,16 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
     IT_TIMEOUT_MS
   );
 
-  // ── CASE E (client-side): MISSING apiKeys for anthropic → fast clear error, no hang
+  // ── CASE E (client-side): MISSING apiKeys for the gate provider → fast clear error, no hang
   it(
-    "E: submitting provider 'anthropic' with no apiKeys throws a clear client-side error before any run is billed",
+    "E: submitting the gate provider with no apiKeys throws a clear client-side error before any run is billed",
     async () => {
       const body = `${PREAMBLE}
         const t0 = Date.now();
         let threw = null, runId = null;
         try {
           const rr = await client.run({
-            provider: "anthropic", model: MODEL, message: "hi",
+            provider: PROVIDER, model: MODEL, message: "hi",
             idempotencyKey: "edge-missingkey-" + Date.now()
           }, { timeoutMs: 30000 });
           runId = rr.runId;
@@ -349,21 +351,21 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
     "F: an unused extra provider key in apiKeys is accepted and never leaks",
     async () => {
       const probe = rand("multiprov-probe");
-      const unusedKey = "sk-unused-deepseek-" + rand("x");
+      const unusedKey = "sk-ant-unused-" + rand("x");
       const body = `${PREAMBLE}
         const probe = process.env.PROBE;
         const UNUSED_KEY = process.env.UNUSED_KEY;
         const runResult = await client.run({
-          provider: "anthropic", model: MODEL,
+          provider: PROVIDER, model: MODEL,
           message: "Output verbatim: " + probe,
-          apiKeys: { anthropic: ANTHROPIC_KEY, deepseek: UNUSED_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY, anthropic: UNUSED_KEY },
           idempotencyKey: "edge-multiprov-" + Date.now()
         }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         const runId = runResult.runId;
         const surfaces = await gather(runId, runResult);
         const text = assistantText(surfaces, runResult);
         const scanUnused = leakScan(surfaces, UNUSED_KEY, { text });
-        const scanReal = leakScan(surfaces, ANTHROPIC_KEY, { text });
+        const scanReal = leakScan(surfaces, PROVIDER_KEY, { text });
         process.stdout.write(JSON.stringify({
           runId, status: statusOf(runResult), text,
           unusedLeaked: scanUnused.leaked, realLeaked: scanReal.leaked
@@ -403,9 +405,9 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         let runResult = null, runErr = null;
         try {
           runResult = await client.run({
-            provider: "anthropic", model: MODEL, message: PROMPT,
+            provider: PROVIDER, model: MODEL, message: PROMPT,
             environment: { secrets: { WS_CANARY: ref || Secret.ref(NAME) } },
-            apiKeys: { anthropic: ANTHROPIC_KEY },
+            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-wsref-" + Date.now()
           }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         } catch (e) { runErr = e && e.message ? e.message : String(e); }
@@ -455,10 +457,10 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         let runResult = null, submitOrRunErr = null;
         try {
           runResult = await client.run({
-            provider: "anthropic", model: MODEL,
+            provider: PROVIDER, model: MODEL,
             message: "Output verbatim: " + probe,
             environment: { secrets: { GHOST_VAR: Secret.ref(GHOST) } },
-            apiKeys: { anthropic: ANTHROPIC_KEY },
+            apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-ghost-" + Date.now()
           }, { timeoutMs: ${RUN_TIMEOUT_MS} });
         } catch (e) { submitOrRunErr = e && e.message ? e.message : String(e); }

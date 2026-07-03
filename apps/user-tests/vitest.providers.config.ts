@@ -6,12 +6,12 @@ loadLocalEnv();
 /**
  * Dedicated config for the on-demand per-provider correctness suite
  * (`bun run test:user:providers`). Each file under test/live/providers/ is a
- * single minimal round-trip that proves one extra provider's
+ * single minimal round-trip that proves one non-gate provider's
  * adapter/routing/registry wiring reaches its real upstream — feature depth is
- * already covered on the two wire shapes (openai-chat via DeepSeek,
- * anthropic-messages via Anthropic) by the default sweep, so these providers
- * (doubao, and future openai/gemini/mistral/openrouter) need only a
- * connectivity check.
+ * already covered by the DeepSeek (openai-chat) gate suites, so these
+ * providers (anthropic, doubao, and future openai/gemini/mistral/openrouter)
+ * need only a connectivity check. Keeping them here means the RELEASE GATE
+ * never depends on a non-gate provider account's billing state.
  *
  * Kept separate from vitest.config.ts (which EXCLUDES test/live/providers/**)
  * so this runs ONLY when invoked explicitly — never on every push — which is

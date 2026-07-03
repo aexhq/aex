@@ -16,15 +16,16 @@
  * the sibling live tests. One live run is created in `beforeAll` and REUSED by
  * every read-side case (replay/polling/abort-on-replay); only the reconnect,
  * keep-alive, and abort-mid-live cases each cost one extra live run. Model is
- * claude-haiku-4-5 with tiny prompts.
+ * deepseek-v4-flash with tiny prompts.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -36,8 +37,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-event-stream");
+const model = gateModel();
 
 /**
  * Shared script preamble: build the client + declare helpers every case uses.
@@ -51,7 +52,8 @@ const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-ha
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const RUN_ID = process.env.RUN_ID;
 
@@ -165,7 +167,7 @@ async function spawnScript<T>(
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_TOKEN: apiToken,
-    ANTHROPIC_KEY: anthropicKey,
+    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     ...(opts.extraEnv ?? {})
   };
@@ -219,11 +221,11 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       "edge-evtstream-base.mjs",
       `
       const session = await client.sessions.create({
-        provider: "anthropic",
+        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-base-")} + Date.now(),
-        apiKeys: { anthropic: ANTHROPIC_KEY }
+        apiKeys: { [PROVIDER]: PROVIDER_KEY }
       });
       const events = [];
       const seqs = [];
@@ -258,7 +260,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(base.unhandled).toBeNull();
     expect(base.runId).toBeTruthy();
     // Assistant text arrived. NOTE (finding): with outputMode:"stream" the managed
-    // Anthropic path delivers the whole multi-sentence reply as ONE
+    // provider path can deliver the whole multi-sentence reply as ONE
     // TEXT_MESSAGE_CONTENT event (no per-token deltas) — see report. We assert >=1
     // (content present) and record the actual count for the report.
     expect(base.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThanOrEqual(1);
@@ -528,11 +530,11 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // dropAfterFrames:1 keeps it robust even for sparse, few-event turns.
       const factory = makeFactory({ dropAfterFrames: 1, maxDrops: 2 });
       const result = await client.run({
-        provider: "anthropic",
+        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-chaos-")} + Date.now(),
-        apiKeys: { anthropic: ANTHROPIC_KEY },
+        apiKeys: { [PROVIDER]: PROVIDER_KEY },
         message: "Write four short sentences about mountains. Keep each under 12 words."
       }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory });
 
@@ -614,11 +616,11 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // stays 1 (no false disconnect). Either way the exactly-once contract holds.
       const factory = makeFactory({});
       const result = await client.run({
-        provider: "anthropic",
+        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-keepalive-")} + Date.now(),
-        apiKeys: { anthropic: ANTHROPIC_KEY },
+        apiKeys: { [PROVIDER]: PROVIDER_KEY },
         message: "Write five short sentences about forests. Keep each under 14 words."
       }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory, idleTimeoutMs: 800, pingIntervalMs: 250 });
 
@@ -659,11 +661,11 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       "edge-evtstream-abort-live.mjs",
       `
       const session = await client.sessions.create({
-        provider: "anthropic",
+        provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-abortlive-")} + Date.now(),
-        apiKeys: { anthropic: ANTHROPIC_KEY }
+        apiKeys: { [PROVIDER]: PROVIDER_KEY }
       });
       // Kick the turn live in the background (its own WS); we abort a SEPARATE
       // streamEnvelopes subscription with a signal while the run is producing.

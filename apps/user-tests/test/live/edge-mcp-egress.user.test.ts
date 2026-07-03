@@ -26,13 +26,14 @@
  * during setup); only the egress + MCP-invocation cases spend model tokens.
  *
  * Required env (wired by the live runner):
- *   AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY,
+ *   AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -44,8 +45,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-mcp-egress");
+const model = gateModel();
 
 // DeepWiki — public, unauthenticated remote MCP (same upstream the existing
 // mcp-invocation test uses). MCP hosts are always allowlisted through egress.
@@ -70,7 +71,7 @@ async function runChild(install: InstallResult, scriptName: string, script: stri
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, ANTHROPIC_KEY: anthropicKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
     throw new Error(
@@ -147,12 +148,12 @@ function validationChildScript(): string {
       let runId = null, status = null, threw = null;
       try {
         const res = await client.run({
-          provider: "anthropic",
+          provider: process.env.PROVIDER,
           model: process.env.MODEL,
           message: "Output verbatim: EDGE",
           mcpServers,
           includeBuiltinTools: false,
-          apiKeys: { anthropic: process.env.ANTHROPIC_KEY },
+          apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
           idempotencyKey: "edge-mcp-" + label + "-" + Date.now()
         }, { timeoutMs: 120000 });
         runId = res && typeof res.runId === "string" ? res.runId : null;
@@ -244,11 +245,11 @@ function egressChildScript(): string {
     import { Aex } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
     const runResult = await client.run({
-      provider: "anthropic",
+      provider: process.env.PROVIDER,
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
       environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
-      apiKeys: { anthropic: process.env.ANTHROPIC_KEY },
+      apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-egress-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
     ${COLLECT}
@@ -285,12 +286,12 @@ function mcpSecretChildScript(marker: string): string {
     // The non-secret submission entry must NOT contain the marker.
     const subEntry = JSON.stringify(mcp.toSubmissionEntry());
     const runResult = await client.run({
-      provider: "anthropic",
+      provider: process.env.PROVIDER,
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
       mcpServers: [mcp],
       includeBuiltinTools: false,
-      apiKeys: { anthropic: process.env.ANTHROPIC_KEY },
+      apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-mcp-secret-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
     ${COLLECT}

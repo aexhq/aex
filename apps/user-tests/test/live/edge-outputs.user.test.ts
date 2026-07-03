@@ -13,18 +13,19 @@
  *   link(selectorOrQuery) / fetch(selectorOrQuery) / download(selector?)
  *   + session.download() / session.downloadMetadata()
  *
- * Model: claude-haiku-4-5, BYOK via apiKeys:{ anthropic }. Tiny prompts. Four
+ * Model: deepseek-v4-flash, BYOK via the gate-provider apiKeys map. Tiny prompts. Four
  * live runs total (A rich-selector-matrix, B large-file round-trip, C
  * unicode+space filename, D no-outputs), each independent, each probing many
  * facets in ONE child process and emitting a JSON verdict the parent asserts on.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -36,8 +37,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-outputs");
+const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -70,7 +71,8 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
-  const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+  const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
 
   // Wrap a probe so ONE failing/hanging verb never aborts the whole script:
@@ -117,7 +119,7 @@ async function runChild(
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
       AEX_API_TOKEN: apiToken,
-      ANTHROPIC_KEY: anthropicKey,
+      PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
       MODEL: model
     })
   });
@@ -159,12 +161,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
       const body = `
         const runResult = await client.run({
-          provider: "anthropic",
+          provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
           outputs: { allowedDirs: ["/workspace/outputs"] },
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const runId = runResult.runId;
@@ -322,12 +324,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         `python3 -c "open('/workspace/outputs/big.txt','w').write('A'*60000)". Then reply with the single word done.`;
       const body = `
         const runResult = await client.run({
-          provider: "anthropic",
+          provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
           outputs: { allowedDirs: ["/workspace/outputs"] },
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-B-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const runId = runResult.runId;
@@ -404,12 +406,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         `then reply with the single word done.`;
       const body = `
         const runResult = await client.run({
-          provider: "anthropic",
+          provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
           outputs: { allowedDirs: ["/workspace/outputs"] },
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-C-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const runId = runResult.runId;
@@ -469,10 +471,10 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       const prompt = `Output verbatim: ${probe}. Do not create, write, or save any files.`;
       const body = `
         const runResult = await client.run({
-          provider: "anthropic",
+          provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
-          apiKeys: { anthropic: ANTHROPIC_KEY },
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-D-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const runId = runResult.runId;

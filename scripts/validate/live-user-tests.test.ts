@@ -21,7 +21,7 @@ describe("live user-test release gate", () => {
     expect(workflow).toContain("Upload redacted live user test log");
     expect(workflow).toContain("path: .suite-diagnostics/redacted");
     expect(workflow).toContain("retention-days: 14");
-    expect(workflow).toContain('["AEX_API_TOKEN", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"]');
+    expect(workflow).toContain('["AEX_API_TOKEN", "DEEPSEEK_API_KEY"]');
     expect(workflow).toContain("text.split(value).join(`[REDACTED:${name}]`)");
     expect(workflow).not.toContain("path: .suite-diagnostics/raw");
   });
@@ -115,11 +115,59 @@ describe("live user-test release gate", () => {
       expect(source, file).not.toContain('AEX_USER_TEST_ANTHROPIC_MODEL"] ??');
     }
     for (const { file, source } of sources.filter(({ source }) => source.includes("AEX_USER_TEST_DEEPSEEK_MODEL"))) {
-      expect(source, file).toContain('?.trim() || "deepseek-v4-flash"');
+      // Blank-safe handling lives either inline or in the shared gate-provider
+      // fixture (test/_fixtures/provider.ts, itself pinned below).
+      expect(
+        source.includes('?.trim() || "deepseek-v4-flash"') || source.includes("gateModel()"),
+        `${file}: must read the gate model blank-safe (inline ?.trim() default or fixture gateModel())`
+      ).toBe(true);
     }
+    const providerFixture = read("apps/user-tests/test/_fixtures/provider.ts");
+    expect(providerFixture).toContain('?.trim() || "deepseek-v4-flash"');
     for (const { file, source } of sources.filter(({ source }) => source.includes("AEX_USER_TEST_ANTHROPIC_MODEL"))) {
       expect(source, file).toContain('?.trim() || "claude-haiku-4-5"');
     }
+  });
+
+  it("keeps the release gate on the DeepSeek gate provider only (no Anthropic billing dependency)", () => {
+    // 2026-07-03: the shared BYOK ANTHROPIC_API_KEY ran out of credit and
+    // killed 6/11 gating live shards. Gating tests exercise PLATFORM behavior,
+    // so they all run on the funded DeepSeek gate provider (SSoT fixture);
+    // Anthropic coverage lives in the non-gating providers suite.
+    for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {
+      const workflow = read(path);
+      expect(workflow, path).not.toContain("ANTHROPIC_API_KEY");
+      expect(workflow, path).not.toContain("AEX_USER_TEST_ANTHROPIC_MODEL");
+      expect(workflow, path).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
+      expect(workflow, path).not.toContain("test:user:providers");
+    }
+
+    // The SSoT fixture pins the gate provider + model.
+    const fixture = read("apps/user-tests/test/_fixtures/provider.ts");
+    expect(fixture).toContain('export const GATE_PROVIDER = "deepseek" as const;');
+    expect(fixture).toContain('export const GATE_KEY_ENV = "DEEPSEEK_API_KEY" as const;');
+    expect(fixture).toContain('?.trim() || "deepseek-v4-flash"');
+
+    // No gating live test may require an Anthropic key or model; Anthropic
+    // BYOK coverage lives only under test/live/providers/ (non-gating).
+    const liveDir = resolve(repoRoot, "apps/user-tests/test/live");
+    // (live-skill-tool-staging embeds "ANTHROPIC_API_KEY=" as an illustrative
+    // fake-credential string; only actual env READS are forbidden here.)
+    for (const name of readdirSync(liveDir).filter((n) => n.endsWith(".ts"))) {
+      const source = read(`apps/user-tests/test/live/${name}`);
+      expect(source, name).not.toContain('requireEnv("ANTHROPIC_API_KEY")');
+      expect(source, name).not.toContain("process.env.ANTHROPIC_API_KEY");
+      expect(source, name).not.toContain('process.env["ANTHROPIC_API_KEY"]');
+      expect(source, name).not.toContain("AEX_USER_TEST_ANTHROPIC_MODEL");
+    }
+    const anthropicProviderTest = read(
+      "apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts"
+    );
+    expect(anthropicProviderTest).toContain('requireEnv("ANTHROPIC_API_KEY")');
+
+    // The non-gating on-demand workflow is the one place the Anthropic key flows.
+    const onDemand = read(".github/workflows/live-on-demand-tests.yml");
+    expect(onDemand).toContain("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}");
   });
 
   it("fans out provider and heavy on-demand suites after one artifact preparation", () => {

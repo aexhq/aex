@@ -21,6 +21,10 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(files).not.toContain("test/live/live-api-fuzz.test.ts");
     expect(files).not.toContain("test/live/live-sdk-tool-capability-fuzz.test.ts");
     expect(files.some((f) => f.startsWith("test/live/providers/"))).toBe(false);
+    // Provider-specific suites (Anthropic BYOK, doubao, …) are non-gating:
+    // they live under test/live/providers/ and never enter the 11 shards.
+    expect(files).not.toContain("test/live/live-sdk-anthropic-managed.test.ts");
+    expect(files).not.toContain("test/live/providers/live-sdk-anthropic-managed.test.ts");
 
     const bins = lptPartition(files, durations, 11) as Array<{ files: string[]; seconds: number }>;
     const all = bins.flatMap((bin) => bin.files);

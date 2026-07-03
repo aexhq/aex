@@ -19,20 +19,21 @@
  * is data, not a non-zero exit.
  *
  * Required env (exported by the shared runner from .env.dev):
- *   AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY
+ *   AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY
  * Optional:
- *   AEX_USER_TEST_ANTHROPIC_MODEL  (default "claude-haiku-4-5")
+ *   AEX_USER_TEST_DEEPSEEK_MODEL  (default "deepseek-v4-flash")
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The edge run-limits sweep runs against a real dev API URL with a real Anthropic key.`
+      `user-tests live: required env ${name} is missing. The edge run-limits sweep runs against a real dev API URL with a real gate-provider key.`
     );
   }
   return value;
@@ -40,8 +41,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-run-limits");
+const model = gateModel();
 
 /** Every valid runtime-size preset token (mirrors RUNTIME_SIZE_PRESETS keys). */
 const VALID_SIZES = [
@@ -56,7 +57,8 @@ const VALID_SIZES = [
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const out = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
 const asErr = (e) => ({
@@ -75,7 +77,7 @@ async function createOnly(opts) {
     return { thrown: false, sessionId: h.id, status: (h.record && h.record.status) ? h.record.status : null, deleted };
   } catch (e) { return asErr(e); }
 }
-const BASE = { model: MODEL, apiKeys: { anthropic: ANTHROPIC_KEY } };
+const BASE = { model: MODEL, apiKeys: { [PROVIDER]: PROVIDER_KEY } };
 `;
 
 interface Verdict {
@@ -108,7 +110,7 @@ describe("live dev — per-run limit / override edge cases (installed SDK)", () 
     const passEnv: Record<string, string> = {
       AEX_API_URL: apiUrl,
       AEX_API_TOKEN: apiToken,
-      ANTHROPIC_KEY: anthropicKey,
+      PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
       MODEL: model
     };
     const child = await runCommand(getBunCommand(), [scriptPath], {

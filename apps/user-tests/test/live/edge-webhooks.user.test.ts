@@ -11,22 +11,23 @@
  *   - URL-validation cases use `sessions.create(...)` WITHOUT a turn, so a rejected
  *     (or even accepted-but-unrun) webhook costs NO billable LLM run.
  *   - Only the delivery-observation + SSRF-delivery cases spend billable runs
- *     (tiny `claude-haiku-4-5` prompts). Total billable runs in this file: 3.
+ *     (tiny `deepseek-v4-flash` prompts). Total billable runs in this file: 3.
  *   - Secrets are read from env passed to the child; never printed. Leak checks
  *     emit booleans only.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY.
+ * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The webhook edge sweep must run against a real dev api URL with a real Anthropic key.`
+      `user-tests live: required env ${name} is missing. The webhook edge sweep must run against a real dev api URL with a real gate-provider key.`
     );
   }
   return value;
@@ -34,8 +35,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-webhooks");
+const model = gateModel();
 
 /** Spawn a bun child that runs `body` in the install dir; parse its stdout JSON. */
 async function runScript<T>(
@@ -49,7 +50,7 @@ async function runScript<T>(
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_TOKEN: apiToken,
-    ANTHROPIC_KEY: anthropicKey,
+    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -80,7 +81,8 @@ async function runScript<T>(
 const CLIENT_PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
-const anthropicKey = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const providerKey = process.env.PROVIDER_KEY;
 const model = process.env.MODEL;
 `;
 
@@ -128,9 +130,9 @@ describe("live hosted — run webhooks edge cases", () => {
         for (const c of cases) {
           try {
             const s = await client.sessions.create({
-              provider: "anthropic",
+              provider: PROVIDER,
               model,
-              apiKeys: { anthropic: anthropicKey },
+              apiKeys: { [PROVIDER]: providerKey },
               webhook: c.webhook
             });
             results.push({ name: c.name, rejected: false, sessionId: s.id });
@@ -148,7 +150,7 @@ describe("live hosted — run webhooks edge cases", () => {
         // no-webhook session -> empty delivery ledger, not an error
         let emptyLedger;
         try {
-          const s = await client.sessions.create({ provider: "anthropic", model, apiKeys: { anthropic: anthropicKey } });
+          const s = await client.sessions.create({ provider: PROVIDER, model, apiKeys: { [PROVIDER]: providerKey } });
           const ledger = await s.webhooks().list();
           emptyLedger = { ok: true, count: Array.isArray(ledger) ? ledger.length : -1 };
         } catch (e) {
@@ -195,10 +197,10 @@ describe("live hosted — run webhooks edge cases", () => {
       const body = `${CLIENT_PREAMBLE}
         const probe = "wh-" + Math.random().toString(36).slice(2, 8);
         const runResult = await client.run({
-          provider: "anthropic",
+          provider: PROVIDER,
           model,
           message: "Output verbatim: " + probe,
-          apiKeys: { anthropic: anthropicKey },
+          apiKeys: { [PROVIDER]: providerKey },
           webhook: { url: "https://example.com/aex-webhook-probe" },
           idempotencyKey: "user-test-wh-valid-" + Date.now()
         }, { timeoutMs: 6 * 60 * 1000 });
@@ -237,7 +239,7 @@ describe("live hosted — run webhooks edge cases", () => {
         try { events = await session.events().list(); } catch (e) { events = []; }
         const serialized = JSON.stringify({ deliveries, events });
         const leakedWhsec = serialized.includes("whsec_");
-        const leakedProviderKey = anthropicKey.length > 0 && serialized.includes(anthropicKey);
+        const leakedProviderKey = providerKey.length > 0 && serialized.includes(providerKey);
 
         process.stdout.write(JSON.stringify({
           runId,
@@ -337,10 +339,10 @@ describe("live hosted — run webhooks edge cases", () => {
           const rec = { name: t.name, url: t.url };
           try {
             const runResult = await client.run({
-              provider: "anthropic",
+              provider: PROVIDER,
               model,
               message: "Output verbatim: ssrf-probe",
-              apiKeys: { anthropic: anthropicKey },
+              apiKeys: { [PROVIDER]: providerKey },
               webhook: { url: t.url },
               idempotencyKey: "user-test-wh-ssrf-" + t.name + "-" + Date.now()
             }, { timeoutMs: 5 * 60 * 1000 });

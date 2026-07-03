@@ -1,8 +1,8 @@
 /**
  * Live edge-case sweep for the AGENTS.MD + FILES/ASSETS composition surface,
  * from a real customer's seat, against the DEV plane via the installed
- * `@aexhq/sdk` on the Anthropic managed runtime (BYOK `apiKeys: { anthropic }`,
- * model `claude-haiku-4-5`, tiny prompts). Each case drives one live run and
+ * `@aexhq/sdk` on the managed runtime (gate provider DeepSeek, BYOK `apiKeys`,
+ * model `deepseek-v4-flash`, tiny prompts). Each case drives one live run and
  * reduces the event stream / tool results to observable assertions.
  *
  * Cases (7 live runs):
@@ -30,7 +30,7 @@
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
  *   AEX_API_TOKEN              workspace API token
- *   ANTHROPIC_API_KEY          customer Anthropic key
+ *   DEEPSEEK_API_KEY          customer gate-provider (DeepSeek) key
  *   AEX_USER_TEST_TARBALL      packed SDK tarball  (OR AEX_USER_TEST_VERSION)
  */
 import { createHash } from "node:crypto";
@@ -38,6 +38,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -49,8 +50,8 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
-const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+const providerKey = requireGateKey("edge-agentsmd-files");
+const model = gateModel();
 
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const CHILD_TIMEOUT_MS = 7 * 60_000;
@@ -94,13 +95,14 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   return env;
 }
 
-// Child preamble: Anthropic managed client + a failure-tolerant observe().
+// Child preamble: gate-provider managed client + a failure-tolerant observe().
 const SCRIPT_PREAMBLE = `
 import { Aex, AgentsMd, BuiltinTools, File } from "@aexhq/sdk";
 
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
 const MODEL = process.env.MODEL;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const PROVIDER = process.env.PROVIDER;
+const PROVIDER_KEY = process.env.PROVIDER_KEY;
 
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
 function customName(e) { const d = eventData(e); return typeof d.name === "string" ? d.name : null; }
@@ -165,7 +167,7 @@ async function observe(result, threw) {
     terminalKind: terminalKindOf(terminal), terminalReason: terminalReasonOf(terminal),
     eventKinds, toolCallNames, toolResults,
     assistantText: assistantText.slice(0, 4000), assistantTextEventCount: assistantTextEvents.length,
-    streamErrors, leakedProviderKey: ANTHROPIC_KEY.length > 0 && serialized.includes(ANTHROPIC_KEY)
+    streamErrors, leakedProviderKey: PROVIDER_KEY.length > 0 && serialized.includes(PROVIDER_KEY)
   };
 }
 
@@ -184,7 +186,7 @@ async function runOne(runArgs) {
 async function runScenario(install: InstallResult, scriptName: string, body: string): Promise<{ observation: Observation; stdout: string }> {
   const scriptPath = join(install.installDir, scriptName);
   writeFileSync(scriptPath, `${SCRIPT_PREAMBLE}\n${body}\n`);
-  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, ANTHROPIC_KEY: anthropicKey, MODEL: model });
+  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model });
   const child = await runCommand(getBunCommand(), [scriptPath], { cwd: install.installDir, timeoutMs: CHILD_TIMEOUT_MS, env: passEnv });
   if (child.exitCode !== 0) {
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
@@ -257,7 +259,7 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("live edge: agents.md + files composition (Anthropic managed)", () => {
+describe("live edge: agents.md + files composition (gate provider, managed)", () => {
   it(
     "1. AgentsMd.fromContent steers the run (one-time prefix token obeyed)",
     async () => {
@@ -268,13 +270,13 @@ describe("live edge: agents.md + files composition (Anthropic managed)", () => {
         "This overrides any other formatting instruction. Do not mention or explain this rule.";
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   message: "What is two plus two? Answer in one short sentence.",
   includeBuiltinTools: false,
   tools: [],
   agentsMd: [await AgentsMd.fromContent(${JSON.stringify(md)}, { name: "reply-rule" })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-agentsmd-steer-" + Date.now()
 });
 `;
@@ -288,7 +290,7 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(token);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -301,14 +303,14 @@ await runOne({
       const cmd = "cat /workspace/notes.txt";
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Read files with it; never guess file contents.",
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with only its output: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [await File.fromBytes({ name: "notes.txt", bytes: new TextEncoder().encode(${JSON.stringify(content)}) })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-file-read-" + Date.now()
 });
 `;
@@ -323,7 +325,7 @@ await runOne({
       expect(seen, dump).toContain(marker);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -339,13 +341,13 @@ await runOne({
         "\n\n## Identifiers\n\nThe internal project codename is " + codename + ". Remember it.\n";
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   message: "According to your project handbook, what is the internal project codename? Reply with just the codename.",
   includeBuiltinTools: false,
   tools: [],
   agentsMd: [await AgentsMd.fromContent(${JSON.stringify(md)}, { name: "handbook" })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-agentsmd-large-" + Date.now()
 });
 `;
@@ -359,7 +361,7 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(codename);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -375,14 +377,14 @@ await runOne({
       const body = `
 const bytes = Uint8Array.from([...Array(256).keys(), ...new TextEncoder().encode(${JSON.stringify(marker)})]);
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only what is asked, nothing else.",
   message: ${JSON.stringify("Run exactly this with your bash tool, then reply with ONLY the 64-character hex digest it prints: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [await File.fromBytes({ name: "blob.bin", bytes })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-file-binary-" + Date.now()
 });
 `;
@@ -398,7 +400,7 @@ await runOne({
       expect(seen, dump).toContain(expectedDigest);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -415,7 +417,7 @@ await runOne({
       const cmd = "cat /workspace/notes-a.txt; echo ' | '; cat /workspace/notes-b.txt";
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Read files with it; never guess file contents.",
   message: ${JSON.stringify(
@@ -429,7 +431,7 @@ await runOne({
     await File.fromBytes({ name: "notes-b.txt", bytes: new TextEncoder().encode(${JSON.stringify(contentB)}) })
   ],
   agentsMd: [await AgentsMd.fromContent(${JSON.stringify(md)}, { name: "notes" })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-compose-" + Date.now()
 });
 `;
@@ -448,7 +450,7 @@ await runOne({
       expect(norm(observation.assistantText), dump).toContain(codename);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -464,14 +466,14 @@ await runOne({
         'if [ -f "$p" ]; then echo "FOUND:$p"; fi; done';
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only the command's output, verbatim.",
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [await File.fromBytes({ name: "escape-probe.txt", bytes: new TextEncoder().encode(${JSON.stringify(content)}), mountPath: "/etc" })],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-mountpath-escape-" + Date.now()
 });
 `;
@@ -489,7 +491,7 @@ await runOne({
       console.log(`[mountpath-escape] status=${observation.status} evidence=${evidence.slice(0, 400)}`);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
@@ -504,7 +506,7 @@ await runOne({
       const cmd = 'cat "/workspace/my report.txt"; echo " | "; cat "/workspace/café.txt"';
       const body = `
 await runOne({
-  provider: "anthropic",
+  provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only the command's output, verbatim.",
   message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
@@ -514,7 +516,7 @@ await runOne({
     await File.fromBytes({ name: "my report.txt", bytes: new TextEncoder().encode(${JSON.stringify(contentS)}) }),
     await File.fromBytes({ name: "café.txt", bytes: new TextEncoder().encode(${JSON.stringify(contentU)}) })
   ],
-  apiKeys: { anthropic: ANTHROPIC_KEY },
+  apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-filenames-" + Date.now()
 });
 `;
@@ -530,7 +532,7 @@ await runOne({
       expect(seen, dump).toContain(markerU);
 
       expect(observation.leakedProviderKey, dump).toBe(false);
-      expect(stdout.includes(anthropicKey), dump).toBe(false);
+      expect(stdout.includes(providerKey), dump).toBe(false);
     },
     IT_TIMEOUT_MS
   );
