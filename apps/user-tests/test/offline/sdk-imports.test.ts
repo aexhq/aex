@@ -63,7 +63,6 @@ describe("sdk imports", () => {
         "ChatClient",
         "ChatSession",
         "ChatTurnStream",
-        "redeem",
         "billing"
       ];
       const result = {

@@ -7,6 +7,7 @@ import SearchDialog from "@/components/search";
 export function Provider({ children }: { children: ReactNode }) {
   return (
     <RootProvider
+      theme={{ forcedTheme: "light", defaultTheme: "light", enableSystem: false }}
       search={{
         SearchDialog
       }}

@@ -1,0 +1,85 @@
+---
+title: Subagents
+description: Delegate bounded sub-tasks to child agent runs with the subagent tool.
+icon: GitFork
+---
+
+A run can delegate bounded sub-tasks to **child agent runs** with the built-in
+`subagent` tool. Delegation is agent-driven: the model decides to fan work out,
+each child is a real run with its own record, and the parent collects results
+as the children finish. There is no client-side parent/child API — lineage is
+session-internal.
+
+## How the tool works
+
+The agent calls `subagent` with a `prompt` and a `model` (both required), plus
+optional `system`, `provider`, `runtimeSize`, `timeout`,
+`includeBuiltinTools`, `tools` (builtin-tool names for the child), `skills`,
+and `files`. The call is **always async**: on a successful spawn it returns
+immediately with the child run id, and the parent keeps working while the child
+runs. When a child settles, the parent is notified in its loop, and it reads
+the child's status and captured outputs on demand with the companion
+`subagent_result` tool.
+
+Children inherit the parent's vaulted BYOK provider keys server-side — the
+child submission carries no secrets. Include a provider key for every provider
+your subagents may use when you open the parent session (a parent holding no
+key for the child's provider gets a clear `parent_missing_provider_key` tool
+error). See [Credentials](../credentials.md).
+
+## Depth and breadth limits
+
+Delegation is bounded by two server-enforced lineage limits:
+
+| Limit | Value | Behavior at the limit |
+| --- | --- | --- |
+| Max depth | **5** — the root run is depth 0 and may spawn down to depth 5; a depth-5 run may not spawn further | The spawn is rejected with a `depth_exceeded` tool error (the parent keeps running). |
+| Concurrent children per lineage root | **1000** live (non-terminal) descendants by default; hard platform ceiling **4096** | Further spawns are refused until a child settles. |
+
+The whole descendant subtree of one root shares a single depth and breadth
+budget, enforced server-side at every level — a grandchild spawn counts against
+the same root budget as a direct child. Values are mirrored in
+[Limits & quotas](../limits-and-quotas.md).
+
+## Where children run: `in-process` vs `container`
+
+By default a child runs **in-process**: it executes as a sibling agent process
+inside the parent's own machine, sharing the parent's CPU, memory, and
+lifetime. This is the platform default shipped today.
+
+- **No extra runtime cost.** The parent's machine is the billable unit, so
+  in-process children bill **$0 of additional runtime** — fan-out is priced by
+  the parent box, however many children it hosts. (Model-token spend is still
+  whatever each child's provider calls cost on your BYOK key.)
+- **Shared capacity.** N children share the parent's fixed CPU/memory. For
+  large fan-outs, size the parent up (`runtime`) rather than assuming each
+  child gets its own machine.
+- **Joined lifecycle.** The parent's terminal waits for its in-process children,
+  and their results are folded into the parent's per-child accounting. Platform
+  recovery re-spawns in-process children exactly once if the parent's machine
+  is replaced mid-run — settled children are never re-run.
+
+The escape valve is `host: "container"`: the child is dispatched to its **own
+isolated machine** with its own runtime size and its own runtime billing, and
+the parent does not host it. Use it when a child needs guaranteed capacity,
+isolation from the parent's filesystem/CPU, or a different machine size than
+the parent can share.
+
+## Lineage and observability
+
+Every child — in-process or container — is a first-class run record:
+
+- The parent's transcript logs each spawn with the child's run id.
+- Each child has its own status, typed event timeline, and captured outputs,
+  readable by id like any other run (`aex.sessions.get(id)`, or the CLI's
+  `aex status` / `aex events` / `aex outputs` / `aex download`).
+- The child's outputs are handed back to the parent via `subagent_result`, and
+  they remain independently downloadable after the lineage finishes.
+
+## Bounding delegation
+
+- Turn delegation off for a run by cherry-picking builtins without `subagent`
+  (see [Agent tools](agent-tools.md)) or setting `includeBuiltinTools: false`.
+- A per-session spend cap (`overrides.maxSpendUsd`) bounds the parent's spend.
+- The depth/breadth limits above are platform defaults and are not settable
+  per-session today.

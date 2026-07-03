@@ -1,0 +1,521 @@
+/**
+ * Live edge-case sweep: SessionOutputs (outputs & downloads surface).
+ *
+ * Acts as a real customer hammering the OUTPUTS + DOWNLOAD verbs of the
+ * installed `@aexhq/sdk` against the DEV plane, hunting for edge-case defects
+ * before a prod launch. The existing live tests exercise `list()` + the archive
+ * `download()` verbs; NONE exercise `read` / `find` / `findOne` / `link` /
+ * `fetch` or the output selector matrix through the session accessor. This file
+ * closes that gap.
+ *
+ * Surface under test (packages/sdk/src/client.ts `SessionOutputs`):
+ *   list / last / first / read(selector) / find(query) / findOne(query) /
+ *   link(selectorOrQuery) / fetch(selectorOrQuery) / download(selector?)
+ *   + session.download() / session.downloadMetadata()
+ *
+ * Model: claude-haiku-4-5, BYOK via apiKeys:{ anthropic }. Tiny prompts. Four
+ * live runs total (A rich-selector-matrix, B large-file round-trip, C
+ * unicode+space filename, D no-outputs), each independent, each probing many
+ * facets in ONE child process and emitting a JSON verdict the parent asserts on.
+ *
+ * Required env: AEX_API_URL, AEX_API_TOKEN, ANTHROPIC_API_KEY, +
+ * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
+ */
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value || value.length === 0) {
+    throw new Error(`user-tests live (edge-outputs): required env ${name} is missing.`);
+  }
+  return value;
+}
+
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+
+function buildPassEnv(extras: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = { ...extras };
+  const pathKey = process.platform === "win32" ? "Path" : "PATH";
+  if (process.env[pathKey]) env[pathKey] = process.env[pathKey]!;
+  if (process.platform === "win32") {
+    for (const k of [
+      "SystemRoot",
+      "SystemDrive",
+      "TEMP",
+      "TMP",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "ComSpec",
+      "ProgramFiles",
+      "ProgramData"
+    ]) {
+      if (process.env[k]) env[k] = process.env[k]!;
+    }
+  } else {
+    for (const k of ["HOME", "TMPDIR", "LANG", "LC_ALL"]) {
+      if (process.env[k]) env[k] = process.env[k]!;
+    }
+  }
+  return env;
+}
+
+/** Small helpers injected into every child script. */
+const CHILD_PRELUDE = `
+  import { Aex } from "@aexhq/sdk";
+  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+  const MODEL = process.env.MODEL;
+
+  // Wrap a probe so ONE failing/hanging verb never aborts the whole script:
+  // record a structured {label, ok, value|error}. A hard 20s race turns a hang
+  // into a reported error rather than a silent whole-child timeout.
+  async function probe(label, fn) {
+    try {
+      const value = await Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("PROBE_TIMEOUT_20S")), 20000))
+      ]);
+      return { label, ok: true, value };
+    } catch (e) {
+      return {
+        label,
+        ok: false,
+        error: {
+          name: e && e.constructor ? e.constructor.name : "Error",
+          message: e && e.message ? String(e.message) : String(e),
+          status: e && typeof e.status === "number" ? e.status : null,
+          code: e && typeof e.code === "string" ? e.code : null
+        }
+      };
+    }
+  }
+  const zipProbe = (bytes) => ({
+    byteLength: bytes ? bytes.byteLength : 0,
+    magicOk: !!bytes && bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04
+  });
+  const dec = (bytes) => new TextDecoder().decode(bytes);
+`;
+
+async function runChild(
+  install: InstallResult,
+  scriptName: string,
+  body: string,
+  timeoutMs = 8 * 60_000
+): Promise<Record<string, unknown>> {
+  const scriptPath = join(install.installDir, scriptName);
+  writeFileSync(scriptPath, `${CHILD_PRELUDE}\n${body}\n`);
+  const child = await runCommand(getBunCommand(), [scriptPath], {
+    cwd: install.installDir,
+    timeoutMs,
+    env: buildPassEnv({
+      AEX_API_URL: apiUrl,
+      AEX_API_TOKEN: apiToken,
+      ANTHROPIC_KEY: anthropicKey,
+      MODEL: model
+    })
+  });
+  if (child.exitCode !== 0) {
+    throw new Error(
+      `edge-outputs runner (${scriptName}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+    );
+  }
+  try {
+    return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
+  } catch {
+    throw new Error(`edge-outputs runner (${scriptName}) produced non-JSON stdout:\n${child.stdout}`);
+  }
+}
+
+type ProbeResult = { label: string; ok: boolean; value?: unknown; error?: { name: string; message: string; status: number | null; code: string | null } };
+function byLabel(probes: ProbeResult[], label: string): ProbeResult {
+  const p = probes.find((x) => x.label === label);
+  if (!p) throw new Error(`probe "${label}" missing from child output; got: ${probes.map((x) => x.label).join(", ")}`);
+  return p;
+}
+
+let install: InstallResult;
+beforeAll(async () => {
+  install = await installAex();
+}, 240_000);
+afterAll(() => {
+  install?.cleanup();
+});
+
+describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", () => {
+  it(
+    "A: small deliverable — every read/find/link/fetch/download selector resolves; bad selectors error cleanly",
+    async () => {
+      const marker = "MK" + Math.random().toString(36).slice(2, 10).toUpperCase();
+      const prompt =
+        `Use your shell/filesystem tools to create a text file at the path ` +
+        `/workspace/outputs/report.txt whose ENTIRE contents are exactly these characters: ${marker} ` +
+        `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
+      const body = `
+        const runResult = await client.run({
+          provider: "anthropic",
+          model: MODEL,
+          message: ${JSON.stringify(prompt)},
+          includeBuiltinTools: true,
+          outputs: { allowedDirs: ["/workspace/outputs"] },
+          apiKeys: { anthropic: ANTHROPIC_KEY },
+          idempotencyKey: "edge-out-A-" + Date.now()
+        }, { timeoutMs: 6 * 60_000 });
+        const runId = runResult.runId;
+        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
+        const session = await client.sessions.open(runId);
+        const outs = await session.outputs();
+
+        // list (sessions endpoint) and find({}) (runs endpoint) — cross-check parity.
+        const listed = await outs.list();
+        const listMeta = listed.map((o) => ({ id: o.id, filename: o.filename ?? null, sizeBytes: o.sizeBytes ?? null, contentType: o.contentType ?? null }));
+        const found = await outs.find({});
+        const findMeta = found.map((o) => ({ id: o.id, filename: o.filename ?? null }));
+
+        const report = listed.find((o) => (o.filename || "").endsWith("report.txt")) || null;
+        const reportIdx = report ? listed.indexOf(report) : -1;
+        const exactPath = report ? report.filename : "report.txt";
+
+        const probes = [];
+        probes.push(await probe("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
+        probes.push(await probe("read_exact", async () => await outs.read({ path: exactPath })));
+        probes.push(await probe("read_output_obj", async () => report ? await outs.read(report) : null));
+        probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
+        probes.push(await probe("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
+        probes.push(await probe("find_extension", async () => (await outs.find({ extension: "txt" })).length));
+        probes.push(await probe("find_type_text", async () => (await outs.find({ type: "text" })).length));
+        probes.push(await probe("findOne_match", async () => { const o = await outs.findOne({ filename: "report.txt" }); return o ? { id: o.id, filename: o.filename ?? null } : null; }));
+        probes.push(await probe("findOne_nomatch_null", async () => await outs.findOne({ filename: "does-not-exist-xyz.txt" })));
+        probes.push(await probe("last", async () => { const o = await outs.last(); return o ? (o.filename ?? o.id) : null; }));
+        probes.push(await probe("first", async () => { const o = await outs.first(); return o ? (o.filename ?? o.id) : null; }));
+
+        // link + fetch a presigned URL, then GET it with global fetch.
+        probes.push(await probe("link", async () => {
+          const link = await outs.link({ filename: "report.txt" });
+          let getStatus = null, getText = null;
+          try {
+            const resp = await fetch(link.url);
+            getStatus = resp.status;
+            getText = (await resp.text()).slice(0, 256);
+          } catch (e) { getText = "(GET error: " + (e && e.message) + ")"; }
+          return { hasUrl: typeof link.url === "string" && link.url.length > 0, expiresInSeconds: link.expiresInSeconds ?? null, getStatus, getText };
+        }));
+        probes.push(await probe("fetch", async () => {
+          const resp = await outs.fetch({ filename: "report.txt" });
+          return { status: resp.status, text: (await resp.text()).slice(0, 256) };
+        }));
+
+        // download one file's raw bytes (by Output selector).
+        probes.push(await probe("download_selector", async () => {
+          if (!report) return null;
+          const bytes = await outs.download(report);
+          return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
+        }));
+        // archive verbs.
+        probes.push(await probe("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
+        probes.push(await probe("download_all_zip", async () => zipProbe(await session.download())));
+        probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
+
+        // Bad-selector / boundary probes — must error CLEANLY (no hang).
+        probes.push(await probe("read_missing_path", async () => await outs.read({ path: "nope-" + Date.now() + ".txt", match: "suffix" })));
+        probes.push(await probe("download_missing_id", async () => await outs.download({ id: "output_nonexistent_zzz" })));
+        probes.push(await probe("link_nomatch", async () => await outs.link({ filename: "nope-" + Date.now() + ".txt" })));
+        probes.push(await probe("link_expires_zero", async () => await outs.link({ filename: "report.txt" }, { expiresIn: 0 })));
+        probes.push(await probe("link_expires_badpreset", async () => await outs.link({ filename: "report.txt" }, { expiresIn: "5m" })));
+
+        process.stdout.write(JSON.stringify({ runId, status, marker: ${JSON.stringify(marker)}, listMeta, findMeta, reportIdx, exactPath, probes }));
+        process.exit(0);
+      `;
+      const r = await runChild(install, "edge-out-A.mjs", body, 9 * 60_000);
+      const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 4000)}`;
+      const probes = r.probes as ProbeResult[];
+      const listMeta = r.listMeta as Array<{ id: string; filename: string | null; sizeBytes: number | null }>;
+      const findMeta = r.findMeta as Array<{ id: string; filename: string | null }>;
+
+      expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
+
+      // 1. list() returns the deliverable with a filename + positive sizeBytes.
+      const report = listMeta.find((o) => (o.filename || "").endsWith("report.txt"));
+      expect(report, `report.txt missing from list()${ctx}`).toBeTruthy();
+      expect(report!.sizeBytes, `report.txt sizeBytes not positive${ctx}`).toBeGreaterThan(0);
+
+      // 2. No internal/diagnostic namespace bleeds into the deliverables listing.
+      const leaked = listMeta.filter((o) => o.filename && (o.filename.startsWith("runtime/") || o.filename.startsWith("host/")));
+      expect(leaked, `diagnostic namespace leaked into outputs list${ctx}`).toEqual([]);
+
+      // 3. list() (sessions endpoint) and find({}) (runs endpoint) agree —
+      //    the two endpoints must not diverge for the same deliverable set.
+      expect(new Set(findMeta.map((o) => o.id)), `list()/find({}) id-set divergence${ctx}`)
+        .toEqual(new Set(listMeta.map((o) => o.id)));
+
+      // 4. read via every selector shape returns the exact content.
+      for (const label of ["read_suffix", "read_exact", "read_output_obj", "read_by_id"]) {
+        const p = byLabel(probes, label);
+        expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
+        const v = p.value as { text: string; truncated: boolean; totalBytes: number; output?: { sizeBytes?: number } };
+        expect(v.text, `${label} wrong text${ctx}`).toBe(r.marker);
+        expect(v.truncated, `${label} unexpectedly truncated${ctx}`).toBe(false);
+        // totalBytes must equal the byte size of the marker (ASCII → 1 byte/char).
+        expect(v.totalBytes, `${label} totalBytes != marker length${ctx}`).toBe((r.marker as string).length);
+      }
+
+      // 5. find / findOne semantics.
+      expect((byLabel(probes, "find_regex").value as number), `find regex 0 hits${ctx}`).toBeGreaterThanOrEqual(1);
+      expect((byLabel(probes, "find_extension").value as number), `find extension txt 0 hits${ctx}`).toBeGreaterThanOrEqual(1);
+      expect((byLabel(probes, "find_type_text").value as number), `find type text 0 hits${ctx}`).toBeGreaterThanOrEqual(1);
+      const findOneMatch = byLabel(probes, "findOne_match").value as { id: string } | null;
+      expect(findOneMatch, `findOne match returned null${ctx}`).toBeTruthy();
+      const findOneNull = byLabel(probes, "findOne_nomatch_null");
+      expect(findOneNull.ok && findOneNull.value === null, `findOne no-match must return null, not throw${ctx}`).toBe(true);
+
+      // 6. link → usable presigned URL that GETs 200 with the content;
+      //    fetch() → Response with the bytes.
+      const link = byLabel(probes, "link");
+      expect(link.ok, `link threw: ${JSON.stringify(link.error)}${ctx}`).toBe(true);
+      const lv = link.value as { hasUrl: boolean; getStatus: number | null; getText: string | null };
+      expect(lv.hasUrl, `link returned no url${ctx}`).toBe(true);
+      expect(lv.getStatus, `presigned URL GET not 200${ctx}`).toBe(200);
+      expect(lv.getText, `presigned URL body mismatch${ctx}`).toBe(r.marker);
+      const fetchP = byLabel(probes, "fetch");
+      expect(fetchP.ok, `fetch threw: ${JSON.stringify(fetchP.error)}${ctx}`).toBe(true);
+      const fv = fetchP.value as { status: number; text: string };
+      expect(fv.status, `fetch() status not 200${ctx}`).toBe(200);
+      expect(fv.text, `fetch() body mismatch${ctx}`).toBe(r.marker);
+
+      // 7. download(selector) → raw bytes == content; archive verbs → valid zips.
+      const dsel = byLabel(probes, "download_selector");
+      expect(dsel.ok, `download(selector) threw: ${JSON.stringify(dsel.error)}${ctx}`).toBe(true);
+      const dv = dsel.value as { len: number; text: string };
+      expect(dv.text, `download(selector) content mismatch${ctx}`).toBe(r.marker);
+      expect(dv.len, `download(selector) len != sizeBytes${ctx}`).toBe(report!.sizeBytes);
+      for (const label of ["download_outputs_zip", "download_all_zip", "download_metadata_zip"]) {
+        const p = byLabel(probes, label);
+        expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
+        const z = p.value as { byteLength: number; magicOk: boolean };
+        expect(z.byteLength, `${label} empty${ctx}`).toBeGreaterThan(0);
+        expect(z.magicOk, `${label} not a valid zip${ctx}`).toBe(true);
+      }
+
+      // 8. Bad selectors error CLEANLY (a real error, not a hang/PROBE_TIMEOUT).
+      for (const label of ["read_missing_path", "download_missing_id", "link_nomatch", "link_expires_zero", "link_expires_badpreset"]) {
+        const p = byLabel(probes, label);
+        expect(p.ok, `${label} should have thrown but resolved to ${JSON.stringify(p.value)}${ctx}`).toBe(false);
+        expect(p.error!.message, `${label} hung instead of erroring${ctx}`).not.toContain("PROBE_TIMEOUT");
+        expect((p.error!.message || "").length, `${label} error message empty${ctx}`).toBeGreaterThan(0);
+      }
+    },
+    10 * 60_000
+  );
+
+  it(
+    "B: large (~60KB) file — bytes round-trip; read() caps at maxBytes with correct truncated/totalBytes",
+    async () => {
+      const prompt =
+        `Create a text file at /workspace/outputs/big.txt containing the single letter A repeated exactly 60000 times ` +
+        `(60000 bytes, no newline, nothing else). Generate it precisely with a shell command, for example: ` +
+        `python3 -c "open('/workspace/outputs/big.txt','w').write('A'*60000)". Then reply with the single word done.`;
+      const body = `
+        const runResult = await client.run({
+          provider: "anthropic",
+          model: MODEL,
+          message: ${JSON.stringify(prompt)},
+          includeBuiltinTools: true,
+          outputs: { allowedDirs: ["/workspace/outputs"] },
+          apiKeys: { anthropic: ANTHROPIC_KEY },
+          idempotencyKey: "edge-out-B-" + Date.now()
+        }, { timeoutMs: 6 * 60_000 });
+        const runId = runResult.runId;
+        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
+        const session = await client.sessions.open(runId);
+        const outs = await session.outputs();
+        const listed = await outs.list();
+        const big = listed.find((o) => (o.filename || "").endsWith("big.txt")) || null;
+        const sizeBytes = big ? (big.sizeBytes ?? null) : null;
+
+        const probes = [];
+        probes.push(await probe("download_full", async () => {
+          if (!big) return null;
+          const bytes = await outs.download(big);
+          const text = dec(bytes);
+          return { len: bytes.byteLength, allA: /^A+$/.test(text), first: text.slice(0, 4), last: text.slice(-4) };
+        }));
+        probes.push(await probe("read_default_cap", async () => {
+          if (!big) return null;
+          const t = await outs.read(big);
+          return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes };
+        }));
+        probes.push(await probe("read_raised_cap", async () => {
+          if (!big || sizeBytes == null) return null;
+          const t = await outs.read(big, { maxBytes: sizeBytes + 5000 });
+          return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes, allA: /^A+$/.test(t.text) };
+        }));
+
+        process.stdout.write(JSON.stringify({ runId, status, sizeBytes, filename: big ? big.filename : null, probes }));
+        process.exit(0);
+      `;
+      const r = await runChild(install, "edge-out-B.mjs", body, 9 * 60_000);
+      const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 3000)}`;
+      const probes = r.probes as ProbeResult[];
+      const sizeBytes = r.sizeBytes as number | null;
+
+      expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
+      expect(sizeBytes, `big.txt missing / no sizeBytes${ctx}`).toBeTruthy();
+      // The truncation edge case is only meaningful above the 50_000 default cap.
+      expect(sizeBytes!, `model produced a file <= 50KB, cannot exercise truncation (model variance)${ctx}`).toBeGreaterThan(50_000);
+
+      const full = byLabel(probes, "download_full");
+      expect(full.ok, `download_full threw: ${JSON.stringify(full.error)}${ctx}`).toBe(true);
+      const fv = full.value as { len: number; allA: boolean };
+      expect(fv.len, `downloaded length != sizeBytes (truncation/corruption)${ctx}`).toBe(sizeBytes);
+      expect(fv.allA, `downloaded content not all 'A' (corruption)${ctx}`).toBe(true);
+
+      const def = byLabel(probes, "read_default_cap");
+      expect(def.ok, `read_default_cap threw: ${JSON.stringify(def.error)}${ctx}`).toBe(true);
+      const dv = def.value as { textLen: number; truncated: boolean; totalBytes: number };
+      expect(dv.truncated, `read() over the 50KB default cap must set truncated=true${ctx}`).toBe(true);
+      expect(dv.textLen, `read() default cap text length must be 50_000${ctx}`).toBe(50_000);
+      expect(dv.totalBytes, `read() default cap totalBytes must equal full size${ctx}`).toBe(sizeBytes);
+
+      const raised = byLabel(probes, "read_raised_cap");
+      expect(raised.ok, `read_raised_cap threw: ${JSON.stringify(raised.error)}${ctx}`).toBe(true);
+      const rv = raised.value as { textLen: number; truncated: boolean; totalBytes: number; allA: boolean };
+      expect(rv.truncated, `read() above file size must NOT be truncated${ctx}`).toBe(false);
+      expect(rv.textLen, `read() raised cap must return the full text${ctx}`).toBe(sizeBytes);
+      expect(rv.totalBytes, `read() raised cap totalBytes${ctx}`).toBe(sizeBytes);
+      expect(rv.allA, `read() raised cap content not all 'A'${ctx}`).toBe(true);
+    },
+    10 * 60_000
+  );
+
+  it(
+    "C: unicode + space in output filename — listing, read, link/fetch all preserve it",
+    async () => {
+      const marker = "CAFE" + Math.random().toString(36).slice(2, 8).toUpperCase();
+      // Filename with a non-ASCII char (é) AND a space.
+      const prompt =
+        `Run EXACTLY this shell command, do not alter the filename in any way: ` +
+        "mkdir -p /workspace/outputs && printf '%s' '" + marker + "' > '/workspace/outputs/café menu.txt' ; " +
+        `then reply with the single word done.`;
+      const body = `
+        const runResult = await client.run({
+          provider: "anthropic",
+          model: MODEL,
+          message: ${JSON.stringify(prompt)},
+          includeBuiltinTools: true,
+          outputs: { allowedDirs: ["/workspace/outputs"] },
+          apiKeys: { anthropic: ANTHROPIC_KEY },
+          idempotencyKey: "edge-out-C-" + Date.now()
+        }, { timeoutMs: 6 * 60_000 });
+        const runId = runResult.runId;
+        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
+        const session = await client.sessions.open(runId);
+        const outs = await session.outputs();
+        const listed = await outs.list();
+        const listNames = listed.map((o) => o.filename ?? null);
+        const target = listed.find((o) => (o.filename || "").endsWith("menu.txt")) || null;
+
+        const probes = [];
+        probes.push(await probe("read_suffix_unicode", async () => target ? (await outs.read({ path: "café menu.txt", match: "suffix" })).text : null));
+        probes.push(await probe("read_by_id", async () => target ? (await outs.read({ id: target.id })).text : null));
+        probes.push(await probe("download_by_id", async () => { if (!target) return null; const b = await outs.download(target); return { len: b.byteLength, text: dec(b) }; }));
+        probes.push(await probe("link_fetch_unicode", async () => {
+          if (!target) return null;
+          const link = await outs.link({ id: target.id });
+          const resp = await fetch(link.url);
+          return { status: resp.status, text: (await resp.text()) };
+        }));
+
+        process.stdout.write(JSON.stringify({ runId, status, marker: ${JSON.stringify(marker)}, listNames, targetFilename: target ? target.filename : null, probes }));
+        process.exit(0);
+      `;
+      const r = await runChild(install, "edge-out-C.mjs", body, 9 * 60_000);
+      const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 3000)}`;
+      const probes = r.probes as ProbeResult[];
+      const targetFilename = r.targetFilename as string | null;
+
+      expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
+      expect(targetFilename, `unicode file not found in listing (model may not have created it)${ctx}`).toBeTruthy();
+      // The é (U+00E9) and the space must survive capture → storage → SDK JSON.
+      expect(targetFilename!.includes("é"), `non-ASCII 'é' lost from filename: ${JSON.stringify(targetFilename)}${ctx}`).toBe(true);
+      expect(targetFilename!.includes(" "), `space lost from filename: ${JSON.stringify(targetFilename)}${ctx}`).toBe(true);
+
+      const rs = byLabel(probes, "read_suffix_unicode");
+      expect(rs.ok, `read by unicode suffix threw: ${JSON.stringify(rs.error)}${ctx}`).toBe(true);
+      expect(rs.value, `read by unicode suffix wrong content${ctx}`).toBe(r.marker);
+      const rid = byLabel(probes, "read_by_id");
+      expect(rid.ok && rid.value === r.marker, `read by id wrong content${ctx}`).toBe(true);
+      const dl = byLabel(probes, "download_by_id");
+      expect(dl.ok, `download unicode file threw: ${JSON.stringify(dl.error)}${ctx}`).toBe(true);
+      expect((dl.value as { text: string }).text, `download unicode content mismatch${ctx}`).toBe(r.marker);
+      const lf = byLabel(probes, "link_fetch_unicode");
+      expect(lf.ok, `link/fetch unicode file threw: ${JSON.stringify(lf.error)}${ctx}`).toBe(true);
+      const lv = lf.value as { status: number; text: string };
+      expect(lv.status, `presigned GET for unicode filename not 200${ctx}`).toBe(200);
+      expect(lv.text, `presigned GET body mismatch for unicode filename${ctx}`).toBe(r.marker);
+    },
+    10 * 60_000
+  );
+
+  it(
+    "D: run with NO outputs — list() is empty, bad reads error, archive verbs still yield valid zips",
+    async () => {
+      const probe = "NOOUT-" + Math.random().toString(36).slice(2, 8);
+      const prompt = `Output verbatim: ${probe}. Do not create, write, or save any files.`;
+      const body = `
+        const runResult = await client.run({
+          provider: "anthropic",
+          model: MODEL,
+          message: ${JSON.stringify(prompt)},
+          apiKeys: { anthropic: ANTHROPIC_KEY },
+          idempotencyKey: "edge-out-D-" + Date.now()
+        }, { timeoutMs: 6 * 60_000 });
+        const runId = runResult.runId;
+        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
+        const session = await client.sessions.open(runId);
+        const outs = await session.outputs();
+
+        const probes = [];
+        probes.push(await probe("list_len", async () => (await outs.list()).length));
+        probes.push(await probe("find_all_len", async () => (await outs.find({})).length));
+        probes.push(await probe("last_undefined", async () => (await outs.last()) === undefined));
+        probes.push(await probe("first_undefined", async () => (await outs.first()) === undefined));
+        probes.push(await probe("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
+        probes.push(await probe("read_missing", async () => await outs.read({ path: "whatever.txt", match: "suffix" })));
+        probes.push(await probe("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
+        probes.push(await probe("download_all_zip", async () => zipProbe(await session.download())));
+        probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
+
+        process.stdout.write(JSON.stringify({ runId, status, probes }));
+        process.exit(0);
+      `;
+      const r = await runChild(install, "edge-out-D.mjs", body, 9 * 60_000);
+      const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 3000)}`;
+      const probes = r.probes as ProbeResult[];
+
+      expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
+      expect(byLabel(probes, "list_len").value, `list() not empty on a no-output run${ctx}`).toBe(0);
+      expect(byLabel(probes, "find_all_len").value, `find({}) not empty on a no-output run${ctx}`).toBe(0);
+      expect(byLabel(probes, "last_undefined").value, `last() should be undefined when empty${ctx}`).toBe(true);
+      expect(byLabel(probes, "first_undefined").value, `first() should be undefined when empty${ctx}`).toBe(true);
+      const fo = byLabel(probes, "findOne_null");
+      expect(fo.ok && fo.value === null, `findOne on empty run must return null${ctx}`).toBe(true);
+      const rm = byLabel(probes, "read_missing");
+      expect(rm.ok, `read of a missing file must throw, not resolve${ctx}`).toBe(false);
+      expect(rm.error!.message, `read of missing file hung${ctx}`).not.toContain("PROBE_TIMEOUT");
+      for (const label of ["download_outputs_zip", "download_all_zip", "download_metadata_zip"]) {
+        const p = byLabel(probes, label);
+        expect(p.ok, `${label} threw on a no-output run: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
+        const z = p.value as { byteLength: number; magicOk: boolean };
+        expect(z.byteLength, `${label} empty on no-output run${ctx}`).toBeGreaterThan(0);
+        expect(z.magicOk, `${label} not a valid zip on no-output run${ctx}`).toBe(true);
+      }
+    },
+    10 * 60_000
+  );
+});

@@ -4,14 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       npm_dist_tag:
-        description: npm dist-tag for the initial publish.
+        description: npm dist-tag for the initial publish (latest is forbidden — assign it via promote.yml after this run is green).
         required: true
         default: canary
         type: choice
         options:
           - canary
           - next
-          - latest
 
 concurrency:
   group: release-aex
@@ -28,6 +27,20 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      # This workflow publishes BEFORE the live user tests run, so it must
+      # never ship straight to `latest`. Guard the raw input as well as the
+      # choice list so an API dispatch can't sneak `latest` past the UI.
+      # `publish` needs this job, so failing here blocks the publish.
+      - name: Forbid direct publish to latest
+        env:
+          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+        run: |
+          set -euo pipefail
+          if [ "${NPM_DIST_TAG}" = "latest" ]; then
+            echo "::error::Publishing directly to the 'latest' dist-tag is forbidden: release.yml publishes before the live user tests run. Publish to 'canary' and assign 'latest' via promote.yml once this release run is green."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v6
 

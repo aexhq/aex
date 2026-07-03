@@ -1,0 +1,278 @@
+/**
+ * Live edge-case sweep for the installed `aex` CLI binary against the DEV plane.
+ *
+ * Blackbox: installs the packed/published SDK artifact and spawns the shipped
+ * `aex` bin against the real API. Focuses on the CLI's real-world day-one
+ * surface that the happy-path `live-cli-installed.test.ts` (deepseek) does not
+ * cover on the anthropic key we have here:
+ *   - a real one-shot `aex run --follow` reaches a clean terminal + prints the
+ *     assistant text and session id (with a UNICODE prompt round-trip),
+ *   - the read verbs (status/events/outputs/download) work on that session,
+ *   - the auth/error paths (bad token -> 401, missing run -> 404) return a clean
+ *     JSON error envelope + non-zero exit, NOT a stack trace or a hang,
+ *   - no secret (api token or provider key) is ever echoed to stdout/stderr.
+ *
+ * Billable runs: exactly ONE (`aex run --follow`); every other case is a
+ * read-only or auth call.
+ *
+ * Required env (wired by run-live.sh): AEX_API_URL, AEX_API_TOKEN,
+ * ANTHROPIC_API_KEY, AEX_USER_TEST_TARBALL.
+ */
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { unzipSync } from "fflate";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getAexBinPath, installAex, runCommand, type InstallResult, type RunResult } from "../_fixtures/install.js";
+
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || v.length === 0) throw new Error(`edge-cli live: required env ${name} is missing`);
+  return v;
+}
+
+const apiBase = requireEnv("AEX_API_URL").replace(/\/+$/, "");
+const apiToken = requireEnv("AEX_API_TOKEN");
+const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
+const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
+
+// A completed one-shot turn parks the session cleanly (idle/suspended) or, when
+// the deployment projects a terminal run status, `succeeded`. Any of these is a
+// clean exit-0 outcome. Mirrors live-cli-installed.test.ts.
+const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
+
+function redact(text: string): string {
+  return text.split(apiToken).join("[REDACTED_TOKEN]").split(anthropicKey).join("[REDACTED_KEY]");
+}
+
+function diag(label: string, r: RunResult): string {
+  return redact(`${label} exited ${r.exitCode}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`);
+}
+
+function assertNoSecretLeak(label: string, r: RunResult): void {
+  const combined = r.stdout + r.stderr;
+  expect(combined.includes(apiToken), `${label}: api token leaked to output`).toBe(false);
+  expect(combined.includes(anthropicKey), `${label}: provider key leaked to output`).toBe(false);
+}
+
+function parseJsonLines(stdout: string): Record<string, unknown>[] {
+  return stdout
+    .trim()
+    .split(/\r?\n/)
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+function eventText(events: readonly Record<string, unknown>[]): string {
+  return events
+    .filter((e) => e["type"] === "TEXT_MESSAGE_CONTENT")
+    .map((e) => {
+      const data = e["data"];
+      if (!data || typeof data !== "object" || Array.isArray(data)) return "";
+      const t = (data as Record<string, unknown>)["text"];
+      return typeof t === "string" ? t : "";
+    })
+    .join("");
+}
+
+function customNames(events: readonly Record<string, unknown>[]): string[] {
+  return events
+    .filter((e) => e["type"] === "CUSTOM")
+    .map((e) => {
+      const data = e["data"];
+      if (!data || typeof data !== "object" || Array.isArray(data)) return "";
+      const n = (data as Record<string, unknown>)["name"];
+      return typeof n === "string" ? n : "";
+    })
+    .filter(Boolean);
+}
+
+function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
+  const kinds = events.map((e) => e["type"]);
+  return kinds.includes("RUN_FINISHED") || customNames(events).includes("aex.session.idle");
+}
+
+describe("live DEV plane via installed aex CLI — edge cases", () => {
+  let install: InstallResult;
+  let binPath: string;
+
+  beforeAll(async () => {
+    install = await installAex();
+    binPath = getAexBinPath(install.installDir);
+  }, 240_000);
+
+  afterAll(() => {
+    install?.cleanup();
+  });
+
+  async function runCli(args: readonly string[], timeoutMs = 60_000): Promise<RunResult> {
+    return await runCommand(binPath, args, { cwd: install.installDir, timeoutMs });
+  }
+
+  const common = (): string[] => ["--api-token", apiToken, "--aex-url", apiBase];
+
+  // ---------------------------------------------------------------- auth (non-billable)
+
+  it("whoami with a valid token exits 0 and returns a JSON principal without leaking the token", async () => {
+    const r = await runCli(["whoami", ...common()]);
+    expect(r.exitCode, diag("aex whoami", r)).toBe(0);
+    const me = JSON.parse(r.stdout.trim()) as Record<string, unknown>;
+    expect(me, diag("aex whoami", r)).toBeTypeOf("object");
+    // whoami must resolve a workspace/principal identity from the bearer alone.
+    expect(Object.keys(me).length, diag("aex whoami", r)).toBeGreaterThan(0);
+    assertNoSecretLeak("whoami", r);
+  });
+
+  it("whoami with a garbage token exits 1 with a clean 4xx JSON envelope (no stack trace)", async () => {
+    // A structurally-garbage token is rejected as 400 malformed_token by dev
+    // (not 401). The robust contract: non-zero exit + a clean JSON envelope that
+    // surfaces the server's reason, never a stack trace or a hang.
+    const badToken = "aex_not_a_real_token_deadbeef";
+    const r = await runCli(["whoami", "--api-token", badToken, "--aex-url", apiBase]);
+    expect(r.exitCode, diag("aex whoami (garbage token)", r)).toBe(1);
+    const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
+    expect(err["error"], diag("aex whoami (garbage token)", r)).toBe("whoami_failed");
+    const status = Number(err["status"] ?? 0);
+    expect(status, diag("aex whoami (garbage token)", r)).toBeGreaterThanOrEqual(400);
+    expect(status, diag("aex whoami (garbage token)", r)).toBeLessThan(500);
+    // the server reason is surfaced so the user is not left blind
+    expect(typeof err["message"], diag("aex whoami (garbage token)", r)).toBe("string");
+    expect(String(err["message"]).length, diag("aex whoami (garbage token)", r)).toBeGreaterThan(0);
+    // FINDING: 400 malformed_token carries NO remedy hint (remedyForStatus only
+    // maps 401/403/404/429/5xx). A 401 (well-formed-but-invalid) attaches the
+    // auth remedy. Assert the exact relationship unconditionally: an
+    // auth-actionable remedy is present exactly when the status is 401 (the
+    // observed 400 has none).
+    const remedyText = typeof err["remedy"] === "string" ? (err["remedy"] as string) : "";
+    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (garbage token)", r)).toBe(status === 401);
+    // the bad token itself must not be echoed back
+    expect(r.stdout + r.stderr).not.toContain(badToken);
+    // no raw stack trace
+    expect(r.stderr).not.toMatch(/\bat .+\(.+:\d+:\d+\)/);
+  });
+
+  it("whoami with a well-formed-but-invalid token surfaces a clean auth error", async () => {
+    // Mutate the tail of the REAL token so it keeps the recognized shape but is
+    // not a valid credential — this exercises the "recognized format, wrong
+    // value" path (typically 401 with an actionable remedy) rather than the
+    // 400 malformed path above. We never print the real or mutated token.
+    const mutatedTail = apiToken.slice(-6).split("").reverse().join("") === apiToken.slice(-6)
+      ? "zzzzzz"
+      : apiToken.slice(-6).split("").reverse().join("");
+    const mutated = apiToken.slice(0, -6) + mutatedTail;
+    // Guard: ensure we actually changed the token.
+    expect(mutated).not.toBe(apiToken);
+    const r = await runCli(["whoami", "--api-token", mutated, "--aex-url", apiBase]);
+    expect(r.exitCode, diag("aex whoami (mutated token)", r)).toBe(1);
+    const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
+    expect(err["error"], diag("aex whoami (mutated token)", r)).toBe("whoami_failed");
+    const status = Number(err["status"] ?? 0);
+    expect(status, diag("aex whoami (mutated token)", r)).toBeGreaterThanOrEqual(400);
+    expect(status, diag("aex whoami (mutated token)", r)).toBeLessThan(500);
+    // If dev classifies this as 401 (recognized format, wrong value) the CLI
+    // must attach the auth remedy; a 400 (still malformed) has none. Asserted
+    // unconditionally as an iff relationship.
+    const remedyText = typeof err["remedy"] === "string" ? (err["remedy"] as string) : "";
+    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (mutated token)", r)).toBe(status === 401);
+    // neither the real nor the mutated token may appear in output
+    expect(r.stdout + r.stderr).not.toContain(mutated);
+    assertNoSecretLeak("whoami-mutated", r);
+    expect(r.stderr).not.toMatch(/\bat .+\(.+:\d+:\d+\)/);
+  });
+
+  it("status on a nonexistent run id exits 1 with a clean not-found JSON envelope", async () => {
+    const r = await runCli(["status", "run-does-not-exist-000000", ...common()]);
+    expect(r.exitCode, diag("aex status (missing id)", r)).toBe(1);
+    const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
+    expect(err["error"], diag("aex status (missing id)", r)).toBe("status_failed");
+    // The server may answer 404 (unknown) or 4xx; assert it is a clean client
+    // error surfaced as JSON, never a crash. 404 gets the "verify the id" remedy.
+    const status = Number(err["status"] ?? 0);
+    expect(status, diag("aex status (missing id)", r)).toBeGreaterThanOrEqual(400);
+    expect(status, diag("aex status (missing id)", r)).toBeLessThan(500);
+    assertNoSecretLeak("status-missing", r);
+    expect(r.stderr).not.toMatch(/\bat .+\(.+:\d+:\d+\)/);
+  });
+
+  // ---------------------------------------------------------------- the one billable run + reads
+
+  it(
+    "run --follow with a UNICODE prompt reaches a clean terminal, prints the id + assistant text, and the read verbs work",
+    async () => {
+      const asciiId = `EDGE-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      // Unicode round-trip via a UTF-8 prompt file (@path) so the marker is not
+      // mangled by the host shell before it reaches the CLI. Tests the CLI's
+      // file-read + JSON transmission path for multi-byte content.
+      const unicodeMarker = "日本語 café";
+      const promptPath = join(install.installDir, `edge-cli-prompt-${asciiId}.txt`);
+      writeFileSync(promptPath, `Output verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
+
+      const run = await runCli(
+        [
+          "run",
+          "--provider", "anthropic",
+          "--model", model,
+          "--prompt", `@${promptPath}`,
+          "--anthropic-api-key", anthropicKey,
+          "--idempotency-key", `edge-cli-${asciiId.toLowerCase()}`,
+          "--follow",
+          "--timeout", "8m",
+          ...common()
+        ],
+        10 * 60_000
+      );
+      expect(run.exitCode, diag("aex run --follow", run)).toBe(0);
+      assertNoSecretLeak("run", run);
+
+      const runLines = parseJsonLines(run.stdout);
+      const initial = runLines[0]!;
+      const sessionId = initial["id"];
+      expect(typeof sessionId, diag("aex run --follow", run)).toBe("string");
+      const finalFromFollow = [...runLines]
+        .reverse()
+        .find((l) => l["id"] === sessionId && typeof l["status"] === "string");
+      expect(SESSION_PARKED_OK, diag("aex run --follow", run)).toContain(finalFromFollow?.["status"]);
+
+      const id = sessionId as string;
+
+      // status: id + clean status
+      const status = await runCli(["status", id, ...common()]);
+      expect(status.exitCode, diag("aex status", status)).toBe(0);
+      const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
+      expect(statusDoc["id"], diag("aex status", status)).toBe(id);
+      expect(SESSION_PARKED_OK, diag("aex status", status)).toContain(statusDoc["status"]);
+      assertNoSecretLeak("status", status);
+
+      // events: RUN_STARTED + clean terminal + the assistant echoed the markers
+      const events = await runCli(["events", id, ...common()]);
+      expect(events.exitCode, diag("aex events", events)).toBe(0);
+      const eventRows = parseJsonLines(events.stdout);
+      expect(eventRows.map((e) => e["type"]), diag("aex events", events)).toContain("RUN_STARTED");
+      expect(hasCleanTerminal(eventRows), diag("aex events", events)).toBe(true);
+      const joined = eventText(eventRows).replace(/\s+/g, "");
+      expect(joined, diag("aex events", events)).toContain(asciiId);
+      // Unicode round-trip: the multi-byte marker survived arg-file -> CLI ->
+      // API -> model -> event stream -> CLI stdout decode.
+      expect(joined, "unicode marker did not round-trip through the CLI").toContain("日本語");
+      expect(joined, "latin-1 marker did not round-trip through the CLI").toContain("café");
+      assertNoSecretLeak("events", events);
+
+      // outputs: exit 0 (list may be empty for a pure text turn)
+      const outputs = await runCli(["outputs", id, ...common()]);
+      expect(outputs.exitCode, diag("aex outputs", outputs)).toBe(0);
+      const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
+      for (const o of outputRows) expect(typeof o["id"], diag("aex outputs", outputs)).toBe("string");
+      assertNoSecretLeak("outputs", outputs);
+
+      // download --only events -> a real zip with events.jsonl
+      const zipPath = join(install.installDir, `edge-cli-events-${id}.zip`);
+      const download = await runCli(["download", id, "--only", "events", "--out", zipPath, ...common()]);
+      expect(download.exitCode, diag("aex download --only events", download)).toBe(0);
+      expect(JSON.parse(download.stdout.trim())).toMatchObject({ sessionId: id, namespace: "events", path: zipPath });
+      expect(existsSync(zipPath), diag("aex download --only events", download)).toBe(true);
+      const entries = unzipSync(new Uint8Array(readFileSync(zipPath)));
+      expect(Object.keys(entries)).toContain("events.jsonl");
+      assertNoSecretLeak("download", download);
+    },
+    12 * 60_000
+  );
+});

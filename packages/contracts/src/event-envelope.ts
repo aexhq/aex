@@ -346,6 +346,24 @@ export function isRunError(e: AexEvent): boolean {
 export function isRunTerminal(e: AexEvent): boolean {
   return e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 }
+/**
+ * The CUSTOM `data.name`s the MANAGED runtime emits as a run/turn's terminal.
+ * A managed one-shot run PARKS (session_parked.v1 → `aex.session.idle` / `.error`
+ * / `.suspended`) rather than writing a `session_finished` → RUN_FINISHED, so
+ * these — not just the AG-UI RUN_FINISHED/RUN_ERROR — are what actually ends a
+ * managed run's event stream. Kept in sync with the platform journal projection
+ * (`journal-project.ts` session_parked.v1 mapping).
+ */
+export const AEX_SESSION_PARKED_NAMES = ["aex.session.idle", "aex.session.error", "aex.session.suspended"] as const;
+/**
+ * True for a managed-runtime session-park terminal (idle/error/suspended). The
+ * turn's work is done and the record has reached its terminal status; a stream
+ * consumer should stop here exactly as it would on RUN_FINISHED/RUN_ERROR.
+ */
+export function isSessionParked(e: AexEvent): boolean {
+  const name = customName(e);
+  return name !== null && (AEX_SESSION_PARKED_NAMES as readonly string[]).includes(name);
+}
 export function isTextMessage(e: AexEvent): boolean {
   return e.type === "TEXT_MESSAGE_CONTENT";
 }
@@ -374,9 +392,15 @@ export function customName(e: AexEvent): string | null {
  * platform mirrors this constant in `@aexhq/shared`.
  */
 export const AEX_RUN_SETTLED_NAME = "aex.run.settled";
-/** True for the settle-consistency barrier event (post-mirror, read-consistent). */
+/**
+ * True for the settle-consistency barrier event (post-mirror, read-consistent).
+ * Also true for a managed-runtime session-park terminal: the managed plane does
+ * NOT broadcast the `aex.run.settled` barrier, and by the time a run parks its
+ * record has reached a terminal status — so a `settleConsistent` stream ends at
+ * the park instead of hanging forever waiting for a barrier that never arrives.
+ */
 export function isRunSettled(e: AexEvent): boolean {
-  return customName(e) === AEX_RUN_SETTLED_NAME;
+  return customName(e) === AEX_RUN_SETTLED_NAME || isSessionParked(e);
 }
 export function isFromSource(e: AexEvent, source: AexEventSource): boolean {
   return e.source === source;

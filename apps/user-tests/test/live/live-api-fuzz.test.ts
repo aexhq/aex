@@ -118,7 +118,7 @@ describe("LIVE API adversarial fuzz", () => {
     }
   });
 
-  it("whoami: valid bearer → 200; missing/garbage bearer → 401 (auth enforced)", async () => {
+  it("whoami: valid bearer → 200; missing → 401; garbage → 400/401/403 (auth enforced, never 200)", async () => {
     const ok = await call("GET", "/api/whoami", { token: TOKEN });
     expect(ok.status, ok.body.slice(0, 160)).toBe(200);
     expect((await call("GET", "/api/whoami", { token: null })).status).toBe(401);
@@ -126,13 +126,16 @@ describe("LIVE API adversarial fuzz", () => {
       fc.asyncProperty(fc.string({ minLength: 1, maxLength: 40 }), async (junk) => {
         const r = await call("GET", "/api/whoami", { token: junk });
         expectNo5xx(`whoami garbage-token`, r);
-        expect([401, 403]).toContain(r.status);
+        // The API deliberately distinguishes a STRUCTURALLY-invalid token (400
+        // `malformed_token`) from a well-formed but unauthorized one (401/403).
+        // The invariant is auth-enforced: garbage NEVER authenticates (never 200).
+        expect([400, 401, 403]).toContain(r.status);
       }),
       { numRuns: Math.min(RUNS, 30) }
     );
   });
 
-  it("region-token routing: any crafted aex_* token → {308,401,403,451}, never 5xx", async () => {
+  it("region-token routing: any crafted aex_* token → {308,400,401,403,451}, never 5xx", async () => {
     const ws = fc.string({ minLength: 4, maxLength: 26 }).map((s) => s.replace(/[^A-Za-z0-9]/g, "0") || "0000");
     await fc.assert(
       fc.asyncProperty(
@@ -144,7 +147,9 @@ describe("LIVE API adversarial fuzz", () => {
           const token = craftToken(plane, code, wsId, "feedfacecafebeef", fixCrc);
           const r = await call("GET", "/api/whoami", { token });
           expectNo5xx(`crafted-token ${plane}/${code}/crc:${fixCrc}`, r);
-          expect([308, 401, 403, 451]).toContain(r.status);
+          // 400 = malformed_token (bad CRC / structure); 308 = region redirect;
+          // 401/403 = unauthorized; 451 = residency. Never 5xx, never 200.
+          expect([308, 400, 401, 403, 451]).toContain(r.status);
         }
       ),
       { numRuns: Math.min(RUNS, 40) }

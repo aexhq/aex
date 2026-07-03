@@ -72,11 +72,11 @@ export function parseRuntimeSize(input: unknown): RuntimeSize | undefined {
 // Run timeout
 // ===========================================================================
 
-/** Default run deadline when `timeout` is omitted (1 hour). */
-export const DEFAULT_RUN_TIMEOUT_MS = 60 * 60 * 1000;
+/** Default run deadline when `timeout` is omitted (8 hours). */
+export const DEFAULT_RUN_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
-/** Hard ceiling on a run deadline (6 hours). */
-export const MAX_RUN_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+/** Hard ceiling on a run deadline (8 hours). */
+export const MAX_RUN_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
 /** Floor on a run deadline (1 minute). */
 export const MIN_RUN_TIMEOUT_MS = 60 * 1000;
@@ -120,7 +120,7 @@ export function parseRunTimeout(input: unknown): number | undefined {
     throw new Error(`timeout must be at least ${MIN_RUN_TIMEOUT_MS}ms (1m); got ${ms}ms`);
   }
   if (ms > MAX_RUN_TIMEOUT_MS) {
-    throw new Error(`timeout must be at most ${MAX_RUN_TIMEOUT_MS}ms (6h); got ${ms}ms`);
+    throw new Error(`timeout must be at most ${MAX_RUN_TIMEOUT_MS}ms (8h); got ${ms}ms`);
   }
   return ms;
 }

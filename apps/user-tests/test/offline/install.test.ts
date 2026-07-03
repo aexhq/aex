@@ -2,7 +2,7 @@
  * Scenario 1: install.test.ts
  *
  * Lock the published package's *shape*. A real user / AI agent who runs
- * `bun add @aexhq/sdk` should land in a tree that:
+ * `npm i @aexhq/sdk` should land in a tree that:
  *   - Has a sensible package.json (name, version, type, main, types,
  *     exports, bin).
  *   - Ships dist/cli.mjs with a Bun shebang.
@@ -177,7 +177,7 @@ describe("install shape", () => {
     // Workspace-internal build packages like @aexhq/contracts and @aexhq/cli are
     // NEVER published as runtime package dependencies. If any of them leak into the published
     // package.json under `dependencies` or `peerDependencies`, then
-    // `bun add @aexhq/sdk` can fail at install time. The SDK build inlines
+    // `npm i @aexhq/sdk` can fail at install time. The SDK build inlines
     // @aexhq/contracts into dist/_contracts/ and keeps it in devDependencies so
     // Bun packing strips it. This guard locks that contract in.
     const pkg = install.aexPackageJson as {

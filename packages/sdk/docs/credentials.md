@@ -13,6 +13,24 @@ aex uses explicit, per-session credentials:
 
 Secrets never belong in reusable run config, files, prompts, or examples.
 
+## The client credential
+
+Pass your aex API token directly to the constructor — `new Aex(apiKey)` — or as
+the `apiKey` option. The older `apiToken` option remains accepted as a
+compatibility alias, so existing code keeps working:
+
+```ts
+import { Aex } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_API_TOKEN!);          // preferred shorthand
+// equivalently:
+// const aex = new Aex({ apiKey: process.env.AEX_API_TOKEN! });
+// const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! }); // alias
+```
+
+See [Authentication](authentication.md) for how tokens are scoped, rotated, and
+issued during the beta.
+
 ## Provider keys
 
 A session selects one upstream provider and must carry a BYOK key for it. Include
@@ -68,6 +86,11 @@ curl -sS \
 
 ## Workspace secrets
 
+> **Availability note:** workspace-secret `Secret.ref(...)` injection requires
+> the next platform deploy — on the current hosted plane the referenced
+> variable can resolve empty inside the run. Per-run `Secret.value(...)`
+> secrets are unaffected.
+
 Store reusable values once, then reference them by name:
 
 ```ts
@@ -92,9 +115,10 @@ Secret reads return metadata only; they never return the stored value.
 
 ## Networking
 
-Networking is open by default. Use `environment.networking.mode: "limited"` with
-`allowedHosts` when you want a run to reach only named public hosts. See
-[Networking](networking.md).
+Networking is open by default within the platform's managed egress ceiling. Use
+`environment.networking.mode: "limited"` with `allowedHosts` when you want a
+run's own code to reach only named hosts. See [Networking](networking.md) for
+the two-layer enforcement model.
 
 ## Explicit call-site rule
 

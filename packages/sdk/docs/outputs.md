@@ -163,9 +163,10 @@ const stream = response.body;
 
 | Run state | Behaviour |
 | --- | --- |
-| `pending` / `queued` / `provisioning` | `metadata/run.json` reflects the early state; `events/` and `outputs/` are typically empty. |
-| `provider_running`, mid-session / `cleaning_up` | Whatever events + outputs have been captured so far. Call again after terminal for the complete set. |
-| `succeeded` / `failed` / `cancelled` / `terminated` | The complete typed event archive + all captured outputs. |
+| `queued` / `claiming` / `provisioning` | `metadata/run.json` reflects the early state; `events/` and `outputs/` are typically empty. |
+| `provider_running`, mid-session / `capturing_outputs` / `cleaning_up` | Whatever events + outputs have been captured so far. Call again after the session parks for the complete set. |
+| `idle` / `suspended` (parked between turns) | The complete archive for every turn sent so far; a later turn appends to it. |
+| `succeeded` / `failed` / `timed_out` / `cancelled` | The complete typed event archive + all captured outputs. |
 
 ## `outputs.allowedDirs` — override capture roots
 

@@ -18,11 +18,13 @@ const publicSurface = await readPublicSurface();
 
 const guideSources = [
   ["quickstart.md", "quickstart"],
+  ["authentication.md", "authentication"],
   ["run-config.md", "run-config"],
   ["run-record.md", "run-record"],
   ["limits.md", "limits"],
   ["defaults.md", "defaults"],
   ["limits-and-quotas.md", "limits-and-quotas"],
+  ["errors.md", "errors"],
   ["secrets.md", "secrets"],
   ["credentials.md", "credentials"],
   ["networking.md", "networking"],
@@ -31,13 +33,17 @@ const guideSources = [
   ["mcp.md", "mcp"],
   ["outputs.md", "outputs"],
   ["events.md", "events"],
+  ["webhooks.md", "webhooks"],
+  ["billing.md", "billing"],
   ["cleanup.md", "cleanup"]
 ];
 
 const conceptSources = [
   ["runs.md", "runs"],
   ["composition.md", "composition"],
-  ["providers-and-runtimes.md", "providers-and-runtimes"]
+  ["providers-and-runtimes.md", "providers-and-runtimes"],
+  ["agent-tools.md", "agent-tools"],
+  ["subagents.md", "subagents"]
 ];
 
 const appDocRoutes = new Map([
@@ -45,7 +51,6 @@ const appDocRoutes = new Map([
   ...guideSources.map(([file, slug]) => [file, `/docs/guides/${slug}/`]),
   ["product-boundaries.md", "/docs/guides/limits/"],
   ["secrets-byok.md", "/docs/guides/secrets/"],
-  ["subagents.md", "/docs/features/#subagents"],
   ["provider-runtime-capabilities.md", "/docs/reference/provider-runtime-capabilities/"]
 ]);
 

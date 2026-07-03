@@ -5,6 +5,8 @@
   "pages": [
     "runs",
     "composition",
-    "providers-and-runtimes"
+    "providers-and-runtimes",
+    "agent-tools",
+    "subagents"
   ]
 }

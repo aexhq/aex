@@ -16,13 +16,13 @@ For the current provider/model set, see the generated
 
 | Area | Default |
 | --- | --- |
-| Workspace storage | 50 GiB per workspace for captured outputs and workspace artifacts. aex-maintainer admin workspaces may be unlimited for internal dogfooding; this is not a customer entitlement. |
+| Workspace storage | 500 GB per workspace for captured outputs and workspace artifacts. aex-maintainer admin workspaces may be unlimited for internal dogfooding; this is not a customer entitlement. |
 
 ## Product Boundaries
 
 | Area | Boundary |
 | --- | --- |
-| Runtime | New submissions run on the managed runtime. There is no public runtime selector. |
+| Runtime | New submissions run on the managed runtime. The `runtime` option selects a managed machine-size preset (`Sizes.*`); there is no alternative runtime backend. |
 | Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
 | Secrets | Provider keys, MCP credentials, and env secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
 | MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |

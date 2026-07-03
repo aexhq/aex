@@ -7,7 +7,7 @@
     "label": "Alpha testing",
     "description": "Access is limited to invited testers while we harden the hosted runtime, dashboard, and SDK workflows."
   },
-  "installCommand": "bun add @aexhq/sdk",
+  "installCommand": "npm i @aexhq/sdk",
   "examples": {
     "typescriptLines": [
       "import { Aex, Models, Sizes } from \"@aexhq/sdk\";",

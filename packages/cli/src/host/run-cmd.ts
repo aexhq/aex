@@ -27,7 +27,7 @@
  *
  * Optional (both modes):
  *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-8gb); default shared-0.25x-1gb
- *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 6h], default 1h
+ *   --run-timeout <dur>            server-side run deadline (e.g. 1h); bounded [1m, 8h], default 8h
  *   --idempotency-key <key>        defaults to a fresh UUID
  *   --follow                       poll events to stdout until terminal status
  *   --timeout <dur>                with --follow: give up after this long (e.g. 8m); exit code 3
@@ -148,7 +148,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
 
   // `--run-timeout` is the SERVER-side run deadline (distinct from `--timeout`,
   // which bounds the client-side --follow loop). Format-checked locally for
-  // fast feedback; the server applies the [1m, 6h] bounds + default.
+  // fast feedback; the server applies the [1m, 8h] bounds + default.
   const runTimeoutFlag = takeFlagValue(rest, "--run-timeout");
   if (runTimeoutFlag.error) { io.stderr(`${runTimeoutFlag.error}\n`); return USAGE_ERR; }
   rest = runTimeoutFlag.remaining;

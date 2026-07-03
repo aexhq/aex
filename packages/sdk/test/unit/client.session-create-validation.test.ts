@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Aex } from "../../src/index.js";
+import { Aex, CredentialValidationError, RunConfigValidationError } from "../../src/index.js";
 
 function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   const calls: string[] = [];
@@ -53,5 +53,72 @@ describe("Aex.openSession — removed field validation", () => {
     ).rejects.toThrow(/secrets is not a supported option/);
 
     expect(rec.calls).toHaveLength(0);
+  });
+});
+
+describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)", () => {
+  it("rejects an invalid runtime token without an HTTP call (F11)", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        runtime: "lite"
+      } as never)
+    ).rejects.toThrow(RunConfigValidationError);
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("rejects a malformed overrides.timeout without an HTTP call (F12)", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        overrides: { timeout: "banana" }
+      })
+    ).rejects.toThrow(RunConfigValidationError);
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("rejects an out-of-range timeout (below the 1m floor) without an HTTP call (F12)", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        overrides: { timeout: "10s" }
+      })
+    ).rejects.toThrow(RunConfigValidationError);
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("accepts a valid runtime + timeout (regression: does not over-reject)", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await client.openSession({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-x" },
+      runtime: "shared-0.5x-4gb",
+      overrides: { timeout: "30m" }
+    });
+    // A valid config DOES reach the network (create call).
+    expect(rec.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("new Aex(...) — credential validation (F2)", () => {
+  it("throws a typed CredentialValidationError (an AexError), not a bare Error, on a missing credential", () => {
+    expect(() => new Aex({} as never)).toThrow(CredentialValidationError);
+    try {
+      new Aex({} as never);
+    } catch (err) {
+      // A caller catching the SDK error base must catch this too.
+      expect(err).toBeInstanceOf(CredentialValidationError);
+      expect((err as CredentialValidationError).code).toBe("CREDENTIAL_INVALID");
+    }
   });
 });

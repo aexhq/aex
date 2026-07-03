@@ -221,6 +221,9 @@ export function describeApiError(err: unknown): {
 }
 
 function remedyForStatus(status: number): string | undefined {
+  // A garbled/truncated token surfaces as 400 malformed_token (not 401), so the
+  // most common credential mistake needs the same "check the token" nudge (F17).
+  if (status === 400) return "malformed request — if this is an auth failure, check --api-token or run `aex login`";
   if (status === 401) return "check --api-token, or run `aex login`";
   if (status === 403) return "token lacks permission for this workspace/action";
   if (status === 404) return "no such run/resource — verify the id";

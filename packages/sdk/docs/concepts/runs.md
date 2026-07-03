@@ -38,7 +38,8 @@ The same durable record backs SDK and CLI reads. From the handle use `refresh`,
 and `events().stream()` / `events().streamEnvelopes()` / `outputs().read(...)` for
 streaming and byte-capped reads) — to inspect the session live or after it parks;
 from the client, `aex.sessions.list()` / `aex.sessions.get(id)` read across the
-workspace.
+workspace (CLI mirrors: `aex sessions` and `aex runs` list the workspace's
+sessions/runs newest-first).
 
 Use `idempotencyKey` when retrying `openSession` or `send` from your own
 workflow. aex hashes the normalized non-secret submission, so a retry with the

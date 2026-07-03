@@ -20,7 +20,7 @@ Use allowlists for sensitive servers whenever possible.
 ## Large-payload responses
 
 aex is a session dispatcher, not an MCP runtime. We intentionally do
-**not** interpose on the transport between Claude and an upstream MCP
+**not** interpose on the transport between the model and an upstream MCP
 server, so we cannot elide MCP responses or write them to the session
 filesystem on the user's behalf. Anything an MCP tool returns lands
 directly in the model's context.

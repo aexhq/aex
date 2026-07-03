@@ -12,7 +12,7 @@ Managed runs inject the complete builtin tool set into the agent by default:
 - `head`, `tail` — read bounded file slices
 - `web_fetch`, `web_search` — fetch a URL / managed web search
 - `todo_write` — maintain a todo list
-- `subagent`, `subagent_result` — delegate to and read back from child runs
+- `subagent`, `subagent_result` — delegate to and read back from child runs (see [Subagents](subagents.md))
 - `bash_output`, `bash_kill` — manage background bash jobs
 - `wait`, `git` — bounded idle-yield and first-class git
 
@@ -32,13 +32,13 @@ to pick a narrow subset alongside `includeBuiltinTools: false`.
 The final tool list is ordered: resolved builtin tools, then custom tools, then
 MCP tools.
 
-Networking is open by default: the agent may reach any public host, subject to a
-fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a
+Networking is open by default within the platform's managed egress ceiling and
+a fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a
 managed, SSRF-guarded path that is **not** governed by `environment.networking`,
 so their hosts never need to be listed in a `limited` allowlist. Setting
 `environment.networking.mode` to `limited` restricts only the agent's own
 arbitrary egress (e.g. a `curl` in `bash`); the built-in web tools keep working.
-See [Networking](../networking.md).
+See [Networking](../networking.md) for the full two-layer model.
 
 ## Disable builtins
 

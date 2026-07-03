@@ -11,8 +11,10 @@ import {
   isLog,
   isRunError,
   isRunFinished,
+  isRunSettled,
   isRunStarted,
   isRunTerminal,
+  isSessionParked,
   isTextMessage,
   isToolCallResult,
   isToolCallStart,
@@ -20,6 +22,7 @@ import {
   runnerEventToAexEvent,
   serializedEventBytes,
   toAGUI,
+  type AexEvent,
   type RunnerEvent
 } from "../src/index.js";
 
@@ -98,6 +101,32 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
     // A non-fatal stream error must NOT masquerade as the terminal RUN_ERROR.
     expect(isRunError(err)).toBe(false);
     expect(isRunTerminal(err)).toBe(false);
+    // ...but a session-park CUSTOM is a managed-runtime terminal (F19).
+    expect(isSessionParked(err)).toBe(false);
+  });
+
+  it("isSessionParked / isRunSettled recognize the managed session-park terminals (F19)", () => {
+    const parked = (name: string): AexEvent => ({
+      specversion: AEX_EVENT_SPECVERSION,
+      id: "run_env:0",
+      source: "runtime",
+      type: "CUSTOM",
+      subject: "run_env",
+      time: new Date().toISOString(),
+      sequence: 0,
+      data: { name, value: {} }
+    });
+    for (const name of ["aex.session.idle", "aex.session.error", "aex.session.suspended"]) {
+      expect(isSessionParked(parked(name))).toBe(true);
+      // settleConsistent must also terminate at the park (the managed plane never
+      // broadcasts the aex.run.settled barrier) rather than hang.
+      expect(isRunSettled(parked(name))).toBe(true);
+    }
+    // A non-park CUSTOM (e.g. skill_loaded) is neither.
+    expect(isSessionParked(parked("aex.skill_loaded"))).toBe(false);
+    expect(isRunSettled(parked("aex.skill_loaded"))).toBe(false);
+    // A plain typed event is not a session park.
+    expect(isSessionParked(map(ev(11, "runtime_terminal", { reason: "complete" })))).toBe(false);
   });
 
   it("runtime_terminal → RUN_FINISHED normally, RUN_ERROR when the reason is error", () => {

@@ -16,7 +16,7 @@ The package ships:
 ## Install
 
 ```bash
-bun add @aexhq/sdk
+npm i @aexhq/sdk
 ```
 
 This installs the TypeScript SDK exports and the bundled `aex` CLI. Set both

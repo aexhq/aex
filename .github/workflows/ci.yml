@@ -17,21 +17,25 @@ jobs:
     name: Contract parity
     runs-on: ubuntu-latest
     # Secrets can't be referenced in step-level `if`; surface the platform PAT
-    # presence as a job-level flag so the parity checkout can gate on it.
+    # presence as a job-level flag so the guard step can gate on it.
     env:
       HAS_PLATFORM_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # Best-effort checkout of the private platform repo so the contract
-      # parity gate can run. The gate SKIPS (does not fail) when this checkout
-      # is absent — e.g. on forks / PRs without the PAT — so CI still passes;
-      # it only enforces on trusted runs where AEX_PLATFORM_DIR is populated.
+      # This gate must never be silently disarmed. CI runs only on push to
+      # main by maintainers, so a missing/expired PLATFORM_REPO_TOKEN or a
+      # failed platform checkout fails this job loudly instead of letting the
+      # parity script skip.
+      - name: Require platform token
+        if: ${{ env.HAS_PLATFORM_TOKEN != 'true' }}
+        run: |
+          echo "::error::PLATFORM_REPO_TOKEN is missing or empty, so the contract parity gate cannot run. Restore the PAT; this gate must not be silently disarmed."
+          exit 1
+
       - name: Checkout platform (for contract parity)
-        if: ${{ env.HAS_PLATFORM_TOKEN == 'true' }}
         uses: actions/checkout@v6
-        continue-on-error: true
         with:
           repository: aexhq/aex-platform
           token: ${{ secrets.PLATFORM_REPO_TOKEN }}
@@ -47,8 +51,8 @@ jobs:
         run: bun ci
 
       # Fails on any platform<->public contract divergence not recorded in
-      # scripts/cicd/contract-parity-baseline.json. SKIPS when the platform
-      # tree wasn't checked out (forks / missing PAT).
+      # scripts/cicd/contract-parity-baseline.json. The platform tree is
+      # guaranteed present here by the mandatory checkout above.
       - name: Contract parity
         run: bun run contracts:parity:check
         env:

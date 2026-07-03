@@ -1,6 +1,7 @@
 import {
   AexApiError,
   AexError,
+  CredentialValidationError,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
   RunConfigValidationError,
@@ -14,6 +15,12 @@ import {
   type AexEvent,
   type AgentsMdRecord,
   type AgentsMdRef,
+  type BillingCheckoutRequest,
+  type BillingHostedSession,
+  type BillingLedgerPage,
+  type BillingLedgerQuery,
+  type BillingPortalRequest,
+  type BillingSummary,
   type DebugSink,
   type FetchLike,
   type FileRecord,
@@ -50,6 +57,9 @@ import {
   type UsageSummary,
   type RunLimits,
   parseRunLimits,
+  parseRuntimeSize,
+  parseRunTimeout,
+  parseRunWebhook,
   type RunWebhookDelivery,
   type RunProvider,
   type SecretRecord,
@@ -59,6 +69,7 @@ import {
   type RuntimeSize,
   type SkillToolRef,
   type ToolRef,
+  type WebhookSigningSecret,
   type WebSocketFactory,
   type WhoAmI,
   TERMINAL_RUN_STATUSES
@@ -605,6 +616,12 @@ export class SessionHandle {
    * Fetch the self-contained `RunUnit` for this session: parsed submission,
    * attempts, indexed events, outputs, capture failures, proxy-call audit, and
    * resolved skills. Use this when you need fields beyond the session record.
+   *
+   * On the managed plane this is a LEAN summary — the aggregate collections
+   * (`attempts` / `events.entries` / `outputs` / `rawEventPages`) default to
+   * empty. For authoritative per-run data use `outputs()` / `events()` /
+   * `messages()`. The returned shape is always type-valid (never `undefined`
+   * where the type promises an array/page), so array/page access is safe.
    */
   unit(): Promise<RunUnit> {
     return operations.getRunUnit(this.#http, this.id);
@@ -683,7 +700,10 @@ export class SessionClient {
    * `query.limit` (default 100).
    */
   async searchOutputs(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
-    const sessionIds = query.runIds ?? (await this.#allSessionIds());
+    // Dedup the caller-supplied allow-list so a run repeated in `runIds` (e.g. from
+    // concatenating corpora) isn't scanned twice and doesn't inflate the hit count
+    // with duplicates (pre-launch edge-sweep F27).
+    const sessionIds = query.runIds ? [...new Set(query.runIds)] : await this.#allSessionIds();
     const limit = query.limit ?? 100;
     // Translate the search query to an OutputQuery so the contracts output
     // filter does the matching — no re-derived filter logic here.
@@ -1314,7 +1334,9 @@ export class Aex {
     const resolved = typeof options === "string" ? { ...overrides, apiKey: options } : options;
     const apiKey = resolved.apiKey ?? resolved.apiToken;
     if (!apiKey) {
-      throw new Error("Aex: apiKey is required");
+      // Typed so a caller catching AexError (the SDK's error base) catches a
+      // missing credential too, instead of a bare Error slipping the taxonomy.
+      throw new CredentialValidationError("Aex: apiKey is required");
     }
     // Wrap the transport fetch (the caller's override, or global `fetch`) with
     // the bounded-retry layer so every BFF request gets default resilience.
@@ -1410,6 +1432,22 @@ export class Aex {
       const events = turnResult.events as unknown as readonly RunEvent[];
       const outputs = turnResult.outputs;
       const ok = turnResult.status === "idle" || turnResult.status === "suspended";
+      if (!ok && scopedSignal?.signal.aborted) {
+        // The client-side wait budget (opts.timeoutMs) expired before the run
+        // reached a terminal park. Parity with SessionHandle.wait(): THROW rather
+        // than silently returning a misleading {ok:false,status:"running"} with no
+        // error (pre-launch edge-sweep F3). The run continues server-side.
+        throw new RunStateError(
+          `Aex.run: timed out after ${opts.timeoutMs}ms waiting for run ${runId} to park (last status ` +
+            `${JSON.stringify(turnResult.status)}); the run continues server-side — cancel via ` +
+            `session.cancel() or resume with openSession(${JSON.stringify(runId)})`
+        );
+      }
+      const trace = runTraceFromEvents(events);
+      // Surface the trace-derived usage at the top level when the run record does
+      // not carry its own usage (the managed plane doesn't populate session.usage);
+      // the per-event trace still yields token counts (pre-launch edge-sweep F5).
+      const usage = turnResult.session.usage ?? trace.usage;
       const costUsd = typeof turnResult.session.costUsd === "number" ? turnResult.session.costUsd : undefined;
       const errorMessage = typeof turnResult.session.errorMessage === "string" && turnResult.session.errorMessage ? turnResult.session.errorMessage : undefined;
       const result: RunResult = {
@@ -1423,9 +1461,9 @@ export class Aex {
         text: turnResult.text,
         messages: turnResult.messages,
         events,
-        trace: runTraceFromEvents(events),
+        trace,
         outputs,
-        ...(turnResult.session.usage ? { usage: turnResult.session.usage } : {}),
+        ...(usage ? { usage } : {}),
         ...(typeof costUsd === "number" ? { costUsd } : {}),
         ...(!ok && errorMessage ? { error: errorMessage } : {})
       };
@@ -1482,6 +1520,23 @@ export class Aex {
     validateApiKeys(options.apiKeys, provider, "Aex.openSession");
     if (typeof options.model !== "string" || !options.model) {
       throw new RunConfigValidationError("Aex.openSession: model is required");
+    }
+    // Fast client-side validation via the contract parsers (the SSoT). runtimeSize
+    // and timeout are STABLE closed sets whose invalid values the create endpoint
+    // otherwise SILENTLY defaults (no error ever — pre-launch edge-sweep F11/F12);
+    // reject them synchronously with a typed error instead. webhook shape is
+    // re-checked here for a fast local fail (the server enforces it too). Model is
+    // deliberately NOT hard-rejected here to preserve forward-compat with models
+    // added server-side before an SDK upgrade (an unknown model still fails on the
+    // server).
+    try {
+      parseRuntimeSize(options.runtime);
+      parseRunTimeout(options.overrides?.timeout);
+      if (options.webhook !== undefined) parseRunWebhook(options.webhook);
+    } catch (err) {
+      throw new RunConfigValidationError(
+        `Aex.openSession: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
     const { declarations: secretEnvDeclarations, values: envSecretValues } =
       splitSecretEnv(options.environment?.secrets);
@@ -1567,6 +1622,54 @@ export class Aex {
 
   whoami(): Promise<WhoAmI> {
     return operations.whoami(this.#http);
+  }
+
+  /**
+   * Read the workspace billing summary: prepaid `balanceUsd`, current-month
+   * `monthSpendUsd`, the enforced `spendCapUsd`, and plan fields. Backed by
+   * `GET /api/billing` (scope `billing:read`). The result is additive-tolerant:
+   * fields a newer deployment reports that this SDK does not know yet pass
+   * through on the returned object.
+   */
+  billing(): Promise<BillingSummary> {
+    return operations.getBilling(this.#http);
+  }
+
+  /**
+   * Create a hosted checkout session for a paid plan (`pro` or `team`).
+   * Open the returned `url` in a browser. Plan activation happens after
+   * checkout completes.
+   */
+  billingCheckout(request: BillingCheckoutRequest): Promise<BillingHostedSession> {
+    return operations.createBillingCheckout(this.#http, request);
+  }
+
+  /**
+   * Create a hosted billing-portal session for the workspace customer.
+   * Open the returned `url` in a browser.
+   */
+  billingPortal(request: BillingPortalRequest = {}): Promise<BillingHostedSession> {
+    return operations.createBillingPortal(this.#http, request);
+  }
+
+  /**
+   * Read recent workspace credit-ledger rows, newest first — top-ups, run
+   * charges, and redemptions with signed `amountUsd`. Backed by
+   * `GET /api/billing/ledger`; `limit` is clamped server-side to [1, 100]
+   * (default 25). Not cursor-paged.
+   */
+  billingLedger(query?: BillingLedgerQuery): Promise<BillingLedgerPage> {
+    return operations.getBillingLedger(this.#http, query);
+  }
+
+  /**
+   * Reveal the workspace webhook signing secret (creating one on first use) —
+   * the `whsec_<base64>` value `verifyAexWebhook` takes as `secret`. Backed by
+   * `POST /api/webhook/signing-secret`; repeat calls return the SAME value (the
+   * hosted API does not rotate it). Treat the reveal as sensitive: never log it.
+   */
+  webhookSigningSecret(): Promise<WebhookSigningSecret> {
+    return operations.getWebhookSigningSecret(this.#http);
   }
 }
 

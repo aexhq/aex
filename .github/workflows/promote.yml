@@ -7,6 +7,10 @@ on:
         description: Published @aexhq/sdk version to promote.
         required: true
         type: string
+      release_run_id:
+        description: Run ID of the green release.yml run that published this version.
+        required: true
+        type: string
       npm_dist_tag:
         description: npm dist-tag to assign.
         required: true
@@ -23,6 +27,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Needed to read the release.yml run named by release_run_id.
+  actions: read
 
 jobs:
   promote:
@@ -43,6 +49,59 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
+
+      # Fail-closed release proof: promotion requires the run ID of the
+      # release.yml run that shipped this exact version. Via the GitHub API
+      # (GITHUB_TOKEN) we verify that the run (a) is .github/workflows/
+      # release.yml in THIS repo — the API path is repo-scoped, so a foreign
+      # run id 404s; (b) completed with conclusion=success, which release.yml
+      # only reaches after the live user tests pass (they are the last jobs);
+      # and (c) published THIS version — the npm registry publish timestamp
+      # (`time[version]`) must fall inside that run's created_at..updated_at
+      # window (created_at, not run_started_at, so re-run attempts of flaky
+      # live shards don't move the window past the publish time). Any check
+      # that cannot be evaluated fails the promotion.
+      - name: Verify green release run published this version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RELEASE_RUN_ID}" in
+            ''|*[!0-9]*)
+              echo "::error::release_run_id must be a numeric workflow run id (got '${RELEASE_RUN_ID}')."
+              exit 1
+              ;;
+          esac
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}")"
+          workflow_path="$(jq -r '.path' <<<"${run_json}")"
+          status="$(jq -r '.status' <<<"${run_json}")"
+          conclusion="$(jq -r '.conclusion' <<<"${run_json}")"
+          run_created_at="$(jq -r '.created_at' <<<"${run_json}")"
+          run_updated_at="$(jq -r '.updated_at' <<<"${run_json}")"
+          if [ "${workflow_path}" != ".github/workflows/release.yml" ]; then
+            echo "::error::Run ${RELEASE_RUN_ID} is '${workflow_path}', not .github/workflows/release.yml."
+            exit 1
+          fi
+          if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
+            echo "::error::Release run ${RELEASE_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green release run (live user tests included)."
+            exit 1
+          fi
+          published_at="$(curl -fsSL "https://registry.npmjs.org/@aexhq%2Fsdk" | jq -r --arg v "${PACKAGE_VERSION}" '.time[$v] // empty')"
+          if [ -z "${published_at}" ]; then
+            echo "::error::@aexhq/sdk@${PACKAGE_VERSION} has no publish timestamp on npm; nothing to promote."
+            exit 1
+          fi
+          start_s="$(date -u -d "${run_created_at}" +%s)"
+          end_s="$(date -u -d "${run_updated_at}" +%s)"
+          pub_s="$(date -u -d "${published_at}" +%s)"
+          if [ "${pub_s}" -lt "${start_s}" ] || [ "${pub_s}" -gt "${end_s}" ]; then
+            echo "::error::@aexhq/sdk@${PACKAGE_VERSION} was published at ${published_at}, outside release run ${RELEASE_RUN_ID}'s window (${run_created_at}..${run_updated_at}); that run did not publish this version."
+            exit 1
+          fi
+          echo "Verified: green release run ${RELEASE_RUN_ID} published @aexhq/sdk@${PACKAGE_VERSION} at ${published_at}."
 
       - name: Assert version exists on npm
         run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"

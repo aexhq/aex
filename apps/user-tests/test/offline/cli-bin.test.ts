@@ -1,7 +1,7 @@
 /**
  * Scenario 2: cli-bin.test.ts
  *
- * The agent-first promise: `bun add @aexhq/sdk` puts a working
+ * The agent-first promise: `npm i @aexhq/sdk` puts a working
  * `aex` executable in node_modules/.bin. This scenario verifies:
  *   - The bin symlink/shim resolves.
  *   - `aex --help` exits 0 and prints the canonical usage banner.

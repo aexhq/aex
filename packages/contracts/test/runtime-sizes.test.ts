@@ -117,7 +117,7 @@ describe("parseRunTimeout", () => {
 
   it("rejects below the floor and above the ceiling", () => {
     expect(() => parseRunTimeout("30s")).toThrow(/at least/);
-    expect(() => parseRunTimeout("7h")).toThrow(/at most/);
+    expect(() => parseRunTimeout("9h")).toThrow(/at most/);
   });
 
   it("accepts the exact bounds", () => {
@@ -131,9 +131,9 @@ describe("parseRunTimeout", () => {
 });
 
 describe("resolveRunTimeoutMs + orchestrationTimeoutString", () => {
-  it("applies the 1h default only when absent", () => {
+  it("applies the 8h default only when absent", () => {
     expect(resolveRunTimeoutMs(undefined)).toBe(DEFAULT_RUN_TIMEOUT_MS);
-    expect(DEFAULT_RUN_TIMEOUT_MS).toBe(60 * 60 * 1000);
+    expect(DEFAULT_RUN_TIMEOUT_MS).toBe(8 * 60 * 60 * 1000);
     expect(resolveRunTimeoutMs(123_000)).toBe(123_000);
   });
 

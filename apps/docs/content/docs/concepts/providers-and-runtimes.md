@@ -17,7 +17,10 @@ aex exposes one submission shape across supported providers:
 | Doubao | `Providers.DOUBAO` |
 | Doubao China | `Providers.DOUBAO_CN` |
 
-All submissions run on the managed runtime. There is no public runtime selector; omit `runtime`.
+All submissions run on the managed runtime. The optional `runtime` option picks
+a managed machine-size preset — use `Sizes.*` in TypeScript (e.g.
+`runtime: Sizes.SHARED_0_25X_1GB`) or `--runtime-size` in the CLI. Omit it for
+the default size; there is no alternative runtime backend to select.
 
 ## Selection
 

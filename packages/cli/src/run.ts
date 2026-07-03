@@ -16,8 +16,12 @@
  *     - `aex download <session-id> [--only outputs|events|metadata] [--out path]`
  *     - `aex cancel <session-id>`
  *     - `aex delete <session-id>`
+ *     - `aex runs [--limit <n>] [--since <iso>]`
+ *     - `aex sessions [--limit <n>]`
  *     - `aex whoami`
- *     - `aex redeem <code>`
+ *     - `aex billing [--json]` / `aex billing ledger [--limit <n>]`
+ *     - `aex billing upgrade pro|team` / `aex billing portal`
+ *     - `aex webhooks secret`
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
@@ -49,7 +53,10 @@ import {
   runDeliveriesCmd,
   runWaitCmd,
   runWhoamiCmd,
-  runRedeemCmd,
+  runBillingCmd,
+  runWebhooksCmd,
+  runRunsCmd,
+  runSessionsCmd,
   runDebugCmd,
   runLoginCmd,
   runLogoutCmd,
@@ -127,12 +134,20 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runDeleteCmd(io, rest);
     case "delete-asset":
       return runDeleteAssetCmd(io, rest);
+    case "runs":
+      // Workspace run list (newest first) via GET /api/runs.
+      return runRunsCmd(io, rest);
+    case "sessions":
+      // Workspace session list (newest first) via GET /api/sessions.
+      return runSessionsCmd(io, rest);
     case "whoami":
       return runWhoamiCmd(io, rest);
-    case "redeem":
-      // Redeem a single-use coupon code to fund the workspace prepaid balance.
-      // CLI-only (direct fetch); intentionally not a public SDK method.
-      return runRedeemCmd(io, rest);
+    case "billing":
+      // Balance / month spend / spend cap (and `billing ledger` rows).
+      return runBillingCmd(io, rest);
+    case "webhooks":
+      // `aex webhooks secret` — reveal the workspace webhook signing secret.
+      return runWebhooksCmd(io, rest);
     case "login":
       return runLoginCmd(io, rest);
     case "logout":
@@ -179,8 +194,14 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex cancel <session-id> --api-token T\n");
   io.stdout("  aex delete <session-id> --api-token T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
+  io.stdout("  aex runs [--limit N] [--since ISO] --api-token T      List the workspace's runs (newest first, JSON)\n");
+  io.stdout("  aex sessions [--limit N] --api-token T      List the workspace's sessions (newest first, JSON)\n");
   io.stdout("  aex whoami --api-token T\n");
-  io.stdout("  aex redeem <code> --api-token T             Redeem a coupon code into the workspace prepaid balance\n");
+  io.stdout("  aex billing [--json] --api-token T          Show prepaid balance, month spend, and spend cap\n");
+  io.stdout("  aex billing ledger [--limit N] --api-token T   Recent credit-ledger entries (newest first, JSON)\n");
+  io.stdout("  aex billing upgrade pro|team --api-token T   Create a hosted checkout session and print its URL\n");
+  io.stdout("  aex billing portal --api-token T             Create a hosted billing portal session and print its URL\n");
+  io.stdout("  aex webhooks secret --api-token T           Reveal (create on first use) the webhook signing secret\n");
   io.stdout("  aex login --api-token T [--aex-url U]      Persist token + url (then other verbs need no --api-token)\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");
@@ -207,7 +228,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --mcp-auth name=Hdr:Val     Auth header on the matching --mcp; routed into vaulted secrets (repeatable)\n");
   io.stdout("  --metadata key=value        Submission metadata entry (repeatable)\n");
   io.stdout("  --runtime-size <size>       managed runtime preset\n");
-  io.stdout("  --run-timeout <dur>         Server-side run deadline (e.g. 1h); distinct from --timeout\n");
+  io.stdout("  --run-timeout <dur>         Server-side run deadline (e.g. 1h, max 8h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");
   io.stdout("  --webhook <url>             Optional per-run callback URL (https); receives the terminal run.finished event\n");
   io.stdout("  --follow                    Poll events to stdout until the run terminates\n");

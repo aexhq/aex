@@ -771,7 +771,7 @@ export interface RunRequestConfig {
   readonly environment?: PlatformEnvironment;
   /** Managed runtime size preset (see {@link RuntimeSize}). */
   readonly runtimeSize?: RuntimeSize;
-  /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 6h] server-side. */
+  /** Run deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 8h] server-side. */
   readonly timeout?: string;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }

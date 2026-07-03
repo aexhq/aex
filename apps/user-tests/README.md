@@ -3,7 +3,7 @@
 Layer-4 test workspace. Exercises a clean install of the current **packed
 tarball** (local/offline default, CI, and manual live workflow runs) or the
 exact **published artifact** selected by release workflows, the way a real user
-or AI agent would on day one of `bun add @aexhq/sdk`.
+or AI agent would on day one of `npm i @aexhq/sdk`.
 
 This workspace deliberately has **no `workspace:*` dependencies on
 `@aexhq/sdk` or other `@aexhq/*` packages**. Every scenario spawns a child process whose

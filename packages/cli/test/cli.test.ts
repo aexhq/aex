@@ -66,6 +66,19 @@ describe("aex --help", () => {
     expect(cap.stdout).toContain("Usage:");
   });
 
+  it("advertises the workspace read verbs (billing, webhooks secret, runs, sessions)", async () => {
+    const cap = makeIo({ argv: ["--help"] });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(cap.stdout).toContain("aex billing [--json]");
+    expect(cap.stdout).toContain("aex billing ledger [--limit N]");
+    expect(cap.stdout).toContain("aex webhooks secret");
+    expect(cap.stdout).toContain("aex runs [--limit N] [--since ISO]");
+    expect(cap.stdout).toContain("aex sessions [--limit N]");
+    // The signing-secret verb is reveal-only; help must not advertise rotation.
+    expect(cap.stdout).not.toContain("--rotate");
+  });
+
   it("does not advertise removed launch flags or commands", async () => {
     const cap = makeIo({ argv: ["--help"] });
     await runCli(cap.io);

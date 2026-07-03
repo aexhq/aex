@@ -1,6 +1,7 @@
 import { strToU8, zipSync } from "fflate";
 import type { HttpClient } from "./http.js";
 import type { RunUnit } from "./run-unit.js";
+import { normalizeRunUnit } from "./run-unit.js";
 import { RunStateError } from "./sdk-errors.js";
 import {
   assertRunRecordArchivePublicSafeV1,
@@ -12,6 +13,12 @@ import {
 import type { RunCostTelemetry } from "./run-cost.js";
 import type {
   AgentsMdRecord,
+  BillingCheckoutRequest,
+  BillingHostedSession,
+  BillingLedgerPage,
+  BillingLedgerQuery,
+  BillingPortalRequest,
+  BillingSummary,
   FileRecord,
   Output,
   OutputLink,
@@ -40,6 +47,7 @@ import type {
   RunWebhookDelivery,
   SecretRecord,
   SecretReveal,
+  WebhookSigningSecret,
   WhoAmI
 } from "./runtime-types.js";
 import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
@@ -75,7 +83,11 @@ export async function getRun(http: HttpClient, runId: string): Promise<Run> {
  * stays for callers that only need the loose record.
  */
 export async function getRunUnit(http: HttpClient, runId: string): Promise<RunUnit> {
-  return http.request<RunUnit>(`/api/runs/${encodeURIComponent(runId)}`);
+  // Normalize so the RunUnit type contract holds at runtime: the managed plane
+  // returns a lean record and omits the aggregate collections (F25). The
+  // aggregates default to empty (safe array/page access) — read outputs()/events()
+  // for the authoritative per-run data on that plane.
+  return normalizeRunUnit(await http.request<unknown>(`/api/runs/${encodeURIComponent(runId)}`));
 }
 
 /**
@@ -615,6 +627,67 @@ export async function deleteWorkspaceAsset(http: HttpClient, hash: string): Prom
 
 export async function whoami(http: HttpClient): Promise<WhoAmI> {
   return http.request<WhoAmI>("/api/whoami");
+}
+
+/**
+ * Read the workspace billing summary (`GET /api/billing`, scope `billing:read`):
+ * prepaid balance, current-month spend, spend cap, and plan fields. The result
+ * is additive-tolerant — server fields this SDK does not know yet pass through.
+ */
+export async function getBilling(http: HttpClient): Promise<BillingSummary> {
+  return http.request<BillingSummary>("/api/billing");
+}
+
+/**
+ * Create a hosted checkout session for a paid plan. Returns only the hosted
+ * URL; plan activation happens after checkout completes.
+ */
+export async function createBillingCheckout(
+  http: HttpClient,
+  request: BillingCheckoutRequest
+): Promise<BillingHostedSession> {
+  return http.request<BillingHostedSession>("/api/billing/checkout", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+/**
+ * Create a hosted billing-portal session for the workspace customer.
+ * Returns only the hosted URL.
+ */
+export async function createBillingPortal(
+  http: HttpClient,
+  request: BillingPortalRequest = {}
+): Promise<BillingHostedSession> {
+  return http.request<BillingHostedSession>("/api/billing/portal", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+/**
+ * Read recent workspace credit-ledger rows (`GET /api/billing/ledger`, scope
+ * `billing:read`), newest first. `limit` is clamped server-side to [1, 100]
+ * (default 25); the read is not cursor-paged.
+ */
+export async function getBillingLedger(
+  http: HttpClient,
+  query?: BillingLedgerQuery
+): Promise<BillingLedgerPage> {
+  const params: Record<string, string> = {};
+  if (query?.limit !== undefined) params.limit = String(query.limit);
+  return http.request<BillingLedgerPage>("/api/billing/ledger", {}, params);
+}
+
+/**
+ * Reveal the workspace webhook signing secret (`POST /api/webhook/signing-secret`),
+ * CREATING one on first use. Repeat calls return the same `whsec_<base64>` value —
+ * the hosted API does not rotate it. POST (not GET) so a reveal is a logged action.
+ * Pass the returned `whsec` to `verifyAexWebhook` as `secret`.
+ */
+export async function getWebhookSigningSecret(http: HttpClient): Promise<WebhookSigningSecret> {
+  return http.request<WebhookSigningSecret>("/api/webhook/signing-secret", { method: "POST" });
 }
 
 /**

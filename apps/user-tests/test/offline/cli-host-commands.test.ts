@@ -2,7 +2,7 @@
  * Installed CLI host-command coverage.
  *
  * This is the blackbox layer for the commands users run after
- * `bun add @aexhq/sdk`: spawn the installed `aex` binary from a clean
+ * `npm i @aexhq/sdk`: spawn the installed `aex` binary from a clean
  * temp install and point it at a local fake API. Unit tests cover the same
  * verbs through an injected fetch; this file catches packaging, bin wiring,
  * auth header, URL, and public wire-shape drift in the shipped artifact.
@@ -108,9 +108,57 @@ async function startFakeApi(): Promise<FakeApi> {
       json(res, 200, { session: { id: "run-cli-1", status: "cancelling" } });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/sessions") {
+      json(res, 200, {
+        sessions: [{ id: "run-cli-1", status: "idle", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z" }]
+      });
+      return;
+    }
+
+    // --- workspace billing + webhook signing secret reads ---
+    if (req.method === "GET" && url.pathname === "/api/billing") {
+      json(res, 200, {
+        balanceUsd: 25,
+        monthSpendUsd: 1.5,
+        spendCapUsd: 100,
+        planKey: "free",
+        subscriptionStatus: "none"
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/billing/ledger") {
+      json(res, 200, {
+        entries: [
+          {
+            id: "led-1",
+            entryType: "top_up",
+            amountUsd: 25,
+            currency: "USD",
+            runId: null,
+            description: "ci top-up",
+            createdBy: "admin:ops@example.test",
+            createdAt: "2026-07-01T00:00:00Z"
+          }
+        ]
+      });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/webhook/signing-secret") {
+      json(res, 200, { whsec: "whsec_aW5zdGFsbGVkLWNsaS1zZWNyZXQ=" });
+      return;
+    }
 
     // --- run endpoints (download assembles the public zip client-side from
     // these; the session id doubles as the run id) ---
+    if (req.method === "GET" && url.pathname === "/api/runs") {
+      json(res, 200, {
+        runs: [
+          { id: "run-cli-1", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.02 },
+          { id: "run-cli-0", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
+        ]
+      });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1") {
       json(res, 200, { id: "run-cli-1", status: "succeeded", provider: "deepseek", runtime: "managed" });
       return;
@@ -295,5 +343,86 @@ describe("installed CLI host commands", () => {
     const messageReq = api.requests.find((r) => r.path === "/api/sessions/run-cli-1/messages");
     expect(messageReq, "expected a POST to the session messages endpoint").toBeDefined();
     expect((messageReq!.body as Record<string, unknown>).input).toEqual(["hello_from_installed_cli"]);
+  });
+
+  it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {
+    const common = ["--api-token", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
+
+    const billing = await runCommand(binPath, ["billing", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(billing.exitCode, `stdout:\n${billing.stdout}\nstderr:\n${billing.stderr}`).toBe(0);
+    expect(billing.stdout).toContain("$25.00");
+    expect(billing.stdout).toContain("$1.50");
+    expect(billing.stdout).toContain("$100.00");
+
+    const billingJson = await runCommand(binPath, ["billing", "--json", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(billingJson.exitCode, `stdout:\n${billingJson.stdout}\nstderr:\n${billingJson.stderr}`).toBe(0);
+    expect(JSON.parse(billingJson.stdout.trim())).toEqual({
+      balanceUsd: 25,
+      monthSpendUsd: 1.5,
+      spendCapUsd: 100,
+      planKey: "free",
+      subscriptionStatus: "none"
+    });
+
+    const ledger = await runCommand(binPath, ["billing", "ledger", "--limit", "10", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(ledger.exitCode, `stdout:\n${ledger.stdout}\nstderr:\n${ledger.stderr}`).toBe(0);
+    const ledgerEntries = JSON.parse(ledger.stdout.trim()) as Array<{ id: string; entryType: string }>;
+    expect(ledgerEntries.map((entry) => entry.id)).toEqual(["led-1"]);
+    expect(ledgerEntries[0]!.entryType).toBe("top_up");
+
+    const secret = await runCommand(binPath, ["webhooks", "secret", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(secret.exitCode, `stdout:\n${secret.stdout}\nstderr:\n${secret.stderr}`).toBe(0);
+    // The reveal verb prints the bare whsec string — pipeable straight into a
+    // verifier — and never echoes it to stderr.
+    expect(secret.stdout.trim()).toBe("whsec_aW5zdGFsbGVkLWNsaS1zZWNyZXQ=");
+    expect(secret.stderr).not.toContain("whsec_");
+
+    const rotate = await runCommand(binPath, ["webhooks", "secret", "--rotate", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(rotate.exitCode).toBe(2);
+    expect(rotate.stderr).toContain("not supported");
+
+    const runs = await runCommand(binPath, ["runs", "--since", "2026-07-01T00:00:00Z", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(runs.exitCode, `stdout:\n${runs.stdout}\nstderr:\n${runs.stderr}`).toBe(0);
+    const runsPage = JSON.parse(runs.stdout.trim()) as { runs: Array<{ id: string }> };
+    // The CLI enforces --since client-side (the deployed API ignores the param),
+    // so only the July run survives.
+    expect(runsPage.runs.map((run) => run.id)).toEqual(["run-cli-1"]);
+
+    const sessions = await runCommand(binPath, ["sessions", "--limit", "5", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(sessions.exitCode, `stdout:\n${sessions.stdout}\nstderr:\n${sessions.stderr}`).toBe(0);
+    const sessionsPage = JSON.parse(sessions.stdout.trim()) as { sessions: Array<{ id: string }> };
+    expect(sessionsPage.sessions.map((session) => session.id)).toEqual(["run-cli-1"]);
+
+    const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
+    expect(methodPaths).toEqual(
+      expect.arrayContaining([
+        "GET /api/billing",
+        "GET /api/billing/ledger?limit=10",
+        "POST /api/webhook/signing-secret",
+        "GET /api/runs?since=2026-07-01T00%3A00%3A00Z",
+        "GET /api/sessions?limit=5"
+      ])
+    );
   });
 });

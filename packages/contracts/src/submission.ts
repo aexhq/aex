@@ -847,8 +847,8 @@ export interface PlatformRunSubmissionRequest {
   readonly runtimeSize?: RuntimeSize;
   /**
    * Run deadline in milliseconds, normalised by the parser from the wire
-   * `timeout` duration string (bounded to [1m, 6h]). Absent ⇒
-   * {@link DEFAULT_RUN_TIMEOUT_MS} (1h). Applies to the managed runner's
+   * `timeout` duration string (bounded to [1m, 8h]). Absent ⇒
+   * {@link DEFAULT_RUN_TIMEOUT_MS} (8h). Applies to the managed runner's
    * terminal wait window and self-kill deadline.
    */
   readonly timeoutMs?: number;
@@ -937,8 +937,8 @@ export type PlatformRunSubmissionInput = Omit<
   readonly provider?: RunProvider;
   /**
    * Run deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
-   * Parsed + bounded to [1m, 6h] server-side into
-   * {@link PlatformRunSubmissionRequest.timeoutMs}. Absent ⇒ 1h default.
+   * Parsed + bounded to [1m, 8h] server-side into
+   * {@link PlatformRunSubmissionRequest.timeoutMs}. Absent ⇒ 8h default.
    */
   readonly timeout?: string;
 };

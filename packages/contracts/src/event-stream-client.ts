@@ -26,6 +26,7 @@
  */
 
 import type { AexEvent } from "./event-envelope.js";
+import { isSessionParked } from "./event-envelope.js";
 
 /** The slice of the WHATWG WebSocket this client depends on. */
 export interface WebSocketLike {
@@ -74,7 +75,13 @@ export interface CoordinatorStreamOptions {
   readonly pingIntervalMs?: number;
 }
 
-const isTerminalType = (e: AexEvent): boolean => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
+// The default terminal predicate ends the stream on the AG-UI terminals AND on
+// the managed runtime's CUSTOM session-park terminal (aex.session.idle/.error/
+// .suspended). A managed one-shot run parks instead of emitting RUN_FINISHED, so
+// WITHOUT the session-park arm a `streamEnvelopes()` over a finished managed run
+// never sees a terminal and hangs on the idle watchdog forever.
+const isTerminalType = (e: AexEvent): boolean =>
+  e.type === "RUN_FINISHED" || e.type === "RUN_ERROR" || isSessionParked(e);
 
 /**
  * Keep-alive ping the client sends; the coordinator answers it with the matching

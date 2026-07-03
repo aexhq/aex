@@ -1,6 +1,69 @@
 import { describe, expect, it } from "vitest";
 import { Models } from "../src/models.js";
-import { parseRunUnitSubmission } from "../src/run-unit.js";
+import { normalizeRunUnit, parseRunUnitSubmission } from "../src/run-unit.js";
+
+describe("normalizeRunUnit (F25 — lean managed record → type-valid RunUnit)", () => {
+  it("fills empty aggregates for a lean record so array/page access never throws", () => {
+    const lean = {
+      id: "run_abc",
+      workspaceId: "ws_1",
+      status: "idle",
+      createdAt: "2026-07-02T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:01:00.000Z",
+      terminalAt: "2026-07-02T00:01:00.000Z"
+      // NO submission / attempts / events / outputs — the managed lean shape.
+    };
+    const unit = normalizeRunUnit(lean);
+    expect(unit.id).toBe("run_abc");
+    expect(unit.status).toBe("idle");
+    // The type promises arrays + an event page — must be present at runtime.
+    expect(Array.isArray(unit.attempts)).toBe(true);
+    expect(unit.attempts).toEqual([]);
+    expect(Array.isArray(unit.outputs)).toBe(true);
+    expect(unit.outputs.map((o) => o.fileName)).toEqual([]);
+    expect(unit.events.totalCount).toBe(0);
+    expect(unit.events.entries).toEqual([]);
+    expect(unit.events.truncated).toBe(false);
+    expect(unit.rawEventPages).toEqual([]);
+    expect(unit.outputCaptureFailures).toEqual([]);
+    expect(unit.attemptCount).toBe(0);
+    expect(unit.cleanupStatus).toBe("not_started");
+    // submission is always present (fallback for a missing snapshot).
+    expect(unit.submission.kind).toBe("submission");
+  });
+
+  it("passes through populated aggregates + costTelemetry verbatim", () => {
+    const full = {
+      id: "run_x",
+      workspaceId: "ws_1",
+      status: "idle",
+      cleanupStatus: "succeeded",
+      createdAt: "2026-07-02T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:01:00.000Z",
+      attemptCount: 2,
+      attempts: [{ id: "a1", attemptNumber: 1, status: "ok", createdAt: "2026-07-02T00:00:00.000Z" }],
+      events: { entries: [{ id: "e1", type: "RUN_STARTED", processedAt: "2026-07-02T00:00:00.000Z" }], totalCount: 5, truncated: true, nextCursor: "c1" },
+      outputs: [{ id: "o1", fileName: "out.txt", byteSize: 3 }],
+      costTelemetry: { schemaVersion: 1, billedCostUsd: 0.01 }
+    };
+    const unit = normalizeRunUnit(full);
+    expect(unit.attemptCount).toBe(2);
+    expect(unit.attempts).toHaveLength(1);
+    expect(unit.events.totalCount).toBe(5);
+    expect(unit.events.truncated).toBe(true);
+    expect(unit.events.nextCursor).toBe("c1");
+    expect(unit.outputs[0]?.fileName).toBe("out.txt");
+    expect(unit.cleanupStatus).toBe("succeeded");
+    expect(unit.costTelemetry).toBeDefined();
+  });
+
+  it("tolerates a non-object payload without throwing", () => {
+    const unit = normalizeRunUnit(null);
+    expect(unit.id).toBe("");
+    expect(unit.attempts).toEqual([]);
+    expect(unit.events.entries).toEqual([]);
+  });
+});
 
 describe("parseRunUnitSubmission", () => {
   it("parses a flat-shape snapshot verbatim", () => {

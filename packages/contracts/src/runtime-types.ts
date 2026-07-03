@@ -469,6 +469,29 @@ export interface WhoAmI {
      */
     readonly maxRunDurationMs?: number | null;
   };
+  /**
+   * ADDITIVE effective per-workspace limits returned by `GET /whoami` on
+   * current platform deployments — everything a caller needs to anticipate a
+   * `429` / `402` submit rejection before hitting it. Every value is the same
+   * one the platform's admission gates enforce. Optional: older deployments
+   * omit the field entirely.
+   */
+  readonly limits?: {
+    /** Effective live-run concurrency cap. One more live run past it fails with `429 workspace_concurrency_exceeded`. */
+    readonly maxConcurrentRuns: number;
+    /** Effective submit-velocity cap per minute; `0` = unlimited (disabled). Past it: `429 workspace_submit_rate_exceeded`. */
+    readonly submitRatePerMinute: number;
+    /** Effective monthly spend cap in USD; `0` = unlimited. Once `monthSpendUsd` reaches it: `402 workspace_spend_cap_exceeded`. */
+    readonly spendCapUsd: number;
+    /** Accrued spend in the current UTC calendar month — the value the spend gate compares. */
+    readonly monthSpendUsd: number;
+    /** Prepaid balance read-model — the value the balance gate compares. */
+    readonly balanceUsd: number;
+    /** Effective (payment-method-aware) submit floor: submits fail with `402 insufficient_balance` once `balanceUsd` is at or below it. */
+    readonly balanceGraceFloorUsd: number;
+    /** `"active"` means a bounded card overdraft is already folded into `balanceGraceFloorUsd`. */
+    readonly paymentMethodStatus: "none" | "active";
+  };
   readonly [key: string]: unknown;
 }
 
@@ -580,4 +603,88 @@ export interface SecretRecord {
 export interface SecretReveal {
   readonly name: string;
   readonly value: string;
+}
+
+/**
+ * Customer-facing billing summary — `GET /api/billing` (scope `billing:read`).
+ * All money fields are USD numbers. The index signature keeps the shape tolerant
+ * of ADDITIVE server fields (e.g. a deployment newer than this SDK reporting
+ * extra plan attributes) — unknown keys are preserved, never rejected.
+ */
+export interface BillingSummary {
+  /** Prepaid balance (authoritative ledger sum). */
+  readonly balanceUsd: number;
+  /** Accrued spend for the current calendar month. */
+  readonly monthSpendUsd: number;
+  /** Monthly spend cap enforced on new runs. */
+  readonly spendCapUsd: number;
+  readonly planKey: string;
+  readonly subscriptionStatus: string;
+  /** `"active"` once a payment method is bound; older deployments omit it. */
+  readonly paymentMethodStatus?: string;
+  readonly [key: string]: unknown;
+}
+
+/** Self-serve paid plans exposed through hosted checkout. */
+export type BillingCheckoutPlanKey = "pro" | "team";
+
+export interface BillingCheckoutRequest {
+  readonly planKey: BillingCheckoutPlanKey;
+  /** Optional return URL after successful hosted checkout. */
+  readonly successUrl?: string;
+  /** Optional return URL after checkout cancellation. */
+  readonly cancelUrl?: string;
+  /** Optional caller-stable key so a retry does not create a second hosted session. */
+  readonly idempotencyKey?: string;
+}
+
+export interface BillingPortalRequest {
+  /** Optional return URL after leaving the hosted billing portal. */
+  readonly returnUrl?: string;
+}
+
+/** Hosted checkout/portal session. The client should open `url`. */
+export interface BillingHostedSession {
+  readonly url: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * One row of the workspace credit ledger as returned by
+ * `GET /api/billing/ledger` (newest first). `amountUsd` is signed: top-ups are
+ * positive, run charges negative. Tolerant of additive server fields.
+ */
+export interface BillingLedgerEntry {
+  readonly id: string;
+  /** e.g. `top_up`, `run_charge`. Open server vocabulary. */
+  readonly entryType: string;
+  readonly amountUsd: number;
+  readonly currency: string;
+  /** The run this entry charges, `null` for non-run entries. */
+  readonly runId?: string | null;
+  readonly description?: string | null;
+  readonly createdBy?: string;
+  readonly createdAt: string;
+  readonly [key: string]: unknown;
+}
+
+/** Query for the billing ledger read. `limit` is clamped server-side to [1, 100] (default 25). */
+export interface BillingLedgerQuery {
+  readonly limit?: number;
+}
+
+/** One page of recent ledger rows (newest first). Not cursor-paged — `limit` bounds the read. */
+export interface BillingLedgerPage {
+  readonly entries: readonly BillingLedgerEntry[];
+}
+
+/**
+ * The workspace webhook signing secret reveal — `POST /api/webhook/signing-secret`.
+ * `whsec` is the Standard-Webhooks style `whsec_<base64>` string that
+ * `verifyAexWebhook` accepts as `secret`. The endpoint reveals the current
+ * secret, CREATING one on first use; it does not rotate (a repeat call returns
+ * the same value). POST (not GET) so every reveal is a logged action.
+ */
+export interface WebhookSigningSecret {
+  readonly whsec: string;
 }

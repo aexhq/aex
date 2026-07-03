@@ -1,6 +1,6 @@
 /**
  * Locks the clean public provider surface as it appears inside a clean
- * `bun add @aexhq/sdk` tempdir.
+ * `npm i @aexhq/sdk` tempdir.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

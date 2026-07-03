@@ -5,10 +5,9 @@ title: Limits & quotas
 # Limits & quotas
 
 These are the hard ceilings and caps that bound a run, a workspace, and a single
-request. Every value is mirrored from a single source-of-truth constant; the
-constant file is authoritative and this page is generated documentation, not a
-second source of truth. If a value here ever disagrees with that constant,
-the constant wins.
+request. Every value is mirrored from a single source-of-truth constant in the
+platform's limits module; this page is hand-maintained against those constants.
+If a value here ever disagrees with the constant, the constant wins.
 
 Each row is named by its source-of-truth constant. For the values that apply
 when you omit an option, see
@@ -26,7 +25,7 @@ And whether you can **raise** it: per-run option, per-plan, or no.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Maximum run timeout | 6 hours | aex policy | Per plan (billing-driven) | `RUN_MAX_TIMEOUT_MS` |
+| Maximum run timeout | 8 hours (also the default when `timeout` is omitted) | aex policy | Per plan (billing-driven) | `RUN_MAX_TIMEOUT_MS` |
 | Minimum run timeout | 1 minute | aex policy | No (floor) | `RUN_MIN_TIMEOUT_MS` |
 | Per-call exec timeout (default) | 30 minutes | aex policy | Per-call via the tool call's `timeoutMs` | `RUN_DEFAULT_EXEC_TIMEOUT_MS` |
 | MCP connect timeout (default) | 30 seconds | aex policy | Per-port via `connectTimeoutMs` | `RUN_DEFAULT_MCP_CONNECT_TIMEOUT_MS` |
@@ -43,8 +42,8 @@ silently lost.
 | --- | --- | --- | --- | --- |
 | Capture wall-clock budget | 1 hour | aex policy | No (hard ceiling) | `RUN_CAPTURE_DEFAULT_TIMEOUT_MS` |
 | Max files captured | 50,000 | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_FILES` |
-| Max bytes per captured file | 1 TB | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_FILE_BYTES` |
-| Max total captured bytes | 1 TB | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_TOTAL_BYTES` |
+| Max bytes per captured file | 500 GB (decimal) | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_FILE_BYTES` |
+| Max total captured bytes | 500 GB (decimal) | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_TOTAL_BYTES` |
 
 ### Tool output caps (per run)
 
@@ -74,9 +73,11 @@ silently lost.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Workspace storage cap | 50 GiB (admins uncapped — not a customer entitlement) | Workspace default | Per-plane via env `AEX_WORKSPACE_STORAGE_CAP_BYTES` | `WORKSPACE_DEFAULT_STORAGE_CAP_BYTES` |
-| Max concurrent runs per workspace | Advisory — there is no hard per-workspace concurrent-run cap constant; concurrency is bounded by plan, the subagent child-run cap, and provider/platform throughput rather than a fixed number. | aex policy | n/a | — |
-| Skill bundle max compressed size (`.zip`) | 100 GB | Workspace default | Per-workspace (plan/env) | `WORKSPACE_SKILL_BUNDLE_MAX_COMPRESSED_BYTES` |
+| Workspace storage cap | 500 GB (decimal; admins uncapped — not a customer entitlement) | Workspace default | Per-plane via env `AEX_WORKSPACE_STORAGE_CAP_BYTES` | `WORKSPACE_DEFAULT_STORAGE_CAP_BYTES` |
+| Max concurrent runs per workspace | **50** live (non-terminal) root runs by default; hard platform ceiling **200**. One more submit past the cap fails with `429 workspace_concurrency_exceeded` (see [Errors](errors.md)). Subagent children are governed separately by the per-lineage caps below. | Workspace default | Per-workspace override (contact support), clamped to the 200 ceiling | `WORKSPACE_DEFAULT_MAX_CONCURRENT_RUNS` / `WORKSPACE_MAX_CONCURRENT_RUNS_CEILING` |
+| Monthly workspace spend cap | **$250** per rolling UTC calendar month by default; `0` = unlimited. A submit past the cap fails with `402 workspace_spend_cap_exceeded` (see [Errors](errors.md)). | Workspace default | Per-workspace override (contact support) | `WORKSPACE_DEFAULT_SPEND_CAP_USD` |
+| Skill bundle max compressed size (`.zip`) | 10 GiB (enforced at upload by the SDK and re-enforced server-side) | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxCompressedBytes` |
+| Skill bundle max decompressed size (sum of uncompressed file sizes) | 50 MB | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxDecompressedBytes` |
 | Skill bundle max file entries | 1,000 | Workspace default | Per-workspace (plan/env) | `WORKSPACE_SKILL_BUNDLE_MAX_FILES` |
 | Skill bundle max directory depth (`a/b/c/d` = 4) | 16 | Workspace default | Per-workspace (plan/env) | `WORKSPACE_SKILL_BUNDLE_MAX_DEPTH` |
 | Skill bundle max entry path length | 512 characters | Workspace default | No (hard ceiling) | `WORKSPACE_SKILL_BUNDLE_MAX_PATH_LENGTH` |
@@ -84,17 +85,32 @@ silently lost.
 
 ### Rate limits (per workspace, per minute)
 
-Default values; each is overridable per-plane via the matching
-`AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
+Run submission has its own platform-enforced velocity cap: **120 submits per
+minute** per workspace by default (`0` = disabled). Past it, `POST /runs` fails
+with `429 workspace_submit_rate_exceeded` (see [Errors](errors.md)). It is
+overridable per-plane via `AEX_WORKSPACE_SUBMIT_RATE_PER_MIN` or per-workspace
+via support.
+
+The dashboard mutation actions below default as listed; each is overridable
+per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
 
 | Action | Default per minute | Source | Constant |
 | --- | --- | --- | --- |
-| Run submit | 60 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Run cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Run delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Signed output link | 120 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API token create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API token delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+
+### Introspecting your effective caps
+
+`aex.whoami()` (CLI: `aex whoami`) returns a `limits` object carrying the
+workspace's *effective* values for the caps above — `maxConcurrentRuns`,
+`submitRatePerMinute`, `spendCapUsd`, plus the live `monthSpendUsd`,
+`balanceUsd`, `balanceGraceFloorUsd`, and `paymentMethodStatus` — resolved by
+the same code the admission gates use, so you can anticipate a `429`/`402`
+before submitting. See [Authentication](authentication.md) and
+[Errors](errors.md).
 
 ## Request Scope
 

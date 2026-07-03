@@ -21,6 +21,7 @@
 import type { McpServerRef } from "./run-config.js";
 import { parseMcpServerRef } from "./run-config.js";
 import type { CleanupStatus } from "./status.js";
+import { CLEANUP_STATUSES } from "./status.js";
 import type {
   JsonValue,
   PlatformPackage,
@@ -265,6 +266,62 @@ function fallbackFlat(): RunUnitFlatSubmission {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Normalize a `GET /api/runs/:runId` payload into a RunUnit whose type contract
+ * holds AT RUNTIME. The managed (AWS) plane returns a LEAN record (scalars +
+ * costTelemetry only) and omits the aggregate collections; the RunUnit type
+ * declares those non-optional, so a naive cast leaves `unit.outputs` /
+ * `unit.events.totalCount` `undefined` and a typed consumer crashes on
+ * `.map()` / `.totalCount` (pre-launch edge-sweep F25). We fill the aggregates
+ * with their empty defaults so array/page access is always safe. NOTE: on the
+ * managed plane these summaries are best-effort — read `outputs()` / `events()`
+ * / `messages()` for the authoritative per-run data.
+ */
+export function normalizeRunUnit(raw: unknown): RunUnit {
+  const r: Record<string, unknown> = isRecord(raw) ? raw : {};
+  const eventsRaw: Record<string, unknown> = isRecord(r.events) ? r.events : {};
+  const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+  const arr = <T>(v: unknown): readonly T[] => (Array.isArray(v) ? (v as readonly T[]) : []);
+  return {
+    id: str(r.id) ?? "",
+    workspaceId: str(r.workspaceId) ?? "",
+    status: str(r.status) ?? "unknown",
+    ...(str(r.lifecyclePhase) ? { lifecyclePhase: r.lifecyclePhase as string } : {}),
+    cleanupStatus: (CLEANUP_STATUSES as readonly string[]).includes(r.cleanupStatus as string)
+      ? (r.cleanupStatus as CleanupStatus)
+      : "not_started",
+    createdAt: str(r.createdAt) ?? "",
+    updatedAt: str(r.updatedAt) ?? "",
+    ...(str(r.startedAt) ? { startedAt: r.startedAt as string } : {}),
+    ...(str(r.terminalAt) ? { terminalAt: r.terminalAt as string } : {}),
+    ...(str(r.deletedAt) ? { deletedAt: r.deletedAt as string } : {}),
+    attemptCount:
+      typeof r.attemptCount === "number"
+        ? r.attemptCount
+        : Array.isArray(r.attempts)
+          ? r.attempts.length
+          : 0,
+    submission: parseRunUnitSubmission(r.submission),
+    ...(isRecord(r.capsSnapshot) ? { capsSnapshot: r.capsSnapshot as Record<string, JsonValue> } : {}),
+    attempts: arr<RunUnitAttempt>(r.attempts),
+    events: {
+      entries: arr<RunUnitEvent>(eventsRaw.entries),
+      totalCount: typeof eventsRaw.totalCount === "number" ? eventsRaw.totalCount : 0,
+      truncated: eventsRaw.truncated === true,
+      ...(str(eventsRaw.nextCursor) ? { nextCursor: eventsRaw.nextCursor as string } : {})
+    },
+    rawEventPages: arr<RunUnitRawEventPage>(r.rawEventPages),
+    outputs: arr<RunUnitOutput>(r.outputs),
+    outputCaptureFailures: arr<RunUnitOutputCaptureFailure>(r.outputCaptureFailures),
+    ...(isRecord(r.costTelemetry)
+      ? { costTelemetry: r.costTelemetry as unknown as NonNullable<RunUnit["costTelemetry"]> }
+      : {}),
+    ...(isRecord(r.runtimeManifest)
+      ? { runtimeManifest: r.runtimeManifest as unknown as NonNullable<RunUnit["runtimeManifest"]> }
+      : {})
+  };
 }
 
 function coerceRunUnitModel(value: unknown) {

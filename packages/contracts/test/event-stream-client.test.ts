@@ -84,6 +84,42 @@ describe("streamCoordinatorEvents — live fanout", () => {
     expect(ws!.closed).toBe(true);
   });
 
+  it("stops on a managed-runtime session-park terminal (aex.session.idle) — F19 no-hang", async () => {
+    // A managed one-shot run PARKS (CUSTOM aex.session.idle) instead of emitting
+    // RUN_FINISHED. The default terminal predicate must treat that as terminal,
+    // else streamEnvelopes() over a finished managed run hangs on the watchdog.
+    const idle: AexEvent = {
+      specversion: "1.0",
+      id: "r:2",
+      source: "runtime",
+      type: "CUSTOM",
+      subject: "r",
+      time: new Date(2).toISOString(),
+      sequence: 2,
+      data: { name: "aex.session.idle", value: { state: "idle", reason: "complete" } }
+    };
+    let ws: FakeWebSocket | undefined;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/runs/r/subscribe",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url))
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) received.push(e.sequence);
+    })();
+
+    await flush();
+    ws!.message(evt(0));
+    ws!.message(evt(1));
+    ws!.message(idle);
+    await consume;
+
+    expect(received).toEqual([0, 1, 2]);
+    expect(ws!.closed).toBe(true);
+  });
+
   it("preserves existing WebSocket URL query parameters", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({

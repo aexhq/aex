@@ -9,7 +9,6 @@
     "fumadocs-core": "^16.9.3",
     "fumadocs-mdx": "^15.0.10",
     "fumadocs-ui": "^16.9.3",
-    "geist": "^1.7.0",
     "lucide-react": "0.562.0",
     "next": "16.2.6",
     "react": "19.2.6",

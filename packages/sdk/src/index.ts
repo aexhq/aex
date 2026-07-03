@@ -95,6 +95,14 @@ export type {
 // Runtime types
 export type {
   AgentsMdRecord as AgentsMdRecordWire,
+  BillingCheckoutPlanKey,
+  BillingCheckoutRequest,
+  BillingHostedSession,
+  BillingLedgerEntry,
+  BillingLedgerPage,
+  BillingLedgerQuery,
+  BillingPortalRequest,
+  BillingSummary,
   FileRecord as FileRecordWire,
   Output,
   OutputFileType,
@@ -133,6 +141,7 @@ export type {
   RuntimeManifest,
   SecretRecord,
   UsageSummary,
+  WebhookSigningSecret,
   WhoAmI
 } from "@aexhq/contracts";
 

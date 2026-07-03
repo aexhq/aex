@@ -110,22 +110,32 @@ collected session turn. The returned `runId` is the session id.
 
 ## Terminal events vs. the run record
 
-A session turn emits a terminal **event** — `RUN_FINISHED`
-(success) or `RUN_ERROR` — when
-the agent's stream ends. This is an AG-UI *render-complete* signal: the runner
-emits it **before** aex commits the authoritative session record, so an
-`aex.sessions.get(id)` issued the instant you observe `RUN_FINISHED` can still
-read a non-parked status for a moment. Treat the terminal event as the
-lowest-latency "stop the spinner" signal — **not** a read-consistency barrier.
+Two families of events can end a turn's stream, and which one you see depends
+on how the turn ends:
 
-Two facts make this easy to work with:
+- **AG-UI terminals** — `RUN_FINISHED` / `RUN_ERROR`. These are *render-complete*
+  signals emitted by the agent stream itself. On the managed plane a normal
+  session turn usually does **not** emit `RUN_FINISHED`: the session *parks*
+  instead (see below). Expect `RUN_ERROR` on stream-level failures, and treat
+  `RUN_FINISHED` — when it does appear — as a low-latency "stop the spinner"
+  hint, not a read-consistency barrier.
+- **`aex.session.*` park terminals** — `CUSTOM` events named `aex.session.idle`,
+  `aex.session.suspended`, or `aex.session.error`. On the managed plane these
+  are what actually end a turn: the session parks with the matching status, and
+  by the time the park event is broadcast the session record has already
+  reached that status. This is the terminal you should expect from a managed
+  run's event stream.
 
-- **Outputs are already durable at the terminal event.** The runner uploads every
-  output before it emits the terminal event, and `session.outputs().list()` / downloads
-  read object storage directly — so the moment you see `RUN_FINISHED` the outputs
-  are complete and readable.
-- **The session _record_ settles a beat later.** To read the authoritative status
-  consistently, don't key off the terminal event — use one of:
+The SDK's helpers cover both families so you never have to switch on the plane:
+
+- `isRunTerminal(event)` — true for the AG-UI `RUN_FINISHED` / `RUN_ERROR` pair.
+- `isRunSettled(event)` — true for the `aex.run.settled` settle barrier **and**
+  for any `aex.session.*` park terminal. The managed plane does not broadcast a
+  separate `aex.run.settled` barrier — the park event plays that role — so
+  `isRunSettled` is the one guard that reliably means "this stream is done and
+  the record is authoritative".
+
+To read the authoritative status consistently, use one of:
 
 ```ts
 // Session record path: send a turn, then wait for the session to park.
@@ -135,18 +145,21 @@ const record = await session.wait(); // the parked session record
 ```
 
 ```ts
-// Live events AND a settle-consistent end: the iterator keeps reading past
-// RUN_FINISHED until the post-mirror barrier, so the record is terminal when it ends.
+// Live events AND a settle-consistent end: the iterator ends on the settle
+// barrier OR the aex.session.* park terminal, whichever the plane emits —
+// so when it ends, the session record is already parked/terminal.
 for await (const event of session.events().streamEnvelopes({ settleConsistent: true })) {
   // render events live…
 }
-const settled = await aex.sessions.get(session.id); // guaranteed terminal here
+const settled = await aex.sessions.get(session.id); // parked/terminal here
 ```
 
-Under the hood the coordinator broadcasts one `aex.run.settled` CUSTOM event as a
-run's last stream event, immediately after the durable record commits.
-`settleConsistent` ends the stream on it; on a raw stream, detect it with
-`isRunSettled(event)`.
+`settleConsistent: true` makes the iterator end exactly when `isRunSettled(event)`
+first fires; on a raw stream, apply `isRunSettled(event)` yourself. What it
+guarantees: when the stream ends, a subsequent `aex.sessions.get(id)` reads a
+parked/terminal status and `session.outputs().list()` is complete. Outputs are
+uploaded before the terminal is broadcast, so they are readable the moment the
+stream ends.
 
 ## Temporary event archive links
 
