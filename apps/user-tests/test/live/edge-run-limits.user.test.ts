@@ -207,7 +207,7 @@ describe("live dev — per-run limit / override edge cases (installed SDK)", () 
   );
 
   it(
-    "PRODUCT_BUG: session-create accepts INVALID runtime-size tokens at submit (should reject the closed preset set)",
+    "rejects invalid runtime-size tokens client-side with RunConfigValidationError",
     async () => {
       // Evidence-gathering: for each token, submit and capture whether it was
       // accepted, plus what the server RECORDED for the size, so we can tell
@@ -241,23 +241,20 @@ describe("live dev — per-run limit / override edge cases (installed SDK)", () 
       // eslint-disable-next-line no-console
       console.log("[edge-run-limits] invalid-size verdicts:", JSON.stringify(result.results, null, 2));
 
-      // DOCUMENTED DEFECT (pins current dev behaviour): the closed RuntimeSize
-      // preset set is a wire contract with a `parseRuntimeSize` validator, yet
-      // `POST` session-create accepts UNKNOWN tokens and even a NON-STRING
-      // (4096) without error — a real session id is minted. The correct
-      // behaviour is a 4xx submit rejection. When the server is fixed to
-      // reject, these expectations flip and this test fires to prompt an update.
+      // The public RuntimeSize preset set is closed. The SDK now validates this
+      // before issuing HTTP, so bad tokens and wrong types must fail without
+      // minting a billable session.
       for (const v of result.results) {
         expect(
           v.thrown,
-          `EXPECTED-BUG runtime=${JSON.stringify(v.size)} is accepted (should be rejected): ${JSON.stringify(v)}`
-        ).toBe(false);
-        expect(typeof v.sessionId, `runtime=${JSON.stringify(v.size)} minted a session`).toBe("string");
-        // Corroboration: the bogus size is not even echoed on the record.
-        expect(
-          (v.reflect as { recordRuntimeSize?: unknown } | null)?.recordRuntimeSize ?? null,
-          `runtime=${JSON.stringify(v.size)} recorded size`
-        ).toBeNull();
+          `runtime=${JSON.stringify(v.size)} should be rejected before submit: ${JSON.stringify(v)}`
+        ).toBe(true);
+        expect(v.name, `runtime=${JSON.stringify(v.size)} error name: ${JSON.stringify(v)}`).toBe("RunConfigValidationError");
+        expect(v.code, `runtime=${JSON.stringify(v.size)} error code: ${JSON.stringify(v)}`).toBe("RUN_CONFIG_INVALID");
+        expect(v.status ?? null, `runtime=${JSON.stringify(v.size)} error status: ${JSON.stringify(v)}`).toBeNull();
+        expect(String(v.message), `runtime=${JSON.stringify(v.size)} error message: ${JSON.stringify(v)}`).toMatch(/runtimeSize must be one of/i);
+        expect(v.reflect, `runtime=${JSON.stringify(v.size)} should not reach unit reflection`).toBeNull();
+        expect((v as { sessionId?: unknown }).sessionId, `runtime=${JSON.stringify(v.size)} minted a session`).toBeUndefined();
       }
     },
     170_000
@@ -313,7 +310,7 @@ describe("live dev — per-run limit / override edge cases (installed SDK)", () 
   // timeout override (server-validated duration string).
   // -------------------------------------------------------------------------
   it(
-    "PRODUCT_BUG: session-create does not validate the timeout override at submit (malformed + out-of-range accepted)",
+    "rejects malformed and out-of-range timeout overrides client-side; accepts valid timeout",
     async () => {
       const result = await probe<{
         malformed: Verdict;
@@ -331,15 +328,27 @@ describe("live dev — per-run limit / override edge cases (installed SDK)", () 
       // eslint-disable-next-line no-console
       console.log("[edge-run-limits] timeout verdicts:", JSON.stringify(result));
 
-      // DOCUMENTED DEFECT (pins current dev behaviour): the public contract
-      // parses `timeout` with `parseRunTimeout` (malformed => error; bounds
-      // 1m..8h), but session-create accepts a MALFORMED duration ("banana")
-      // and OUT-OF-RANGE values ("10s" below the 1m floor, "99h" above the 6h
-      // ceiling) without error. A user who fat-fingers a deadline gets no
-      // signal and silently runs on the platform default.
-      expect(result.malformed.thrown, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe(false);
-      expect(result.tooShort.thrown, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe(false);
-      expect(result.tooLong.thrown, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe(false);
+      // The public timeout contract is validated before HTTP: malformed values
+      // and values outside the 1m..8h bounds must fail without creating a
+      // session. A valid in-range duration is the control.
+      expect(result.malformed.thrown, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe(true);
+      expect(result.malformed.name, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe("RunConfigValidationError");
+      expect(result.malformed.code, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe("RUN_CONFIG_INVALID");
+      expect(result.malformed.status ?? null, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBeNull();
+      expect(String(result.malformed.message), `malformed timeout: ${JSON.stringify(result.malformed)}`).toMatch(/invalid duration/i);
+
+      expect(result.tooShort.thrown, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe(true);
+      expect(result.tooShort.name, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe("RunConfigValidationError");
+      expect(result.tooShort.code, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe("RUN_CONFIG_INVALID");
+      expect(result.tooShort.status ?? null, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBeNull();
+      expect(String(result.tooShort.message), `too-short timeout: ${JSON.stringify(result.tooShort)}`).toMatch(/at least 60000ms/i);
+
+      expect(result.tooLong.thrown, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe(true);
+      expect(result.tooLong.name, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe("RunConfigValidationError");
+      expect(result.tooLong.code, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe("RUN_CONFIG_INVALID");
+      expect(result.tooLong.status ?? null, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBeNull();
+      expect(String(result.tooLong.message), `too-long timeout: ${JSON.stringify(result.tooLong)}`).toMatch(/at most 28800000ms/i);
+
       // A valid in-range duration is (also) accepted — the control.
       expect(result.valid.thrown, `valid timeout: ${JSON.stringify(result.valid)}`).toBe(false);
     },

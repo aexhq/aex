@@ -273,7 +273,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(base.streamErrors.length).toBe(0);
   });
 
-  it("case B — streamEnvelopes({from:0}) replays a finished run in order; documents the no-terminal HANG; polling stream() agrees", async () => {
+  it("case B — streamEnvelopes({from:0}) replays a finished run in order and terminates on session-idle; polling stream() agrees", async () => {
     const r = await spawnScript<{
       readonly envTypes: Record<string, number>;
       readonly envCustomNames: readonly string[];
@@ -290,11 +290,9 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       "edge-evtstream-replay0.mjs",
       `
       const session = await client.sessions.open(RUN_ID);
-      // 1. streamEnvelopes({from:0}) on a FINISHED session run. The default terminal
-      //    predicate is RUN_FINISHED/RUN_ERROR — but a session turn emits NEITHER
-      //    (its terminal is CUSTOM aex.session.idle), so the iterator never
-      //    self-terminates. We hard-guard at 30s and record whether it hung. We do
-      //    NOT break on aex.session.idle here so the DEFAULT behavior is observed.
+      // 1. streamEnvelopes({from:0}) on a FINISHED session run. Session turns emit
+      //    CUSTOM aex.session.idle rather than RUN_FINISHED; the SDK treats that
+      //    custom event as terminal so replay ends naturally.
       const envEvents = [];
       const envSeqs = [];
       const ac = new AbortController();
@@ -303,7 +301,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
         envEvents.push(ev);
         envSeqs.push(ev.sequence);
-        // safety: if a RUN_FINISHED ever appears, stop (would mean the bug is fixed)
+        // safety: if a run-level terminal ever appears, stop too.
         if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
       }
       clearTimeout(guard);
@@ -370,13 +368,12 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.envAnalyze.monotonic).toBe(true);
     expect(r.envAnalyze.dupCount).toBe(0);
 
-    // KNOWN DEFECT (reported): a session run emits no RUN_FINISHED and no
-    // aex.run.settled, so the DOCUMENTED default streamEnvelopes() terminal never
-    // arrives and the iterator HANGS (guard fires) instead of ending after replay.
-    // These assertions encode the current defective reality; they will flip when
-    // the platform emits a real terminal, which is the intended signal to revisit.
+    // The default session-envelope stream terminates on CUSTOM aex.session.idle,
+    // even though session runs still do not emit run-level RUN_FINISHED/RUN_ERROR.
     expect(r.rfPresent).toBe(false);
-    expect(r.endedNaturally).toBe(false);
+    expect(r.endedNaturally).toBe(true);
+    // settleConsistent waits for the post-mirror aex.run.settled barrier, which
+    // session turns still do not emit on this path.
     expect(r.settleHasBarrier).toBe(false);
     expect(r.settleEndedNaturally).toBe(false);
 

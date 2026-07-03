@@ -192,6 +192,41 @@ async function runScenario(install: InstallResult, scriptName: string, body: str
   return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
 }
 
+function isPreCreateTransportFailure(o: Observation): boolean {
+  return (
+    o.runId === null &&
+    o.threw !== null &&
+    /socket connection was closed unexpectedly|fetch failed|ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|terminated/i.test(o.threw)
+  );
+}
+
+async function runScenarioWithPreCreateRetry(
+  install: InstallResult,
+  scriptName: string,
+  body: string
+): Promise<{ observation: Observation; stdout: string }> {
+  const maxAttempts = 3;
+  let last: { observation: Observation; stdout: string } | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = await runScenario(install, scriptName, body);
+    last = result;
+    if (!isPreCreateTransportFailure(result.observation) || attempt === maxAttempts) {
+      return result;
+    }
+
+    // No runId means the submit never created a debuggable live run artifact.
+    // Retry only this transport gap; all post-create failures stay single-shot.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[edge-agentsmd-files] ${scriptName} pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${result.observation.threw}`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+  }
+
+  return last!;
+}
+
 function tag(): string {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
@@ -243,7 +278,7 @@ await runOne({
   idempotencyKey: "edge-agentsmd-steer-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-agentsmd-steer.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-agentsmd-steer.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
@@ -277,7 +312,7 @@ await runOne({
   idempotencyKey: "edge-file-read-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-file-read.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-file-read.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
@@ -314,7 +349,7 @@ await runOne({
   idempotencyKey: "edge-agentsmd-large-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-agentsmd-large.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-agentsmd-large.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
@@ -351,7 +386,7 @@ await runOne({
   idempotencyKey: "edge-file-binary-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-file-binary.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-file-binary.mjs", body);
       const dump = diag(observation) + `\nexpectedDigest=${expectedDigest}`;
 
       expect(observation.threw, dump).toBeNull();
@@ -398,7 +433,7 @@ await runOne({
   idempotencyKey: "edge-compose-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-compose.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-compose.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
@@ -440,7 +475,7 @@ await runOne({
   idempotencyKey: "edge-mountpath-escape-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-mountpath-escape.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-mountpath-escape.mjs", body);
       const dump = diag(observation);
       const evidence = toolText(observation) + " " + observation.assistantText;
 
@@ -483,7 +518,7 @@ await runOne({
   idempotencyKey: "edge-filenames-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-filenames.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-filenames.mjs", body);
       const dump = diag(observation);
       const seen = norm(toolText(observation) + " " + observation.assistantText);
 

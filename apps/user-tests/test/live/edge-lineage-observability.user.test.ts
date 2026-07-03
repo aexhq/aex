@@ -19,7 +19,7 @@
  * runId was returned, and the DeepSeek key never leaks into ANY SDK-visible
  * surface (parent OR child events).
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_KEY (mapped by the runner),
+ * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
  * MODEL. Cost-safe: one parent + one tiny child, DeepSeek, tiny prompts.
  */
 import { writeFileSync } from "node:fs";
@@ -35,9 +35,17 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function requireAnyEnv(...names: string[]): string {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value && value.length > 0) return value;
+  }
+  throw new Error(`user-tests live (lineage): required env ${names.join(" or ")} is missing.`);
+}
+
 const apiUrl = requireEnv("AEX_API_URL");
 const apiToken = requireEnv("AEX_API_TOKEN");
-const deepseekKey = requireEnv("DEEPSEEK_KEY");
+const deepseekKey = requireAnyEnv("DEEPSEEK_API_KEY", "DEEPSEEK_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 const OUT_JSON = "C:/Users/luowe/AppData/Local/Temp/claude/C--Users-luowe-workspace-aex/61a72653-ab6e-4621-bcae-b287c42c2945/scratchpad/lineage-wave1-out.json";
@@ -216,6 +224,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
         AEX_API_TOKEN: apiToken,
+        DEEPSEEK_API_KEY: deepseekKey,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model,
         PARENT_MARKER: parentMarker,

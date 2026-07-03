@@ -87,6 +87,8 @@ const model = process.env.MODEL;
 interface ValidationCaseResult {
   readonly name: string;
   readonly rejected: boolean;
+  readonly code?: string;
+  readonly errorName?: string;
   readonly status?: number;
   readonly message?: string;
   readonly sessionId?: string;
@@ -96,7 +98,7 @@ interface ValidationScriptResult {
   readonly emptyLedger: { readonly ok: boolean; readonly count?: number; readonly message?: string };
 }
 
-describe("live dev — run webhooks edge cases", () => {
+describe("live hosted — run webhooks edge cases", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -136,6 +138,8 @@ describe("live dev — run webhooks edge cases", () => {
             results.push({
               name: c.name,
               rejected: true,
+              code: (e && typeof e.code === "string") ? e.code : undefined,
+              errorName: (e && typeof e.name === "string") ? e.name : undefined,
               status: (e && typeof e.status === "number") ? e.status : undefined,
               message: String((e && e.message) || e).slice(0, 400)
             });
@@ -355,6 +359,8 @@ describe("live dev — run webhooks edge cases", () => {
             rec.firstDelivery = (Array.isArray(deliveries) && deliveries[0]) ? deliveries[0] : null;
           } catch (e) {
             rec.submitRejected = true;
+            rec.code = (e && typeof e.code === "string") ? e.code : undefined;
+            rec.errorName = (e && typeof e.name === "string") ? e.name : undefined;
             rec.status = (e && typeof e.status === "number") ? e.status : undefined;
             rec.message = String((e && e.message) || e).slice(0, 400);
           }
@@ -369,6 +375,8 @@ describe("live dev — run webhooks edge cases", () => {
           url: string;
           submitRejected?: boolean;
           runOk?: boolean;
+          code?: string;
+          errorName?: string;
           status?: number;
           message?: string;
           deliveryCount?: number;
@@ -393,15 +401,24 @@ describe("live dev — run webhooks edge cases", () => {
 
       expect(out.length).toBe(3);
       for (const rec of out) {
-        // If rejected at submit, the rejection must be a clean 4xx; N/A (true) for
-        // accepted records. One unconditional expect — a rejected record with a
-        // missing/non-4xx status FAILS rather than being silently skipped.
+        // If rejected by the API, the rejection must be a clean 4xx. The SDK also
+        // rejects malformed webhook URLs client-side before HTTP; that is clean
+        // when it carries the typed run-config validation code and a webhook.url
+        // message. N/A (true) for accepted records.
+        const clientSideValidation =
+          rec.submitRejected === true &&
+          rec.status === undefined &&
+          rec.errorName === "RunConfigValidationError" &&
+          rec.code === "RUN_CONFIG_INVALID" &&
+          typeof rec.message === "string" &&
+          rec.message.includes("webhook.url");
         const rejectionIsClean =
           !rec.submitRejected ||
+          clientSideValidation ||
           (typeof rec.status === "number" && rec.status >= 400 && rec.status < 500);
         expect(
           rejectionIsClean,
-          `SSRF ${rec.name}: if rejected at submit it must carry a clean 4xx status: ${JSON.stringify(rec)}`
+          `SSRF ${rec.name}: submit rejection must be a clean 4xx or typed SDK validation: ${JSON.stringify(rec)}`
         ).toBe(true);
 
         // Security invariant (holds whether the URL was submit-rejected, delivery-

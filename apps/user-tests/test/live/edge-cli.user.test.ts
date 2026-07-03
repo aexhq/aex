@@ -137,13 +137,10 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     // the server reason is surfaced so the user is not left blind
     expect(typeof err["message"], diag("aex whoami (garbage token)", r)).toBe("string");
     expect(String(err["message"]).length, diag("aex whoami (garbage token)", r)).toBeGreaterThan(0);
-    // FINDING: 400 malformed_token carries NO remedy hint (remedyForStatus only
-    // maps 401/403/404/429/5xx). A 401 (well-formed-but-invalid) attaches the
-    // auth remedy. Assert the exact relationship unconditionally: an
-    // auth-actionable remedy is present exactly when the status is 401 (the
-    // observed 400 has none).
+    // The CLI should attach an actionable auth remedy for both malformed and
+    // invalid token paths so the user is not left with a bare server reason.
     const remedyText = typeof err["remedy"] === "string" ? (err["remedy"] as string) : "";
-    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (garbage token)", r)).toBe(status === 401);
+    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (garbage token)", r)).toBe(true);
     // the bad token itself must not be echoed back
     expect(r.stdout + r.stderr).not.toContain(badToken);
     // no raw stack trace
@@ -168,11 +165,10 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     const status = Number(err["status"] ?? 0);
     expect(status, diag("aex whoami (mutated token)", r)).toBeGreaterThanOrEqual(400);
     expect(status, diag("aex whoami (mutated token)", r)).toBeLessThan(500);
-    // If dev classifies this as 401 (recognized format, wrong value) the CLI
-    // must attach the auth remedy; a 400 (still malformed) has none. Asserted
-    // unconditionally as an iff relationship.
+    // The CLI should attach an actionable auth remedy regardless of whether the
+    // API classifies the mutated token as malformed (400) or unauthorized (401).
     const remedyText = typeof err["remedy"] === "string" ? (err["remedy"] as string) : "";
-    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (mutated token)", r)).toBe(status === 401);
+    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (mutated token)", r)).toBe(true);
     // neither the real nor the mutated token may appear in output
     expect(r.stdout + r.stderr).not.toContain(mutated);
     assertNoSecretLeak("whoami-mutated", r);
