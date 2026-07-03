@@ -101,9 +101,37 @@ describe("live user-test release gate", () => {
     expect(source).toContain('managedHeavySkillName("beta", "deepseek")');
     expect(source).toContain('managedHeavySkillName("gamma", "deepseek")');
     expect(source).toContain("produced no skill_loaded event");
+    expect(source).toContain('return isSessionIdle(e) ? "aex.session.idle" : e.type;');
+    expect(source).toContain('expect(["RUN_FINISHED", "aex.session.idle"]).toContain(result.terminalKind);');
+    expect(source).not.toContain('"RUN_FINISHED",\n  "TEXT_MESSAGE_CONTENT"');
     expect(source).not.toContain('name: "heavy-alpha-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-beta-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-gamma-${spec.provider}"');
     expect(source).not.toContain('["heavy-alpha-managed", "heavy-beta-managed", "heavy-gamma-managed"]');
+  });
+
+  it("keeps live API fuzz region-routing probes from following redirects", () => {
+    const source = read("apps/user-tests/test/live/live-api-fuzz.test.ts");
+
+    expect(source).toContain("redirect?: RequestRedirect");
+    expect(source).toContain('redirect: opts.redirect ?? "follow"');
+    expect(source).toContain('token, redirect: "manual"');
+  });
+
+  it("keeps event-stream settle consistency aligned with session-park terminals", () => {
+    const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
+
+    expect(source).toContain("stream ends at the session-park terminal");
+    expect(source).toContain("expect(r.settleHasBarrier).toBe(false);");
+    expect(source).toContain("expect(r.settleEndedNaturally).toBe(true);");
+  });
+
+  it("keeps lineage observability scratch output inside the live-test sandbox", () => {
+    const source = read("apps/user-tests/test/live/edge-lineage-observability.user.test.ts");
+
+    expect(source).toContain('writeFileSync(join(install.installDir, "lineage-wave1-out.json")');
+    expect(source).not.toContain("C:/Users/");
+    expect(source).not.toContain("/tmp/claude/");
+    expect(source).not.toContain("scratchpad/lineage-wave1-out.json");
   });
 });

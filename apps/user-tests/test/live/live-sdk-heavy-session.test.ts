@@ -39,13 +39,15 @@
  *
  * Managed cells (full assertion set — "validate all aspects"):
  *   - run reached `succeeded`; runtime/provider echo back correctly.
- *   - event log is framed RUN_STARTED … RUN_FINISHED, terminal reason
- *     "complete", runtimeExitCode 0-or-absent.
+ *   - event log is framed RUN_STARTED … terminal, where managed session turns
+ *     may park with CUSTOM `aex.session.idle` instead of RUN_FINISHED; terminal
+ *     reason is "complete", runtimeExitCode 0-or-absent.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
  *     superset of every type aex emits on a successful run —
- *     RUN_STARTED, RUN_FINISHED, TEXT_MESSAGE_CONTENT, TOOL_CALL_START,
- *     TOOL_CALL_RESULT, CUSTOM (RUN_ERROR is failure-only and is covered
- *     by live-sdk-outputs-and-failures.test.ts). See AEX_EVENT_TYPES
+ *     RUN_STARTED, TEXT_MESSAGE_CONTENT, TOOL_CALL_START, TOOL_CALL_RESULT,
+ *     CUSTOM (RUN_FINISHED may be absent on parked sessions; RUN_ERROR is
+ *     failure-only and is covered by live-sdk-outputs-and-failures.test.ts).
+ *     See AEX_EVENT_TYPES
  *     in packages/contracts/src/event-envelope.ts — the single source of
  *     truth this list is kept in sync with.
  *   - the agent actually used tools (TOOL_CALL_START/RESULT counts > 0).
@@ -110,7 +112,6 @@ function managedHeavySkillName(role: "alpha" | "beta" | "gamma", provider: CaseS
 // imports @aexhq/* workspace packages.
 const EXPECTED_SUCCESS_EVENT_TYPES = [
   "RUN_STARTED",
-  "RUN_FINISHED",
   "TEXT_MESSAGE_CONTENT",
   "TOOL_CALL_START",
   "TOOL_CALL_RESULT",
@@ -328,6 +329,22 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const value = e && e.data ? e.data.value : null;
       return value && typeof value === "object" ? value : {};
     }
+    function isSessionIdle(e) {
+      return customName(e) === "aex.session.idle";
+    }
+    function terminalKindOf(e) {
+      if (!e) return null;
+      return isSessionIdle(e) ? "aex.session.idle" : e.type;
+    }
+    function terminalDataOf(e) {
+      if (!e) return null;
+      if (!isSessionIdle(e)) return e.data ?? null;
+      const value = customValue(e);
+      return {
+        ...(e.data && typeof e.data === "object" ? e.data : {}),
+        reason: value.reason === "completed" ? "complete" : (value.reason ?? null)
+      };
+    }
     function skillLoadedName(e) {
       const value = customValue(e);
       if (
@@ -353,7 +370,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     const toolCallStartCount = events.filter((e) => e.type === "TOOL_CALL_START").length;
     const toolCallResultCount = events.filter((e) => e.type === "TOOL_CALL_RESULT").length;
 
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
+    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
@@ -393,8 +410,8 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       skillLoadedNames,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal ? terminal.type : null,
-      terminalData: terminal ? terminal.data : null,
+      terminalKind: terminalKindOf(terminal),
+      terminalData: terminalDataOf(terminal),
       outputCount: outputs.length,
       outputs: outputsCollected,
       outProbesFound: Array.from(outProbesFound),
@@ -485,15 +502,20 @@ function dumpCase(result: CaseResult): string {
 function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly [string, string, string]): void {
   const dump = (): string => dumpCase(result);
 
-  // Lifecycle: succeeded, framed RUN_STARTED … RUN_FINISHED, terminal
-  // reason "complete", runtimeExitCode 0-or-absent.
+  // Lifecycle: succeeded, framed RUN_STARTED … terminal, terminal reason
+  // "complete", runtimeExitCode 0-or-absent. Managed session turns park with
+  // CUSTOM aex.session.idle rather than emitting RUN_FINISHED.
   if (result.runStatus !== "succeeded") {
     throw new Error(`expected runStatus "succeeded" but got "${result.runStatus}"\n\n${dump()}`);
   }
-  expect(result.terminalKind).toBe("RUN_FINISHED");
+  expect(["RUN_FINISHED", "aex.session.idle"]).toContain(result.terminalKind);
   expect(result.eventKinds).toContain("RUN_STARTED");
-  expect(result.eventKinds).toContain("RUN_FINISHED");
-  expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
+  if (result.terminalKind === "RUN_FINISHED") {
+    expect(result.eventKinds).toContain("RUN_FINISHED");
+    expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
+  } else {
+    expect(result.eventKinds).toContain("CUSTOM");
+  }
   const terminal = result.terminalData ?? {};
   if (terminal["reason"] !== "complete") {
     throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dump()}`);

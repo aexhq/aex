@@ -63,7 +63,7 @@ const findings: string[] = [];
 async function call(
   method: string,
   path: string,
-  opts: { token?: string | null; body?: string; contentType?: string } = {}
+  opts: { token?: string | null; body?: string; contentType?: string; redirect?: RequestRedirect } = {}
 ): Promise<Res> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
@@ -71,7 +71,12 @@ async function call(
   let last: Res = { status: 0, body: "" };
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const r = await fetch(`${BASE}${path}`, { method, headers, ...(opts.body !== undefined ? { body: opts.body } : {}) });
+      const r = await fetch(`${BASE}${path}`, {
+        method,
+        headers,
+        redirect: opts.redirect ?? "follow",
+        ...(opts.body !== undefined ? { body: opts.body } : {})
+      });
       const text = await r.text().catch(() => "");
       last = { status: r.status, body: text };
       // 503 = Aurora min-ACU-0 cold-resume (AWS) → retryable infra, not a finding.
@@ -145,7 +150,7 @@ describe("LIVE API adversarial fuzz", () => {
         fc.boolean(),
         async (plane, code, wsId, fixCrc) => {
           const token = craftToken(plane, code, wsId, "feedfacecafebeef", fixCrc);
-          const r = await call("GET", "/api/whoami", { token });
+          const r = await call("GET", "/api/whoami", { token, redirect: "manual" });
           expectNo5xx(`crafted-token ${plane}/${code}/crc:${fixCrc}`, r);
           // 400 = malformed_token (bad CRC / structure); 308 = region redirect;
           // 401/403 = unauthorized; 451 = residency. Never 5xx, never 200.

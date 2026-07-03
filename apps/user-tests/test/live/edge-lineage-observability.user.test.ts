@@ -48,8 +48,6 @@ const apiToken = requireEnv("AEX_API_TOKEN");
 const deepseekKey = requireAnyEnv("DEEPSEEK_API_KEY", "DEEPSEEK_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
-const OUT_JSON = "C:/Users/luowe/AppData/Local/Temp/claude/C--Users-luowe-workspace-aex/61a72653-ab6e-4621-bcae-b287c42c2945/scratchpad/lineage-wave1-out.json";
-
 interface Wave1Result {
   readonly parentRunId: string;
   readonly parentStatus: string;
@@ -250,7 +248,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
       }
 
       const result = JSON.parse(child.stdout.trim()) as Wave1Result;
-      writeFileSync(OUT_JSON, JSON.stringify(result, null, 2));
+      writeFileSync(join(install.installDir, "lineage-wave1-out.json"), JSON.stringify(result, null, 2));
 
       const dump = JSON.stringify(result, null, 2);
 

@@ -372,10 +372,12 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // even though session runs still do not emit run-level RUN_FINISHED/RUN_ERROR.
     expect(r.rfPresent).toBe(false);
     expect(r.endedNaturally).toBe(true);
-    // settleConsistent waits for the post-mirror aex.run.settled barrier, which
-    // session turns still do not emit on this path.
+    // settleConsistent waits for the post-mirror aex.run.settled barrier on
+    // run-finished paths. Managed session turns do not emit that barrier; the
+    // stream ends at the session-park terminal because the record is already
+    // terminal by then.
     expect(r.settleHasBarrier).toBe(false);
-    expect(r.settleEndedNaturally).toBe(false);
+    expect(r.settleEndedNaturally).toBe(true);
 
     // Polling stream() (RunEvent path) self-terminates on the parked session
     // (unlike streamEnvelopes) and agrees on the presence of assistant text.
