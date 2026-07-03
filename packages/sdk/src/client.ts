@@ -1098,6 +1098,9 @@ function durationMs(start: string | undefined, end: string | undefined): number 
 }
 
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
+  if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+    return true;
+  }
   const name = customName(event);
   if (
     name !== "aex.session.idle" &&
@@ -1118,6 +1121,8 @@ function terminalSessionStatusFromEvents(events: readonly SessionEvent[], turnSe
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]!;
     if (!isSessionTurnTerminalEvent(event, turnSeq)) continue;
+    if (event.type === "RUN_ERROR") return "error";
+    if (event.type === "RUN_FINISHED") return "idle";
     const name = customName(event);
     if (name === "aex.session.idle") return "idle";
     if (name === "aex.session.suspended") return "suspended";

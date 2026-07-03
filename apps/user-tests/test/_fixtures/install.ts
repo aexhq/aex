@@ -358,7 +358,12 @@ export async function runCommand(
     });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`));
+      reject(
+        new Error(
+          `timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}\n` +
+            `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
+        )
+      );
     }, timeoutMs);
     child.stdout?.on("data", (chunk) => {
       stdout += chunk.toString();

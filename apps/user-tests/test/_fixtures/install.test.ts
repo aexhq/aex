@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveInstallSpec } from "./install.js";
+import { getBunCommand, resolveInstallSpec, runCommand } from "./install.js";
 
 describe("user-test install artifact resolution", () => {
   it("uses AEX_USER_TEST_TARBALL when set", async () => {
@@ -60,5 +63,26 @@ describe("user-test install artifact resolution", () => {
       spec: "/tmp/aex-local/aexhq-sdk-1.2.3.tgz",
       source: "local-pack"
     });
+  });
+
+  it("includes partial stdout and stderr when a child command times out", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aex-run-command-timeout-"));
+    try {
+      const script = join(dir, "timeout-diagnostics.mjs");
+      writeFileSync(
+        script,
+        [
+          'process.stdout.write("stdout-before-timeout\\n");',
+          'process.stderr.write("stderr-before-timeout\\n");',
+          "await new Promise((resolve) => setTimeout(resolve, 30_000));"
+        ].join("\n")
+      );
+
+      await expect(runCommand(getBunCommand(), [script], { timeoutMs: 1500 })).rejects.toThrow(
+        /stdout-before-timeout[\s\S]*stderr-before-timeout/
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

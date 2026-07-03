@@ -61,6 +61,23 @@ function errorEvent(turnSeq = 1, seq = 1024): AexEvent {
   };
 }
 
+function runErrorEvent(seq = 1024): AexEvent {
+  return {
+    specversion: "1.0",
+    id: `run-1:${seq}`,
+    source: "runtime",
+    type: "RUN_ERROR",
+    subject: "run-1",
+    time: new Date(seq).toISOString(),
+    sequence: seq,
+    data: {
+      reason: "failed",
+      failureClass: "transient-provider",
+      failureMessage: "provider returned no public assistant content"
+    } as Record<string, JsonValue>
+  };
+}
+
 class FakeWebSocket implements WebSocketLike {
   readonly url: string;
   readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
@@ -297,6 +314,25 @@ describe("SessionHandle.replayLast", () => {
 });
 
 describe("Aex throttle error on a provider-throttled turn", () => {
+  it("ends a session turn on RUN_ERROR even when no aex.session.error event follows", async () => {
+    const h = harness({ id: "run-1", status: "error", turnSeq: 1, errorMessage: "provider returned no public assistant content" });
+    const promise = h.client.run(
+      { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
+      { webSocketFactory: h.webSocketFactory }
+    );
+    await waitForSocket(h.sockets, 1);
+    h.sockets[0]!.message(runErrorEvent());
+
+    const result = await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("session turn did not end on RUN_ERROR")), 250))
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("error");
+    expect(result.events.map((event) => event.type)).toEqual(["RUN_ERROR"]);
+  });
+
   it("throwOnFailure raises AexRateLimitError from a structured provider fault", async () => {
     const h = harness({
       id: "run-1",

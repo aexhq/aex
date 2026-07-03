@@ -149,6 +149,7 @@ interface CreateOutcome {
 
 interface SendOutcome {
   i: number;
+  key?: string;
   status?: string;
   text?: string;
   error?: { name: string; message: string; status: number | null; code: string | null };
@@ -369,18 +370,70 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           idempotencyKey: "cstorm-" + STAMP,
           apiKeys: { deepseek: DEEPSEEK_KEY }
         });
+        const SEND_TIMEOUT_MS = 5 * 60 * 1000;
+        function compactEvent(event) {
+          const data = event && event.data && typeof event.data === "object" ? event.data : {};
+          return {
+            type: event && event.type ? event.type : null,
+            name: typeof data.name === "string" ? data.name : null,
+            failureClass: typeof data.failureClass === "string" ? data.failureClass : null,
+            status: typeof data.status === "string" ? data.status : null
+          };
+        }
+        async function sessionSnapshot() {
+          const snapshot = {};
+          try {
+            snapshot.record = await client.sessions.get(session.id);
+          } catch (e) {
+            snapshot.recordError = errShape(e);
+          }
+          try {
+            const events = await session.events().list();
+            snapshot.events = events.map(compactEvent).slice(-25);
+          } catch (e) {
+            snapshot.eventsError = errShape(e);
+          }
+          return snapshot;
+        }
+        function withSendTimeout(i, key, turn) {
+          let timer;
+          return new Promise((resolve) => {
+            timer = setTimeout(() => {
+              resolve({
+                i,
+                key,
+                error: {
+                  name: "SendTimeout",
+                  message: "session.send().done() did not settle within " + SEND_TIMEOUT_MS + "ms",
+                  status: null,
+                  code: "SEND_TIMEOUT"
+                }
+              });
+            }, SEND_TIMEOUT_MS);
+            turn.then(resolve, (e) => resolve({ i, key, error: errShape(e) })).finally(() => clearTimeout(timer));
+          });
+        }
         const M = 4;
         const tasks = [];
+        console.error("[edge-concurrency] D session-created " + JSON.stringify({ sessionId: session.id, M, sendTimeoutMs: SEND_TIMEOUT_MS }));
         for (let i = 0; i < M; i++) {
-          tasks.push(
-            session.send("Output verbatim: S" + i + "Z" + STAMP, { idempotencyKey: "cstorm-" + STAMP + "-" + i })
+          const key = "cstorm-" + STAMP + "-" + i;
+          const turn = (
+            session.send("Output verbatim: S" + i + "Z" + STAMP, { idempotencyKey: key })
               .done()
-              .then((res) => ({ i, status: String(res.status), text: dense(res.text) }))
-              .catch((e) => ({ i, error: errShape(e) }))
+              .then((res) => ({ i, key, status: String(res.status), text: dense(res.text) }))
+              .catch((e) => ({ i, key, error: errShape(e) }))
+          );
+          tasks.push(
+            withSendTimeout(i, key, turn).then((result) => {
+              console.error("[edge-concurrency] D send-outcome " + JSON.stringify(result));
+              return result;
+            })
           );
         }
         const results = await Promise.all(tasks);
-        process.stdout.write(JSON.stringify({ M, sessionId: session.id, results }));
+        const snapshot = await sessionSnapshot();
+        process.stdout.write(JSON.stringify({ M, sessionId: session.id, results, snapshot }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-conc-D.mjs", body, 10 * 60_000);
