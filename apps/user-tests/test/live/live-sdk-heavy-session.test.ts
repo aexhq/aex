@@ -127,6 +127,7 @@ interface Probes {
 
 interface CaseResult {
   readonly runId: string;
+  readonly attempts: number;
   readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
@@ -298,126 +299,155 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       idempotencyKey: "heavy-${spec.provider}-" + Date.now()
     };
 
-    const result = await client.run(submitOpts, { timeoutMs: ${spec.pollDeadlineMs} });
-    const runId = result.runId;
-    const run = {
-      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
-      runtime: "managed",
-      provider: ${JSON.stringify(spec.provider)}
-    };
-    const session = await client.sessions.open(runId);
-
-    const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-    const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
-    let events = fallbackEvents;
-    let outputs = fallbackOutputs;
-    try {
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedOutputs = await session.outputs().list();
-      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
-    } catch {
-      events = fallbackEvents;
-      outputs = fallbackOutputs;
+    const maxTransientRetries = 2;
+    let payload = null;
+    for (let attempt = 0; attempt <= maxTransientRetries; attempt++) {
+      payload = await runAttempt(attempt);
+      const failureClass =
+        payload.terminalData && typeof payload.terminalData.failureClass === "string"
+          ? payload.terminalData.failureClass
+          : null;
+      if (payload.runStatus === "succeeded" || failureClass !== "transient-provider" || attempt >= maxTransientRetries) break;
+      console.warn(
+        "[user-tests] run " + payload.runId + " failed (failureClass=transient-provider); " +
+          "retrying run (attempt " + (attempt + 1) + "/" + maxTransientRetries + ")"
+      );
     }
 
-    // CUSTOM envelopes nest the original payload under data.value.
-    function customName(e) {
-      return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
-    }
-    function customValue(e) {
-      const value = e && e.data ? e.data.value : null;
-      return value && typeof value === "object" ? value : {};
-    }
-    function isSessionIdle(e) {
-      return customName(e) === "aex.session.idle";
-    }
-    function terminalKindOf(e) {
-      if (!e) return null;
-      return isSessionIdle(e) ? "aex.session.idle" : e.type;
-    }
-    function terminalDataOf(e) {
-      if (!e) return null;
-      if (!isSessionIdle(e)) return e.data ?? null;
-      const value = customValue(e);
+    async function runAttempt(attempt) {
+      const attemptSubmit = {
+        ...submitOpts,
+        idempotencyKey: submitOpts.idempotencyKey + "-try" + attempt
+      };
+      const result = await client.run(attemptSubmit, { timeoutMs: ${spec.pollDeadlineMs} });
+      const runId = result.runId;
+      const run = {
+        status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+        runtime: "managed",
+        provider: ${JSON.stringify(spec.provider)}
+      };
+      const session = await client.sessions.open(runId);
+
+      const fallbackEvents = Array.isArray(result.events) ? result.events : [];
+      const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
+      let events = fallbackEvents;
+      let outputs = fallbackOutputs;
+      try {
+        const listedEvents = await session.events().list();
+        if (Array.isArray(listedEvents) && listedEvents.length > 0) {
+          events = hasTerminalEvent(listedEvents) || !hasTerminalEvent(fallbackEvents) ? listedEvents : fallbackEvents;
+        }
+        const listedOutputs = await session.outputs().list();
+        if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+      } catch {
+        events = fallbackEvents;
+        outputs = fallbackOutputs;
+      }
+
+      // CUSTOM envelopes nest the original payload under data.value.
+      function customName(e) {
+        return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
+      }
+      function customValue(e) {
+        const value = e && e.data ? e.data.value : null;
+        return value && typeof value === "object" ? value : {};
+      }
+      function isSessionIdle(e) {
+        return customName(e) === "aex.session.idle";
+      }
+      function terminalKindOf(e) {
+        if (!e) return null;
+        return isSessionIdle(e) ? "aex.session.idle" : e.type;
+      }
+      function terminalDataOf(e) {
+        if (!e) return null;
+        if (!isSessionIdle(e)) return e.data ?? null;
+        const value = customValue(e);
+        return {
+          ...(e.data && typeof e.data === "object" ? e.data : {}),
+          reason: value.reason === "completed" ? "complete" : (value.reason ?? null)
+        };
+      }
+      function skillLoadedName(e) {
+        const value = customValue(e);
+        if (
+          customName(e) === "aex.skill_loaded" ||
+          value.kind === "skill_loaded" ||
+          value.kind === "skill_loaded_marker"
+        ) {
+          const name = value.name || value.skillId;
+          return typeof name === "string" ? name : null;
+        }
+        return null;
+      }
+      function hasTerminalEvent(list) {
+        return list.some((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR" || isSessionIdle(e));
+      }
+
+      const notifications = events.filter((e) => e.type === "CUSTOM");
+      const notificationKinds = notifications.map((n) => customValue(n).kind || "(unknown)");
+      const skillLoadedNames = notifications.map(skillLoadedName).filter(Boolean);
+
+      const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
+      const assistantTextJoined = assistantTextEvents
+        .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
+        .join(" ");
+
+      const eventTypeSet = Array.from(new Set(events.map((e) => e.type)));
+      const toolCallStartCount = events.filter((e) => e.type === "TOOL_CALL_START").length;
+      const toolCallResultCount = events.filter((e) => e.type === "TOOL_CALL_RESULT").length;
+
+      const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+      const streamErrors = events
+        .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
+        .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
+
+      const outProbes = ${JSON.stringify(probes.out)};
+      const outputsCollected = [];
+      const outProbesFound = new Set();
+      for (const out of outputs.slice(0, 16)) {
+        let sample = null;
+        try {
+          const bytes = await session.outputs().download(out);
+          const text = new TextDecoder().decode(bytes);
+          sample = text.slice(0, 256);
+          for (const p of outProbes) {
+            if (text.includes(p)) outProbesFound.add(p);
+          }
+        } catch (err) {
+          sample = "(download error: " + (err && err.message ? err.message : String(err)) + ")";
+        }
+        outputsCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
+      }
+
+      const serialized = JSON.stringify({ run, events, outputs });
+      const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
       return {
-        ...(e.data && typeof e.data === "object" ? e.data : {}),
-        reason: value.reason === "completed" ? "complete" : (value.reason ?? null)
+        runId: runId,
+        attempts: attempt + 1,
+        runStatus: run.status,
+        runtime: run.runtime ?? "(missing)",
+        provider: run.provider ?? "(missing)",
+        probes: ${JSON.stringify(probes)},
+        eventCount: events.length,
+        eventKinds: events.map((e) => e.type),
+        eventTypeSet,
+        toolCallStartCount,
+        toolCallResultCount,
+        notificationKinds,
+        skillLoadedNames,
+        assistantTextJoined,
+        assistantTextEventCount: assistantTextEvents.length,
+        terminalKind: terminalKindOf(terminal),
+        terminalData: terminalDataOf(terminal),
+        outputCount: outputs.length,
+        outputs: outputsCollected,
+        outProbesFound: Array.from(outProbesFound),
+        leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
+        streamErrors
       };
     }
-    function skillLoadedName(e) {
-      const value = customValue(e);
-      if (
-        customName(e) === "aex.skill_loaded" ||
-        value.kind === "skill_loaded" ||
-        value.kind === "skill_loaded_marker"
-      ) {
-        const name = value.name || value.skillId;
-        return typeof name === "string" ? name : null;
-      }
-      return null;
-    }
-    const notifications = events.filter((e) => e.type === "CUSTOM");
-    const notificationKinds = notifications.map((n) => customValue(n).kind || "(unknown)");
-    const skillLoadedNames = notifications.map(skillLoadedName).filter(Boolean);
 
-    const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
-    const assistantTextJoined = assistantTextEvents
-      .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
-      .join(" ");
-
-    const eventTypeSet = Array.from(new Set(events.map((e) => e.type)));
-    const toolCallStartCount = events.filter((e) => e.type === "TOOL_CALL_START").length;
-    const toolCallResultCount = events.filter((e) => e.type === "TOOL_CALL_RESULT").length;
-
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
-    const streamErrors = events
-      .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
-      .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
-
-    const outProbes = ${JSON.stringify(probes.out)};
-    const outputsCollected = [];
-    const outProbesFound = new Set();
-    for (const out of outputs.slice(0, 16)) {
-      let sample = null;
-      try {
-        const bytes = await session.outputs().download(out);
-        const text = new TextDecoder().decode(bytes);
-        sample = text.slice(0, 256);
-        for (const p of outProbes) {
-          if (text.includes(p)) outProbesFound.add(p);
-        }
-      } catch (err) {
-        sample = "(download error: " + (err && err.message ? err.message : String(err)) + ")";
-      }
-      outputsCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
-    }
-
-    const serialized = JSON.stringify({ run, events, outputs });
-    const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
-    const payload = {
-      runId: runId,
-      runStatus: run.status,
-      runtime: run.runtime ?? "(missing)",
-      provider: run.provider ?? "(missing)",
-      probes: ${JSON.stringify(probes)},
-      eventCount: events.length,
-      eventKinds: events.map((e) => e.type),
-      eventTypeSet,
-      toolCallStartCount,
-      toolCallResultCount,
-      notificationKinds,
-      skillLoadedNames,
-      assistantTextJoined,
-      assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminalKindOf(terminal),
-      terminalData: terminalDataOf(terminal),
-      outputCount: outputs.length,
-      outputs: outputsCollected,
-      outProbesFound: Array.from(outProbesFound),
-      leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
-      streamErrors
-    };
     process.stdout.write(JSON.stringify(payload));
     process.exit(0);
   `;
@@ -471,7 +501,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
 function dumpCase(result: CaseResult): string {
   const lines: string[] = [];
   lines.push(`runId=${result.runId} runtime=${result.runtime} provider=${result.provider}`);
-  lines.push(`runStatus=${result.runStatus} terminalKind=${result.terminalKind}`);
+  lines.push(`runStatus=${result.runStatus} terminalKind=${result.terminalKind} attempts=${result.attempts}`);
   lines.push(`terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventTypeSet=[${result.eventTypeSet.join(", ")}]`);
   lines.push(
