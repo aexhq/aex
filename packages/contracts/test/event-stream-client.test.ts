@@ -340,6 +340,108 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
   });
 });
 
+describe("streamCoordinatorEvents — event-quiet recheck", () => {
+  it("forces a reconnect when pongs flow but no event frame arrives (dead fan-out self-heal)", async () => {
+    // The half-open watchdog counts ANY frame — including pongs — as liveness. But a
+    // pong only proves the SOCKET is alive, not the delivery pipeline behind it: a
+    // reaped/wedged server-side subscription keeps answering pings while never
+    // delivering another event, and the client hangs forever one frame short of the
+    // terminal. The quiet recheck reconnects on an event-frame gap; the replay-on-
+    // connect path then reads the events table directly and recovers the terminal.
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const fetchTicket = vi.fn(async () => "tkt");
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        reconnectDelayMs: 10,
+        idleTimeoutMs: 1000,
+        pingIntervalMs: 300,
+        eventQuietRecheckMs: 2000,
+        fetchTicket,
+        webSocketFactory: (url) => {
+          const w = new FakeWebSocket(url);
+          sockets.push(w);
+          return w;
+        }
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0]!.open();
+      sockets[0]!.message(evt(0));
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Pongs keep the idle watchdog fed for the whole window — no event frames.
+      for (let i = 0; i < 7; i++) {
+        await vi.advanceTimersByTimeAsync(300);
+        sockets[0]!.pong();
+      }
+      // 2100ms of event silence has passed → the quiet recheck must have fired.
+      await vi.advanceTimersByTimeAsync(20); // backoff(10) + fresh ticket + reconnect
+
+      expect(sockets).toHaveLength(2);
+      expect(sockets[0]!.closed).toBe(true);
+      // Resume strictly after the last delivered sequence, with a fresh ticket.
+      expect(sockets[1]!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=1");
+      expect(fetchTicket).toHaveBeenCalledTimes(2);
+
+      sockets[1]!.open();
+      sockets[1]!.message(evt(1, "RUN_FINISHED"));
+      await vi.advanceTimersByTimeAsync(0);
+      await consume;
+      expect(received).toEqual([0, 1]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an event frame re-arms the quiet recheck — a steadily-streaming run never recycles", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        reconnectDelayMs: 0,
+        idleTimeoutMs: 0,
+        pingIntervalMs: 0,
+        eventQuietRecheckMs: 1000,
+        fetchTicket: async () => "tkt",
+        webSocketFactory: (url) => {
+          const w = new FakeWebSocket(url);
+          sockets.push(w);
+          return w;
+        }
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0]!.open();
+      // Events every 600ms — each re-arms the 1000ms recheck; no reconnect.
+      for (let seq = 0; seq < 4; seq++) {
+        sockets[0]!.message(evt(seq));
+        await vi.advanceTimersByTimeAsync(600);
+      }
+      expect(sockets).toHaveLength(1);
+
+      sockets[0]!.message(evt(4, "RUN_FINISHED"));
+      await vi.advanceTimersByTimeAsync(0);
+      await consume;
+      expect(received).toEqual([0, 1, 2, 3, 4]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("client-side filter + projection", () => {
   async function* arr(items: AexEvent[]): AsyncGenerator<AexEvent> {
     for (const i of items) yield i;

@@ -73,6 +73,17 @@ export interface CoordinatorStreamOptions {
    * watchdog → quiet runs may reconnect).
    */
   readonly pingIntervalMs?: number;
+  /**
+   * Event-quiet recheck window. A pong proves the SOCKET is alive, not the
+   * delivery pipeline behind it — a server-side subscription that died (reaped
+   * connection row, wedged fan-out) keeps answering pings while never delivering
+   * another event, so the idle watchdog alone would hang one frame short of the
+   * terminal forever. If no REAL event frame arrives within this many ms the
+   * client silently reconnects (resume from cursor) — the replay-on-connect path
+   * reads the event store directly, so a dead subscription self-heals. Default
+   * 90s. Set 0 to disable.
+   */
+  readonly eventQuietRecheckMs?: number;
 }
 
 // The default terminal predicate ends the stream on the AG-UI terminals AND on
@@ -93,6 +104,8 @@ const COORDINATOR_PING = "aex:ping";
 const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 /** Default client keep-alive ping cadence. */
 const DEFAULT_PING_INTERVAL_MS = 15_000;
+/** Default event-quiet recheck window (a silent reconnect, so the cost of a false positive is small). */
+const DEFAULT_EVENT_QUIET_RECHECK_MS = 90_000;
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
@@ -104,6 +117,7 @@ export async function* streamCoordinatorEvents(
   const maxReconnects = opts.maxReconnects ?? Number.POSITIVE_INFINITY;
   const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
+  const eventQuietRecheckMs = opts.eventQuietRecheckMs ?? DEFAULT_EVENT_QUIET_RECHECK_MS;
   let cursor = (opts.from ?? 0) - 1;
   let attempts = 0;
   let done = false;
@@ -129,6 +143,7 @@ export async function* streamCoordinatorEvents(
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let pingTimer: ReturnType<typeof setInterval> | null = null;
+    let quietTimer: ReturnType<typeof setTimeout> | null = null;
     const stopTimers = (): void => {
       if (idleTimer !== null) {
         clearTimeout(idleTimer);
@@ -137,6 +152,10 @@ export async function* streamCoordinatorEvents(
       if (pingTimer !== null) {
         clearInterval(pingTimer);
         pingTimer = null;
+      }
+      if (quietTimer !== null) {
+        clearTimeout(quietTimer);
+        quietTimer = null;
       }
     };
     // Re-arm on every inbound frame. On expiry the socket is presumed half-open
@@ -152,6 +171,20 @@ export async function* streamCoordinatorEvents(
         closeQuietly(ws);
         wake();
       }, idleTimeoutMs);
+    };
+    // Re-arm only on REAL event frames. On expiry: silent reconnect (resume from
+    // cursor) — self-heals a dead server-side subscription a pong can't expose.
+    const armQuiet = (): void => {
+      if (eventQuietRecheckMs <= 0) return;
+      if (quietTimer !== null) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => {
+        quietTimer = null;
+        if (closed) return;
+        closed = true;
+        disconnectReason = "quiet_recheck";
+        closeQuietly(ws);
+        wake();
+      }, eventQuietRecheckMs);
     };
 
     ws.addEventListener("open", () => {
@@ -172,9 +205,12 @@ export async function* streamCoordinatorEvents(
       if (!data) return;
       try {
         const evt = JSON.parse(data) as AexEvent;
-        if (typeof evt.sequence === "number" && evt.sequence > cursor) {
-          queue.push(evt);
-          wake();
+        if (typeof evt.sequence === "number") {
+          armQuiet(); // a real event frame proves the delivery pipeline, not just the socket
+          if (evt.sequence > cursor) {
+            queue.push(evt);
+            wake();
+          }
         }
       } catch {
         // ignore a non-JSON frame
@@ -208,8 +244,10 @@ export async function* streamCoordinatorEvents(
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
     // Arm immediately: a connect that never reaches "open" (and fakes that
-    // never emit it) must still time out rather than hang forever.
+    // never emit it) must still time out rather than hang forever. The quiet
+    // recheck arms here too so a socket fed only by pongs still recycles.
     armIdle();
+    armQuiet();
 
     try {
       while (true) {
@@ -244,9 +282,13 @@ export async function* streamCoordinatorEvents(
       );
       return;
     }
-    console.warn(
-      `[aex] event stream disconnected (${disconnectReason || "unknown"}); reconnecting attempt ${attempts} from seq ${cursor + 1}`
-    );
+    // The quiet recheck is a routine self-heal on a legitimately quiet stream —
+    // reconnecting silently keeps a long tool call from spamming the console.
+    if (disconnectReason !== "quiet_recheck") {
+      console.warn(
+        `[aex] event stream disconnected (${disconnectReason || "unknown"}); reconnecting attempt ${attempts} from seq ${cursor + 1}`
+      );
+    }
     await sleep(reconnectDelayMs, opts.signal);
   }
 }
