@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { collectTestFiles, loadDurations, lptPartition } from "../../apps/user-tests/scripts/shard-files.mjs";
+import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const userTestsRoot = resolve(repoRoot, "apps/user-tests");
@@ -10,10 +11,16 @@ function durationsOf(entries: Record<string, number>): Map<string, number> {
   return new Map(Object.entries(entries));
 }
 
+function expectBin(bins: ShardBin[], index: number): ShardBin {
+  const bin = bins[index];
+  if (!bin) throw new Error(`expected shard bin ${index} to exist`);
+  return bin;
+}
+
 describe("shard-files duration-balanced bin packing", () => {
   it("partitions the real collected suite completely and deterministically", () => {
-    const files = collectTestFiles(userTestsRoot) as string[];
-    const durations = loadDurations() as Map<string, number>;
+    const files = collectTestFiles(userTestsRoot);
+    const durations = loadDurations();
 
     expect(files.length).toBeGreaterThanOrEqual(11);
     // Excluded explicit gates never leak into the default sweep.
@@ -26,7 +33,7 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(files).not.toContain("test/live/live-sdk-anthropic-managed.test.ts");
     expect(files).not.toContain("test/live/providers/live-sdk-anthropic-managed.test.ts");
 
-    const bins = lptPartition(files, durations, 11) as Array<{ files: string[]; seconds: number }>;
+    const bins = lptPartition(files, durations, 11);
     const all = bins.flatMap((bin) => bin.files);
     // Completeness + disjointness: every collected file in exactly one shard.
     expect([...all].sort()).toEqual([...files].sort());
@@ -34,26 +41,27 @@ describe("shard-files duration-balanced bin packing", () => {
     for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
 
     // Deterministic: same inputs => identical partition.
-    const again = lptPartition(files, durations, 11) as Array<{ files: string[] }>;
+    const again = lptPartition(files, durations, 11);
     expect(again.map((b) => b.files)).toEqual(bins.map((b) => b.files));
   });
 
   it("balances by duration, not file count", () => {
     const files = ["a.ts", "b.ts", "c.ts", "d.ts"];
     const durations = durationsOf({ "a.ts": 100, "b.ts": 1, "c.ts": 1, "d.ts": 1 });
-    const bins = lptPartition(files, durations, 2) as Array<{ files: string[]; seconds: number }>;
-    expect(bins[0].files).toEqual(["a.ts"]);
-    expect(bins[1].files).toEqual(["b.ts", "c.ts", "d.ts"]);
+    const bins = lptPartition(files, durations, 2);
+    expect(expectBin(bins, 0).files).toEqual(["a.ts"]);
+    expect(expectBin(bins, 1).files).toEqual(["b.ts", "c.ts", "d.ts"]);
   });
 
   it("assigns unknown files the median of recorded durations", () => {
     const files = ["known-big.ts", "known-mid.ts", "known-small.ts", "unknown.ts"];
     const durations = durationsOf({ "known-big.ts": 100, "known-mid.ts": 10, "known-small.ts": 1 });
     // median = 10 => unknown.ts weighs 10 and pairs with known-small, not known-big.
-    const bins = lptPartition(files, durations, 2) as Array<{ files: string[]; seconds: number }>;
-    expect(bins[0].files).toEqual(["known-big.ts"]);
-    expect(bins[1].files).toEqual(["known-mid.ts", "known-small.ts", "unknown.ts"]);
-    expect(bins[1].seconds).toBe(21);
+    const bins = lptPartition(files, durations, 2);
+    expect(expectBin(bins, 0).files).toEqual(["known-big.ts"]);
+    const secondBin = expectBin(bins, 1);
+    expect(secondBin.files).toEqual(["known-mid.ts", "known-small.ts", "unknown.ts"]);
+    expect(secondBin.seconds).toBe(21);
   });
 
   it("fails loudly when a shard would be empty", () => {
@@ -64,8 +72,8 @@ describe("shard-files duration-balanced bin packing", () => {
   });
 
   it("keeps the checked-in durations file keyed to real, collectable test files", () => {
-    const files = new Set(collectTestFiles(userTestsRoot) as string[]);
-    const durations = loadDurations() as Map<string, number>;
+    const files = new Set(collectTestFiles(userTestsRoot));
+    const durations = loadDurations();
     for (const key of durations.keys()) {
       expect(files.has(key), `shard-durations.json entry no longer collected: ${key}`).toBe(true);
     }
