@@ -83,6 +83,12 @@ export interface Session {
   readonly usage?: UsageSummary;
   readonly costUsd?: number;
   readonly errorMessage?: string | null;
+  /**
+   * Settle-written failure taxonomy for an `error` session (e.g.
+   * `provider-permanent`, `budget_exhausted`) — the class a caller can branch
+   * on, complementing the human-readable `errorMessage`.
+   */
+  readonly failureClass?: string | null;
   readonly [key: string]: unknown;
 }
 
