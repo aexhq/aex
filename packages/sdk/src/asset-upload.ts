@@ -54,6 +54,8 @@ export interface UploadedAsset {
   readonly exists: boolean;
 }
 
+const DIRECT_UPLOAD_MAX_ATTEMPTS = 3;
+
 /**
  * Upload `bytes` to the hosted API's content-addressable asset store via the
  * direct-to-storage presign flow.
@@ -115,18 +117,11 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     "content-type": args.contentType ?? "application/zip",
     ...(presign.requiredHeaders ?? {})
   };
-  const putRes = await doFetch(presign.uploadUrl, {
+  await putWithRetry(doFetch, presign.uploadUrl, {
     method: "PUT",
     headers: putHeaders,
     body: args.bytes
   });
-  if (!putRes.ok) {
-    const detail = await putRes.text().catch(() => "");
-    throw new Error(
-      `uploadAsset: direct upload PUT failed with status ${putRes.status}` +
-        (detail ? `: ${detail.slice(0, 500)}` : "")
-    );
-  }
 
   // ---- Step 3: finalize (control plane confirms existence via HEAD) ----
   const fin = await args.http.request<{
@@ -174,6 +169,125 @@ async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
 function assetIdFromContentHash(contentHash: string): string {
   const hex = contentHash.startsWith("sha256:") ? contentHash.slice("sha256:".length) : contentHash;
   return `asset_${hex}`;
+}
+
+async function putWithRetry(fetchImpl: AssetFetch, uploadUrl: string, init: RequestInit): Promise<void> {
+  for (let attempt = 1; attempt <= DIRECT_UPLOAD_MAX_ATTEMPTS; attempt++) {
+    let response: Awaited<ReturnType<AssetFetch>>;
+    try {
+      response = await fetchImpl(uploadUrl, init);
+    } catch (err) {
+      if (attempt < DIRECT_UPLOAD_MAX_ATTEMPTS && isRetryableUploadError(err)) {
+        continue;
+      }
+      throw directUploadNetworkError(uploadUrl, err, attempt);
+    }
+
+    if (response.ok) return;
+
+    if (attempt < DIRECT_UPLOAD_MAX_ATTEMPTS && isRetryableUploadStatus(response.status)) {
+      await response.text().catch(() => "");
+      continue;
+    }
+
+    const detail = await response.text().catch(() => "");
+    throw directUploadResponseError(uploadUrl, response.status, detail, attempt);
+  }
+}
+
+function isRetryableUploadStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isRetryableUploadError(err: unknown): boolean {
+  if (isNamedError(err, "AbortError")) return false;
+  return true;
+}
+
+function directUploadNetworkError(uploadUrl: string, err: unknown, attempts: number): Error {
+  const safeUrl = redactUrl(uploadUrl);
+  const code = extractErrorCode(err);
+  const detail = sanitizeUploadText(errorMessage(err)).slice(0, 500);
+  return new Error(
+    `uploadAsset: direct upload PUT failed for ${safeUrl} after ${attemptsLabel(attempts)}` +
+      (code ? ` (${code})` : "") +
+      (detail ? `: ${detail}` : "")
+  );
+}
+
+function directUploadResponseError(uploadUrl: string, status: number, detail: string, attempts: number): Error {
+  const safeUrl = redactUrl(uploadUrl);
+  const safeDetail = sanitizeUploadText(detail).slice(0, 500);
+  return new Error(
+    `uploadAsset: direct upload PUT failed for ${safeUrl} with status ${status}` +
+      (attempts > 1 ? ` after ${attemptsLabel(attempts)}` : "") +
+      (safeDetail ? `: ${safeDetail}` : "")
+  );
+}
+
+function attemptsLabel(attempts: number): string {
+  return attempts === 1 ? "1 attempt" : `${attempts} attempts`;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === "string") return err;
+  return String(err);
+}
+
+function extractErrorCode(err: unknown): string | undefined {
+  const code = stringProperty(err, "code");
+  if (code) return code;
+  const cause = objectProperty(err, "cause");
+  const causeCode = stringProperty(cause, "code");
+  if (causeCode) return causeCode;
+  const match = /\bE[A-Z0-9_]+\b/.exec(errorMessage(err));
+  return match?.[0];
+}
+
+function isNamedError(err: unknown, name: string): boolean {
+  return stringProperty(err, "name") === name;
+}
+
+function objectProperty(value: unknown, key: string): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const prop = (value as Record<string, unknown>)[key];
+  return prop && typeof prop === "object" ? (prop as Record<string, unknown>) : undefined;
+}
+
+function stringProperty(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const prop = (value as Record<string, unknown>)[key];
+  return typeof prop === "string" && prop.length > 0 ? prop : undefined;
+}
+
+function sanitizeUploadText(text: string): string {
+  return text
+    .replace(/https?:\/\/[^\s<>"'`]+/g, (raw) => redactUrlPreservingTrailingPunctuation(raw))
+    .replace(
+      /\b(?:X-Amz-(?:Algorithm|Credential|Date|Expires|Security-Token|Signature|SignedHeaders)|AWSAccessKeyId|Signature|Credential|Security-Token|AccessKeyId|SecretAccessKey|SessionToken)=([^&\s<>"'`]+)/gi,
+      "[redacted]"
+    )
+    .replace(/\bAKIA[0-9A-Z]{8,}\b/g, "[redacted]");
+}
+
+function redactUrlPreservingTrailingPunctuation(raw: string): string {
+  const trailing = raw.match(/[),.;:!?]+$/)?.[0] ?? "";
+  const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
+  return `${redactUrl(candidate)}${trailing}`;
+}
+
+function redactUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const auth = parsed.username || parsed.password ? "[redacted]@" : "";
+    const query = parsed.search ? "?[redacted]" : "";
+    return `${parsed.protocol}//${auth}${parsed.host}${parsed.pathname}${query}`;
+  } catch {
+    const withoutAuth = url.replace(/\/\/[^/?#\s]+@/, "//[redacted]@");
+    const queryStart = withoutAuth.indexOf("?");
+    return queryStart === -1 ? withoutAuth : `${withoutAuth.slice(0, queryStart)}?[redacted]`;
+  }
 }
 
 function bufferToHex(buffer: ArrayBuffer): string {

@@ -170,8 +170,31 @@ jobs:
               text = text.split(value).join(`[REDACTED:${name}]`);
             }
           }
+          text = redactSignedUrls(text);
 
           writeFileSync(outPath, text);
+
+          function redactSignedUrls(input) {
+            return input
+              .replace(/https?:\/\/[^\s<>"'`]+/g, (raw) => {
+                const trailing = raw.match(/[),.;:!?]+$/)?.[0] ?? "";
+                const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
+                if (!/[?&](?:X-Amz-|X-Goog-|AWSAccessKeyId=|GoogleAccessId=|Signature=|Credential=|Security-Token=)/i.test(candidate)) {
+                  return raw;
+                }
+                try {
+                  const url = new URL(candidate);
+                  const auth = url.username || url.password ? "[redacted]@" : "";
+                  return `${url.protocol}//${auth}${url.host}${url.pathname}?[redacted]${url.hash}${trailing}`;
+                } catch {
+                  return `${candidate.replace(/\?.*$/, "?[redacted]")}${trailing}`;
+                }
+              })
+              .replace(
+                /\b((?:X-Amz-[A-Za-z0-9-]+|X-Goog-[A-Za-z0-9-]+|AWSAccessKeyId|GoogleAccessId|Signature|Credential|Security-Token|AccessKeyId|SecretAccessKey|SessionToken)=)[^&\s<>"'`]+/gi,
+                "$1[redacted]"
+              );
+          }
           NODE
 
       - name: Upload redacted live user test log

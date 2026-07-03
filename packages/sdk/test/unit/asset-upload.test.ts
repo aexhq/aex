@@ -96,16 +96,137 @@ describe("uploadAsset (direct-to-storage)", () => {
   it("throws when the object storage PUT fails (e.g. object storage rejected the checksum)", async () => {
     const hash = await hashOf(bytes);
     const hex = hash.slice("sha256:".length);
+    const uploadUrl =
+      "https://acct.object-storage.example.test/b/k?X-Amz-Security-Token=token&X-Amz-Signature=s";
     const http: AssetsHttpClient = {
       request: vi.fn(async (path: string) => {
         if (path === "/assets/presign") {
-          return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl: "https://acct.object-storage.example.test/b/k?X-Amz-Signature=s", requiredHeaders: {} } as unknown;
+          return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl, requiredHeaders: {} } as unknown;
         }
         return {} as unknown;
       }) as AssetsHttpClient["request"]
     };
     const fetch: AssetFetch = vi.fn(async () => ({ ok: false, status: 400, text: async () => "BadDigest: checksum mismatch" }));
-    await expect(uploadAsset({ http, bytes, hash, fetch })).rejects.toThrow(/direct upload PUT failed with status 400/);
+    let thrown: unknown;
+    try {
+      await uploadAsset({ http, bytes, hash, fetch });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(thrown).toBeInstanceOf(Error);
+    expect(String((thrown as Error).message)).toMatch(
+      /direct upload PUT failed for https:\/\/acct\.object-storage\.example\.test\/b\/k\?\[redacted\] with status 400/
+    );
+    expect(String((thrown as Error).message)).not.toMatch(/X-Amz-Security-Token|X-Amz-Signature|token&|Signature=s/);
+  });
+
+  it("retries transient object storage 429/5xx responses and then finalizes", async () => {
+    const hash = await hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    const calls: string[] = [];
+    const http: AssetsHttpClient = {
+      request: vi.fn(async (path: string) => {
+        calls.push(path);
+        if (path === "/assets/presign") {
+          return {
+            ok: true,
+            exists: false,
+            assetId: `asset_${hex}`,
+            contentHash: hash,
+            uploadUrl: `https://acct.object-storage.example.test/b/${hex}?X-Amz-Signature=s`,
+            requiredHeaders: {}
+          } as unknown;
+        }
+        return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, sizeBytes: bytes.byteLength } as unknown;
+      }) as AssetsHttpClient["request"]
+    };
+    const fetch: AssetFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => "SlowDown" })
+      .mockResolvedValueOnce({ ok: false, status: 500, text: async () => "InternalError" })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "" });
+
+    const out = await uploadAsset({ http, bytes, hash, fetch });
+
+    expect(out.exists).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(calls).toEqual(["/assets/presign", "/assets/finalize"]);
+  });
+
+  it("retries transient object storage network errors and redacts the signed URL when exhausted", async () => {
+    const hash = await hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    const uploadUrl =
+      `https://AKIA_TEST:secret@acct.object-storage.example.test/b/${hex}` +
+      "?X-Amz-Credential=credential&X-Amz-Security-Token=token&X-Amz-Signature=signature";
+    const http: AssetsHttpClient = {
+      request: vi.fn(async (path: string) => {
+        if (path === "/assets/presign") {
+          return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, uploadUrl, requiredHeaders: {} } as unknown;
+        }
+        throw new Error(`unexpected request: ${path}`);
+      }) as AssetsHttpClient["request"]
+    };
+    const fetchErr = Object.assign(new TypeError(`fetch failed for ${uploadUrl}: ECONNRESET`), { code: "ECONNRESET" });
+    const fetch: AssetFetch = vi.fn(async () => {
+      throw fetchErr;
+    });
+
+    let thrown: unknown;
+    try {
+      await uploadAsset({ http, bytes, hash, fetch });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(String((thrown as Error).message)).toContain(
+      `https://[redacted]@acct.object-storage.example.test/b/${hex}?[redacted]`
+    );
+    expect(String((thrown as Error).message)).toContain("ECONNRESET");
+    expect(String((thrown as Error).message)).toContain("after 3 attempts");
+    expect(String((thrown as Error).message)).not.toMatch(/X-Amz|Credential=credential|Security-Token|Signature|AKIA_TEST|secret|token/);
+  });
+
+  it("does not retry permanent object storage 4xx responses", async () => {
+    const hash = await hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    const http: AssetsHttpClient = {
+      request: vi.fn(async (path: string) => {
+        if (path === "/assets/presign") {
+          return {
+            ok: true,
+            exists: false,
+            assetId: `asset_${hex}`,
+            contentHash: hash,
+            uploadUrl: "https://acct.object-storage.example.test/b/k?X-Amz-Signature=s",
+            requiredHeaders: {}
+          } as unknown;
+        }
+        throw new Error(`unexpected request: ${path}`);
+      }) as AssetsHttpClient["request"]
+    };
+    const fetch: AssetFetch = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      text: async () => "Forbidden for https://acct.object-storage.example.test/b/k?X-Amz-Signature=s"
+    }));
+
+    let thrown: unknown;
+    try {
+      await uploadAsset({ http, bytes, hash, fetch });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String((thrown as Error).message)).toContain("status 403");
+    expect(String((thrown as Error).message)).toContain("https://acct.object-storage.example.test/b/k?[redacted]");
+    expect(String((thrown as Error).message)).not.toMatch(/X-Amz-Signature|Signature=s/);
   });
 
   it("rejects a client-side hash mismatch before any network call", async () => {

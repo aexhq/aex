@@ -26,6 +26,19 @@ describe("live user-test release gate", () => {
     expect(workflow).not.toContain("path: .suite-diagnostics/raw");
   });
 
+  it("redacts signed object-storage URLs from live-test artifacts", () => {
+    for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {
+      const workflow = read(path);
+
+      expect(workflow, path).toContain("text = redactSignedUrls(text);");
+      expect(workflow, path).toContain("function redactSignedUrls(input)");
+      expect(workflow, path).toContain("X-Amz-");
+      expect(workflow, path).toContain("X-Goog-");
+      expect(workflow, path).toContain("?[redacted]");
+      expect(workflow, path).toContain("Security-Token");
+    }
+  });
+
   it("keeps shard flags out of conformance prebuilds", () => {
     const packageJson = JSON.parse(read("apps/user-tests/package.json")) as {
       scripts?: Record<string, string>;
