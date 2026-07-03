@@ -56,6 +56,7 @@ export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "
 export {
   AexApiError,
   AexError,
+  AexNetworkError,
   CleanupError,
   CredentialValidationError,
   ProviderError,

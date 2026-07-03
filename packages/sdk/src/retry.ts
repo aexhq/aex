@@ -20,7 +20,7 @@
  * fall through to the transport's usual `AexApiError` / network rejection.
  */
 
-import { AexApiError, type FetchLike } from "@aexhq/contracts";
+import { AexApiError, AexNetworkError, type FetchLike } from "@aexhq/contracts";
 
 /**
  * HTTP statuses that are transient and worth retrying. The billable submits
@@ -295,6 +295,52 @@ function coerceRetryAfterMs(raw: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * Wrap the last network-error rejection once retries are exhausted, so the
+ * surfaced error states how many attempts were made over how many ms and
+ * preserves the raw rejection on `cause` (mirrors the {@link AexRateLimitError}
+ * path for exhausted throttle statuses). An {@link AexNetworkError} from the
+ * transport is annotated — rebuilt with the same request context and its
+ * original cause — rather than double-wrapped.
+ */
+function networkRetryExhausted(
+  err: unknown,
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+  attempts: number,
+  elapsedMs: number
+): AexNetworkError {
+  if (err instanceof AexNetworkError) {
+    return new AexNetworkError({
+      method: err.method,
+      host: err.host,
+      path: err.path,
+      cause: err.cause ?? err,
+      attempts,
+      elapsedMs
+    });
+  }
+  const url = requestUrl(input);
+  const method = init?.method ?? (typeof Request !== "undefined" && input instanceof Request ? input.method : "GET");
+  return new AexNetworkError({
+    method: method.toUpperCase(),
+    host: url?.host ?? "",
+    path: url?.pathname ?? "",
+    cause: err,
+    attempts,
+    elapsedMs
+  });
+}
+
+function requestUrl(input: string | URL | Request): URL | undefined {
+  try {
+    if (input instanceof URL) return input;
+    return new URL(typeof input === "string" ? input : input.url);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Hooks the retry loop needs, injectable so tests run without real timers. */
 export interface RetryDeps {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -380,9 +426,13 @@ export function withRetry(
       } catch (err) {
         // A caller-initiated abort is terminal, never transient.
         if (isAbortError(err)) throw err;
-        if (attempt >= config.maxAttempts) throw err;
+        if (attempt >= config.maxAttempts) {
+          throw networkRetryExhausted(err, input, init, attempt, now() - startedAt);
+        }
         const delay = computeBackoffDelayMs(config, attempt, random);
-        if (now() - startedAt + delay > config.maxElapsedMs) throw err;
+        if (now() - startedAt + delay > config.maxElapsedMs) {
+          throw networkRetryExhausted(err, input, init, attempt, now() - startedAt);
+        }
         await sleep(delay, signal ?? undefined);
         continue;
       }

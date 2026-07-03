@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AexApiError, type FetchLike } from "@aexhq/contracts";
+import { AexApiError, AexNetworkError, type FetchLike } from "@aexhq/contracts";
 import {
   AexRateLimitError,
   computeBackoffDelayMs,
@@ -278,7 +278,7 @@ describe("withRetry: transient handling", () => {
     }
   });
 
-  it("retries a network error then succeeds, and rethrows the original when exhausted", async () => {
+  it("retries a network error then succeeds, and wraps the original when exhausted", async () => {
     const netErr = new TypeError("fetch failed");
     const okAfter = scriptedFetch([netErr, json({ ok: true }, 200)]);
     const okDeps = deterministicDeps(1);
@@ -288,9 +288,21 @@ describe("withRetry: transient handling", () => {
 
     const alwaysDown = scriptedFetch([netErr]);
     const downDeps = deterministicDeps(1);
-    await expect(
-      withRetry(alwaysDown.fetch, { maxAttempts: 3, initialDelayMs: 1 }, downDeps.deps)("https://x", { method: "POST" })
-    ).rejects.toBe(netErr);
+    const err = await withRetry(alwaysDown.fetch, { maxAttempts: 3, initialDelayMs: 1 }, downDeps.deps)(
+      "https://x",
+      { method: "POST" }
+    ).then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (e) => e as AexNetworkError
+    );
+    // Exhausted network errors surface as AexNetworkError stating the
+    // attempts made, with the raw rejection preserved on `cause`.
+    expect(err).toBeInstanceOf(AexNetworkError);
+    expect(err.attempts).toBe(3);
+    expect(err.message).toMatch(/after 3 attempts over \d+ms/);
+    expect(err.cause).toBe(netErr);
     expect(alwaysDown.calls).toHaveLength(3);
   });
 

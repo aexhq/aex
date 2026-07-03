@@ -7,8 +7,9 @@
  *   - presign errors fail without a buffered `/assets` retry
  */
 import { describe, expect, it, vi } from "vitest";
+import { HttpClient } from "@aexhq/contracts";
 import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/asset-upload.js";
-import { AexApiError } from "../../src/index.js";
+import { AexApiError, AexNetworkError } from "../../src/index.js";
 
 const bytes = new TextEncoder().encode("hello skill bundle");
 // sha256("hello skill bundle") — precomputed so the client-side check passes.
@@ -91,6 +92,35 @@ describe("uploadAsset (direct-to-storage)", () => {
     await expect(uploadAsset({ http, bytes, hash, fetch })).rejects.toThrow(/object storage S3 creds not configured/);
     expect(calls).toEqual(["/assets/presign"]);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("surfaces network context when the presign request cannot reach the API", async () => {
+    const hash = await hashOf(bytes);
+    const raw = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" })
+    });
+    // Integration through the real transport: uploadAsset → HttpClient →
+    // rejecting fetch, exactly the unreachable-API shape from the field report.
+    const http = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiToken: "tok",
+      fetch: async () => {
+        throw raw;
+      }
+    });
+    const put: AssetFetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => "" }));
+    let thrown: unknown;
+    try {
+      await uploadAsset({ http, bytes, hash, fetch: put });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(AexNetworkError);
+    const err = thrown as AexNetworkError;
+    expect(err.message).toContain("POST api.example.test/assets/presign failed");
+    expect(err.message).toContain("ECONNREFUSED");
+    expect(err.cause).toBe(raw);
+    expect(put).not.toHaveBeenCalled();
   });
 
   it("throws when the object storage PUT fails (e.g. object storage rejected the checksum)", async () => {

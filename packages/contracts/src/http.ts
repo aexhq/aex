@@ -1,4 +1,4 @@
-import { AexApiError } from "./sdk-errors.js";
+import { AexApiError, AexError, AexNetworkError, redactUrl } from "./sdk-errors.js";
 import { AEX_DEFAULT_BASE_URL } from "./stable.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -43,7 +43,15 @@ export class HttpClient {
     }
     const raw = options.baseUrl ?? AEX_DEFAULT_BASE_URL;
     const normalized = raw.endsWith("/") ? raw : `${raw}/`;
-    this.#baseUrl = new URL(normalized);
+    try {
+      this.#baseUrl = new URL(normalized);
+    } catch (err) {
+      throw new Error(
+        `HttpClient: invalid aex baseUrl ${JSON.stringify(redactUrl(raw))} — ` +
+          `expected an absolute URL like "${AEX_DEFAULT_BASE_URL}"`,
+        { cause: err }
+      );
+    }
     this.#apiToken = options.apiToken;
     this.#fetch = options.fetch ?? fetch;
     this.#debug = options.debug;
@@ -78,7 +86,12 @@ export class HttpClient {
       }
     }
     const startedMs = Date.now();
-    const response = await this.#fetch(url, { ...init, headers });
+    let response: Response;
+    try {
+      response = await this.#fetch(url, { ...init, headers });
+    } catch (err) {
+      throw toNetworkError(init.method, url, err);
+    }
     this.#trace(init.method, url, response.status, startedMs);
     const body = await readJson(response);
     if (!response.ok) {
@@ -101,7 +114,12 @@ export class HttpClient {
       ...normalizeHeaders(init.headers)
     };
     const startedMs = Date.now();
-    const response = await this.#fetch(url, { ...init, headers });
+    let response: Response;
+    try {
+      response = await this.#fetch(url, { ...init, headers });
+    } catch (err) {
+      throw toNetworkError(init.method, url, err);
+    }
     this.#trace(init.method, url, response.status, startedMs);
     if (!response.ok) {
       const body = await readJson(response);
@@ -109,6 +127,24 @@ export class HttpClient {
     }
     return { response };
   }
+}
+
+/**
+ * Wrap a fetch rejection into an {@link AexNetworkError} carrying the
+ * request's method + redacted host/path. Caller-initiated aborts and
+ * already-structured aex errors (e.g. a retry layer's AexRateLimitError or
+ * AexNetworkError) pass through untouched.
+ */
+function toNetworkError(method: string | undefined, url: URL, err: unknown): unknown {
+  if (err instanceof AexError) return err;
+  // `DOMException` is not an `Error` subclass on every runtime, so match aborts by name.
+  if ((err as { readonly name?: unknown } | null | undefined)?.name === "AbortError") return err;
+  return new AexNetworkError({
+    method: (method ?? "GET").toUpperCase(),
+    host: url.host,
+    path: url.pathname,
+    cause: err
+  });
 }
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {

@@ -20,6 +20,8 @@
  *
  */
 
+import { extractErrorCode, redactUrl } from "@aexhq/contracts";
+
 /**
  * Subset of `HttpClient` needed by the asset uploader. Defined as a
  * structural type so tests can supply a thin stub without dragging in
@@ -76,26 +78,21 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
   const contentHashHeader = `sha256:${actual}`;
 
   // ---- Step 1: presign (control plane) ----
-  let presign:
-    | {
-        ok: boolean;
-        exists: boolean;
-        assetId?: string;
-        contentHash?: string;
-        sizeBytes?: number;
-        uploadUrl?: string;
-        requiredHeaders?: Record<string, string>;
-      }
-    | undefined;
-  try {
-    presign = await args.http.request<NonNullable<typeof presign>>("/assets/presign", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
-    });
-  } catch (err) {
-    throw err;
-  }
+  // A network failure here surfaces as the transport's AexNetworkError,
+  // which already names the method, host, path, and transport code.
+  const presign = await args.http.request<{
+    ok: boolean;
+    exists: boolean;
+    assetId?: string;
+    contentHash?: string;
+    sizeBytes?: number;
+    uploadUrl?: string;
+    requiredHeaders?: Record<string, string>;
+  }>("/assets/presign", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
+  });
 
   // Dedup hit — identical bytes already vaulted under this workspace.
   if (presign.exists) {
@@ -235,24 +232,8 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
-function extractErrorCode(err: unknown): string | undefined {
-  const code = stringProperty(err, "code");
-  if (code) return code;
-  const cause = objectProperty(err, "cause");
-  const causeCode = stringProperty(cause, "code");
-  if (causeCode) return causeCode;
-  const match = /\bE[A-Z0-9_]+\b/.exec(errorMessage(err));
-  return match?.[0];
-}
-
 function isNamedError(err: unknown, name: string): boolean {
   return stringProperty(err, "name") === name;
-}
-
-function objectProperty(value: unknown, key: string): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const prop = (value as Record<string, unknown>)[key];
-  return prop && typeof prop === "object" ? (prop as Record<string, unknown>) : undefined;
 }
 
 function stringProperty(value: unknown, key: string): string | undefined {
@@ -275,19 +256,6 @@ function redactUrlPreservingTrailingPunctuation(raw: string): string {
   const trailing = raw.match(/[),.;:!?]+$/)?.[0] ?? "";
   const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
   return `${redactUrl(candidate)}${trailing}`;
-}
-
-function redactUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const auth = parsed.username || parsed.password ? "[redacted]@" : "";
-    const query = parsed.search ? "?[redacted]" : "";
-    return `${parsed.protocol}//${auth}${parsed.host}${parsed.pathname}${query}`;
-  } catch {
-    const withoutAuth = url.replace(/\/\/[^/?#\s]+@/, "//[redacted]@");
-    const queryStart = withoutAuth.indexOf("?");
-    return queryStart === -1 ? withoutAuth : `${withoutAuth.slice(0, queryStart)}?[redacted]`;
-  }
 }
 
 function bufferToHex(buffer: ArrayBuffer): string {

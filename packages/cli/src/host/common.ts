@@ -3,7 +3,17 @@
  * parsing, HttpClient construction, manifest detection so we can refuse
  * to run host commands inside a managed run container, and exit codes.
  */
-import { AEX_DEFAULT_BASE_URL, AexApiError, AexError, HttpClient, TERMINAL_RUN_STATUSES, type FetchLike } from "@aexhq/contracts";
+import {
+  AEX_DEFAULT_BASE_URL,
+  AexApiError,
+  AexError,
+  AexNetworkError,
+  HttpClient,
+  TERMINAL_RUN_STATUSES,
+  extractErrorCode,
+  redactSecrets,
+  type FetchLike
+} from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
 
 export interface CliExitCode {
@@ -207,17 +217,49 @@ export function describeApiError(err: unknown): {
 } {
   if (err instanceof AexApiError) {
     const remedy = remedyForStatus(err.status);
+    const detail = describeErrorBody(err.body);
     return {
       code: err.code,
-      message: err.message,
+      message: detail ? `${err.message} — ${detail}` : err.message,
       status: err.status,
       ...(remedy ? { remedy } : {})
     };
   }
   if (err instanceof AexError) {
-    return { code: err.code, message: err.message };
+    // Surface the transport failure code (ECONNREFUSED/ENOTFOUND/…) —
+    // undici hides it on `cause` — plus a connectivity remedy keyed on it.
+    const causeCode = err instanceof AexNetworkError ? err.causeCode : extractErrorCode(err.cause);
+    const remedy = causeCode ? remedyForNetworkCode(causeCode) : undefined;
+    const message = causeCode && !err.message.includes(causeCode) ? `${err.message} (${causeCode})` : err.message;
+    return { code: err.code, message, ...(remedy ? { remedy } : {}) };
   }
   return { code: "error", message: err instanceof Error ? err.message : String(err) };
+}
+
+/**
+ * Standard aex error-envelope keys. A body carrying ONLY these adds nothing
+ * beyond the message `describeApiError` already extracted, so it is omitted.
+ */
+const STANDARD_ERROR_BODY_KEYS = new Set(["ok", "error", "message", "code"]);
+
+/**
+ * Render an `AexApiError.body` for the CLI envelope when it carries fields
+ * beyond the standard `{ ok, error, code, message }` shape. Truncated and
+ * redaction-scanned (the body is already redacted at construction; this is a
+ * cheap second pass).
+ */
+function describeErrorBody(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const keys = Object.keys(body as Record<string, unknown>);
+  if (keys.length === 0 || keys.every((key) => STANDARD_ERROR_BODY_KEYS.has(key))) return undefined;
+  let text: string;
+  try {
+    text = JSON.stringify(body);
+  } catch {
+    return undefined;
+  }
+  const redacted = redactSecrets(text);
+  return redacted.length > 400 ? `${redacted.slice(0, 400)}… (truncated)` : redacted;
 }
 
 function remedyForStatus(status: number): string | undefined {
@@ -230,6 +272,28 @@ function remedyForStatus(status: number): string | undefined {
   if (status === 429) return "rate limited — retry with backoff";
   if (status >= 500) return "server error — retry; re-run with --debug to capture the request trace";
   return undefined;
+}
+
+/** Network sibling of {@link remedyForStatus}, keyed on the transport code. */
+function remedyForNetworkCode(code: string): string | undefined {
+  switch (code) {
+    case "ECONNREFUSED":
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+      return "cannot reach the aex API — check --aex-url and network connectivity";
+    case "ECONNRESET":
+    case "ETIMEDOUT":
+    case "UND_ERR_CONNECT_TIMEOUT":
+      return "connection dropped — retry; check --aex-url, network connectivity, or any proxy/VPN";
+    case "CERT_HAS_EXPIRED":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+      return "TLS verification failed — check --aex-url points at the right host";
+    default:
+      return undefined;
+  }
 }
 
 /**
