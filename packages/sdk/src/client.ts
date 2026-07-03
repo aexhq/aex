@@ -152,7 +152,12 @@ export interface RunResult {
   readonly outputs: readonly Output[];
   /** Aggregate token usage when the deployment exposes it on the record. */
   readonly usage?: UsageSummary;
-  /** Settle-time showback estimate (USD), from `run.costTelemetry`. */
+  /**
+   * Settle-time showback estimate (USD), from `run.costTelemetry`. The settle
+   * write lands tens of seconds AFTER the turn parks, so by default this is
+   * usually absent on a fresh run — pass `settleConsistent: true` to wait for
+   * it, or read `sessions.get(runId).costUsd` later.
+   */
   readonly costUsd?: number;
   /** The run's error message when `!ok`. */
   readonly error?: string;
@@ -167,6 +172,14 @@ export interface RunCollectOptions {
   readonly pingIntervalMs?: number;
   /** Throw a {@link RunStateError} when the run does not succeed. Default false. */
   readonly throwOnFailure?: boolean;
+  /**
+   * Wait (bounded, ~60s) for the settle write after the turn parks, so the
+   * result carries the settle-stamped `costUsd`/`usage`/`errorMessage`. The
+   * settle lambda lands tens of seconds after the park event, so this trades
+   * latency for a complete record. Default false: return at park; read
+   * `sessions.get(runId)` later for the showback.
+   */
+  readonly settleConsistent?: boolean;
 }
 
 export type SessionInput = string | readonly string[];
@@ -1430,12 +1443,15 @@ export class Aex {
         idempotencyKey: messageKey
       }).done();
       const runId = turnResult.sessionId;
-      // Settle-consistent enrichment: the park EVENT that ends the stream lands
-      // seconds BEFORE the settle write that flips the record and stamps the
-      // costTelemetry/costUsd this result documents — a single immediate read
-      // misses the showback on virtually every fresh run. Briefly poll for the
-      // parked RECORD (bounded; degrades gracefully to the immediate read).
-      const settledRecord = await settledSessionRecord(this.#http, runId, turnResult.session, scopedSignal?.signal);
+      // Settle-consistent enrichment (opt-in): the park EVENT that ends the
+      // stream lands tens of seconds BEFORE the settle write that flips the
+      // record and stamps costTelemetry/costUsd, so an immediate read misses
+      // the showback on virtually every fresh run. `settleConsistent: true`
+      // polls for the parked RECORD (bounded; degrades to the immediate read).
+      const settledRecord =
+        opts.settleConsistent === true
+          ? await settledSessionRecord(this.#http, runId, turnResult.session, scopedSignal?.signal)
+          : undefined;
       const sessionRecord = settledRecord ?? turnResult.session;
       if (deleteAfter) {
         await session.delete();
@@ -1695,7 +1711,7 @@ function isTerminal(status: string | undefined): boolean {
 }
 
 /** How long `Aex.run` waits for the settle write after the park event (ms). */
-const SETTLE_POLL_DEADLINE_MS = 15_000;
+const SETTLE_POLL_DEADLINE_MS = 60_000;
 /** Interval between settle-poll reads (ms). */
 const SETTLE_POLL_INTERVAL_MS = 750;
 

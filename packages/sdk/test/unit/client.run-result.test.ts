@@ -193,7 +193,7 @@ describe("Aex.run -> one-shot session RunResult", () => {
     const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
     const promise = client.run(
       { model: "claude-haiku-4-5", message: "p", apiKeys: { anthropic: "sk-ant" } },
-      { webSocketFactory: factory }
+      { webSocketFactory: factory, settleConsistent: true }
     );
 
     await flush();
