@@ -169,16 +169,19 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         ).done();
         const secondIdle = await pollSession(session.id, ["idle"]);
         const idleEvents = await listEventsSettled(session, "aex.session.idle");
-        // Anchor the list to this session's creation: the suite runs 11 shards
-        // against one shared workspace, and a newest-first unanchored list can
-        // page this session out behind concurrently created sessions. Retry
-        // briefly to absorb GSI eventual consistency.
+        // The suite runs 11 shards against one shared workspace and the list is
+        // newest-first, so with a "since" lower bound this session is the LAST
+        // item in the range — concurrent shards' newer sessions fill page one.
+        // Follow nextCursor pages; "since" keeps the page space small and finite.
         const listedIn = (p) => Array.isArray(p.sessions) && p.sessions.some((s) => s.id === session.id || s.sessionId === session.id);
-        let page = await client.sessions.list({ status: "idle", limit: 25, since: session.record.createdAt });
-        for (let i = 0; i < 3 && !listedIn(page); i++) {
-          await new Promise((r) => setTimeout(r, 2000));
-          page = await client.sessions.list({ status: "idle", limit: 25, since: session.record.createdAt });
-        }
+        let listed = false;
+        let page;
+        let cursor;
+        do {
+          page = await client.sessions.list({ status: "idle", limit: 25, since: session.record.createdAt, ...(cursor ? { cursor } : {}) });
+          if (listedIn(page)) { listed = true; break; }
+          cursor = page.nextCursor;
+        } while (cursor);
         await session.delete({ idempotencyKey: "chat-session-delete-" + Date.now() });
 
         const events = [...suspendedEvents, ...idleEvents];
@@ -193,7 +196,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           resumedStatus: resumedRecord.status,
           secondStatus: second.status,
           secondPolledStatus: secondIdle.status,
-          listed: listedIn(page),
+          listed,
           firstText: first.text,
           secondText: second.text,
           snapshotTypes: [...new Set(events.map((e) => e.type))],
