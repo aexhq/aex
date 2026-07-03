@@ -13,10 +13,10 @@ describe("live user-test release gate", () => {
   it("uploads only a redacted live-test log artifact", () => {
     const workflow = read(".github/workflows/live-user-tests.yml");
 
-    expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/6");
-    expect(workflow).toContain("shard: [1, 2, 3, 4, 5, 6]");
-    expect(workflow).toContain("bun run test:user -- --shard=${{ matrix.shard }}/6 2>&1 | tee \"$RAW_LOG\"");
-    expect(workflow).toContain("AEX_USER_TEST_MAX_WORKERS: 2");
+    expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/11");
+    expect(workflow).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
+    expect(workflow).toContain("bun run test:user -- --shard=${{ matrix.shard }}/11 2>&1 | tee \"$RAW_LOG\"");
+    expect(workflow).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
     expect(workflow).toContain("Redact live user test log");
     expect(workflow).toContain("Upload redacted live user test log");
     expect(workflow).toContain("path: .suite-diagnostics/redacted");

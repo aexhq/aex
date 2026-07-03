@@ -230,7 +230,7 @@ jobs:
         run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
 
   live-user-tests:
-    name: Live user tests shard ${{ matrix.shard }}/6
+    name: Live user tests shard ${{ matrix.shard }}/11
     needs: publish
     runs-on: ubuntu-latest
     environment: live-user-tests
@@ -238,7 +238,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -264,12 +264,12 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
-          AEX_USER_TEST_MAX_WORKERS: 2
+          AEX_USER_TEST_MAX_WORKERS: 1
           RAW_LOG: .suite-diagnostics/raw/release-live-user-tests-shard-${{ matrix.shard }}.log
         run: |
           set -euo pipefail
           mkdir -p .suite-diagnostics/raw
-          bun run test:user -- --shard=${{ matrix.shard }}/6 2>&1 | tee "$RAW_LOG"
+          bun run test:user -- --shard=${{ matrix.shard }}/11 2>&1 | tee "$RAW_LOG"
 
       - name: Redact live user test log
         if: ${{ always() }}
