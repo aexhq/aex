@@ -15,7 +15,7 @@ describe("live user-test release gate", () => {
 
     expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/11");
     expect(workflow).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
-    expect(workflow).toContain("bun run test:user -- --shard=${{ matrix.shard }}/11 2>&1 | tee \"$RAW_LOG\"");
+    expect(workflow).toContain('bun run test:user:files -- $FILES 2>&1 | tee "$RAW_LOG"');
     expect(workflow).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
     expect(workflow).toContain("Redact live user test log");
     expect(workflow).toContain("Upload redacted live user test log");
@@ -37,6 +37,54 @@ describe("live user-test release gate", () => {
       expect(workflow, path).toContain("?[redacted]");
       expect(workflow, path).toContain("Security-Token");
     }
+  });
+
+  it("shards live user tests by recorded duration, not file count", () => {
+    // vitest --shard splits by file count (per-file live durations vary
+    // ~1s..6.5min, giving 1m42s..12m7s shard walls, and shard 12/12 once
+    // collected ZERO tests). Both release-gate workflows must instead ask
+    // scripts/shard-files.mjs for an explicit, duration-balanced,
+    // guaranteed-non-empty file list BEFORE invoking vitest.
+    for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {
+      const workflow = read(path);
+
+      expect(workflow, path).toContain(
+        'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"'
+      );
+      expect(workflow, path).toContain('bun run test:user:files -- $FILES 2>&1 | tee "$RAW_LOG"');
+      expect(workflow, path).not.toContain("--shard=");
+      const shardCall = workflow.indexOf("scripts/shard-files.mjs --shard");
+      const vitestCall = workflow.indexOf("bun run test:user:files -- $FILES");
+      expect(shardCall, path).toBeGreaterThan(-1);
+      expect(vitestCall, path).toBeGreaterThan(shardCall);
+    }
+
+    // The explicit-file lane must NOT carry the catch-all `test` positional
+    // filter — it would match every file and defeat the shard list.
+    const packageJson = JSON.parse(read("apps/user-tests/package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(packageJson.scripts?.["test:user:files"]).toBe(
+      "bun scripts/run-user-vitest.mjs --config vitest.config.ts"
+    );
+    const rootPackageJson = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+    expect(rootPackageJson.scripts?.["test:user:files"]).toBe(
+      "bun run --filter @aexhq/user-tests test:user:files"
+    );
+
+    // The bin-packer's exclude list must mirror vitest.config.ts so both
+    // collect the same file set.
+    const script = read("apps/user-tests/scripts/shard-files.mjs");
+    const vitestConfig = read("apps/user-tests/vitest.config.ts");
+    for (const excluded of [
+      "test/live/live-sdk-heavy-session.test.ts",
+      "test/live/live-api-fuzz.test.ts",
+      "test/live/live-sdk-tool-capability-fuzz.test.ts"
+    ]) {
+      expect(script).toContain(`"${excluded}"`);
+      expect(vitestConfig).toContain(`"${excluded}"`);
+    }
+    expect(script).toContain("shard-durations.json");
   });
 
   it("keeps shard flags out of conformance prebuilds", () => {

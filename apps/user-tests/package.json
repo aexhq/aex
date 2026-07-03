@@ -6,6 +6,7 @@
   "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. Product SDK/CLI access goes through a child process whose cwd is a fresh `bun install` tempdir; the harness may import shared conformance matchers.",
   "scripts": {
     "test:user": "bun scripts/run-user-vitest.mjs --config vitest.config.ts test",
+    "test:user:files": "bun scripts/run-user-vitest.mjs --config vitest.config.ts",
     "test:user:offline": "bun scripts/run-user-vitest.mjs --config vitest.offline.config.ts",
     "test:user:heavy": "bun scripts/run-user-vitest.mjs --config vitest.heavy.config.ts",
     "test:user:providers": "bun scripts/run-user-vitest.mjs --config vitest.providers.config.ts",

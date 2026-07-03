@@ -139,7 +139,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .suite-diagnostics/raw
-          bun run test:user -- --shard=${{ matrix.shard }}/11 2>&1 | tee "$RAW_LOG"
+          # Duration-balanced sharding: shard-files.mjs LPT bin-packs the
+          # collected test files by recorded duration (shard-durations.json)
+          # and fails loudly if a shard would be empty — unlike vitest
+          # --shard, which splits by file count and can collect zero tests.
+          FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"
+          bun run test:user:files -- $FILES 2>&1 | tee "$RAW_LOG"
 
       - name: Redact live user test log
         if: ${{ always() }}
