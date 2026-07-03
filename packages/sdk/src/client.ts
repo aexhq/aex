@@ -1429,11 +1429,18 @@ export class Aex {
         ...streamOptions,
         idempotencyKey: messageKey
       }).done();
+      const runId = turnResult.sessionId;
+      // Settle-consistent enrichment: the park EVENT that ends the stream lands
+      // seconds BEFORE the settle write that flips the record and stamps the
+      // costTelemetry/costUsd this result documents — a single immediate read
+      // misses the showback on virtually every fresh run. Briefly poll for the
+      // parked RECORD (bounded; degrades gracefully to the immediate read).
+      const settledRecord = await settledSessionRecord(this.#http, runId, turnResult.session, scopedSignal?.signal);
+      const sessionRecord = settledRecord ?? turnResult.session;
       if (deleteAfter) {
         await session.delete();
       }
-      const runId = turnResult.sessionId;
-      const run = sessionToRun(turnResult.session);
+      const run = sessionToRun(sessionRecord);
       const events = turnResult.events as unknown as readonly RunEvent[];
       const outputs = turnResult.outputs;
       const ok = turnResult.status === "idle" || turnResult.status === "suspended";
@@ -1452,14 +1459,14 @@ export class Aex {
       // Surface the trace-derived usage at the top level when the run record does
       // not carry its own usage (the managed plane doesn't populate session.usage);
       // the per-event trace still yields token counts (pre-launch edge-sweep F5).
-      const usage = turnResult.session.usage ?? trace.usage;
-      const costUsd = typeof turnResult.session.costUsd === "number" ? turnResult.session.costUsd : undefined;
-      const errorMessage = typeof turnResult.session.errorMessage === "string" && turnResult.session.errorMessage ? turnResult.session.errorMessage : undefined;
+      const usage = sessionRecord.usage ?? trace.usage;
+      const costUsd = typeof sessionRecord.costUsd === "number" ? sessionRecord.costUsd : undefined;
+      const errorMessage = typeof sessionRecord.errorMessage === "string" && sessionRecord.errorMessage ? sessionRecord.errorMessage : undefined;
       const result: RunResult = {
         runId,
         run,
         sessionId: runId,
-        session: turnResult.session,
+        session: sessionRecord,
         turn: turnResult.turn,
         status: turnResult.status,
         ok,
@@ -1476,7 +1483,7 @@ export class Aex {
         // A turn that failed because the upstream provider throttled us surfaces
         // as a structured, non-leaky AexRateLimitError carrying the provider
         // fault, so callers can branch on `isRateLimited(err)` and replay.
-        const throttle = throttleFromSession(turnResult.session);
+        const throttle = throttleFromSession(sessionRecord);
         if (throttle) {
           throw new AexRateLimitError({
             status: throttle.status ?? 429,
@@ -1685,6 +1692,40 @@ const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
 
 function isTerminal(status: string | undefined): boolean {
   return typeof status === "string" && TERMINAL_STATUSES.has(status);
+}
+
+/** How long `Aex.run` waits for the settle write after the park event (ms). */
+const SETTLE_POLL_DEADLINE_MS = 15_000;
+/** Interval between settle-poll reads (ms). */
+const SETTLE_POLL_INTERVAL_MS = 750;
+
+/**
+ * Poll for the session RECORD to reach a parked status — i.e. for the settle
+ * write (which also stamps `costUsd`/`usage`/`errorMessage`) to land. Returns
+ * the settled record, or `undefined` on timeout/abort/read-failure so the
+ * caller can fall back to the record it already holds. The first read is
+ * immediate, so a fast settle costs one extra GET and no added latency.
+ */
+async function settledSessionRecord(
+  http: HttpClient,
+  sessionId: string,
+  lastSeen: Session,
+  signal: AbortSignal | undefined
+): Promise<Session | undefined> {
+  // `lastSeen.status` may be client-side patched (withTerminalSessionStatus), so
+  // only trust it when it is parked AND already carries the settle-stamped cost.
+  if (isSessionParked(lastSeen.status) && typeof lastSeen.costUsd === "number") return lastSeen;
+  const deadline = Date.now() + SETTLE_POLL_DEADLINE_MS;
+  while (signal?.aborted !== true && Date.now() < deadline) {
+    const record = await operations.getSession(http, sessionId).catch(() => undefined);
+    if (record !== undefined && isSessionParked(record.status)) return record;
+    try {
+      await sleep(SETTLE_POLL_INTERVAL_MS, signal);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 /**

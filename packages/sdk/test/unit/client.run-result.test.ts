@@ -145,6 +145,68 @@ describe("Aex.run -> one-shot session RunResult", () => {
     expect(result.error).toBe("boom");
   });
 
+  it("waits for the settled record so costUsd/usage survive the park-event → settle race", async () => {
+    // Live-observed on dev: the park EVENT ends the stream seconds BEFORE the
+    // settle lambda flips the record and stamps costTelemetry/costUsd, so a
+    // single immediate read returned costUsd: undefined on virtually every
+    // fresh run — despite RunResult documenting the settle-time showback.
+    const urls: string[] = [];
+    const sockets: FakeWebSocket[] = [];
+    let sessionReads = 0;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      urls.push(`${(init?.method ?? "GET").toString()} ${url}`);
+      if (url.endsWith("/api/sessions/run-1/events/ticket")) {
+        return json({ wsUrl: "wss://events.example.test/sessions/run-1", ticket: "ticket", expiresAtMs: 1 });
+      }
+      if (url.endsWith("/api/sessions/run-1/outputs")) {
+        return json({ outputs: [] });
+      }
+      if (url.endsWith("/api/sessions/run-1/messages")) {
+        return json({
+          session: { id: "run-1", status: "running", turnSeq: 1 },
+          turn: { sessionId: "run-1", turnSeq: 1 },
+          eventCursor: 1024
+        });
+      }
+      if (url.endsWith("/api/sessions/run-1")) {
+        sessionReads += 1;
+        // Read 1 (post-stream): settle hasn't landed — record still `running`,
+        // no costUsd. Read 2+: settled.
+        return json({
+          session:
+            sessionReads < 2
+              ? { id: "run-1", status: "running", turnSeq: 1 }
+              : { id: "run-1", status: "idle", turnSeq: 1, costUsd: 0.0042, usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } }
+        });
+      }
+      if (url.endsWith("/api/sessions")) {
+        return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } });
+      }
+      return json({});
+    };
+    const factory = (url: string): FakeWebSocket => {
+      const ws = new FakeWebSocket(url);
+      sockets.push(ws);
+      return ws;
+    };
+    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const promise = client.run(
+      { model: "claude-haiku-4-5", message: "p", apiKeys: { anthropic: "sk-ant" } },
+      { webSocketFactory: factory }
+    );
+
+    await flush();
+    sockets[0]!.message(evt(1024, "TEXT_MESSAGE_CONTENT", { text: "hi", messageId: "m1" }));
+    sockets[0]!.message(evt(1025, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } }));
+
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.costUsd).toBe(0.0042);
+    expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
+    expect(result.session?.status).toBe("idle");
+  });
+
   it("throws when throwOnFailure is set and the session turn did not park cleanly", async () => {
     const { client, sockets, webSocketFactory } = runClient({ id: "run-1", status: "error", errorMessage: "boom" });
     const promise = client.run(
