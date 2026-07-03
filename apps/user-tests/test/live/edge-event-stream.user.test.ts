@@ -371,7 +371,18 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // The default session-envelope stream terminates on CUSTOM aex.session.idle,
     // even though session runs still do not emit run-level RUN_FINISHED/RUN_ERROR.
     expect(r.rfPresent).toBe(false);
-    expect(r.endedNaturally).toBe(true);
+    expect(
+      r.endedNaturally,
+      `streamEnvelopes({from:0}) replay did not end naturally (30s guard aborted): ${JSON.stringify({
+        envTypes: r.envTypes,
+        envCustomNames: r.envCustomNames,
+        envAnalyze: r.envAnalyze,
+        rfPresent: r.rfPresent,
+        pollTypes: r.pollTypes,
+        pollCount: r.pollCount,
+        pollErr: r.pollErr
+      })}`
+    ).toBe(true);
     // settleConsistent waits for the post-mirror aex.run.settled barrier on
     // run-finished paths. Managed session turns do not emit that barrier; the
     // stream ends at the session-park terminal because the record is already

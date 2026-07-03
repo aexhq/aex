@@ -113,6 +113,9 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           apiKeys: { deepseek: deepseekKey }
         }, { timeoutMs: 8 * 60 * 1000 });
         const runId = runResult.runId;
+        // stderr, not stdout: the parent parses stdout as one JSON blob. The
+        // runId must land in the CI log even if this script dies before emit.
+        process.stderr.write("runId=" + runId + "\\n");
         const run = {
           status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
           runtime: "managed",
@@ -211,9 +214,21 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
 
       const result = JSON.parse(child.stdout.trim()) as LiveResult;
 
+      // Print the runId as soon as we have it so the platform diagnostics
+      // collector can pull this run's forensics from the CI log even when a
+      // later assertion fails (same convention as live-sdk-heavy-session).
+      console.log(`runId=${result.runId} runStatus=${result.runStatus} terminalKind=${result.terminalKind}`);
+
       // ---- assertions ----
 
-      expect(result.runStatus).toBe("succeeded");
+      const failureClass =
+        result.terminalData && typeof result.terminalData["failureClass"] === "string"
+          ? (result.terminalData["failureClass"] as string)
+          : null;
+      expect(
+        result.runStatus,
+        `runId=${result.runId} terminalKind=${result.terminalKind} failureClass=${failureClass} terminalData=${JSON.stringify(result.terminalData)}`
+      ).toBe("succeeded");
 
       // Real managed-runtime event frame: starts with runtime_started, ends
       // with runtime_terminal, has at least one assistant_text from
