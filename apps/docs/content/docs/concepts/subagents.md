@@ -70,9 +70,12 @@ the parent can share.
 Every child — in-process or container — is a first-class run record:
 
 - The parent's transcript logs each spawn with the child's run id.
-- Each child has its own status, typed event timeline, and captured outputs,
-  readable by id like any other run (`aex.sessions.get(id)`, or the CLI's
-  `aex status` / `aex events` / `aex outputs` / `aex download`).
+- Each child has its own status, typed event timeline, and captured outputs.
+  The child's events and outputs are readable by id
+  (`aex.sessions.outputs(id)` in the SDK, or the CLI's `aex events` /
+  `aex outputs`). Child runs are not served by the session read surface
+  today — `aex.sessions.get(id)` / `aex sessions` / the CLI's `aex status`
+  answer `not_found` for a child id.
 - The child's outputs are handed back to the parent via `subagent_result`, and
   they remain independently downloadable after the lineage finishes.
 
