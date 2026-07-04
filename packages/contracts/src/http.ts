@@ -167,7 +167,17 @@ async function readJson(response: Response): Promise<unknown> {
 function extractErrorMessage(body: unknown): string {
   if (body && typeof body === "object") {
     const obj = body as { readonly error?: unknown; readonly message?: unknown };
-    if (typeof obj.error === "string") return obj.error;
+    if (typeof obj.error === "string") {
+      // A 409 `session_busy` body carries the session's CURRENT status.
+      // Surface it: a send to a deleted (or cancelling/suspending) session
+      // otherwise reads as merely "busy", which is misleading for a session
+      // that will never accept a turn again.
+      const status = (body as { readonly status?: unknown }).status;
+      if (obj.error === "session_busy" && typeof status === "string") {
+        return `session_busy (session status: ${status})`;
+      }
+      return obj.error;
+    }
     if (obj.error && typeof obj.error === "object" && "message" in obj.error) {
       const message = (obj.error as { readonly message?: unknown }).message;
       if (typeof message === "string") return message;
