@@ -314,22 +314,73 @@ export interface SessionRunResult extends SessionTurnResult {}
 
 export class SessionTurnStream implements AsyncIterable<SessionEvent> {
   readonly #run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>;
+  #generator: AsyncGenerator<SessionEvent, SessionTurnResult, void> | undefined;
+  #outcome:
+    | { readonly ok: true; readonly value: SessionTurnResult }
+    | { readonly ok: false; readonly error: unknown }
+    | undefined;
   #done: Promise<SessionTurnResult> | undefined;
 
   constructor(run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>) {
     this.#run = run;
   }
 
+  /**
+   * ONE underlying send per turn: iterating the stream and calling `done()`
+   * (the documented `for await … ; await turn.done()` pattern) must share a
+   * single generator — a fresh generator per consumer would re-POST the
+   * message as a second billable turn (or 409 `session_busy` mid-turn).
+   */
+  #shared(): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+    this.#generator ??= this.#capture(this.#run());
+    return this.#generator;
+  }
+
+  async *#capture(
+    generator: AsyncGenerator<SessionEvent, SessionTurnResult, void>
+  ): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+    try {
+      let next = await generator.next();
+      while (!next.done) {
+        yield next.value;
+        next = await generator.next();
+      }
+      this.#outcome = { ok: true, value: next.value };
+      return next.value;
+    } catch (error) {
+      this.#outcome = { ok: false, error };
+      throw error;
+    }
+  }
+
   [Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
-    return this.#run();
+    const generator = this.#shared();
+    // Deliberately do NOT forward `return()`: `break`-ing out of a
+    // `for await` loop must not close the in-flight turn — `done()` can
+    // still drain it to completion afterwards.
+    return {
+      next: () => generator.next(),
+      return: async () => ({ done: true as const, value: undefined })
+    };
   }
 
   done(): Promise<SessionTurnResult> {
     this.#done ??= (async () => {
-      const iterator = this.#run();
-      let next = await iterator.next();
+      const generator = this.#shared();
+      let next = await generator.next();
       while (!next.done) {
-        next = await iterator.next();
+        next = await generator.next();
+      }
+      // A prior consumer may have drained the generator already: its return
+      // value is then gone from `next.value`, so replay the captured outcome.
+      if (next.value !== undefined) {
+        return next.value;
+      }
+      if (this.#outcome !== undefined) {
+        if (this.#outcome.ok) {
+          return this.#outcome.value;
+        }
+        throw this.#outcome.error;
       }
       return next.value;
     })();
