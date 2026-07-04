@@ -387,11 +387,22 @@ export async function outputLink(
       body: JSON.stringify({ expiresInSeconds })
     }
   );
+  const effectiveExpiresIn = result.expiresInSeconds ?? expiresInSeconds;
   return {
     ...result,
-    expiresInSeconds: result.expiresInSeconds ?? expiresInSeconds,
+    expiresInSeconds: effectiveExpiresIn,
+    expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn),
     output: result.output ?? output
   };
+}
+
+/**
+ * The hosted API returns `{ url, expiresInSeconds }` without an absolute
+ * timestamp; the documented `link.expiresAt` is synthesized client-side from
+ * the mint time so it is always present on a returned link.
+ */
+function syntheticExpiresAt(expiresInSeconds: number): string {
+  return new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 }
 
 export async function createOutputLink(
@@ -416,9 +427,11 @@ export async function eventArchiveLink(
       body: JSON.stringify({ expiresInSeconds })
     }
   );
+  const effectiveExpiresIn = result.expiresInSeconds ?? expiresInSeconds;
   return {
     ...result,
-    expiresInSeconds: result.expiresInSeconds ?? expiresInSeconds
+    expiresInSeconds: effectiveExpiresIn,
+    expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn)
   };
 }
 

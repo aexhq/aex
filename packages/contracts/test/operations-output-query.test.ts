@@ -129,4 +129,30 @@ describe("operations output links", () => {
     expect(JSON.parse(calls[0]!.body!)).toEqual({ expiresInSeconds: 86400 });
     expect(link.expiresInSeconds).toBe(86400);
   });
+
+  it("synthesizes the documented expiresAt when the server omits it", async () => {
+    const { http } = clientFor({
+      "/api/runs/run-1/outputs/txt/link": () =>
+        json({ url: "https://storage.example/direct.txt", expiresInSeconds: 900 })
+    });
+
+    const before = Date.now();
+    const link = await operations.createOutputLink(http, "run-1", "txt", { expiresIn: "15m" });
+    const after = Date.now();
+
+    expect(typeof link.expiresAt).toBe("string");
+    const at = new Date(link.expiresAt!).getTime();
+    expect(at).toBeGreaterThanOrEqual(before + 900_000);
+    expect(at).toBeLessThanOrEqual(after + 900_000);
+  });
+
+  it("keeps a server-provided expiresAt untouched", async () => {
+    const { http } = clientFor({
+      "/api/runs/run-1/outputs/txt/link": () =>
+        json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
+    });
+
+    const link = await operations.createOutputLink(http, "run-1", "txt");
+    expect(link.expiresAt).toBe("2026-06-18T12:00:00.000Z");
+  });
 });
