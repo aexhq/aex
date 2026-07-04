@@ -59,5 +59,5 @@ For the hard ceilings and who can raise them, see
 | Run submit rate (per minute) | 120 (`0` = disabled); past it `POST /runs` fails with `429 workspace_submit_rate_exceeded` | Per-plane via env `AEX_WORKSPACE_SUBMIT_RATE_PER_MIN`; per-workspace via support. | — |
 | Max concurrent runs | Plan-based: 5 live root runs (free), 50 (Pro), 200 (Team); hard ceiling 200 | Per-plan (upgrade) or per-workspace override via support, clamped to the ceiling. | `PLANS[planKey].maxConcurrentRuns` |
 | Monthly spend cap | $250 per UTC calendar month (`0` = unlimited) | Per-workspace override via support. | `WORKSPACE_DEFAULT_SPEND_CAP_USD` |
-| Per-workspace mutation rate limits (per minute) | run cancel 30, run delete 30, signed link 120, API token create 10, API token delete 30 | Per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var. | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| Per-workspace mutation rate limits (per minute) | run cancel 30, run delete 30, signed link 120, API key create 10, API key delete 30 | Per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var. | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Workspace storage cap | 500 GB (decimal) | Per-plane via env `AEX_WORKSPACE_STORAGE_CAP_BYTES`; admin workspaces are uncapped (not a customer entitlement). | `WORKSPACE_DEFAULT_STORAGE_CAP_BYTES` |

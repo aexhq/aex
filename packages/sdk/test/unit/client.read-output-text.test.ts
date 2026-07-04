@@ -15,7 +15,7 @@ function clientFor(handler: (url: string) => Response): Aex {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     return handler(url);
   };
-  return new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+  return new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch });
 }
 
 describe("aex.sessions.outputs(id).read", () => {

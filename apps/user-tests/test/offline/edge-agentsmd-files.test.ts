@@ -284,7 +284,7 @@ const B = (s) => new TextEncoder().encode(s);
 
 function makeClient() {
   const { calls, fetch } = makeFetch();
-  return { calls, client: new Aex({ apiToken: "aex_edge_token", baseUrl: "https://example.invalid", fetch }) };
+  return { calls, client: new Aex({ apiKey: "aex_edge_token", baseUrl: "https://example.invalid", fetch }) };
 }
 
 // 1. agents.md + the SAME File instance passed twice => both wire entries share one assetId.

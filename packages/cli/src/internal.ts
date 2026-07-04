@@ -57,7 +57,7 @@ export interface CliIO {
    * the OS/home/env to resolve the config path — keeping the pure command layer
    * env-free and the `no-env-vars` bundle grep clean. Optional: in-container and
    * test fakes omit it, in which case `aex login` is unavailable and host verbs
-   * fall back to requiring `--api-token`.
+   * fall back to requiring `--api-key`.
    */
   readonly configStore?: CliConfigStore;
   /**
@@ -81,7 +81,7 @@ export interface CliIO {
  */
 export interface StoredCliConfig {
   readonly schemaVersion?: number;
-  readonly apiToken?: string;
+  readonly apiKey?: string;
   readonly aexUrl?: string;
 }
 

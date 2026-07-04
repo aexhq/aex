@@ -272,7 +272,7 @@ describe("SDK sessions (installed package)", () => {
 const { Aex, AgentsMd, File, Secret, Tools } = await import("@aexhq/sdk");
 
 const h = makeHarness();
-const client = new Aex({ apiToken: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
+const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
 const skill = await Tools.fromSkillDir(makeSkillDir("chat-skill", "Follow instructions."), { name: "chat-skill" });
 const rules = await AgentsMd.fromContent("# Chat rules\nKeep it short.\n", { name: "chat-rules" });
 const file = await File.fromBytes({
@@ -367,7 +367,7 @@ console.log(JSON.stringify({ ok: true, createCalls: callsFor(h.calls, "POST", "/
 const { Aex } = await import("@aexhq/sdk");
 
 const h = makeHarness();
-const client = new Aex({ apiToken: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
+const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
 const session = await client.sessions.create({
   model: "claude-haiku-4-5",
   apiKeys: { anthropic: "sk-ant-chat" }
@@ -403,7 +403,7 @@ console.log(JSON.stringify({ ok: true, events: result.events.length, sockets: h.
     const script = CHILD_HARNESS + String.raw`
 const { Aex } = await import("@aexhq/sdk");
 const h = makeHarness();
-const client = new Aex({ apiToken: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
+const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
 
 await expectReject("missing create options", () => client.openSession(undefined), /options is required/);
 await expectReject("removed postHook", () => client.openSession({

@@ -34,7 +34,7 @@ Pass a `retry` option when you construct the client:
 import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex({
-  apiToken: process.env.AEX_API_TOKEN!,
+  apiKey: process.env.AEX_API_KEY!,
   retry: {
     maxAttempts: 4,        // total tries incl. the first (default 4)
     initialDelayMs: 500,   // base backoff, doubles per retry (default 500)

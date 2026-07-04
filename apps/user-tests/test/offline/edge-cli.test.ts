@@ -100,7 +100,7 @@ describe("installed aex CLI — offline edge cases", () => {
       "--anthropic-api-key", "k",
       "--model", "claude-haiku-4-5",
       "--prompt", "hi",
-      "--api-token", "dummy",
+      "--api-key", "dummy",
       "--totally-bogus"
     ]);
     expect(r.exitCode, diag("aex run --totally-bogus", r)).toBe(2);
@@ -108,19 +108,19 @@ describe("installed aex CLI — offline edge cases", () => {
   });
 
   it("run without the selected provider's key exits 2 with an actionable message", async () => {
-    const r = await runCli(["run", "--model", "claude-haiku-4-5", "--prompt", "hi", "--api-token", "dummy"]);
+    const r = await runCli(["run", "--model", "claude-haiku-4-5", "--prompt", "hi", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex run (no provider key)", r)).toBe(2);
     expect(r.stderr).toMatch(/--anthropic-api-key is required/);
   });
 
   it("run without --model exits 2", async () => {
-    const r = await runCli(["run", "--anthropic-api-key", "k", "--prompt", "hi", "--api-token", "dummy"]);
+    const r = await runCli(["run", "--anthropic-api-key", "k", "--prompt", "hi", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex run (no model)", r)).toBe(2);
     expect(r.stderr).toMatch(/--model is required/);
   });
 
   it("run without --prompt exits 2", async () => {
-    const r = await runCli(["run", "--anthropic-api-key", "k", "--model", "claude-haiku-4-5", "--api-token", "dummy"]);
+    const r = await runCli(["run", "--anthropic-api-key", "k", "--model", "claude-haiku-4-5", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex run (no prompt)", r)).toBe(2);
     expect(r.stderr).toMatch(/--prompt is required/);
   });
@@ -131,7 +131,7 @@ describe("installed aex CLI — offline edge cases", () => {
       "--anthropic-api-key", "k",
       "--model", "claude-haiku",
       "--prompt", "hi",
-      "--api-token", "dummy"
+      "--api-key", "dummy"
     ]);
     expect(r.exitCode, diag("aex run bad model", r)).toBe(2);
     expect(r.stderr).toMatch(/--model must be one of/);
@@ -145,7 +145,7 @@ describe("installed aex CLI — offline edge cases", () => {
       "--anthropic-api-key", "k",
       "--model", "claude-haiku-4-5",
       "--prompt", "hi",
-      "--api-token", "dummy"
+      "--api-key", "dummy"
     ]);
     expect(r.exitCode, diag("aex run bad provider", r)).toBe(2);
     expect(r.stderr).toMatch(/--provider must be one of/);
@@ -159,7 +159,7 @@ describe("installed aex CLI — offline edge cases", () => {
       "--model", "claude-haiku-4-5",
       "--prompt", "hi",
       "--proxy-endpoint", "https://example.com",
-      "--api-token", "dummy"
+      "--api-key", "dummy"
     ]);
     expect(r.exitCode, diag("aex run --proxy-endpoint", r)).toBe(2);
     expect(r.stderr).toMatch(/no longer supported/);
@@ -170,36 +170,36 @@ describe("installed aex CLI — offline edge cases", () => {
   it("host verb without a token (isolated config) exits 2 pointing at aex login", async () => {
     const r = await runCli(["status", "some-run-id"]);
     expect(r.exitCode, diag("aex status (no token)", r)).toBe(2);
-    expect(r.stderr).toMatch(/no API token/);
+    expect(r.stderr).toMatch(/no API key/);
     expect(r.stderr).toMatch(/aex login/);
   });
 
   it("host verb with a token but no id exits 2 with usage", async () => {
-    const r = await runCli(["status", "--api-token", "dummy"]);
+    const r = await runCli(["status", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex status (no id)", r)).toBe(2);
     expect(r.stderr).toMatch(/usage: aex status <session-id>/);
   });
 
-  it("--api-token with no value exits 2", async () => {
-    const r = await runCli(["status", "some-run-id", "--api-token"]);
-    expect(r.exitCode, diag("aex status --api-token (no value)", r)).toBe(2);
-    expect(r.stderr).toMatch(/--api-token requires a value/);
+  it("--api-key with no value exits 2", async () => {
+    const r = await runCli(["status", "some-run-id", "--api-key"]);
+    expect(r.exitCode, diag("aex status --api-key (no value)", r)).toBe(2);
+    expect(r.stderr).toMatch(/--api-key requires a value/);
   });
 
   it("removed --workspace flag exits 2 with a migration hint", async () => {
-    const r = await runCli(["status", "some-run-id", "--workspace", "ws-1", "--api-token", "dummy"]);
+    const r = await runCli(["status", "some-run-id", "--workspace", "ws-1", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex status --workspace", r)).toBe(2);
-    expect(r.stderr).toMatch(/workspace is derived from --api-token/);
+    expect(r.stderr).toMatch(/workspace is derived from --api-key/);
   });
 
   it("a malformed --timeout duration exits 2 before any network call", async () => {
-    const r = await runCli(["wait", "some-run-id", "--timeout", "banana", "--api-token", "dummy"]);
+    const r = await runCli(["wait", "some-run-id", "--timeout", "banana", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex wait --timeout banana", r)).toBe(2);
     expect(r.stderr).toMatch(/--timeout: invalid duration/);
   });
 
   it("a negative --timeout duration is rejected (exit 2)", async () => {
-    const r = await runCli(["wait", "some-run-id", "--timeout", "-5s", "--api-token", "dummy"]);
+    const r = await runCli(["wait", "some-run-id", "--timeout", "-5s", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex wait --timeout -5s", r)).toBe(2);
     expect(r.stderr).toMatch(/--timeout: invalid duration/);
   });
@@ -228,7 +228,7 @@ describe("installed aex CLI — offline edge cases", () => {
 
   // ---------------------------------------------------------------- secret hygiene
 
-  it("--debug never echoes the api token or provider key, even on an error path", async () => {
+  it("--debug never echoes the api key or provider key, even on an error path", async () => {
     const SECRET_TOKEN = "SUPERSECRETTOKEN-do-not-leak-4711";
     const SECRET_KEY = "SUPERSECRETKEY-do-not-leak-8842";
     const r = await runCli([
@@ -237,7 +237,7 @@ describe("installed aex CLI — offline edge cases", () => {
       "--anthropic-api-key", SECRET_KEY,
       "--model", "definitely-not-a-model",
       "--prompt", "hi",
-      "--api-token", SECRET_TOKEN,
+      "--api-key", SECRET_TOKEN,
       "--debug"
     ]);
     // Rejected at model validation (no network), but --debug has already
@@ -245,17 +245,17 @@ describe("installed aex CLI — offline edge cases", () => {
     expect(r.exitCode, diag("aex run --debug (bad model)", r)).toBe(2);
     expect(r.stderr).toMatch(/--model must be one of/);
     const combined = r.stdout + r.stderr;
-    expect(combined, "api token leaked to output").not.toContain(SECRET_TOKEN);
+    expect(combined, "api key leaked to output").not.toContain(SECRET_TOKEN);
     expect(combined, "provider key leaked to output").not.toContain(SECRET_KEY);
     // the debug line should confirm the source without the value
-    expect(r.stderr).toMatch(/\[aex\] auth: --api-token flag/);
+    expect(r.stderr).toMatch(/\[aex\] auth: --api-key flag/);
   });
 
   // ---------------------------------------------------------------- unknown-flag consistency (FINDING)
 
   it("whoami rejects an unknown flag but a read verb silently ignores it (inconsistency)", async () => {
     // whoami: extra args (incl. unknown --flags) are rejected -> exit 2.
-    const whoami = await runCli(["whoami", "--typo-flag", "--api-token", "dummy"]);
+    const whoami = await runCli(["whoami", "--typo-flag", "--api-key", "dummy"]);
     expect(whoami.exitCode, diag("aex whoami --typo-flag", whoami)).toBe(2);
     expect(whoami.stderr).toMatch(/unexpected arguments: --typo-flag/);
 
@@ -268,7 +268,7 @@ describe("installed aex CLI — offline edge cases", () => {
     const status = await runCli([
       "status", "some-run-id",
       "--typo-flag",
-      "--api-token", "dummy",
+      "--api-key", "dummy",
       "--aex-url", "http://127.0.0.1:9"
     ]);
     expect(status.exitCode, diag("aex status --typo-flag", status)).toBe(1);

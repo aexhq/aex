@@ -21,7 +21,7 @@
  * per-test canaries are passed via the child ENV — never inlined into a script
  * source and never printed.
  *
- * Required env (exported by the live runner): AEX_API_URL, AEX_API_TOKEN,
+ * Required env (exported by the live runner): AEX_API_URL, AEX_API_KEY,
  * DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -35,14 +35,14 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `edge-byok-secrets: required env ${name} is missing. Run via the live runner so AEX_API_URL / AEX_API_TOKEN / DEEPSEEK_API_KEY are exported.`
+      `edge-byok-secrets: required env ${name} is missing. Run via the live runner so AEX_API_URL / AEX_API_KEY / DEEPSEEK_API_KEY are exported.`
     );
   }
   return value;
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-byok-secrets");
 const model = gateModel();
 
@@ -78,7 +78,7 @@ async function runScript(
   writeFileSync(scriptPath, body);
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     ...extraEnv
@@ -112,7 +112,7 @@ async function runScript(
  */
 const PREAMBLE = `
 import { Aex, Secret } from "@aexhq/sdk";
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;

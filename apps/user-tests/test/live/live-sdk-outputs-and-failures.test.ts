@@ -35,7 +35,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -108,7 +108,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
+      apiKey: process.env.AEX_API_KEY
     });
 
     const runResult = await client.run({
@@ -247,7 +247,7 @@ async function runOutputCell(cell: Cell, installDir: string): Promise<OutputCase
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     [cell.keyEnvName]: cell.keyValue
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {
@@ -317,7 +317,7 @@ function buildCorruptedSkillScript(): string {
           "content-type": "application/octet-stream",
           "content-length": String(corruptedZip.byteLength),
           "x-asset-hash": "sha256:" + hashHex,
-          authorization: "Bearer " + process.env.AEX_API_TOKEN
+          authorization: "Bearer " + process.env.AEX_API_KEY
         },
         body: corruptedZip
       });
@@ -350,7 +350,7 @@ function buildCorruptedSkillScript(): string {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: "Bearer " + process.env.AEX_API_TOKEN
+            authorization: "Bearer " + process.env.AEX_API_KEY
           },
           body: JSON.stringify({
             workspaceId: "ws-test",
@@ -412,7 +412,7 @@ function buildIncompatibleRuntimeScript(): string {
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
+      apiKey: process.env.AEX_API_KEY
     });
 
     let submitOk = false;
@@ -482,7 +482,7 @@ function buildStdioMcpScript(): string {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: "Bearer " + process.env.AEX_API_TOKEN
+          authorization: "Bearer " + process.env.AEX_API_KEY
         },
         body: JSON.stringify({
           workspaceId: "ws-test",
@@ -538,7 +538,7 @@ async function runFailureCase(
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     DEEPSEEK_KEY_SUBMIT: deepseekKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {

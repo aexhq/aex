@@ -19,7 +19,7 @@ export interface HttpClientOptions {
    * own URL; no env var consults this value.
    */
   readonly baseUrl?: string;
-  readonly apiToken: string;
+  readonly apiKey: string;
   readonly fetch?: FetchLike;
   /** When set, every request emits a redacted one-line trace here. */
   readonly debug?: DebugSink;
@@ -33,13 +33,13 @@ export interface HttpClientOptions {
  */
 export class HttpClient {
   readonly #baseUrl: URL;
-  readonly #apiToken: string;
+  readonly #apiKey: string;
   readonly #fetch: FetchLike;
   readonly #debug: DebugSink | undefined;
 
   constructor(options: HttpClientOptions) {
-    if (!options.apiToken) {
-      throw new Error("HttpClient: apiToken is required");
+    if (!options.apiKey) {
+      throw new Error("HttpClient: apiKey is required");
     }
     const raw = options.baseUrl ?? AEX_DEFAULT_BASE_URL;
     const normalized = raw.endsWith("/") ? raw : `${raw}/`;
@@ -52,7 +52,7 @@ export class HttpClient {
         { cause: err }
       );
     }
-    this.#apiToken = options.apiToken;
+    this.#apiKey = options.apiKey;
     this.#fetch = options.fetch ?? fetch;
     this.#debug = options.debug;
   }
@@ -73,7 +73,7 @@ export class HttpClient {
     }
     const headers: Record<string, string> = {
       accept: "application/json",
-      authorization: `Bearer ${this.#apiToken}`,
+      authorization: `Bearer ${this.#apiKey}`,
       ...normalizeHeaders(init.headers)
     };
     if (init.body !== undefined && init.body !== null && !headers["content-type"]) {
@@ -111,7 +111,7 @@ export class HttpClient {
       url.searchParams.set(key, value);
     }
     const headers: Record<string, string> = {
-      authorization: `Bearer ${this.#apiToken}`,
+      authorization: `Bearer ${this.#apiKey}`,
       ...normalizeHeaders(init.headers)
     };
     const startedMs = Date.now();

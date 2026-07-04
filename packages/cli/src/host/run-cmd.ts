@@ -23,7 +23,7 @@
  *
  * Always required (both modes):
  *   --anthropic-api-key <key>      provider key (never stored)
- *   --api-token <token>            see `parseCommonHostFlags`
+ *   --api-key <token>            see `parseCommonHostFlags`
  *
  * Optional (both modes):
  *   --runtime-size <size>          managed runtime preset (e.g. shared-2x-8gb); default shared-0.25x-1gb

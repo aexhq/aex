@@ -263,7 +263,7 @@ const okSchema = { type: "object", properties: {} };
 
 function makeClient() {
   const { calls, fetch } = makeFetch();
-  return { calls, client: new Aex({ apiToken: "aex_edge_token", baseUrl: "https://example.invalid", fetch }) };
+  return { calls, client: new Aex({ apiKey: "aex_edge_token", baseUrl: "https://example.invalid", fetch }) };
 }
 
 // 1. tools: [] serialises to an empty tools array (no throw, no builtins injected client-side).

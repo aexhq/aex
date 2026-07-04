@@ -4,7 +4,7 @@
  * Every other live test injects AEX_API_URL, so the canonical default
  * (`https://api.aex.dev`, AEX_DEFAULT_BASE_URL in @aexhq/contracts) was never
  * exercised over the network — a missing DNS record shipped undetected and
- * every out-of-the-box `new Aex({ apiToken })` failed with ENOTFOUND
+ * every out-of-the-box `new Aex({ apiKey })` failed with ENOTFOUND
  * (root-caused 2026-07-04). This test deliberately IGNORES AEX_API_URL and
  * hits the default hostname directly: it proves DNS + TLS + routing, not auth,
  * so it passes with any plane's credentials.

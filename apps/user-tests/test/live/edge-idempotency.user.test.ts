@@ -14,7 +14,7 @@
  * ONE billable run total (tiny prompt); the mismatch probes replay/conflict
  * against that run and never start a second billable turn.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -32,7 +32,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-idempotency");
 const model = gateModel();
 
@@ -81,7 +81,7 @@ const CHILD_PRELUDE = `
     }
     return resp;
   };
-  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN, fetch: instrumentedFetch });
+  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY, fetch: instrumentedFetch });
 
   const errShape = (e) => ({
     name: e && e.constructor ? e.constructor.name : "Error",
@@ -104,7 +104,7 @@ async function runChild(
     timeoutMs,
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
-      AEX_API_TOKEN: apiToken,
+      AEX_API_KEY: apiKey,
       PROVIDER: GATE_PROVIDER,
       PROVIDER_KEY: providerKey,
       MODEL: model

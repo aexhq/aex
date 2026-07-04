@@ -32,7 +32,7 @@
  * Cost: no billable LLM turns today (the run dies pre-LLM), but several
  * container boots and ~7 minutes of wall clock while the defect stands.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN + AEX_USER_TEST_TARBALL/VERSION
+ * Required env: AEX_API_URL, AEX_API_KEY + AEX_USER_TEST_TARBALL/VERSION
  * (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -49,7 +49,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = { ...extras };
@@ -89,14 +89,14 @@ async function runChild(
     scriptPath,
     `
     import { Aex } from "@aexhq/sdk";
-    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     ${body}
     `
   );
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey })
   });
   if (child.exitCode !== 0) {
     throw new Error(

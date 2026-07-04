@@ -41,7 +41,7 @@ await aex.run({
 
 ```bash
 aex run \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --provider openai \
   --openai-api-key "$OPENAI_API_KEY" \
   --model gpt-4.1 \

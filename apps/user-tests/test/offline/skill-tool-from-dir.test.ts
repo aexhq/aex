@@ -224,7 +224,7 @@ const { Aex, Tools } = await import("@aexhq/sdk");
 function makeClient() {
   const harness = makeFetch();
   const client = new Aex({
-    apiToken: "aex_skilltool_token",
+    apiKey: "aex_skilltool_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
   });
@@ -391,7 +391,7 @@ const { Aex, Tools } = await import("@aexhq/sdk");
 function makeClient() {
   const harness = makeFetch();
   const client = new Aex({
-    apiToken: "aex_skilltool_token",
+    apiKey: "aex_skilltool_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
   });

@@ -16,7 +16,7 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
 function clientReturning(body: unknown, status: number, headers: Record<string, string> = {}): HttpClient {
   return new HttpClient({
     baseUrl: "https://api.example.test",
-    apiToken: "t",
+    apiKey: "t",
     fetch: async () => jsonResponse(body, status, headers)
   });
 }

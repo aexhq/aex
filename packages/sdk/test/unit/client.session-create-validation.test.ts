@@ -13,7 +13,7 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
 describe("Aex.openSession — removed field validation", () => {
   it("rejects the legacy runtimeSize field without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({
@@ -28,7 +28,7 @@ describe("Aex.openSession — removed field validation", () => {
 
   it("rejects the legacy secretEnv field without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({
@@ -43,7 +43,7 @@ describe("Aex.openSession — removed field validation", () => {
 
   it("rejects the legacy nested secrets object without an HTTP call", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({
@@ -57,7 +57,7 @@ describe("Aex.openSession — removed field validation", () => {
 
   it("rejects a message field without an HTTP call (was silently dropped: empty session, no turn)", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
       client.openSession({
@@ -74,7 +74,7 @@ describe("Aex.openSession — removed field validation", () => {
 describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)", () => {
   it("rejects an invalid runtime token without an HTTP call (F11)", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -87,7 +87,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
 
   it("rejects a malformed overrides.timeout without an HTTP call (F12)", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -100,7 +100,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
 
   it("rejects an out-of-range timeout (below the 1m floor) without an HTTP call (F12)", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -113,7 +113,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
 
   it("accepts a valid runtime + timeout (regression: does not over-reject)", async () => {
     const rec = recordingFetch();
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-x" },

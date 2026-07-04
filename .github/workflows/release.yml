@@ -258,7 +258,7 @@ jobs:
         shell: bash
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
-          AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
@@ -279,7 +279,7 @@ jobs:
       - name: Redact live user test log
         if: ${{ always() }}
         env:
-          AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           RAW_LOG: .suite-diagnostics/raw/release-live-user-tests-shard-${{ matrix.shard }}.log
           REDACTED_LOG: .suite-diagnostics/redacted/release-live-user-tests-shard-${{ matrix.shard }}.log
@@ -298,7 +298,7 @@ jobs:
             ? readFileSync(rawPath, "utf8")
             : "release live-user-tests log was not created before diagnostics collection.\n";
 
-          for (const name of ["AEX_API_TOKEN", "DEEPSEEK_API_KEY"]) {
+          for (const name of ["AEX_API_KEY", "DEEPSEEK_API_KEY"]) {
             const value = process.env[name];
             if (value && value.length > 0) {
               text = text.split(value).join(`[REDACTED:${name}]`);

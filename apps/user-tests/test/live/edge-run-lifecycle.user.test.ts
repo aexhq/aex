@@ -9,7 +9,7 @@
  * and time low. Cases that only exercise CLIENT-side validation make no HTTP call.
  *
  * Required env (wired by the shared live runner):
- *   AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL
+ *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +27,7 @@ function requireEnv(name: string): string {
 
 const apiUrl = requireEnv("AEX_API_URL");
 const providerKey = requireGateKey("edge-run-lifecycle");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const model = gateModel();
 
 // Shared in-child preamble: build the client + tiny helpers. No dynamic values
@@ -36,7 +36,7 @@ const model = gateModel();
 // self-contained and uniquely named on disk.
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
 const KEY = process.env.PROVIDER_KEY;
 const PROVIDER = process.env.PROVIDER;
@@ -59,7 +59,7 @@ function print(o){ process.stdout.write(JSON.stringify(o)); }
 function buildEnv(waitMs: number): Record<string, string> {
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     WAIT_MS: String(waitMs)

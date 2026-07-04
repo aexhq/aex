@@ -194,7 +194,7 @@ export interface UsageSummary {
 /**
  * Filters for {@link import("./operations.js").listRuns} / the CLI's `aex runs`.
  * Every field is optional; omitting all of them lists the most recent runs in the
- * token's workspace. Workspace identity is derived server-side from the API token,
+ * token's workspace. Workspace identity is derived server-side from the API key,
  * so there is no `workspaceId` here — a token can only ever enumerate its own runs.
  */
 export interface RunListQuery {
@@ -448,9 +448,9 @@ export interface WhoAmI {
   /**
    * Kind of principal the bearer resolved to. OPTIONAL IN PRACTICE: current
    * managed deployments do not serve it (`GET /whoami` returns only
-   * `workspaceId` + `scopes` + `limits`) — treat `undefined` as "api_token".
+   * `workspaceId` + `scopes` + `limits`) — treat `undefined` as "api_key".
    */
-  readonly principalType?: "api_token" | "user";
+  readonly principalType?: "api_key" | "user";
   readonly workspaceId?: string;
   readonly tokenId?: string;
   readonly tokenName?: string | null;

@@ -31,7 +31,7 @@ function aliasClient(): { readonly client: Aex; readonly calls: RecordedCall[] }
     return json({ id: "sess-1", status: "idle" });
   };
   return {
-    client: new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
+    client: new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }),
     calls
   };
 }
@@ -78,7 +78,7 @@ describe("SessionHandle.messages / lastMessage decode assistant text", () => {
       if (url.endsWith("/api/sessions/sess-1/events")) return json({ events });
       return json({ id: "sess-1", status: "idle" });
     };
-    return new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+    return new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch });
   }
 
   it("returns assistant messages oldest-first and lastMessage is the latest", async () => {

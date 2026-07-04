@@ -50,7 +50,7 @@ describe("download namespaces surface (offline)", () => {
         }
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
       };
-      const c = new Aex({ apiToken: "t", baseUrl: "https://example.test", fetch });
+      const c = new Aex({ apiKey: "t", baseUrl: "https://example.test", fetch });
       const session = await c.sessions.open("sess-1");
       const result = {
         session: {
@@ -137,7 +137,7 @@ describe("download namespaces surface (offline)", () => {
         throw new Error("unexpected route: " + key);
       };
 
-      const client = new Aex({ apiToken: "t", baseUrl: "https://example.test", fetch });
+      const client = new Aex({ apiKey: "t", baseUrl: "https://example.test", fetch });
       const session = await client.sessions.open("run-1");
       const entries = unzipSync(await session.download());
       const manifest = JSON.parse(strFromU8(entries["manifest.json"]));
@@ -182,7 +182,7 @@ describe("download namespaces surface (offline)", () => {
     // No run id → usage error (exit 2) that lists the --only namespaces.
     const result = await runCommand(
       binPath,
-      ["download", "--api-token", "t", "--aex-url", "https://example.test"],
+      ["download", "--api-key", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
@@ -192,7 +192,7 @@ describe("download namespaces surface (offline)", () => {
   it("`aex download --only logs` rejects as a removed public namespace", async () => {
     const result = await runCommand(
       binPath,
-      ["download", "run-x", "--only", "logs", "--api-token", "t", "--aex-url", "https://example.test"],
+      ["download", "run-x", "--only", "logs", "--api-key", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
@@ -202,7 +202,7 @@ describe("download namespaces surface (offline)", () => {
   it("`aex download --only <bogus>` rejects before any network call", async () => {
     const result = await runCommand(
       binPath,
-      ["download", "run-x", "--only", "bogus", "--api-token", "t", "--aex-url", "https://example.test"],
+      ["download", "run-x", "--only", "bogus", "--api-key", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);

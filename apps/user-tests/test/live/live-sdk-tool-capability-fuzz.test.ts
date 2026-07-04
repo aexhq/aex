@@ -30,7 +30,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -187,7 +187,7 @@ import {
 
 const client = new Aex({
   baseUrl: process.env.AEX_API_URL,
-  apiToken: process.env.AEX_API_TOKEN
+  apiKey: process.env.AEX_API_KEY
 });
 const MODEL = process.env.MODEL_DEEPSEEK;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
@@ -310,7 +310,7 @@ function buildScript(body: string): string {
 function passEnv(extras: Readonly<Record<string, string>> = {}): Record<string, string> {
   const env: Record<string, string> = {
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     DEEPSEEK_KEY: deepseekKey,
     MODEL_DEEPSEEK: deepseekModel,
     ...extras

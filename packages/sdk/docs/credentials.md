@@ -6,7 +6,7 @@ title: Credentials
 
 aex uses explicit, per-session credentials:
 
-- `AEX_API_TOKEN` authenticates the SDK or CLI to aex.
+- `AEX_API_KEY` authenticates the SDK or CLI to aex.
 - `apiKeys` carries BYOK provider keys for the model provider.
 - `McpServer.remote(..., { headers })` carries MCP auth when a remote MCP server needs it.
 - `environment.secrets` carries runtime secrets for your own code.
@@ -15,20 +15,18 @@ Secrets never belong in reusable run config, files, prompts, or examples.
 
 ## The client credential
 
-Pass your aex API token directly to the constructor — `new Aex(apiKey)` — or as
-the `apiKey` option. The older `apiToken` option remains accepted as a
-compatibility alias, so existing code keeps working:
+Pass your aex API key directly to the constructor — `new Aex(apiKey)` — or as
+the `apiKey` option:
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_TOKEN!);          // preferred shorthand
+const aex = new Aex(process.env.AEX_API_KEY!);          // preferred shorthand
 // equivalently:
-// const aex = new Aex({ apiKey: process.env.AEX_API_TOKEN! });
-// const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! }); // alias
+// const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 ```
 
-See [Authentication](authentication.md) for how tokens are scoped, rotated, and
+See [Authentication](authentication.md) for how keys are scoped, rotated, and
 issued during the beta.
 
 ## Provider keys
@@ -58,7 +56,7 @@ can be ephemeral with `Secret.value(...)` or a workspace secret reference with
 ```ts
 import { Aex, Models, Secret } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,

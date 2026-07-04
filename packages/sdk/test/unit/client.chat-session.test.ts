@@ -104,7 +104,7 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
     }
     return json({});
   };
-  const client = new Aex({ apiToken: "tkn", baseUrl: "https://api.example.test", fetch });
+  const client = new Aex({ apiKey: "tkn", baseUrl: "https://api.example.test", fetch });
   const factory = (url: string): FakeWebSocket => {
     const ws = new FakeWebSocket(url);
     sockets.push(ws);

@@ -15,7 +15,7 @@ describe("live child-runner diagnostics", () => {
       URL,
       process: {
         env: {
-          AEX_API_TOKEN: "aex-live-token-secret",
+          AEX_API_KEY: "aex-live-token-secret",
           DEEPSEEK_KEY: "deepseek-live-key-secret"
         },
         stderr: {
@@ -36,7 +36,7 @@ describe("live child-runner diagnostics", () => {
       );
       aexDebug(
         "[aex] POST /api/sessions -> 404 9ms " +
-          process.env.AEX_API_TOKEN +
+          process.env.AEX_API_KEY +
           " " +
           process.env.DEEPSEEK_KEY
       );

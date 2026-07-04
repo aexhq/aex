@@ -24,7 +24,7 @@ zips + hashes the bytes, and returns a `SkillTool`:
 ```ts
 import { Aex, Models, Tools } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken });
+const aex = new Aex({ apiKey });
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,

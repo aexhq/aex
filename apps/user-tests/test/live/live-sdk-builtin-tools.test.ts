@@ -31,7 +31,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -109,7 +109,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
+      apiKey: process.env.AEX_API_KEY
     });
 
     const runResult = await client.run({
@@ -207,7 +207,7 @@ async function runCell(cell: Cell, mode: "positive" | "negative", installDir: st
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     [cell.keyEnvName]: cell.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });

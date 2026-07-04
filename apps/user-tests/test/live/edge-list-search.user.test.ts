@@ -18,7 +18,7 @@
  * cases B and C are pure read/introspection against the existing workspace and
  * spend nothing). Model deepseek-v4-flash, tiny prompt.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -36,7 +36,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-list-search");
 const model = gateModel();
 
@@ -70,22 +70,22 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 /**
  * Child prelude: a `probe(label, fn, ms?)` that turns a throw OR a hang into a
  * structured record (never aborts the whole script), plus a `scrub()` that
- * strips the api token / provider key from any string before it can reach
+ * strips the api key / provider key from any string before it can reach
  * stdout. Secrets are read from env for LEAK checks but are NEVER emitted — only
  * booleans and scrubbed samples cross the process boundary.
  */
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const API_URL = process.env.AEX_API_URL;
-  const API_TOKEN = process.env.AEX_API_TOKEN;
+  const API_KEY = process.env.AEX_API_KEY;
   const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
-  const client = new Aex({ baseUrl: API_URL, apiToken: API_TOKEN });
+  const client = new Aex({ baseUrl: API_URL, apiKey: API_KEY });
 
   function scrub(s) {
     let out = String(s == null ? "" : s);
-    if (API_TOKEN) out = out.split(API_TOKEN).join("***TOKEN***");
+    if (API_KEY) out = out.split(API_KEY).join("***TOKEN***");
     if (PROVIDER_KEY) out = out.split(PROVIDER_KEY).join("***KEY***");
     return out;
   }
@@ -125,7 +125,7 @@ async function runChild(
     timeoutMs,
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
-      AEX_API_TOKEN: apiToken,
+      AEX_API_KEY: apiKey,
       PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
       MODEL: model
     })
@@ -235,7 +235,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
             manifestRuntimeSize: rmObj ? (rmObj.runtimeSize ?? rmObj.size ?? null) : null,
             topRuntimeSize: u.runtimeSize ?? null,
             hasCostTelemetry: u.costTelemetry != null,
-            leakedToken: !!(API_TOKEN && s.includes(API_TOKEN)),
+            leakedToken: !!(API_KEY && s.includes(API_KEY)),
             leakedKey: !!(PROVIDER_KEY && s.includes(PROVIDER_KEY)),
             bytes: s.length
           };
@@ -362,7 +362,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       const u = unit.value as Record<string, unknown>;
       // These MUST hold regardless of shape: an id, and no embedded secrets.
       expect(u.hasId, `unit() returned no id${ctx}`).toBe(true);
-      expect(u.leakedToken, `unit() leaked the API token${ctx}`).toBe(false);
+      expect(u.leakedToken, `unit() leaked the API key${ctx}`).toBe(false);
       expect(u.leakedKey, `unit() leaked the provider key${ctx}`).toBe(false);
       // eslint-disable-next-line no-console
       console.log(
@@ -600,10 +600,10 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
         console.error = (...a) => { c1lines.push(a.map(String).join(" ")); };
         let c1err = null;
         try {
-          const c1c = new Aex({ baseUrl: API_URL, apiToken: API_TOKEN, debug: true });
+          const c1c = new Aex({ baseUrl: API_URL, apiKey: API_KEY, debug: true });
           await c1c.sessions.list({ status: "idle", limit: 2 });
         } catch (e) { c1err = scrub(e && e.message ? e.message : String(e)); } finally { console.error = origErr; }
-        const c1leakToken = c1lines.some((l) => API_TOKEN && l.includes(API_TOKEN));
+        const c1leakToken = c1lines.some((l) => API_KEY && l.includes(API_KEY));
         const c1leakKey = c1lines.some((l) => PROVIDER_KEY && l.includes(PROVIDER_KEY));
         const c1 = {
           count: c1lines.length,
@@ -624,10 +624,10 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
         console.error = (...a) => { c2console.push(a.map(String).join(" ")); };
         let c2err = null;
         try {
-          const c2c = new Aex({ baseUrl: API_URL, apiToken: API_TOKEN, debug: (line) => c2lines.push(line) });
+          const c2c = new Aex({ baseUrl: API_URL, apiKey: API_KEY, debug: (line) => c2lines.push(line) });
           await c2c.sessions.list({ limit: 2 });
         } catch (e) { c2err = scrub(e && e.message ? e.message : String(e)); } finally { console.error = origErr; }
-        const c2leakToken = c2lines.some((l) => API_TOKEN && l.includes(API_TOKEN));
+        const c2leakToken = c2lines.some((l) => API_KEY && l.includes(API_KEY));
         const c2 = {
           count: c2lines.length,
           hasAexPrefix: c2lines.some((l) => l.includes("[aex]")),
@@ -643,7 +643,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
         origErr = console.error;
         console.error = (...a) => { c3lines.push(a.map(String).join(" ")); };
         try {
-          const c3c = new Aex({ baseUrl: API_URL, apiToken: API_TOKEN });
+          const c3c = new Aex({ baseUrl: API_URL, apiKey: API_KEY });
           await c3c.sessions.list({ limit: 1 });
         } catch (e) { /* ignore */ } finally { console.error = origErr; }
         const c3 = { aexLines: c3lines.filter((l) => l.includes("[aex]")).length };
@@ -663,7 +663,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       expect(c1.hasPath, `debug:true trace missing the request path${ctx}`).toBe(true);
       expect(c1.hasStatus, `debug:true trace missing the "-> <status>" shape${ctx}`).toBe(true);
       // SECURITY: no token, no key, and the query string must NOT be traced.
-      expect(c1.leakToken, `debug:true LEAKED the api token to the trace${ctx}`).toBe(false);
+      expect(c1.leakToken, `debug:true LEAKED the api key to the trace${ctx}`).toBe(false);
       expect(c1.leakKey, `debug:true LEAKED the provider key to the trace${ctx}`).toBe(false);
       expect(c1.queryLeak, `debug:true trace leaked the query string (status/limit)${ctx}`).toBe(false);
 
@@ -671,7 +671,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       expect(c2.count as number, `custom debug sink received no trace lines${ctx}`).toBeGreaterThan(0);
       expect(c2.hasAexPrefix, `custom sink line missing the [aex] prefix${ctx}`).toBe(true);
       expect(c2.usedConsoleErrorToo, `custom sink was set but SDK ALSO wrote to console.error${ctx}`).toBe(false);
-      expect(c2.leakToken, `custom sink LEAKED the api token${ctx}`).toBe(false);
+      expect(c2.leakToken, `custom sink LEAKED the api key${ctx}`).toBe(false);
       expect(c2.leakKey, `custom sink LEAKED the provider key${ctx}`).toBe(false);
 
       // C3: no debug → no [aex] noise.

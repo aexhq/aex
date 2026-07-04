@@ -58,7 +58,7 @@ export function isSessionOk(status: string): boolean {
 }
 
 export interface CommonHostFlags {
-  readonly apiToken: string;
+  readonly apiKey: string;
   readonly aexUrl: string;
   /** `--debug`: print a redacted per-request trace to stderr. Uploads nothing. */
   readonly debug: boolean;
@@ -70,7 +70,7 @@ export type ParseCommonResult =
 
 /** Raw, pre-resolution extraction: token/url may be `null` (no required check). */
 export interface ExtractedCommonHostFlags {
-  readonly apiToken: string | null;
+  readonly apiKey: string | null;
   readonly aexUrl: string | null;
   readonly debug: boolean;
   readonly rest: readonly string[];
@@ -83,14 +83,14 @@ export type ExtractCommonResult =
 /**
  * Pure, synchronous extraction of the common host flags from argv. Unlike
  * {@link parseCommonHostFlags} this does NOT require a token — it leaves
- * `apiToken`/`aexUrl` as `null` when absent so {@link resolveCommonHostFlags}
+ * `apiKey`/`aexUrl` as `null` when absent so {@link resolveCommonHostFlags}
  * can fall back to the stored config. Touches no IO and reads no env.
  *
  * There is no `--workspace` flag: workspace identity is derived server-side
- * from the API token.
+ * from the API key.
  */
 export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonResult {
-  let apiToken: string | null = null;
+  let apiKey: string | null = null;
   let aexUrl: string | null = null;
   let debug = false;
   const rest: string[] = [];
@@ -101,10 +101,10 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
       debug = true;
       continue;
     }
-    if (arg === "--api-token") {
+    if (arg === "--api-key") {
       const v = argv[++i];
-      if (v === undefined) return { ok: false, reason: "--api-token requires a value" };
-      apiToken = v;
+      if (v === undefined) return { ok: false, reason: "--api-key requires a value" };
+      apiKey = v;
       continue;
     }
     if (arg === "--aex-url") {
@@ -114,19 +114,19 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
       continue;
     }
     if (arg === "--workspace" || arg === "--workspace-id") {
-      // Removed in favor of server-side derivation from the API token.
+      // Removed in favor of server-side derivation from the API key.
       // Bail out early with an actionable message instead of letting
       // the flag fall through and produce a confusing positional-arg
       // count error from the calling subcommand.
       return {
         ok: false,
-        reason: `unknown flag ${arg}: workspace is derived from --api-token on the server; drop this flag`
+        reason: `unknown flag ${arg}: workspace is derived from --api-key on the server; drop this flag`
       };
     }
     rest.push(arg);
   }
 
-  return { ok: true, flags: { apiToken, aexUrl, debug, rest } };
+  return { ok: true, flags: { apiKey, aexUrl, debug, rest } };
 }
 
 /**
@@ -135,25 +135,25 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
  * back-compat. New code should call {@link resolveCommonHostFlags}, which adds
  * the stored-config fallback so a token persisted by `aex login` is honored.
  *
- * The CLI is `flags_only` — no `AEX_*` env reads. `--api-token` is
+ * The CLI is `flags_only` — no `AEX_*` env reads. `--api-key` is
  * required; `--aex-url` defaults to `AEX_DEFAULT_BASE_URL`
  * (`https://api.aex.dev`) so SaaS users never need to supply it.
  */
 export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
   const extracted = extractCommonHostFlags(argv);
   if (!extracted.ok) return extracted;
-  const { apiToken, aexUrl, debug, rest } = extracted.flags;
-  if (!apiToken) return { ok: false, reason: "--api-token is required" };
+  const { apiKey, aexUrl, debug, rest } = extracted.flags;
+  if (!apiKey) return { ok: false, reason: "--api-key is required" };
   return {
     ok: true,
-    flags: { apiToken, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug },
+    flags: { apiKey, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug },
     rest
   };
 }
 
 /**
  * Resolve the common host flags with the stored-config fallback (DX1).
- * Precedence: `--api-token` flag > stored token; `--aex-url` flag > stored url >
+ * Precedence: `--api-key` flag > stored token; `--aex-url` flag > stored url >
  * default. When neither a flag nor a stored token supplies the bearer, returns
  * an actionable `ok:false` pointing at `aex login`.
  *
@@ -167,7 +167,7 @@ export async function resolveCommonHostFlags(
 ): Promise<ParseCommonResult> {
   const extracted = extractCommonHostFlags(argv);
   if (!extracted.ok) return extracted;
-  const { apiToken: flagToken, aexUrl: flagUrl, debug, rest } = extracted.flags;
+  const { apiKey: flagToken, aexUrl: flagUrl, debug, rest } = extracted.flags;
 
   let token = flagToken;
   let url = flagUrl;
@@ -177,8 +177,8 @@ export async function resolveCommonHostFlags(
   if (!token && io.configStore) {
     const stored = await io.configStore.read();
     storedLocation = io.configStore.location();
-    if (stored?.apiToken) {
-      token = stored.apiToken;
+    if (stored?.apiKey) {
+      token = stored.apiKey;
       source = "stored";
       if (!url && stored.aexUrl) url = stored.aexUrl;
     }
@@ -189,7 +189,7 @@ export async function resolveCommonHostFlags(
   if (debug) {
     const where =
       source === "flag"
-        ? "--api-token flag"
+        ? "--api-key flag"
         : source === "stored"
           ? `stored token (${storedLocation})`
           : "none";
@@ -197,9 +197,9 @@ export async function resolveCommonHostFlags(
   }
 
   if (!token) {
-    return { ok: false, reason: "no API token — pass --api-token or run `aex login`" };
+    return { ok: false, reason: "no API key — pass --api-key or run `aex login`" };
   }
-  return { ok: true, flags: { apiToken: token, aexUrl: resolvedUrl, debug }, rest };
+  return { ok: true, flags: { apiKey: token, aexUrl: resolvedUrl, debug }, rest };
 }
 
 /**
@@ -270,8 +270,8 @@ function describeErrorBody(body: unknown): string | undefined {
 function remedyForStatus(status: number): string | undefined {
   // A garbled/truncated token surfaces as 400 malformed_token (not 401), so the
   // most common credential mistake needs the same "check the token" nudge (F17).
-  if (status === 400) return "malformed request — if this is an auth failure, check --api-token or run `aex login`";
-  if (status === 401) return "check --api-token, or run `aex login`";
+  if (status === 400) return "malformed request — if this is an auth failure, check --api-key or run `aex login`";
+  if (status === 401) return "check --api-key, or run `aex login`";
   if (status === 403) return "token lacks permission for this workspace/action";
   if (status === 404) return "no such run/resource — verify the id";
   if (status === 429) return "rate limited — retry with backoff";
@@ -348,7 +348,7 @@ function levenshtein(a: string, b: string): number {
 export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
   return new HttpClient({
     baseUrl: flags.aexUrl,
-    apiToken: flags.apiToken,
+    apiKey: flags.apiKey,
     fetch: io.fetchImpl as FetchLike,
     // `--debug`: route the transport's redacted per-request traces to stderr.
     ...(flags.debug ? { debug: (line: string) => io.stderr(`${line}\n`) } : {})

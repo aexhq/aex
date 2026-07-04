@@ -10,12 +10,12 @@
  *   - the read verbs (status/events/outputs/download) work on that session,
  *   - the auth/error paths (bad token -> 401, missing run -> 404) return a clean
  *     JSON error envelope + non-zero exit, NOT a stack trace or a hang,
- *   - no secret (api token or provider key) is ever echoed to stdout/stderr.
+ *   - no secret (api key or provider key) is ever echoed to stdout/stderr.
  *
  * Billable runs: exactly ONE (`aex run --follow`); every other case is a
  * read-only or auth call.
  *
- * Required env (wired by run-live.sh): AEX_API_URL, AEX_API_TOKEN,
+ * Required env (wired by run-live.sh): AEX_API_URL, AEX_API_KEY,
  * DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -32,7 +32,7 @@ function requireEnv(name: string): string {
 }
 
 const apiBase = requireEnv("AEX_API_URL").replace(/\/+$/, "");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-cli");
 const model = gateModel();
 
@@ -42,7 +42,7 @@ const model = gateModel();
 const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
 
 function redact(text: string): string {
-  return text.split(apiToken).join("[REDACTED_TOKEN]").split(providerKey).join("[REDACTED_KEY]");
+  return text.split(apiKey).join("[REDACTED_TOKEN]").split(providerKey).join("[REDACTED_KEY]");
 }
 
 function diag(label: string, r: RunResult): string {
@@ -51,7 +51,7 @@ function diag(label: string, r: RunResult): string {
 
 function assertNoSecretLeak(label: string, r: RunResult): void {
   const combined = r.stdout + r.stderr;
-  expect(combined.includes(apiToken), `${label}: api token leaked to output`).toBe(false);
+  expect(combined.includes(apiKey), `${label}: api key leaked to output`).toBe(false);
   expect(combined.includes(providerKey), `${label}: provider key leaked to output`).toBe(false);
 }
 
@@ -109,7 +109,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     return await runCommand(binPath, args, { cwd: install.installDir, timeoutMs });
   }
 
-  const common = (): string[] => ["--api-token", apiToken, "--aex-url", apiBase];
+  const common = (): string[] => ["--api-key", apiKey, "--aex-url", apiBase];
 
   // ---------------------------------------------------------------- auth (non-billable)
 
@@ -128,7 +128,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     // (not 401). The robust contract: non-zero exit + a clean JSON envelope that
     // surfaces the server's reason, never a stack trace or a hang.
     const badToken = "aex_not_a_real_token_deadbeef";
-    const r = await runCli(["whoami", "--api-token", badToken, "--aex-url", apiBase]);
+    const r = await runCli(["whoami", "--api-key", badToken, "--aex-url", apiBase]);
     expect(r.exitCode, diag("aex whoami (garbage token)", r)).toBe(1);
     const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
     expect(err["error"], diag("aex whoami (garbage token)", r)).toBe("whoami_failed");
@@ -141,7 +141,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     // The CLI should attach an actionable auth remedy for both malformed and
     // invalid token paths so the user is not left with a bare server reason.
     const remedyText = typeof err["remedy"] === "string" ? (err["remedy"] as string) : "";
-    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (garbage token)", r)).toBe(true);
+    expect(/--api-key|aex login/.test(remedyText), diag("aex whoami (garbage token)", r)).toBe(true);
     // the bad token itself must not be echoed back
     expect(r.stdout + r.stderr).not.toContain(badToken);
     // no raw stack trace
@@ -153,13 +153,13 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     // not a valid credential — this exercises the "recognized format, wrong
     // value" path (typically 401 with an actionable remedy) rather than the
     // 400 malformed path above. We never print the real or mutated token.
-    const mutatedTail = apiToken.slice(-6).split("").reverse().join("") === apiToken.slice(-6)
+    const mutatedTail = apiKey.slice(-6).split("").reverse().join("") === apiKey.slice(-6)
       ? "zzzzzz"
-      : apiToken.slice(-6).split("").reverse().join("");
-    const mutated = apiToken.slice(0, -6) + mutatedTail;
+      : apiKey.slice(-6).split("").reverse().join("");
+    const mutated = apiKey.slice(0, -6) + mutatedTail;
     // Guard: ensure we actually changed the token.
-    expect(mutated).not.toBe(apiToken);
-    const r = await runCli(["whoami", "--api-token", mutated, "--aex-url", apiBase]);
+    expect(mutated).not.toBe(apiKey);
+    const r = await runCli(["whoami", "--api-key", mutated, "--aex-url", apiBase]);
     expect(r.exitCode, diag("aex whoami (mutated token)", r)).toBe(1);
     const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
     expect(err["error"], diag("aex whoami (mutated token)", r)).toBe("whoami_failed");
@@ -169,7 +169,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     // The CLI should attach an actionable auth remedy regardless of whether the
     // API classifies the mutated token as malformed (400) or unauthorized (401).
     const remedyText = typeof err["remedy"] === "string" ? (err["remedy"] as string) : "";
-    expect(/--api-token|aex login/.test(remedyText), diag("aex whoami (mutated token)", r)).toBe(true);
+    expect(/--api-key|aex login/.test(remedyText), diag("aex whoami (mutated token)", r)).toBe(true);
     // neither the real nor the mutated token may appear in output
     expect(r.stdout + r.stderr).not.toContain(mutated);
     assertNoSecretLeak("whoami-mutated", r);

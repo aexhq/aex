@@ -89,7 +89,7 @@ function runClient(session: Record<string, unknown>): {
     sockets.push(ws);
     return ws;
   };
-  return { client: new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch }), urls, sockets, webSocketFactory: factory };
+  return { client: new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch }), urls, sockets, webSocketFactory: factory };
 }
 
 async function collectRun(session: Record<string, unknown>): Promise<{
@@ -205,7 +205,7 @@ describe("Aex.run -> one-shot session RunResult", () => {
       sockets.push(ws);
       return ws;
     };
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const promise = client.run(
       { model: "claude-haiku-4-5", message: "p", apiKeys: { anthropic: "sk-ant" } },
       { webSocketFactory: factory, settleConsistent: true }

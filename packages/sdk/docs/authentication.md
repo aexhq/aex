@@ -4,7 +4,7 @@ title: Authentication
 
 # Authentication
 
-Every SDK and CLI call authenticates with an **aex API token**: a bearer
+Every SDK and CLI call authenticates with an **aex API key**: a bearer
 credential that is **workspace-scoped** — the workspace is derived server-side
 from the token, so there is no workspace parameter anywhere in the API. A
 request either carries a valid token for a workspace or it is rejected with
@@ -19,21 +19,21 @@ in the dashboard at <https://aex.dev>.
 
 ## Using a token
 
-Pass the token to the SDK constructor, the CLI's `--api-token` flag, or persist
+Pass the token to the SDK constructor, the CLI's `--api-key` flag, or persist
 it once with `aex login`:
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_TOKEN!); // preferred
-// also accepted: new Aex({ apiKey: ... }) and the alias new Aex({ apiToken: ... })
+const aex = new Aex(process.env.AEX_API_KEY!); // preferred
+// also accepted: new Aex({ apiKey: ... }) and the alias new Aex({ apiKey: ... })
 ```
 
 ```bash
-aex whoami --api-token "$AEX_API_TOKEN"
+aex whoami --api-key "$AEX_API_KEY"
 
-# or persist it once, then omit --api-token on later commands:
-aex login --api-token "$AEX_API_TOKEN"
+# or persist it once, then omit --api-key on later commands:
+aex login --api-key "$AEX_API_KEY"
 aex whoami
 ```
 

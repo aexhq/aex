@@ -51,7 +51,7 @@ The `aex run` host subcommand accepts the same run config either as a JSON file:
 
 ```bash
 aex run --config ./run.json \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 

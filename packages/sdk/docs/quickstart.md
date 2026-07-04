@@ -14,14 +14,14 @@ This installs the TypeScript SDK exports and the bundled `aex` CLI.
 
 ## 2. Set credentials
 
-aex is currently in **invite-only beta**: workspaces and API tokens are issued
+aex is currently in **invite-only beta**: workspaces and API keys are issued
 by the aex team — contact <support@aex.dev> for beta access. Once you have
 access, create a quickstart SDK token with `runs:read`, `runs:write`, and
 `outputs:read` in the dashboard at <https://aex.dev>. The examples also need
 your BYOK provider key for the model you choose. For the Claude examples below:
 
 ```bash
-export AEX_API_TOKEN="<your-aex-token>"
+export AEX_API_KEY="<your-aex-api-key>"
 export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
@@ -30,7 +30,7 @@ export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```ts
 import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_TOKEN!);
+const aex = new Aex(process.env.AEX_API_KEY!);
 
 const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -100,7 +100,7 @@ The same run from the bundled CLI:
 
 ```bash
 aex run \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --prompt "Write a short report and save it as a file." \

@@ -30,13 +30,13 @@
  *   4. Secret redaction — a secret-SHAPED value (`sk-ant-…`) in the SKILL.md
  *      body is returned as `[REDACTED]`, never verbatim.
  *
- * Gating: this is a LIVE suite. Missing creds (AEX_API_URL / AEX_API_TOKEN /
+ * Gating: this is a LIVE suite. Missing creds (AEX_API_URL / AEX_API_KEY /
  * DEEPSEEK_API_KEY) are a hard collection-time failure; the live lane must never
  * pass by silently skipping.
  *
  * Required env (live only):
  *   AEX_API_URL                 live hosted API URL
- *   AEX_API_TOKEN               workspace API token
+ *   AEX_API_KEY               workspace API key
  *   DEEPSEEK_API_KEY            customer DeepSeek key
  *   AEX_USER_TEST_TARBALL       packed SDK tarball
  *     OR AEX_USER_TEST_VERSION  published package version
@@ -47,7 +47,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -144,7 +144,7 @@ function buildScript(cfg: ScriptConfig): string {
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
+      apiKey: process.env.AEX_API_KEY
     });
 
     // Materialize the skill bundle on the local FS (SKILL.md + any extra files,
@@ -266,7 +266,7 @@ async function runScenario(installDir: string, scriptName: string, cfg: ScriptCo
   writeFileSync(scriptPath, buildScript(cfg));
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     DEEPSEEK_KEY_SUBMIT: deepseekKey
   });
   const child = await runCommand(getBunCommand(), [scriptPath], {

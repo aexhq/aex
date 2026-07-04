@@ -37,7 +37,7 @@ function downloadClient(): Aex {
     }
     throw new Error(`No fake responder for ${url}`);
   };
-  return new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch });
+  return new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch });
 }
 
 describe("SessionHandle download { to } options", () => {

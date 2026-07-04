@@ -84,7 +84,7 @@ the configured hosted API. The workflow runs the default sweep as 11 shards.
 They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
-- **Secret `AEX_API_TOKEN`** — workspace API token for the selected API URL.
+- **Secret `AEX_API_KEY`** — workspace API key for the selected API URL.
 - **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key. DeepSeek is the
   single RELEASE-GATING provider (SSoT `test/_fixtures/provider.ts`): gating
   shards must never depend on another provider account's billing state.
@@ -105,15 +105,13 @@ and asserts the user's probe string round-trips through a real upstream LLM call
 Required env:
 
 - `AEX_API_URL`
-- `AEX_API_TOKEN`
+- `AEX_API_KEY`
 - `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION` when testing an
   explicit artifact; if neither is set, the harness packs the checked-out SDK.
 - `ANTHROPIC_API_KEY`
 - `DEEPSEEK_API_KEY`
 
-Local `.env.local` files should use the canonical variables above. The loader
-also accepts the legacy local-only `AEX_TEST_DEEPSEEK_API_TOKEN` alias for
-`DEEPSEEK_API_KEY` when the canonical name is absent.
+Local `.env.local` files should use the canonical variables above.
 
 CI lives in `.github/workflows/live-user-tests.yml`.
 
@@ -149,7 +147,7 @@ bun run --filter @aexhq/user-tests test:user:heavy   # or: bun run test:user:hea
 ```
 
 Required env is identical to the comprehensive scenario
-(`AEX_API_URL`, `AEX_API_TOKEN`, `AEX_USER_TEST_TARBALL` or
+(`AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
 `AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
@@ -174,7 +172,7 @@ for reproduction:
 bun run --filter @aexhq/user-tests test:user:tool-fuzz
 ```
 
-Required env is `AEX_API_URL`, `AEX_API_TOKEN`, `AEX_USER_TEST_TARBALL` or
+Required env is `AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
 `AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`; model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 

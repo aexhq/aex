@@ -21,7 +21,7 @@
  * Cost: two tiny deepseek runs. The Finding-1 parent is cancelled after the
  * probe to release its container promptly.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  */
 import { writeFileSync } from "node:fs";
@@ -39,7 +39,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-subagent-mcp-failmodes");
 const model = gateModel();
 
@@ -62,7 +62,7 @@ const CHILD_PRELUDE = `
   const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
-  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
   const errShape = (e) => ({
     name: e && e.constructor ? e.constructor.name : "Error",
     message: e && e.message ? String(e.message).slice(0, 400) : String(e),
@@ -78,7 +78,7 @@ async function runChild(install: InstallResult, scriptName: string, body: string
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
     throw new Error(`edge-subagent-mcp-failmodes runner (${scriptName}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);

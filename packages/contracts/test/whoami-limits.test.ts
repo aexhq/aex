@@ -15,7 +15,7 @@ import type { WhoAmI } from "../src/runtime-types.js";
 function clientReturning(body: unknown): HttpClient {
   return new HttpClient({
     baseUrl: "https://api.example.test",
-    apiToken: "test-token",
+    apiKey: "test-token",
     fetch: async () =>
       new Response(JSON.stringify(body), {
         status: 200,

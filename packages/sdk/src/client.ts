@@ -91,10 +91,8 @@ import { SkillTool } from "./skill-tool.js";
 import { Tool } from "./tool.js";
 
 export interface AexOptions {
-  /** Workspace-scoped SDK API token. */
+  /** Workspace-scoped SDK API key. */
   readonly apiKey?: string;
-  /** @deprecated Use `apiKey`; kept as a source-compatible alias during launch. */
-  readonly apiToken?: string;
   /**
    * API plane root, e.g. `https://aex.example.com`. Optional —
    * defaults to the canonical hosted URL (`https://api.aex.dev`).
@@ -1406,7 +1404,7 @@ function unwrapSecretValue(value: string | SecretString): string {
  * the dashboard BFF and operate on durable run records.
  *
  * The SDK never asks the caller for a workspace id — workspace identity
- * is derived server-side from the API token on every request. Use
+ * is derived server-side from the API key on every request. Use
  * `client.whoami()` if you want to introspect which workspace the
  * token resolves to.
  */
@@ -1419,11 +1417,11 @@ export class Aex {
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
 
-  constructor(apiKey: string, options?: Omit<AexOptions, "apiKey" | "apiToken">);
+  constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
   constructor(options: AexOptions);
-  constructor(options: string | AexOptions, overrides: Omit<AexOptions, "apiKey" | "apiToken"> = {}) {
+  constructor(options: string | AexOptions, overrides: Omit<AexOptions, "apiKey"> = {}) {
     const resolved = typeof options === "string" ? { ...overrides, apiKey: options } : options;
-    const apiKey = resolved.apiKey ?? resolved.apiToken;
+    const apiKey = resolved.apiKey;
     if (!apiKey) {
       // Typed so a caller catching AexError (the SDK's error base) catches a
       // missing credential too, instead of a bare Error slipping the taxonomy.
@@ -1437,7 +1435,7 @@ export class Aex {
     const retryingFetch = withRetry(baseFetch, resolved.retry);
     this.#http = new HttpClient({
       ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {}),
-      apiToken: apiKey,
+      apiKey,
       fetch: retryingFetch,
       // Opt-in local diagnostics: emit a redacted per-request trace to
       // stderr. Uploads nothing. A caller wanting a custom sink can pass

@@ -20,14 +20,8 @@ export function loadLocalEnv(): void {
       loadDotenv({ path, override: false });
     }
   }
-
-  applyCompatibilityAliases();
 }
 
 function uniqueDirs(dirs: readonly string[]): string[] {
   return Array.from(new Set(dirs));
-}
-
-function applyCompatibilityAliases(): void {
-  process.env.DEEPSEEK_API_KEY ??= process.env.AEX_TEST_DEEPSEEK_API_TOKEN;
 }

@@ -21,7 +21,7 @@ function listClient(page: unknown): { readonly client: Aex; readonly calls: Reco
     return json(page);
   };
   return {
-    client: new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch }),
+    client: new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }),
     calls
   };
 }

@@ -6,7 +6,7 @@ title: Billing & webhook signing secret
 
 Workspace-level billing, subscription, and webhook verification calls are
 token-scoped like every other client call — the workspace is derived
-server-side from the API token.
+server-side from the API key.
 
 ## Read the billing summary
 
@@ -16,7 +16,7 @@ and the spend cap enforced on new runs, plus plan fields:
 ```ts
 import { Aex } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_TOKEN!);
+const aex = new Aex(process.env.AEX_API_KEY!);
 const billing = await aex.billing();
 console.log(billing.balanceUsd, billing.monthSpendUsd, billing.spendCapUsd);
 ```
@@ -89,7 +89,7 @@ Run webhooks are signed Standard-Webhooks style with a per-workspace secret.
 ```ts
 import { Aex, verifyAexWebhook } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_TOKEN!);
+const aex = new Aex(process.env.AEX_API_KEY!);
 const { whsec } = await aex.webhookSigningSecret();
 
 // In your webhook receiver:

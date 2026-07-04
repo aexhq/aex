@@ -11,7 +11,7 @@
  *
  * They validate the FIXED behaviour and so only pass once the fixes are
  * DEPLOYED to the remote hosted API. Env mirrors the other user-tests:
- *   AEX_API_URL, AEX_API_TOKEN,
+ *   AEX_API_URL, AEX_API_KEY,
  *   DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION (the SDK to install).
  */
@@ -21,7 +21,7 @@ import { getBunCommand, runCommand, type InstallResult } from "../_fixtures/inst
 
 export interface UserEnv {
   readonly apiBase: string;
-  readonly apiToken: string;
+  readonly apiKey: string;
   readonly deepseekKey?: string;
   readonly deepseekModel: string;
 }
@@ -39,7 +39,7 @@ function req(name: string): string {
 export function requireUserEnv(opts: { deepseek?: boolean } = {}): UserEnv {
   const env: UserEnv = {
     apiBase: req("AEX_API_URL").replace(/\/$/, ""),
-    apiToken: req("AEX_API_TOKEN"),
+    apiKey: req("AEX_API_KEY"),
     deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash"
   };
   return {
@@ -92,7 +92,7 @@ export interface SdkRunResult {
  */
 const PREAMBLE = `
 import { Aex, AgentsMd } from "@aexhq/sdk";
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
@@ -208,7 +208,7 @@ export async function runSdkScript(
 
   const passEnv: Record<string, string> = {
     AEX_API_URL: env.apiBase,
-    AEX_API_TOKEN: env.apiToken,
+    AEX_API_KEY: env.apiKey,
     MODEL_DEEPSEEK: env.deepseekModel,
     WAIT_MS: String(opts.waitMs ?? 240_000),
     ...(env.deepseekKey ? { DEEPSEEK_KEY: env.deepseekKey } : {})

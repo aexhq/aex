@@ -1,8 +1,8 @@
 /**
  * `aex login` / `aex logout` / `aex auth status` (DX1).
  *
- * Persist the API token + default `--aex-url` to a 0600 config file so a dev
- * stops re-passing `--api-token` on every command. `login` validates the token
+ * Persist the API key + default `--aex-url` to a 0600 config file so a dev
+ * stops re-passing `--api-key` on every command. `login` validates the token
  * against `whoami` BEFORE writing (a bad token is never persisted). The token
  * value is never printed by any of these verbs.
  *
@@ -34,19 +34,19 @@ export async function runLoginCmd(io: CliIO, argv: readonly string[]): Promise<C
     io.stderr(`${extracted.reason}\n`);
     return USAGE_ERR;
   }
-  const { apiToken, aexUrl, debug, rest } = extracted.flags;
+  const { apiKey, aexUrl, debug, rest } = extracted.flags;
   const positional = rest.filter((a) => !a.startsWith("--"));
   if (positional.length > 0) {
     io.stderr(`unexpected arguments: ${positional.join(" ")}\n`);
     return USAGE_ERR;
   }
-  if (!apiToken) {
-    io.stderr("usage: aex login --api-token <token> [--aex-url <url>]\n");
+  if (!apiKey) {
+    io.stderr("usage: aex login --api-key <token> [--aex-url <url>]\n");
     return USAGE_ERR;
   }
 
   const resolvedUrl = aexUrl ?? AEX_DEFAULT_BASE_URL;
-  const http = makeHttpClient(io, { apiToken, aexUrl: resolvedUrl, debug });
+  const http = makeHttpClient(io, { apiKey, aexUrl: resolvedUrl, debug });
   let workspaceId: string | undefined;
   try {
     const me = await operations.whoami(http);
@@ -61,7 +61,7 @@ export async function runLoginCmd(io: CliIO, argv: readonly string[]): Promise<C
     });
   }
 
-  await io.configStore.write({ schemaVersion: 1, apiToken, ...(aexUrl ? { aexUrl: resolvedUrl } : {}) });
+  await io.configStore.write({ schemaVersion: 1, apiKey, ...(aexUrl ? { aexUrl: resolvedUrl } : {}) });
   if (debug) io.stderr(`[aex] login: persisted to ${io.configStore.location()}\n`);
   io.stdout(
     JSON.stringify({
@@ -100,9 +100,9 @@ export async function runAuthStatusCmd(io: CliIO, argv: readonly string[]): Prom
     return USAGE_ERR;
   }
   const stored = await io.configStore.read();
-  const hasToken = Boolean(stored?.apiToken);
+  const hasToken = Boolean(stored?.apiKey);
   // Show only the last 4 chars of the stored token as a non-secret fingerprint.
-  const tokenSuffix = hasToken ? stored!.apiToken!.slice(-4) : undefined;
+  const tokenSuffix = hasToken ? stored!.apiKey!.slice(-4) : undefined;
   io.stdout(
     JSON.stringify({
       configPath: io.configStore.location(),

@@ -30,7 +30,7 @@ describe("user/SDK: postHook is rejected at the public boundary", () => {
       const calls = [];
       const client = new Aex({
         baseUrl: "https://example.invalid",
-        apiToken: "aex_user_posthook_token",
+        apiKey: "aex_user_posthook_token",
         fetch: async (input, init) => {
           calls.push({ input: String(input), method: init && init.method });
           return new Response(JSON.stringify({ ok: true }), {

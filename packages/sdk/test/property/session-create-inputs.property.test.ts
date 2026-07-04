@@ -348,7 +348,7 @@ function captureClient(): CaptureHarness {
   };
   return {
     client: new Aex({
-      apiToken: "tkn_property",
+      apiKey: "tkn_property",
       baseUrl: "https://example.test",
       fetch: fetchImpl,
       retry: false

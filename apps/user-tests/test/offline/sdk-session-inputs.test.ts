@@ -252,7 +252,7 @@ const {
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
-  apiToken: "aex_user_inputs_token",
+  apiKey: "aex_user_inputs_token",
   baseUrl: "https://example.invalid",
   fetch
 });
@@ -421,7 +421,7 @@ const { Aex, Tools } = await import("@aexhq/sdk");
 function makeClient() {
   const harness = makeFetch();
   const client = new Aex({
-    apiToken: "aex_skill_inputs_token",
+    apiKey: "aex_skill_inputs_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
   });
@@ -544,7 +544,7 @@ const {
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
-  apiToken: "aex_invalid_inputs_token",
+  apiKey: "aex_invalid_inputs_token",
   baseUrl: "https://example.invalid",
   fetch
 });
@@ -699,7 +699,7 @@ console.log(JSON.stringify({
 const { Aex, Models, Sizes } = await import("@aexhq/sdk");
 const { calls, fetch } = makeFetch();
 const client = new Aex({
-  apiToken: "aex_extreme_inputs_token",
+  apiKey: "aex_extreme_inputs_token",
   baseUrl: "https://example.invalid",
   fetch
 });
