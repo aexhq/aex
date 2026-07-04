@@ -48,7 +48,7 @@ describe("HttpClient network failures", () => {
     const raw = undiciFetchFailed();
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "secret-token-value",
+      apiKey: "secret-token-value",
       fetch: async () => {
         throw raw;
       }
@@ -75,7 +75,7 @@ describe("HttpClient network failures", () => {
     const raw = undiciFetchFailed("ENOTFOUND", "getaddrinfo ENOTFOUND api.example.test");
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "t",
+      apiKey: "t",
       fetch: async () => {
         throw raw;
       }
@@ -95,7 +95,7 @@ describe("HttpClient network failures", () => {
     const abort = new DOMException("The operation was aborted", "AbortError");
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "t",
+      apiKey: "t",
       fetch: async () => {
         throw abort;
       }
@@ -111,7 +111,7 @@ describe("HttpClient baseUrl validation", () => {
       () =>
         new HttpClient({
           baseUrl: "not a url",
-          apiToken: "t",
+          apiKey: "t",
           fetch: async () => new Response("{}")
         })
     ).toThrow(/baseUrl.*not a url/);
@@ -122,7 +122,7 @@ describe("HttpClient baseUrl validation", () => {
     try {
       new HttpClient({
         baseUrl: "https://user:hunter2secret@bad host.example",
-        apiToken: "t",
+        apiKey: "t",
         fetch: async () => new Response("{}")
       });
     } catch (err) {

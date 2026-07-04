@@ -15,9 +15,9 @@ import {
 } from "../src/index.js";
 
 const actor = {
-  principal: { type: "api_token", ref: "api-token-11111111" },
+  principal: { type: "api_key", ref: "api-token-11111111" },
   sourcePlane: "api",
-  authenticatedBy: "api_token"
+  authenticatedBy: "api_key"
 } as const;
 
 describe("side-effect audit contract", () => {
@@ -67,7 +67,7 @@ describe("side-effect audit contract", () => {
     expect(event.schemaVersion).toBe(SIDE_EFFECT_AUDIT_SCHEMA_VERSION);
     expect(event.kind).toBe(SIDE_EFFECT_AUDIT_KIND);
     expect(event.actor).toMatchObject({
-      principal: { type: "api_token", ref: "api-token-11111111" },
+      principal: { type: "api_key", ref: "api-token-11111111" },
       sourcePlane: "api"
     });
     expect(event.target).toMatchObject({
@@ -134,15 +134,15 @@ describe("side-effect audit contract", () => {
   });
 
   it("builds API-token deletion audit events", () => {
-    expect(SIDE_EFFECT_AUDIT_ACTIONS).toContain("api_token.deleted");
+    expect(SIDE_EFFECT_AUDIT_ACTIONS).toContain("api_key.deleted");
 
     const event = buildSideEffectAuditEvent({
       workspaceId: "workspace-11111111",
-      action: "api_token.deleted",
+      action: "api_key.deleted",
       outcome: "succeeded",
       observedAt: "2026-06-02T12:00:00.000Z",
       actor,
-      target: { type: "api_token", id: "api-token-11111111" },
+      target: { type: "api_key", id: "api-token-11111111" },
       metadata: {
         status: { status: "deleted" },
         timestamps: { deletedAt: "2026-06-02T12:00:00.000Z" }
@@ -150,9 +150,9 @@ describe("side-effect audit contract", () => {
     });
 
     expect(event).toMatchObject({
-      action: "api_token.deleted",
+      action: "api_key.deleted",
       outcome: "succeeded",
-      target: { type: "api_token", id: "api-token-11111111" },
+      target: { type: "api_key", id: "api-token-11111111" },
       metadata: { status: { status: "deleted" } }
     });
     expect(scanSideEffectAuditPayloadForSensitiveValues(event)).toEqual([]);

@@ -107,7 +107,7 @@ function captureMessagesClient(messages: readonly SessionMessage[]): {
     throw new Error(`unexpected SDK request: ${call.method} ${call.pathname}${call.search}`);
   };
   return {
-    client: new Aex({ apiToken: "tkn_property", baseUrl: "https://api.example.test", fetch: fetchImpl, retry: false }),
+    client: new Aex({ apiKey: "tkn_property", baseUrl: "https://api.example.test", fetch: fetchImpl, retry: false }),
     calls
   };
 }
@@ -142,7 +142,7 @@ function captureMissingMessagesClient(args: {
     throw new Error(`unexpected SDK request: ${call.method} ${call.pathname}${call.search}`);
   };
   return {
-    client: new Aex({ apiToken: "tkn_property", baseUrl: "https://api.example.test", fetch: fetchImpl, retry: false }),
+    client: new Aex({ apiKey: "tkn_property", baseUrl: "https://api.example.test", fetch: fetchImpl, retry: false }),
     calls
   };
 }
@@ -184,7 +184,7 @@ function captureRunClient(firstSeq: number): {
     throw new Error(`unexpected SDK request: ${call.method} ${call.pathname}${call.search}`);
   };
   return {
-    client: new Aex({ apiToken: "tkn_property", baseUrl: "https://api.example.test", fetch: fetchImpl, retry: false }),
+    client: new Aex({ apiKey: "tkn_property", baseUrl: "https://api.example.test", fetch: fetchImpl, retry: false }),
     calls,
     sockets,
     webSocketFactory: (url: string) => {

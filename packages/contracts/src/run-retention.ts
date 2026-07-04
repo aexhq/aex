@@ -144,7 +144,7 @@ export interface RunDeletionManifestRunV1 {
 
 export interface RunDeletionManifestRequestV1 {
   readonly reason: RunDeletionReason;
-  readonly actorClass: "user" | "api_token" | "system" | "operator";
+  readonly actorClass: "user" | "api_key" | "system" | "operator";
 }
 
 export interface RunDeletionManifestSummaryV1 {

@@ -18,7 +18,7 @@ per-noun "does the frame depict X?" verdict.
 ```ts
 import { Aex, Models, Secret, Tools } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const result = await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,

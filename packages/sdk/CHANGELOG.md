@@ -19,9 +19,10 @@ follows semantic versioning.
   composition primitives, runtime constants, errors, event guards, and core
   public contracts. Retired convenience/data-tool/debug trace exports are no
   longer available from `@aexhq/sdk`.
-- Added `apiKey` as the preferred SDK constructor credential option, plus
-  `new Aex(apiKey)` and `new Aex(apiKey, options)` shortcuts. The existing
-  `apiToken` option remains accepted as a launch compatibility alias.
+- Renamed the SDK constructor credential option to `apiKey` and the environment
+  variable to `AEX_API_KEY`, plus `new Aex(apiKey)` and `new Aex(apiKey, options)`
+  shortcuts. Pre-launch clean cut — the former `apiToken` option and
+  `AEX_API_TOKEN` variable are removed with no compatibility alias.
 - `session.messages` is now a callable accessor property, so both
   `session.messages.all()` and older `session.messages().list()` style calls
   resolve through the same message accessor.
@@ -181,9 +182,9 @@ follows semantic versioning.
   - `aex chat` — a read-only, multi-run chat CLI over a corpus that uses your own
     provider key plus the corpus read tools. See `examples/data-chat/`.
 - CLI host commands for auth and live run inspection:
-  - `aex login` / `aex logout` / `aex auth status` — persist your API token and
+  - `aex login` / `aex logout` / `aex auth status` — persist your API key and
     default `--aex-url` to a `0600` config file so commands stop re-passing
-    `--api-token`. `login` validates the token against `whoami` before writing (a
+    `--api-key`. `login` validates the token against `whoami` before writing (a
     bad token is never persisted) and the token value is never printed.
   - `aex tail <run-id>` — live, human-readable follow over the coordinator
     envelope stream (the low-latency equivalent of `events --follow`), with

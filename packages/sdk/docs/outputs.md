@@ -28,7 +28,7 @@ await session.download({ to: "./session.zip" });
 ```
 
 ```bash
-aex download <session-id> --out ./session.zip --api-token …
+aex download <session-id> --out ./session.zip --api-key …
 ```
 
 ## The three namespaces
@@ -150,7 +150,7 @@ Selectors can be an output id, an `Output` object, a path selector, or an `Outpu
 
 The returned URL is a reusable bearer URL until it expires. Anyone who has it can read that artifact during the TTL. aex does not promise one-time use or early revocation for these direct artifact URLs.
 
-For large files, `session.outputs().fetch()` mints the same temporary URL and returns the `Response` from fetching it directly, without adding the SDK API token to that second request:
+For large files, `session.outputs().fetch()` mints the same temporary URL and returns the `Response` from fetching it directly, without adding the SDK API key to that second request:
 
 ```ts
 const response = await session.outputs().fetch({ type: "video", filename: /clip\.mp4$/ });

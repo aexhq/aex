@@ -216,7 +216,7 @@ describe("installed CLI host commands", () => {
   });
 
   it("runs run/status/events/wait/download/cancel through the installed binary", async () => {
-    const common = ["--api-token", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
+    const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
 
     const run = await runCommand(
       binPath,
@@ -346,7 +346,7 @@ describe("installed CLI host commands", () => {
   });
 
   it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {
-    const common = ["--api-token", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
+    const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
 
     const billing = await runCommand(binPath, ["billing", ...common], {
       cwd: install.installDir,

@@ -6,7 +6,7 @@
  *
  * Run from the repository root after building the workspace package:
  *
- *   AEX_API_TOKEN=... DEEPSEEK_API_KEY=... bun packages/sdk/examples/feature-tour.ts
+ *   AEX_API_KEY=... DEEPSEEK_API_KEY=... bun packages/sdk/examples/feature-tour.ts
  *
  * Optional:
  *
@@ -34,7 +34,7 @@ import {
 process.on("uncaughtException", handleFatal);
 process.on("unhandledRejection", handleFatal);
 
-const apiToken = required("AEX_API_TOKEN");
+const apiKey = required("AEX_API_KEY");
 const deepseekKey = required("DEEPSEEK_API_KEY");
 const apiUrl = process.env.AEX_API_URL;
 const demoMcpUrl = process.env.AEX_DEMO_MCP_URL;
@@ -44,7 +44,7 @@ const downloadPath = process.env.AEX_FEATURE_TOUR_DOWNLOAD;
 const textEncoder = new TextEncoder();
 
 const aex = new Aex({
-  apiToken,
+  apiKey,
   ...(apiUrl ? { baseUrl: apiUrl } : {}),
   retry: {
     maxAttempts: 4,

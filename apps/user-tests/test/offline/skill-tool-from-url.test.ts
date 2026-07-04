@@ -248,7 +248,7 @@ const enc = new TextEncoder();
 function makeClient(archives) {
   const harness = makeFetch(archives);
   const client = new Aex({
-    apiToken: "aex_skill_url_token",
+    apiKey: "aex_skill_url_token",
     baseUrl: "https://example.invalid",
     fetch: harness.fetch
   });
@@ -403,7 +403,7 @@ const url = "https://skills.example.test/integrity.zip";
 // Correct hash, prefixed form -> accepted, and flows through to the wire.
 const prefixed = makeFetch({ [url]: { status: 200, bytes: zip } });
 const prefixedClient = new Aex({
-  apiToken: "aex_integrity_token",
+  apiKey: "aex_integrity_token",
   baseUrl: "https://example.invalid",
   fetch: prefixed.fetch
 });

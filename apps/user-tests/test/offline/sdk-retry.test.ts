@@ -93,7 +93,7 @@ const { Aex, isRateLimited, AexRateLimitError, AexApiError } = await import("@ae
 
 function client(fetch) {
   return new Aex({
-    apiToken: "aex_retry_token",
+    apiKey: "aex_retry_token",
     baseUrl: "https://example.invalid",
     fetch,
     retry: { maxAttempts: 4, initialDelayMs: 1, maxDelayMs: 2 }
@@ -149,7 +149,7 @@ strictEqual(isRateLimited(badRequest), false);
 // 5) retry:false disables the layer — a 429 is a single plain AexApiError.
 const e = makeFetch([429]);
 const off = new Aex({
-  apiToken: "aex_retry_token",
+  apiKey: "aex_retry_token",
   baseUrl: "https://example.invalid",
   fetch: e.fetch,
   retry: false

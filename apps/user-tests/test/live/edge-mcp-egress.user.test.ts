@@ -26,7 +26,7 @@
  * during setup); only the egress + MCP-invocation cases spend model tokens.
  *
  * Required env (wired by the live runner):
- *   AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
+ *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -44,7 +44,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-mcp-egress");
 const model = gateModel();
 
@@ -71,7 +71,7 @@ async function runChild(install: InstallResult, scriptName: string, script: stri
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
     throw new Error(
@@ -142,7 +142,7 @@ function validationChildScript(): string {
     });
 
     // --- bad-submission fail-closed probes (parallel; no LLM is invoked) ---
-    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     async function submitBad(label, mcpServers) {
       const t0 = Date.now();
       let runId = null, status = null, threw = null;
@@ -243,7 +243,7 @@ function egressChildScript(): string {
     "Reply with ONLY the three tokens separated by single spaces.";
   return `
     import { Aex } from "@aexhq/sdk";
-    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     const runResult = await client.run({
       provider: process.env.PROVIDER,
       model: process.env.MODEL,
@@ -276,7 +276,7 @@ function mcpSecretChildScript(marker: string): string {
     `repository anthropics/anthropic-cookbook. Reply with exactly one line: lang=<language>.`;
   return `
     import { Aex, McpServer } from "@aexhq/sdk";
-    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     // Secret header carried under secrets.mcpServers — must never surface in events/outputs.
     const mcp = McpServer.remote({
       name: ${JSON.stringify(MCP_NAME)},

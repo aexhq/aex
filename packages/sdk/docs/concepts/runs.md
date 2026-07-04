@@ -14,7 +14,7 @@ one-shot convenience wrapper over them.
 ```ts
 import { Aex, Models } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const session = await aex.openSession({
   provider: "anthropic",

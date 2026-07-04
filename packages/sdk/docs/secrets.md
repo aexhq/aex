@@ -8,7 +8,7 @@ aex supports BYOK provider keys, per-run credentials, and reusable workspace
 secrets. Secret values are excluded from the idempotency fingerprint and do not
 belong in run config.
 
-Runnable examples need both `AEX_API_TOKEN` for aex and the matching BYOK
+Runnable examples need both `AEX_API_KEY` for aex and the matching BYOK
 provider key, such as `ANTHROPIC_API_KEY` for Claude.
 
 ## Use A Provider Key For One Run
@@ -18,7 +18,7 @@ provider key, such as `ANTHROPIC_API_KEY` for Claude.
 ```ts
 import { Aex, Models } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -31,7 +31,7 @@ await aex.run({
 
 ```bash
 aex run \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --prompt "Write a short report and save it as a file."
@@ -45,7 +45,7 @@ want to persist it as a named workspace secret for later runs.
 ```ts
 import { Aex, Models, Providers, Secret } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const githubToken = await Secret.value(process.env.GITHUB_TOKEN!).upload(aex, {
   name: "github-token"

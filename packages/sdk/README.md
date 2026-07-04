@@ -20,11 +20,11 @@ npm i @aexhq/sdk
 ```
 
 This installs the TypeScript SDK exports and the bundled `aex` CLI. Set both
-credentials before running the examples: `AEX_API_TOKEN` authenticates to aex,
+credentials before running the examples: `AEX_API_KEY` authenticates to aex,
 and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
 
 ```bash
-export AEX_API_TOKEN="<your-aex-token>"
+export AEX_API_KEY="<your-aex-api-key>"
 export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
@@ -33,7 +33,7 @@ export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```ts
 import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -82,7 +82,7 @@ The same request can run from the bundled CLI:
 
 ```bash
 aex run \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --prompt "Write the report and save outputs." \
@@ -91,14 +91,14 @@ aex run \
 
 ## CLI: login, discovery, typed errors
 
-Stop re-passing `--api-token` on every command — log in once and the token (plus
+Stop re-passing `--api-key` on every command — log in once and the token (plus
 your default `--aex-url`) is persisted to a `0600` config file
 (`$XDG_CONFIG_HOME/aex/config.json` or `~/.config/aex/config.json`; `%APPDATA%\aex\config.json`
-on Windows). An explicit `--api-token` flag always overrides the stored one.
+on Windows). An explicit `--api-key` flag always overrides the stored one.
 
 ```bash
-aex login --api-token "$AEX_API_TOKEN" [--aex-url https://api.aex.dev]
-aex whoami            # no --api-token needed after login
+aex login --api-key "$AEX_API_KEY" [--aex-url https://api.aex.dev]
+aex whoami            # no --api-key needed after login
 aex auth status       # show the resolved config (the token value is never printed)
 aex logout            # clear the stored token
 ```

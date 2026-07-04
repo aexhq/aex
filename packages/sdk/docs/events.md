@@ -60,11 +60,11 @@ for callers that build custom collectors.
 The CLI mirrors the same surface:
 
 ```bash
-aex events  <session-id> --api-token … [--aex-url …]                      # snapshot (polling)
-aex events  <session-id> --follow [--timeout 8m] --api-token … [--aex-url …]  # stream until the session parks (polling)
-aex tail    <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token …  # live, human-readable, over the WS envelope stream
-aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token …             # one-shot full timeline + jump-to-failure + cost/usage
-aex wait    <session-id> [--timeout 8m] [--interval 2s] --api-token …          # block, print final session
+aex events  <session-id> --api-key … [--aex-url …]                      # snapshot (polling)
+aex events  <session-id> --follow [--timeout 8m] --api-key … [--aex-url …]  # stream until the session parks (polling)
+aex tail    <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-key …  # live, human-readable, over the WS envelope stream
+aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key …             # one-shot full timeline + jump-to-failure + cost/usage
+aex wait    <session-id> [--timeout 8m] [--interval 2s] --api-key …          # block, print final session
 ```
 
 `aex tail` and `aex inspect` consume the same coordinator WebSocket envelope

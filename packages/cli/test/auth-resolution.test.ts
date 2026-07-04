@@ -1,7 +1,7 @@
 /**
  * DX1: the stored-config fallback in `resolveCommonHostFlags`, exercised through
  * a real host verb (`whoami`). A token persisted by `aex login` is honored when
- * `--api-token` is absent; an explicit flag overrides it; `--aex-url` precedence
+ * `--api-key` is absent; an explicit flag overrides it; `--aex-url` precedence
  * is flag > stored > default; and with neither flag nor stored token the verb
  * fails with the actionable "run `aex login`" message.
  */
@@ -40,7 +40,7 @@ function makeIo(opts: {
     cwd: () => "/tmp",
     fetchImpl: async (url) => {
       calls.push({ url: String(url) });
-      return new Response(JSON.stringify({ principalType: "api_token", workspaceId: "ws-1" }), {
+      return new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-1" }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -81,10 +81,10 @@ function makeIo(opts: {
 }
 
 describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
-  it("uses the stored token + url when --api-token is absent", async () => {
+  it("uses the stored token + url when --api-key is absent", async () => {
     const cap = makeIo({
       argv: ["whoami"],
-      stored: { schemaVersion: 1, apiToken: "stored-tok", aexUrl: "https://stored.example" }
+      stored: { schemaVersion: 1, apiKey: "stored-tok", aexUrl: "https://stored.example" }
     });
     await runCli(cap.io);
     expect(cap.exit()).toBe(0);
@@ -92,10 +92,10 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
     expect(cap.calls[0]!.url).toBe("https://stored.example/api/whoami");
   });
 
-  it("lets an explicit --api-token override the stored token", async () => {
+  it("lets an explicit --api-key override the stored token", async () => {
     const cap = makeIo({
-      argv: ["whoami", "--api-token", "flag-tok", "--aex-url", "https://flag.example"],
-      stored: { schemaVersion: 1, apiToken: "stored-tok", aexUrl: "https://stored.example" }
+      argv: ["whoami", "--api-key", "flag-tok", "--aex-url", "https://flag.example"],
+      stored: { schemaVersion: 1, apiKey: "stored-tok", aexUrl: "https://stored.example" }
     });
     await runCli(cap.io);
     expect(cap.exit()).toBe(0);
@@ -106,13 +106,13 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
     // flag url present, stored url present → flag wins
     const cap = makeIo({
       argv: ["whoami", "--aex-url", "https://flag.example"],
-      stored: { apiToken: "stored-tok", aexUrl: "https://stored.example" }
+      stored: { apiKey: "stored-tok", aexUrl: "https://stored.example" }
     });
     await runCli(cap.io);
     expect(cap.calls[0]!.url).toBe("https://flag.example/api/whoami");
 
     // no flag url, stored url absent → default base url
-    const cap2 = makeIo({ argv: ["whoami"], stored: { apiToken: "stored-tok" } });
+    const cap2 = makeIo({ argv: ["whoami"], stored: { apiKey: "stored-tok" } });
     await runCli(cap2.io);
     expect(cap2.calls[0]!.url).toBe("https://api.aex.dev/api/whoami");
   });
@@ -128,7 +128,7 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
   it("emits a non-secret auth-source line under --debug (token never printed)", async () => {
     const cap = makeIo({
       argv: ["whoami", "--debug"],
-      stored: { apiToken: "super-secret-token", aexUrl: "https://stored.example" }
+      stored: { apiKey: "super-secret-token", aexUrl: "https://stored.example" }
     });
     await runCli(cap.io);
     expect(cap.err()).toContain("[aex] auth: stored token (/home/u/.config/aex/config.json)");
@@ -138,7 +138,7 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
   it("still refuses host verbs inside a managed run container", async () => {
     const cap = makeIo({
       argv: ["whoami"],
-      stored: { apiToken: "stored-tok" },
+      stored: { apiKey: "stored-tok" },
       files: { [AEX_INDEX_PATH]: "{}" }
     });
     await runCli(cap.io);

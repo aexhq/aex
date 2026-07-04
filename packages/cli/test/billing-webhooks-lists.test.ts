@@ -69,7 +69,7 @@ function makeHostIo(opts: {
   };
 }
 
-const COMMON = ["--api-token", "tok-1", "--aex-url", "https://dash.example/"];
+const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
 const BILLING_SUMMARY = {
   balanceUsd: 12.5,

@@ -19,7 +19,7 @@ function clientFor(routes: Record<string, () => Response>) {
     if (!handler) return new Response("not found", { status: 404 });
     return handler();
   };
-  return new HttpClient({ apiToken: "tok", baseUrl: BASE, fetch: fetchImpl });
+  return new HttpClient({ apiKey: "tok", baseUrl: BASE, fetch: fetchImpl });
 }
 
 const json = (body: unknown) =>

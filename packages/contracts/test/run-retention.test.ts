@@ -260,7 +260,7 @@ describe("run retention and deletion contract", () => {
       generatedAt: "2026-06-02T10:00:00.000Z",
       mode: "dry_run",
       run: terminalRun,
-      request: { reason: "manual_delete", actorClass: "api_token" },
+      request: { reason: "manual_delete", actorClass: "api_key" },
       counts: [{ class: "events", count: 4, status: "counted" }]
     });
 

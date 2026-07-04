@@ -8,7 +8,7 @@
  *
  * Required env:
  *   AEX_API_URL
- *   AEX_API_TOKEN
+ *   AEX_API_KEY
  *   DEEPSEEK_API_KEY
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION (optional; otherwise local pack)
  */
@@ -20,7 +20,7 @@ import { getAexBinPath, installAex, runCommand, type InstallResult, type RunResu
 
 interface LiveCliEnv {
   readonly apiBase: string;
-  readonly apiToken: string;
+  readonly apiKey: string;
   readonly deepseekKey: string;
   readonly deepseekModel: string;
 }
@@ -40,7 +40,7 @@ function requireLiveCliEnv(): LiveCliEnv {
   }
   return {
     apiBase,
-    apiToken: requireEnv("AEX_API_TOKEN"),
+    apiKey: requireEnv("AEX_API_KEY"),
     deepseekKey: requireEnv("DEEPSEEK_API_KEY"),
     deepseekModel: process.env.AEX_USER_TEST_DEEPSEEK_MODEL?.trim() || "deepseek-v4-flash"
   };
@@ -54,7 +54,7 @@ const env = requireLiveCliEnv();
 const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
 
 function redactSecrets(text: string): string {
-  return text.split(env.apiToken).join("[REDACTED_AEX_API_TOKEN]").split(env.deepseekKey).join("[REDACTED_DEEPSEEK_API_KEY]");
+  return text.split(env.apiKey).join("[REDACTED_AEX_API_KEY]").split(env.deepseekKey).join("[REDACTED_DEEPSEEK_API_KEY]");
 }
 
 function commandDiagnostic(command: string, result: RunResult): string {
@@ -125,7 +125,7 @@ describe("live hosted API via installed CLI", () => {
   }
 
   function commonArgs(): string[] {
-    return ["--api-token", env.apiToken, "--aex-url", env.apiBase];
+    return ["--api-key", env.apiKey, "--aex-url", env.apiBase];
   }
 
   it("submits with run --follow, then reads status/events/outputs/wait/download through the installed binary", async () => {

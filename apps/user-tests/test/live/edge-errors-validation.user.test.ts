@@ -5,9 +5,9 @@
  * validation reject, an auth reject, a 404, or a bounded network failure.
  *
  * Asserted (each classified in the agent report as EXPECTED / PRODUCT_BUG):
- *   1. Garbage apiToken → `whoami()` rejects with a typed AexApiError, status 401
+ *   1. Garbage apiKey → `whoami()` rejects with a typed AexApiError, status 401
  *      (or 403) — a clean auth reject, never an opaque throw or a hang.
- *   2. Valid apiToken → `whoami()` resolves to a workspace-identity object.
+ *   2. Valid apiKey → `whoami()` resolves to a workspace-identity object.
  *   3. Nonexistent sessionId → `sessions.open/get` and `sessions.outputs(id).list()`
  *      reject with a typed AexApiError 4xx (a clean 404, never a 5xx).
  *   4. Client-side malformed run config (missing model / empty message / missing
@@ -17,7 +17,7 @@
  *      (does NOT hang), surfacing a real Error rather than swallowing it.
  *
  * Required env (exported by the shared live runner from .env.dev):
- *   AEX_API_URL, AEX_API_TOKEN
+ *   AEX_API_URL, AEX_API_KEY
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -86,11 +86,11 @@ import {
 } from "@aexhq/sdk";
 
 const apiUrl = process.env.AEX_API_URL;
-const apiToken = process.env.AEX_API_TOKEN;
+const apiKey = process.env.AEX_API_KEY;
 const bogusSession = ${JSON.stringify(bogusSession)};
 
 // Never let the real token bleed into the recorded evidence.
-const REDACT = (s) => typeof s === "string" ? s.split(apiToken).join("<token>") : s;
+const REDACT = (s) => typeof s === "string" ? s.split(apiKey).join("<token>") : s;
 
 // Build a STRUCTURALLY-VALID aex_* bearer token (correct 6-segment shape +
 // valid crc32 checksum) that is NOT a real credential, to separate the
@@ -136,7 +136,7 @@ function describeErr(err, includeStatus) {
 // (1a) A structurally MALFORMED token → whoami rejects cleanly (typed
 //      AexApiError). On dev this is HTTP 400 {"error":"malformed_token"}.
 const JUNK = "aex_garbage_not_a_real_token_zzzz";
-const garbage = new Aex({ apiToken: JUNK, baseUrl: apiUrl });
+const garbage = new Aex({ apiKey: JUNK, baseUrl: apiUrl });
 let malformedToken;
 try { await garbage.whoami(); malformedToken = { rejected: false, isApiError: false, status: null, name: null, bodyError: null, hasMessage: false, leaked: false }; }
 catch (err) { malformedToken = tokenReject(err, JUNK); }
@@ -176,13 +176,13 @@ try {
 // (1c) A WELL-FORMED aex_* token (valid shape+crc) but not a real credential →
 //      whoami rejects with HTTP 401 {"error":"token_invalid"} (the true
 //      invalid-credential path, distinct from the no-bearer and malformed paths).
-const wellFormed = new Aex({ apiToken: craftWellFormedToken(), baseUrl: apiUrl });
+const wellFormed = new Aex({ apiKey: craftWellFormedToken(), baseUrl: apiUrl });
 let wellFormedUnauthToken;
 try { await wellFormed.whoami(); wellFormedUnauthToken = { rejected: false, isApiError: false, status: null, name: null, bodyError: null, hasMessage: false, leaked: false }; }
 catch (err) { wellFormedUnauthToken = tokenReject(err, null); }
 
 // (2) Valid token → whoami resolves to a workspace-identity object.
-const client = new Aex({ apiToken, baseUrl: apiUrl });
+const client = new Aex({ apiKey, baseUrl: apiUrl });
 let validWhoami;
 try {
   const who = await client.whoami();
@@ -228,7 +228,7 @@ try {
 
 // (5) Unreachable baseUrl → the retry loop gives up bounded (does not hang).
 const unreachableClient = new Aex({
-  apiToken: "aex_x",
+  apiKey: "aex_x",
   baseUrl: "https://127.0.0.1:9",
   retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 3 }
 });
@@ -254,8 +254,8 @@ process.exit(0);
       const scriptPath = join(install.installDir, "edge-errors-validation-runner.mjs");
       writeFileSync(scriptPath, script);
 
-      const apiToken = requireEnv("AEX_API_TOKEN");
-      const passEnv: Record<string, string> = { AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken };
+      const apiKey = requireEnv("AEX_API_KEY");
+      const passEnv: Record<string, string> = { AEX_API_URL: apiUrl, AEX_API_KEY: apiKey };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";
       if (process.env[pathKey]) passEnv[pathKey] = process.env[pathKey]!;
       const carry =

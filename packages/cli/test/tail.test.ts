@@ -137,7 +137,7 @@ function makeIo(opts: {
   };
 }
 
-const COMMON = ["--api-token", "tok", "--aex-url", "https://dash.example"];
+const COMMON = ["--api-key", "tok", "--aex-url", "https://dash.example"];
 
 describe("aex tail", () => {
   it("renders pretty lines in order and exits 0 on a succeeded terminal", async () => {

@@ -919,7 +919,7 @@ export interface RunMachine {
 /**
  * Wire shape posted by the SDK and CLI. `workspaceId` is **omitted by
  * design** — token-authenticated clients never name the workspace
- * because it is derived from their API token on the server. The BFF
+ * because it is derived from their API key on the server. The BFF
  * route resolves the workspace from the token and injects it before
  * calling the parser. The dashboard UI (Auth.js user principal,
  * multi-workspace) is the only caller that supplies `workspaceId`

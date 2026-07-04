@@ -108,7 +108,7 @@ describe("aex run provider inference (SDK parity)", () => {
         "--model", "deepseek-v4-flash",
         "--prompt", "hi",
         "--deepseek-api-key", "dsk-test",
-        "--api-token", "tok",
+        "--api-key", "tok",
         "--aex-url", "https://api.test"
       ],
       fetchHandler: async () =>
@@ -129,7 +129,7 @@ describe("aex run provider inference (SDK parity)", () => {
         "--provider", "deepseek",
         "--model", "deepseek-v4-flash",
         "--prompt", "hi",
-        "--api-token", "tok",
+        "--api-key", "tok",
         "--aex-url", "https://api.test"
       ]
     });

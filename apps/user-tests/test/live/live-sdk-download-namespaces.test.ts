@@ -16,7 +16,7 @@
  * download verb round-trips against a live run, without unzipping in the child.
  *
  * Required env: same as the other live-sdk-* files
- * (AEX_API_URL, AEX_API_TOKEN,
+ * (AEX_API_URL, AEX_API_KEY,
  * DEEPSEEK_API_KEY, + AEX_USER_TEST_TARBALL/VERSION).
  */
 import { writeFileSync } from "node:fs";
@@ -33,7 +33,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -97,7 +97,7 @@ function buildScript(cell: Cell, marker: string): string {
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
+      apiKey: process.env.AEX_API_KEY
     });
 
     const result = await client.run({
@@ -170,7 +170,7 @@ describe("live: run-artifact public outputs + download verbs", () => {
           timeoutMs: 8 * 60_000,
           env: buildPassEnv({
             AEX_API_URL: apiUrl,
-            AEX_API_TOKEN: apiToken,
+            AEX_API_KEY: apiKey,
             DEEPSEEK_KEY_SUBMIT: deepseekKey
           })
         });

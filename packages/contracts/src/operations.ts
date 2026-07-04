@@ -61,7 +61,7 @@ import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submissio
  * Every function takes an HttpClient (so callers control auth + fetch
  * injection) and returns parsed responses.
  *
- * Workspace identity is derived server-side from the API token on
+ * Workspace identity is derived server-side from the API key on
  * every request; callers do not pass `workspaceId`.
  */
 

@@ -25,14 +25,14 @@
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
- *   Operator (AWS creds, not `--api-token`):
+ *   Operator (AWS creds, not `--api-key`):
  *     - `aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch]`
  *
  * Every host subcommand (except the operator `debug` verb) requires
- * `--api-token`. `--aex-url` is
+ * `--api-key`. `--aex-url` is
  * optional and defaults to `https://api.aex.dev`. There is no
  * `--workspace` flag — the workspace is derived server-side from the
- * API token.
+ * API key.
  */
 import { RUN_PROVIDERS } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
@@ -168,7 +168,7 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
     case "debug":
       // Operator/admin command: reads the AWS plane directly (S3 + DDB + SFN +
       // CloudWatch) via the standard AWS SDK credential chain. NOT an
-      // --api-token verb — distinct from the public host commands above.
+      // --api-key verb — distinct from the public host commands above.
       return runDebugCmd(io, rest);
     default:
       io.stderr(`unknown subcommand: ${sub}\n`);
@@ -181,28 +181,28 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   // Host-side help: the unified surface mirroring the SDK 1:1.
   io.stdout("aex — unified CLI for the aex platform (mirrors the SDK 1:1)\n\n");
   io.stdout("Usage:\n");
-  io.stdout("  aex run --config <run.json> --<provider>-api-key K --api-token T [flags]\n");
-  io.stdout("  aex run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-token T [flags]\n");
-  io.stdout("  aex status <session-id> --api-token T\n");
-  io.stdout("  aex deliveries <session-id> --api-token T\n");
-  io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-token T\n");
-  io.stdout("  aex events <session-id> [--follow] [--timeout 8m] --api-token T\n");
-  io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-token T\n");
-  io.stdout("  aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-token T\n");
-  io.stdout("  aex outputs <session-id> --api-token T\n");
-  io.stdout("  aex download <session-id> [--only outputs|events|metadata] [--out path] --api-token T\n");
-  io.stdout("  aex cancel <session-id> --api-token T\n");
-  io.stdout("  aex delete <session-id> --api-token T\n");
-  io.stdout("  aex delete-asset <assetId|hash> --api-token T\n");
-  io.stdout("  aex runs [--limit N] [--since ISO] --api-token T      List the workspace's runs (newest first, JSON)\n");
-  io.stdout("  aex sessions [--limit N] --api-token T      List the workspace's sessions (newest first, JSON)\n");
-  io.stdout("  aex whoami --api-token T\n");
-  io.stdout("  aex billing [--json] --api-token T          Show prepaid balance, month spend, and spend cap\n");
-  io.stdout("  aex billing ledger [--limit N] --api-token T   Recent credit-ledger entries (newest first, JSON)\n");
-  io.stdout("  aex billing upgrade pro|team --api-token T   Create a hosted checkout session and print its URL\n");
-  io.stdout("  aex billing portal --api-token T             Create a hosted billing portal session and print its URL\n");
-  io.stdout("  aex webhooks secret --api-token T           Reveal (create on first use) the webhook signing secret\n");
-  io.stdout("  aex login --api-token T [--aex-url U]      Persist token + url (then other verbs need no --api-token)\n");
+  io.stdout("  aex run --config <run.json> --<provider>-api-key K --api-key T [flags]\n");
+  io.stdout("  aex run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-key T [flags]\n");
+  io.stdout("  aex status <session-id> --api-key T\n");
+  io.stdout("  aex deliveries <session-id> --api-key T\n");
+  io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-key T\n");
+  io.stdout("  aex events <session-id> [--follow] [--timeout 8m] --api-key T\n");
+  io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-key T\n");
+  io.stdout("  aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key T\n");
+  io.stdout("  aex outputs <session-id> --api-key T\n");
+  io.stdout("  aex download <session-id> [--only outputs|events|metadata] [--out path] --api-key T\n");
+  io.stdout("  aex cancel <session-id> --api-key T\n");
+  io.stdout("  aex delete <session-id> --api-key T\n");
+  io.stdout("  aex delete-asset <assetId|hash> --api-key T\n");
+  io.stdout("  aex runs [--limit N] [--since ISO] --api-key T      List the workspace's runs (newest first, JSON)\n");
+  io.stdout("  aex sessions [--limit N] --api-key T      List the workspace's sessions (newest first, JSON)\n");
+  io.stdout("  aex whoami --api-key T\n");
+  io.stdout("  aex billing [--json] --api-key T          Show prepaid balance, month spend, and spend cap\n");
+  io.stdout("  aex billing ledger [--limit N] --api-key T   Recent credit-ledger entries (newest first, JSON)\n");
+  io.stdout("  aex billing upgrade pro|team --api-key T   Create a hosted checkout session and print its URL\n");
+  io.stdout("  aex billing portal --api-key T             Create a hosted billing portal session and print its URL\n");
+  io.stdout("  aex webhooks secret --api-key T           Reveal (create on first use) the webhook signing secret\n");
+  io.stdout("  aex login --api-key T [--aex-url U]      Persist token + url (then other verbs need no --api-key)\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");
   io.stdout("  aex models list [--json]                   List models + default provider (no token needed)\n");
@@ -212,7 +212,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]   (operator; AWS creds)\n");
   io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
-  io.stdout("  --api-token <token>         REQUIRED — aex SDK API token (workspace is derived from it)\n");
+  io.stdout("  --api-key <token>         REQUIRED — aex SDK API key (workspace is derived from it)\n");
   io.stdout("  --aex-url <url>         Optional; defaults to https://api.aex.dev (local/staging/hosted plane)\n");
   io.stdout("  --debug                     Optional; print a redacted per-request trace to stderr (uploads nothing)\n\n");
   io.stdout("aex run flags:\n");

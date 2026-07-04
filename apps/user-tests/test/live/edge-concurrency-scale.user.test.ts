@@ -19,7 +19,7 @@
  * cases B create sessions only (no LLM turn). Waves are run selectively with
  * `-t`. Total kept well under the ~15-live-runs-per-wave budget.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by run-live-deepseek.sh).
  */
 import { writeFileSync } from "node:fs";
@@ -36,7 +36,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -68,7 +68,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 /**
- * Child prelude: an `Aex` client from env, a `scrub()` that strips the api token
+ * Child prelude: an `Aex` client from env, a `scrub()` that strips the api key
  * / provider key from any string before it can reach stdout, and a `dense()`
  * whitespace-stripper (managed-runtime streams fragment tokens across content
  * blocks). Secrets are read from env for LEAK checks but NEVER emitted — only
@@ -77,14 +77,14 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const API_URL = process.env.AEX_API_URL;
-  const API_TOKEN = process.env.AEX_API_TOKEN;
+  const API_KEY = process.env.AEX_API_KEY;
   const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
   const MODEL = process.env.MODEL;
-  const client = new Aex({ baseUrl: API_URL, apiToken: API_TOKEN });
+  const client = new Aex({ baseUrl: API_URL, apiKey: API_KEY });
 
   function scrub(s) {
     let out = String(s == null ? "" : s);
-    if (API_TOKEN) out = out.split(API_TOKEN).join("***TOKEN***");
+    if (API_KEY) out = out.split(API_KEY).join("***TOKEN***");
     if (DEEPSEEK_KEY) out = out.split(DEEPSEEK_KEY).join("***KEY***");
     return out;
   }
@@ -113,7 +113,7 @@ async function runChild(
     timeoutMs,
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
-      AEX_API_TOKEN: apiToken,
+      AEX_API_KEY: apiKey,
       DEEPSEEK_KEY: deepseekKey,
       MODEL: model
     })

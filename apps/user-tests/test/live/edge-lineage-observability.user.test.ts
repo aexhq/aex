@@ -19,7 +19,7 @@
  * runId was returned, and the DeepSeek key never leaks into ANY SDK-visible
  * surface (parent OR child events).
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
  * MODEL. Cost-safe: one parent + one tiny child, DeepSeek, tiny prompts.
  */
 import { writeFileSync } from "node:fs";
@@ -44,7 +44,7 @@ function requireAnyEnv(...names: string[]): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireAnyEnv("DEEPSEEK_API_KEY", "DEEPSEEK_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -96,7 +96,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
       const script = `
         import { Aex } from "@aexhq/sdk";
 
-        const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+        const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const PARENT_MARKER = process.env.PARENT_MARKER;
@@ -221,7 +221,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
 
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
-        AEX_API_TOKEN: apiToken,
+        AEX_API_KEY: apiKey,
         DEEPSEEK_API_KEY: deepseekKey,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model,

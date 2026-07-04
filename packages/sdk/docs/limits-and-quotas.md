@@ -99,8 +99,8 @@ per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
 | Run cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Run delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Signed output link | 120 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
-| API token create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
-| API token delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| API key create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| API key delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 
 ### Introspecting your effective caps
 

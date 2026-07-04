@@ -2,7 +2,7 @@
  * `aex debug <runId>` — OPERATOR/admin command.
  *
  * Unlike the public host verbs (`status`, `events`, `outputs`, …) which talk
- * to the HTTP API with an `--api-token`, this command reads the AWS plane
+ * to the HTTP API with an `--api-key`, this command reads the AWS plane
  * directly and assembles ONE local debug bundle for a run from every durable
  * source:
  *
@@ -774,7 +774,7 @@ export function makeAwsSources(region: string): AwsDebugClient {
 const USAGE =
   "usage: aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--out dir] " +
   "[--account <id>] [--cloudwatch] [--since <dur>] [--with-outputs]\n" +
-  "  operator command — uses the standard AWS SDK credential chain (env/profile), NOT --api-token\n";
+  "  operator command — uses the standard AWS SDK credential chain (env/profile), NOT --api-key\n";
 
 export async function runDebugCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "debug")) return USAGE_ERR;

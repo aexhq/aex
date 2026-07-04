@@ -37,7 +37,7 @@ function makeClient(): { client: Aex; calls: string[] } {
     }
     throw new Error(`no responder for ${url}`);
   });
-  return { client: new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl }), calls };
+  return { client: new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: fetchImpl }), calls };
 }
 
 describe("aex.sessions.searchOutputs", () => {
@@ -90,7 +90,7 @@ describe("aex.sessions.searchOutputs", () => {
       }
       throw new Error(`no responder for ${url}`);
     });
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
 
     const page = await client.sessions.searchOutputs({ extension: "md" });
 
@@ -104,7 +104,7 @@ describe("aex.sessions.searchOutputs", () => {
       if (/\/api\/sessions\/run-deleted\/outputs$/.test(url)) return errorResponse(404, { error: "not_found" });
       throw new Error(`no responder for ${url}`);
     });
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
 
     await expect(client.sessions.searchOutputs({ runIds: ["run-deleted"], extension: "md" })).rejects.toMatchObject({
       status: 404
@@ -127,7 +127,7 @@ describe("aex.sessions.searchOutputs", () => {
       }
       throw new Error(`no responder for ${url}`);
     });
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
 
     const page = await client.sessions.searchOutputs({ extension: "md" });
 
@@ -150,7 +150,7 @@ describe("aex.sessions.searchOutputs", () => {
       }
       throw new Error(`no responder for ${url}`);
     });
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
 
     await expect(client.sessions.searchOutputs({ extension: "md" })).rejects.toThrow(/repeated cursor/);
   });

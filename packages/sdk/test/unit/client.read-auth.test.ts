@@ -1,7 +1,7 @@
 /**
  * H-1 coherence: the run read + output-download surface on the hosted API
  * plane is workspace-token gated. Our own clients must keep working against
- * it, which means EVERY read path has to send `Authorization: Bearer <apiToken>`.
+ * it, which means EVERY read path has to send `Authorization: Bearer <apiKey>`.
  *
  * The shared `HttpClient` attaches that header on both `request()` and
  * `download()`, so all `operations.*` reads inherit it. These tests pin
@@ -52,7 +52,7 @@ function recordingClient(body: unknown, contentType = "application/json") {
       headers: { "content-type": contentType }
     });
   };
-  const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+  const client = new Aex({ apiKey: TOKEN, baseUrl: BASE, fetch: stub });
   return { client, calls };
 }
 
@@ -126,7 +126,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
         headers: { "content-type": "application/json" }
       });
     };
-    const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new Aex({ apiKey: TOKEN, baseUrl: BASE, fetch: stub });
     const session = await client.openSession(SID);
     calls.length = 0;
 
@@ -174,7 +174,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       }
       return new Response("direct-bytes", { status: 200, headers: { "content-type": "text/plain" } });
     };
-    const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new Aex({ apiKey: TOKEN, baseUrl: BASE, fetch: stub });
     const session = await client.openSession(SID);
     calls.length = 0;
 
@@ -230,7 +230,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       }
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
     };
-    const client = new Aex({ apiToken: TOKEN, baseUrl: BASE, fetch: stub });
+    const client = new Aex({ apiKey: TOKEN, baseUrl: BASE, fetch: stub });
     const session = await client.openSession(SID);
     calls.length = 0;
 

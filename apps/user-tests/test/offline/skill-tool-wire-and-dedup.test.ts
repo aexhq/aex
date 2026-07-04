@@ -293,7 +293,7 @@ const { Aex, Tools } = await import("@aexhq/sdk");
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
-  apiToken: "aex_reuse_token",
+  apiKey: "aex_reuse_token",
   baseUrl: "https://example.invalid",
   fetch
 });
@@ -338,7 +338,7 @@ const { Aex, BuiltinTools, Tool, Tools } = await import("@aexhq/sdk");
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
-  apiToken: "aex_order_token",
+  apiKey: "aex_order_token",
   baseUrl: "https://example.invalid",
   fetch
 });
@@ -453,7 +453,7 @@ const { Aex, Tools } = await import("@aexhq/sdk");
 // --- Distinct instances, byte-identical files: one stored object, two entries.
 {
   const { calls, fetch } = makeFetch();
-  const client = new Aex({ apiToken: "aex_dedup_token", baseUrl: "https://example.invalid", fetch });
+  const client = new Aex({ apiKey: "aex_dedup_token", baseUrl: "https://example.invalid", fetch });
 
   const sX = await Tools.fromSkillDir(makeSkillDir("twin-skill", "Twin skill."), { name: "twin-skill" });
   const sY = await Tools.fromSkillDir(makeSkillDir("twin-skill", "Twin skill."), { name: "twin-skill" });
@@ -479,7 +479,7 @@ const { Aex, Tools } = await import("@aexhq/sdk");
 let sameNameSummary;
 {
   const { calls, fetch } = makeFetch();
-  const client = new Aex({ apiToken: "aex_samename_token", baseUrl: "https://example.invalid", fetch });
+  const client = new Aex({ apiKey: "aex_samename_token", baseUrl: "https://example.invalid", fetch });
 
   const sA = await Tools.fromSkillDir(makeSkillDirBody("dup-name", "Same description.", "# A\nAlpha body.\n"));
   const sB = await Tools.fromSkillDir(makeSkillDirBody("dup-name", "Same description.", "# B\nBravo body.\n"));
@@ -519,7 +519,7 @@ console.log(JSON.stringify({ ok: true, sameName: sameNameSummary }));
 const { Aex, Tools } = await import("@aexhq/sdk");
 
 const { calls, fetch } = makeFetch();
-const client = new Aex({ apiToken: "aex_draft_token", baseUrl: "https://example.invalid", fetch });
+const client = new Aex({ apiKey: "aex_draft_token", baseUrl: "https://example.invalid", fetch });
 
 const draft = await Tools.fromSkillDir(makeSkillDir("draft-skill", "Draft skill."), { name: "draft-skill" });
 strictEqual(draft.isDraft, true);
@@ -557,7 +557,7 @@ console.log(JSON.stringify({ ok: true, sampleMessage: m1, cachedAfterUpload: dra
 const { Aex, AgentsMd, BuiltinTools, File, McpServer, Tools } = await import("@aexhq/sdk");
 
 const { calls, fetch } = makeFetch();
-const client = new Aex({ apiToken: "aex_mix_token", baseUrl: "https://example.invalid", fetch });
+const client = new Aex({ apiKey: "aex_mix_token", baseUrl: "https://example.invalid", fetch });
 
 // --- Non-interference: a skill-tool next to agentsMd, files, and one mcp entry.
 const skill = await Tools.fromSkillDir(makeSkillDir("mixed-skill", "Mixed skill."), { name: "mixed-skill" });

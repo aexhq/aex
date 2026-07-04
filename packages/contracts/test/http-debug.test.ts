@@ -21,7 +21,7 @@ describe("HttpClient debug sink", () => {
     const lines: string[] = [];
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "secret-token-value",
+      apiKey: "secret-token-value",
       fetch: async () => jsonResponse({ ok: true }),
       debug: (line) => lines.push(line)
     });
@@ -42,7 +42,7 @@ describe("HttpClient debug sink", () => {
     // never throws on the (absent) debug path.
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "t",
+      apiKey: "t",
       fetch: async () => jsonResponse({ ok: true })
     });
     await expect(client.request("/api/whoami")).resolves.toEqual({ ok: true });
@@ -52,7 +52,7 @@ describe("HttpClient debug sink", () => {
     const lines: string[] = [];
     const client = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "t",
+      apiKey: "t",
       fetch: async () => jsonResponse({ ok: false, message: "nope" }, 404),
       debug: (line) => lines.push(line)
     });

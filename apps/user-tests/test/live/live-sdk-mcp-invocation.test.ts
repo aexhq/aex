@@ -21,7 +21,7 @@
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL
- *   AEX_API_TOKEN             workspace API token
+ *   AEX_API_KEY             workspace API key
  *   DEEPSEEK_API_KEY    customer DeepSeek key
  *   AEX_USER_TEST_TARBALL          packed SDK tarball
  *     OR AEX_USER_TEST_VERSION     published package version
@@ -40,7 +40,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -126,7 +126,7 @@ function buildScript(cell: Cell): string {
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
-      apiToken: process.env.AEX_API_TOKEN
+      apiKey: process.env.AEX_API_KEY
     });
 
     const mcp = McpServer.remote({
@@ -241,7 +241,7 @@ async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     [cell.keyEnvName]: cell.keyValue,
     DEEPSEEK_KEY: deepseekKey
   });

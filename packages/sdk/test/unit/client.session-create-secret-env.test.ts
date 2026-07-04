@@ -36,7 +36,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
 
 function openWith(secrets: Record<string, Secret>) {
   const { fetch, calls } = makeStubFetch();
-  const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+  const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
   return {
     client,
     calls,
@@ -96,7 +96,7 @@ describe("openSession environment.secrets split", () => {
 
   it("omits both fields when environment.secrets is not provided", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-x" } });
     const body = calls[0]!.body as Record<string, unknown>;
     expect("secretEnv" in (body.submission as object)).toBe(false);
@@ -110,7 +110,7 @@ describe("openSession environment.secrets split", () => {
 
   it("rejects a non-Secret value", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",

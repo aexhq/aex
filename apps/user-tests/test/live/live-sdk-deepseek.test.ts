@@ -91,14 +91,14 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         const apiBase = process.env.AEX_API_URL;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
-        const apiToken = process.env.AEX_API_TOKEN;
+        const apiKey = process.env.AEX_API_KEY;
 
-        // Phase 7 wired workspace-token auth on POST /runs; the apiToken
+        // Phase 7 wired workspace-token auth on POST /runs; the apiKey
         // is now a real, workspace-scoped credential. The live runner
         // gets it via env from the spawning test.
         const client = new Aex({
           baseUrl: apiBase,
-          apiToken
+          apiKey
         });
 
         // Run a DeepSeek agent. The SDK's run() opens a one-shot session,
@@ -171,10 +171,10 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       // Sanitize the child env — pass only what the SDK consumer needs,
       // so a regression that depends on a CI-only secret can't pass
       // silently.
-      const apiToken = requireEnv("AEX_API_TOKEN");
+      const apiKey = requireEnv("AEX_API_KEY");
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
-        AEX_API_TOKEN: apiToken,
+        AEX_API_KEY: apiKey,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };

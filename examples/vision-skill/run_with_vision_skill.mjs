@@ -2,12 +2,12 @@
 // caption/verify image frames with Doubao. The Doubao key is passed as a runtime
 // secret and the skill makes a normal HTTPS call to the provider.
 //
-// Env required: AEX_API_TOKEN, DOUBAO_API_KEY, ANTHROPIC_API_KEY (or your
+// Env required: AEX_API_KEY, DOUBAO_API_KEY, ANTHROPIC_API_KEY (or your
 // chosen run provider key). Optional: AEX_API_URL for a non-default plane.
 import { Aex, Models, Secret, Tools } from "@aexhq/sdk";
 
 const aex = new Aex({
-  apiToken: process.env.AEX_API_TOKEN,
+  apiKey: process.env.AEX_API_KEY,
   ...(process.env.AEX_API_URL ? { baseUrl: process.env.AEX_API_URL } : {})
 });
 

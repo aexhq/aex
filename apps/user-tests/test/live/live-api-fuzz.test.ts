@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
  * malformed bytes the SDK would never emit. Substrate-agnostic: the same
  * robustness invariants hold for any deployment plane behind the public contract.
  *
- * Fails fast unless AEX_API_URL + AEX_API_TOKEN are set. Run on demand via
+ * Fails fast unless AEX_API_URL + AEX_API_KEY are set. Run on demand via
  *   bun run --filter @aexhq/user-tests test:user:fuzz
  * (excluded from the default `test:user` sweep — see vitest.config.ts).
  *
@@ -39,9 +39,9 @@ function requireFuzzEnv(): FuzzEnv {
   if (!/^https?:\/\//.test(base)) {
     throw new Error("live-api-fuzz: AEX_API_URL must be an absolute http(s) URL");
   }
-  const token = process.env.AEX_API_TOKEN;
+  const token = process.env.AEX_API_KEY;
   if (!token) {
-    throw new Error("live-api-fuzz: required env AEX_API_TOKEN is missing");
+    throw new Error("live-api-fuzz: required env AEX_API_KEY is missing");
   }
   const runs = Number(process.env.AEX_FUZZ_RUNS ?? "60");
   if (!Number.isInteger(runs) || runs < 1) {

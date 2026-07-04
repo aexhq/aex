@@ -22,7 +22,7 @@
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
- *   AEX_API_TOKEN            workspace API token
+ *   AEX_API_KEY            workspace API key
  *   ANTHROPIC_API_KEY        customer's Anthropic API key
  *   AEX_USER_TEST_TARBALL          path to packed aex tgz
  *     OR AEX_USER_TEST_VERSION     published package version
@@ -92,11 +92,11 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
         const apiBase = process.env.AEX_API_URL;
         const anthropicKey = process.env.ANTHROPIC_KEY;
         const model = process.env.MODEL;
-        const apiToken = process.env.AEX_API_TOKEN;
+        const apiKey = process.env.AEX_API_KEY;
 
         const client = new Aex({
           baseUrl: apiBase,
-          apiToken
+          apiKey
         });
 
         const runResult = await client.run({
@@ -161,10 +161,10 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
       const scriptPath = join(install.installDir, "live-anthropic-managed-runner.mjs");
       writeFileSync(scriptPath, script);
 
-      const apiToken = requireEnv("AEX_API_TOKEN");
+      const apiKey = requireEnv("AEX_API_KEY");
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
-        AEX_API_TOKEN: apiToken,
+        AEX_API_KEY: apiKey,
         ANTHROPIC_KEY: anthropicKey,
         MODEL: model
       };

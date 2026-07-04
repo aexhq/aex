@@ -68,7 +68,7 @@ If your run needs a host the ceiling blocks, contact support.
 ```ts
 import { Aex, Models, Providers } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 await aex.run({
   provider: Providers.ANTHROPIC,

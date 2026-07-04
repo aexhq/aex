@@ -28,7 +28,7 @@ function noNetworkFetch(): { fetch: typeof fetch; calls: number } {
 }
 
 function makeClient(fetchImpl: typeof fetch): Aex {
-  return new Aex({ apiToken: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
+  return new Aex({ apiKey: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
 }
 
 const unknownModel = "totally-unknown-model-xyz" as unknown as RunModel;

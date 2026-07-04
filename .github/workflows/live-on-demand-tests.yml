@@ -138,7 +138,7 @@ jobs:
       - name: Per-provider correctness tests
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
-          AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
           # One key env per extra provider. Each test self-skips when its key is
@@ -195,7 +195,7 @@ jobs:
       - name: Heavy full-feature long session
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
-          AEX_API_TOKEN: ${{ secrets.AEX_API_TOKEN }}
+          AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

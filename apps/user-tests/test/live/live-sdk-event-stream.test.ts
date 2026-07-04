@@ -18,7 +18,7 @@
  *
  * Required env:
  *   AEX_API_URL              live hosted API URL (local or prod)
- *   AEX_API_TOKEN             workspace API token
+ *   AEX_API_KEY             workspace API key
  *   DEEPSEEK_API_KEY    customer DeepSeek API key
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
@@ -36,7 +36,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -82,11 +82,11 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         import { Aex } from "@aexhq/sdk";
 
         const baseUrl = process.env.AEX_API_URL;
-        const apiToken = process.env.AEX_API_TOKEN;
+        const apiKey = process.env.AEX_API_KEY;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
 
-        const client = new Aex({ baseUrl, apiToken });
+        const client = new Aex({ baseUrl, apiKey });
         const result = await client.run({
           provider: "deepseek",
           model,
@@ -184,7 +184,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           try {
             const tRes = await fetchBounded(baseUrl + "/api/runs/" + runId + "/events/ticket", {
               method: "POST",
-              headers: { authorization: "Bearer " + apiToken }
+              headers: { authorization: "Bearer " + apiKey }
             }, 8000);
             if (!tRes.ok) {
               manifestAttempts.push({ attempt, phase: "ticket", status: tRes.status });
@@ -246,7 +246,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
 
       const passEnv: Record<string, string> = {
         AEX_API_URL: apiUrl,
-        AEX_API_TOKEN: apiToken,
+        AEX_API_KEY: apiKey,
         DEEPSEEK_KEY: deepseekKey,
         MODEL: model
       };

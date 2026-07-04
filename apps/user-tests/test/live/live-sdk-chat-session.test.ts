@@ -12,7 +12,7 @@
  *
  * Required env:
  *   AEX_API_URL
- *   AEX_API_TOKEN
+ *   AEX_API_KEY
  *   DEEPSEEK_API_KEY
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
@@ -31,7 +31,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
@@ -102,11 +102,11 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         ${LIVE_REQUEST_TRACE_SOURCE}
 
         const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
-        const apiToken = process.env.AEX_API_TOKEN;
+        const apiKey = process.env.AEX_API_KEY;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
         const probe = "REF.chat." + Math.random().toString(36).slice(2, 10);
-        const client = new Aex({ baseUrl, apiToken, debug: aexDebug });
+        const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
 
         async function pollSession(id, wanted, timeoutMs = 240000) {
           const deadline = Date.now() + timeoutMs;
@@ -215,13 +215,13 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         timeoutMs: 12 * 60_000,
         env: buildPassEnv({
           AEX_API_URL: apiUrl,
-          AEX_API_TOKEN: apiToken,
+          AEX_API_KEY: apiKey,
           DEEPSEEK_KEY: deepseekKey,
           MODEL: deepseekModel
         })
       });
       if (child.exitCode !== 0) {
-        throw new Error(formatChildFailure("chat-session SDK runner", child, [apiToken, deepseekKey]));
+        throw new Error(formatChildFailure("chat-session SDK runner", child, [apiKey, deepseekKey]));
       }
       const result = JSON.parse(child.stdout.trim()) as ChatSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);
@@ -254,10 +254,10 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         ${LIVE_REQUEST_TRACE_SOURCE}
 
         const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
-        const apiToken = process.env.AEX_API_TOKEN;
+        const apiKey = process.env.AEX_API_KEY;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
-        const client = new Aex({ baseUrl, apiToken, debug: aexDebug });
+        const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
 
         async function api(path, init = {}) {
           const method = init.method || "GET";
@@ -267,7 +267,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
             res = await fetch(baseUrl + path, {
               ...init,
               headers: {
-                authorization: "Bearer " + apiToken,
+                authorization: "Bearer " + apiKey,
                 "content-type": "application/json",
                 ...(init.headers || {})
               }
@@ -366,13 +366,13 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         timeoutMs: 9 * 60_000,
         env: buildPassEnv({
           AEX_API_URL: apiUrl,
-          AEX_API_TOKEN: apiToken,
+          AEX_API_KEY: apiKey,
           DEEPSEEK_KEY: deepseekKey,
           MODEL: deepseekModel
         })
       });
       if (child.exitCode !== 0) {
-        throw new Error(formatChildFailure("chat-session raw runner", child, [apiToken, deepseekKey]));
+        throw new Error(formatChildFailure("chat-session raw runner", child, [apiKey, deepseekKey]));
       }
       const result = JSON.parse(child.stdout.trim()) as RawSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);

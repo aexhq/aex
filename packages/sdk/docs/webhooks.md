@@ -17,7 +17,7 @@ pass a callback URL with the submission, and the platform delivers exactly one
 ```ts
 import { Aex, Models } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_TOKEN!);
+const aex = new Aex(process.env.AEX_API_KEY!);
 
 const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -28,7 +28,7 @@ const session = await aex.openSession({
 
 ```bash
 aex run \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --prompt "Write the report." \
@@ -80,7 +80,7 @@ The signing key is a per-workspace secret. Reveal it (it is created on first
 use) with either surface:
 
 ```bash
-aex webhooks secret --api-token "$AEX_API_TOKEN"   # prints whsec_...
+aex webhooks secret --api-key "$AEX_API_KEY"   # prints whsec_...
 ```
 
 ```ts
@@ -120,7 +120,7 @@ await session.webhooks().redeliver(deliveries[0]!.id);
 ```
 
 ```bash
-aex deliveries <session-id> --api-token "$AEX_API_TOKEN"
+aex deliveries <session-id> --api-key "$AEX_API_KEY"
 ```
 
 Redelivery re-sends the frozen payload with the **same** `webhook-id`, so a

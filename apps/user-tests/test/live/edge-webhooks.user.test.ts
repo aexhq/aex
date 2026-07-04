@@ -15,7 +15,7 @@
  *   - Secrets are read from env passed to the child; never printed. Leak checks
  *     emit booleans only.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY.
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-webhooks");
 const model = gateModel();
 
@@ -49,7 +49,7 @@ async function runScript<T>(
   writeFileSync(scriptPath, body);
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model
   };
@@ -80,7 +80,7 @@ async function runScript<T>(
 
 const CLIENT_PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const PROVIDER = process.env.PROVIDER;
 const providerKey = process.env.PROVIDER_KEY;
 const model = process.env.MODEL;

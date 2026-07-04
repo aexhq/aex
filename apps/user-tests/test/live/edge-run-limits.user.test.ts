@@ -19,7 +19,7 @@
  * is data, not a non-zero exit.
  *
  * Required env (exported by the shared runner from .env.dev):
- *   AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY
+ *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY
  * Optional:
  *   AEX_USER_TEST_DEEPSEEK_MODEL  (default "deepseek-v4-flash")
  */
@@ -40,7 +40,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-run-limits");
 const model = gateModel();
 
@@ -56,7 +56,7 @@ const VALID_SIZES = [
 
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
@@ -109,7 +109,7 @@ describe("live dev — per-run limit / override edge cases (installed SDK)", () 
     writeFileSync(scriptPath, `${PREAMBLE}\n${body}\n`);
     const passEnv: Record<string, string> = {
       AEX_API_URL: apiUrl,
-      AEX_API_TOKEN: apiToken,
+      AEX_API_KEY: apiKey,
       PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
       MODEL: model
     };

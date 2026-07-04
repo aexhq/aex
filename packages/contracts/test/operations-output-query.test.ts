@@ -38,7 +38,7 @@ function clientFor(routes: Record<string, (init: RequestInit | undefined) => Res
     });
     return routes[path]?.(init) ?? json({ ok: false, code: "not_found" });
   };
-  return { http: new HttpClient({ apiToken: "tok", baseUrl: BASE, fetch: fetchImpl }), calls };
+  return { http: new HttpClient({ apiKey: "tok", baseUrl: BASE, fetch: fetchImpl }), calls };
 }
 
 describe("operations output discovery", () => {

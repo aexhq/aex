@@ -164,7 +164,7 @@ function harness(
   };
 
   const client = new Aex({
-    apiToken: "tkn",
+    apiKey: "tkn",
     baseUrl: "https://x",
     fetch: fetchImpl,
     // Instant backoff keeps the test fast; the retry LOGIC is exercised fully.

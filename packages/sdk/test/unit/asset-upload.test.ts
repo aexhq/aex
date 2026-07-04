@@ -103,7 +103,7 @@ describe("uploadAsset (direct-to-storage)", () => {
     // rejecting fetch, exactly the unreachable-API shape from the field report.
     const http = new HttpClient({
       baseUrl: "https://api.example.test",
-      apiToken: "tok",
+      apiKey: "tok",
       fetch: async () => {
         throw raw;
       }

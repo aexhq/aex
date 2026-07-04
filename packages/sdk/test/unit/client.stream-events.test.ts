@@ -58,7 +58,7 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
       }
     ]);
 
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
     const session = await client.openSession("run-abc");
     const events: string[] = [];
     for await (const ev of session.events().stream({ intervalMs: 1 })) {
@@ -74,7 +74,7 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
       { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
     ]);
-    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: f });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
     const session = await client.openSession("run-abc");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 5);

@@ -23,7 +23,7 @@ function clientFor(body: unknown, capture?: { url?: string }) {
       headers: { "content-type": "application/json" }
     });
   };
-  return new HttpClient({ apiToken: "tok", baseUrl: BASE, fetch: fetchImpl });
+  return new HttpClient({ apiKey: "tok", baseUrl: BASE, fetch: fetchImpl });
 }
 
 const WELL_FORMED = {

@@ -14,7 +14,7 @@
  *
  * Model: deepseek-v4-flash, tiny prompts. Provider key via the gate-provider apiKeys map.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION
  */
 import { writeFileSync } from "node:fs";
@@ -33,7 +33,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL").replace(/\/$/, "");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-chat-session");
 const model = gateModel();
 
@@ -64,11 +64,11 @@ afterAll(() => {
 const PRE = `
 import { Aex } from "@aexhq/sdk";
 const baseUrl = process.env.AEX_API_URL.replace(/\\/$/, "");
-const apiToken = process.env.AEX_API_TOKEN;
+const apiKey = process.env.AEX_API_KEY;
 const PROVIDER = process.env.PROVIDER;
 const providerKey = process.env.PROVIDER_KEY;
 const model = process.env.MODEL;
-const client = new Aex({ baseUrl, apiToken });
+const client = new Aex({ baseUrl, apiKey });
 const CREATE = {
   provider: PROVIDER,
   model,
@@ -101,7 +101,7 @@ async function settleIdle(session, timeoutMs){
 }
 function leaks(obj){
   const s = JSON.stringify(obj);
-  return (providerKey && s.includes(providerKey)) || (apiToken && s.includes(apiToken));
+  return (providerKey && s.includes(providerKey)) || (apiKey && s.includes(apiKey));
 }
 function emit(o){ process.stdout.write(JSON.stringify(o)); process.exit(0); }
 `;
@@ -113,17 +113,17 @@ async function runChild(scriptName: string, body: string, timeoutMs = 8 * 60_000
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
-    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
+    env: buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model })
   });
   if (child.exitCode !== 0) {
-    throw new Error(formatChildFailure(scriptName, child, [apiToken, providerKey]));
+    throw new Error(formatChildFailure(scriptName, child, [apiKey, providerKey]));
   }
   const out = child.stdout.trim();
   try {
     return JSON.parse(out) as Record<string, unknown>;
   } catch {
     throw new Error(
-      `${scriptName}: child stdout was not JSON:\n${redactKnownValues(out, [apiToken, providerKey])}\n--- stderr ---\n${redactKnownValues(child.stderr, [apiToken, providerKey])}`
+      `${scriptName}: child stdout was not JSON:\n${redactKnownValues(out, [apiKey, providerKey])}\n--- stderr ---\n${redactKnownValues(child.stderr, [apiKey, providerKey])}`
     );
   }
 }
@@ -156,7 +156,7 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
     const assistant = all.filter((m) => m.sender === "assistant");
 
     // Fresh client == a brand-new process/handle. Resume by id and continue.
-    const client2 = new Aex({ baseUrl, apiToken });
+    const client2 = new Aex({ baseUrl, apiKey });
     const session2 = await client2.sessions.open(sessionId);
     const t3 = await session2.send("Say my name one more time, just the name.", { idleTimeoutMs: 180000 }).done();
     await settleIdle(session2);

@@ -44,7 +44,7 @@ function makeIo(opts: {
           headers: { "content-type": "application/json" }
         });
       }
-      return new Response(JSON.stringify({ principalType: "api_token", workspaceId: "ws-9" }), {
+      return new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-9" }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -85,13 +85,13 @@ function makeIo(opts: {
 describe("aex login", () => {
   it("validates via whoami then persists the token + url", async () => {
     const cap = makeIo({
-      argv: ["login", "--api-token", "tok-abc", "--aex-url", "https://dev.example"]
+      argv: ["login", "--api-key", "tok-abc", "--aex-url", "https://dev.example"]
     });
     await runCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.calls).toEqual(["https://dev.example/api/whoami"]);
     expect(cap.writes).toHaveLength(1);
-    expect(cap.writes[0]).toMatchObject({ schemaVersion: 1, apiToken: "tok-abc", aexUrl: "https://dev.example" });
+    expect(cap.writes[0]).toMatchObject({ schemaVersion: 1, apiKey: "tok-abc", aexUrl: "https://dev.example" });
     const printed = JSON.parse(cap.out().trim()) as { ok: boolean; workspace?: string; configPath: string };
     expect(printed.ok).toBe(true);
     expect(printed.workspace).toBe("ws-9");
@@ -100,7 +100,7 @@ describe("aex login", () => {
 
   it("does NOT persist a bad token (whoami fails)", async () => {
     const cap = makeIo({
-      argv: ["login", "--api-token", "bad-tok"],
+      argv: ["login", "--api-key", "bad-tok"],
       whoamiStatus: 401
     });
     await runCli(cap.io);
@@ -123,7 +123,7 @@ describe("aex login", () => {
 
 describe("aex logout", () => {
   it("clears the store", async () => {
-    const cap = makeIo({ argv: ["logout"], stored: { apiToken: "tok" } });
+    const cap = makeIo({ argv: ["logout"], stored: { apiKey: "tok" } });
     await runCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.cleared()).toBe(1);
@@ -136,7 +136,7 @@ describe("aex auth status", () => {
   it("shows config path + hasToken without printing the token value", async () => {
     const cap = makeIo({
       argv: ["auth", "status"],
-      stored: { apiToken: "super-secret-1234", aexUrl: "https://dev.example" }
+      stored: { apiKey: "super-secret-1234", aexUrl: "https://dev.example" }
     });
     await runCli(cap.io);
     expect(cap.exit()).toBe(0);

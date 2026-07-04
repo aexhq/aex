@@ -47,7 +47,7 @@ describe("SessionHandle.unit", () => {
         headers: { "content-type": "application/json" }
       });
     };
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://example.test", fetch: stub });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch: stub });
     const session = await client.openSession("run-1");
     const unit = await session.unit();
     // The unit read hits the run-keyed endpoint.

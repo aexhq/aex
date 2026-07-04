@@ -58,7 +58,7 @@ const REC = {
 
 function client(routes: (req: CapturedRequest) => Response) {
   const { fetch, calls } = makeStubFetch(routes);
-  return { client: new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch }), calls };
+  return { client: new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch }), calls };
 }
 
 describe("aex.secrets management client", () => {

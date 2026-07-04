@@ -16,7 +16,7 @@
  * at deepseek rates) — it cannot observe concurrent running states without
  * running concurrently.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
  *
  * Optional env: AEX_ADMISSION_GATES_MAX_SAFE_CAP limits the concurrency probe
@@ -38,7 +38,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-admission-gates");
 const model = gateModel();
 
@@ -71,7 +71,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
-  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
   const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
@@ -90,7 +90,7 @@ const CHILD_PRELUDE = `
   const raw = async (method, path, body) => {
     const res = await fetch(process.env.AEX_API_URL + path, {
       method,
-      headers: { authorization: "Bearer " + process.env.AEX_API_TOKEN, "content-type": "application/json" },
+      headers: { authorization: "Bearer " + process.env.AEX_API_KEY, "content-type": "application/json" },
       body: body ? JSON.stringify(body) : undefined
     });
     let parsed = null;
@@ -112,7 +112,7 @@ async function runChild(
     timeoutMs,
     env: buildPassEnv({
       AEX_API_URL: apiUrl,
-      AEX_API_TOKEN: apiToken,
+      AEX_API_KEY: apiKey,
       PROVIDER: GATE_PROVIDER,
       PROVIDER_KEY: providerKey,
       MODEL: model,

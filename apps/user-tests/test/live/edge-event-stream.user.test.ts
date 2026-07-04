@@ -18,7 +18,7 @@
  * keep-alive, and abort-mid-live cases each cost one extra live run. Model is
  * deepseek-v4-flash with tiny prompts.
  *
- * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY,
+ * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
  *   AEX_USER_TEST_TARBALL | AEX_USER_TEST_VERSION.
  */
 import { writeFileSync } from "node:fs";
@@ -36,7 +36,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-event-stream");
 const model = gateModel();
 
@@ -51,7 +51,7 @@ const model = gateModel();
  */
 const PREAMBLE = `
 import { Aex } from "@aexhq/sdk";
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
@@ -166,7 +166,7 @@ async function spawnScript<T>(
 
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
-    AEX_API_TOKEN: apiToken,
+    AEX_API_KEY: apiKey,
     PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
     MODEL: model,
     ...(opts.extraEnv ?? {})

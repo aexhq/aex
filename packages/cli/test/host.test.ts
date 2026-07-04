@@ -88,14 +88,14 @@ function makeHostIo(opts: {
   };
 }
 
-const COMMON = ["--api-token", "tok-1", "--aex-url", "https://dash.example/"];
+const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
 describe("aex whoami", () => {
   it("calls GET /api/whoami without a workspace query and prints the body", async () => {
     const cap = makeHostIo({
-      argv: ["whoami", "--api-token", "tok-1", "--aex-url", "https://dash.example/"],
+      argv: ["whoami", "--api-key", "tok-1", "--aex-url", "https://dash.example/"],
       fetchHandler: () =>
-        new Response(JSON.stringify({ principalType: "api_token", workspaceId: "ws-7", scopes: ["runs.write"] }), {
+        new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-7", scopes: ["runs.write"] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -106,22 +106,22 @@ describe("aex whoami", () => {
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/whoami");
     expect(cap.calls[0]!.init.method ?? "GET").toBe("GET");
     const printed = JSON.parse(cap.stdout.trim()) as { principalType: string; workspaceId: string };
-    expect(printed.principalType).toBe("api_token");
+    expect(printed.principalType).toBe("api_key");
     expect(printed.workspaceId).toBe("ws-7");
   });
 
-  it("rejects when --api-token is missing", async () => {
+  it("rejects when --api-key is missing", async () => {
     const cap = makeHostIo({ argv: ["whoami", "--aex-url", "https://dash.example/"] });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--api-token");
+    expect(cap.stderr).toContain("--api-key");
   });
 
   it("defaults --aex-url to https://api.aex.dev when omitted", async () => {
     const cap = makeHostIo({
-      argv: ["whoami", "--api-token", "tok-1"],
+      argv: ["whoami", "--api-key", "tok-1"],
       fetchHandler: () =>
-        new Response(JSON.stringify({ principalType: "api_token", workspaceId: "ws-9", scopes: [] }), {
+        new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-9", scopes: [] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -151,7 +151,7 @@ describe("aex status", () => {
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
     const cap = makeHostIo({
-      argv: ["status", "run-1", "--workspace", "ws-1", "--api-token", "tok", "--aex-url", "https://x"]
+      argv: ["status", "run-1", "--workspace", "ws-1", "--api-key", "tok", "--aex-url", "https://x"]
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);

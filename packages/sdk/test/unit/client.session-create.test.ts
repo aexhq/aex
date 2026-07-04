@@ -110,7 +110,7 @@ describe("Aex.openSession — session-create wire shape", () => {
   it("builds the session-create submission and routes MCP headers into secrets", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({
-      apiToken: "tkn_test",
+      apiKey: "tkn_test",
       baseUrl: "https://example.test",
       fetch
     });
@@ -165,7 +165,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("requires a provider key for the selected provider", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -176,7 +176,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("serializes outputs when only capture overrides are supplied", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "k" },
@@ -200,7 +200,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("uploads draft tools and includes value-free tool refs in the submission", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const tool = await Tool.fromFiles({
       name: "calendar_lookup",
       description: "Looks up calendar availability.",
@@ -267,7 +267,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("threads includeBuiltinTools and places builtin tool refs (strings) before custom tools on the wire", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const tool = await Tool.fromFiles({
       name: "calendar_lookup",
       description: "Looks up calendar availability.",
@@ -295,7 +295,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("creates DeepSeek provider sessions with per-provider apiKeys", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await client.openSession({
       provider: "deepseek",
       model: "deepseek-v4-flash",
@@ -319,7 +319,7 @@ describe("Aex.openSession — session-create wire shape", () => {
     ] as const;
     for (const [model, expectedProvider] of cases) {
       const { fetch, calls } = makeStubFetch();
-      const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+      const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
       await client.openSession({ model, apiKeys: { [expectedProvider]: "sk-x" } });
       const body = calls[0]!.body as Record<string, unknown>;
       expect(body.provider, `model ${model}`).toBe(expectedProvider);
@@ -328,7 +328,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("throws when an explicit provider does not serve the model", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         provider: "anthropic",
@@ -340,7 +340,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("accepts a non-default provider for a multi-provider model", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     // gpt-4o-mini is served by openai (default) and openrouter; the canonical
     // model id is sent on the wire untranslated — the platform maps it to the
     // provider-native id (openrouter → "openai/gpt-4o-mini").
@@ -356,7 +356,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("includes webhook on the top-level request body when supplied", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await client.openSession({
       model: "claude-haiku-4-5",
       webhook: { url: "https://hooks.example.com/aex" },
@@ -370,7 +370,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("omits webhook from the request body when not supplied", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "k" },
@@ -383,7 +383,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("rejects an empty one-shot message before any HTTP request", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.run({
         model: "claude-haiku-4-5",
@@ -396,7 +396,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("rejects two same-named MCP servers whose urls conflict", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -419,7 +419,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("rejects non-Tool/SkillTool entries in tools with index in the message", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -431,7 +431,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("rejects a legacy `skills` option with a migration hint", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -444,7 +444,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("auto-uploads an inline AgentsMd to the asset store and submits a plain asset ref", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const draft = await AgentsMd.fromContent("# Rules\nBe helpful.\n", { name: "rules" });
     await client.openSession({
       model: "claude-haiku-4-5",
@@ -471,7 +471,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("auto-uploads a draft SkillTool, AgentsMd, and File refs as assets before creating", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const zip = skillZip("rules", "Keep responses short.");
     const skillTool = await Tools.fromSkillUrl("https://skills.example/rules.zip", {
       fetch: async () => new Response(zip)
@@ -540,7 +540,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("uploads a draft skill-tool once and reuses the cached asset id across sessions", async () => {
     const { fetch, calls } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const zip = skillZip("rules", "Keep responses short.");
     const skillTool = await Tools.fromSkillUrl("https://skills.example/rules.zip", {
       fetch: async () => new Response(zip)
@@ -582,7 +582,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
   it("rejects non-AgentsMd entries in the agentsMd array with index in the message", async () => {
     const { fetch } = makeStubFetch();
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
       client.openSession({
         model: "claude-haiku-4-5",
@@ -609,7 +609,7 @@ describe("Aex.deleteWorkspaceAsset", () => {
       calls.push({ url, method: (init?.method ?? "GET").toString(), headers, body: init?.body });
       return new Response(null, { status: 204 });
     });
-    const client = new Aex({ apiToken: "tkn", baseUrl: "https://x", fetch: stub });
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch: stub });
     const hex = "b".repeat(64);
 
     await client.deleteWorkspaceAsset(`sha256:${hex}`);

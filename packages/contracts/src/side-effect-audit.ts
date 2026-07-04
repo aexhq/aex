@@ -27,15 +27,15 @@ export const SIDE_EFFECT_AUDIT_ACTIONS = [
   "runtime.cleanup.failed",
   "terminal_redrive.attempted",
   "terminal_redrive.completed",
-  "api_token.created",
-  "api_token.deleted",
-  "api_token.used"
+  "api_key.created",
+  "api_key.deleted",
+  "api_key.used"
 ] as const;
 export type SideEffectAuditAction = (typeof SIDE_EFFECT_AUDIT_ACTIONS)[number];
 
 export const SIDE_EFFECT_AUDIT_ACTOR_PRINCIPAL_TYPES = [
   "user",
-  "api_token",
+  "api_key",
   "system",
   "runtime"
 ] as const;
@@ -52,7 +52,7 @@ export type SideEffectAuditSourcePlane = (typeof SIDE_EFFECT_AUDIT_SOURCE_PLANES
 
 export const SIDE_EFFECT_AUDIT_AUTHENTICATION_KINDS = [
   "dashboard_auth",
-  "api_token",
+  "api_key",
   "runner_token",
   "system"
 ] as const;
@@ -76,7 +76,7 @@ export const SIDE_EFFECT_AUDIT_TARGET_TYPES = [
   "cleanup",
   "deletion",
   "terminal_redrive",
-  "api_token"
+  "api_key"
 ] as const;
 export type SideEffectAuditTargetType = (typeof SIDE_EFFECT_AUDIT_TARGET_TYPES)[number];
 

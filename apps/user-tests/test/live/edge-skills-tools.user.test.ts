@@ -26,7 +26,7 @@
  * when a credential is missing, so the file is only collected/run with live
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
- *   AEX_API_TOKEN              workspace API token
+ *   AEX_API_KEY              workspace API key
  *   DEEPSEEK_API_KEY          customer gate-provider (DeepSeek) key
  *   AEX_USER_TEST_TARBALL      packed SDK tarball  (OR AEX_USER_TEST_VERSION)
  */
@@ -45,7 +45,7 @@ function requireEnv(name: string): string {
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
-const apiToken = requireEnv("AEX_API_TOKEN");
+const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-skills-tools");
 const model = gateModel();
 
@@ -100,7 +100,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const SCRIPT_PREAMBLE = `
 import { Aex, BuiltinTools, Tool } from "@aexhq/sdk";
 
-const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiToken: process.env.AEX_API_TOKEN });
+const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const MODEL = process.env.MODEL;
 const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
@@ -195,7 +195,7 @@ async function runOne(runArgs) {
 async function runScenario(install: InstallResult, scriptName: string, body: string): Promise<{ observation: Observation; stdout: string }> {
   const scriptPath = join(install.installDir, scriptName);
   writeFileSync(scriptPath, `${SCRIPT_PREAMBLE}\n${body}\n`);
-  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_TOKEN: apiToken, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model });
+  const passEnv = buildPassEnv({ AEX_API_URL: apiUrl, AEX_API_KEY: apiKey, PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey, MODEL: model });
   const child = await runCommand(getBunCommand(), [scriptPath], { cwd: install.installDir, timeoutMs: CHILD_TIMEOUT_MS, env: passEnv });
   if (child.exitCode !== 0) {
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);

@@ -43,7 +43,7 @@ function captureClient(): { client: Aex; bodies: unknown[] } {
     throw new Error(`unexpected SDK network call (asset upload not expected in this fuzz): ${url}`);
   };
   return {
-    client: new Aex({ apiToken: "tkn_fuzz", baseUrl: "https://example.test", fetch: fetchImpl }),
+    client: new Aex({ apiKey: "tkn_fuzz", baseUrl: "https://example.test", fetch: fetchImpl }),
     bodies
   };
 }
