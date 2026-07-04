@@ -199,9 +199,7 @@ describe("live DEV — subagent + MCP failure modes (DEFECT PROBES)", () => {
       const subResults = Array.isArray(out.subResults) ? out.subResults as Array<{ isError?: boolean; text?: string }> : [];
       const joined = JSON.stringify(subResults);
       expect(joined, `subagent tool result did not surface invalid-model admission error: ${dump}`).toMatch(/invalid_model|POST|400|model/i);
-      if (out.childId) {
-        expect(out.childTerminal, `child run was created but did not terminalize: ${dump}`).toBe(true);
-      }
+      expect(!out.childId || out.childTerminal, `child run was created but did not terminalize: ${dump}`).toBe(true);
     },
     12 * 60_000
   );

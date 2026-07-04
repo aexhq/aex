@@ -10,6 +10,10 @@ function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 }
 
+function errorResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
 const OUTPUTS: Record<string, Array<Record<string, unknown>>> = {
   "run-a": [
     { id: "a1", filename: "report.md", sizeBytes: 100, contentType: "text/markdown" },
@@ -70,6 +74,41 @@ describe("aex.sessions.searchOutputs", () => {
     const page = await client.sessions.searchOutputs({ extension: "md" });
     expect(page.hits.map((h) => h.outputId)).toEqual(["a1", "b1"]);
     expect(calls.some((u) => /\/api\/sessions(\?|$)/.test(u))).toBe(true);
+  });
+
+  it("continues an unscoped workspace scan when a listed session is deleted before its outputs are read", async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      calls.push(url);
+      const parsed = new URL(url);
+      const m = /\/api\/sessions\/([^/]+)\/outputs$/.exec(parsed.pathname);
+      if (m?.[1] === "run-deleted") return errorResponse(404, { error: "not_found" });
+      if (m) return jsonResponse({ outputs: OUTPUTS[m[1]!] ?? [] });
+      if (parsed.pathname === "/api/sessions") {
+        return jsonResponse({ sessions: [{ id: "run-deleted" }, { id: "run-a" }] });
+      }
+      throw new Error(`no responder for ${url}`);
+    });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+
+    const page = await client.sessions.searchOutputs({ extension: "md" });
+
+    expect(page.hits.map((h) => h.outputId)).toEqual(["a1"]);
+    expect(calls).toContain("https://dash.test/api/sessions/run-deleted/outputs");
+  });
+
+  it("preserves 404s for explicitly scoped output searches", async () => {
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (/\/api\/sessions\/run-deleted\/outputs$/.test(url)) return errorResponse(404, { error: "not_found" });
+      throw new Error(`no responder for ${url}`);
+    });
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+
+    await expect(client.sessions.searchOutputs({ runIds: ["run-deleted"], extension: "md" })).rejects.toMatchObject({
+      status: 404
+    });
   });
 
   it("pages the workspace session corpus with opaque listSessions cursors", async () => {

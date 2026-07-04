@@ -769,7 +769,8 @@ export class SessionClient {
     // Dedup the caller-supplied allow-list so a run repeated in `runIds` (e.g. from
     // concatenating corpora) isn't scanned twice and doesn't inflate the hit count
     // with duplicates (pre-launch edge-sweep F27).
-    const sessionIds = query.runIds ? [...new Set(query.runIds)] : await this.#allSessionIds();
+    const unscoped = query.runIds === undefined;
+    const sessionIds = unscoped ? await this.#allSessionIds() : [...new Set(query.runIds)];
     const limit = query.limit ?? 100;
     // Translate the search query to an OutputQuery so the contracts output
     // filter does the matching — no re-derived filter logic here.
@@ -781,9 +782,15 @@ export class SessionClient {
     const hasFilter = Object.keys(outputQuery).length > 0;
     const hits: OutputSearchHit[] = [];
     for (const sessionId of sessionIds) {
-      const outputs = hasFilter
-        ? await operations.listSessionOutputs(this.#http, sessionId, outputQuery)
-        : await operations.listSessionOutputs(this.#http, sessionId);
+      let outputs: readonly Output[];
+      try {
+        outputs = hasFilter
+          ? await operations.listSessionOutputs(this.#http, sessionId, outputQuery)
+          : await operations.listSessionOutputs(this.#http, sessionId);
+      } catch (err) {
+        if (unscoped && isMissingOutputsSession(err)) continue;
+        throw err;
+      }
       for (const o of outputs) {
         hits.push({
           runId: sessionId,
@@ -978,6 +985,10 @@ function messageFromWire(message: SessionMessage): Message {
 
 function isMissingMessagesEndpoint(err: unknown): boolean {
   return err instanceof AexApiError && (err.status === 404 || err.status === 405 || err.status === 501);
+}
+
+function isMissingOutputsSession(err: unknown): boolean {
+  return err instanceof AexApiError && err.status === 404;
 }
 
 function projectAssistantMessages(events: readonly (SessionEvent | RunEvent)[]): readonly Message[] {

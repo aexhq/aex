@@ -4,6 +4,7 @@
  * by `err.code` / `instanceof RunConfigValidationError`.
  */
 import { describe, expect, it, vi } from "vitest";
+import type { RunModel } from "@aexhq/contracts";
 import {
   AexError,
   Aex,
@@ -29,6 +30,8 @@ function noNetworkFetch(): { fetch: typeof fetch; calls: number } {
 function makeClient(fetchImpl: typeof fetch): Aex {
   return new Aex({ apiToken: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
 }
+
+const unknownModel = "totally-unknown-model-xyz" as unknown as RunModel;
 
 describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
   it("throws RunConfigValidationError with code RUN_CONFIG_INVALID for a missing options object", async () => {
@@ -99,7 +102,7 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     // missing apiKeys["anthropic"], pointing at the wrong problem.
     await expect(
       client.openSession({
-        model: "totally-unknown-model-xyz",
+        model: unknownModel,
         apiKeys: { deepseek: "sk-x" }
       })
     ).rejects.toMatchObject({
@@ -117,7 +120,7 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     // unknown model (server owns that) — the request reaches the fetch stub.
     await expect(
       client.openSession({
-        model: "totally-unknown-model-xyz",
+        model: unknownModel,
         provider: "deepseek",
         apiKeys: { deepseek: "sk-x" }
       })

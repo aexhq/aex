@@ -7,11 +7,9 @@
  *    body fails with an idempotency conflict."
  *
  * The existing lifecycle tests cover the SAME-body replay half (same runId,
- * no dup billable run). NOTHING covers the mismatched-body half — and on the
- * dev plane it is broken: the server replays the existing run for the same
- * key with a DIFFERENT message, model, or runtimeSize (HTTP 200, no 409).
- * A customer retrying a genuinely different request silently receives the
- * WRONG run's result.
+ * no dup billable run). This covers the mismatched-body half: a same-key retry
+ * with a different message, model, or runtimeSize must return 409
+ * rather than silently replaying the wrong run.
  *
  * ONE billable run total (tiny prompt); the mismatch probes replay/conflict
  * against that run and never start a second billable turn.
@@ -176,7 +174,8 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
           }
         }
         const diffMessage = await mismatch({ message: "Reply with the single word OTHER. Do not use any tools." });
-        const diffModel = await mismatch({ model: MODEL === "deepseek-v4" ? "deepseek-v4-flash" : "deepseek-v4" });
+        const alternateModel = MODEL === "deepseek-v4-flash" ? "deepseek-v4-pro" : "deepseek-v4-flash";
+        const diffModel = await mismatch({ model: alternateModel });
         const diffRuntime = await mismatch({ runtime: "shared-0.25x-1gb" });
 
         process.stdout.write(JSON.stringify({
@@ -213,13 +212,7 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
       const creates = out.httpLog.filter((s) => s === 201).length;
       expect(creates, `expected exactly one 201 create, raw createSession statuses: ${JSON.stringify(out.httpLog)}`).toBe(1);
 
-      // DEFECT PROBE: the docs promise "a mismatched body fails with an
-      // idempotency conflict". On the dev plane today the server stores NO
-      // request hash on the idem record and replays the existing run for the
-      // same key with a different message/model/runtimeSize (raw HTTP 200, no
-      // 409) — a retrying customer silently gets the WRONG run's result.
-      // These assertions state the CONTRACT: they fail today and go green once
-      // the plane hashes the normalized submission and 409s on mismatch.
+      // The docs promise "a mismatched body fails with an idempotency conflict".
       for (const [label, probe] of [
         ["different message", out.diffMessage],
         ["different model", out.diffModel],

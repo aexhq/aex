@@ -71,6 +71,8 @@ interface RawSessionLiveResult {
   readonly createStatus: string;
   readonly firstStatus: number;
   readonly replayStatus: number;
+  readonly conflictStatus: number;
+  readonly conflictError: string | null;
   readonly busyStatus: number;
   readonly firstTurnSeq: number;
   readonly replayTurnSeq: number;
@@ -313,15 +315,21 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         const createStatus = session.record.status;
 
         const key = "chat-raw-message-" + Date.now();
+        const firstInput = "Reply with exactly one word: ok.";
         const first = await api("/api/sessions/" + encodeURIComponent(session.id) + "/messages", {
           method: "POST",
           headers: { "Idempotency-Key": key },
-          body: JSON.stringify({ input: "Reply with exactly one word: ok." })
+          body: JSON.stringify({ input: firstInput })
         });
         const replay = await api("/api/sessions/" + encodeURIComponent(session.id) + "/messages", {
           method: "POST",
           headers: { "Idempotency-Key": key },
-          body: JSON.stringify({ input: "This replay body must not create another turn." })
+          body: JSON.stringify({ input: firstInput })
+        });
+        const conflict = await api("/api/sessions/" + encodeURIComponent(session.id) + "/messages", {
+          method: "POST",
+          headers: { "Idempotency-Key": key },
+          body: JSON.stringify({ input: "This mismatched replay body must conflict." })
         });
         const busy = await api("/api/sessions/" + encodeURIComponent(session.id) + "/messages", {
           method: "POST",
@@ -339,6 +347,8 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           createStatus,
           firstStatus: first.status,
           replayStatus: replay.status,
+          conflictStatus: conflict.status,
+          conflictError: conflict.body && typeof conflict.body.error === "string" ? conflict.body.error : null,
           busyStatus: busy.status,
           firstTurnSeq: first.body && first.body.turn ? first.body.turn.turnSeq : -1,
           replayTurnSeq: replay.body && replay.body.turn ? replay.body.turn.turnSeq : -2,
@@ -374,6 +384,8 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       expect(result.replayStatus, dump()).toBeLessThan(300);
       expect(result.firstTurnSeq, dump()).toBeGreaterThan(0);
       expect(result.replayTurnSeq, dump()).toBe(result.firstTurnSeq);
+      expect(result.conflictStatus, dump()).toBe(409);
+      expect(result.conflictError, dump()).toBe("idempotency_conflict");
       expect(result.busyStatus, dump()).toBe(409);
       expect(result.finalStatus, dump()).toBe("idle");
       expect(result.customNames, dump()).toContain("aex.session.idle");

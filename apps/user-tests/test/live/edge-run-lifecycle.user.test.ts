@@ -344,14 +344,13 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
         print({ scenario:"badmodel", outcome, res, err });
       `;
       const r = await runChild("edge-invalid-model.mjs", body, { childTimeoutMs: 150_000, waitMs: 90_000 });
-      // Observed behavior (pinned, and itself a finding): an invalid model is
-      // never accepted as a green run — it is deferred-validated during the run
-      // and resolves ok:false with a clear model-constraint error, rather than a
-      // synchronous submit-time 4xx.
-      expect(r.outcome).toBe("resolved");
-      const res = r.res as Record<string, unknown>;
-      expect(res.ok).toBe(false);
-      expect(String(res.error ?? "")).toMatch(/submission\.model must be one of/);
+      // Admission validation rejects an unknown model before provisioning. This
+      // is preferable to accepting a doomed billable run and surfacing the
+      // model error only after the runner starts.
+      expect(r.outcome).toBe("threw");
+      const err = r.err as Record<string, unknown>;
+      expect(err.status).toBe(400);
+      expect(String(err.message ?? "")).toMatch(/invalid_model|model/i);
     },
     180_000
   );
