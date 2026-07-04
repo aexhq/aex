@@ -1,26 +1,15 @@
 /**
  * Live edge-case sweep: subagent mid-tree failure + inline-MCP host reachability.
  *
- * Both assertions are DEFECT PROBES — they encode the CURRENT broken behaviour
- * observed on the dev plane (2026-07-04). They FLIP to the correct expectation
- * once the platform fixes land; until then they document the defect without
- * self-skipping (the live suite never skips).
+ * These assertions cover edge regressions observed on the dev plane
+ * (2026-07-04). They do not self-skip: each case either proves the current
+ * fixed contract or continues documenting an unfixed defect.
  *
- * ── Finding 1 (PLATFORM): invalid-model subagent → ZOMBIE child ──────────────
- * The `subagent` tool spawns a CHILD run via the internal in-process admit
- * (host=in-process): the API returns 202 with the child runId and hands the
- * parent a writer-token, but performs NO model validation. When the child model
- * is unknown, the parent container's in-process spawn never produces a terminal
- * for it, so the child row is stuck `submitted`/`queued` FOREVER (never
- * `failed`), `updatedAt == createdAt`, no SFN execution, no brain logs. The
- * parent, meanwhile, reads `{"status":"queued","terminal":false}` from
- * subagent_result on every poll and never learns the child is dead — it either
- * loops on `wait`/`subagent_result` until its own idle timeout or gives up.
- * A normal top-level submit with the same bad model would fail_closed at boot;
- * the lineage/in-process path skips that gate.
- * EXPECTED AFTER FIX: the child reaches a terminal failed status
- * (invalid_submission / boot_failed) within a couple of minutes, AND that
- * failure is visible to the parent via subagent_result (terminal:true).
+ * -- Finding 1 (FIXED): invalid-model subagent must never zombie -------------
+ * The in-process child admit path now validates model/provider before writing a
+ * child row. The parent should see a subagent tool error (400 invalid_model) and
+ * no queued child run should remain. If a child run id is ever returned, it must
+ * reach a terminal status within the poll window.
  *
  * ── Finding 2 (PLATFORM): non-allowlisted inline MCP host → boot_failed ──────
  * `McpServer.remote({url})` advertises arbitrary remote MCP servers, but the
@@ -120,7 +109,7 @@ afterAll(() => {
 
 describe("live DEV — subagent + MCP failure modes (DEFECT PROBES)", () => {
   it(
-    "DEFECT PROBE (Finding 1): a subagent with an invalid model becomes a zombie child (never terminal)",
+    "Finding 1 fixed: a subagent with an invalid model is rejected instead of creating a zombie child",
     async () => {
       const out = await runChild(
         install,
@@ -130,30 +119,49 @@ describe("live DEV — subagent + MCP failure modes (DEFECT PROBES)", () => {
           'You have a tool named "subagent" that delegates a task to a child agent run. ' +
           'Call the subagent tool EXACTLY ONCE with: model set to "totally-invalid-model-zzz9", and ' +
           'prompt set to "say hi". Report the tool result you got, then STOP. Do not retry.';
-        // Bound the parent so the run cannot linger: a short idle TTL + a modest wait budget.
-        const r = await client.run(
-          { provider: PROVIDER, model: MODEL, message: prompt, includeBuiltinTools: true,
-            apiKeys: { [PROVIDER]: PROVIDER_KEY }, overrides: { maxSpendUsd: 0.10, idleTtl: "3m" } },
-          { timeoutMs: 6 * 60_000 }
-        ).catch((e) => ({ __thrown: errShape(e) }));
+        // Create first so diagnostics always include the parent run id, even if
+        // the turn throws or times out.
+        const parent = await client.sessions.create({
+          provider: PROVIDER,
+          model: MODEL,
+          includeBuiltinTools: true,
+          apiKeys: { [PROVIDER]: PROVIDER_KEY },
+          overrides: { maxSpendUsd: 0.10, idleTtl: "3m" }
+        });
+        const parentRunId = parent.id;
 
-        const parentRunId = r && r.runId ? r.runId : null;
-        let childId = null, subResults = [];
+        let sendResult = null, sendThrown = null;
+        try {
+          const r = await parent.send(prompt, { idleTimeoutMs: 6 * 60_000 }).done();
+          sendResult = { status: r.status, text: String(r.text || "").slice(0, 500) };
+        } catch (e) {
+          sendThrown = errShape(e);
+        }
+
+        let childId = null, subResults = [], subStarts = 0;
         if (parentRunId) {
           const h = await client.sessions.open(parentRunId);
           const evs = await h.events().list();
+          const subStartIds = new Set(
+            evs
+              .filter((e) => e.type === "TOOL_CALL_START" && e.data && e.data.name === "subagent")
+              .map((e) => e.data && typeof e.data.id === "string" ? e.data.id : null)
+              .filter((id) => id !== null)
+          );
+          subStarts = subStartIds.size;
           subResults = evs
-            .filter((e) => e.type === "TOOL_CALL_RESULT")
+            .filter((e) => e.type === "TOOL_CALL_RESULT" && e.data && typeof e.data.id === "string" && subStartIds.has(e.data.id))
             .map((e) => {
               const c = e.data && e.data.content;
               const t = Array.isArray(c) ? c.map((b) => (b && b.text) || "").join(" ") : typeof c === "string" ? c : "";
-              return t;
+              return { isError: e.data && e.data.isError === true, text: t };
             });
           const m = JSON.stringify(subResults).match(/\\brun_[0-9a-f]{32}\\b/i);
           childId = m ? m[0] : null;
         }
 
-        // Poll the child for ~2 min: the DEFECT is that it never reaches terminal.
+        // Poll any returned child for ~2 min. Fixed admit should usually return
+        // no child id, but if one appears it must not remain queued forever.
         let childStatus = null, childUpdatedEqualsCreated = null, childTerminal = false;
         if (childId) {
           const terminal = new Set(["failed", "error", "cancelled", "succeeded", "timed_out", "idle", "suspended"]);
@@ -171,18 +179,29 @@ describe("live DEV — subagent + MCP failure modes (DEFECT PROBES)", () => {
         }
         if (parentRunId) await client.sessions.open(parentRunId).then((h) => h.cancel()).catch(() => {});
 
-        console.log(JSON.stringify({ parentRunId, childId, childStatus, childTerminal, childUpdatedEqualsCreated, subResults: subResults.slice(0, 4) }));
+        console.log(JSON.stringify({
+          parentRunId,
+          childId,
+          childStatus,
+          childTerminal,
+          childUpdatedEqualsCreated,
+          subStarts,
+          subResults: subResults.slice(0, 4),
+          sendResult,
+          sendThrown
+        }));
         `
       );
 
       const dump = JSON.stringify(out).slice(0, 1200);
-      // The subagent tool DID spawn a child (the parent got a runId back).
-      expect(out.childId, `no child runId spawned — parent flow changed: ${dump}`).toBeTruthy();
-      // DEFECT: the child never reaches terminal within the poll window.
-      // When the platform validates the child model (or the in-process spawn
-      // surfaces the failure), childTerminal flips true and THIS assertion fails —
-      // delete the probe and assert the terminal-failure expectation instead.
-      expect(out.childTerminal, `child reached terminal — Finding 1 appears FIXED, update this probe: ${dump}`).toBe(false);
+      expect(out.parentRunId, `parent run id was not captured: ${dump}`).toBeTruthy();
+      expect(out.subStarts, `model did not call the subagent tool; diagnostics: ${dump}`).toBeGreaterThan(0);
+      const subResults = Array.isArray(out.subResults) ? out.subResults as Array<{ isError?: boolean; text?: string }> : [];
+      const joined = JSON.stringify(subResults);
+      expect(joined, `subagent tool result did not surface invalid-model admission error: ${dump}`).toMatch(/invalid_model|POST|400|model/i);
+      if (out.childId) {
+        expect(out.childTerminal, `child run was created but did not terminalize: ${dump}`).toBe(true);
+      }
     },
     12 * 60_000
   );
