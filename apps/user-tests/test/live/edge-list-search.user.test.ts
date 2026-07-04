@@ -325,20 +325,23 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       const us = byLabel(probes, "search_unscoped_marker");
       // Two acceptable outcomes: it TERMINATED and found our marker, or it merely
       // ran out of the race budget on a large workspace (PROBE_TIMEOUT). A
-      // non-timeout hang (cursor-dedup broken, crit) or a finish-without-marker
-      // are the failures. Expressed unconditionally so it can never be skipped.
+      // non-timeout throw (including a 404 from a session deleted after
+      // sessions.list), cursor-dedup hang, or finish-without-marker are failures.
+      // Expressed unconditionally so it can never be skipped.
       const usOutcome = us.ok
         ? ((us.value as { foundThisRun: boolean }).foundThisRun ? "found" : "finished-without-marker")
-        : (us.error!.message.includes("PROBE_TIMEOUT") ? "race-budget" : "hung");
+        : (us.error!.message.includes("PROBE_TIMEOUT")
+            ? "race-budget"
+            : (us.error!.status === 404 ? "stale-session-404" : "threw"));
       expect(
         ["found", "race-budget"],
-        `unscoped full-scan search outcome=${usOutcome} (want terminate+found, or exceed race budget — not hang / finish-without-marker)${ctx}`
+        `unscoped full-scan search outcome=${usOutcome} (want terminate+found, or exceed race budget — not stale-session-404 / threw / finish-without-marker)${ctx}`
       ).toContain(usOutcome);
       // eslint-disable-next-line no-console
       console.log(
         us.ok
           ? `[edge-list-search] unscoped searchOutputs full-scan terminated in ${(us.value as { ms: number }).ms}ms with ${(us.value as { hits: number }).hits} hit(s)`
-          : `[edge-list-search] NOTE: unscoped searchOutputs exceeded the race budget on this workspace: ${us.error!.message}`
+          : `[edge-list-search] NOTE: unscoped searchOutputs did not terminate cleanly: ${JSON.stringify(us.error)}`
       );
 
       // ---- searchOutputs dup-runIds (LOW finding, reported not gated) ----

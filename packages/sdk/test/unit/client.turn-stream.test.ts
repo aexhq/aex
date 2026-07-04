@@ -13,8 +13,8 @@
  * `session_busy` while the first turn is still in flight (observed live).
  */
 import { describe, expect, it } from "vitest";
+import type { SessionEvent } from "@aexhq/contracts";
 import { SessionTurnStream } from "../../src/client.js";
-import type { SessionEvent } from "../../src/client.js";
 
 type Result = { readonly status: string; readonly text: string };
 

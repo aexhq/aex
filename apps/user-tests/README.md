@@ -106,7 +106,8 @@ Required env:
 
 - `AEX_API_URL`
 - `AEX_API_TOKEN`
-- `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION`
+- `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION` when testing an
+  explicit artifact; if neither is set, the harness packs the checked-out SDK.
 - `ANTHROPIC_API_KEY`
 - `DEEPSEEK_API_KEY`
 
