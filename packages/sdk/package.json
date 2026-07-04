@@ -35,7 +35,7 @@
     "test:unit:unlocked": "vitest run test/unit",
     "test:security": "bun ../../scripts/with-generated-dist-lock.mjs bun run test:security:unlocked",
     "test:security:unlocked": "vitest run test/security",
-    "test:property": "vitest run --passWithNoTests property",
+    "test:property": "vitest run property",
     "test:coverage": "vitest run --coverage test/unit",
     "prepack": "bun run build",
     "pack:dry-run": "bun ../../scripts/with-generated-dist-lock.mjs bun pm pack --dry-run --ignore-scripts"

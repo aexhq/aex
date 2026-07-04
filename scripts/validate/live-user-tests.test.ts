@@ -15,7 +15,9 @@ describe("live user-test release gate", () => {
 
     expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/11");
     expect(workflow).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
-    expect(workflow).toContain('bun run test:user:files -- $FILES 2>&1 | tee "$RAW_LOG"');
+    expect(workflow).toContain("REPORT: .suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json");
+    expect(workflow).toContain('bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"');
+    expect(workflow).toContain('node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"');
     expect(workflow).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
     expect(workflow).toContain("Redact live user test log");
     expect(workflow).toContain("Upload redacted live user test log");
@@ -51,7 +53,8 @@ describe("live user-test release gate", () => {
       expect(workflow, path).toContain(
         'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"'
       );
-      expect(workflow, path).toContain('bun run test:user:files -- $FILES 2>&1 | tee "$RAW_LOG"');
+      expect(workflow, path).toContain('bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"');
+      expect(workflow, path).toContain('node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"');
       expect(workflow, path).not.toContain("--shard=");
       const shardCall = workflow.indexOf("scripts/shard-files.mjs --shard");
       const vitestCall = workflow.indexOf("bun run test:user:files -- $FILES");

@@ -1,6 +1,6 @@
 // Self-test fixture for the aex ESLint rules. Lives next to the plugin
 // so it ships with the rules. NOT a Vitest test — runs as a fixture-style
-// lint smoke (`bun run lint:tests` will fail with EXACTLY the four
+// lint smoke (`bun run lint:tests` will fail with EXACTLY the five
 // expected aex/* violations on this file). The verification script
 // at the bottom of this comment block runs it programmatically; manual
 // re-introduction here serves the same purpose for ad-hoc verification.
@@ -37,7 +37,11 @@ it.skip("VERIFY-PATTERN-3", () => {
   expect(1).toBe(1);
 });
 
-// PATTERN 4 — no-focused-tests
-it.only("VERIFY-PATTERN-4", () => {
+it.skipIf(true)("VERIFY-PATTERN-4", () => {
+  expect(1).toBe(1);
+});
+
+// PATTERN 5 — no-focused-tests
+it.only("VERIFY-PATTERN-5", () => {
   expect(1).toBe(1);
 });

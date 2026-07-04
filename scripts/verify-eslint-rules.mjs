@@ -16,7 +16,7 @@ const fixture = path.join(root, "tools", "eslint-plugin-aex", "__verify_rules.te
 const EXPECTED = [
   { ruleId: "aex/no-undefined-skip-expect", count: 1 },
   { ruleId: "aex/no-conditional-expect", count: 2 },
-  { ruleId: "aex/no-disabled-tests", count: 1 },
+  { ruleId: "aex/no-disabled-tests", count: 2 },
   { ruleId: "aex/no-focused-tests", count: 1 }
 ];
 

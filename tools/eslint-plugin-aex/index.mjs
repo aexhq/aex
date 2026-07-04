@@ -183,9 +183,9 @@ function bodyContainsThrow(node) {
 // ---------------------------------------------------------------------------
 // Rule: no-disabled-tests
 //
-// Blocks `it.skip`, `test.skip`, `describe.skip`, `xit`, `xdescribe`. The
-// platform-conditional `it.skipIf(...)` is allowed (it gates on a runtime
-// signal, not "this test is broken, leave it for later").
+// Blocks `it.skip`, `test.skip`, `describe.skip`, `*.skipIf`, `*.runIf`,
+// `xit`, and `xdescribe`. Selected tests must run; runtime conditionals belong
+// in non-gating on-demand suites, not in the test body or declaration.
 // ---------------------------------------------------------------------------
 const noDisabledTests = {
   meta: {
@@ -194,7 +194,7 @@ const noDisabledTests = {
     schema: [],
     messages: {
       disabled:
-        "`{{name}}` disables a test. Either fix it, delete it, or use the platform-conditional `skipIf(...)` (which gates on runtime conditions, not on the test being broken)."
+        "`{{name}}` disables a selected test. Either fix it, delete it, or move provider-specific coverage to a non-gating on-demand suite."
     }
   },
   create(context) {
@@ -208,7 +208,10 @@ const noDisabledTests = {
           callee.object && callee.object.type === "Identifier" &&
           (callee.object.name === "it" || callee.object.name === "test" || callee.object.name === "describe") &&
           callee.property && callee.property.type === "Identifier" &&
-          (callee.property.name === "skip" || callee.property.name === "todo")
+          (callee.property.name === "skip" ||
+            callee.property.name === "skipIf" ||
+            callee.property.name === "runIf" ||
+            callee.property.name === "todo")
         ) {
           context.report({ node, messageId: "disabled", data: { name: `${callee.object.name}.${callee.property.name}` } });
         }

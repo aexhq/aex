@@ -134,6 +134,7 @@ jobs:
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_MAX_WORKERS: 1
           RAW_LOG: .suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
+          REPORT: .suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json
         run: |
           set -euo pipefail
           mkdir -p .suite-diagnostics/raw
@@ -142,7 +143,8 @@ jobs:
           # and fails loudly if a shard would be empty — unlike vitest
           # --shard, which splits by file count and can collect zero tests.
           FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"
-          bun run test:user:files -- $FILES 2>&1 | tee "$RAW_LOG"
+          bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"
+          node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"
 
       - name: Redact live user test log
         if: ${{ always() }}

@@ -30,11 +30,9 @@
  *   4. Secret redaction — a secret-SHAPED value (`sk-ant-…`) in the SKILL.md
  *      body is returned as `[REDACTED]`, never verbatim.
  *
- * Gating: this is a LIVE suite. Without creds (AEX_API_URL / AEX_API_TOKEN /
- * DEEPSEEK_API_KEY) the whole `describe` is SKIPPED cleanly via
- * `describe.skipIf` — no throw, no install, no run. With creds it runs the same
- * managed DeepSeek path the sibling live suites use. It always TYPECHECKS
- * (`tsc --noEmit` / `bun run lint`) regardless of creds.
+ * Gating: this is a LIVE suite. Missing creds (AEX_API_URL / AEX_API_TOKEN /
+ * DEEPSEEK_API_KEY) are a hard collection-time failure; the live lane must never
+ * pass by silently skipping.
  *
  * Required env (live only):
  *   AEX_API_URL                 live hosted API URL
@@ -48,13 +46,18 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
-const apiUrl = process.env["AEX_API_URL"] ?? "";
-const apiToken = process.env["AEX_API_TOKEN"] ?? "";
-const deepseekKey = process.env["DEEPSEEK_API_KEY"] ?? "";
+const apiUrl = requireEnv("AEX_API_URL");
+const apiToken = requireEnv("AEX_API_TOKEN");
+const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
-// The single gate: no creds ⇒ skip the whole suite cleanly (never throw).
-const hasCreds = apiUrl.length > 0 && apiToken.length > 0 && deepseekKey.length > 0;
+function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is required for live skill-tool staging tests.`);
+  }
+  return value;
+}
 
 interface SkillFileSpec {
   /** POSIX-relative path inside the bundle (e.g. "SKILL.md", "data/payload.txt"). */
@@ -305,7 +308,7 @@ function assertRunOk(result: CaseResult): void {
 
 let install: InstallResult;
 
-describe.skipIf(!hasCreds)("live skill-tool — filesystem staging + byte-cap + secret redaction", () => {
+describe("live skill-tool — filesystem staging + byte-cap + secret redaction", () => {
   beforeAll(async () => {
     install = await installAex();
   }, 240_000);
@@ -425,12 +428,7 @@ describe.skipIf(!hasCreds)("live skill-tool — filesystem staging + byte-cap + 
       expect(result.checks["startMarkerPresent"], dump(result)).toBe(true);
       // Core cap proof: the beyond-cap marker never reached the model or the stream.
       expect(result.checks["beyondMarkerAbsent"], dump(result)).toBe(true);
-      // The truncation NOTICE sits at the tail of the 400 KB result; a journal may
-      // trim the trailing bytes, so treat it as a corroborating soft signal only.
-      if (result.checks["truncationNotePresent"] !== true) {
-        // eslint-disable-next-line no-console
-        console.warn(`[byte-cap] truncation notice not observed in tool result (soft, non-failing):\n${dump(result)}`);
-      }
+      expect(result.checks["truncationNotePresent"], dump(result)).toBe(true);
     },
     11 * 60_000
   );
@@ -473,12 +471,8 @@ describe.skipIf(!hasCreds)("live skill-tool — filesystem staging + byte-cap + 
       expect(result.checks["guardTokenPresent"], dump(result)).toBe(true);
       // Core redaction proof: the secret NEVER appears verbatim in any channel.
       expect(result.checks["secretLeaked"], dump(result)).toBe(false);
-      // Positive corroboration that the redactor fired on the returned body. Soft:
-      // it depends on the load-tool result being observable in the event stream.
-      if (result.checks["redactedMarkerPresent"] !== true) {
-        // eslint-disable-next-line no-console
-        console.warn(`[redaction] [REDACTED] marker not observed in run payload (soft, non-failing):\n${dump(result)}`);
-      }
+      // Positive corroboration that the redactor fired on the returned body.
+      expect(result.checks["redactedMarkerPresent"], dump(result)).toBe(true);
     },
     11 * 60_000
   );
