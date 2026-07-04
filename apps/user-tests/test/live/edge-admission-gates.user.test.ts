@@ -1,21 +1,15 @@
 /**
  * Live edge-case sweep: session-path admission gates.
  *
- * DEFECT PROBE — on the dev plane the workspace admission gates
- * (concurrency cap, and strict BYOK/provider validation at create) are only
- * wired on the legacy `POST /api/runs` submit path. The session surface —
- * the ONLY path the SDK uses — skips them:
+ * Release-gating probes for session-path admission gates. These assert the
+ * public SDK path sees the same hosted admission contract as one-shot submits:
  *
- *   1. Concurrency: `whoami().limits.maxConcurrentRuns` (plan cap) is never
- *      consulted by `POST /sessions` or `POST /sessions/:id/messages`; N >
- *      cap turns all run simultaneously with zero 429
- *      (`workspace_concurrency_exceeded` is unreachable from the SDK path).
- *   2. A whitespace-only provider key passes the `missing_provider_key`
- *      gate (`sub.apiKey === ""` presence check only) and is admitted.
- *   3. A provider/model mismatch (provider that does not serve the model)
- *      is admitted at create (201) and only fails at the first BILLABLE
- *      turn (`invalid_submission` at dispatch) — the validation exists but
- *      runs one turn too late.
+ *   1. Concurrency: `whoami().limits.maxConcurrentRuns` is enforced for
+ *      `client.run(...)` / session turns with a public 429
+ *      `workspace_concurrency_exceeded` once the cap is saturated.
+ *   2. A whitespace-only provider key is rejected at session create.
+ *   3. A provider/model mismatch is rejected at session create, before any
+ *      billable turn launches.
  *
  * Billing: probes 2 and 3 create born-empty idle sessions and delete them
  * without a turn (zero billable). Probe 1 sends cap+1 tiny turns (~$0.003
@@ -86,7 +80,12 @@ const CHILD_PRELUDE = `
     name: e && e.constructor ? e.constructor.name : "Error",
     message: e && e.message ? String(e.message).slice(0, 300) : String(e),
     status: e && typeof e.status === "number" ? e.status : null,
-    code: e && typeof e.code === "string" ? e.code : null
+    code: e && typeof e.code === "string" ? e.code : null,
+    requestId: e && e.body && typeof e.body.requestId === "string" ? e.body.requestId : null,
+    bodyError: e && e.body && typeof e.body.error === "string" ? e.body.error : null,
+    bodyCode: e && e.body && typeof e.body.code === "string" ? e.body.code : null,
+    bodyObserved: e && e.body && typeof e.body.observed === "number" ? e.body.observed : null,
+    bodyCap: e && e.body && typeof e.body.cap === "number" ? e.body.cap : null
   });
   const raw = async (method, path, body) => {
     const res = await fetch(process.env.AEX_API_URL + path, {
@@ -145,7 +144,7 @@ describe("edge: session-path admission gates", () => {
     "the plan concurrency cap rejects turns beyond maxConcurrentRuns",
     async () => {
       const body = `
-        const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, runIds: [] };
+        const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, initialRunning: 0, runIds: [] };
         const me = await client.whoami();
         out.cap = me.limits.maxConcurrentRuns;
         if (!Number.isFinite(MAX_SAFE_CAP) || MAX_SAFE_CAP < 1) {
@@ -161,6 +160,11 @@ describe("edge: session-path admission gates", () => {
           process.exit(0);
         }
         const n = out.cap + 1;
+        try {
+          const initialPage = await client.sessions.list({ limit: 50 });
+          out.initialRunning = initialPage.sessions.filter((s) => s.status === "running").length;
+          out.peakRunning = Math.max(out.peakRunning, out.initialRunning);
+        } catch {}
         const done = { flag: false };
         const poller = (async () => {
           while (!done.flag) {
@@ -209,14 +213,12 @@ describe("edge: session-path admission gates", () => {
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "admission-concurrency.mjs", body, 8 * 60_000);
+      console.info("edge-admission-gates concurrency result", JSON.stringify(result));
       expect(result.setupError).toBeUndefined();
       expect(result.otherErrors).toEqual([]);
       const cap = result.cap as number;
       expect(cap).toBeGreaterThan(0);
-      // DEFECT (dev): all cap+1 turns are admitted and run simultaneously
-      // (peakRunning > cap, rejected429 === 0) — the session path never
-      // consults the concurrency gate.
-      expect((result.peakRunning as number) <= cap).toBe(true);
+      expect((result.peakRunning as number) <= cap, JSON.stringify(result)).toBe(true);
       expect((result.rejected429 as number) + (result.admitted as number)).toBe(cap + 1);
       expect(result.rejected429 as number).toBeGreaterThanOrEqual(1);
     },
@@ -243,9 +245,7 @@ describe("edge: session-path admission gates", () => {
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "admission-whitespace-key.mjs", body);
-      // DEFECT (dev): 201 — the missing_provider_key gate is a bare === ""
-      // check, so a whitespace key is admitted and only fails (billed) at
-      // the first turn as a provider 401.
+      console.info("edge-admission-gates whitespace-key result", JSON.stringify(result));
       expect(result.status).toBe(400);
       expect(result.error).toBe("missing_provider_key");
     },
@@ -272,10 +272,7 @@ describe("edge: session-path admission gates", () => {
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "admission-provider-mismatch.mjs", body);
-      // DEFECT (dev): 201 — validateRunModelProvider only runs on the
-      // in-process child submit path; the session create admits the
-      // mismatch and the customer discovers it via a billed turn that
-      // errors `invalid_submission`.
+      console.info("edge-admission-gates provider-mismatch result", JSON.stringify(result));
       expect(result.status).toBe(400);
       expect(["invalid_submission", "invalid_model"]).toContain(result.error);
     },
