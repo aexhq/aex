@@ -58,8 +58,17 @@ missing scope. The customer-grantable scopes:
 | `files:delete` | Delete workspace asset-store entries. |
 | `secrets:read` | List workspace secrets and read their metadata (never values). |
 | `secrets:write` | Create, rotate, and delete workspace secrets. |
+| `mcp:read` | List and read workspace MCP server configurations. |
+| `mcp:write` | Create workspace MCP server configurations. |
+| `mcp:delete` | Delete workspace MCP server configurations. |
 | `billing:read` | Read billing state and create hosted billing sessions. |
 | `workspaces:delete` | Owner self-service workspace hard-erase. |
+
+Tokens may additionally carry the reserved scopes `skills:read` /
+`skills:write` / `skills:delete`, `agentsmd:read` / `agentsmd:write` /
+`agentsmd:delete`, and `files:read`. No API route requires them today — skill
+and AGENTS.md asset uploads are covered by `files:write` — so treat them as
+inert placeholders for future per-asset-type routes.
 
 A typical automation token carries `runs:read`, `runs:write`, and
 `outputs:read`. Grant the rest only where the workload needs them — a read-only
