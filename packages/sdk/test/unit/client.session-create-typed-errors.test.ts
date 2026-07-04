@@ -91,6 +91,39 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     ).rejects.toThrow(/Aex\.openSession: a provider API key is required/);
   });
 
+  it("names the unknown model (not a missing default-provider key) when provider cannot be inferred", async () => {
+    const { fetch, calls } = noNetworkFetch();
+    const client = makeClient(fetch);
+    // Unknown model + no provider + a key for a real provider: the old
+    // behavior fell back to the default provider and complained about a
+    // missing apiKeys["anthropic"], pointing at the wrong problem.
+    await expect(
+      client.openSession({
+        model: "totally-unknown-model-xyz",
+        apiKeys: { deepseek: "sk-x" }
+      })
+    ).rejects.toMatchObject({
+      name: "RunConfigValidationError",
+      code: "RUN_CONFIG_INVALID",
+      message: expect.stringMatching(/model "totally-unknown-model-xyz" is not a known model id.*pass provider explicitly/)
+    });
+    expect(calls).toBe(0);
+  });
+
+  it("still forwards an unknown model when the caller names the provider explicitly (forward-compat)", async () => {
+    const { fetch } = noNetworkFetch();
+    const client = makeClient(fetch);
+    // Explicit provider + key: client-side validation must NOT hard-reject the
+    // unknown model (server owns that) — the request reaches the fetch stub.
+    await expect(
+      client.openSession({
+        model: "totally-unknown-model-xyz",
+        provider: "deepseek",
+        apiKeys: { deepseek: "sk-x" }
+      })
+    ).rejects.toThrow(/no network call should be made/);
+  });
+
   it("rejects a provider that does not serve the model with code RUN_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);

@@ -1545,6 +1545,24 @@ export class Aex {
       );
     }
     const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
+    if (
+      options.provider === undefined &&
+      supportedProviders.length === 0 &&
+      typeof options.model === "string" &&
+      options.model.length > 0 &&
+      (typeof options.apiKeys?.[provider] !== "string" || options.apiKeys[provider]!.length === 0)
+    ) {
+      // Unknown model with no explicit provider: the DEFAULT_RUN_PROVIDER
+      // fallback exists for forward-compat with models added server-side, but
+      // without a key for that default the generic missing-key error below
+      // would point at the wrong problem (e.g. "pass apiKeys[\"anthropic\"]"
+      // when the caller mistyped a deepseek model id). Name the real issue.
+      throw new RunConfigValidationError(
+        `Aex.openSession: model ${JSON.stringify(options.model)} is not a known model id, so its provider ` +
+          `cannot be inferred — pass provider explicitly (with a matching apiKeys entry) to run a model ` +
+          `this SDK version does not know about.`
+      );
+    }
     validateApiKeys(options.apiKeys, provider, "Aex.openSession");
     if (typeof options.model !== "string" || !options.model) {
       throw new RunConfigValidationError("Aex.openSession: model is required");
