@@ -63,6 +63,24 @@ describe("normalizeRunUnit (F25 — lean managed record → type-valid RunUnit)"
     expect(unit.attempts).toEqual([]);
     expect(unit.events.entries).toEqual([]);
   });
+
+  it("uses the record's top-level model for the fallback submission (never claims a model the run did not use)", () => {
+    // The hosted plane's GET /runs/:id projects a flat record with `model`
+    // at the top level and no `submission` snapshot. The fallback must echo
+    // that model instead of fabricating the static default.
+    const lean = {
+      id: "run_flat",
+      workspaceId: "ws_1",
+      status: "idle",
+      createdAt: "2026-07-02T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:01:00.000Z",
+      provider: "deepseek",
+      model: "deepseek-v4-flash"
+    };
+    const unit = normalizeRunUnit(lean);
+    expect(unit.submission.kind).toBe("submission");
+    expect(unit.submission.submission.model).toBe("deepseek-v4-flash");
+  });
 });
 
 describe("parseRunUnitSubmission", () => {

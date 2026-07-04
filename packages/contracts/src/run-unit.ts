@@ -174,20 +174,20 @@ export interface RunUnit {
  * must still render *something* for a buggy historical row rather than 500ing
  * the whole detail page.
  */
-export function parseRunUnitSubmission(input: unknown): RunUnitSubmission {
+export function parseRunUnitSubmission(input: unknown, fallbackModel?: unknown): RunUnitSubmission {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return fallbackFlat();
+    return fallbackFlat(fallbackModel);
   }
   const value = input as Record<string, unknown>;
   if (value.kind === "submission") {
-    return parseFlatProjection(value);
+    return parseFlatProjection(value, fallbackModel);
   }
   // Snapshot exists but does not match the flat shape — surface as an
   // empty flat submission so consumers can still render lifecycle bits.
-  return fallbackFlat();
+  return fallbackFlat(fallbackModel);
 }
 
-function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmission {
+function parseFlatProjection(value: Record<string, unknown>, fallbackModel?: unknown): RunUnitFlatSubmission {
   const submissionRaw = isRecord(value.submission) ? value.submission : {};
   const outputsRaw = isRecord(submissionRaw.outputs) ? submissionRaw.outputs : {};
   const allowedDirs = toOptionalStringArray(outputsRaw.allowedDirs);
@@ -197,7 +197,7 @@ function parseFlatProjection(value: Record<string, unknown>): RunUnitFlatSubmiss
   const maxTotalBytes = toOptionalPositiveInteger(outputsRaw.maxTotalBytes);
   const maxFiles = toOptionalPositiveInteger(outputsRaw.maxFiles);
   const submission: PlatformSubmission = {
-    model: coerceRunUnitModel(submissionRaw.model),
+    model: coerceRunUnitModel(submissionRaw.model ?? fallbackModel),
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
     prompt: toStringArray(submissionRaw.prompt),
     agentsMd: [],
@@ -244,11 +244,11 @@ function toOptionalPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
-function fallbackFlat(): RunUnitFlatSubmission {
+function fallbackFlat(fallbackModel?: unknown): RunUnitFlatSubmission {
   return {
     kind: "submission",
     submission: {
-      model: Models.CLAUDE_HAIKU_4_5,
+      model: coerceRunUnitModel(fallbackModel),
       prompt: [],
       agentsMd: [],
       files: [],
@@ -303,7 +303,10 @@ export function normalizeRunUnit(raw: unknown): RunUnit {
         : Array.isArray(r.attempts)
           ? r.attempts.length
           : 0,
-    submission: parseRunUnitSubmission(r.submission),
+    // Plane responses that project a flat record (no `submission` snapshot)
+    // still carry the run's `model` at the top level — prefer it over the
+    // static fallback so `unit()` never claims a model the run did not use.
+    submission: parseRunUnitSubmission(r.submission, r.model),
     ...(isRecord(r.capsSnapshot) ? { capsSnapshot: r.capsSnapshot as Record<string, JsonValue> } : {}),
     attempts: arr<RunUnitAttempt>(r.attempts),
     events: {
