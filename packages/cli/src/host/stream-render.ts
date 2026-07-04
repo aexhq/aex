@@ -121,6 +121,14 @@ export function renderEnvelope(e: AexEvent, options: RenderOptions = {}): string
     }
     case "CUSTOM": {
       const label = e.message ?? str(e.data.name) ?? "custom";
+      // Surface WHY the session parked: the `aex.session.idle` custom carries a
+      // `reason` ("completed" | "cancel_requested" | …). Without it a cancelled
+      // turn renders identically to a completed one.
+      if (e.data.name === "aex.session.idle") {
+        const value = e.data.value as { reason?: unknown } | undefined;
+        const reason = value && typeof value.reason === "string" ? value.reason : "";
+        if (reason && reason !== "completed") return `[aex] ${label} (${reason})`;
+      }
       return `[aex] ${label}`;
     }
     case "LOG": {
