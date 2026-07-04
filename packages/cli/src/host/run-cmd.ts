@@ -37,6 +37,7 @@ import {
   DEFAULT_RUN_PROVIDER,
   operations,
   parseRunRequestConfig,
+  providersForModel,
   RUN_MODELS,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
@@ -94,7 +95,12 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   const providerFlag = takeFlagValue(rest, "--provider");
   if (providerFlag.error) { io.stderr(`${providerFlag.error}\n`); return USAGE_ERR; }
   rest = providerFlag.remaining;
-  let provider: RunProvider = DEFAULT_RUN_PROVIDER;
+  // Resolved AFTER the run config is known: an omitted --provider is inferred
+  // from the model's supported providers (SDK parity — Aex.openSession does
+  // `provider ?? providersForModel(model)[0] ?? default`), so
+  // `aex run --model deepseek-v4-flash --deepseek-api-key K` must not demand
+  // an anthropic key.
+  let explicitProvider: RunProvider | undefined;
   if (providerFlag.value !== null) {
     if (!(RUN_PROVIDERS as readonly string[]).includes(providerFlag.value)) {
       const hint = suggest(providerFlag.value, RUN_PROVIDERS);
@@ -104,7 +110,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       );
       return USAGE_ERR;
     }
-    provider = providerFlag.value as RunProvider;
+    explicitProvider = providerFlag.value as RunProvider;
   }
 
   // Provider key flag handling: each provider in RUN_PROVIDERS has its
@@ -119,10 +125,6 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     if (flag.error) { io.stderr(`${flag.error}\n`); return USAGE_ERR; }
     rest = flag.remaining;
     if (flag.value !== null) providerKeyValues[p] = flag.value;
-  }
-  if (!providerKeyValues[provider]) {
-    io.stderr(`--${provider}-api-key is required when --provider is ${provider} (the platform does not store provider keys on your behalf)\n`);
-    return USAGE_ERR;
   }
 
   const idempotency = takeFlagValue(rest, "--idempotency-key");
@@ -293,6 +295,18 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
         ? { metadata: { ...metadataFlags.entries } }
         : {})
     };
+  }
+
+  // Provider + key resolution (needs the model, so it runs after config resolution).
+  const provider: RunProvider =
+    explicitProvider ?? providersForModel(runConfig.model)[0] ?? DEFAULT_RUN_PROVIDER;
+  if (!providerKeyValues[provider]) {
+    io.stderr(
+      `--${provider}-api-key is required for provider ${provider}` +
+        `${explicitProvider === undefined ? ` (inferred from --model ${runConfig.model})` : ""}` +
+        ` (the platform does not store provider keys on your behalf)\n`
+    );
+    return USAGE_ERR;
   }
 
   // ---------------- Resolve MCP secrets (--mcp-auth + config headers) ----------------

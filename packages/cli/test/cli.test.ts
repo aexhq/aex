@@ -96,6 +96,49 @@ describe("aex --help", () => {
   });
 });
 
+describe("aex run provider inference (SDK parity)", () => {
+  it("infers the provider from a single-provider model instead of demanding the anthropic key", async () => {
+    // Aex.openSession resolves `provider ?? providersForModel(model)[0] ?? default`;
+    // the CLI (which advertises 1:1 SDK parity) jumped straight to the anthropic
+    // default, so `aex run --model deepseek-v4-flash --deepseek-api-key K` failed
+    // with "--anthropic-api-key is required". Live-observed on dev.
+    const cap = makeIo({
+      argv: [
+        "run",
+        "--model", "deepseek-v4-flash",
+        "--prompt", "hi",
+        "--deepseek-api-key", "dsk-test",
+        "--api-token", "tok",
+        "--aex-url", "https://api.test"
+      ],
+      fetchHandler: async () =>
+        new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } })
+    });
+    await runCli(cap.io);
+    expect(cap.stderr).not.toContain("--anthropic-api-key is required");
+    expect(cap.fetchCalls.length).toBeGreaterThan(0);
+    const body = JSON.parse(String(cap.fetchCalls[0]!.init?.body ?? "{}")) as Record<string, unknown>;
+    const provider = body["provider"] ?? (body["submission"] as Record<string, unknown> | undefined)?.["provider"];
+    expect(provider).toBe("deepseek");
+  });
+
+  it("still requires the matching key for an explicitly selected provider", async () => {
+    const cap = makeIo({
+      argv: [
+        "run",
+        "--provider", "deepseek",
+        "--model", "deepseek-v4-flash",
+        "--prompt", "hi",
+        "--api-token", "tok",
+        "--aex-url", "https://api.test"
+      ]
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("--deepseek-api-key is required");
+  });
+});
+
 describe("removed commands", () => {
   it("treats the old proxy verb as an unknown subcommand", async () => {
     const cap = makeIo({ argv: ["proxy", "--help"] });
