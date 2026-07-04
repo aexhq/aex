@@ -45,4 +45,23 @@ describe("AexApiError message extraction", () => {
     const client = clientReturning({ error: "not_found", status: "whatever" }, 404);
     await expect(client.request("/api/x")).rejects.toThrow(/^not_found$/);
   });
+
+  it("surfaces the server's message detail alongside the error code", async () => {
+    const client = clientReturning(
+      {
+        error: "asset_snapshot_source_missing",
+        message: "referenced asset asset_xyz is not in the workspace store; upload and finalize it before referencing it",
+        requestId: "req-1"
+      },
+      400
+    );
+    await expect(client.request("/api/sessions", { method: "POST" })).rejects.toThrow(
+      "asset_snapshot_source_missing: referenced asset asset_xyz is not in the workspace store; upload and finalize it before referencing it"
+    );
+  });
+
+  it("does not duplicate the code when message repeats it", async () => {
+    const client = clientReturning({ error: "not_found", message: "not_found" }, 404);
+    await expect(client.request("/api/x")).rejects.toThrow(/^not_found$/);
+  });
 });

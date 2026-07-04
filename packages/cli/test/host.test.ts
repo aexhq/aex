@@ -471,7 +471,7 @@ describe("aex cancel + delete", () => {
     // remedy keyed on it (the message stays the API's own error string).
     expect(err).toEqual({
       error: "delete_asset_failed",
-      message: "asset_not_found",
+      message: "asset_not_found: asset not found",
       hash: hex,
       status: 404,
       remedy: "no such run/resource — verify the id"

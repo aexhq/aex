@@ -176,6 +176,13 @@ function extractErrorMessage(body: unknown): string {
       if (obj.error === "session_busy" && typeof status === "string") {
         return `session_busy (session status: ${status})`;
       }
+      // Most aex API rejections are `{error: <code>, message: <human detail>}`.
+      // Keep the stable code first, but don't drop the server's actionable
+      // detail (e.g. asset_snapshot_source_missing's "upload and finalize it
+      // before referencing it").
+      if (typeof obj.message === "string" && obj.message.length > 0 && obj.message !== obj.error) {
+        return `${obj.error}: ${obj.message}`;
+      }
       return obj.error;
     }
     if (obj.error && typeof obj.error === "object" && "message" in obj.error) {
