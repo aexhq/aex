@@ -7,6 +7,7 @@
   "scripts": {
     "test:user": "bun scripts/run-user-vitest.mjs --config vitest.config.ts test",
     "test:user:files": "bun scripts/run-user-vitest.mjs --config vitest.config.ts",
+    "test:user:admission-gates": "bun scripts/run-user-vitest.mjs --config vitest.admission-gates.config.ts",
     "test:user:offline": "bun scripts/run-user-vitest.mjs --config vitest.offline.config.ts",
     "test:user:heavy": "bun scripts/run-user-vitest.mjs --config vitest.heavy.config.ts",
     "test:user:providers": "bun scripts/run-user-vitest.mjs --config vitest.providers.config.ts",

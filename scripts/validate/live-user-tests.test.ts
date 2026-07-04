@@ -67,15 +67,22 @@ describe("live user-test release gate", () => {
     expect(packageJson.scripts?.["test:user:files"]).toBe(
       "bun scripts/run-user-vitest.mjs --config vitest.config.ts"
     );
+    expect(packageJson.scripts?.["test:user:admission-gates"]).toBe(
+      "bun scripts/run-user-vitest.mjs --config vitest.admission-gates.config.ts"
+    );
     const rootPackageJson = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
     expect(rootPackageJson.scripts?.["test:user:files"]).toBe(
       "bun run --filter @aexhq/user-tests test:user:files"
+    );
+    expect(rootPackageJson.scripts?.["test:user:admission-gates"]).toBe(
+      "bun run --filter @aexhq/user-tests test:user:admission-gates"
     );
 
     // The bin-packer's exclude list must mirror vitest.config.ts so both
     // collect the same file set.
     const script = read("apps/user-tests/scripts/shard-files.mjs");
     const vitestConfig = read("apps/user-tests/vitest.config.ts");
+    const admissionGateConfig = read("apps/user-tests/vitest.admission-gates.config.ts");
     for (const excluded of [
       "test/live/edge-admission-gates.user.test.ts",
       "test/live/live-sdk-heavy-session.test.ts",
@@ -85,6 +92,8 @@ describe("live user-test release gate", () => {
       expect(script).toContain(`"${excluded}"`);
       expect(vitestConfig).toContain(`"${excluded}"`);
     }
+    expect(admissionGateConfig).toContain('"test/live/edge-admission-gates.user.test.ts"');
+    expect(admissionGateConfig).not.toContain('"test/live/live-sdk-heavy-session.test.ts"');
     expect(script).toContain("shard-durations.json");
   });
 
