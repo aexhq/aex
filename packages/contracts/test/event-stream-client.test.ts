@@ -140,6 +140,35 @@ describe("streamCoordinatorEvents — live fanout", () => {
     ws!.message(evt(0, "RUN_FINISHED"));
     await consume;
   });
+
+  it("closes the WebSocket when the caller breaks the iterator early", async () => {
+    let ws: FakeWebSocket | undefined;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/runs/r/subscribe",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0,
+      eventQuietRecheckMs: 0
+    });
+    const received: number[] = [];
+    const consume = (async () => {
+      for await (const e of gen) {
+        received.push(e.sequence);
+        if (received.length === 2) break; // early exit mid-stream, no terminal
+      }
+    })();
+
+    await flush();
+    ws!.message(evt(0));
+    ws!.message(evt(1));
+    ws!.message(evt(2)); // buffered but never consumed — the break wins first
+    await consume;
+
+    expect(received).toEqual([0, 1]);
+    expect(ws!.closed).toBe(true);
+  });
 });
 
 describe("streamCoordinatorEvents — settle-consistent terminal predicate", () => {

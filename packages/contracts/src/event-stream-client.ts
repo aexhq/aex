@@ -269,6 +269,12 @@ export async function* streamCoordinatorEvents(
     } finally {
       stopTimers();
       opts.signal?.removeEventListener("abort", onAbort);
+      // A caller that `break`s the iterator triggers the generator's `return()`,
+      // which lands here with the socket still OPEN (the yield was suspended, no
+      // terminal/abort/transport-close ran). Close it so an early break never
+      // leaks a live WebSocket. Idempotent: the terminal/abort/reconnect paths
+      // have already closed it, and closeQuietly swallows a double close.
+      closeQuietly(ws);
     }
 
     if (done || opts.signal?.aborted) return;
