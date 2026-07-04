@@ -105,7 +105,20 @@ export async function listRuns(http: HttpClient, query?: RunListQuery): Promise<
   if (query?.since !== undefined) params.since = query.since;
   if (query?.limit !== undefined) params.limit = String(query.limit);
   if (query?.cursor !== undefined) params.cursor = query.cursor;
-  return http.request<RunListPage>("/api/runs", {}, params);
+  const page = await http.request<RunListPage>("/api/runs", {}, params);
+  // Defensive contract enforcement: some deployed planes leak non-run marker
+  // rows (settle-time ledger/spendmark items) into the run-list index. Those
+  // phantoms carry only { id, createdAt } and would surface as duplicate,
+  // status-less RunSummary entries. Drop anything missing the fields
+  // RunSummary declares required, so callers can trust the published type.
+  const runs = page.runs.filter(
+    (run) =>
+      typeof run.id === "string" &&
+      typeof run.status === "string" &&
+      typeof run.createdAt === "string" &&
+      typeof run.updatedAt === "string"
+  );
+  return runs.length === page.runs.length ? page : { ...page, runs };
 }
 
 export interface IdempotencyOptions {
