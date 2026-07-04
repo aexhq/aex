@@ -77,6 +77,7 @@ describe("live user-test release gate", () => {
     const script = read("apps/user-tests/scripts/shard-files.mjs");
     const vitestConfig = read("apps/user-tests/vitest.config.ts");
     for (const excluded of [
+      "test/live/edge-admission-gates.user.test.ts",
       "test/live/live-sdk-heavy-session.test.ts",
       "test/live/live-api-fuzz.test.ts",
       "test/live/live-sdk-tool-capability-fuzz.test.ts"

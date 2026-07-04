@@ -15,8 +15,10 @@ export default defineConfig({
     testTimeout: 180_000,
     hookTimeout: 180_000,
     include: ["test/**/*.test.ts"],
-    // Two suites are SEPARATE explicit gates kept out of the default
+    // Some suites are SEPARATE explicit gates kept out of the default
     // `test:user` sweep so they never run implicitly:
+    //   - the cap-saturating admission-gate suite (own isolated low-cap
+    //     workspace lane in platform aws-suite.yml);
     //   - the heavy full-feature long session (own `test:user:heavy` +
     //     vitest.heavy.config.ts), run only AFTER the rest pass;
     //   - the per-provider correctness round-trips under test/live/providers/
@@ -24,6 +26,7 @@ export default defineConfig({
     //     on demand so the extra-provider matrix never piles spend on push.
     exclude: [
       "**/node_modules/**",
+      "test/live/edge-admission-gates.user.test.ts",
       "test/live/live-sdk-heavy-session.test.ts",
       "test/live/live-api-fuzz.test.ts",
       "test/live/live-sdk-tool-capability-fuzz.test.ts",

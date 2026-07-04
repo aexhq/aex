@@ -95,7 +95,8 @@ export class HttpClient {
     this.#trace(init.method, url, response.status, startedMs);
     const body = await readJson(response);
     if (!response.ok) {
-      throw new AexApiError(response.status, extractErrorMessage(body), body);
+      const errorBody = withResponseRequestId(body, response.headers);
+      throw new AexApiError(response.status, extractErrorMessage(errorBody), errorBody);
     }
     return body as T;
   }
@@ -123,7 +124,8 @@ export class HttpClient {
     this.#trace(init.method, url, response.status, startedMs);
     if (!response.ok) {
       const body = await readJson(response);
-      throw new AexApiError(response.status, extractErrorMessage(body), body);
+      const errorBody = withResponseRequestId(body, response.headers);
+      throw new AexApiError(response.status, extractErrorMessage(errorBody), errorBody);
     }
     return { response };
   }
@@ -162,6 +164,22 @@ async function readJson(response: Response): Promise<unknown> {
   } catch {
     return { raw: text };
   }
+}
+
+function withResponseRequestId(body: unknown, headers: Headers): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const record = body as Record<string, unknown>;
+  if (typeof record.requestId === "string" && record.requestId.trim()) return body;
+  const requestId = responseRequestId(headers);
+  return requestId ? { ...record, requestId } : body;
+}
+
+function responseRequestId(headers: Headers): string | undefined {
+  for (const name of ["x-request-id", "request-id"]) {
+    const value = headers.get(name)?.trim();
+    if (value) return value;
+  }
+  return undefined;
 }
 
 function extractErrorMessage(body: unknown): string {

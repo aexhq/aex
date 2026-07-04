@@ -459,15 +459,32 @@ export function withRetry(
       // through to the transport's normal AexApiError.
       if (isRateLimitStatus(response.status)) {
         const body = await readBodyForError(response);
+        const errorBody = withResponseRequestId(body, response.headers);
         throw new AexRateLimitError({
           status: response.status,
           attempts: attempt,
           source: "api",
           ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-          body
+          body: errorBody
         });
       }
       return response;
     }
   };
+}
+
+function withResponseRequestId(body: unknown, headers: Headers): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+  const record = body as Record<string, unknown>;
+  if (typeof record.requestId === "string" && record.requestId.trim()) return body;
+  const requestId = responseRequestId(headers);
+  return requestId ? { ...record, requestId } : body;
+}
+
+function responseRequestId(headers: Headers): string | undefined {
+  for (const name of ["x-request-id", "request-id"]) {
+    const value = headers.get(name)?.trim();
+    if (value) return value;
+  }
+  return undefined;
 }

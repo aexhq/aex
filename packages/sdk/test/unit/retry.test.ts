@@ -233,16 +233,19 @@ describe("withRetry: transient handling", () => {
   });
 
   it("throws a structured AexRateLimitError once 429 retries are exhausted", async () => {
-    const { fetch, calls } = scriptedFetch([json({ error: "limit" }, 429, { "retry-after": "2" })]);
+    const { fetch, calls } = scriptedFetch([
+      json({ error: "limit" }, 429, { "retry-after": "2", "x-request-id": "req-header" })
+    ]);
     const { deps } = deterministicDeps(1);
     const wrapped = withRetry(fetch, { maxAttempts: 3, initialDelayMs: 1 }, deps);
-    await expect(wrapped("https://x", { method: "POST" })).rejects.toMatchObject({
-      name: "AexRateLimitError",
-      status: 429,
-      attempts: 3,
-      retryAfterMs: 2000,
-      source: "api"
-    });
+    const err = await wrapped("https://x", { method: "POST" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AexRateLimitError);
+    expect((err as AexRateLimitError).name).toBe("AexRateLimitError");
+    expect((err as AexRateLimitError).status).toBe(429);
+    expect((err as AexRateLimitError).attempts).toBe(3);
+    expect((err as AexRateLimitError).retryAfterMs).toBe(2000);
+    expect((err as AexRateLimitError).source).toBe("api");
+    expect((err as AexRateLimitError).body).toMatchObject({ requestId: "req-header" });
     expect(calls).toHaveLength(3);
   });
 

@@ -9,15 +9,15 @@ import { describe, expect, it } from "vitest";
 import { HttpClient } from "../src/http.js";
 import { AexApiError } from "../src/sdk-errors.js";
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
-function clientReturning(body: unknown, status: number): HttpClient {
+function clientReturning(body: unknown, status: number, headers: Record<string, string> = {}): HttpClient {
   return new HttpClient({
     baseUrl: "https://api.example.test",
     apiToken: "t",
-    fetch: async () => jsonResponse(body, status)
+    fetch: async () => jsonResponse(body, status, headers)
   });
 }
 
@@ -58,6 +58,27 @@ describe("AexApiError message extraction", () => {
     await expect(client.request("/api/sessions", { method: "POST" })).rejects.toThrow(
       "asset_snapshot_source_missing: referenced asset asset_xyz is not in the workspace store; upload and finalize it before referencing it"
     );
+  });
+
+  it("adds response request ids to the redacted error body without overriding body requestId", async () => {
+    const withXRequestId = clientReturning({ error: "rate_limited" }, 429, {
+      "x-request-id": "req-header"
+    });
+    const headerErr = await withXRequestId.request("/api/sessions", { method: "POST" }).catch((e: unknown) => e);
+    expect((headerErr as AexApiError).body).toMatchObject({ requestId: "req-header" });
+
+    const withRequestId = clientReturning({ error: "rate_limited" }, 429, {
+      "request-id": "req-alt-header"
+    });
+    const altHeaderErr = await withRequestId.request("/api/sessions", { method: "POST" }).catch((e: unknown) => e);
+    expect((altHeaderErr as AexApiError).body).toMatchObject({ requestId: "req-alt-header" });
+
+    const bodyOnly = clientReturning({ error: "rate_limited", requestId: "req-body" }, 429, {
+      "x-request-id": "req-header"
+    });
+    const bodyErr = await bodyOnly.request("/api/sessions", { method: "POST" }).catch((e: unknown) => e);
+    expect(bodyErr).toBeInstanceOf(AexApiError);
+    expect((bodyErr as AexApiError).body).toMatchObject({ requestId: "req-body" });
   });
 
   it("does not duplicate the code when message repeats it", async () => {
