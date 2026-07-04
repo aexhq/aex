@@ -101,6 +101,24 @@ describe("secret redaction (property)", () => {
     );
   });
 
+  it("keeps canonical run_<hex32> ids intact (traceability exemption)", () => {
+    const hexChars = "0123456789abcdef".split("");
+    const runIdHex = fc.array(fc.constantFrom(...hexChars), { minLength: 32, maxLength: 32 }).map((a) => a.join(""));
+    fc.assert(
+      fc.property(runIdHex, (hex) => {
+        const runId = `run_${hex}`;
+        const msg = `timed out waiting for run ${runId} to park; cancel via openSession("${runId}")`;
+        expect(redactString(msg)).toBe(msg);
+        expect(containsSecretLikeValue(msg)).toBe(false);
+        // the exemption is POSITION-BOUND: the same hex WITHOUT the run_ prefix
+        // is still eligible for the entropy gate (no blanket hex-32 exemption)
+        const bare = redactString(hex);
+        expect(bare === hex || bare === REDACTED).toBe(true);
+      }),
+      { numRuns: 200 }
+    );
+  });
+
   it("is idempotent and total: redactString never throws and re-redaction is stable", () => {
     fc.assert(
       fc.property(fc.string({ maxLength: 200 }), (s) => {

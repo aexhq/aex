@@ -65,6 +65,20 @@ const MIN_CHAR_CLASSES = 2;
  */
 const HIGH_ENTROPY_NO_DIGIT_MIN_LEN = 40;
 
+/**
+ * Canonical aex run-id hex: exactly 32 lowercase hex chars directly preceded
+ * by `run_`. The HIGH_ENTROPY_CANDIDATE class excludes `_`, so the candidate
+ * run for a run id is the bare hex — dense enough to trip the entropy gate.
+ * Masking it destroys the ONE identifier every error message needs for
+ * traceability (`cancel via openSession("run_[REDACTED]")` is useless
+ * guidance). A run id is not a credential: it grants nothing without the
+ * bearer token. Mirrors the platform-side redactor's canonical-id exemption.
+ */
+function isCanonicalRunIdHex(input: string, matchStart: number, match: string): boolean {
+  if (!/^[0-9a-f]{32}$/.test(match)) return false;
+  return input.slice(Math.max(0, matchStart - 4), matchStart) === "run_";
+}
+
 export class SecretString {
   readonly #value: string;
 
@@ -133,8 +147,8 @@ export function redactString(input: string, known: Iterable<string> = []): strin
       ),
     out
   );
-  return out.replace(HIGH_ENTROPY_CANDIDATE, (match) =>
-    looksHighEntropySecret(match) ? REDACTED : match
+  return out.replace(HIGH_ENTROPY_CANDIDATE, (match, offset: number, whole: string) =>
+    !isCanonicalRunIdHex(whole, offset, match) && looksHighEntropySecret(match) ? REDACTED : match
   );
 }
 
@@ -150,6 +164,9 @@ export function containsSecretLikeValue(input: string): boolean {
   HIGH_ENTROPY_CANDIDATE.lastIndex = 0;
   let candidate: RegExpExecArray | null;
   while ((candidate = HIGH_ENTROPY_CANDIDATE.exec(input)) !== null) {
+    if (isCanonicalRunIdHex(input, candidate.index, candidate[0])) {
+      continue;
+    }
     if (looksHighEntropySecret(candidate[0])) {
       return true;
     }
