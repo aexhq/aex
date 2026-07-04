@@ -46,6 +46,7 @@ interface TokenReject {
 
 interface EdgeResult {
   readonly malformedToken: TokenReject;
+  readonly missingBearer: TokenReject;
   readonly wellFormedUnauthToken: TokenReject;
   readonly validWhoami: { ok: boolean; isObject: boolean; keyCount: number };
   readonly missingSession: { open: EdgeErr; get: EdgeErr; outputs: EdgeErr };
@@ -140,9 +141,41 @@ let malformedToken;
 try { await garbage.whoami(); malformedToken = { rejected: false, isApiError: false, status: null, name: null, bodyError: null, hasMessage: false, leaked: false }; }
 catch (err) { malformedToken = tokenReject(err, JUNK); }
 
-// (1b) A WELL-FORMED aex_* token (valid shape+crc) but not a real credential →
-//      whoami rejects with HTTP 401 {"error":"unauthorized"} (the true
-//      invalid-credential path, distinct from the malformed-structure path).
+// (1b) No bearer at all → the plain missing-credentials fallback.
+let missingBearer;
+try {
+  const res = await fetch(apiUrl.replace(/\/$/, "") + "/whoami");
+  let bodyError = null;
+  let hasMessage = false;
+  try {
+    const body = await res.json();
+    bodyError = body && typeof body.error === "string" ? body.error : null;
+    hasMessage = body && typeof body.message === "string" && body.message.length > 0;
+  } catch {}
+  missingBearer = {
+    rejected: !res.ok,
+    isApiError: false,
+    status: res.status,
+    name: null,
+    bodyError,
+    hasMessage,
+    leaked: false
+  };
+} catch (err) {
+  missingBearer = {
+    rejected: true,
+    isApiError: false,
+    status: null,
+    name: err && err.name != null ? String(err.name) : null,
+    bodyError: null,
+    hasMessage: err && err.message != null,
+    leaked: false
+  };
+}
+
+// (1c) A WELL-FORMED aex_* token (valid shape+crc) but not a real credential →
+//      whoami rejects with HTTP 401 {"error":"token_invalid"} (the true
+//      invalid-credential path, distinct from the no-bearer and malformed paths).
 const wellFormed = new Aex({ apiToken: craftWellFormedToken(), baseUrl: apiUrl });
 let wellFormedUnauthToken;
 try { await wellFormed.whoami(); wellFormedUnauthToken = { rejected: false, isApiError: false, status: null, name: null, bodyError: null, hasMessage: false, leaked: false }; }
@@ -214,7 +247,7 @@ try {
 }
 
 process.stdout.write(JSON.stringify({
-  malformedToken, wellFormedUnauthToken, validWhoami, missingSession, validation, missingApiKeyCtor, unreachable
+  malformedToken, missingBearer, wellFormedUnauthToken, validWhoami, missingSession, validation, missingApiKeyCtor, unreachable
 }));
 process.exit(0);
 `;
@@ -255,11 +288,16 @@ process.exit(0);
       expect(result.malformedToken.hasMessage).toBe(true);
       expect(result.malformedToken.leaked).toBe(false);
 
-      // (1b) Well-formed but unauthenticated token → the true 401 path.
+      // (1b) No bearer at all → the plain 401 missing-credentials fallback.
+      expect(result.missingBearer.rejected).toBe(true);
+      expect(result.missingBearer.status).toBe(401);
+      expect(result.missingBearer.bodyError).toBe("unauthorized");
+
+      // (1c) Well-formed but unauthenticated token → the classified 401 path.
       expect(result.wellFormedUnauthToken.rejected).toBe(true);
       expect(result.wellFormedUnauthToken.isApiError).toBe(true);
       expect(result.wellFormedUnauthToken.status).toBe(401);
-      expect(result.wellFormedUnauthToken.bodyError).toBe("unauthorized");
+      expect(result.wellFormedUnauthToken.bodyError).toBe("token_invalid");
       expect(result.wellFormedUnauthToken.leaked).toBe(false);
 
       // (2) Valid token resolves an identity object.

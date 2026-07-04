@@ -13,10 +13,14 @@ throttling as `AexRateLimitError`.
 
 | Code | Meaning |
 | --- | --- |
-| `unauthorized` | Missing, invalid, or revoked bearer token. |
+| `unauthorized` | Missing or empty bearer token. |
+| `token_invalid` | Bearer token is structurally valid but does not match a live credential, has a bad signature, or belongs to an inactive workspace. |
+| `token_revoked` | Bearer token matched a revoked credential. |
+| `token_expired` | Short-lived internal writer token is past its expiry. |
 
-Check the token value and that it has not been deleted. `aex whoami` is the
-cheapest way to validate a credential. See [Authentication](authentication.md).
+Check the token value and that it has not been deleted or revoked. `aex whoami`
+is the cheapest way to validate a credential. See
+[Authentication](authentication.md).
 
 ## 403 — authorization
 
