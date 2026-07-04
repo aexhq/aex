@@ -1,25 +1,15 @@
 /**
  * Live edge-case sweep: built-in web tools (`web_search`, `web_fetch`).
  *
- * DEFECT PROBE — two defects observed on the dev plane (2026-07-04):
+ * REGRESSION PROBES — two defects fixed after the dev sweep (2026-07-04):
  *
- *   1. `web_search` is dead on every plane: the platform-side SERPER key is
- *      intentionally empty (infra/terraform/modules/region/ecs.tf — populating
- *      it in the brain env would be a Class-B secret leak via /proc environ;
- *      the fix path is server-side injection at the byok-inject egress proxy).
- *      Yet the docs advertise `web_search` as a default builtin. The agent sees
- *      an opaque tool error "web_search → Serper HTTP 403". This probe asserts
- *      the tool RESULT succeeds — red until platform web_search is enabled.
+ *   1. `web_search` must work without placing the platform Serper key in the
+ *      brain task env. The key is injected at the managed byok-inject egress
+ *      boundary, and this probe asserts the tool RESULT succeeds.
  *
- *   2. `web_fetch` to an SSRF-blocked target (link-local metadata IP) is
- *      correctly denied and the run survives (tool-level error, not a run
- *      crash) — but the denial surfaces as a bare "HTTP 407" (Smokescreen
- *      CONNECT deny has no typed body; container-runtime aws-entry.ts
- *      installWebEgressInterceptor dispatches through the proxy with no denial
- *      classification), not the "blocked by egress policy" wording the tool's
- *      own typed-denial path (agent-tool-web-fetch parseEgressDenial) was
- *      built to produce. The run-survival half is a REGRESSION GUARD (green);
- *      the message-quality half is the defect (red).
+ *   2. `web_fetch` to an SSRF-blocked target (link-local metadata IP) must be a
+ *      tool-level denial, not a run crash, and the denial must name the egress
+ *      policy instead of surfacing a bare proxy status.
  *
  * Cost: two tiny billable turns.
  *
@@ -126,10 +116,10 @@ afterAll(() => {
 
 describe("edge: built-in web tools work and fail honestly", () => {
   it(
-    "web_search returns a successful tool result (DEFECT: platform SERPER backend disabled — Serper HTTP 403)",
+    "web_search returns a successful tool result",
     async () => {
       const body = `
-        const out = { status: null, text: null, searchResult: null, error: null };
+        const out = { runId: null, status: null, text: null, searchResult: null, error: null };
         let runId = null;
         try {
           const r = await client.run({
@@ -138,6 +128,7 @@ describe("edge: built-in web tools work and fail honestly", () => {
             message: "Use the web_search tool to search for: Eiffel Tower height meters. If the tool errors, reply 'SEARCH-ERR: ' plus the error text; otherwise reply 'SEARCH-OK'.",
           }, { timeoutMs: 240000 });
           runId = r.runId;
+          out.runId = runId;
           out.status = r.status;
           out.text = (r.text ?? "").slice(0, 200);
           const results = r.events.filter((e) => e.type === "TOOL_CALL_RESULT");
@@ -150,12 +141,11 @@ describe("edge: built-in web tools work and fail honestly", () => {
         console.log(JSON.stringify(out));
       `;
       const out = await runChild(install, "web-search-probe.mjs", body);
-      expect(out.error).toBeNull();
+      const dump = JSON.stringify(out).slice(0, 1200);
+      expect(out.error, `web_search run threw before returning diagnostics: ${dump}`).toBeNull();
       const searchResult = out.searchResult as { isError: boolean; text: string } | null;
-      expect(searchResult).not.toBeNull();
-      // DEFECT (red on dev): the platform search backend is disabled, so the
-      // tool result is an error ("web_search → Serper HTTP 403").
-      expect(searchResult!.isError).toBe(false);
+      expect(searchResult, `web_search did not emit a tool result: ${dump}`).not.toBeNull();
+      expect(searchResult!.isError, `web_search returned a tool error: ${dump}`).toBe(false);
     },
     8 * 60_000
   );
@@ -164,7 +154,7 @@ describe("edge: built-in web tools work and fail honestly", () => {
     "web_fetch to an SSRF-blocked host is a tool-level denial that names the egress policy (run must survive)",
     async () => {
       const body = `
-        const out = { status: null, text: null, fetchResult: null, error: null };
+        const out = { runId: null, status: null, text: null, fetchResult: null, error: null };
         let runId = null;
         try {
           const r = await client.run({
@@ -173,6 +163,7 @@ describe("edge: built-in web tools work and fail honestly", () => {
             message: "Use the web_fetch tool to fetch http://169.254.169.254/latest/meta-data/ exactly once. Reply 'FETCH-ERR: ' plus the tool's error text, or 'FETCH-OK' if it worked. Do not retry.",
           }, { timeoutMs: 240000 });
           runId = r.runId;
+          out.runId = runId;
           out.status = r.status;
           out.text = (r.text ?? "").slice(0, 200);
           const results = r.events.filter((e) => e.type === "TOOL_CALL_RESULT");
@@ -185,17 +176,15 @@ describe("edge: built-in web tools work and fail honestly", () => {
         console.log(JSON.stringify(out));
       `;
       const out = await runChild(install, "web-fetch-ssrf-probe.mjs", body);
-      // REGRESSION GUARD (green today): the run survives — SSRF denial is a
-      // tool-level error, never a run-level crash.
-      expect(out.error).toBeNull();
-      expect(out.status).toBe("idle");
+      const dump = JSON.stringify(out).slice(0, 1200);
+      expect(out.error, `web_fetch run threw before returning diagnostics: ${dump}`).toBeNull();
+      expect(out.status, `web_fetch run did not survive as an idle session: ${dump}`).toBe("idle");
       const fetchResult = out.fetchResult as { isError: boolean; text: string } | null;
-      expect(fetchResult).not.toBeNull();
-      expect(fetchResult!.isError).toBe(true);
-      // DEFECT (red on dev): the denial reads "web_fetch http://169.254.169.254/…
-      // → HTTP 407" — a bare proxy status instead of the typed "blocked by
-      // egress policy" wording the tool was built to surface.
-      expect(fetchResult!.text).toMatch(/blocked by egress policy/i);
+      expect(fetchResult, `web_fetch did not emit a tool result: ${dump}`).not.toBeNull();
+      expect(fetchResult!.isError, `web_fetch unexpectedly succeeded for a private target: ${dump}`).toBe(true);
+      expect(fetchResult!.text, `web_fetch denial text was not policy-classified: ${dump}`).toMatch(
+        /blocked by egress policy/i
+      );
     },
     8 * 60_000
   );

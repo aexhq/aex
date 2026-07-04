@@ -11,24 +11,15 @@
  * no queued child run should remain. If a child run id is ever returned, it must
  * reach a terminal status within the poll window.
  *
- * ── Finding 2 (PLATFORM): non-allowlisted inline MCP host → boot_failed ──────
- * `McpServer.remote({url})` advertises arbitrary remote MCP servers, but the
- * per-run egress allowlist (R12, the `aex-{plane}-{region}-egress-allowlist`
- * DDB table) is provisioned + read-wired yet NEVER WRITTEN by the submit Lambda
- * (infra/lambdas/src/api.ts). So the ONLY reachable MCP hosts are the static
- * union baked into the egress ACL (mcp.deepwiki.com, example.com, provider
- * hosts). Any other host — INCLUDING the documented public baseline
- * `mcp.context7.com` — is refused by the egress default-deny (HTTP 407), and
- * because MCP discovery runs at brain boot ("a server that fails discovery
- * throws an honest terminal"), the WHOLE run crashes `boot_failed` before any
- * agent work — one unreachable MCP server kills the entire run.
- * EXPECTED AFTER FIX: a declared MCP host is written to the per-run allowlist so
- * the dial is permitted (or, at minimum, an unreachable MCP server degrades to a
- * tool-level error rather than a boot crash of the whole run).
+ * -- Finding 2 (FIXED): documented inline MCP host must not hit egress deny ----
+ * `McpServer.remote({url})` advertises remote MCP servers. The documented
+ * Context7 endpoint (`https://mcp.context7.com/mcp`) used to be absent from the
+ * managed egress ceiling, so discovery failed at the boundary with HTTP 407 and
+ * the whole run crashed `boot_failed` before any agent work. The regression now
+ * asserts that Context7 discovery reaches the server and the run survives.
  *
- * Cost: two tiny deepseek runs (Finding 1 parent + Finding 2 boot-fail run,
- * which invokes no LLM). The Finding-1 parent is cancelled after the probe to
- * release its container promptly.
+ * Cost: two tiny deepseek runs. The Finding-1 parent is cancelled after the
+ * probe to release its container promptly.
  *
  * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
@@ -107,7 +98,7 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("live DEV — subagent + MCP failure modes (DEFECT PROBES)", () => {
+describe("live DEV — subagent + MCP failure modes", () => {
   it(
     "Finding 1 fixed: a subagent with an invalid model is rejected instead of creating a zombie child",
     async () => {
@@ -205,43 +196,77 @@ describe("live DEV — subagent + MCP failure modes (DEFECT PROBES)", () => {
   );
 
   it(
-    "DEFECT PROBE (Finding 2): a non-allowlisted inline MCP host boot-fails the whole run",
+    "Finding 2 fixed: a documented public inline MCP host is reachable through managed egress",
     async () => {
       const out = await runChild(
         install,
         "probe-mcp-nonallowlisted-host.mjs",
         `
-        // mcp.context7.com is the DOCUMENTED public MCP baseline, but it is NOT in
-        // the static egress union and the per-run allowlist is never written, so the
-        // egress boundary refuses it (407) and the brain boot throws terminal.
-        const r = await client.run(
-          { provider: PROVIDER, model: MODEL, message: "List your MCP tools and stop.", includeBuiltinTools: false,
+        // mcp.context7.com is a documented public MCP baseline. Discovery must not
+        // fail at the managed egress ceiling with a proxy/allowlist denial.
+        const out = {
+          runId: null,
+          createThrown: null,
+          sendThrown: null,
+          sendResult: null,
+          record: null,
+          recentEvents: []
+        };
+        let session = null;
+        try {
+          session = await client.sessions.create(
+            { provider: PROVIDER, model: MODEL, includeBuiltinTools: false,
             mcpServers: [McpServer.remote({ name: "probe", url: "https://mcp.context7.com/mcp" })],
-            apiKeys: { [PROVIDER]: PROVIDER_KEY }, overrides: { maxSpendUsd: 0.05, idleTtl: "3m" } },
-          { timeoutMs: 6 * 60_000 }
-        ).catch((e) => ({ __thrown: errShape(e), runId: null }));
+            apiKeys: { [PROVIDER]: PROVIDER_KEY }, overrides: { maxSpendUsd: 0.05, idleTtl: "3m" } }
+          );
+          out.runId = session.id;
+          try {
+            const r = await session.send("List your MCP tools and stop.", { idleTimeoutMs: 6 * 60_000 }).done();
+            out.sendResult = { status: r.status, text: String(r.text || "").slice(0, 300) };
+          } catch (e) {
+            out.sendThrown = errShape(e);
+          }
 
-        let record = null;
-        const runId = r && r.runId ? r.runId : null;
-        if (runId) {
-          const c = await client.sessions.get(runId).catch(() => null);
-          if (c) record = { status: c.status, failureClass: c.failureClass, errorMessage: (c.errorMessage || "").slice(0, 300) };
+          const terminal = new Set(["failed", "error", "cancelled", "succeeded", "timed_out", "idle", "suspended"]);
+          const deadline = Date.now() + 2 * 60_000;
+          while (Date.now() < deadline) {
+            const c = await client.sessions.get(session.id).catch(() => null);
+            if (c) {
+              out.record = { status: c.status, failureClass: c.failureClass, errorMessage: (c.errorMessage || "").slice(0, 300) };
+              if (terminal.has(c.status)) break;
+            }
+            await sleep(5000);
+          }
+          const h = await client.sessions.open(session.id).catch(() => null);
+          if (h) {
+            const evs = await h.events().list().catch(() => []);
+            out.recentEvents = evs.slice(-5).map((e) => ({
+              type: e.type,
+              data: e.data ? JSON.stringify(e.data).slice(0, 240) : null
+            }));
+          }
+        } catch (e) {
+          out.createThrown = errShape(e);
+        } finally {
+          if (session && session.id) {
+            await client.sessions.delete(session.id).catch(() => {});
+          }
         }
-        console.log(JSON.stringify({ runId, ok: !!(r && r.ok), status: r && r.status, thrown: r && r.__thrown ? r.__thrown.name : null, record }));
+        console.log(JSON.stringify(out));
         `
       );
 
       const dump = JSON.stringify(out).slice(0, 1200);
+      expect(out.createThrown, `MCP session create failed before a run id was captured: ${dump}`).toBeNull();
+      expect(out.runId, `MCP session id was not captured: ${dump}`).toBeTruthy();
       const record = out.record as { status?: string; failureClass?: string; errorMessage?: string } | null;
-      // The run must not succeed on an unreachable MCP host.
-      expect(out.ok, `MCP run unexpectedly succeeded — Finding 2 may be FIXED: ${dump}`).not.toBe(true);
-      // DEFECT: the failure is a whole-run boot crash (not a tool-level degrade),
-      // and the message names the egress default-deny. When the per-run allowlist
-      // is written (or MCP failure degrades gracefully), this flips.
-      expect(
-        record?.failureClass === "boot_failed" || /egress|denied|not allowed|407/i.test(record?.errorMessage ?? ""),
-        `expected a boot_failed egress-denied terminal for a non-allowlisted MCP host: ${dump}`
-      ).toBe(true);
+      expect(record?.failureClass, `MCP discovery still failed at boot: ${dump}`).not.toBe("boot_failed");
+      expect(record?.errorMessage ?? "", `MCP discovery still hit egress policy: ${dump}`).not.toMatch(
+        /egress|denied|not allowed|407/i
+      );
+      expect((out.sendResult as { status?: string } | null)?.status, `MCP run did not settle cleanly: ${dump}`).toBe(
+        "idle"
+      );
     },
     10 * 60_000
   );

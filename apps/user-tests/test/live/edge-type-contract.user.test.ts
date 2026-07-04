@@ -2,7 +2,7 @@
  * Live edge-case sweep: public type-contract gaps found by the iter-8
  * SDK-shape audit (2026-07-04).
  *
- * DEFECT PROBES — red on the dev plane until the platform closes them:
+ * REGRESSION PROBES — fixed by the platform after the 2026-07-04 dev sweep:
  *
  *   1. Token usage is unavailable on EVERY public surface. `RunResult.usage`
  *      / `Run.usage` / `Session.usage` document aggregate token counts "when
@@ -154,15 +154,13 @@ describe("edge: public type-contract gaps", () => {
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "type-contract-usage.mjs", body, 6 * 60_000);
-      // DEFECT (dev): all three are null/0 — token counts are documented on
-      // RunResult.usage / Run.usage / costTelemetry.providerUsage but no
-      // public surface ever carries them.
       const anyUsage =
         result.resultUsage !== null ||
         result.sessionUsage !== null ||
         result.providerUsage !== null ||
         (result.usageEvents as number) > 0;
-      expect(anyUsage).toBe(true);
+      const dump = JSON.stringify(result).slice(0, 1200);
+      expect(anyUsage, `no public usage surface was populated; diagnostics: ${dump}`).toBe(true);
     },
     8 * 60_000
   );
@@ -187,9 +185,8 @@ describe("edge: public type-contract gaps", () => {
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "type-contract-prompt-cap.mjs", body);
-      // DEFECT (dev): 201 — no server-side prompt-size cap; a 2 MiB (and a
-      // live-verified 5 MiB) prompt is admitted at create.
-      expect([400, 413]).toContain(result.status);
+      const dump = JSON.stringify(result).slice(0, 1200);
+      expect([400, 413], `oversized prompt was not rejected; diagnostics: ${dump}`).toContain(result.status);
     },
     5 * 60_000
   );

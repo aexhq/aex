@@ -1,9 +1,9 @@
 /**
  * Live edge-case sweep: openrouter managed runs must fail honestly (or work).
  *
- * DEFECT PROBE — observed on the dev plane (2026-07-04): EVERY managed
- * openrouter run crashes BEFORE the first LLM call and burns the whole
- * recovery budget:
+ * REGRESSION PROBE — fixed after the 2026-07-04 dev sweep. Managed OpenRouter
+ * runs used to crash BEFORE the first LLM call and burn the whole recovery
+ * budget:
  *
  *   - The api Lambda freezes the CANONICAL model id into the boot
  *     sessionConfig (`model: sub.model`, infra/lambdas/src/api.ts:3144)
@@ -123,7 +123,7 @@ describe("edge: openrouter managed run fails honestly", () => {
     "an openrouter run with a bad key surfaces a provider auth failure, not a recovery crash-loop",
     async () => {
       const body = `
-        const out = { status: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null };
+        const out = { sessionId: null, status: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null };
         let sid = null;
         const t0 = Date.now();
         try {
@@ -133,6 +133,7 @@ describe("edge: openrouter managed run fails honestly", () => {
             apiKeys: { openrouter: "sk-or-v1-" + "0".repeat(64) },
           });
           sid = session.id;
+          out.sessionId = sid;
           try {
             await session.send("Reply with exactly OK.").done();
           } catch {}
@@ -158,14 +159,13 @@ describe("edge: openrouter managed run fails honestly", () => {
         console.log(JSON.stringify(out));
       `;
       const out = await runChild(install, "openrouter-badkey-probe.mjs", body, 12 * 60_000);
-      expect(out.error).toBeNull();
-      expect(out.status).toBe("error");
-      // DEFECT (red on dev): failureClass is "recoveries_exhausted" and the
-      // message is the generic "run worker exited before producing a terminal
-      // result (exitCode=1)" — the deterministic pre-LLM registry crash is
-      // retried 6x and the honest provider/auth story never surfaces.
-      expect(out.failureClass).toBe("provider-permanent");
-      expect(String(out.errorMessage)).toMatch(/401|auth/i);
+      const dump = JSON.stringify(out).slice(0, 1200);
+      expect(out.error, `OpenRouter probe threw before terminal diagnostics: ${dump}`).toBeNull();
+      expect(out.status, `OpenRouter bad-key probe did not terminalize as error: ${dump}`).toBe("error");
+      expect(out.failureClass, `OpenRouter bad-key probe did not expose provider auth failure: ${dump}`).toBe(
+        "provider-permanent"
+      );
+      expect(String(out.errorMessage), `OpenRouter bad-key error did not name auth/401: ${dump}`).toMatch(/401|auth/i);
     },
     14 * 60_000
   );
