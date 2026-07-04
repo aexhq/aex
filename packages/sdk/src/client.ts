@@ -153,7 +153,9 @@ export interface RunResult {
   /** Aggregate token usage when the deployment exposes it on the record. */
   readonly usage?: UsageSummary;
   /**
-   * Settle-time showback estimate (USD), from `run.costTelemetry`. The settle
+   * Settle-time showback estimate (USD), from the settle-stamped session
+   * record's `costUsd` (the full `costTelemetry` block is served on
+   * `GET /api/runs/:id`, not on the session projection). The settle
    * write lands tens of seconds AFTER the turn parks, so by default this is
    * usually absent on a fresh run — pass `settleConsistent: true` to wait for
    * it, or read `sessions.get(runId).costUsd` later.
@@ -1095,6 +1097,11 @@ function toolCallsFromEvents(events: readonly RunEvent[]): RunTrace["toolCalls"]
   return order.map((id) => byId.get(id)!);
 }
 
+/** True when a usage summary actually carries at least one token count. */
+function hasUsageCounts(usage: UsageSummary | undefined): usage is UsageSummary {
+  return !!usage && Object.values(usage).some((n) => typeof n === "number");
+}
+
 function usageFromEvents(events: readonly RunEvent[]): UsageSummary {
   const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
   let seen = false;
@@ -1526,7 +1533,12 @@ export class Aex {
       // Surface the trace-derived usage at the top level when the run record does
       // not carry its own usage (the managed plane doesn't populate session.usage);
       // the per-event trace still yields token counts (pre-launch edge-sweep F5).
-      const usage = sessionRecord.usage ?? trace.usage;
+      // When NEITHER source carries token counts (trace usage is `{}` — the
+      // managed plane emits no `aex.usage` events today), leave `usage` absent so
+      // `result.usage` honors its "when the deployment exposes it" contract
+      // instead of surfacing a truthy-but-empty object.
+      const recordUsage = hasUsageCounts(sessionRecord.usage) ? sessionRecord.usage : undefined;
+      const usage = recordUsage ?? (hasUsageCounts(trace.usage) ? trace.usage : undefined);
       const costUsd = typeof sessionRecord.costUsd === "number" ? sessionRecord.costUsd : undefined;
       const errorMessage = typeof sessionRecord.errorMessage === "string" && sessionRecord.errorMessage ? sessionRecord.errorMessage : undefined;
       const result: RunResult = {

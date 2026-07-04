@@ -138,6 +138,21 @@ describe("Aex.run -> one-shot session RunResult", () => {
     expect(urls.some((url) => url.includes("/api/runs"))).toBe(false);
   });
 
+  it("omits usage when neither the record nor the events carry token counts", async () => {
+    // The managed plane emits no `aex.usage` events and no record usage today —
+    // the trace-derived summary is `{}`. RunResult.usage documents "when the
+    // deployment exposes it", so an empty object must NOT be promoted (a truthy
+    // `result.usage` with no counts misleads `if (result.usage)` callers).
+    const { result } = await collectRun({ id: "run-1", status: "idle", costUsd: 0.0004 });
+    expect(result.usage).toBeUndefined();
+    expect(result.trace.usage).toEqual({});
+  });
+
+  it("does not promote an empty record usage object either", async () => {
+    const { result } = await collectRun({ id: "run-1", status: "idle", usage: {} });
+    expect(result.usage).toBeUndefined();
+  });
+
   it("returns ok:false with error for an error session by default", async () => {
     const { result } = await collectRun({ id: "run-1", status: "error", errorMessage: "boom" });
     expect(result.ok).toBe(false);
