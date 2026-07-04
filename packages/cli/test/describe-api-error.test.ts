@@ -69,6 +69,29 @@ describe("describeApiError API error bodies", () => {
     expect(d.remedy).toBe("no such run/resource — verify the id");
   });
 
+  it("appends ONLY the non-standard body keys — never re-serializes error/message", () => {
+    // Every current-plane envelope carries requestId; the append must surface it
+    // without duplicating the code+message already extracted into `message`.
+    const body = { error: "malformed_token", message: "the bearer token is malformed", requestId: "req-123" };
+    const err = new AexApiError(400, "malformed_token: the bearer token is malformed", body);
+    const d = describeApiError(err);
+    expect(d.message).toBe('malformed_token: the bearer token is malformed — {"requestId":"req-123"}');
+  });
+
+  it("surfaces requiredScope-style extras without the standard envelope noise", () => {
+    const body = {
+      error: "insufficient_scope",
+      message: "the token does not carry the scope this route requires",
+      requiredScope: "billing:read",
+      requestId: "req-9"
+    };
+    const err = new AexApiError(403, "insufficient_scope: the token does not carry the scope this route requires", body);
+    const d = describeApiError(err);
+    expect(d.message).toContain('"requiredScope":"billing:read"');
+    expect(d.message).toContain('"requestId":"req-9"');
+    expect(d.message.indexOf("the token does not carry")).toBe(d.message.lastIndexOf("the token does not carry"));
+  });
+
   it("truncates giant bodies and keeps secrets redacted", () => {
     const body = { detail: "x".repeat(2000), apiKey: `sk-ant-${"a".repeat(24)}` };
     const err = new AexApiError(500, "server exploded", body);

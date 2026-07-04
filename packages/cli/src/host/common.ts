@@ -239,22 +239,27 @@ export function describeApiError(err: unknown): {
 /**
  * Standard aex error-envelope keys. A body carrying ONLY these adds nothing
  * beyond the message `describeApiError` already extracted, so it is omitted.
+ * The extra-detail append renders only the NON-standard keys (`requestId`,
+ * `requiredScope`, …), so the message never repeats the `error`/`message`
+ * the caller already sees.
  */
 const STANDARD_ERROR_BODY_KEYS = new Set(["ok", "error", "message", "code"]);
 
 /**
  * Render an `AexApiError.body` for the CLI envelope when it carries fields
- * beyond the standard `{ ok, error, code, message }` shape. Truncated and
- * redaction-scanned (the body is already redacted at construction; this is a
- * cheap second pass).
+ * beyond the standard `{ ok, error, code, message }` shape — and
+ * render ONLY those extra fields (e.g. `requiredScope`, `status`), never the
+ * standard ones the message already carries. Truncated and redaction-scanned
+ * (the body is already redacted at construction; this is a cheap second pass).
  */
 function describeErrorBody(body: unknown): string | undefined {
   if (!body || typeof body !== "object") return undefined;
-  const keys = Object.keys(body as Record<string, unknown>);
-  if (keys.length === 0 || keys.every((key) => STANDARD_ERROR_BODY_KEYS.has(key))) return undefined;
+  const record = body as Record<string, unknown>;
+  const extraKeys = Object.keys(record).filter((key) => !STANDARD_ERROR_BODY_KEYS.has(key));
+  if (extraKeys.length === 0) return undefined;
   let text: string;
   try {
-    text = JSON.stringify(body);
+    text = JSON.stringify(Object.fromEntries(extraKeys.map((key) => [key, record[key]])));
   } catch {
     return undefined;
   }
