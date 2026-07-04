@@ -330,6 +330,10 @@ function assertFailedClosed(s: SubmissionCase): void {
   expect(rejected, `bad MCP ref was neither rejected nor errored: ${dump}`).toBe(true);
 }
 
+function rejectionText(s: SubmissionCase): string {
+  return `${s.reason ?? ""} ${s.threw ?? ""}`.toLowerCase();
+}
+
 describe("edge: McpServer primitive + MCP declaration + egress allowlist (security)", () => {
   beforeAll(async () => {
     install = await installAex();
@@ -383,25 +387,25 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
     const s = sub("ssrf-imds");
     assertFailedClosed(s);
     // The deny reason must reference the metadata / link-local range.
-    expect(`${s.reason}`.toLowerCase(), JSON.stringify(s)).toMatch(/169\.254|metadata|link-local/);
+    expect(rejectionText(s), JSON.stringify(s)).toMatch(/169\.254|metadata|link-local/);
   });
 
   it("SECURITY: an MCP url at a private RFC1918 address fails closed and is never dialed", () => {
     const s = sub("ssrf-rfc1918");
     assertFailedClosed(s);
-    expect(`${s.reason}`.toLowerCase(), JSON.stringify(s)).toMatch(/rfc1918|10\.0\.0\.0|private/);
+    expect(rejectionText(s), JSON.stringify(s)).toMatch(/rfc1918|10\.0\.0\.0|private/);
   });
 
   it("an MCP name violating MCP_SERVER_NAME_PATTERN is rejected server-side (fail closed)", () => {
     const s = sub("bad-name-uppercase");
     assertFailedClosed(s);
-    expect(`${s.reason}`, JSON.stringify(s)).toMatch(/must match|name/i);
+    expect(rejectionText(s), JSON.stringify(s)).toMatch(/must match|name/i);
   });
 
   it("duplicate MCP server names are rejected server-side (fail closed)", () => {
     const s = sub("duplicate-names");
     assertFailedClosed(s);
-    expect(`${s.reason}`.toLowerCase(), JSON.stringify(s)).toMatch(/duplicate/);
+    expect(rejectionText(s), JSON.stringify(s)).toMatch(/duplicate/);
   });
 
   // ---- Egress allowlist enforcement (KEY security check, 1 LLM run) ----

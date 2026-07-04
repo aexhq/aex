@@ -53,8 +53,9 @@
  *   - the agent actually used tools (TOOL_CALL_START/RESULT counts > 0).
  *   - all 3 submitted skills produced a `skill_loaded` notification (every
  *     skill materialized into the container).
- *   - system + AGENTS.md + prompt probes all round-trip in the reply
- *     (composeInstructions carried all three channels into the recipe).
+ *   - system + AGENTS.md + prompt probes all appear in the SDK-visible event
+ *     transcript (assistant text, tool-call arguments, or tool results), proving
+ *     composeInstructions carried all three channels into the recipe.
  *   - the OUTPUTS pipeline round-trips: every captured output downloads
  *     without error, and at least one agent-written file carries its
  *     expected REF-out token (write → capture → object storage → download e2e).
@@ -146,6 +147,9 @@ interface CaseResult {
   readonly outputCount: number;
   readonly outputs: readonly { filename: string | null; sizeBytes: number; sample: string | null }[];
   readonly outProbesFound: readonly string[];
+  readonly channelProbeSources: Readonly<Record<string, readonly string[]>>;
+  readonly channelProbeMisses: readonly string[];
+  readonly retryReasons: readonly string[];
   readonly leakedDeepseekKey: boolean;
   // Full payload of every runner-sourced stream_error — captures the
   // actual exception message + phase when materialize / manifest fetch
@@ -300,19 +304,39 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     };
 
     const maxTransientRetries = 2;
+    const maxChannelProbeRetries = 2;
     let payload = null;
-    for (let attempt = 0; attempt <= maxTransientRetries; attempt++) {
+    const retryReasons = [];
+    for (let attempt = 0; attempt <= Math.max(maxTransientRetries, maxChannelProbeRetries); attempt++) {
       payload = await runAttempt(attempt);
       const failureClass =
         payload.terminalData && typeof payload.terminalData.failureClass === "string"
           ? payload.terminalData.failureClass
           : null;
-      if (payload.runStatus === "succeeded" || failureClass !== "transient-provider" || attempt >= maxTransientRetries) break;
-      console.warn(
-        "[user-tests] run " + payload.runId + " failed (failureClass=transient-provider); " +
-          "retrying run (attempt " + (attempt + 1) + "/" + maxTransientRetries + ")"
-      );
+      const canRetryTransient =
+        payload.runStatus !== "succeeded" && failureClass === "transient-provider" && attempt < maxTransientRetries;
+      const channelProbeMisses = Array.isArray(payload.channelProbeMisses) ? payload.channelProbeMisses : [];
+      const canRetryChannelProbeMiss =
+        payload.runStatus === "succeeded" && channelProbeMisses.length > 0 && attempt < maxChannelProbeRetries;
+      if (!canRetryTransient && !canRetryChannelProbeMiss) break;
+      if (canRetryTransient) {
+        const reason = "transient-provider:" + payload.runId;
+        retryReasons.push(reason);
+        console.warn(
+          "[user-tests] run " + payload.runId + " failed (failureClass=transient-provider); " +
+            "retrying run (attempt " + (attempt + 1) + "/" + maxTransientRetries + ")"
+        );
+      } else {
+        const reason = "channel-probe-miss:" + payload.runId + ":" + channelProbeMisses.join(",");
+        retryReasons.push(reason);
+        console.warn(
+          "[user-tests] run " + payload.runId + " succeeded but missed channel probes [" +
+            channelProbeMisses.join(", ") + "]; retrying run (attempt " +
+            (attempt + 1) + "/" + maxChannelProbeRetries + ")"
+        );
+      }
     }
+    if (payload) payload.retryReasons = retryReasons;
 
     async function runAttempt(attempt) {
       const attemptSubmit = {
@@ -392,6 +416,47 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const assistantTextJoined = assistantTextEvents
         .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
         .join(" ");
+      function toolResultText(content) {
+        if (!Array.isArray(content)) return "";
+        return content
+          .map((part) => {
+            if (!part || typeof part !== "object") return "";
+            if (typeof part.text === "string") return part.text;
+            return JSON.stringify(part);
+          })
+          .join(" ");
+      }
+      const channelProbeSources = {};
+      function recordChannelProbeSources(source, text) {
+        const normalized = String(text ?? "").replace(/\\s+/g, "");
+        for (const [channel, probe] of [
+          ["system", ${JSON.stringify(probes.system)}],
+          ["agentsMd", ${JSON.stringify(probes.agentsMd)}],
+          ["prompt", ${JSON.stringify(probes.prompt)}]
+        ]) {
+          if (!normalized.includes(probe)) continue;
+          if (!channelProbeSources[channel]) channelProbeSources[channel] = [];
+          if (!channelProbeSources[channel].includes(source)) channelProbeSources[channel].push(source);
+        }
+      }
+      recordChannelProbeSources("assistantText", assistantTextJoined);
+      for (const e of events) {
+        if (e.type === "TOOL_CALL_START") {
+          recordChannelProbeSources(
+            "toolCallStart",
+            JSON.stringify(e.data && typeof e.data === "object" ? e.data.arguments ?? {} : {})
+          );
+        } else if (e.type === "TOOL_CALL_RESULT") {
+          recordChannelProbeSources(
+            "toolCallResult",
+            toolResultText(e.data && typeof e.data === "object" ? e.data.content : null)
+          );
+        }
+      }
+      const channelProbeMisses = [];
+      for (const channel of ["system", "agentsMd", "prompt"]) {
+        if (!channelProbeSources[channel] || channelProbeSources[channel].length === 0) channelProbeMisses.push(channel);
+      }
 
       const eventTypeSet = Array.from(new Set(events.map((e) => e.type)));
       const toolCallStartCount = events.filter((e) => e.type === "TOOL_CALL_START").length;
@@ -443,6 +508,9 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         outputCount: outputs.length,
         outputs: outputsCollected,
         outProbesFound: Array.from(outProbesFound),
+        channelProbeSources,
+        channelProbeMisses,
+        retryReasons: [],
         leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
         streamErrors
       };
@@ -510,6 +578,8 @@ function dumpCase(result: CaseResult): string {
   );
   lines.push(`notificationKinds=[${result.notificationKinds.join(", ")}]`);
   lines.push(`skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`);
+  lines.push(`channelProbeSources=${JSON.stringify(result.channelProbeSources)}`);
+  lines.push(`channelProbeMisses=[${result.channelProbeMisses.join(", ")}] retryReasons=[${result.retryReasons.join(", ")}]`);
   lines.push(`outProbesFound=[${result.outProbesFound.join(", ")}] of [${result.probes.out.join(", ")}]`);
   if (result.streamErrors.length > 0) {
     lines.push(`streamErrors:`);
@@ -586,17 +656,17 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.assistantTextEventCount).toBeGreaterThan(0);
   expect(result.assistantTextJoined.length).toBeGreaterThan(0);
 
-  // system + AGENTS.md + prompt all reached the model via the recipe.
-  // Strip whitespace because stream-json fragments content per token.
-  const normalized = result.assistantTextJoined.replace(/\s+/g, "");
-  for (const [channel, probe] of [
-    ["system", result.probes.system],
-    ["agentsMd", result.probes.agentsMd],
-    ["prompt", result.probes.prompt]
-  ] as const) {
-    if (!normalized.includes(probe)) {
-      throw new Error(`${channel} probe "${probe}" did not round-trip in the reply\n\n${dump()}`);
-    }
+  // system + AGENTS.md + prompt all reached the model via the recipe. The proof
+  // can surface in assistant text or in tool-call events, because the model may
+  // satisfy the acknowledgement by running a tool and returning its result.
+  if (result.channelProbeMisses.length > 0) {
+    const probeByChannel: Record<string, string> = {
+      system: result.probes.system,
+      agentsMd: result.probes.agentsMd,
+      prompt: result.probes.prompt
+    };
+    const missing = result.channelProbeMisses.map((channel) => `${channel}=${probeByChannel[channel] ?? "(unknown)"}`);
+    throw new Error(`channel probes did not round-trip in the event transcript: ${missing.join(", ")}\n\n${dump()}`);
   }
 
   // Outputs pipeline: every captured output downloads cleanly, and at

@@ -222,11 +222,28 @@ describe("live user-test release gate", () => {
     expect(source).toContain("produced no skill_loaded event");
     expect(source).toContain('return isSessionIdle(e) ? "aex.session.idle" : e.type;');
     expect(source).toContain('expect(["RUN_FINISHED", "aex.session.idle"]).toContain(result.terminalKind);');
+    expect(source).toContain("const maxChannelProbeRetries = 2;");
+    expect(source).toContain("recordChannelProbeSources");
+    expect(source).toContain('"toolCallStart"');
+    expect(source).toContain('"toolCallResult"');
+    expect(source).toContain("channelProbeSources");
+    expect(source).toContain("channelProbeMisses");
+    expect(source).toContain("succeeded but missed channel probes");
     expect(source).not.toContain('"RUN_FINISHED",\n  "TEXT_MESSAGE_CONTENT"');
     expect(source).not.toContain('name: "heavy-alpha-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-beta-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-gamma-${spec.provider}"');
     expect(source).not.toContain('["heavy-alpha-managed", "heavy-beta-managed", "heavy-gamma-managed"]');
+  });
+
+  it("keeps MCP egress fail-closed assertions aware of submit-time API rejections", () => {
+    const source = read("apps/user-tests/test/live/edge-mcp-egress.user.test.ts");
+
+    expect(source).toContain("function rejectionText(s: SubmissionCase): string");
+    expect(source).toContain('s.reason ?? ""');
+    expect(source).toContain('s.threw ?? ""');
+    expect(source).toContain("rejectionText(s)");
+    expect(source).not.toContain("`${s.reason}`");
   });
 
   it("keeps live API fuzz region-routing probes from following redirects", () => {
