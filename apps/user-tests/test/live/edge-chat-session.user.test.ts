@@ -440,6 +440,85 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
   );
 
   it(
+    "cancel during turn launch parks the session idle with reason cancel_requested (regression: wedge/lost-cancel)",
+    async () => {
+      const result = await runChild(
+        "edge-cancel-at-launch.mjs",
+        `
+    const session = await client.sessions.create(CREATE);
+
+    // Kick a slow turn and cancel the moment the record leaves idle (launch /
+    // container-boot phase — before any assistant output exists).
+    const inflight = session.send(
+      "Count from 1 to 40 slowly, one number per line, with a sentence about each number.",
+      { idleTimeoutMs: 240000 }
+    ).done()
+      .then((r) => ({ ok: true, status: r.status, text: String(r.text || "").slice(0, 40) }))
+      .catch((e) => ({ ok: false, ...errInfo(e) }));
+
+    let launched = null;
+    for (let i = 0; i < 60; i++) {
+      const rec = await client.sessions.get(session.id).catch(() => null);
+      if (rec && rec.status !== "idle") { launched = rec.status; break; }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    let cancel;
+    try { const acc = await session.cancel(); cancel = { ok: true, status: acc.session ? acc.session.status : null }; }
+    catch (e) { cancel = { ok: false, ...errInfo(e) }; }
+
+    // The cancel must land: the session parks (idle) — never wedged in
+    // "cancelling", never silently resurrected into a full turn, never
+    // auto-suspended with the cancel lost.
+    let final = null;
+    const timeline = [];
+    const deadline = Date.now() + 240000;
+    while (Date.now() < deadline) {
+      const rec = await client.sessions.get(session.id).catch(() => null);
+      if (rec && timeline[timeline.length - 1] !== rec.status) timeline.push(rec.status);
+      if (rec && (rec.status === "idle" || rec.status === "suspended" || rec.status === "error")) { final = rec; break; }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+
+    // WHY the session parked rides the aex.session.idle custom event.
+    let idleReason = null;
+    try {
+      const evs = await session.events().list();
+      const idleEv = (Array.isArray(evs) ? evs : []).filter(
+        (e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle"
+      ).pop();
+      idleReason = idleEv && idleEv.data.value ? idleEv.data.value.reason : null;
+    } catch (e) { idleReason = { error: errInfo(e) }; }
+
+    const inflightResult = await Promise.race([
+      inflight,
+      new Promise((r) => setTimeout(() => r({ ok: false, timedOut: true }), 30000))
+    ]);
+
+    const out = { launched, cancel, timeline, finalStatus: final ? final.status : null, idleReason, inflightResult };
+    out.leaked = leaks(out);
+    await session.delete().catch(() => {});
+    emit(out);
+        `,
+        9 * 60_000
+      );
+
+      const dump = JSON.stringify(result, null, 2);
+      expect(result.fatal, dump).toBeUndefined();
+      const cancel = result.cancel as Record<string, unknown>;
+      expect(cancel.ok, dump).toBe(true);
+      // Terminal at-rest state is idle (sessions have no "cancelled" status) —
+      // NOT stuck cancelling, NOT suspended-with-the-cancel-lost.
+      expect(result.finalStatus, dump).toBe("idle");
+      // The park reason must record the cancel, not claim a clean completion
+      // (a launch-phase cancel produces no assistant work to complete).
+      expect(result.idleReason, dump).toBe("cancel_requested");
+      expect(result.leaked, dump).toBe(false);
+    },
+    10 * 60_000
+  );
+
+  it(
     "delete() leaves no usable ghost; open() on missing/malformed/empty ids is a clean 404, not a crash",
     async () => {
       const result = await runChild(
