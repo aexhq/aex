@@ -23,7 +23,7 @@ import { AgentsMd, File, McpServer, Models, Secret, Tools } from "@aexhq/sdk";
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Use the attached docs and tools to produce a report.",
-  agentsMd: [AgentsMd.fromContent("Follow the repo conventions.")],
+  agentsMd: [await AgentsMd.fromContent("Follow the repo conventions.", { name: "repo-rules" })],
   files: [await File.fromPath("./input")],
   tools: [await Tools.fromSkillDir("./skills/report-writer", { name: "report-writer" })],
   mcpServers: [McpServer.remote({ name: "github", url: "https://example.com/mcp" })],
