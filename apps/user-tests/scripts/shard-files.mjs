@@ -27,6 +27,9 @@ const appRoot = resolve(here, "..");
 // MUST mirror the `exclude` list in vitest.config.ts (the default `test:user`
 // sweep). Heavy/fuzz/provider suites are separate explicit gates.
 const EXCLUDED = new Set([
+  // Cap-saturating by design. It runs in a dedicated workflow lane with an
+  // isolated low-cap workspace so it cannot starve unrelated live assertions.
+  "test/live/edge-admission-gates.user.test.ts",
   "test/live/live-sdk-heavy-session.test.ts",
   "test/live/live-api-fuzz.test.ts",
   "test/live/live-sdk-tool-capability-fuzz.test.ts"

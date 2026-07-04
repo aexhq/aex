@@ -24,6 +24,10 @@
  *
  * Required env: AEX_API_URL, AEX_API_TOKEN, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
+ *
+ * Optional env: AEX_ADMISSION_GATES_MAX_SAFE_CAP limits the concurrency probe
+ * to low-cap isolated workspaces (default 10). The test fails before launching
+ * runs when the target workspace cap is higher.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,6 +81,7 @@ const CHILD_PRELUDE = `
   const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
+  const MAX_SAFE_CAP = Number(process.env.AEX_ADMISSION_GATES_MAX_SAFE_CAP ?? "10");
   const errShape = (e) => ({
     name: e && e.constructor ? e.constructor.name : "Error",
     message: e && e.message ? String(e.message).slice(0, 300) : String(e),
@@ -111,7 +116,8 @@ async function runChild(
       AEX_API_TOKEN: apiToken,
       PROVIDER: GATE_PROVIDER,
       PROVIDER_KEY: providerKey,
-      MODEL: model
+      MODEL: model,
+      AEX_ADMISSION_GATES_MAX_SAFE_CAP: process.env.AEX_ADMISSION_GATES_MAX_SAFE_CAP ?? "10"
     })
   });
   if (child.exitCode !== 0) {
@@ -142,6 +148,18 @@ describe("edge: session-path admission gates", () => {
         const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, runIds: [] };
         const me = await client.whoami();
         out.cap = me.limits.maxConcurrentRuns;
+        if (!Number.isFinite(MAX_SAFE_CAP) || MAX_SAFE_CAP < 1) {
+          out.setupError = "invalid_max_safe_cap";
+          out.maxSafeCap = MAX_SAFE_CAP;
+          console.log(JSON.stringify(out));
+          process.exit(0);
+        }
+        if (out.cap > MAX_SAFE_CAP) {
+          out.setupError = "cap_too_high";
+          out.maxSafeCap = MAX_SAFE_CAP;
+          console.log(JSON.stringify(out));
+          process.exit(0);
+        }
         const n = out.cap + 1;
         const done = { flag: false };
         const poller = (async () => {
@@ -191,6 +209,7 @@ describe("edge: session-path admission gates", () => {
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "admission-concurrency.mjs", body, 8 * 60_000);
+      expect(result.setupError).toBeUndefined();
       expect(result.otherErrors).toEqual([]);
       const cap = result.cap as number;
       expect(cap).toBeGreaterThan(0);

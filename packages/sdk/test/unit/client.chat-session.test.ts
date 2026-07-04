@@ -204,6 +204,16 @@ describe("Aex sessions", () => {
     );
   });
 
+  it("sessions.delete deletes an id-addressed session", async () => {
+    const { client, calls } = makeClient();
+
+    await client.sessions.delete("sess_1", { idempotencyKey: "delete-key-1" });
+
+    const req = calls.find((call) => call.method === "DELETE" && call.url.endsWith("/api/sessions/sess_1"));
+    expect(req).toBeTruthy();
+    expect(req!.headers["Idempotency-Key"] ?? req!.headers["idempotency-key"]).toBe("delete-key-1");
+  });
+
   it("openSession lets callers override the idle-to-suspend TTL", async () => {
     const { client, calls } = makeClient();
     await client.openSession({

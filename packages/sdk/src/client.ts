@@ -742,6 +742,10 @@ export class SessionClient {
     return operations.getSession(this.#http, sessionId);
   }
 
+  async delete(sessionId: string, options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<void> {
+    await operations.deleteSession(this.#http, sessionId, options);
+  }
+
   list(query?: SessionListQuery): Promise<SessionListPage> {
     return operations.listSessions(this.#http, query);
   }

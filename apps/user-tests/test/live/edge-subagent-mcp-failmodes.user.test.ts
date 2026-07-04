@@ -249,7 +249,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
           out.createThrown = errShape(e);
         } finally {
           if (session && session.id) {
-            await client.sessions.delete(session.id).catch(() => {});
+            await session.delete().catch(() => {});
           }
         }
         console.log(JSON.stringify(out));

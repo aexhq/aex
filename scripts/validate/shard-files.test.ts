@@ -24,6 +24,7 @@ describe("shard-files duration-balanced bin packing", () => {
 
     expect(files.length).toBeGreaterThanOrEqual(11);
     // Excluded explicit gates never leak into the default sweep.
+    expect(files).not.toContain("test/live/edge-admission-gates.user.test.ts");
     expect(files).not.toContain("test/live/live-sdk-heavy-session.test.ts");
     expect(files).not.toContain("test/live/live-api-fuzz.test.ts");
     expect(files).not.toContain("test/live/live-sdk-tool-capability-fuzz.test.ts");
