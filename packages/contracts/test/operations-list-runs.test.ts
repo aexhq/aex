@@ -54,6 +54,23 @@ describe("operations.listRuns", () => {
     expect(page.nextCursor).toBe("opaque-cursor");
   });
 
+  it("normalizes a served costUsd:null to absent (RunSummary declares costUsd?: number)", async () => {
+    const client = clientFor({
+      runs: [
+        { ...WELL_FORMED, id: "run_null", costUsd: null },
+        WELL_FORMED
+      ]
+    });
+
+    const page = await operations.listRuns(client);
+
+    expect(page.runs).toEqual([
+      { id: "run_null", status: "idle", createdAt: WELL_FORMED.createdAt, updatedAt: WELL_FORMED.updatedAt },
+      WELL_FORMED
+    ]);
+    expect(Object.prototype.hasOwnProperty.call(page.runs[0], "costUsd")).toBe(false);
+  });
+
   it("returns a clean page unchanged", async () => {
     const capture: { url?: string } = {};
     const client = clientFor({ runs: [WELL_FORMED] }, capture);

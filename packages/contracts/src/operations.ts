@@ -34,6 +34,7 @@ import type {
   RunEvent,
   RunListPage,
   RunListQuery,
+  RunSummary,
   Session,
   SessionCreateRequest,
   SessionEvent,
@@ -111,14 +112,30 @@ export async function listRuns(http: HttpClient, query?: RunListQuery): Promise<
   // phantoms carry only { id, createdAt } and would surface as duplicate,
   // status-less RunSummary entries. Drop anything missing the fields
   // RunSummary declares required, so callers can trust the published type.
-  const runs = page.runs.filter(
-    (run) =>
-      typeof run.id === "string" &&
-      typeof run.status === "string" &&
-      typeof run.createdAt === "string" &&
-      typeof run.updatedAt === "string"
-  );
-  return runs.length === page.runs.length ? page : { ...page, runs };
+  // The same enforcement covers `costUsd`: deployed planes serve `null` for
+  // runs with no settled telemetry, but RunSummary declares `costUsd?: number`
+  // — normalize `null` to absent so typed callers never see it.
+  let changed = false;
+  const runs: RunSummary[] = [];
+  for (const run of page.runs) {
+    if (
+      typeof run.id !== "string" ||
+      typeof run.status !== "string" ||
+      typeof run.createdAt !== "string" ||
+      typeof run.updatedAt !== "string"
+    ) {
+      changed = true;
+      continue;
+    }
+    if (typeof run.costUsd !== "number" && run.costUsd !== undefined) {
+      const { costUsd: _dropped, ...rest } = run;
+      runs.push(rest);
+      changed = true;
+      continue;
+    }
+    runs.push(run);
+  }
+  return changed ? { ...page, runs } : page;
 }
 
 export interface IdempotencyOptions {

@@ -192,7 +192,7 @@ export interface UsageSummary {
 }
 
 /**
- * Filters for {@link import("./operations.js").listRuns} / `Aex.runs.list`.
+ * Filters for {@link import("./operations.js").listRuns} / the CLI's `aex runs`.
  * Every field is optional; omitting all of them lists the most recent runs in the
  * token's workspace. Workspace identity is derived server-side from the API token,
  * so there is no `workspaceId` here — a token can only ever enumerate its own runs.
@@ -229,7 +229,7 @@ export interface RunListPage {
 }
 
 /**
- * Cross-run output search query (`Aex.outputs.search`). Restrict to a
+ * Cross-run output search query (`Aex.sessions.searchOutputs`). Restrict to a
  * corpus with `runIds`; filter by filename substring / extension / content type.
  * The MVP composes this client-side (per-run `listOutputs` + filter) — a future
  * server-side `GET /api/outputs/search` can back the same contract with a real
@@ -394,7 +394,7 @@ export interface OutputFileDownload {
   readonly bytes: Uint8Array;
 }
 
-/** Options for `Aex.outputs.read` / {@link import("./operations.js").readOutputText}. */
+/** Options for `Aex.sessions.outputs(id).read` / {@link import("./operations.js").readOutputText}. */
 export interface ReadOutputTextOptions {
   /**
    * Stop reading after this many bytes. Defaults to 50_000; clamped server-side
@@ -411,7 +411,7 @@ export interface ReadOutputTextOptions {
 
 /**
  * A byte-capped, decoded text read of one output file, as returned by
- * `Aex.outputs.read`. Built for feeding run deliverables to an LLM
+ * `Aex.sessions.outputs(id).read`. Built for feeding run deliverables to an LLM
  * without loading the whole (possibly very large) file into memory or context:
  * the read streams and stops at `maxBytes`, so `text` is at most that many bytes
  * decoded as UTF-8. Check {@link truncated} before treating `text` as complete.
@@ -445,7 +445,12 @@ export interface OutputLink {
 }
 
 export interface WhoAmI {
-  readonly principalType: "api_token" | "user";
+  /**
+   * Kind of principal the bearer resolved to. OPTIONAL IN PRACTICE: current
+   * managed deployments do not serve it (`GET /whoami` returns only
+   * `workspaceId` + `scopes` + `limits`) — treat `undefined` as "api_token".
+   */
+  readonly principalType?: "api_token" | "user";
   readonly workspaceId?: string;
   readonly tokenId?: string;
   readonly tokenName?: string | null;
@@ -454,9 +459,10 @@ export interface WhoAmI {
    * Workspace-level caps the BFF will enforce on subsequent calls.
    * Surfaced so consumers (e.g. broll's app-side admission gate) can
    * decide whether to keep their own gate or rely on platform headers.
-   * All fields optional — older BFFs may omit. Numbers are concrete
-   * snapshots at the time of the `whoami` call; `null` means no app-visible
-   * cap is applied for that field.
+   * All fields optional — older BFFs may omit, and current managed
+   * deployments serve the newer {@link limits} block INSTEAD of `caps`.
+   * Numbers are concrete snapshots at the time of the `whoami` call;
+   * `null` means no app-visible cap is applied for that field.
    */
   readonly caps?: {
     /** Token-bucket cap on POST /api/runs per minute, per workspace. */
