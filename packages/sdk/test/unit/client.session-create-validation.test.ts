@@ -54,6 +54,21 @@ describe("Aex.openSession — removed field validation", () => {
 
     expect(rec.calls).toHaveLength(0);
   });
+
+  it("rejects a message field without an HTTP call (was silently dropped: empty session, no turn)", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiToken: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        message: "hello there"
+      } as never)
+    ).rejects.toThrow(/message is not a supported option; sessions are created without a first message/);
+
+    expect(rec.calls).toHaveLength(0);
+  });
 });
 
 describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)", () => {

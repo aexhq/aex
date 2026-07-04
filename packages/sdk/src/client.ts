@@ -1533,6 +1533,16 @@ export class Aex {
       throw new RunConfigValidationError("Aex.openSession: options is required");
     }
     assertNoLegacySessionFields(options, "Aex.openSession");
+    // `message` belongs to the one-shot surfaces (`run` / `sessions.run`), which
+    // strip it before creating the session. Passing it here used to be SILENTLY
+    // dropped — the session was created empty, idled from birth, and auto-
+    // suspended at the idle TTL without ever running a turn.
+    if (Object.prototype.hasOwnProperty.call(options as unknown as Record<string, unknown>, "message")) {
+      throw new RunConfigValidationError(
+        "Aex.openSession: message is not a supported option; sessions are created without a first " +
+          "message — send it with session.send(...), or use run({ message }) for a one-shot."
+      );
+    }
     const supportedProviders = providersForModel(options.model);
     if (
       options.provider &&
