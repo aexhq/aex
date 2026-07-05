@@ -275,6 +275,8 @@ interface FailureCaseResult {
   readonly errorMessage: string | null;
   readonly runId: string | null;
   readonly runStatus: string | null;
+  readonly runPollStatus: number | null;
+  readonly runPollAttempts: number;
   readonly runErrorMessage: string | null;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
@@ -298,6 +300,8 @@ function buildCorruptedSkillScript(): string {
     let errorMessage = null;
     let runId = null;
     let runStatus = null;
+    let runPollStatus = null;
+    let runPollAttempts = 0;
     let runErrorMessage = null;
     let terminalKind = null;
     let terminalData = null;
@@ -455,9 +459,11 @@ function buildCorruptedSkillScript(): string {
       const deadline = Date.now() + Number(process.env.FAILURE_WAIT_MS || "120000");
       while (Date.now() < deadline) {
         try {
+          runPollAttempts += 1;
           const runRes = await fetch(process.env.AEX_API_URL + "/api/runs/" + encodeURIComponent(runId), {
             headers: authHeaders
           });
+          runPollStatus = runRes.status;
           if (runRes.ok) {
             const runBody = await runRes.json();
             const run = runBody && runBody.run && typeof runBody.run === "object" ? runBody.run : runBody;
@@ -502,6 +508,8 @@ function buildCorruptedSkillScript(): string {
       errorMessage,
       runId,
       runStatus,
+      runPollStatus,
+      runPollAttempts,
       runErrorMessage,
       terminalKind,
       terminalData,
@@ -564,6 +572,8 @@ function buildIncompatibleRuntimeScript(): string {
       errorMessage,
       runId: null,
       runStatus: null,
+      runPollStatus: null,
+      runPollAttempts: 0,
       runErrorMessage: null,
       terminalKind: null,
       terminalData: null,
@@ -628,6 +638,8 @@ function buildStdioMcpScript(): string {
       errorMessage,
       runId: null,
       runStatus: null,
+      runPollStatus: null,
+      runPollAttempts: 0,
       runErrorMessage: null,
       terminalKind: null,
       terminalData: null,
@@ -672,7 +684,7 @@ function dumpFailureResult(result: FailureCaseResult): string {
     `submitBody=${(result.submitBody ?? "").slice(0, 400)}`,
     `errorClass=${result.errorClass} errorCode=${result.errorCode}`,
     `errorMessage=${(result.errorMessage ?? "").slice(0, 400)}`,
-    `runId=${result.runId} runStatus=${result.runStatus}`,
+    `runId=${result.runId} runStatus=${result.runStatus} runPollStatus=${result.runPollStatus} runPollAttempts=${result.runPollAttempts}`,
     `runErrorMessage=${(result.runErrorMessage ?? "").slice(0, 400)}`,
     `terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`,
     `eventKinds=[${result.eventKinds.join(", ")}]`,
