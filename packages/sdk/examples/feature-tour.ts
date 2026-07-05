@@ -22,7 +22,6 @@ import {
   BuiltinTools,
   File,
   isRateLimited,
-  isTextMessage,
   McpServer,
   Models,
   Providers,
@@ -200,12 +199,11 @@ for (;;) {
     break;
   }
   const event = next.value;
-  if (isTextMessage(event)) {
+  if (event.isTextMessage()) {
     process.stdout.write(event.data.text);
-  } else if (event.type === "TOOL_CALL_START") {
-    const name = typeof event.data.name === "string" ? event.data.name : "tool";
-    process.stdout.write(`\n[tool:start] ${name}\n`);
-  } else if (event.type === "TOOL_CALL_RESULT") {
+  } else if (event.isToolCallStart()) {
+    process.stdout.write(`\n[tool:start] ${event.data.name}\n`);
+  } else if (event.isToolCallResult()) {
     process.stdout.write("[tool:result]\n");
   }
 }
