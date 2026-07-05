@@ -4,7 +4,7 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
-## 0.38.0
+## 0.38.1
 
 ### Added
 

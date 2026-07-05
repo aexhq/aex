@@ -15,12 +15,16 @@ describe("live user-test release gate", () => {
 
     expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/11");
     expect(workflow).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
-    expect(workflow).toContain("REPORT: .suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json");
+    expect(workflow).toContain("RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log");
+    expect(workflow).toContain("REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json");
     expect(workflow).toContain('bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"');
     expect(workflow).toContain('node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"');
     expect(workflow).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
     expect(workflow).toContain("Redact live user test log");
     expect(workflow).toContain("Upload redacted live user test log");
+    expect(workflow).toContain("REDACTED_LOG: ${{ github.workspace }}/.suite-diagnostics/redacted/live-user-tests-shard-${{ matrix.shard }}.log");
+    expect(workflow).toContain('mkdir -p "$(dirname "$RAW_LOG")"');
+    expect(workflow).toContain('mkdir -p "$(dirname "$REDACTED_LOG")"');
     expect(workflow).toContain("path: .suite-diagnostics/redacted");
     expect(workflow).toContain("retention-days: 14");
     expect(workflow).toContain('["AEX_API_KEY", "DEEPSEEK_API_KEY"]');
@@ -98,6 +102,8 @@ describe("live user-test release gate", () => {
       expect(workflow, path).toContain(
         'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"'
       );
+      expect(workflow, path).toContain("REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/");
+      expect(workflow, path).not.toContain("REPORT: .suite-diagnostics/raw/");
       expect(workflow, path).toContain('bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"');
       expect(workflow, path).toContain('node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"');
       expect(workflow, path).not.toContain("--shard=");
