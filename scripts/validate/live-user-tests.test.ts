@@ -41,6 +41,51 @@ describe("live user-test release gate", () => {
     }
   });
 
+  it("preflights live user-test environment before publishing or sharding", () => {
+    const release = read(".github/workflows/release.yml");
+    const live = read(".github/workflows/live-user-tests.yml");
+
+    expect(release).toContain("live-user-tests-preflight:");
+    expect(release).toContain("name: Live user tests preflight");
+    expect(release).toContain("- live-user-tests-preflight");
+    expect(release.indexOf("live-user-tests-preflight:")).toBeLessThan(release.indexOf("publish:"));
+    expect(release.indexOf("- live-user-tests-preflight")).toBeLessThan(release.indexOf("npm-release"));
+
+    expect(live).toContain("live-user-tests-preflight:");
+    expect(live).toContain("name: Live user tests preflight");
+    expect(live).toContain("- live-user-tests-preflight");
+    expect(live.indexOf("live-user-tests-preflight:")).toBeLessThan(live.indexOf("live-user-tests:\n    name: Live user tests shard"));
+
+    for (const workflow of [release, live]) {
+      expect(workflow).toContain("AEX_API_URL: ${{ vars.AEX_API_URL }}");
+      expect(workflow).toContain("AEX_API_KEY: ${{ secrets.AEX_API_KEY }}");
+      expect(workflow).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
+      expect(workflow).toContain("live-user-tests environment is missing required value(s)");
+      expect(workflow).toContain('"${AEX_API_URL%/}/api/whoami"');
+      expect(workflow).toContain("-H \"Authorization: Bearer ${AEX_API_KEY}\"");
+      expect(workflow).toContain("live-user-tests /api/whoami preflight failed");
+      expect(workflow).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50");
+      expect(workflow).toContain("limits.maxConcurrentRuns");
+      expect(workflow).toContain("workspace maxConcurrentRuns=${max_concurrent_runs} is below required minimum");
+      expect(workflow).toContain("maxConcurrentRuns=${max_concurrent_runs}");
+      expect(workflow).toContain("requestId=${request_id:-unknown}");
+      expect(workflow).not.toContain("AEX_API_TOKEN");
+    }
+  });
+
+  it("serializes live user-test shards against one shared workspace", () => {
+    for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {
+      const workflow = read(path);
+      const strategy = workflow.indexOf("strategy:");
+      const maxParallel = workflow.indexOf("max-parallel: 1", strategy);
+      const matrix = workflow.indexOf("matrix:", strategy);
+
+      expect(strategy, path).toBeGreaterThan(-1);
+      expect(maxParallel, path).toBeGreaterThan(strategy);
+      expect(maxParallel, path).toBeLessThan(matrix);
+    }
+  });
+
   it("shards live user tests by recorded duration, not file count", () => {
     // vitest --shard splits by file count (per-file live durations vary
     // ~1s..6.5min, giving 1m42s..12m7s shard walls, and shard 12/12 once
