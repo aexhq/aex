@@ -69,6 +69,8 @@ describe("live user-test release gate", () => {
       expect(workflow).toContain("-H \"Authorization: Bearer ${AEX_API_KEY}\"");
       expect(workflow).toContain("live-user-tests /api/whoami preflight failed");
       expect(workflow).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50");
+      expect(workflow).toContain("awk 'tolower($1) == \"x-amzn-requestid:\"");
+      expect(workflow).toContain("preflight did not receive an HTTP status");
       expect(workflow).toContain("limits.maxConcurrentRuns");
       expect(workflow).toContain("workspace maxConcurrentRuns=${max_concurrent_runs} is below required minimum");
       expect(workflow).toContain("maxConcurrentRuns=${max_concurrent_runs}");

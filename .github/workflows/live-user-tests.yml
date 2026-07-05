@@ -115,7 +115,11 @@ jobs:
               -H "Authorization: Bearer ${AEX_API_KEY}" \
               "${AEX_API_URL%/}/api/whoami" || true
           )"
-          request_id="$(grep -i -m1 '^x-amzn-requestid:' "$headers" | tr -d '\r' | awk '{print $2}')"
+          request_id="$(awk 'tolower($1) == "x-amzn-requestid:" { print $2; exit }' "$headers" | tr -d '\r')"
+          if ! [[ "$status" =~ ^[0-9]{3}$ ]]; then
+            echo "::error::live-user-tests /api/whoami preflight did not receive an HTTP status (status=${status:-curl_failed}, requestId=${request_id:-unknown}). Check API reachability."
+            exit 1
+          fi
           if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
             echo "::error::live-user-tests /api/whoami preflight failed (status=${status:-curl_failed}, requestId=${request_id:-unknown}). Check the AEX_API_URL/AEX_API_KEY pairing."
             exit 1
