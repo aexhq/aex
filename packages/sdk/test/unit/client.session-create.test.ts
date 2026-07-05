@@ -512,7 +512,7 @@ describe("Aex.openSession — session-create wire shape", () => {
     });
     const skillHash = skillTool.ref.kind === "draft" ? skillTool.ref.contentHash : "";
     const agentsMdHash = agentsMd.ref.kind === "draft" ? agentsMd.ref.contentHash : "";
-    const fileHash = file.ref.kind === "draft" ? file.ref.contentHash : "";
+    const fileHash = (file.ref.kind === "draft" ? file.ref.contentHash : "") ?? "";
 
     await client.openSession({
       model: "claude-haiku-4-5",

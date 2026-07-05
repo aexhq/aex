@@ -1,8 +1,21 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import type { FileRef } from "@aexhq/contracts";
-import { DEFAULT_FILE_MOUNT_PATH, assertValidMountPath } from "@aexhq/contracts";
-import { hashSkillBundle } from "./bundle.js";
+import {
+  DEFAULT_FILE_MOUNT_PATH,
+  RESERVED_META_ENTRY,
+  assertValidMountPath,
+  bundleManifestIsEmpty,
+  serializeBundleManifest
+} from "@aexhq/contracts";
+import { hashSkillBundle, type BundleMeta } from "./bundle.js";
+import {
+  frameCanonicalZipSync,
+  streamBundleZip,
+  type ByteSink,
+  type ZipEntrySource
+} from "./canonical-zip.js";
+import { walkDirectory, type IgnoreOptions } from "./node-walk.js";
 import { zipSync } from "fflate";
 
 /**
@@ -21,6 +34,15 @@ import { zipSync } from "fflate";
  * `subtitles.srt` becomes `/workspace/subtitles.srt`, a folder lands its entries
  * under `/workspace/`. The resolved path is surfaced back on the Run record.
  *
+ * FIDELITY: a directory walk captures executable bits and symlinks into a
+ * `.aexmeta.json` sidecar (emitted only when such metadata exists, so a
+ * pure-content bundle stays byte-identical → dedup continuity), and honors
+ * `.aexignore` (gitignore-compatible) plus always-on defaults (`.git/`,
+ * `node_modules/`). SCALE: a large input (total raw size over the streaming
+ * threshold, `File.fromPath` only) is uploaded via a streaming two-pass
+ * multipart flow that holds only one entry + one part in memory, lifting the
+ * old ~2 GiB in-memory ceiling.
+ *
  * `client.run` / `openSession` materializes the bytes to the hosted asset store
  * before the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
  * same bytes are deduped.
@@ -28,12 +50,15 @@ import { zipSync } from "fflate";
 export class File {
   readonly #ref: FileRef | DraftFileRef;
   readonly #bytes: Uint8Array | undefined;
+  /** Large-input streaming driver — re-runs the deterministic canonical-zip framer per pass. */
+  readonly #drive: ZipStreamDriver | undefined;
   /** Asset id cached after the first use, so reuse skips a re-upload. */
   #assetId: string | undefined;
 
-  constructor(ref: FileRef | DraftFileRef, bytes?: Uint8Array) {
+  constructor(ref: FileRef | DraftFileRef, bytes?: Uint8Array, drive?: ZipStreamDriver) {
     this.#ref = ref;
     this.#bytes = bytes;
+    this.#drive = drive;
   }
 
   get ref(): FileRef | DraftFileRef {
@@ -81,10 +106,7 @@ export class File {
       throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
     }
     const mountPath = resolveMountPath(args.mountPath, "File.fromBytes");
-    const zip = zipSync(
-      { [filename]: [args.bytes, { mtime: ZIP_EPOCH }] },
-      { level: 6 }
-    );
+    const zip = zipSync({ [filename]: [args.bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
     const contentHash = await hashSkillBundle(zip);
     const ref: DraftFileRef = {
       kind: "draft",
@@ -100,42 +122,98 @@ export class File {
    * preserves its real basename (with extension) as the sole zip entry, so the
    * agent finds it at `<mountPath>/<basename>` after unzip. Directories walk
    * recursively into a canonical zip (sorted relative paths, deterministic
-   * mtime), landing each entry under `<mountPath>/`. `mountPath` defaults to
-   * `/workspace`. The optional `name` is only the storage slug (dedup label);
-   * it never affects the on-disk filename.
+   * mtime), landing each entry under `<mountPath>/`. Executable bits + symlinks
+   * are captured into a `.aexmeta.json` sidecar; `.aexignore` (+ defaults) prune
+   * the walk. `mountPath` defaults to `/workspace`. The optional `name` is only
+   * the storage slug (dedup label); it never affects the on-disk filename.
    */
   static async fromPath(
     path: string,
-    args?: { readonly name?: string; readonly mountPath?: string }
+    args?: { readonly name?: string; readonly mountPath?: string; readonly ignore?: IgnoreOptions }
   ): Promise<File> {
     const stats = await stat(path);
     const mountPath = resolveMountPath(args?.mountPath, "File.fromPath");
     // `name` is only the storage slug (dedup label), never the on-disk filename.
-    // Slugify a provided name so the stored slug stays DNS-clean; derive from the
-    // basename when omitted.
     const slug = args?.name !== undefined ? slugFromFilename(args.name) : inferNameFromPath(path);
-    let zip: Uint8Array;
-    if (stats.isDirectory()) {
-      zip = await buildDirZip(path);
-    } else {
-      const bytes = await readFile(path);
-      const basename = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").at(-1) ?? "";
-      const filename = sanitiseFilename(basename) ?? `${slug}`;
-      zip = zipSync({ [filename]: [bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
+    return stats.isDirectory()
+      ? File.#fromDirectory(path, slug, mountPath, args?.ignore)
+      : File.#fromSingleFile(path, slug, mountPath, stats.size, (stats.mode & 0o111) !== 0);
+  }
+
+  /** Directory branch: walk + fidelity sidecar + small/streaming path selection. */
+  static async #fromDirectory(
+    path: string,
+    slug: string,
+    mountPath: string,
+    ignore: IgnoreOptions | undefined
+  ): Promise<File> {
+    const walk = await walkDirectory(path, ignore);
+    if (walk.entries.length === 0 && walk.symlinks.length === 0) {
+      throw new Error(`File.fromPath: directory ${JSON.stringify(path)} is empty (no regular files or symlinks)`);
     }
-    const contentHash = await hashSkillBundle(zip);
-    const ref: DraftFileRef = {
-      kind: "draft",
-      name: slug,
-      contentHash,
-      mountPath
-    };
-    return new File(ref, zip);
+    const meta: BundleMeta = { exec: walk.exec, symlinks: walk.symlinks };
+    const sidecar = bundleManifestIsEmpty(meta)
+      ? undefined
+      : serializeBundleManifest({ v: 1, exec: walk.exec, symlinks: walk.symlinks });
+
+    if (walk.totalSize <= SMALL_UPLOAD_THRESHOLD_BYTES) {
+      // Small: read all bytes and build the canonical zip in memory (single PUT).
+      const ordered: Array<[string, Uint8Array]> = [];
+      for (const entry of walk.entries) {
+        ordered.push([entry.rel, new Uint8Array(await readFile(entry.absPath))]);
+      }
+      if (sidecar) ordered.push([RESERVED_META_ENTRY, sidecar]);
+      const zip = frameCanonicalZipSync(ordered);
+      const contentHash = await hashSkillBundle(zip);
+      return new File({ kind: "draft", name: slug, contentHash, mountPath }, zip);
+    }
+
+    // Large: stream the canonical zip (never materialize the whole bundle).
+    const sources = buildEntrySources(walk.entries, sidecar);
+    const drive: ZipStreamDriver = (sink) => streamBundleZip(sources, sink);
+    return new File({ kind: "draft", name: slug, mountPath }, undefined, drive);
+  }
+
+  /** Single-file branch: preserve the basename; capture the +x bit; small/streaming by size. */
+  static async #fromSingleFile(
+    path: string,
+    slug: string,
+    mountPath: string,
+    size: number,
+    isExecutable: boolean
+  ): Promise<File> {
+    const basename = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").at(-1) ?? "";
+    const filename = sanitiseFilename(basename) ?? `${slug}`;
+    const sidecar = isExecutable
+      ? serializeBundleManifest({ v: 1, exec: [filename], symlinks: [] })
+      : undefined;
+
+    if (size <= SMALL_UPLOAD_THRESHOLD_BYTES) {
+      const bytes = new Uint8Array(await readFile(path));
+      const ordered: Array<[string, Uint8Array]> = [[filename, bytes]];
+      if (sidecar) ordered.push([RESERVED_META_ENTRY, sidecar]);
+      const zip = frameCanonicalZipSync(ordered);
+      const contentHash = await hashSkillBundle(zip);
+      return new File({ kind: "draft", name: slug, contentHash, mountPath }, zip);
+    }
+
+    const sources: ZipEntrySource[] = [
+      {
+        name: filename,
+        size,
+        read: async () => new Uint8Array(await readFile(path)),
+        openStream: () => fileByteStream(path)
+      }
+    ];
+    if (sidecar) sources.push({ name: RESERVED_META_ENTRY, size: sidecar.length, read: () => sidecar });
+    const drive: ZipStreamDriver = (sink) => streamBundleZip(sources, sink);
+    return new File({ kind: "draft", name: slug, mountPath }, undefined, drive);
   }
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.run` / `openSession` can upload it as an asset.
+   * `client.run` / `openSession` can upload it as an asset (single PUT).
+   * Returns undefined for a streaming (large) draft — use {@link _takeDraftStream}.
    */
   _takeDraftBundle(): {
     name: string;
@@ -143,7 +221,7 @@ export class File {
     bytes: Uint8Array;
     mountPath: string;
   } | undefined {
-    if (this.#ref.kind !== "draft" || !this.#bytes) {
+    if (this.#ref.kind !== "draft" || !this.#bytes || this.#ref.contentHash === undefined) {
       return undefined;
     }
     return {
@@ -152,6 +230,16 @@ export class File {
       bytes: this.#bytes,
       mountPath: this.#ref.mountPath
     };
+  }
+
+  /**
+   * Internal: yield the draft's canonical-zip stream driver so `client.run` can
+   * upload it via the streaming multipart flow. Returns undefined for the small
+   * (in-memory) draft — use {@link _takeDraftBundle}.
+   */
+  _takeDraftStream(): { name: string; mountPath: string; drive: ZipStreamDriver } | undefined {
+    if (this.#ref.kind !== "draft" || !this.#drive) return undefined;
+    return { name: this.#ref.name, mountPath: this.#ref.mountPath, drive: this.#drive };
   }
 
   toJSON(): FileRef {
@@ -168,13 +256,51 @@ export class File {
 export interface DraftFileRef {
   readonly kind: "draft";
   readonly name: string;
-  readonly contentHash: string;
+  /** sha256 of the canonical zip (small path only); undefined for a streaming draft (hashed at upload). */
+  readonly contentHash?: string;
   /** Absolute container directory the file unzips into (always set; defaults to /workspace). */
   readonly mountPath: string;
 }
 
+/** A re-runnable driver that frames the canonical zip into `sink` (one call per upload pass). */
+export type ZipStreamDriver = (sink: ByteSink) => Promise<void>;
+
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 const WORKSPACE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
+
+/**
+ * Total raw input size (via `stat`, before reading bytes) above which
+ * `File.fromPath` streams the upload instead of building the whole zip in
+ * memory. A pure performance/simplicity switch, NOT a correctness boundary — the
+ * streaming framer is byte-identical to the in-memory `zipSync` for Canonical A,
+ * so a bundle at the threshold dedups either way.
+ */
+const SMALL_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024;
+
+/** Build lazy zip entry sources from walked descriptors, appending the sidecar LAST. */
+function buildEntrySources(
+  entries: ReadonlyArray<{ readonly rel: string; readonly absPath: string; readonly size: number }>,
+  sidecar: Uint8Array | undefined
+): ZipEntrySource[] {
+  const sources: ZipEntrySource[] = entries.map((entry) => ({
+    name: entry.rel,
+    size: entry.size,
+    read: async () => new Uint8Array(await readFile(entry.absPath)),
+    openStream: () => fileByteStream(entry.absPath)
+  }));
+  if (sidecar) {
+    sources.push({ name: RESERVED_META_ENTRY, size: sidecar.length, read: () => sidecar });
+  }
+  return sources;
+}
+
+/** Async-iterate a file's bytes in native stream chunks (for Canonical-B giant entries). */
+async function* fileByteStream(absPath: string): AsyncIterable<Uint8Array> {
+  const stream = createReadStream(absPath);
+  for await (const chunk of stream as AsyncIterable<Buffer>) {
+    yield chunk;
+  }
+}
 
 /**
  * Resolve + validate a caller-supplied `mountPath`, defaulting to `/workspace`.
@@ -219,36 +345,4 @@ function inferNameFromPath(path: string): string {
   const normalised = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const base = normalised.split("/").at(-1) ?? "";
   return slugFromFilename(base);
-}
-
-async function buildDirZip(dirPath: string): Promise<Uint8Array> {
-  const files: Array<{ rel: string; bytes: Uint8Array }> = [];
-  await walkDir(dirPath, dirPath, files);
-  if (files.length === 0) {
-    throw new Error(`File.fromPath: directory ${JSON.stringify(dirPath)} is empty (no regular files)`);
-  }
-  files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
-  const zippable: Record<string, [Uint8Array, { mtime: Date }]> = {};
-  for (const { rel, bytes } of files) {
-    zippable[rel] = [bytes, { mtime: ZIP_EPOCH }];
-  }
-  return zipSync(zippable, { level: 6 });
-}
-
-async function walkDir(
-  base: string,
-  current: string,
-  result: Array<{ rel: string; bytes: Uint8Array }>
-): Promise<void> {
-  const entries = await readdir(current, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(current, entry.name);
-    if (entry.isDirectory()) {
-      await walkDir(base, fullPath, result);
-    } else if (entry.isFile()) {
-      const bytes = await readFile(fullPath);
-      const rel = relative(base, fullPath).replace(/\\/g, "/");
-      result.push({ rel, bytes: new Uint8Array(bytes) });
-    }
-  }
 }

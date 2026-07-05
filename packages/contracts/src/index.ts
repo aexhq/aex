@@ -80,6 +80,7 @@ export * from "./stable.js";
 export * from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
 export * from "./run-config.js";
+export * from "./bundle-manifest.js";
 export * from "./runtime-types.js";
 export * from "./webhook-verify.js";
 export * from "./http.js";

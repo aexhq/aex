@@ -1,5 +1,13 @@
 import { zipSync, type Zippable } from "fflate";
-import { SKILL_BUNDLE_LIMITS, validateSkillBundleEntry, type ToolInputSchema } from "@aexhq/contracts";
+import {
+  RESERVED_META_ENTRY,
+  SKILL_BUNDLE_LIMITS,
+  bundleManifestIsEmpty,
+  serializeBundleManifest,
+  validateSkillBundleEntry,
+  type BundleSymlink,
+  type ToolInputSchema
+} from "@aexhq/contracts";
 
 /**
  * In-memory skill bundle: a flat path -> bytes map and the
@@ -27,7 +35,46 @@ const TEXT = new TextEncoder();
 /** Inline files map: path -> contents (UTF-8 string or raw bytes). */
 export type SkillFiles = Readonly<Record<string, string | Uint8Array>>;
 
-export function bundleSkillFiles(files: SkillFiles): BundledSkill {
+/**
+ * Fidelity metadata captured from a local directory walk: `exec` are the
+ * bundle-relative paths that restore executable (0o755); `symlinks` are captured
+ * links. When non-empty it is serialized into the {@link RESERVED_META_ENTRY}
+ * sidecar, appended LAST so a pure-content bundle stays byte-identical to the
+ * pre-fidelity output (dedup continuity).
+ */
+export interface BundleMeta {
+  readonly exec?: readonly string[];
+  readonly symlinks?: readonly BundleSymlink[];
+}
+
+/**
+ * Build the ordered {@link Zippable} for a collected content map: content entries
+ * sorted lexicographically, then (when `meta` carries any exec/symlink) the
+ * canonical `.aexmeta.json` sidecar appended LAST. Insertion order is the zip
+ * order (fflate iterates keys in insertion order), so the sidecar is always the
+ * final entry and a metadata-free bundle is byte-identical to today's output.
+ */
+function buildCanonicalZippable(collected: Map<string, Uint8Array>, meta?: BundleMeta): Zippable {
+  const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const zippable: Zippable = {};
+  for (const [path, bytes] of sorted) {
+    zippable[path] = [bytes, { mtime: ZIP_EPOCH }];
+  }
+  if (meta && !bundleManifestIsEmpty(meta)) {
+    const sidecar = serializeBundleManifest({ v: 1, exec: meta.exec ?? [], symlinks: meta.symlinks ?? [] });
+    zippable[RESERVED_META_ENTRY] = [sidecar, { mtime: ZIP_EPOCH }];
+  }
+  return zippable;
+}
+
+/** Reject a user file colliding with the reserved sidecar name (matches the `tool.json` precedent). */
+function assertNotReservedMetaPath(path: string, kind: string): void {
+  if (path === RESERVED_META_ENTRY) {
+    throw new Error(`${kind} files must not include reserved "${RESERVED_META_ENTRY}"; fidelity metadata is emitted by the SDK`);
+  }
+}
+
+export function bundleSkillFiles(files: SkillFiles, meta?: BundleMeta): BundledSkill {
   if (!files || typeof files !== "object") {
     throw new Error("Skill files map is required");
   }
@@ -49,6 +96,7 @@ export function bundleSkillFiles(files: SkillFiles): BundledSkill {
       throw new Error(`Skill file "${rawPath}" must be a string or Uint8Array`);
     }
     const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
+    assertNotReservedMetaPath(entry.path, "Skill bundle");
     if (entry.path === "SKILL.md") {
       hasSkillMd = true;
     }
@@ -75,12 +123,9 @@ export function bundleSkillFiles(files: SkillFiles): BundledSkill {
   // Sort entries and pin every mtime to the epoch so the byte output is
   // identical across machines and re-runs (the BFF re-canonicalises and
   // recomputes the canonical hash, so this is for retry-safety / debug
-  // reproducibility rather than a wire-shape contract).
-  const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const zippable: Zippable = {};
-  for (const [path, bytes] of sorted) {
-    zippable[path] = [bytes, { mtime: ZIP_EPOCH }];
-  }
+  // reproducibility rather than a wire-shape contract). The fidelity sidecar,
+  // when present, is appended LAST so a metadata-free bundle is byte-identical.
+  const zippable = buildCanonicalZippable(collected, meta);
 
   const zip = zipSync(zippable, { level: 6 });
   if (zip.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
@@ -107,7 +152,8 @@ export interface ToolBundleManifest {
 
 export function bundleToolFiles(
   files: SkillFiles,
-  manifest: ToolBundleManifest
+  manifest: ToolBundleManifest,
+  meta?: BundleMeta
 ): BundledTool {
   if (!files || typeof files !== "object") {
     throw new Error("Tool files map is required");
@@ -131,6 +177,7 @@ export function bundleToolFiles(
       throw new Error(`Tool file "${rawPath}" must be a string or Uint8Array`);
     }
     const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
+    assertNotReservedMetaPath(entry.path, "Tool bundle");
     totalDecompressed += bytes.byteLength;
     if (totalDecompressed > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
       throw new Error(
@@ -154,11 +201,7 @@ export function bundleToolFiles(
   }
   collected.set("tool.json", manifestBytes);
 
-  const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const zippable: Zippable = {};
-  for (const [path, bytes] of sorted) {
-    zippable[path] = [bytes, { mtime: ZIP_EPOCH }];
-  }
+  const zippable = buildCanonicalZippable(collected, meta);
 
   const zip = zipSync(zippable, { level: 6 });
   if (zip.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {

@@ -77,8 +77,8 @@ import {
   TERMINAL_RUN_STATUSES
 } from "@aexhq/contracts";
 import { AgentsMd } from "./agents-md.js";
-import { uploadAsset, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
-import { File } from "./file.js";
+import { uploadAsset, uploadAssetMultipart, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
+import { File, type ZipStreamDriver } from "./file.js";
 import { McpServer } from "./mcp-server.js";
 import {
   AexRateLimitError,
@@ -1522,6 +1522,25 @@ export class Aex {
   }
 
   /**
+   * Internal: materialize a LARGE draft (a `File.fromPath` over the streaming
+   * threshold) to the content store via the two-pass streaming multipart flow —
+   * hash the deterministic canonical-zip stream, presign by hash (dedup still
+   * short-circuits), then upload it in parts. Bounded memory (one entry + one
+   * part). NOT part of the public API.
+   */
+  async _uploadAssetStream(args: {
+    readonly drive: ZipStreamDriver;
+    readonly contentType?: string;
+  }): Promise<UploadedAsset> {
+    return uploadAssetMultipart({
+      http: this.#http,
+      drive: args.drive,
+      ...(args.contentType ? { contentType: args.contentType } : {}),
+      ...(this.#fetch ? { fetch: this.#fetch as unknown as AssetFetch } : {})
+    });
+  }
+
+  /**
    * Internal: upsert already-uploaded skill metadata into the workspace registry.
    * The bytes are staged through `_uploadAsset`; this call binds the content hash
    * to a mutable workspace skill name before the run references that name.
@@ -1741,13 +1760,14 @@ export class Aex {
     }
 
     const uploader: AssetUploader = (args) => this._uploadAsset(args);
+    const streamUploader: AssetStreamUploader = (args) => this._uploadAssetStream(args);
     // The four prepare passes touch disjoint instance sets, so run them
     // concurrently; each internally uploads its drafts with bounded concurrency.
     const [preparedTools, preparedSkills, preparedAgentsMd, preparedFiles] = await Promise.all([
       prepareTools(options.tools ?? [], uploader),
       prepareSkills(options.skills ?? [], this),
       prepareAgentsMd(options.agentsMd ?? [], uploader),
-      prepareFiles(options.files ?? [], uploader)
+      prepareFiles(options.files ?? [], uploader, streamUploader)
     ]);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
@@ -2206,6 +2226,16 @@ type AssetUploader = (args: {
 }) => Promise<UploadedAsset>;
 
 /**
+ * Stages a LARGE draft's canonical-zip STREAM to the content store via the
+ * two-pass multipart flow and returns the resulting asset id. Satisfied by
+ * `Aex._uploadAssetStream`.
+ */
+type AssetStreamUploader = (args: {
+  readonly drive: ZipStreamDriver;
+  readonly contentType?: string;
+}) => Promise<UploadedAsset>;
+
+/**
  * A draft asset instance: yields its bytes once and caches the resolved asset id
  * so reuse across submits skips a re-upload (uploads are content-hash deduped).
  */
@@ -2389,7 +2419,8 @@ async function prepareAgentsMd(
 /** Walk File[], eagerly upload drafts as assets (bounded concurrency), and return plain asset refs. */
 async function prepareFiles(
   files: readonly File[],
-  uploader: AssetUploader
+  uploader: AssetUploader,
+  streamUploader: AssetStreamUploader
 ): Promise<readonly FileRef[]> {
   return mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (entry, i): Promise<FileRef> => {
     if (!(entry instanceof File)) {
@@ -2397,6 +2428,17 @@ async function prepareFiles(
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
+      // A large draft carries a streaming driver instead of in-memory bytes.
+      const stream = entry._takeDraftStream();
+      if (stream) {
+        const cached = entry._cachedAssetId;
+        if (cached !== undefined) {
+          return { kind: "asset", assetId: cached, name: stream.name, mountPath: stream.mountPath };
+        }
+        const uploaded = await streamUploader({ drive: stream.drive, contentType: "application/zip" });
+        entry._rememberAsset(uploaded.assetId);
+        return { kind: "asset", assetId: uploaded.assetId, name: stream.name, mountPath: stream.mountPath };
+      }
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
         throw new RunConfigValidationError(`aex: files[${i}] is draft but has no bytes`);
