@@ -81,6 +81,10 @@ function makeHarness() {
   let sessionCounter = 0;
   let turnSeq = 0;
   let sessionStatus = "idle";
+  // One-shot 409 injection: arm N message POSTs to answer session_busy so a
+  // test can reproduce the settle-lag race (turn parked idle, record still running).
+  let busyRemaining = 0;
+  let busyStatus = "running";
 
   const fetchFake = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -138,6 +142,10 @@ function makeHarness() {
       });
     }
     if (parsed.pathname === "/api/sessions/sess_user_1/messages" && method === "POST") {
+      if (busyRemaining > 0) {
+        busyRemaining -= 1;
+        return json({ error: "session_busy", status: busyStatus }, 409);
+      }
       turnSeq += 1;
       sessionStatus = "running";
       return json({
@@ -196,9 +204,12 @@ function makeHarness() {
       this.listeners = {};
       sockets.push(this);
       queueMicrotask(() => this.emit("open", {}));
+      // Capture the turn this socket belongs to so the idle event's turnSeq
+      // matches — otherwise a 2nd turn's stream would not see idle as terminal.
+      const seq = turnSeq;
       setTimeout(() => {
         this.message(event(10, "TEXT_MESSAGE_CONTENT", { text: "hello from chat" }));
-        this.message(sessionEvent(11, "aex.session.idle"));
+        this.message(event(11, "CUSTOM", { name: "aex.session.idle", value: { sessionId: "sess_user_1", turnSeq: seq } }));
       }, 0);
     }
     addEventListener(type, cb) {
@@ -219,7 +230,8 @@ function makeHarness() {
     calls,
     sockets,
     fetch: fetchFake,
-    webSocketFactory: (url) => new FakeWebSocket(url)
+    webSocketFactory: (url) => new FakeWebSocket(url),
+    armBusy: (count, status = "running") => { busyRemaining = count; busyStatus = status; }
   };
 }
 
@@ -419,6 +431,39 @@ console.log(JSON.stringify({ ok: true, events: result.events.length, sockets: h.
 `;
     const result = await runChild(script, "sdk-chat-send-stream.mjs");
     expect(result).toMatchObject({ ok: true, events: 2, sockets: 1 });
+  });
+
+  it("recovers a follow-up send when the previous turn's settle lag 409s session_busy", async () => {
+    const script = CHILD_HARNESS + String.raw`
+const { Aex } = await importSdk();
+
+const h = makeHarness();
+const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
+const session = await client.sessions.create({
+  model: "claude-haiku-4-5",
+  apiKeys: { anthropic: "sk-ant-chat" }
+});
+
+// First turn parks idle.
+const first = await session.send("hello", { webSocketFactory: h.webSocketFactory }).done();
+strictEqual(first.status, "idle");
+
+// The platform is still catching up from that park: the very next send's POST is
+// rejected once with session_busy (status running). The SDK must reconcile —
+// wait for the record to leave running, then retry — not surface the 409.
+h.armBusy(1);
+const second = await session.send("again", { webSocketFactory: h.webSocketFactory }).done();
+strictEqual(second.status, "idle");
+strictEqual(second.turn.turnSeq, 2);
+
+const messagePosts = callsFor(h.calls, "POST", "/api/sessions/sess_user_1/messages").length;
+// turn 1 (1 POST) + turn 2 (the 409 + the reconciled retry = 2 POSTs).
+strictEqual(messagePosts, 3);
+
+console.log(JSON.stringify({ ok: true, status: second.status, messagePosts }));
+`;
+    const result = await runChild(script, "sdk-chat-idle-send-reconcile.mjs");
+    expect(result).toMatchObject({ ok: true, status: "idle", messagePosts: 3 });
   });
 
   it("rejects removed session options before any HTTP call", async () => {
