@@ -10,6 +10,7 @@ Managed runs inject the complete builtin tool set into the agent by default:
 - `read_file`, `write_file`, `edit_file` — file read/create/patch
 - `grep`, `glob` — search file contents and paths
 - `head`, `tail` — read bounded file slices
+- `ls`, `stat`, `wc` — list a directory, inspect path metadata, count lines/words/bytes
 - `web_fetch`, `web_search` — fetch a URL / managed web search
 - `todo_write` — maintain a todo list
 - `subagent`, `subagent_result` — delegate to and read back from child runs (see [Subagents](subagents.md))

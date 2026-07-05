@@ -261,7 +261,10 @@ describe("RUN_PROVIDERS exports", () => {
       "bash_kill",
       "code_execution",
       "wait",
-      "git"
+      "git",
+      "ls",
+      "stat",
+      "wc"
     ]);
   });
 

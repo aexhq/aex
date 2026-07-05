@@ -1375,7 +1375,10 @@ export const BUILTIN_TOOL_NAMES = [
   "bash_kill",
   "code_execution",
   "wait",
-  "git"
+  "git",
+  "ls",
+  "stat",
+  "wc"
 ] as const;
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
 
@@ -1406,7 +1409,10 @@ export const BuiltinTools = {
   bash_kill: "bash_kill",
   code_execution: "code_execution",
   wait: "wait",
-  git: "git"
+  git: "git",
+  ls: "ls",
+  stat: "stat",
+  wc: "wc"
 } as const satisfies Readonly<Record<BuiltinToolName, BuiltinToolName>>;
 
 /**

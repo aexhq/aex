@@ -107,7 +107,10 @@ describe("aex tools list", () => {
       "bash_kill",
       "code_execution",
       "wait",
-      "git"
+      "git",
+      "ls",
+      "stat",
+      "wc"
     ].map((tool) => ({ tool, default: true })));
     expect(arr.some((entry) => entry.tool === "notebook_edit")).toBe(false);
     expect(cap.fetchCount()).toBe(0);
