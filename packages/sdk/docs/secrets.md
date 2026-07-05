@@ -118,3 +118,17 @@ await aex.secrets.delete("serper-api-key");
 
 The CLI supports per-run provider and MCP credentials. Workspace secret
 administration is exposed through the SDK.
+
+## Redaction Scope And Output Files
+
+Registered secret values are redacted from the run's **event stream** (both tool
+output and model-authored surfaces) — a value you inject via `environment.secrets`
+is masked regardless of its shape. Two surfaces are intentionally *not* scrubbed:
+
+- **Captured output files** (`outputs().download()` / `read()` / the `aex download`
+  zip) are returned **verbatim**. They are your run's own artifacts, so the platform
+  does not rewrite their bytes — if the agent writes a secret into a deliverable file,
+  that file contains it. Treat downloaded outputs as unredacted.
+- An **unregistered** secret (a credential the run produces itself and never declared
+  via `environment.secrets`) can only be masked heuristically by shape; register the
+  values you care about so they are masked by value.

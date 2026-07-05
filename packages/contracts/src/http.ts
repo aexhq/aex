@@ -1,4 +1,5 @@
-import { AexApiError, AexError, AexNetworkError, redactUrl } from "./sdk-errors.js";
+import { AexError, AexNetworkError, redactUrl } from "./sdk-errors.js";
+import { apiErrorFromResponse } from "./error-factory.js";
 import { AEX_DEFAULT_BASE_URL } from "./stable.js";
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -96,7 +97,11 @@ export class HttpClient {
     const body = await readJson(response);
     if (!response.ok) {
       const errorBody = withResponseRequestId(body, response.headers);
-      throw new AexApiError(response.status, extractErrorMessage(errorBody), errorBody);
+      throw apiErrorFromResponse({
+        status: response.status,
+        body: errorBody,
+        message: extractErrorMessage(errorBody)
+      });
     }
     return body as T;
   }
@@ -125,7 +130,11 @@ export class HttpClient {
     if (!response.ok) {
       const body = await readJson(response);
       const errorBody = withResponseRequestId(body, response.headers);
-      throw new AexApiError(response.status, extractErrorMessage(errorBody), errorBody);
+      throw apiErrorFromResponse({
+        status: response.status,
+        body: errorBody,
+        message: extractErrorMessage(errorBody)
+      });
     }
     return { response };
   }

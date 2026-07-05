@@ -39,8 +39,10 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
     return USAGE_ERR;
   }
 
-  const jsonFlag = takeBooleanFlag(common.rest, "--json");
-  const logsFlag = takeBooleanFlag(jsonFlag.remaining, "--logs");
+  // `--json` is consumed centrally by resolveCommonHostFlags (a global flag);
+  // read the resolved value rather than re-parsing it here.
+  const json = common.flags.json;
+  const logsFlag = takeBooleanFlag(common.rest, "--logs");
   const settleFlag = takeBooleanFlag(logsFlag.remaining, "--settle");
   const filterFlag = collectRepeated(settleFlag.remaining, "--filter");
   if (filterFlag.error) {
@@ -126,7 +128,7 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
         // Still hide logs from the pretty stream consistently.
         continue;
       }
-      if (jsonFlag.present) {
+      if (json) {
         if (logsFlag.present || (e as AexEvent).channel !== "log") {
           io.stdout(JSON.stringify(e) + "\n");
           eventCount++;

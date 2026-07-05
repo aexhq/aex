@@ -38,8 +38,9 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     return USAGE_ERR;
   }
 
-  const jsonFlag = takeBooleanFlag(common.rest, "--json");
-  const logsFlag = takeBooleanFlag(jsonFlag.remaining, "--logs");
+  // `--json` is consumed centrally by resolveCommonHostFlags (a global flag).
+  const json = common.flags.json;
+  const logsFlag = takeBooleanFlag(common.rest, "--logs");
   const filterFlag = collectRepeated(logsFlag.remaining, "--filter");
   if (filterFlag.error) {
     io.stderr(`${filterFlag.error}\n`);
@@ -95,7 +96,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
       ...(d.remedy ? { remedy: d.remedy } : {})
     });
   }
-  if (!jsonFlag.present) {
+  if (!json) {
     const model = typeof header.model === "string" ? ` · ${header.model}` : "";
     const created = header.createdAt ? ` · ${header.createdAt}` : "";
     io.stdout(`session ${sessionId} · ${header.status}${model}${created}\n`);
@@ -123,7 +124,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     for await (const e of stream) {
       if (e.type === "RUN_ERROR") runErrorEvent = e;
       if (filters.predicate && !filters.predicate(e)) continue;
-      if (jsonFlag.present) {
+      if (json) {
         if (logsFlag.present || e.channel !== "log") collected.push(e);
         continue;
       }
@@ -154,7 +155,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     /* keep header */
   }
 
-  if (jsonFlag.present) {
+  if (json) {
     io.stdout(JSON.stringify({ session: finalSession, events: collected }) + "\n");
   } else {
     // Footer: jump-to-failure + cost/usage.

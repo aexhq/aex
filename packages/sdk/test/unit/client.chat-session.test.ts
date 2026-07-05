@@ -100,7 +100,9 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
       return json({ outputs: [{ id: "out_1", filename: "answer.txt" }] });
     }
     if (url.endsWith("/api/sessions/sess_1")) {
-      return json({ session: { id: "sess_1", status: options.getSessionStatus ?? "idle", turnSeq: 1 } });
+      // Settle-stamped (costUsd present) so the default await-settle resolves on
+      // the first read; a `running` override stays unsettled to exercise the lag.
+      return json({ session: { id: "sess_1", status: options.getSessionStatus ?? "idle", turnSeq: 1, costUsd: 0 } });
     }
     return json({});
   };
@@ -135,7 +137,10 @@ describe("Aex sessions", () => {
 
     const result: SessionRunResult = await promise;
     expect(result.sessionId).toBe("sess_1");
-    expect(result.status).toBe("idle");
+    // The RESULT status is the terminal OUTCOME (a clean park ⇒ succeeded); the
+    // resumable lifecycle `idle` stays on the session record.
+    expect(result.status).toBe("succeeded");
+    expect(result.session.status).toBe("idle");
     expect(result.text).toBe("hello");
     expect(result.events.map((evt) => evt.sequence)).toEqual([4096, 4097]);
     expect(result.outputs).toEqual([{ id: "out_1", filename: "answer.txt" }]);
@@ -147,13 +152,15 @@ describe("Aex sessions", () => {
     expect(calls.some((call) => call.url.endsWith("/api/runs"))).toBe(false);
   });
 
-  it("uses the terminal session event status when the post-stream session read is stale", async () => {
+  it("patches a stale (running) post-stream record from the terminal event (await:'park')", async () => {
     const { client, sockets, webSocketFactory } = makeClient({ getSessionStatus: "running" });
     const promise = client.sessions.run({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
-      stream: { webSocketFactory }
+      // 'park' skips the settle-poll (the record here never settles) so the
+      // terminal-event → record patch is what we exercise.
+      stream: { webSocketFactory, await: "park" }
     });
 
     await flush();
@@ -165,7 +172,9 @@ describe("Aex sessions", () => {
     }));
 
     const result = await promise;
-    expect(result.status).toBe("idle");
+    // Outcome status is succeeded; the stale `running` record is patched to the
+    // carried `idle` park.
+    expect(result.status).toBe("succeeded");
     expect(result.session.status).toBe("idle");
   });
 
@@ -213,6 +222,7 @@ describe("Aex sessions", () => {
         }
         if (evt.isRunSettled()) sawSettled = true;
         // The lifecycle discriminants are mutually exclusive on a text event.
+        // eslint-disable-next-line aex/no-conditional-expect -- per-event-type check over a stream the harness guarantees yields text events; asserts discriminant mutual-exclusivity for each text event.
         if (evt.isTextMessage()) {
           expect(evt.isToolCallStart()).toBe(false);
           expect(evt.isCustom()).toBe(false);

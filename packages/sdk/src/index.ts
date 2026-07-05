@@ -9,7 +9,9 @@
 export {
   Aex,
   AgentsMdClient,
+  ChildRunHandle,
   FilesClient,
+  OutputsClient,
   SecretsClient,
   SessionClient,
   SessionHandle,
@@ -18,13 +20,17 @@ export {
 } from "./client.js";
 export type {
   AexOptions,
+  BatchOptions,
   Message,
   OutputDownloadOptions,
   OutputFilePathMatch,
   OutputFilePathSelector,
   OutputFileSelector,
   OutputLinkSelector,
+  PerSessionOutputSearchQuery,
   RunCollectOptions,
+  RunEvents,
+  RunOutputs,
   RunResult,
   SessionCreateOptions,
   SessionEnvironmentOptions,
@@ -36,9 +42,12 @@ export type {
   SessionRunOptions,
   SessionRunResult,
   SessionSendOptions,
+  SessionTerminalRead,
   SessionTurnResult,
   SessionWebhooks,
+  SettleAwait,
   StreamEventsOptions,
+  SubmitResult,
   WaitForRunOptions
 } from "./client.js";
 
@@ -53,17 +62,32 @@ export type { SecretEnvSubmissionEntry } from "./secret.js";
 export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
 export type { BundledSkill, BundledTool, BundleMeta, SkillFiles, ToolBundleManifest } from "./bundle.js";
 
-// Errors
+// Errors. One wire→exception factory (`apiErrorFromResponse`) + a stable
+// `apiCode` on every `AexApiError`; typed subclasses (`AexAuthError` /
+// `AexIdempotencyConflictError` / `AexNotFoundError`) each narrow with a guard.
 export {
+  AEX_API_ERROR_CODES,
+  AEX_API_ERROR_MESSAGES,
+  AEX_API_ERROR_REMEDIES,
   AexApiError,
+  AexAuthError,
   AexError,
+  AexIdempotencyConflictError,
   AexNetworkError,
+  AexNotFoundError,
   CleanupError,
   CredentialValidationError,
   ProviderError,
   RunConfigValidationError,
-  RunStateError
+  RunStateError,
+  apiErrorFromResponse,
+  isAexApiErrorCode,
+  isAuthError,
+  isIdempotencyConflict,
+  isInsufficientScope,
+  isNotFound
 } from "@aexhq/contracts";
+export type { AexApiErrorCode } from "@aexhq/contracts";
 
 // Built-in transport resilience. Every BFF request is retried on transient
 // failures (429/5xx/529 + network errors) with bounded backoff + jitter,
@@ -140,7 +164,6 @@ export type {
   RunRecordNamespaceV1,
   RunRecordSubmissionSnapshotV1,
   RunRecordV1,
-  RunEvent,
   RunWebhookDelivery,
   RunWebhookDeliveryStatus,
   RuntimeManifest,
@@ -192,16 +215,51 @@ export {
   Models,
   providerForModel,
   providersForModel,
+  resolveModelProvider,
   resolveProviderModelId,
   isRunModel,
   parseRunModel,
   Providers,
-  RUN_PROVIDERS
+  RUN_PROVIDERS,
+  suggest
 } from "@aexhq/contracts";
 export type {
   RunModel,
   RunProvider
 } from "@aexhq/contracts";
+
+// Unified settled-result / batch / typed-decode / lineage surface (WS3/WS8/WS10).
+export { usageFromProviderUsage } from "@aexhq/contracts";
+export type {
+  BatchItemResult,
+  BatchResult,
+  ChildRunRef,
+  ResolvableRunRef,
+  RunOutcome,
+  RunRefusalReason,
+  SettledResult
+} from "@aexhq/contracts";
+
+// Status vocabulary (WS1): the terminal-outcome half + guard, bound to the run
+// outcome SSoT. The bare session `error` is retired — a failed turn is `failed`.
+export { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES, isTerminalSessionStatus } from "@aexhq/contracts";
+export type { SessionTerminalOutcome } from "@aexhq/contracts";
+
+// Self-describing API-key codec + plane routing (WS11): the constructor parses
+// the key to derive the plane baseUrl and fail fast on a plane mismatch.
+export { PLANE_BASE_URLS, parseApiKey } from "@aexhq/contracts";
+export type { ApiKeyPlane, ParsedApiKey } from "@aexhq/contracts";
+
+// Structured-output (schema-decode), HITL approval-gate, and the streaming
+// capability model (WS9/WS10).
+export {
+  RESPONSE_FORMAT_KINDS,
+  STREAMABLE_SHAPES,
+  isStreamableProvider,
+  parseApprovalGate,
+  parseResponseFormat
+} from "@aexhq/contracts";
+export type { ApprovalGate, ResponseFormat, ResponseFormatKind, StreamableShape } from "@aexhq/contracts";
 
 // Event methods. Every event the SDK yields — the turn stream (`session.send()`),
 // `session.events().list()`, `session.events().streamEnvelopes()`, and

@@ -22,13 +22,23 @@
  */
 
 import type { AexEvent, AexEventSource } from "./event-envelope.js";
-import { channelOf, isRunSettled } from "./event-envelope.js";
+import { channelOf, isRunSettled, isAwaitingApproval, isResultDecoded, isResultRefused } from "./event-envelope.js";
 import type { JsonValue } from "./submission.js";
 
-/** A `TEXT_MESSAGE_CONTENT` event with its assistant-text payload narrowed. */
+/**
+ * A `TEXT_MESSAGE_CONTENT` event with its assistant-text payload narrowed.
+ * `delta` discriminates a per-token STREAMING delta (`delta: true`, emitted on
+ * `outputMode:'stream'`) from the final coalesced block (`delta` absent/false).
+ * Both narrow via `isTextMessage()`.
+ */
 export interface TextMessageEventView extends AexEventView {
   readonly type: "TEXT_MESSAGE_CONTENT";
-  readonly data: Readonly<Record<string, JsonValue>> & { readonly text: string; readonly messageId?: string };
+  readonly data: Readonly<Record<string, JsonValue>> & {
+    readonly text: string;
+    readonly messageId?: string;
+    /** `true` on a per-token streaming delta; absent/false on the coalesced block. */
+    readonly delta?: boolean;
+  };
 }
 
 /** A `TOOL_CALL_START` event with the tool-call id/name/args narrowed. */
@@ -39,6 +49,8 @@ export interface ToolCallStartEventView extends AexEventView {
     readonly name: string;
     readonly arguments?: { readonly [key: string]: JsonValue };
   };
+  /** The tool-call correlation id (`data.id`), the cross-projection join key. */
+  toolCallId(): string;
 }
 
 /** A `TOOL_CALL_RESULT` event with the correlating id + result narrowed. */
@@ -49,6 +61,8 @@ export interface ToolCallResultEventView extends AexEventView {
     readonly content?: JsonValue;
     readonly isError?: boolean;
   };
+  /** The tool-call correlation id (`data.id`), the cross-projection join key. */
+  toolCallId(): string;
 }
 
 /**
@@ -86,9 +100,31 @@ export class AexEventView {
   isToolCallResult(): this is ToolCallResultEventView {
     return this.type === "TOOL_CALL_RESULT";
   }
+  /**
+   * The tool-call correlation id — `data.id`, the documented, stable join key
+   * that a `TOOL_CALL_START` and its `TOOL_CALL_RESULT` share (and that is
+   * IDENTICAL across the list and stream projections). Returns `undefined` on a
+   * non-tool-call event; on a tool-call view the return narrows to `string`.
+   */
+  toolCallId(): string | undefined {
+    const id = this.data.id;
+    return typeof id === "string" ? id : undefined;
+  }
   /** True for an aex-native CUSTOM event (an `aex.*` name under `data.name`). */
   isCustom(): boolean {
     return this.type === "CUSTOM";
+  }
+  /** True for the HITL `awaiting_approval` write-gate event. */
+  isAwaitingApproval(): boolean {
+    return isAwaitingApproval(this);
+  }
+  /** True for a schema-decoded terminal result event (`aex.result.decoded`). */
+  isResultDecoded(): boolean {
+    return isResultDecoded(this);
+  }
+  /** True for a typed decode-refusal terminal result event (`aex.result.refused`). */
+  isResultRefused(): boolean {
+    return isResultRefused(this);
   }
   /** True when the record is a log line (the `log` channel / `LOG` type). */
   isLog(): boolean {

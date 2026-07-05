@@ -37,6 +37,7 @@
 import { RUN_PROVIDERS } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
 import { runOutputsSyncCmd } from "./outputs-sync.js";
+import { findVerbSpec, renderVerbHelp, wantsVerbHelp } from "./host/registry.js";
 import {
   RUNTIME_ERR,
   SUCCESS,
@@ -96,6 +97,14 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
   }
   const sub = args[0];
   const rest = args.slice(1);
+  // Per-verb `--help`/`-h`: rendered from the static verb registry BEFORE the
+  // auth-requiring handler runs, so discovering a verb's flags never needs an
+  // API key (T6f). The `outputs sync` in-container internal verb is exempt.
+  const spec = sub === undefined ? undefined : findVerbSpec(sub);
+  if (spec && wantsVerbHelp(rest) && !(sub === "outputs" && rest[0] === "sync")) {
+    io.stdout(renderVerbHelp(spec));
+    return SUCCESS;
+  }
   switch (sub) {
     case "run":
       return runRunCmd(io, rest);
@@ -178,8 +187,10 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
 }
 
 async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
-  // Host-side help: the unified surface mirroring the SDK 1:1.
-  io.stdout("aex — unified CLI for the aex platform (mirrors the SDK 1:1)\n\n");
+  // Host-side help: the unified surface over the aex SDK. Capability parity
+  // (every SDK method/run-option/outputs accessor has a verb/flag) is enforced
+  // by the conformance `cli-sdk-parity` manifest test.
+  io.stdout("aex — unified CLI for the aex platform (a thin pass-through over the SDK)\n\n");
   io.stdout("Usage:\n");
   io.stdout("  aex run --config <run.json> --<provider>-api-key K --api-key T [flags]\n");
   io.stdout("  aex run --model M --prompt P [--system S] [--mcp name=url ...] --<provider>-api-key K --api-key T [flags]\n");

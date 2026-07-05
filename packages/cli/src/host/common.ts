@@ -16,6 +16,11 @@ import {
 } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
 
+// One shared "did you mean?" suggester (contracts SSoT), used by the SDK's
+// unknown-model resolver AND the CLI's near-miss --provider/--runtime-size
+// hints — no CLI-local duplicate to drift from the SDK.
+export { suggest } from "@aexhq/contracts";
+
 export interface CliExitCode {
   readonly code: number;
 }
@@ -62,6 +67,14 @@ export interface CommonHostFlags {
   readonly aexUrl: string;
   /** `--debug`: print a redacted per-request trace to stderr. Uploads nothing. */
   readonly debug: boolean;
+  /**
+   * `--json`: a globally-recognized output flag no verb rejects. Most verbs
+   * already emit JSON, so it is a no-op there; the render-toggling verbs
+   * (`tail`/`inspect`/`billing`) read it to switch human ↔ machine output.
+   * Recognized centrally so `aex whoami --json` (and any verb) never fails
+   * with "unexpected arguments".
+   */
+  readonly json: boolean;
 }
 
 export type ParseCommonResult =
@@ -73,6 +86,7 @@ export interface ExtractedCommonHostFlags {
   readonly apiKey: string | null;
   readonly aexUrl: string | null;
   readonly debug: boolean;
+  readonly json: boolean;
   readonly rest: readonly string[];
 }
 
@@ -93,12 +107,19 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
   let apiKey: string | null = null;
   let aexUrl: string | null = null;
   let debug = false;
+  let json = false;
   const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--debug") {
       debug = true;
+      continue;
+    }
+    if (arg === "--json") {
+      // Globally recognized + consumed so no verb ever treats it as an
+      // "unexpected argument"; render-toggling verbs read `flags.json`.
+      json = true;
       continue;
     }
     if (arg === "--api-key") {
@@ -126,7 +147,7 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
     rest.push(arg);
   }
 
-  return { ok: true, flags: { apiKey, aexUrl, debug, rest } };
+  return { ok: true, flags: { apiKey, aexUrl, debug, json, rest } };
 }
 
 /**
@@ -142,11 +163,11 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
 export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
   const extracted = extractCommonHostFlags(argv);
   if (!extracted.ok) return extracted;
-  const { apiKey, aexUrl, debug, rest } = extracted.flags;
+  const { apiKey, aexUrl, debug, json, rest } = extracted.flags;
   if (!apiKey) return { ok: false, reason: "--api-key is required" };
   return {
     ok: true,
-    flags: { apiKey, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug },
+    flags: { apiKey, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug, json },
     rest
   };
 }
@@ -167,7 +188,7 @@ export async function resolveCommonHostFlags(
 ): Promise<ParseCommonResult> {
   const extracted = extractCommonHostFlags(argv);
   if (!extracted.ok) return extracted;
-  const { apiKey: flagToken, aexUrl: flagUrl, debug, rest } = extracted.flags;
+  const { apiKey: flagToken, aexUrl: flagUrl, debug, json, rest } = extracted.flags;
 
   let token = flagToken;
   let url = flagUrl;
@@ -199,7 +220,7 @@ export async function resolveCommonHostFlags(
   if (!token) {
     return { ok: false, reason: "no API key — pass --api-key or run `aex login`" };
   }
-  return { ok: true, flags: { apiKey: token, aexUrl: resolvedUrl, debug }, rest };
+  return { ok: true, flags: { apiKey: token, aexUrl: resolvedUrl, debug, json }, rest };
 }
 
 /**
@@ -299,50 +320,6 @@ function remedyForNetworkCode(code: string): string | undefined {
     default:
       return undefined;
   }
-}
-
-/**
- * "Did you mean?" suggester for a near-miss enum value. Returns the closest
- * candidate by Levenshtein distance (≤ 2) or a unique case-insensitive prefix
- * match, else `undefined`. Used on invalid `--model` / `--provider` /
- * `--runtime-size` to turn a flat rejection into a fix hint.
- */
-export function suggest(input: string, candidates: readonly string[]): string | undefined {
-  const needle = input.trim();
-  if (!needle) return undefined;
-  // Unique case-insensitive prefix match first (cheap + intuitive).
-  const lower = needle.toLowerCase();
-  const prefixHits = candidates.filter((c) => c.toLowerCase().startsWith(lower));
-  if (prefixHits.length === 1) return prefixHits[0];
-  // Else nearest by edit distance, ties broken by declaration order.
-  let best: string | undefined;
-  let bestDist = Number.POSITIVE_INFINITY;
-  for (const candidate of candidates) {
-    const dist = levenshtein(needle, candidate);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = candidate;
-    }
-  }
-  return bestDist <= 2 ? best : undefined;
-}
-
-function levenshtein(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  let curr = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n]!;
 }
 
 export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {

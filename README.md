@@ -21,10 +21,15 @@ The package includes the TypeScript SDK and the bundled `aex` CLI used below.
 
 aex is currently in **invite-only beta** — workspaces and API keys are issued
 by the aex team (contact <support@aex.dev> for beta access). Once you have
-access, create a quickstart SDK token with `runs:read`, `runs:write`, and
-`outputs:read` in the dashboard at <https://aex.dev>, then set both credentials
-before running the examples: `AEX_API_KEY` authenticates to aex, and
-`ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
+access, create a quickstart SDK token with `runs:read`, `runs:write`,
+`outputs:read`, and `billing:read` in the dashboard at <https://aex.dev>, then
+set both credentials before running the examples: `AEX_API_KEY` authenticates
+to aex, and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
+
+An API key is self-describing: the SDK constructor reads its plane from the key
+and routes to it (a `prd` key → `https://api.aex.dev`) with zero network. A key
+whose plane disagrees with an explicit `baseUrl` throws a
+`CredentialValidationError` up front, instead of a late `token_invalid`.
 
 ```bash
 export AEX_API_KEY="<your-aex-api-key>"
@@ -68,10 +73,12 @@ console.log(result.runId); // session id; pass to openSession(...) to continue
 console.log(result.text);
 ```
 
-The bundled CLI keeps the familiar one-shot command:
+The bundled CLI keeps the familiar one-shot command. The `aex` binary ships
+inside the package, so invoke it with `npx aex …` after a local install (or
+`npm i -g @aexhq/sdk` to put a bare `aex` on your PATH):
 
 ```bash
-aex run \
+npx aex run \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \

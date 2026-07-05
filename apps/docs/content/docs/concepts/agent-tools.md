@@ -10,6 +10,7 @@ Managed runs inject the complete builtin tool set into the agent by default:
 - `read_file`, `write_file`, `edit_file` — file read/create/patch
 - `grep`, `glob` — search file contents and paths
 - `head`, `tail` — read bounded file slices
+- `ls`, `stat`, `wc` — list a directory, inspect path metadata, count lines/words/bytes
 - `web_fetch`, `web_search` — fetch a URL / managed web search
 - `todo_write` — maintain a todo list
 - `subagent`, `subagent_result` — delegate to and read back from child runs (see [Subagents](/docs/concepts/subagents/))
@@ -31,6 +32,16 @@ to pick a narrow subset alongside `includeBuiltinTools: false`.
 
 The final tool list is ordered: resolved builtin tools, then custom tools, then
 MCP tools.
+
+## Custom tools
+
+Attach your own tool in `tools` as a bundle built with `Tool.fromFiles(...)` (an
+explicit `{ entry, files }`) or `Tool.fromPath(dir)` (a directory with a
+`tool.json` at its root). The bundle's **entry must be a JS module** — a
+`.js`/`.mjs`/`.cjs` file present in the bundle that **default-exports a function
+or an object with an `execute` method**. This is validated at authoring time, so
+a non-JS entry (e.g. a `run.sh`) is rejected right where you build the tool, not
+opaquely mid-run when the runtime's module loader would fail to import it.
 
 Networking is open by default within the platform's managed egress ceiling and
 a fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a

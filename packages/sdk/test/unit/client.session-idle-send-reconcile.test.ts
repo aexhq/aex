@@ -133,7 +133,9 @@ function makeHarness(overrides: Partial<HarnessState> = {}): {
     }
     if (url.endsWith("/api/sessions/sess_1")) {
       if (state.flipRunningToIdleOnRead && state.sessionStatus === "running") state.sessionStatus = "idle";
-      return json({ session: { id: "sess_1", status: state.sessionStatus, turnSeq: state.turnSeq } });
+      // Settle-stamped once parked so the default await-settle resolves.
+      const settled = state.sessionStatus === "idle" ? { costUsd: 0 } : {};
+      return json({ session: { id: "sess_1", status: state.sessionStatus, turnSeq: state.turnSeq, ...settled } });
     }
     return json({});
   };
@@ -158,9 +160,10 @@ describe("session idle -> send reconcile", () => {
     const { client, calls, state, webSocketFactory } = makeHarness();
     const session = await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
 
-    // First turn parks idle.
+    // First turn parks idle (outcome succeeded; the resumable record stays idle).
     const first = await session.send("hello", { webSocketFactory }).done();
-    expect(first.status).toBe("idle");
+    expect(first.status).toBe("succeeded");
+    expect(first.session.status).toBe("idle");
 
     // The server is still catching up from that park: the very next send's POST
     // is rejected once with `session_busy (status: running)`.
@@ -169,7 +172,8 @@ describe("session idle -> send reconcile", () => {
 
     const second = await session.send("again", { webSocketFactory }).done();
 
-    expect(second.status).toBe("idle");
+    expect(second.status).toBe("succeeded");
+    expect(second.session.status).toBe("idle");
     // The 2nd turn's POST was attempted twice: the 409, then the reconciled retry.
     expect(messagePosts(calls)).toBe(3); // turn 1 (1) + turn 2 (409 + retry = 2)
     // The retry only fired after we read the record back to a non-running state.

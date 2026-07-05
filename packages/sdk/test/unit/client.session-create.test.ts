@@ -353,7 +353,7 @@ describe("Aex.openSession — session-create wire shape", () => {
         model: "gpt-4.1",
         apiKeys: { anthropic: "sk-x" }
       })
-    ).rejects.toThrow(/is not available for model "gpt-4\.1" \(supported: openai\)/);
+    ).rejects.toThrow(/model "gpt-4\.1" is not available for provider anthropic; available: openai/);
   });
 
   it("accepts a non-default provider for a multi-provider model", async () => {

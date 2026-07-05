@@ -4,7 +4,8 @@ import {
   type CustodyManifestV1,
   type CustodyRedactionFinding
 } from "./run-custody.js";
-import type { Run, RunEvent, Output } from "./runtime-types.js";
+import type { AexEvent } from "./event-envelope.js";
+import type { Run, Output } from "./runtime-types.js";
 import type { PlatformSubmission } from "./submission.js";
 
 export const RUN_RECORD_SCHEMA_VERSION = "aex.run-record.v1" as const;
@@ -47,7 +48,7 @@ export interface RunRecordMetadataV1 {
 
 export interface RunRecordEventsV1 {
   /** Typed `channel: "event"` records in the SDK `events/events.jsonl` export. */
-  readonly typed: readonly RunEvent[];
+  readonly typed: readonly AexEvent[];
 }
 
 export interface RunRecordV1 {

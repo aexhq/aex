@@ -595,18 +595,16 @@ describe("aex download", () => {
   });
 });
 
-// `aex run` now opens a session and sends the prompt as the first turn (mirroring
-// the SDK's `run()`): POST /api/sessions, then POST /api/sessions/{id}/messages.
-// The prompt rides the message body, NOT the create submission.
+// `aex run` now delegates to the SDK's `aex.submit()`: create the session AND
+// post the first turn in ONE `POST /api/sessions` call, with the prompt riding
+// the create body's `input` (never the submission). The CLI prints the accepted
+// session record from that single call.
 function sessionRunHandler(sessionId: string, status = "running"): (call: FetchCall) => Response {
   const ok = (body: unknown): Response =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   return (call) => {
-    if (call.url.endsWith(`/api/sessions/${sessionId}/messages`)) {
-      return ok({ session: { id: sessionId, status }, turn: { turnSeq: 0 } });
-    }
     if (call.url.endsWith("/api/sessions")) {
-      return ok({ id: sessionId, status: "creating" });
+      return ok({ id: sessionId, status });
     }
     return ok({});
   };
@@ -642,10 +640,9 @@ describe("aex run", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // create session + first-turn message
-    expect(cap.calls).toHaveLength(2);
+    // ONE call: create + first turn in a single POST /api/sessions (the SDK's submit()).
+    expect(cap.calls).toHaveLength(1);
     const create = cap.calls[0]!;
-    const message = cap.calls[1]!;
     expect(create.url).toBe("https://dash.example/api/sessions");
     expect(create.init.method).toBe("POST");
     // idempotency is header-carried on create (not in the body).
@@ -657,7 +654,7 @@ describe("aex run", () => {
     expect(createBody.retention).toEqual({ idleTtl: "3m" });
     const submission = createBody.submission as Record<string, unknown>;
     expect(submission.model).toBe("claude-haiku-4-5");
-    // the prompt is NOT part of the create submission — it rides the first turn.
+    // the prompt is NOT part of the create submission — it rides the create `input`.
     expect("prompt" in submission).toBe(false);
     expect(submission.tools).toEqual([]);
     expect(submission.mcpServers).toEqual([
@@ -672,10 +669,8 @@ describe("aex run", () => {
         headers: { Authorization: "Bearer t-from-config" }
       }
     ]);
-    // the first turn carries the prompt as its input.
-    expect(message.url).toBe("https://dash.example/api/sessions/sess-1/messages");
-    expect(message.init.method).toBe("POST");
-    expect((message.body as Record<string, unknown>).input).toEqual(["hi"]);
+    // the prompt rides the single create call's `input`.
+    expect(createBody.input).toEqual(["hi"]);
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
     expect(printed).toMatchObject({ id: "sess-1", status: "running" });
   });
@@ -716,8 +711,8 @@ describe("aex run", () => {
         headers: { Authorization: "Bearer t" }
       }
     ]);
-    // prompt rode the first-turn message, not the submission.
-    expect((cap.calls[1]!.body as Record<string, unknown>).input).toEqual(["hello"]);
+    // prompt rode the single create call's `input`, not the submission.
+    expect(body.input).toEqual(["hello"]);
   });
 
   it("opens DeepSeek sessions with --provider deepseek and --deepseek-api-key", async () => {
@@ -933,8 +928,8 @@ describe("aex run", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // the escaped literal rides the first-turn message input.
-    const message = cap.calls[1]!.body as Record<string, unknown>;
-    expect(message.input).toEqual(["@alice please look at this"]);
+    // the escaped literal rides the single create call's `input`.
+    const body = cap.calls[0]!.body as Record<string, unknown>;
+    expect(body.input).toEqual(["@alice please look at this"]);
   });
 });

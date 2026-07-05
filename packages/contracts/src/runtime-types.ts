@@ -1,4 +1,5 @@
-import type { SessionStatus } from "./status.js";
+import type { SessionStatus, SessionTerminalOutcome } from "./status.js";
+import type { RunCostProviderUsage } from "./run-cost.js";
 import type {
   PlatformRunSubmissionInput,
   PlatformSubmission
@@ -41,6 +42,12 @@ export interface Run {
    */
   readonly usage?: UsageSummary;
   readonly costTelemetry?: import("./run-cost.js").RunCostTelemetry;
+  /**
+   * The authoritative terminal OUTCOME of the run's last turn — the settle-
+   * written outcome (`succeeded`/`failed`/`timed_out`/`cancelled`), distinct
+   * from the resumable lifecycle {@link status}. Absent until the run settles.
+   */
+  readonly lastTurnOutcome?: SessionTerminalOutcome;
   readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;
   readonly [key: string]: unknown;
 }
@@ -82,9 +89,17 @@ export interface Session {
   readonly retainedStorageBytes?: number;
   readonly usage?: UsageSummary;
   readonly costUsd?: number;
+  /**
+   * The authoritative terminal OUTCOME of the session's last turn — the
+   * settle-written outcome (`succeeded`/`failed`/`timed_out`/`cancelled`),
+   * distinct from the resumable lifecycle {@link status} (`idle`/`suspended`).
+   * A cancelled turn reads `cancelled` here even though the session may park
+   * `idle`; absent until the turn settles.
+   */
+  readonly lastTurnOutcome?: SessionTerminalOutcome;
   readonly errorMessage?: string | null;
   /**
-   * Settle-written failure taxonomy for an `error` session (e.g.
+   * Settle-written failure taxonomy for a `failed` session (e.g.
    * `provider-permanent`, `budget_exhausted`) — the class a caller can branch
    * on, complementing the human-readable `errorMessage`.
    */
@@ -192,6 +207,103 @@ export interface UsageSummary {
 }
 
 /**
+ * Project a {@link UsageSummary} from the settle-written
+ * {@link RunCostProviderUsage} entries — the SINGLE server source of token
+ * usage ({@link Run.costTelemetry}`.providerUsage`). Sums each field across all
+ * provider entries; a field is present only when at least one entry carried it.
+ * This retires the dead `session.usage` / `aex.usage`-event usage path: the SDK
+ * derives usage from cost telemetry, never re-reads a dual-written top-level
+ * `usage`. Pure.
+ */
+export function usageFromProviderUsage(
+  providerUsage: readonly RunCostProviderUsage[] | undefined
+): UsageSummary {
+  if (!providerUsage || providerUsage.length === 0) return {};
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let cacheReadInputTokens: number | undefined;
+  let cacheCreationInputTokens: number | undefined;
+  let totalTokens: number | undefined;
+  const add = (acc: number | undefined, value: number | undefined): number | undefined =>
+    value === undefined ? acc : (acc ?? 0) + value;
+  for (const entry of providerUsage) {
+    inputTokens = add(inputTokens, entry.inputTokens);
+    outputTokens = add(outputTokens, entry.outputTokens);
+    cacheReadInputTokens = add(cacheReadInputTokens, entry.cacheReadInputTokens);
+    cacheCreationInputTokens = add(cacheCreationInputTokens, entry.cacheCreationInputTokens);
+    totalTokens = add(totalTokens, entry.totalTokens);
+  }
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {})
+  };
+}
+
+/**
+ * The unified SETTLED-RESULT contract shared by `run()` and `done()`. Because
+ * both await the settle commit by default, these fields are ALWAYS present at a
+ * terminal read — they are NON-optional, so a code path that forgets to
+ * populate `costUsd`/`usage`/the terminal `status` fails to typecheck. The SDK
+ * `RunResult`/`SessionTurnResult` extend this one shape so `done()` == `run()`.
+ *
+ * `costUsd` is the AEX showback estimate in USD (>= 0) and EXCLUDES the
+ * customer's BYOK provider spend — price BYOK from `usage` tokens.
+ */
+export interface SettledResult {
+  /** The terminal outcome (never a bare resumable `idle`). */
+  readonly status: SessionTerminalOutcome;
+  /** `succeeded` ⇒ true; `failed`/`timed_out`/`cancelled` ⇒ false. */
+  readonly ok: boolean;
+  /** AEX showback estimate (USD, >= 0). Excludes BYOK provider spend. */
+  readonly costUsd: number;
+  /** Aggregate token usage, derived from `costTelemetry.providerUsage`. */
+  readonly usage: UsageSummary;
+  /** Terminal failure message (from the terminal `RUN_ERROR` event) when `!ok`. */
+  readonly error?: string;
+}
+
+/**
+ * The reason a schema-constrained decode did not yield a value:
+ *   - `schema_violation` — the model output failed schema validation.
+ *   - `uncertain` — the model signalled low confidence / declined to commit.
+ *   - `refused` — the model refused the request.
+ */
+export type RunRefusalReason = "schema_violation" | "uncertain" | "refused";
+
+/**
+ * The typed outcome of a `run<T>({ responseFormat })`: EITHER a schema-valid
+ * decoded value OR a typed refusal — there is no untyped path that silently
+ * yields a hallucinated object. `T` is the decoded value type.
+ */
+export type RunOutcome<T = unknown> =
+  | { readonly kind: "decoded"; readonly value: T }
+  | { readonly kind: "refused"; readonly reason: RunRefusalReason; readonly detail?: string };
+
+/** One item's settled result inside a {@link BatchResult}. */
+export interface BatchItemResult<T = unknown> extends SettledResult {
+  readonly runId: string;
+  /** Present only for a `responseFormat`-decoded item. */
+  readonly outcome?: RunOutcome<T>;
+}
+
+/**
+ * The result of `aex.batch(items, …)`: every item's settled result PLUS a real
+ * rollup. The rollup is honest because `run()` awaits settle, so every item's
+ * `costUsd`/`usage` is populated — a missing cost is a typed absent, not a
+ * silent `$0`.
+ */
+export interface BatchResult<T = unknown> {
+  readonly results: readonly BatchItemResult<T>[];
+  readonly totalCostUsd: number;
+  readonly totalUsage: UsageSummary;
+  readonly okCount: number;
+  readonly failed: readonly BatchItemResult<T>[];
+}
+
+/**
  * Filters for {@link import("./operations.js").listRuns} / the CLI's `aex runs`.
  * Every field is optional; omitting all of them lists the most recent runs in the
  * token's workspace. Workspace identity is derived server-side from the API key,
@@ -229,6 +341,39 @@ export interface RunListPage {
 }
 
 /**
+ * The minimal capability a value must carry to be RESOLVABLE through the run
+ * facade — `getRun` / `listRunEvents` / `listOutputs` all key on this `id`.
+ * Encodes the "handed ⇒ resolvable" invariant at the type level: anything the
+ * platform hands you as a run reference exposes a resolvable `id`, so a run can
+ * never be surfaced as a bare unresolvable string.
+ */
+export interface ResolvableRunRef {
+  readonly id: string;
+}
+
+/**
+ * A subagent CHILD run, enumerated under its parent via `GET /runs/:id/children`.
+ * A first-class, lineage-discoverable run reference: it {@link ResolvableRunRef}
+ * (its `id` resolves through the run facade — events/outputs/getRun), carries the
+ * lineage (`parentRunId`/`depth`) and the terminal outcome/cost, so a child is
+ * observable exactly like a top-level run.
+ */
+export interface ChildRunRef extends ResolvableRunRef {
+  /** The parent run this child was spawned by. */
+  readonly parentRunId: string;
+  /** The child's run status. */
+  readonly status: string;
+  /** Subagent nesting depth (1 = direct child of the top-level run). */
+  readonly depth?: number;
+  /** Settled AEX showback estimate (USD) for the child, when present. */
+  readonly costUsd?: number;
+  readonly createdAt?: string;
+  readonly terminalAt?: string | null;
+  /** The child's terminal outcome once settled. */
+  readonly lastTurnOutcome?: SessionTerminalOutcome;
+}
+
+/**
  * Cross-run output search query (`Aex.sessions.searchOutputs`). Restrict to a
  * corpus with `runIds`; filter by filename substring / extension / content type.
  * The MVP composes this client-side (per-run `listOutputs` + filter) — a future
@@ -238,8 +383,13 @@ export interface RunListPage {
 export interface OutputSearchQuery {
   /** Restrict the search to these runs (the chat corpus allow-list). */
   readonly runIds?: readonly string[];
-  /** Case-insensitive substring match on the output filename. */
-  readonly filename?: string;
+  /**
+   * Filename match. A string is a case-insensitive SUBSTRING match; a RegExp is
+   * tested as given. Unified with {@link OutputQuery.filename} (`string | RegExp`)
+   * so the same value works on `find()` and `search()` — feed it through
+   * {@link import("./operations.js").toFilenameMatcher} rather than assuming a string.
+   */
+  readonly filename?: string | RegExp;
   /** File extension, with or without a leading dot. Case-insensitive. */
   readonly extension?: string;
   /** Exact content type or a prefix wildcard such as `image/*`. */
@@ -262,38 +412,12 @@ export interface OutputSearchPage {
   readonly hits: readonly OutputSearchHit[];
 }
 
-/**
- * A run event as recorded by the dashboard. Includes the `type` field
- * that the `is*Event` type guards narrow on plus any provider payload.
- *
- * The unified-stream discriminators (`channel`, `source`, `sourceSeq`,
- * `emittedAt`, `receivedAt`, `level`) carry through from the coordinator
- * envelope (see `event-envelope.ts` —
- * {@link import("./event-envelope.js").AexEvent}) so SDK/CLI consumers can
- * split/filter the one stream by channel or source. All are OPTIONAL: archived
- * events from before the unification (and any producer that omits an ordering
- * attribute) lack them, an absent `channel` means `"event"` (see `channelOf`),
- * and `level` is present only on `log`-channel records.
- */
-export interface RunEvent {
-  readonly id: string;
-  readonly type: string;
-  readonly runId?: string;
-  readonly recordedAt?: string;
-  /** Which sub-stream this record rides — `"event"` (typed) or `"log"`. Absent ⇒ `"event"`. */
-  readonly channel?: import("./event-envelope.js").AexEventChannel;
-  /** Coarse origin classifier. See {@link AexEventSource}. */
-  readonly source?: import("./event-envelope.js").AexEventSource;
-  /** Per-source monotonic counter assigned at the source (carried, not re-ordered). */
-  readonly sourceSeq?: number;
-  /** Source wall-clock ms at emit (carried for a best-effort client time view). */
-  readonly emittedAt?: number;
-  /** The DO's authoritative receive-time (wall-clock ms) stamped at ingest, companion to `seq`. */
-  readonly receivedAt?: number;
-  /** Log severity, first-class on a `channel: "log"` record ("info" | "warn" | "error"). */
-  readonly level?: import("./event-envelope.js").AexLogLevel;
-  readonly [key: string]: unknown;
-}
+// The loose `RunEvent` snapshot shape has been RETIRED. Every event read
+// surface — `listSessionEvents`/`listRunEvents`, `list()`/`stream()`/
+// `streamEnvelopes()` — now yields the one canonical
+// {@link import("./event-envelope.js").AexEvent} (guard-bearing via
+// {@link import("./event-view.js").AexEventView}) with a non-optional,
+// populated `sequence`. There is no second event identity/shape.
 
 /** Status of a per-run webhook delivery. Terminal: delivered/exhausted/invalid. */
 export type RunWebhookDeliveryStatus =

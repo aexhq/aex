@@ -49,17 +49,29 @@ describe("release pipeline gates", () => {
     const workflow = read(".github/workflows/promote.yml");
 
     expect(workflow).toContain("release_run_id:");
+    expect(workflow).toContain("platform_deploy_run_id:");
     expect(workflow).toContain("actions: read");
     expect(workflow).toContain("name: Verify green release run published this version");
+    expect(workflow).toContain("name: Verify green platform deploy tested this version");
     expect(workflow).toContain("published-artifact");
+    expect(workflow).toContain("PLATFORM_REPO_TOKEN");
 
     // The verification is fail-closed: release.yml identity, success
-    // conclusion, and the npm publish timestamp inside the run's window.
+    // conclusion, the npm publish timestamp inside the run's window, and a
+    // platform deploy proof artifact for the same sdk_version.
     expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/release.yml" ]');
     expect(workflow).toContain('[ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]');
     expect(workflow).toContain(".time[$v] // empty");
     expect(workflow).toContain('[ "${pub_s}" -lt "${start_s}" ] || [ "${pub_s}" -gt "${end_s}" ]');
+    expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]');
+    expect(workflow).toContain('--name "promotion-proof-${PLATFORM_DEPLOY_RUN_ID}"');
+    expect(workflow).toContain('proof_version="$(jq -r');
+    expect(workflow).toContain('if [ "${proof_version}" != "${PACKAGE_VERSION}" ]');
+    expect(workflow).toContain("suite_dev spot_canary_dev suite_prod smoke_prod");
     expect(workflow.indexOf("Verify green release run published this version")).toBeLessThan(
+      workflow.indexOf("Add npm dist-tag")
+    );
+    expect(workflow.indexOf("Verify green platform deploy tested this version")).toBeLessThan(
       workflow.indexOf("Add npm dist-tag")
     );
   });

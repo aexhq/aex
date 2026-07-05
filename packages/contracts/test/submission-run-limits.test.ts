@@ -200,6 +200,33 @@ describe("parseRunLimits (shape + positivity gate)", () => {
     });
   });
 
+  describe("maxTurns boundaries (positive safe integer — WS11)", () => {
+    it("accepts a positive integer", () => {
+      expect(parseRunLimits({ maxTurns: 40 })).toEqual({ maxTurns: 40 });
+    });
+
+    it("accepts it alongside the other fields", () => {
+      expect(parseRunLimits({ maxConcurrentChildRuns: 2, maxSubagentDepth: 3, maxSpendUsd: 5, maxTurns: 20 })).toEqual({
+        maxConcurrentChildRuns: 2,
+        maxSubagentDepth: 3,
+        maxSpendUsd: 5,
+        maxTurns: 20
+      });
+    });
+
+    it("rejects 0 / -1 / fractional / string", () => {
+      expect(() => parseRunLimits({ maxTurns: 0 })).toThrow(/limits\.maxTurns must be a positive safe integer/);
+      expect(() => parseRunLimits({ maxTurns: -1 })).toThrow(/limits\.maxTurns must be a positive safe integer/);
+      expect(() => parseRunLimits({ maxTurns: 1.5 })).toThrow(/limits\.maxTurns must be a positive safe integer/);
+      expect(() => parseRunLimits({ maxTurns: "20" })).toThrow(/limits\.maxTurns must be a positive safe integer/);
+    });
+
+    it("survives the full request parser", () => {
+      const parsed = parseRunSubmissionRequest({ ...baseRequest(), limits: { maxTurns: 30 } });
+      expect(parsed.limits).toEqual({ maxTurns: 30 });
+    });
+  });
+
   describe("non-object input", () => {
     it("rejects a string", () => {
       expect(() => parseRunLimits("nope")).toThrow(/limits must be an object/);

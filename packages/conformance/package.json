@@ -28,6 +28,8 @@
     "test:unit": "vitest run"
   },
   "devDependencies": {
+    "@aexhq/cli": "workspace:*",
+    "@aexhq/sdk": "workspace:*",
     "@types/node": "22.15.3",
     "typescript": "5.8.3",
     "vitest": "3.1.2"

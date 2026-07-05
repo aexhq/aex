@@ -1,0 +1,250 @@
+/**
+ * The single source of truth for the CLI's verb surface: every subcommand, the
+ * `run` flags, and the `outputs` sub-verbs. Two consumers read it:
+ *
+ *   1. Per-verb `--help` (`aex <verb> --help`) renders a static usage table
+ *      from here BEFORE any auth-requiring handler runs, so discovering a
+ *      verb's flags never needs an API key.
+ *   2. The conformance CLI↔SDK parity manifest test asserts every SDK public
+ *      capability (Aex method / run-option / outputs accessor) maps to a verb
+ *      or flag REGISTERED here — turning "mirrors the SDK" from a comment into
+ *      a CI-enforced invariant.
+ *
+ * Keep this list in lockstep with the `dispatch()` switch in `run.ts`.
+ */
+
+export interface CliVerbSpec {
+  /** The subcommand token, e.g. `run`, `outputs`, `delete-asset`. */
+  readonly name: string;
+  /** One-line description shown in per-verb help. */
+  readonly summary: string;
+  /** Full usage lines rendered by `aex <verb> --help`. */
+  readonly usage: readonly string[];
+  /**
+   * Long-form flags this verb recognizes (`--model`, `--skill`, …). Drives the
+   * per-verb help flag list AND the parity manifest's run-option coverage.
+   */
+  readonly flags?: readonly string[];
+  /** Sub-verbs (e.g. `outputs read|download|link|find|search`). */
+  readonly subverbs?: readonly string[];
+}
+
+/** Common flags every host verb accepts (rendered in per-verb help footers). */
+export const COMMON_HOST_FLAGS: readonly string[] = ["--api-key", "--aex-url", "--json", "--debug"];
+
+/**
+ * The `aex run` flag surface. Also the SSoT the parity manifest maps
+ * `SessionRunOptions` keys onto — a new run-option the CLI should forward
+ * gets a flag here, and the parity test proves the mapping is complete.
+ */
+export const RUN_FLAGS: readonly string[] = [
+  "--provider",
+  "--model",
+  "--system",
+  "--prompt",
+  "--config",
+  "--skill",
+  "--tool",
+  "--agents-md",
+  "--file",
+  "--mcp",
+  "--mcp-auth",
+  "--metadata",
+  "--runtime-size",
+  "--run-timeout",
+  "--idempotency-key",
+  "--webhook",
+  "--follow",
+  "--timeout"
+];
+
+/** The `aex outputs` sub-verbs (`aex outputs <id>` bare = list). */
+export const OUTPUTS_SUBVERBS: readonly string[] = ["read", "download", "link", "find", "search"];
+
+export const CLI_VERBS: readonly CliVerbSpec[] = [
+  {
+    name: "run",
+    summary: "One-shot: open a session, send the prompt as the first turn (delegates to the SDK).",
+    usage: [
+      "aex run --model M --prompt P [--system S] [--provider name] --<provider>-api-key K",
+      "aex run --config <run.json> --<provider>-api-key K",
+      "  --skill @file        Attach a workspace skill bundle (repeatable)",
+      "  --tool @file.js      Attach a custom tool module (repeatable)",
+      "  --agents-md @file    Attach an AGENTS.md brief (repeatable)",
+      "  --file @path         Mount a file into /workspace (repeatable)",
+      "  --mcp name=url       MCP server (repeatable); --mcp-auth name=Hdr:Val for headers",
+      "  --metadata key=value Submission metadata (repeatable)",
+      "  --runtime-size <s>   Managed runtime preset",
+      "  --run-timeout <dur>  Server-side run deadline (validated client-side by the SDK)",
+      "  --webhook <url>      Per-run terminal callback (https)",
+      "  --follow             Stream the turn's events until the session parks"
+    ],
+    flags: RUN_FLAGS
+  },
+  {
+    name: "status",
+    summary: "Print a session/run record (GET /api/sessions/:id).",
+    usage: ["aex status <session-id>"]
+  },
+  {
+    name: "deliveries",
+    summary: "List a run's webhook delivery attempts.",
+    usage: ["aex deliveries <session-id>"]
+  },
+  {
+    name: "wait",
+    summary: "Poll a session until it parks; exit code reflects the outcome.",
+    usage: ["aex wait <session-id> [--timeout 8m] [--interval 2s]"],
+    flags: ["--timeout", "--interval"]
+  },
+  {
+    name: "events",
+    summary: "List (or --follow) a session's events as NDJSON.",
+    usage: ["aex events <session-id> [--follow] [--timeout 8m]"],
+    flags: ["--follow", "--timeout"]
+  },
+  {
+    name: "tail",
+    summary: "Live human-readable follow over the coordinator event stream.",
+    usage: ["aex tail <session-id> [--filter <type|source>] [--logs] [--from <seq>] [--settle] [--timeout <dur>]"],
+    flags: ["--filter", "--logs", "--from", "--settle", "--timeout"]
+  },
+  {
+    name: "inspect",
+    summary: "One-shot full-timeline render + jump-to-failure summary.",
+    usage: ["aex inspect <session-id> [--filter <type|source>] [--logs] [--timeout <dur>]"],
+    flags: ["--filter", "--logs", "--timeout"]
+  },
+  {
+    name: "outputs",
+    summary: "List a session's captured outputs, or read/download/link/find/search one file.",
+    usage: [
+      "aex outputs <session-id>                         List captured outputs (NDJSON)",
+      "aex outputs read <session-id> <path>             Read one file as capped text",
+      "aex outputs download <session-id> <path> [--out] Download one file's raw bytes",
+      "aex outputs link <session-id> <path>             Mint a temporary download URL",
+      "aex outputs find <session-id> [--name S] [--ext E] [--type T]",
+      "aex outputs search [--query S] [--name S] [--ext E] [--run-id ID]   Cross-run"
+    ],
+    flags: ["--out", "--name", "--ext", "--type", "--content-type", "--query", "--run-id", "--limit", "--max-bytes"],
+    subverbs: OUTPUTS_SUBVERBS
+  },
+  {
+    name: "download",
+    summary: "Download a session's content as a zip (whole or one namespace).",
+    usage: ["aex download <session-id> [--only outputs|events|metadata] [--out path]"],
+    flags: ["--only", "--out"]
+  },
+  {
+    name: "cancel",
+    summary: "Cancel a running session.",
+    usage: ["aex cancel <session-id>"]
+  },
+  {
+    name: "delete",
+    summary: "Delete a session.",
+    usage: ["aex delete <session-id>"]
+  },
+  {
+    name: "delete-asset",
+    summary: "Delete a workspace asset blob by hash.",
+    usage: ["aex delete-asset <assetId|hash>"]
+  },
+  {
+    name: "runs",
+    summary: "List the workspace's runs (newest first).",
+    usage: ["aex runs [--limit N] [--since ISO]"],
+    flags: ["--limit", "--since"]
+  },
+  {
+    name: "sessions",
+    summary: "List the workspace's sessions (newest first).",
+    usage: ["aex sessions [--limit N]"],
+    flags: ["--limit"]
+  },
+  {
+    name: "whoami",
+    summary: "Resolve the API key to its workspace + scopes.",
+    usage: ["aex whoami [--json]"]
+  },
+  {
+    name: "billing",
+    summary: "Show balance / spend / cap; ledger, upgrade, and portal sub-verbs.",
+    usage: [
+      "aex billing [--json]",
+      "aex billing ledger [--limit N]",
+      "aex billing upgrade pro|team",
+      "aex billing portal"
+    ],
+    subverbs: ["ledger", "upgrade", "portal"]
+  },
+  {
+    name: "webhooks",
+    summary: "Reveal the workspace webhook signing secret.",
+    usage: ["aex webhooks secret"],
+    subverbs: ["secret"]
+  },
+  {
+    name: "login",
+    summary: "Persist the API key + url so other verbs need no --api-key.",
+    usage: ["aex login --api-key T [--aex-url U]"]
+  },
+  {
+    name: "logout",
+    summary: "Clear the stored token.",
+    usage: ["aex logout"]
+  },
+  {
+    name: "auth",
+    summary: "Show the resolved config (token never printed).",
+    usage: ["aex auth status"],
+    subverbs: ["status"]
+  },
+  {
+    name: "models",
+    summary: "List models + default provider (no token needed).",
+    usage: ["aex models list [--json]"]
+  },
+  {
+    name: "providers",
+    summary: "List providers + their models (no token needed).",
+    usage: ["aex providers list [--json]"]
+  },
+  {
+    name: "tools",
+    summary: "List builtin tools (no token needed).",
+    usage: ["aex tools list [--json]"]
+  },
+  {
+    name: "runtime-sizes",
+    summary: "List managed runtime presets (no token needed).",
+    usage: ["aex runtime-sizes list [--json]"]
+  },
+  {
+    name: "debug",
+    summary: "Operator: read the AWS plane directly (AWS creds, not --api-key).",
+    usage: ["aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]"]
+  }
+];
+
+const VERB_BY_NAME = new Map<string, CliVerbSpec>(CLI_VERBS.map((v) => [v.name, v]));
+
+/** Every registered verb name (used by the parity manifest test). */
+export const CLI_VERB_NAMES: readonly string[] = CLI_VERBS.map((v) => v.name);
+
+export function findVerbSpec(name: string): CliVerbSpec | undefined {
+  return VERB_BY_NAME.get(name);
+}
+
+/** Whether `argv` requests per-verb help (`--help` / `-h`). */
+export function wantsVerbHelp(argv: readonly string[]): boolean {
+  return argv.includes("--help") || argv.includes("-h");
+}
+
+/** Render a verb's static usage table (no API key required). */
+export function renderVerbHelp(spec: CliVerbSpec): string {
+  const lines: string[] = [`aex ${spec.name} — ${spec.summary}`, "", "Usage:"];
+  for (const u of spec.usage) lines.push(`  ${u}`);
+  lines.push("", `Common flags: ${COMMON_HOST_FLAGS.join(" ")}`);
+  return lines.join("\n") + "\n";
+}

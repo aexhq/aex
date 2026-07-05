@@ -1,4 +1,5 @@
 import type { RunProvider } from "./submission.js";
+import { suggest } from "./suggest.js";
 
 /**
  * Source of truth for the closed model set: each canonical model id maps to the
@@ -171,6 +172,43 @@ export function resolveProviderModelId(model: string, provider: RunProvider): st
     );
   }
   return native;
+}
+
+/**
+ * The single model→provider resolver shared by the SDK and the CLI, wrapping
+ * {@link providersForModel} with the forward-compat unknown-model allowance:
+ *
+ *   - `provider` given: it is honored. If `model` is a KNOWN id, the provider
+ *     must serve it (else throw). If `model` is UNKNOWN, it is allowed through
+ *     so a slightly-old client can still run a newly-launched model (the server
+ *     arbitrates).
+ *   - `provider` omitted: a known model resolves to its DEFAULT provider (first
+ *     declared). An UNKNOWN model with no provider throws a `did you mean?`
+ *     hint — you must name a provider to run a model this client doesn't know.
+ *
+ * Returns the resolved {@link RunProvider}.
+ */
+export function resolveModelProvider(model: string, provider?: RunProvider): RunProvider {
+  const providers = providersForModel(model);
+  if (provider !== undefined) {
+    if (providers.length > 0 && !providers.includes(provider)) {
+      throw new Error(
+        `model ${JSON.stringify(model)} is not available for provider ${provider}; ` +
+          `available: ${providers.join(", ")}`
+      );
+    }
+    return provider;
+  }
+  const inferred = providers[0];
+  if (inferred === undefined) {
+    const hint = suggest(model, RUN_MODELS);
+    throw new Error(
+      `${JSON.stringify(model)} is not a known model id` +
+        (hint ? ` (did you mean ${JSON.stringify(hint)}?)` : "") +
+        "; pass provider explicitly to run it"
+    );
+  }
+  return inferred;
 }
 
 export function isRunModel(input: unknown): input is RunModel {

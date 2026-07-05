@@ -91,6 +91,50 @@ describe("redactString — value-agnostic shapes", () => {
   });
 });
 
+describe("value-shape precision: low-entropy NAMES survive, opaque secrets still mask (WS7 #5)", () => {
+  // A customer secret NAME / timestamped slug / dashed identifier is NOT a
+  // credential — masking it makes `secret_not_found` unactionable. These must
+  // survive the entropy gate verbatim, INCLUDING a real `Date.now()` timestamp
+  // whose whole-run entropy (~4.1) would trip a naive floor — the '-'-aware gate
+  // judges each segment (word / decimal number), none of which is opaque.
+  const names = [
+    "spike17-race-1720000000000", // the exact repro (round timestamp, whole-run entropy ~3.1)
+    "spike17-race-1720394857263", // real Date.now() variant (whole-run entropy ~4.1)
+    "prod-db-primary-replica-secret", // dictionary kebab ending in the word "secret"
+    "worker-config-2026-07-05", // words + a dashed date
+    "my-super-long-descriptive-name" // digit-free kebab, 30 chars
+  ];
+  for (const name of names) {
+    it(`preserves the low-entropy identifier "${name}"`, () => {
+      expect(redactString(name)).toBe(name);
+      expect(containsSecretLikeValue(name)).toBe(false);
+    });
+    it(`preserves "${name}" inside a secret_not_found error message`, () => {
+      const msg = `referenced workspace secret ${JSON.stringify(name)} does not exist; create it via POST /secrets`;
+      expect(redactString(msg)).toBe(msg);
+    });
+  }
+
+  // Opaque secrets STILL mask — including ones that merely CONTAIN a '-' (the
+  // base64url anti-regression: '-'-splitting must not open a leak). A neutral,
+  // keyword-free, space-bounded prefix isolates the entropy gate (no SECRET_PATTERN
+  // shape/keyword match), so these assert the generic high-entropy path itself.
+  const opaque: ReadonlyArray<readonly [name: string, secret: string]> = [
+    ["32-char base64 key (no dash) — entropy path", "Zx9Kq2Lp7Vn4Rt6Wy8Ub3Mc5Ad1Ef0Gh"],
+    ["base64url secret CONTAINING a dash — entropy path", "Zx9Kq2Lp7Vn4Rt6-Wy8Ub3Mc5Ad1Ef0Gh"],
+    ["32-char hex key (bare, not run_ prefixed) — entropy path", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"],
+    ["sk- sentinel with dashes — shape path", "sk-SENTINEL-9f3a1b2c3d4e5f6a7b8c9d0e1f2"]
+  ];
+  for (const [name, secret] of opaque) {
+    it(`still masks ${name}`, () => {
+      const out = redactString(`blob ${secret} end`);
+      expect(out).not.toContain(secret);
+      expect(out).toContain(REDACTED);
+      expect(containsSecretLikeValue(secret)).toBe(true);
+    });
+  }
+});
+
 describe("redactSecrets — structured values", () => {
   it("redacts known key patterns inside objects", () => {
     const redacted = redactSecrets({

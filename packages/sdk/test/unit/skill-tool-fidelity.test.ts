@@ -210,6 +210,7 @@ describe("Tool.fromPath — .aexignore + defaults + exec", () => {
     expect(entries["src/index.js"]).toBeDefined();
     // tool.json is re-added by the bundler from the manifest fields.
     expect(entries["tool.json"]).toBeDefined();
+    // eslint-disable-next-line aex/no-conditional-expect -- POSIX-only exec-sidecar assertion; the unconditional bundle assertions above always run, and Windows sets no exec bit so there is no sidecar to assert.
     if (isPosix) {
       const manifest = parseBundleManifest(entries[RESERVED_META_ENTRY]);
       expect(manifest?.exec).toContain("run.sh");

@@ -1,28 +1,35 @@
 import {
   AexApiError,
-  AexError,
   CredentialValidationError,
   DEFAULT_RUN_PROVIDER,
   HttpClient,
+  PLANE_BASE_URLS,
   RunConfigValidationError,
   RunStateError,
   SecretString,
   asAexEventView,
   customName,
   isRunSettled,
+  assertStreamableOutputMode,
   operations,
-  providersForModel,
+  parseApiKey,
+  resolveModelProvider,
   streamCoordinatorEvents,
+  usageFromProviderUsage,
   type AexEvent,
   type AexEventView,
   type AgentsMdRecord,
   type AgentsMdRef,
+  type ApprovalGate,
+  type BatchItemResult,
+  type BatchResult,
   type BillingCheckoutRequest,
   type BillingHostedSession,
   type BillingLedgerPage,
   type BillingLedgerQuery,
   type BillingPortalRequest,
   type BillingSummary,
+  type ChildRunRef,
   type DebugSink,
   type FetchLike,
   type FileRecord,
@@ -36,9 +43,12 @@ import {
   type OutputText,
   type OutputMode,
   type ReadOutputTextOptions,
+  type ResponseFormat,
   type OutputSearchQuery,
   type OutputSearchHit,
   type OutputSearchPage,
+  type RunCostProviderUsage,
+  type RunOutcome,
   type Session,
   type SessionCreateRequest,
   type SessionEvent,
@@ -48,14 +58,15 @@ import {
   type SessionMessageAccepted,
   type SessionRetentionPolicy,
   type SessionStateChangeAccepted,
+  type SessionTerminalOutcome,
   type SessionTurn,
+  type SettledResult,
   type PlatformEnvironmentInput,
   type PlatformSubmission,
   type PlatformInlineSecrets,
   type PlatformMcpServerSecret,
   type Run,
   type RunModel,
-  type RunEvent,
   type RunTrace,
   type UsageSummary,
   type RunLimits,
@@ -125,24 +136,27 @@ export interface AexOptions {
 }
 
 /**
- * The settle-consistent result of {@link Aex.run}:
- * the one-shot session record plus its events, decoded trace, assistant text,
- * and captured outputs — everything a "do it and give me the result" caller
- * needs without hand-rolling a session/message/stream loop.
+ * The unified SETTLED result of {@link Aex.run}. Extends the contracts
+ * {@link SettledResult} (the ONE settled shape `run()` and `done()` share), so
+ * the terminal `status` (a {@link SessionTerminalOutcome}), `ok`, `costUsd`
+ * (`number`, `>= 0`), and `usage` are ALWAYS present — `run()` awaits the settle
+ * commit by default. Adds the one-shot conveniences: the run-compatible record,
+ * events, decoded trace, assistant text, and captured outputs.
+ *
+ * `T` is the `responseFormat` decode type: when the run was submitted with a
+ * `json_schema` `responseFormat`, {@link outcome} carries the typed decoded
+ * value or a typed refusal.
  */
-export interface RunResult {
+export interface RunResult<T = unknown> extends SettledResult {
   readonly runId: string;
   /** The session id used as the run-compatible handle. */
   readonly sessionId?: string;
   /** Run-compatible view of the underlying session record. */
   readonly run: Run;
-  /** The underlying resumable session record. */
+  /** The underlying resumable session record (its lifecycle `status` is idle/suspended when resumable). */
   readonly session?: Session;
   /** The turn accepted for this one-shot run. */
   readonly turn?: SessionTurn;
-  readonly status: string;
-  /** `true` when the one-shot turn parked the session cleanly (`idle` or `suspended`). */
-  readonly ok: boolean;
   /** The assistant's final text. */
   readonly text: string;
   /** Assistant messages projected from the settled event stream. */
@@ -153,20 +167,17 @@ export interface RunResult {
   readonly trace: RunTrace;
   /** The run's captured output files. */
   readonly outputs: readonly Output[];
-  /** Aggregate token usage when the deployment exposes it on the record. */
-  readonly usage?: UsageSummary;
   /**
-   * Settle-time showback estimate (USD), from the settle-stamped session
-   * record's `costUsd` (the full `costTelemetry` block is served on
-   * `GET /api/runs/:id`, not on the session projection). The settle
-   * write lands tens of seconds AFTER the turn parks, so by default this is
-   * usually absent on a fresh run — pass `settleConsistent: true` to wait for
-   * it, or read `sessions.get(runId).costUsd` later.
+   * The typed schema-decode outcome — present only when the run was submitted
+   * with a `json_schema` `responseFormat`: `{ kind:'decoded', value }` or
+   * `{ kind:'refused', reason }`. There is no untyped path that yields a
+   * hallucinated object.
    */
-  readonly costUsd?: number;
-  /** The run's error message when `!ok`. */
-  readonly error?: string;
+  readonly outcome?: RunOutcome<T>;
 }
+
+/** How a one-shot / turn resolves: at the render-complete park, or (default) at the settle commit. */
+export type SettleAwait = "park" | "settle";
 
 /** Options for {@link Aex.run}. */
 export interface RunCollectOptions {
@@ -178,13 +189,27 @@ export interface RunCollectOptions {
   /** Throw a {@link RunStateError} when the run does not succeed. Default false. */
   readonly throwOnFailure?: boolean;
   /**
-   * Wait (bounded, ~60s) for the settle write after the turn parks, so the
-   * result carries the settle-stamped `costUsd`/`usage`/`errorMessage`. The
-   * settle lambda lands tens of seconds after the park event, so this trades
-   * latency for a complete record. Default false: return at park; read
-   * `sessions.get(runId)` later for the showback.
+   * When the result resolves. `'settle'` (DEFAULT) waits (bounded) for the
+   * settle commit after the turn parks, so `costUsd`/`usage`/terminal `status`
+   * are always present. `'park'` returns at the render-complete park event for
+   * latency-sensitive streaming — cost/usage are then best-effort (the settle
+   * write lands tens of seconds later).
    */
-  readonly settleConsistent?: boolean;
+  readonly await?: SettleAwait;
+}
+
+/** The result of {@link Aex.submit}: the run id + a resumable session handle. */
+export interface SubmitResult {
+  readonly runId: string;
+  readonly session: SessionHandle;
+}
+
+/** Options for {@link Aex.batch}. */
+export interface BatchOptions {
+  /** Max concurrent items, clamped to `[1, 10]` (below the workspace tier cap). */
+  readonly concurrency?: number;
+  /** Reserved — the cost/usage rollup is always computed on the result. */
+  readonly rollup?: boolean;
 }
 
 export type SessionInput = string | readonly string[];
@@ -198,6 +223,11 @@ export interface SessionOverrides {
   readonly idleTtl?: string;
   readonly timeout?: string;
   readonly maxSpendUsd?: number;
+  /**
+   * Per-run iteration cap (agent loop turns). Defaults + ceiling are enforced
+   * server-side; omit to accept the platform default. A positive integer.
+   */
+  readonly maxTurns?: number;
 }
 
 /**
@@ -268,10 +298,32 @@ export interface SessionCreateOptions {
    */
   readonly includeBuiltinTools?: boolean;
   /**
-   * Assistant-output granularity. `"buffered"` (default) delivers one event per
-   * assistant message; `"stream"` delivers per-token text deltas.
+   * Assistant-output granularity. `"buffered"` (default) delivers ONE coalesced
+   * `TEXT_MESSAGE_CONTENT` per assistant message. `"stream"` delivers per-token
+   * `TEXT_MESSAGE_CONTENT` DELTAS (each `event.isTextMessage()` with
+   * `event.data.delta === true`) as they arrive — but this is CAPABILITY-GATED:
+   * `"stream"` is only honored for a streamable provider (submitting `"stream"`
+   * against a non-streamable one is rejected at submit, never silently
+   * downgraded). A coalesced final `TEXT_MESSAGE_CONTENT` ALWAYS follows the
+   * deltas, so a buffered consumer sees the same final text either way; deltas
+   * are provisional until that coalesced block.
    */
   readonly outputMode?: OutputMode;
+  /**
+   * Structured-output policy. `{ kind:'text' }` (default) is free-form;
+   * `{ kind:'json_schema', schema, strict?, name? }` requests provider-native
+   * constrained decode against `schema`. The typed outcome is read from
+   * `run<T>()`'s `result.outcome` (`{ kind:'decoded', value }` or
+   * `{ kind:'refused', reason }`) — never an untyped hallucinated object.
+   */
+  readonly responseFormat?: ResponseFormat;
+  /**
+   * Declarative HITL write-gate: the platform parks the session
+   * `awaiting_approval` BEFORE dispatching any tool in `tools`, independent of
+   * model prose. Resume with `session.approve()` or reject with
+   * `session.deny()`.
+   */
+  readonly approvalGate?: ApprovalGate;
   readonly metadata?: PlatformSubmission["metadata"];
   readonly idempotencyKey?: string;
   /** BYOK provider key(s), keyed by provider. */
@@ -298,6 +350,12 @@ export interface SessionSendOptions {
   readonly webSocketFactory?: WebSocketFactory;
   readonly idleTimeoutMs?: number;
   readonly pingIntervalMs?: number;
+  /**
+   * When the turn resolves. `'settle'` (DEFAULT) awaits the settle commit so
+   * `costUsd`/`usage`/terminal `status` are present on the result; `'park'`
+   * returns at the render-complete park event (cost/usage then best-effort).
+   */
+  readonly await?: SettleAwait;
 }
 
 interface InternalSessionSendOptions extends SessionSendOptions {
@@ -311,15 +369,22 @@ export interface SessionRunOptions extends SessionCreateOptions {
   readonly stream?: Omit<SessionSendOptions, "idempotencyKey">;
 }
 
-export interface SessionTurnResult {
+/**
+ * The unified SETTLED result of one turn (`session.send(...).done()`). Extends
+ * the contracts {@link SettledResult}, so `done()` returns the SAME shape as
+ * `run()`: the terminal `status` (a {@link SessionTerminalOutcome}), `ok`,
+ * `costUsd`, and `usage` are always present (the turn awaits settle by default).
+ */
+export interface SessionTurnResult<T = unknown> extends SettledResult {
   readonly sessionId: string;
   readonly session: Session;
   readonly turn: SessionTurn;
-  readonly status: string;
   readonly text: string;
   readonly events: readonly AexEventView[];
   readonly outputs: readonly Output[];
   readonly messages: readonly Message[];
+  /** The typed schema-decode outcome when a `json_schema` `responseFormat` was set. */
+  readonly outcome?: RunOutcome<T>;
 }
 
 export interface SessionRunResult extends SessionTurnResult {}
@@ -431,15 +496,17 @@ export interface SessionMessages {
 }
 
 /**
- * Accessor over the session's event stream (`session.events()`): the buffered
- * `SessionEvent` snapshots, the polling `RunEvent` iterator, the live
- * coordinator envelope iterator, and the events-namespace archive.
+ * Accessor over the session's event stream (`session.events()`). EVERY surface
+ * yields the one canonical {@link AexEventView} (guard-bearing, non-optional
+ * populated `sequence`): the buffered snapshot `list()`, the polling `stream()`
+ * iterator, the live coordinator `streamEnvelopes()` iterator, and the
+ * events-namespace archive.
  */
 export interface SessionEvents {
   list(): Promise<readonly AexEventView[]>;
   last(): Promise<AexEventView | undefined>;
   first(): Promise<AexEventView | undefined>;
-  stream(options?: StreamEventsOptions): AsyncIterable<RunEvent>;
+  stream(options?: StreamEventsOptions): AsyncIterable<AexEventView>;
   streamEnvelopes(options?: StreamEnvelopesOptions): AsyncIterable<AexEventView>;
   archiveLink(options?: OutputLinkOptions): Promise<OutputLink>;
   /** Download the events-namespace archive as a zip. */
@@ -457,11 +524,21 @@ export interface SessionOutputs {
   read(selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText>;
   find(query: OutputQuery): Promise<readonly Output[]>;
   findOne(query: OutputQuery): Promise<Output | null>;
+  /**
+   * Search THIS session's captured outputs by filename (`string | RegExp`) /
+   * extension / content type. Metadata-only (reference hits, no bytes). A
+   * content-shaped query throws a typed "content search unsupported" rather than
+   * silently returning 0 hits.
+   */
+  search(query?: PerSessionOutputSearchQuery): Promise<OutputSearchPage>;
   link(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink>;
   fetch(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<Response>;
   /** No selector = outputs-namespace zip; with selector = one file's raw bytes. */
   download(selector?: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
 }
+
+/** A per-session output search — {@link OutputSearchQuery} without the cross-run `runIds` corpus. */
+export type PerSessionOutputSearchQuery = Omit<OutputSearchQuery, "runIds">;
 
 /**
  * Accessor over the session's webhook delivery ledger (`session.webhooks()`).
@@ -518,7 +595,7 @@ export class SessionHandle {
   }
 
   async *#send(input: SessionInput, options: InternalSessionSendOptions): AsyncGenerator<AexEventView, SessionTurnResult, void> {
-    const idempotencyKey = options.idempotencyKey ?? generateIdempotencyKey();
+    const idempotencyKey = operations.resolveIdempotencyKey(options.idempotencyKey);
     this.#lastSend = { input, idempotencyKey };
     const accepted = await this.#acceptTurn(input, idempotencyKey, options.signal);
     this.#session = accepted.session;
@@ -531,21 +608,19 @@ export class SessionHandle {
       events.push(event);
       yield event;
     }
-    const terminalStatus = terminalSessionStatusFromEvents(events, turn.turnSeq);
+    // Read the CARRIED terminal outcome from the events (never re-derive a lossy idle).
+    const read = terminalSessionStatusFromEvents(events, turn.turnSeq);
+    // Await the settle commit by DEFAULT so cost/usage + the terminal outcome are
+    // always present; `await: 'park'` returns at the render-complete park event.
     const readSession = await operations.getSession(this.#http, this.id).catch(() => this.#session);
-    this.#session = withTerminalSessionStatus(readSession, terminalStatus);
+    const settled =
+      (options.await ?? "settle") === "park"
+        ? readSession
+        : (await settledSessionRecord(this.#http, this.id, readSession, options.signal)) ?? readSession;
+    this.#session = withTerminalSessionStatus(settled, read);
     const outputs = await operations.listSessionOutputs(this.#http, this.id).catch(() => [] as readonly Output[]);
     const messages = projectAssistantMessages(events);
-    return {
-      sessionId: this.id,
-      session: this.#session,
-      turn,
-      status: this.#session.status,
-      text: assistantTextFromEvents(events),
-      events,
-      outputs,
-      messages
-    };
+    return settledTurnResult(this.id, this.#session, turn, events, outputs, messages, read);
   }
 
   /**
@@ -630,6 +705,43 @@ export class SessionHandle {
   }
 
   /**
+   * Request the HITL write-gate: park this session `awaiting_approval` before
+   * its next gated action. Imperative counterpart to the declarative
+   * `approvalGate` submission option. Resume with {@link approve} / reject with
+   * {@link deny}.
+   */
+  async requestApproval(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
+    const accepted = await operations.requestApproval(this.#http, this.id, options);
+    this.#session = accepted.session;
+    return accepted;
+  }
+
+  /** Approve an `awaiting_approval` session so the held turn resumes (→ running). */
+  async approve(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
+    const accepted = await operations.approveSession(this.#http, this.id, options);
+    this.#session = accepted.session;
+    return accepted;
+  }
+
+  /** Deny an `awaiting_approval` session so the held turn is cancelled (→ cancelled). */
+  async deny(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
+    const accepted = await operations.denySession(this.#http, this.id, options);
+    this.#session = accepted.session;
+    return accepted;
+  }
+
+  /**
+   * Enumerate this run's subagent CHILD runs (`GET /runs/:id/children`). Each is
+   * a {@link ChildRunHandle} backed by the RUN facade (getRun/events/outputs) —
+   * NOT `openSession` — so every child the platform hands you is resolvable, with
+   * its lineage (`parentRunId`/`depth`) and terminal outcome exposed.
+   */
+  async children(): Promise<readonly ChildRunHandle[]> {
+    const refs = await operations.listRunChildren(this.#http, this.id);
+    return refs.map((ref) => new ChildRunHandle(this.#http, ref, this.#fetch));
+  }
+
+  /**
    * Accessor for the session's assistant messages. `all()` returns them
    * oldest-first; `last()`/`first()` return a single entry or `undefined` when
    * empty. The accessor is callable as a compatibility shim for older
@@ -667,7 +779,7 @@ export class SessionHandle {
 
   /**
    * Accessor for the session's event stream: the buffered `SessionEvent`
-   * snapshots (`list`/`last`/`first`), the polling `RunEvent` iterator
+   * snapshots (`list`/`last`/`first`), the polling `AexEventView` iterator
    * (`stream`), the live coordinator envelope iterator (`streamEnvelopes`), and
    * the events-namespace archive (`archiveLink`/`download`).
    */
@@ -791,7 +903,7 @@ export class SessionClient {
     const session = await operations.createSession(
       this.#http,
       request,
-      { idempotencyKey: options.idempotencyKey ?? generateIdempotencyKey() }
+      { idempotencyKey: operations.resolveIdempotencyKey(options.idempotencyKey) }
     );
     return new SessionHandle(this.#http, session, this.#fetch);
   }
@@ -823,73 +935,6 @@ export class SessionClient {
     return sessionOutputs(this.#http, sessionId, this.#fetch);
   }
 
-  /**
-   * Find output files across sessions by filename / extension / content type.
-   * Returns lean REFERENCE hits (never bytes; fetch content with `readOutput`).
-   * Scope the search to a corpus with `query.runIds` (a session-id allow-list);
-   * omit it to scan every session in the workspace. Composed client-side (per-
-   * session `listSessionOutputs` + the contracts output filter), bounded by
-   * `query.limit` (default 100).
-   */
-  async searchOutputs(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
-    // Dedup the caller-supplied allow-list so a run repeated in `runIds` (e.g. from
-    // concatenating corpora) isn't scanned twice and doesn't inflate the hit count
-    // with duplicates (pre-launch edge-sweep F27).
-    const unscoped = query.runIds === undefined;
-    const sessionIds = unscoped ? await this.#allSessionIds() : [...new Set(query.runIds)];
-    const limit = query.limit ?? 100;
-    // Translate the search query to an OutputQuery so the contracts output
-    // filter does the matching — no re-derived filter logic here.
-    const outputQuery: OutputQuery = {
-      ...(query.filename ? { filename: new RegExp(escapeRegExp(query.filename), "i") } : {}),
-      ...(query.extension ? { extension: query.extension } : {}),
-      ...(query.contentType ? { contentType: query.contentType } : {})
-    };
-    const hasFilter = Object.keys(outputQuery).length > 0;
-    const hits: OutputSearchHit[] = [];
-    for (const sessionId of sessionIds) {
-      let outputs: readonly Output[];
-      try {
-        outputs = hasFilter
-          ? await operations.listSessionOutputs(this.#http, sessionId, outputQuery)
-          : await operations.listSessionOutputs(this.#http, sessionId);
-      } catch (err) {
-        if (unscoped && isMissingOutputsSession(err)) continue;
-        throw err;
-      }
-      for (const o of outputs) {
-        hits.push({
-          runId: sessionId,
-          outputId: o.id,
-          ...(o.filename !== undefined ? { filename: o.filename } : {}),
-          ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
-          ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
-        });
-        if (hits.length >= limit) return { hits };
-      }
-    }
-    return { hits };
-  }
-
-  /** Enumerate every session id in the workspace by paging `listSessions`. */
-  async #allSessionIds(): Promise<readonly string[]> {
-    const ids: string[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-    do {
-      if (cursor !== undefined) {
-        if (seenCursors.has(cursor)) {
-          throw new Error("Aex.sessions.searchOutputs: listSessions returned a repeated cursor");
-        }
-        seenCursors.add(cursor);
-      }
-      const page = await operations.listSessions(this.#http, cursor ? { cursor } : {});
-      for (const session of page.sessions) ids.push(session.id);
-      cursor = page.nextCursor;
-    } while (cursor);
-    return ids;
-  }
-
   async run(options: SessionRunOptions): Promise<SessionRunResult> {
     const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
     assertNoLegacySessionFields(options, "Aex.sessions.run");
@@ -897,8 +942,9 @@ export class SessionClient {
     // Derive the message key from the create key (like the CLI) so a retried run
     // with the same `idempotencyKey` de-duplicates BOTH the create and the
     // billable turn — never a duplicate billable run.
-    const createKey = createOptions.idempotencyKey ?? generateIdempotencyKey();
-    const messageKey = messageIdempotencyKey ?? deriveMessageKey(createKey);
+    const createKey = operations.resolveIdempotencyKey(createOptions.idempotencyKey);
+    const messageKey =
+      messageIdempotencyKey !== undefined ? operations.resolveIdempotencyKey(messageIdempotencyKey) : deriveMessageKey(createKey);
     const session = await this.create({ ...createOptions, idempotencyKey: createKey });
     const result = await session.send(input, {
       ...(stream ?? {}),
@@ -909,6 +955,237 @@ export class SessionClient {
     }
     return result;
   }
+}
+
+/**
+ * Cross-run output search (`aex.outputs`). Composed client-side (per-run
+ * `listSessionOutputs` + the contracts output filter): scope a corpus with
+ * `query.runIds`, or omit it to scan every run in the workspace. Metadata-only
+ * (reference hits, no bytes); a content-shaped query throws a typed
+ * "content search unsupported".
+ */
+export class OutputsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  async search(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
+    assertMetadataOnlyOutputSearch(query, "aex.outputs.search");
+    // Dedup the caller-supplied allow-list so a run repeated in `runIds` (from
+    // concatenating corpora) isn't scanned twice and doesn't inflate hit count.
+    const unscoped = query.runIds === undefined;
+    const runIds = unscoped ? await this.#allRunIds() : [...new Set(query.runIds)];
+    const limit = query.limit ?? 100;
+    const hits: OutputSearchHit[] = [];
+    for (const runId of runIds) {
+      let outputs: readonly Output[];
+      try {
+        outputs = await searchRunOutputs(this.#http, runId, query);
+      } catch (err) {
+        if (unscoped && isMissingOutputsSession(err)) continue;
+        throw err;
+      }
+      for (const hit of outputHits(runId, outputs, limit - hits.length)) {
+        hits.push(hit);
+        if (hits.length >= limit) return { hits };
+      }
+    }
+    return { hits };
+  }
+
+  /** Enumerate every run id in the workspace by paging `listSessions`. */
+  async #allRunIds(): Promise<readonly string[]> {
+    const ids: string[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      if (cursor !== undefined) {
+        if (seenCursors.has(cursor)) {
+          throw new Error("aex.outputs.search: listSessions returned a repeated cursor");
+        }
+        seenCursors.add(cursor);
+      }
+      const page = await operations.listSessions(this.#http, cursor ? { cursor } : {});
+      for (const session of page.sessions) ids.push(session.id);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return ids;
+  }
+}
+
+/** A run-facade events accessor (list + polling stream) keyed on a run id. */
+export interface RunEvents {
+  list(): Promise<readonly AexEventView[]>;
+  stream(options?: StreamEventsOptions): AsyncIterable<AexEventView>;
+}
+
+/** A run-facade outputs accessor (a subset of {@link SessionOutputs}) keyed on a run id. */
+export interface RunOutputs {
+  list(query?: OutputQuery): Promise<readonly Output[]>;
+  find(query: OutputQuery): Promise<readonly Output[]>;
+  findOne(query: OutputQuery): Promise<Output | null>;
+  read(selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText>;
+  link(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink>;
+  download(selector?: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
+}
+
+/**
+ * A first-class, lineage-discoverable SUBAGENT CHILD run — handed out by
+ * `session.children()` / `run.children()`, backed by the RUN facade
+ * (getRun/events/outputs), NOT `openSession`. Every child the platform hands you
+ * is resolvable through this handle; its lineage (`parentRunId`/`depth`) and
+ * terminal outcome (`status`) are first-class.
+ */
+export class ChildRunHandle {
+  readonly #http: HttpClient;
+  readonly #fetch: FetchLike | undefined;
+  readonly #ref: ChildRunRef;
+
+  constructor(http: HttpClient, ref: ChildRunRef, fetch?: FetchLike) {
+    this.#http = http;
+    this.#ref = ref;
+    this.#fetch = fetch;
+  }
+
+  get id(): string {
+    return this.#ref.id;
+  }
+
+  get parentRunId(): string {
+    return this.#ref.parentRunId;
+  }
+
+  get depth(): number | undefined {
+    return this.#ref.depth;
+  }
+
+  /** The child's run status (a real run terminal outcome once settled). */
+  get status(): string {
+    return this.#ref.status;
+  }
+
+  get ref(): ChildRunRef {
+    return this.#ref;
+  }
+
+  /** Re-read the child run record (status, lineage, costTelemetry). */
+  get(): Promise<Run> {
+    return operations.getRun(this.#http, this.id);
+  }
+
+  /** The child's events over the RUN facade (`/runs/:id/events`). */
+  events(): RunEvents {
+    return runEventsAccessor(this.#http, this.id);
+  }
+
+  /** The child's captured outputs over the RUN facade (`/runs/:id/outputs`). */
+  outputs(): RunOutputs {
+    return runOutputsAccessor(this.#http, this.id, this.#fetch);
+  }
+
+  /** This child's own subagent children (recursive lineage). */
+  async children(): Promise<readonly ChildRunHandle[]> {
+    const refs = await operations.listRunChildren(this.#http, this.id);
+    return refs.map((ref) => new ChildRunHandle(this.#http, ref, this.#fetch));
+  }
+
+  /** Cancel the child run (run facade `POST /runs/:id/cancel`). */
+  cancel(): Promise<void> {
+    return operations.cancelRun(this.#http, this.id);
+  }
+}
+
+/** Run-facade events accessor (list + polling stream) — used by {@link ChildRunHandle}. */
+function runEventsAccessor(http: HttpClient, id: string): RunEvents {
+  return {
+    list: async () => (await operations.listRunEvents(http, id)).map(asAexEventView),
+    stream: (options?: StreamEventsOptions) => streamRunEventsPolling(http, id, options ?? {})
+  };
+}
+
+/** Run-facade outputs accessor — used by {@link ChildRunHandle}. */
+function runOutputsAccessor(http: HttpClient, id: string, fetchLike: FetchLike | undefined): RunOutputs {
+  void fetchLike;
+  return {
+    list: (query?: OutputQuery) => operations.listOutputs(http, id, query),
+    find: (query) => operations.findOutputs(http, id, query),
+    findOne: (query) => operations.findOutput(http, id, query),
+    read: (selector, options) => operations.readOutputText(http, id, selector, options),
+    link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
+    download: (selector, options) => downloadSessionOutput(http, id, selector, options)
+  };
+}
+
+/**
+ * Poll a RUN's events (via the run facade) until it reaches a terminal status,
+ * the signal aborts, or the caller breaks the iterator. Uses `getRun` (not
+ * `getSession`) so it resolves for a child run that has no session facade.
+ */
+async function* streamRunEventsPolling(
+  http: HttpClient,
+  id: string,
+  options: StreamEventsOptions
+): AsyncIterable<AexEventView> {
+  if (options.signal?.aborted) return;
+  const seenIds = new Set<string>();
+  const intervalMs = options.intervalMs ?? 1_000;
+  const signal = options.signal;
+  while (!signal?.aborted) {
+    const events = await operations.listRunEvents(http, id);
+    for (const event of events) {
+      if (!seenIds.has(event.id)) {
+        seenIds.add(event.id);
+        yield asAexEventView(event);
+      }
+    }
+    const run = await operations.getRun(http, id);
+    if (isSessionParked(run.status)) return;
+    try {
+      await sleep(intervalMs, signal);
+    } catch {
+      return;
+    }
+  }
+}
+
+/** Default / max concurrent items for {@link Aex.batch} (bounded below the tier cap). */
+const DEFAULT_BATCH_CONCURRENCY = 4;
+const BATCH_MAX_CONCURRENCY = 10;
+
+/** Sum the per-item settled cost/usage into a real {@link BatchResult} rollup. */
+function rollupBatch<T>(results: readonly BatchItemResult<T>[]): BatchResult<T> {
+  let totalCostUsd = 0;
+  let okCount = 0;
+  const failed: BatchItemResult<T>[] = [];
+  for (const result of results) {
+    totalCostUsd += result.costUsd;
+    if (result.ok) okCount += 1;
+    else failed.push(result);
+  }
+  return {
+    results,
+    totalCostUsd,
+    totalUsage: sumUsageSummaries(results.map((result) => result.usage)),
+    okCount,
+    failed
+  };
+}
+
+/** Field-wise sum of {@link UsageSummary} objects; a field is present iff some item carried it. */
+function sumUsageSummaries(usages: readonly UsageSummary[]): UsageSummary {
+  const keys = ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens", "totalTokens"] as const;
+  const out: Mutable<UsageSummary> = {};
+  for (const key of keys) {
+    let sum: number | undefined;
+    for (const usage of usages) {
+      const value = usage[key];
+      if (typeof value === "number") sum = (sum ?? 0) + value;
+    }
+    if (sum !== undefined) out[key] = sum;
+  }
+  return out;
 }
 
 async function* streamSessionTurnEvents(
@@ -933,15 +1210,17 @@ async function* streamSessionTurnEvents(
 }
 
 /**
- * Poll the session's `RunEvent` snapshots until the session parks, the signal
- * aborts, or the caller breaks the iterator, deduping by event id. Module-level
- * so `SessionHandle.events()` can hand it to its accessor object literal.
+ * Poll the session's event snapshots until the session parks, the signal
+ * aborts, or the caller breaks the iterator, deduping by event id. Yields the
+ * one canonical guard-bearing {@link AexEventView} (same shape as every other
+ * event surface). Module-level so `SessionHandle.events()` can hand it to its
+ * accessor object literal.
  */
 async function* streamSessionEventsPolling(
   http: HttpClient,
   id: string,
   options: StreamEventsOptions
-): AsyncIterable<RunEvent> {
+): AsyncIterable<AexEventView> {
   if (options.signal?.aborted) return;
   const seenIds = new Set<string>();
   const intervalMs = options.intervalMs ?? 1_000;
@@ -951,7 +1230,7 @@ async function* streamSessionEventsPolling(
     for (const event of events) {
       if (!seenIds.has(event.id)) {
         seenIds.add(event.id);
-        yield event;
+        yield asAexEventView(event);
       }
     }
     const session = await operations.getSession(http, id);
@@ -1001,18 +1280,12 @@ async function downloadSessionOutput(
   selector?: OutputFileSelector,
   options?: OutputDownloadOptions
 ): Promise<Uint8Array> {
-  let bytes: Uint8Array;
-  if (selector === undefined) {
-    bytes = await operations.downloadOutputs(http, id);
-  } else {
-    const output = isOutputPathSelector(selector)
-      ? resolveOutputFileSelector(await operations.listOutputs(http, id), selector, id)
-      : resolveOutputFileSelector([], selector, id);
-    const { response } = await http.download(
-      `/api/runs/${encodeURIComponent(id)}/outputs/${encodeURIComponent(output.id)}/download`
-    );
-    bytes = new Uint8Array(await response.arrayBuffer());
-  }
+  // One selector-resolution path: the contracts `downloadOutput` lists-if-path
+  // then downloads, throwing with PUBLIC verb names — no duplicated resolver.
+  const bytes =
+    selector === undefined
+      ? await operations.downloadOutputs(http, id)
+      : (await operations.downloadOutput(http, id, selector)).bytes;
   return writeOptionalFile(bytes, options?.to);
 }
 
@@ -1033,6 +1306,11 @@ function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | und
     read: (selector, options) => operations.readOutputText(http, id, selector, options),
     find: (query) => operations.findOutputs(http, id, query),
     findOne: (query) => operations.findOutput(http, id, query),
+    search: async (query: PerSessionOutputSearchQuery = {}) => {
+      assertMetadataOnlyOutputSearch(query, "outputs().search");
+      const outputs = await searchRunOutputs(http, id, query);
+      return { hits: outputHits(id, outputs, query.limit ?? 100) };
+    },
     link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
     fetch: async (selectorOrQuery, options) => {
       const link = await operations.outputLink(http, id, selectorOrQuery, options);
@@ -1040,6 +1318,63 @@ function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | und
     },
     download: (selector, options) => downloadSessionOutput(http, id, selector, options)
   };
+}
+
+/**
+ * List one run's outputs matching a metadata search: `extension`/`contentType`
+ * via the contracts filter, and `filename` via {@link operations.toFilenameMatcher}
+ * — a case-insensitive SUBSTRING for a string, `.test` for a RegExp (RegExp-safe;
+ * no `escapeRegExp` footgun on a reused pattern).
+ */
+async function searchRunOutputs(
+  http: HttpClient,
+  runId: string,
+  query: Omit<OutputSearchQuery, "runIds">
+): Promise<readonly Output[]> {
+  const listQuery: OutputQuery = {
+    ...(query.extension !== undefined ? { extension: query.extension } : {}),
+    ...(query.contentType !== undefined ? { contentType: query.contentType } : {})
+  };
+  const outputs = await operations.listSessionOutputs(
+    http,
+    runId,
+    Object.keys(listQuery).length > 0 ? listQuery : undefined
+  );
+  if (query.filename === undefined) return outputs;
+  const match = operations.toFilenameMatcher(query.filename);
+  return outputs.filter((output) => typeof output.filename === "string" && match(output.filename));
+}
+
+/**
+ * Fail-fast on a CONTENT-shaped search: the search surface is metadata-only, so
+ * a `content`/`text`/`query` needle throws a typed error rather than silently
+ * returning 0 hits (which reads as "no matches" for a query that was never run).
+ */
+function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
+  for (const key of ["content", "text", "query", "grep", "body"]) {
+    if (Object.prototype.hasOwnProperty.call(query, key)) {
+      throw new RunConfigValidationError(
+        `${surface}: content search is not supported — search matches on filename/extension/contentType metadata only`,
+        { field: key }
+      );
+    }
+  }
+}
+
+/** Project a run's output files to reference-only {@link OutputSearchHit}s, capped. */
+function outputHits(runId: string, outputs: readonly Output[], limit: number): OutputSearchHit[] {
+  const hits: OutputSearchHit[] = [];
+  for (const o of outputs) {
+    hits.push({
+      runId,
+      outputId: o.id,
+      ...(o.filename !== undefined ? { filename: o.filename } : {}),
+      ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
+      ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
+    });
+    if (hits.length >= limit) break;
+  }
+  return hits;
 }
 
 function messageFromWire(message: SessionMessage): Message {
@@ -1061,7 +1396,7 @@ function isMissingOutputsSession(err: unknown): boolean {
   return err instanceof AexApiError && err.status === 404;
 }
 
-function projectAssistantMessages(events: readonly (SessionEvent | RunEvent)[]): readonly Message[] {
+function projectAssistantMessages(events: readonly AexEvent[]): readonly Message[] {
   const out: Message[] = [];
   const byMessageId = new Map<string, number>();
   for (let i = 0; i < events.length; i++) {
@@ -1101,11 +1436,11 @@ function projectAssistantMessages(events: readonly (SessionEvent | RunEvent)[]):
   return out;
 }
 
-function assistantTextFromEvents(events: readonly (SessionEvent | RunEvent)[]): string {
+function assistantTextFromEvents(events: readonly AexEvent[]): string {
   return assistantTextEntriesFromEvents(events).map((entry) => entry.text).join("");
 }
 
-function runTraceFromEvents(events: readonly RunEvent[]): RunTrace {
+function runTraceFromEvents(events: readonly AexEvent[]): RunTrace {
   return {
     toolCalls: toolCallsFromEvents(events),
     usage: usageFromEvents(events),
@@ -1114,11 +1449,10 @@ function runTraceFromEvents(events: readonly RunEvent[]): RunTrace {
 }
 
 function assistantTextEntriesFromEvents(
-  events: readonly (SessionEvent | RunEvent)[]
+  events: readonly AexEvent[]
 ): RunTrace["text"] {
   const out: Array<Mutable<RunTrace["text"][number]>> = [];
-  for (const raw of events) {
-    const event = raw as MessageEventLike;
+  for (const event of events) {
     if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
     const data = asRecord(event.data);
     const text = typeof data.text === "string" ? data.text : undefined;
@@ -1126,15 +1460,14 @@ function assistantTextEntriesFromEvents(
     const entry: Mutable<RunTrace["text"][number]> = { text };
     const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
     if (messageId !== undefined) entry.messageId = messageId;
-    if (typeof event.seq === "number") entry.seq = event.seq;
-    const recordedAt = typeof event.recordedAt === "string" ? event.recordedAt : undefined;
-    if (recordedAt !== undefined) entry.recordedAt = recordedAt;
+    if (typeof event.sequence === "number") entry.seq = event.sequence;
+    if (typeof event.time === "string") entry.recordedAt = event.time;
     out.push(entry);
   }
   return out;
 }
 
-function toolCallsFromEvents(events: readonly RunEvent[]): RunTrace["toolCalls"] {
+function toolCallsFromEvents(events: readonly AexEvent[]): RunTrace["toolCalls"] {
   const order: string[] = [];
   const byId = new Map<string, Mutable<RunTrace["toolCalls"][number]>>();
   for (const event of events) {
@@ -1149,8 +1482,8 @@ function toolCallsFromEvents(events: readonly RunEvent[]): RunTrace["toolCalls"]
       };
       const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
       if (messageId !== undefined) trace.messageId = messageId;
-      if (typeof event.seq === "number") trace.startSeq = event.seq;
-      if (typeof event.recordedAt === "string") trace.startedAt = event.recordedAt;
+      if (typeof event.sequence === "number") trace.startSeq = event.sequence;
+      if (typeof event.time === "string") trace.startedAt = event.time;
       if (!byId.has(id)) order.push(id);
       byId.set(id, trace);
       continue;
@@ -1162,8 +1495,8 @@ function toolCallsFromEvents(events: readonly RunEvent[]): RunTrace["toolCalls"]
         isError: data.isError === true,
         content: data.content ?? null
       };
-      if (typeof event.seq === "number") result.seq = event.seq;
-      if (typeof event.recordedAt === "string") result.recordedAt = event.recordedAt;
+      if (typeof event.sequence === "number") result.seq = event.sequence;
+      if (typeof event.time === "string") result.recordedAt = event.time;
       let trace = byId.get(id);
       if (trace === undefined) {
         trace = { id, name: "", args: {} };
@@ -1178,12 +1511,7 @@ function toolCallsFromEvents(events: readonly RunEvent[]): RunTrace["toolCalls"]
   return order.map((id) => byId.get(id)!);
 }
 
-/** True when a usage summary actually carries at least one token count. */
-function hasUsageCounts(usage: UsageSummary | undefined): usage is UsageSummary {
-  return !!usage && Object.values(usage).some((n) => typeof n === "number");
-}
-
-function usageFromEvents(events: readonly RunEvent[]): UsageSummary {
+function usageFromEvents(events: readonly AexEvent[]): UsageSummary {
   const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
   let seen = false;
   for (const event of events) {
@@ -1249,16 +1577,53 @@ function durationMs(start: string | undefined, end: string | undefined): number 
   return delta >= 0 ? delta : undefined;
 }
 
+/**
+ * The terminal READ a turn's terminal event carries: either a
+ * {@link SessionTerminalOutcome} (succeeded/failed/timed_out/cancelled) or a
+ * resumable/held lifecycle park (idle/suspended/awaiting_approval). The SDK
+ * READS this from the carried event — it never re-derives a lossy `idle`.
+ */
+export type SessionTerminalRead = SessionTerminalOutcome | "idle" | "suspended" | "awaiting_approval";
+
+const SESSION_TERMINAL_READS = new Set<string>([
+  "succeeded",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "idle",
+  "suspended",
+  "awaiting_approval"
+]);
+
+/** The CUSTOM `aex.session.<name>` terminal event names → the carried read. */
+const SESSION_TERMINAL_EVENT_READS: Readonly<Record<string, SessionTerminalRead>> = {
+  "aex.session.succeeded": "succeeded",
+  "aex.session.failed": "failed",
+  // Clean-cut: the bare `error` park is now `failed` (one terminal vocabulary).
+  "aex.session.error": "failed",
+  "aex.session.timed_out": "timed_out",
+  "aex.session.cancelled": "cancelled",
+  "aex.session.idle": "idle",
+  "aex.session.suspended": "suspended",
+  "aex.session.awaiting_approval": "awaiting_approval"
+};
+
+/** An explicit `data.value.outcome` a park/settle event may carry (the authoritative outcome). */
+function carriedOutcome(event: AexEvent): SessionTerminalRead | undefined {
+  const value = event.data.value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const outcome = (value as { readonly outcome?: unknown }).outcome;
+  return typeof outcome === "string" && SESSION_TERMINAL_READS.has(outcome)
+    ? (outcome as SessionTerminalRead)
+    : undefined;
+}
+
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
   if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
     return true;
   }
   const name = customName(event);
-  if (
-    name !== "aex.session.idle" &&
-    name !== "aex.session.suspended" &&
-    name !== "aex.session.error"
-  ) {
+  if (name === null || !(name in SESSION_TERMINAL_EVENT_READS)) {
     return false;
   }
   const value = event.data.value;
@@ -1269,22 +1634,27 @@ function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boole
   return typeof eventTurnSeq !== "number" || eventTurnSeq === turnSeq;
 }
 
-function terminalSessionStatusFromEvents(events: readonly SessionEvent[], turnSeq: number): string | undefined {
+/**
+ * Read the CARRIED terminal outcome/park from the turn's terminal event — never
+ * a lossy re-derivation. Prefers an explicit `data.value.outcome`, then the
+ * `aex.session.<name>` name, then RUN_ERROR→failed / RUN_FINISHED→succeeded.
+ */
+function terminalSessionStatusFromEvents(events: readonly SessionEvent[], turnSeq: number): SessionTerminalRead | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]!;
     if (!isSessionTurnTerminalEvent(event, turnSeq)) continue;
-    if (event.type === "RUN_ERROR") return "error";
-    if (event.type === "RUN_FINISHED") return "idle";
+    const carried = carriedOutcome(event);
+    if (carried !== undefined) return carried;
+    if (event.type === "RUN_ERROR") return "failed";
+    if (event.type === "RUN_FINISHED") return "succeeded";
     const name = customName(event);
-    if (name === "aex.session.idle") return "idle";
-    if (name === "aex.session.suspended") return "suspended";
-    if (name === "aex.session.error") return "error";
+    if (name !== null && name in SESSION_TERMINAL_EVENT_READS) return SESSION_TERMINAL_EVENT_READS[name]!;
   }
   return undefined;
 }
 
-function withTerminalSessionStatus(session: Session, terminalStatus: string | undefined): Session {
-  if (terminalStatus === undefined || session.status === terminalStatus) return session;
+function withTerminalSessionStatus(session: Session, read: SessionTerminalRead | undefined): Session {
+  if (read === undefined || session.status === read) return session;
   if (
     session.status !== "creating" &&
     session.status !== "running" &&
@@ -1293,11 +1663,125 @@ function withTerminalSessionStatus(session: Session, terminalStatus: string | un
   ) {
     return session;
   }
-  return { ...session, status: terminalStatus };
+  return { ...session, status: read };
+}
+
+/** Map a terminal READ to the 4-value {@link SessionTerminalOutcome} for the result `status`. */
+function readToOutcome(read: SessionTerminalRead): SessionTerminalOutcome {
+  return read === "failed" || read === "timed_out" || read === "cancelled" ? read : "succeeded";
+}
+
+/** `true` for an OK terminal read (succeeded / resumable idle|suspended / held awaiting_approval). */
+function isTerminalReadOk(read: SessionTerminalRead): boolean {
+  return read !== "failed" && read !== "timed_out" && read !== "cancelled";
+}
+
+/** Best-effort READ off a settled record when the events carried none. */
+function sessionRecordRead(session: Session): SessionTerminalRead {
+  const outcome = session.lastTurnOutcome;
+  if (outcome !== undefined && SESSION_TERMINAL_READS.has(outcome)) return outcome;
+  const status = session.status;
+  if (status === "idle" || status === "suspended" || status === "awaiting_approval") return status;
+  if (status === "succeeded" || status === "failed" || status === "timed_out" || status === "cancelled") return status;
+  if (status === "error") return "failed";
+  return "succeeded";
+}
+
+/** The settle-written provider usage entries (the SINGLE token-usage source). */
+function providerUsageOf(record: Session | Run): readonly RunCostProviderUsage[] | undefined {
+  const telemetry = (record as {
+    readonly costTelemetry?: { readonly providerUsage?: readonly RunCostProviderUsage[] };
+  }).costTelemetry;
+  return telemetry?.providerUsage;
+}
+
+/**
+ * The IMMEDIATE authoritative failure text — the terminal `RUN_ERROR` event's
+ * `data.failureMessage`. `result.error` reads this FIRST so a failed (e.g.
+ * bad-BYOK) run's error is never empty even before the settle-lagged
+ * `sessionRecord.errorMessage` lands.
+ */
+function failureFromEvents(events: readonly AexEvent[]): string | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type !== "RUN_ERROR") continue;
+    const data = asRecord(event.data);
+    for (const key of ["failureMessage", "message", "error"]) {
+      const value = data[key];
+      if (typeof value === "string" && value.length > 0) return value;
+    }
+  }
+  return undefined;
+}
+
+/** The typed schema-decode outcome from the terminal `aex.result.*` event, if any. */
+function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): RunOutcome<T> | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.isResultDecoded()) {
+      const value = asRecord(event.data).value;
+      const decoded =
+        value && typeof value === "object" && !Array.isArray(value) && "value" in (value as object)
+          ? (value as { readonly value: unknown }).value
+          : value;
+      return { kind: "decoded", value: decoded as T };
+    }
+    if (event.isResultRefused()) {
+      const payload = asRecord(asRecord(event.data).value);
+      const reason = payload.reason;
+      const detail = typeof payload.detail === "string" ? payload.detail : undefined;
+      return {
+        kind: "refused",
+        reason: reason === "schema_violation" || reason === "uncertain" || reason === "refused" ? reason : "refused",
+        ...(detail !== undefined ? { detail } : {})
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Build the ONE unified settled turn result (shared by `session.send().done()`
+ * and `Aex.run`): the terminal outcome `status`, `ok`, `costUsd` (>= 0),
+ * `usage` (from `costTelemetry.providerUsage`), and event-first `error`.
+ */
+function settledTurnResult(
+  sessionId: string,
+  session: Session,
+  turn: SessionTurn,
+  events: readonly AexEventView[],
+  outputs: readonly Output[],
+  messages: readonly Message[],
+  read: SessionTerminalRead | undefined
+): SessionTurnResult {
+  const effectiveRead = read ?? sessionRecordRead(session);
+  const status = readToOutcome(effectiveRead);
+  const ok = isTerminalReadOk(effectiveRead);
+  const usage = usageFromProviderUsage(providerUsageOf(session));
+  const costUsd = typeof session.costUsd === "number" ? session.costUsd : 0;
+  const error =
+    failureFromEvents(events) ??
+    (!ok && typeof session.errorMessage === "string" && session.errorMessage ? session.errorMessage : undefined);
+  const outcome = outcomeFromEvents(events);
+  return {
+    sessionId,
+    session,
+    turn,
+    status,
+    ok,
+    costUsd,
+    usage,
+    ...(error !== undefined ? { error } : {}),
+    text: assistantTextFromEvents(events),
+    events,
+    outputs,
+    messages,
+    ...(outcome !== undefined ? { outcome } : {})
+  };
 }
 
 export interface StreamEventsOptions {
-  /** Poll interval in ms for the `RunEvent` snapshot loop. Default 1000. */
+  /** Poll interval in ms for the event snapshot loop. Default 1000. */
   readonly intervalMs?: number;
   readonly signal?: AbortSignal;
 }
@@ -1512,6 +1996,8 @@ export class Aex {
   readonly skills: SkillsClient;
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
+  /** Cross-run output search (`aex.outputs.search(...)`). */
+  readonly outputs: OutputsClient;
 
   constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
   constructor(options: AexOptions);
@@ -1523,6 +2009,12 @@ export class Aex {
       // missing credential too, instead of a bare Error slipping the taxonomy.
       throw new CredentialValidationError("Aex: apiKey is required");
     }
+    // Self-describing key ⇒ plane-aware routing, checked ZERO-network in the
+    // constructor: derive the baseUrl from the key's plane when omitted, and
+    // fail fast on a plane/baseUrl mismatch instead of a bare 401 after a full
+    // round-trip. An opaque/legacy key (no `aex_` shape) skips this and keeps
+    // the HttpClient default.
+    const baseUrl = resolveBaseUrlForKey(apiKey, resolved.baseUrl);
     // Wrap the transport fetch (the caller's override, or global `fetch`) with
     // the bounded-retry layer so every BFF request gets default resilience.
     // The raw `#fetch` below stays unwrapped for the direct-to-storage asset PUT
@@ -1530,7 +2022,7 @@ export class Aex {
     const baseFetch: FetchLike = resolved.fetch ?? ((input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]) => fetch(input, init));
     const retryingFetch = withRetry(baseFetch, resolved.retry);
     this.#http = new HttpClient({
-      ...(resolved.baseUrl ? { baseUrl: resolved.baseUrl } : {}),
+      ...(baseUrl ? { baseUrl } : {}),
       apiKey,
       fetch: retryingFetch,
       // Opt-in local diagnostics: emit a redacted per-request trace to
@@ -1546,6 +2038,7 @@ export class Aex {
     this.skills = new SkillsClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
     this.sessions = new SessionClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
+    this.outputs = new OutputsClient(this.#http);
   }
 
   /**
@@ -1620,89 +2113,74 @@ export class Aex {
    * events, outputs, and session record. The returned `runId` is the session id,
    * so callers can resume later with `openSession(runId)`.
    */
-  async run(options: SessionRunOptions, opts: RunCollectOptions = {}): Promise<RunResult> {
+  async run<T = unknown>(options: SessionRunOptions, opts: RunCollectOptions = {}): Promise<RunResult<T>> {
     const scopedSignal = scopedAbortSignal(opts.timeoutMs);
     try {
       const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
       assertNoLegacySessionFields(options, "Aex.run");
       const input = normaliseSessionInput(message, "Aex.run", "message");
       assertNoSessionSendSignal(stream, "Aex.run stream");
-      const streamOptions: Omit<InternalSessionSendOptions, "idempotencyKey"> = {
+      const sendOptions: InternalSessionSendOptions = {
         ...(stream ?? {}),
         ...(scopedSignal?.signal ? { signal: scopedSignal.signal } : {}),
         ...(opts.webSocketFactory ? { webSocketFactory: opts.webSocketFactory } : {}),
         ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
-        ...(opts.pingIntervalMs !== undefined ? { pingIntervalMs: opts.pingIntervalMs } : {})
+        ...(opts.pingIntervalMs !== undefined ? { pingIntervalMs: opts.pingIntervalMs } : {}),
+        // run()/done() await settle by DEFAULT; opt out with `await: 'park'`.
+        ...(opts.await !== undefined ? { await: opts.await } : {})
       };
       // Derive the message key from the create key (like the CLI) so a retried
       // run with the same `idempotencyKey` de-duplicates BOTH the create and the
       // billable turn server-side — never a duplicate billable run (sdk-dx-3).
-      const createKey = createOptions.idempotencyKey ?? generateIdempotencyKey();
-      const messageKey = messageIdempotencyKey ?? deriveMessageKey(createKey);
+      const createKey = operations.resolveIdempotencyKey(createOptions.idempotencyKey);
+      const messageKey =
+        messageIdempotencyKey !== undefined ? operations.resolveIdempotencyKey(messageIdempotencyKey) : deriveMessageKey(createKey);
       const session = await this.sessions.create({ ...createOptions, idempotencyKey: createKey });
-      const turnResult = await sendSessionInternal(session, input, {
-        ...streamOptions,
-        idempotencyKey: messageKey
-      }).done();
+      // ONE terminal boundary: `done()` awaits settle by default, so the turn
+      // result already carries the terminal outcome + cost + usage. `run()` just
+      // reshapes it — `done()` == `run()` (WS3).
+      let turnResult: SessionTurnResult;
+      try {
+        turnResult = await sendSessionInternal(session, input, { ...sendOptions, idempotencyKey: messageKey }).done();
+      } catch (err) {
+        if (scopedSignal?.signal.aborted) {
+          // The client-side wait budget (opts.timeoutMs) expired. Parity with
+          // SessionHandle.wait(): THROW rather than a misleading silent result;
+          // the run continues server-side.
+          throw new RunStateError(
+            `Aex.run: timed out after ${opts.timeoutMs}ms waiting for run ${session.id} to park; the run ` +
+              `continues server-side — cancel via session.cancel() or resume with openSession(${JSON.stringify(session.id)})`
+          );
+        }
+        throw err;
+      }
       const runId = turnResult.sessionId;
-      // Settle-consistent enrichment (opt-in): the park EVENT that ends the
-      // stream lands tens of seconds BEFORE the settle write that flips the
-      // record and stamps costTelemetry/costUsd, so an immediate read misses
-      // the showback on virtually every fresh run. `settleConsistent: true`
-      // polls for the parked RECORD (bounded; degrades to the immediate read).
-      const settledRecord =
-        opts.settleConsistent === true
-          ? await settledSessionRecord(this.#http, runId, turnResult.session, scopedSignal?.signal)
-          : undefined;
-      const sessionRecord = settledRecord ?? turnResult.session;
       if (deleteAfter) {
         await session.delete();
       }
+      const sessionRecord = turnResult.session;
       const run = sessionToRun(sessionRecord);
-      const events = turnResult.events;
-      const outputs = turnResult.outputs;
-      const ok = turnResult.status === "idle" || turnResult.status === "suspended";
-      if (!ok && scopedSignal?.signal.aborted) {
-        // The client-side wait budget (opts.timeoutMs) expired before the run
-        // reached a terminal park. Parity with SessionHandle.wait(): THROW rather
-        // than silently returning a misleading {ok:false,status:"running"} with no
-        // error (pre-launch edge-sweep F3). The run continues server-side.
-        throw new RunStateError(
-          `Aex.run: timed out after ${opts.timeoutMs}ms waiting for run ${runId} to park (last status ` +
-            `${JSON.stringify(turnResult.status)}); the run continues server-side — cancel via ` +
-            `session.cancel() or resume with openSession(${JSON.stringify(runId)})`
-        );
-      }
-      const trace = runTraceFromEvents(events as unknown as readonly RunEvent[]);
-      // Surface the trace-derived usage at the top level when the run record does
-      // not carry its own usage (the managed plane doesn't populate session.usage);
-      // the per-event trace still yields token counts (pre-launch edge-sweep F5).
-      // When NEITHER source carries token counts (trace usage is `{}` — the
-      // managed plane emits no `aex.usage` events today), leave `usage` absent so
-      // `result.usage` honors its "when the deployment exposes it" contract
-      // instead of surfacing a truthy-but-empty object.
-      const recordUsage = hasUsageCounts(sessionRecord.usage) ? sessionRecord.usage : undefined;
-      const usage = recordUsage ?? (hasUsageCounts(trace.usage) ? trace.usage : undefined);
-      const costUsd = typeof sessionRecord.costUsd === "number" ? sessionRecord.costUsd : undefined;
-      const errorMessage = typeof sessionRecord.errorMessage === "string" && sessionRecord.errorMessage ? sessionRecord.errorMessage : undefined;
-      const result: RunResult = {
+      const trace = runTraceFromEvents(turnResult.events);
+      const outcome = turnResult.outcome as RunOutcome<T> | undefined;
+      const result: RunResult<T> = {
         runId,
         run,
         sessionId: runId,
         session: sessionRecord,
         turn: turnResult.turn,
         status: turnResult.status,
-        ok,
+        ok: turnResult.ok,
+        costUsd: turnResult.costUsd,
+        usage: turnResult.usage,
         text: turnResult.text,
         messages: turnResult.messages,
-        events,
+        events: turnResult.events,
         trace,
-        outputs,
-        ...(usage ? { usage } : {}),
-        ...(typeof costUsd === "number" ? { costUsd } : {}),
-        ...(!ok && errorMessage ? { error: errorMessage } : {})
+        outputs: turnResult.outputs,
+        ...(turnResult.error !== undefined ? { error: turnResult.error } : {}),
+        ...(outcome !== undefined ? { outcome } : {})
       };
-      if (opts.throwOnFailure && !ok) {
+      if (opts.throwOnFailure && !turnResult.ok) {
         // A turn that failed because the upstream provider throttled us surfaces
         // as a structured, non-leaky AexRateLimitError carrying the provider
         // fault, so callers can branch on `isRateLimited(err)` and replay.
@@ -1717,7 +2195,7 @@ export class Aex {
           });
         }
         throw new RunStateError(
-          `Aex.run: session ${runId} ended ${turnResult.status}${errorMessage ? `: ${errorMessage}` : ""}`,
+          `Aex.run: session ${runId} ended ${turnResult.status}${turnResult.error ? `: ${turnResult.error}` : ""}`,
           { runId, status: turnResult.status }
         );
       }
@@ -1725,6 +2203,55 @@ export class Aex {
     } finally {
       scopedSignal?.clear();
     }
+  }
+
+  /**
+   * Fire-and-forget: create the session and POST its first turn WITHOUT awaiting
+   * settle (the honest counterpart to await-settle `run()`). Resolves with the
+   * `runId` + a resumable {@link SessionHandle} immediately; observe the run via
+   * a `webhook`, the event stream, or `openSession(runId)`.
+   */
+  async submit(options: SessionRunOptions): Promise<SubmitResult> {
+    const { message, deleteAfter: _deleteAfter, messageIdempotencyKey: _messageIdempotencyKey, stream: _stream, ...createOptions } = options;
+    assertNoLegacySessionFields(options, "Aex.submit");
+    const input = normaliseSessionInput(message, "Aex.submit", "message");
+    const request = await this.#buildSessionCreateRequest(createOptions);
+    const { runId, session } = await operations.submit(
+      this.#http,
+      { ...request, input },
+      { idempotencyKey: operations.resolveIdempotencyKey(createOptions.idempotencyKey) }
+    );
+    return { runId, session: new SessionHandle(this.#http, session, this.#fetch) };
+  }
+
+  /**
+   * Run a batch of one-shot items with a bounded worker pool, returning every
+   * item's settled result PLUS a REAL cost/usage rollup. The rollup is honest
+   * because each `run()` awaits settle, so each item's `costUsd`/`usage` is
+   * populated — a failed item lands in `failed[]`, never a silent `$0` success.
+   * Concurrency is clamped below the workspace tier cap.
+   */
+  async batch<T = unknown>(
+    items: readonly SessionRunOptions[],
+    options: BatchOptions = {}
+  ): Promise<BatchResult<T>> {
+    if (!Array.isArray(items)) {
+      throw new RunConfigValidationError("Aex.batch: items must be an array of run options");
+    }
+    const concurrency = Math.min(Math.max(1, Math.floor(options.concurrency ?? DEFAULT_BATCH_CONCURRENCY)), BATCH_MAX_CONCURRENCY);
+    const results = (await mapWithConcurrency(items, concurrency, async (item): Promise<BatchItemResult<T>> => {
+      const result = await this.run<T>(item);
+      return {
+        runId: result.runId,
+        status: result.status,
+        ok: result.ok,
+        costUsd: result.costUsd,
+        usage: result.usage,
+        ...(result.error !== undefined ? { error: result.error } : {}),
+        ...(result.outcome !== undefined ? { outcome: result.outcome } : {})
+      };
+    })) as BatchItemResult<T>[];
+    return rollupBatch(results);
   }
 
   openSession(options: SessionCreateOptions): Promise<SessionHandle>;
@@ -1750,39 +2277,36 @@ export class Aex {
           "message — send it with session.send(...), or use run({ message }) for a one-shot."
       );
     }
-    const supportedProviders = providersForModel(options.model);
-    if (
-      options.provider &&
-      supportedProviders.length > 0 &&
-      !supportedProviders.includes(options.provider)
-    ) {
-      throw new RunConfigValidationError(
-        `Aex.openSession: provider ${JSON.stringify(options.provider)} is not available for ` +
-          `model ${JSON.stringify(options.model)} (supported: ${supportedProviders.join(", ")})`
-      );
+    // Model is REQUIRED and checked BEFORE the provider key, so omitting `model`
+    // reports "model is required" rather than a misleading provider-key message.
+    if (typeof options.model !== "string" || !options.model) {
+      throw configError("Aex.openSession", "model", "model is required");
     }
-    const provider: RunProvider = options.provider ?? supportedProviders[0] ?? DEFAULT_RUN_PROVIDER;
-    if (
-      options.provider === undefined &&
-      supportedProviders.length === 0 &&
-      typeof options.model === "string" &&
-      options.model.length > 0 &&
-      (typeof options.apiKeys?.[provider] !== "string" || options.apiKeys[provider]!.length === 0)
-    ) {
-      // Unknown model with no explicit provider: the DEFAULT_RUN_PROVIDER
-      // fallback exists for forward-compat with models added server-side, but
-      // without a key for that default the generic missing-key error below
-      // would point at the wrong problem (e.g. "pass apiKeys[\"anthropic\"]"
-      // when the caller mistyped a deepseek model id). Name the real issue.
-      throw new RunConfigValidationError(
-        `Aex.openSession: model ${JSON.stringify(options.model)} is not a known model id, so its provider ` +
-          `cannot be inferred — pass provider explicitly (with a matching apiKeys entry) to run a model ` +
-          `this SDK version does not know about.`
+    // One model→provider resolver (SSoT), shared with the CLI: it honors an
+    // explicit provider (forward-compat: an unknown model is allowed through so a
+    // slightly-old SDK can still run a newly-launched model), infers the default
+    // provider for a known model, and — for an UNKNOWN model with no provider —
+    // throws a shared `did you mean?` suggestion.
+    let provider: RunProvider;
+    try {
+      provider = resolveModelProvider(options.model, options.provider);
+    } catch (err) {
+      throw configError(
+        "Aex.openSession",
+        options.provider === undefined ? "model" : "provider",
+        err instanceof Error ? err.message : String(err),
+        options.provider ?? options.model
       );
     }
     validateApiKeys(options.apiKeys, provider, "Aex.openSession");
-    if (typeof options.model !== "string" || !options.model) {
-      throw new RunConfigValidationError("Aex.openSession: model is required");
+    // WS9 fail-closed: `outputMode:'stream'` on a NON-streamable provider is a
+    // hard reject at the earliest seam (no silent downgrade to buffered).
+    if (options.outputMode !== undefined) {
+      try {
+        assertStreamableOutputMode(options.outputMode, provider);
+      } catch (err) {
+        throw configError("Aex.openSession", "outputMode", err instanceof Error ? err.message : String(err), options.outputMode);
+      }
     }
     // Fast client-side validation via the contract parsers (the SSoT). runtimeSize
     // and timeout are STABLE closed sets whose invalid values the create endpoint
@@ -1805,17 +2329,15 @@ export class Aex {
       splitSecretEnv(options.environment?.secrets);
 
     let limits: RunLimits | undefined;
+    const limitsInput: { maxSpendUsd?: number; maxTurns?: number } = {};
+    if (options.overrides?.maxSpendUsd !== undefined) limitsInput.maxSpendUsd = options.overrides.maxSpendUsd;
+    if (options.overrides?.maxTurns !== undefined) limitsInput.maxTurns = options.overrides.maxTurns;
     try {
-      limits = parseRunLimits(
-        options.overrides?.maxSpendUsd === undefined
-          ? undefined
-          : { maxSpendUsd: options.overrides.maxSpendUsd }
-      );
+      limits = parseRunLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
     } catch (err) {
-      throw new AexError(
-        "RUN_CONFIG_INVALID",
-        `Aex.openSession: ${err instanceof Error ? err.message : String(err)}`
-      );
+      // One `configError` factory for every client-side validation throw, so
+      // maxSpendUsd/maxTurns are `RunConfigValidationError` (not a base AexError).
+      throw configError("Aex.openSession", "limits", err instanceof Error ? err.message : String(err));
     }
 
     const uploader: AssetUploader = (args) => this._uploadAsset(args);
@@ -1855,7 +2377,9 @@ export class Aex {
       ...(options.includeBuiltinTools !== undefined
         ? { includeBuiltinTools: options.includeBuiltinTools }
         : {}),
-      ...(options.outputMode !== undefined ? { outputMode: options.outputMode } : {})
+      ...(options.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
+      ...(options.responseFormat !== undefined ? { responseFormat: options.responseFormat } : {}),
+      ...(options.approvalGate !== undefined ? { approvalGate: options.approvalGate } : {})
     };
 
     const secrets: PlatformInlineSecrets = {
@@ -1942,6 +2466,41 @@ export class Aex {
   }
 }
 
+/**
+ * Resolve the effective `baseUrl` from a self-describing API key (ZERO-network):
+ *   - key omitted-of-shape (opaque/legacy): return the caller's `baseUrl`
+ *     unchanged (HttpClient falls back to the prd default).
+ *   - `baseUrl` omitted: DERIVE it from the key's plane; a plane with no default
+ *     host (dev) requires an explicit `baseUrl` — throw with that guidance.
+ *   - `baseUrl` supplied but its plane DISAGREES with the key's plane: throw
+ *     {@link CredentialValidationError} BEFORE any request (the exact `dev key
+ *     against the prd default → bare token_invalid` trap).
+ */
+function resolveBaseUrlForKey(apiKey: string, baseUrl: string | undefined): string | undefined {
+  const parsed = parseApiKey(apiKey);
+  if (parsed === null) return baseUrl;
+  const planeUrl = PLANE_BASE_URLS[parsed.plane];
+  if (baseUrl === undefined) {
+    if (planeUrl === null) {
+      throw new CredentialValidationError(
+        `Aex: this API key is for the ${parsed.plane} plane, which has no default host — pass baseUrl explicitly.`,
+        { plane: parsed.plane }
+      );
+    }
+    return planeUrl;
+  }
+  // The only client-detectable mismatch: a non-prd key pointed at the canonical
+  // prd host (dev has no canonical host to compare a prd key against).
+  if (baseUrl === PLANE_BASE_URLS.prd && parsed.plane !== "prd") {
+    throw new CredentialValidationError(
+      `Aex: this API key is for the ${parsed.plane} plane but baseUrl targets the prd plane (${PLANE_BASE_URLS.prd}) — ` +
+        `pass the ${parsed.plane} plane baseUrl, or omit baseUrl to auto-route.`,
+      { plane: parsed.plane, baseUrl }
+    );
+  }
+  return baseUrl;
+}
+
 // `Run.status` is a loose `string` on the wire shape, so we membership-test
 // against the canonical terminal set rather than re-deriving one (which is how
 // `timed_out` got dropped from the old hardcoded list).
@@ -1957,10 +2516,26 @@ const SETTLE_POLL_DEADLINE_MS = 60_000;
 const SETTLE_POLL_INTERVAL_MS = 750;
 
 /**
- * Poll for the session RECORD to reach a parked status — i.e. for the settle
- * write (which also stamps `costUsd`/`usage`/`errorMessage`) to land. Returns
- * the settled record, or `undefined` on timeout/abort/read-failure so the
- * caller can fall back to the record it already holds. The first read is
+ * A settle marker on a record: the settle commit stamps `settledAt` (and always
+ * `costUsd`, default 0) plus the terminal outcome / cost telemetry. The SAME
+ * predicate gates the early-return and the loop-return so a $0 turn (costUsd:0
+ * present) resolves as settled — never a hang, never an undefined cost.
+ */
+function isSettledRecord(record: Session): boolean {
+  if (!isSessionParked(record.status)) return false;
+  return (
+    (record as { readonly settledAt?: unknown }).settledAt !== undefined ||
+    typeof record.costUsd === "number" ||
+    record.lastTurnOutcome !== undefined ||
+    providerUsageOf(record) !== undefined
+  );
+}
+
+/**
+ * Poll for the session RECORD to reach a SETTLED state — i.e. for the settle
+ * write (which stamps `settledAt` + `costUsd` + the terminal outcome) to land.
+ * Returns the settled record, or `undefined` on timeout/abort/read-failure so
+ * the caller can fall back to the record it already holds. The first read is
  * immediate, so a fast settle costs one extra GET and no added latency.
  */
 async function settledSessionRecord(
@@ -1969,13 +2544,11 @@ async function settledSessionRecord(
   lastSeen: Session,
   signal: AbortSignal | undefined
 ): Promise<Session | undefined> {
-  // `lastSeen.status` may be client-side patched (withTerminalSessionStatus), so
-  // only trust it when it is parked AND already carries the settle-stamped cost.
-  if (isSessionParked(lastSeen.status) && typeof lastSeen.costUsd === "number") return lastSeen;
+  if (isSettledRecord(lastSeen)) return lastSeen;
   const deadline = Date.now() + SETTLE_POLL_DEADLINE_MS;
   while (signal?.aborted !== true && Date.now() < deadline) {
     const record = await operations.getSession(http, sessionId).catch(() => undefined);
-    if (record !== undefined && isSessionParked(record.status)) return record;
+    if (record !== undefined && isSettledRecord(record)) return record;
     try {
       await sleep(SETTLE_POLL_INTERVAL_MS, signal);
     } catch {
@@ -2017,6 +2590,7 @@ function isSessionParked(status: string | undefined): boolean {
   return (
     status === "idle" ||
     status === "suspended" ||
+    status === "awaiting_approval" ||
     status === "error" ||
     status === "deleted" ||
     status === "expired" ||
@@ -2051,58 +2625,6 @@ function scopedAbortSignal(timeoutMs: number | undefined): { readonly signal: Ab
   };
 }
 
-/** Escape a literal string for safe interpolation into a RegExp. */
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function isOutputPathSelector(selector: OutputFileSelector): selector is OutputFilePathSelector {
-  return Boolean(selector && typeof selector === "object" && "path" in selector);
-}
-
-function resolveOutputFileSelector(
-  outputs: readonly Output[],
-  selector: OutputFileSelector,
-  runId: string
-): Output {
-  if (isOutputPathSelector(selector)) {
-    const target = normalizeOutputLookupPath(selector.path);
-    if (!target) {
-      throw new RunStateError("Aex.downloadOutput: output path must be non-empty", {
-        runId,
-        path: selector.path
-      });
-    }
-    const matches = outputs.filter((output) => {
-      if (typeof output.filename !== "string") return false;
-      const filename = normalizeOutputLookupPath(output.filename);
-      if (selector.match === "suffix") {
-        return filename === target || filename.endsWith(`/${target}`);
-      }
-      return filename === target;
-    });
-    if (matches.length === 1) return matches[0]!;
-    if (matches.length > 1) {
-      throw new RunStateError(
-        `Aex.downloadOutput: output path "${selector.path}" matched multiple files`,
-        { runId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
-      );
-    }
-    throw new RunStateError(`Aex.downloadOutput: output path "${selector.path}" was not found`, {
-      runId,
-      path: selector.path
-    });
-  }
-  if (typeof selector.id !== "string" || selector.id.length === 0) {
-    throw new RunStateError("Aex.downloadOutput: selector must include an output id or path", { runId });
-  }
-  return { ...selector, id: selector.id };
-}
-
-function normalizeOutputLookupPath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/^\/+/, "");
-}
-
 async function writeOptionalFile(bytes: Uint8Array, to?: string): Promise<Uint8Array> {
   if (to !== undefined) {
     const { writeFile } = await import("node:fs/promises");
@@ -2129,10 +2651,16 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   });
 }
 
-function generateIdempotencyKey(): string {
-  const cryptoObj = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
-  return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+/**
+ * ONE factory for every client-side validation throw: a
+ * {@link RunConfigValidationError} carrying structured `details: { field, value? }`
+ * so callers branch on `err.details.field` instead of string-parsing the message.
+ */
+function configError(surface: string, field: string, message: string, value?: unknown): RunConfigValidationError {
+  return new RunConfigValidationError(
+    `${surface}: ${message}`,
+    value === undefined ? { field } : { field, value }
+  );
 }
 
 /**
@@ -2207,7 +2735,6 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     secretEnv: "use environment.secrets.",
     secrets: "use top-level apiKeys for provider keys and environment.secrets for run secrets.",
     runtimeSize: "use runtime.",
-    parentRunId: "subagents are session-internal; parentRunId is not part of the session API.",
     limits: "use overrides.",
     timeout: "use overrides.timeout.",
     signal: "use session.cancel() / session.suspend() for remote control.",

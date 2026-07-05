@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@aexhq/contracts": "workspace:*",
+    "@aexhq/sdk": "workspace:*",
     "fflate": "^0.8.2"
   },
   "optionalDependencies": {

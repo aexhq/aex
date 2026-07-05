@@ -13,6 +13,7 @@ coverage/
 *.tsbuildinfo
 # npm pack / publish artifacts
 *.tgz
+.release-diagnostics/
 **/test/fixtures/api-recordings/**/*.raw.json
 **/test/fixtures/api-recordings/**/*.secret.json
 .claude/

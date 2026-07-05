@@ -88,7 +88,9 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
     // `outputs(id)` returns the SAME accessor as `session.outputs()` (shape
     // checked below), so id-addressed reads use `sessions.outputs(id).read(...)`.
-    for (const key of ["create", "open", "get", "list", "outputs", "searchOutputs", "run"]) {
+    // Cross-run output search RELOCATED to `aex.outputs.search()` (WS6); the old
+    // `sessions.searchOutputs` is gone.
+    for (const key of ["create", "open", "get", "list", "outputs", "run"]) {
       if (!isFn(SessionClient.prototype, key)) missing.push(`SessionClient.prototype.${key}`);
     }
     // The lifecycle verbs a `session` handle keeps FLAT in the docs. The read /
@@ -120,7 +122,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const accessorVerbs: ReadonlyArray<{ readonly group: string; readonly verbs: readonly string[] }> = [
       { group: "messages", verbs: ["all", "list", "last", "first"] },
       { group: "events", verbs: ["list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
-      { group: "outputs", verbs: ["list", "last", "first", "read", "find", "findOne", "link", "fetch", "download"] },
+      { group: "outputs", verbs: ["list", "last", "first", "read", "find", "findOne", "search", "link", "fetch", "download"] },
       { group: "webhooks", verbs: ["list", "redeliver"] }
     ];
     for (const { group, verbs } of accessorVerbs) {
@@ -205,5 +207,120 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+});
+
+/**
+ * [REGRESSION] Pre-release fix-sweep (2026-07-05) — onboarding doc-drift guards.
+ *
+ * These pin the specific doc corrections the sweep made so they cannot silently
+ * regress across CI: ONE canonical constructor form in onboarding prose, `npx
+ * aex` in every local-install CLI snippet, `billing:read` minted in the
+ * quickstart, no resurrected output "baseline snapshot" fiction, plus the typed
+ * error / streaming-capability / custom-tool-entry / sandbox claims the shipped
+ * code now guarantees.
+ */
+const readDoc = (rel: string): string =>
+  readFileSync(resolve(repoRoot, rel), "utf8").replace(/\r\n/g, "\n");
+
+// The hand-written onboarding surface a newcomer copy-pastes first.
+const ONBOARDING_DOCS = [
+  "README.md",
+  "packages/sdk/README.md",
+  "packages/sdk/docs/quickstart.md",
+  "packages/sdk/docs/authentication.md",
+  "packages/sdk/docs/billing.md"
+] as const;
+
+// The subset that walks a user from `npm i` straight into a CLI command.
+const LOCAL_INSTALL_DOCS = [
+  "README.md",
+  "packages/sdk/README.md",
+  "packages/sdk/docs/quickstart.md"
+] as const;
+
+// A bare `aex <verb>` command line (not prose like "aex is an agent…"): the
+// footgun after a LOCAL `npm i`, where the binary is not on PATH.
+const BARE_AEX_CMD =
+  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|outputs|download|cancel|delete|delete-asset|billing|webhooks|sessions|runs|deliveries|debug)\b/m;
+
+describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
+  it("onboarding docs use ONE constructor form: the string arg, never the object literal", () => {
+    const failures: string[] = [];
+    for (const rel of ONBOARDING_DOCS) {
+      const content = readDoc(rel);
+      // The object-literal form `new Aex({ ... })` is documented ONCE in the
+      // credentials reference; onboarding prose must use `new Aex(apiKey)`.
+      if (/new Aex\(\s*\{/.test(content)) failures.push(`${rel} shows the object-literal \`new Aex({ ... })\``);
+      if (!/new Aex\(/.test(content)) failures.push(`${rel} no longer constructs \`new Aex(...)\` at all`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("local-install docs invoke the CLI as `npx aex …`, never a bare `aex <verb>`", () => {
+    const failures: string[] = [];
+    for (const rel of LOCAL_INSTALL_DOCS) {
+      const content = readDoc(rel);
+      // Sanity: these are the docs that teach `npm i` then run the CLI.
+      if (!content.includes("npm i @aexhq/sdk")) failures.push(`${rel} no longer teaches \`npm i @aexhq/sdk\``);
+      if (!content.includes("npx aex")) failures.push(`${rel} has no \`npx aex\` snippet`);
+      if (BARE_AEX_CMD.test(content)) failures.push(`${rel} has a bare \`aex <verb>\` line (use \`npx aex\`)`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("the quickstart mints billing:read alongside the runs/outputs scopes", () => {
+    const quickstart = readDoc("packages/sdk/docs/quickstart.md");
+    for (const scope of ["runs:read", "runs:write", "outputs:read", "billing:read"]) {
+      expect(quickstart).toContain(scope);
+    }
+  });
+
+  it("outputs.md carries NO baseline-snapshot / filesystem-diff capture fiction", () => {
+    const outputs = readDoc("packages/sdk/docs/outputs.md");
+    const fictions = [
+      /snapshots the filesystem/i,
+      /filesystem diff/i,
+      /uploads the delta/i,
+      /baseline snapshot/i,
+      /excluded by timing/i
+    ];
+    const hits = fictions.filter((f) => f.test(outputs)).map((f) => f.source);
+    expect(hits).toEqual([]);
+    // …and it still teaches the honest identity-based exclusion.
+    expect(outputs).toMatch(/by IDENTITY/);
+  });
+
+  it("errors.md documents the typed hierarchy, idempotency conflict, and the empty-key throw", () => {
+    const errors = readDoc("packages/sdk/docs/errors.md");
+    for (const needle of [
+      "apiCode",
+      "idempotency_conflict",
+      "AexIdempotencyConflictError",
+      "isInsufficientScope",
+      "isNotFound"
+    ]) {
+      expect(errors).toContain(needle);
+    }
+    // An empty idempotencyKey is a client-side fail-fast, not a wire round-trip.
+    expect(errors).toMatch(/empty[^.]*idempotencyKey[^.]*throws|idempotencyKey[^.]*throws[^.]*RunConfigValidationError/i);
+  });
+
+  it("events.md documents capability-honest streaming (typed reject, not silent downgrade)", () => {
+    const events = readDoc("packages/sdk/docs/events.md");
+    expect(events).toContain("outputMode");
+    expect(events).toMatch(/streamable/);
+    expect(events).toMatch(/typed rejection|fail-closed|silent downgrade/i);
+  });
+
+  it("the custom-tool entry rule and sandbox notes are documented", () => {
+    const tools = readDoc("packages/sdk/docs/concepts/agent-tools.md");
+    expect(tools).toMatch(/\.mjs/);
+    expect(tools).toMatch(/default-export/i);
+
+    const limits = readDoc("packages/sdk/docs/limits-and-quotas.md");
+    expect(limits).toContain("maxTurns");
+    expect(limits).toMatch(/\/workspace/);
+    expect(limits).toMatch(/PEP 668/);
   });
 });

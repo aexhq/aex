@@ -19,9 +19,11 @@ The package ships:
 npm i @aexhq/sdk
 ```
 
-This installs the TypeScript SDK exports and the bundled `aex` CLI. Set both
-credentials before running the examples: `AEX_API_KEY` authenticates to aex,
-and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
+This installs the TypeScript SDK exports and the bundled `aex` CLI. The CLI
+ships inside the package — invoke it with `npx aex …` after a local install, or
+`npm i -g @aexhq/sdk` to put a bare `aex` on your PATH. Set both credentials
+before running the examples: `AEX_API_KEY` authenticates to aex, and
+`ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
 
 ```bash
 export AEX_API_KEY="<your-aex-api-key>"
@@ -33,7 +35,7 @@ export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```ts
 import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
+const aex = new Aex(process.env.AEX_API_KEY!);
 
 const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -44,8 +46,10 @@ const session = await aex.openSession({
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
+// done() awaits settle by default, so status is the terminal outcome
+// ("succeeded"), and costUsd/usage are populated.
 const first = await session.send("Summarize this repo.").done();
-console.log(first.status, first.text);
+console.log(first.status, first.costUsd, first.text);
 
 const resumed = await aex.openSession(session.id);
 await resumed.send("Continue with the follow-up validation.").done();
@@ -78,10 +82,10 @@ await aex.run({
 });
 ```
 
-The same request can run from the bundled CLI:
+The same request can run from the bundled CLI (`npx aex` on a local install):
 
 ```bash
-aex run \
+npx aex run \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
@@ -97,20 +101,22 @@ your default `--aex-url`) is persisted to a `0600` config file
 on Windows). An explicit `--api-key` flag always overrides the stored one.
 
 ```bash
-aex login --api-key "$AEX_API_KEY" [--aex-url https://api.aex.dev]
-aex whoami            # no --api-key needed after login
-aex auth status       # show the resolved config (the token value is never printed)
-aex logout            # clear the stored token
+npx aex login --api-key "$AEX_API_KEY" [--aex-url https://api.aex.dev]
+npx aex whoami            # no --api-key needed after login
+npx aex whoami --json     # machine-readable workspace + scopes + limits
+npx aex auth status       # show the resolved config (the token value is never printed)
+npx aex logout            # clear the stored token
 ```
 
 Discover the closed sets the platform accepts — no token, no network (human table
-by default, machine JSON under `--json`):
+by default, machine JSON under `--json`). Per-verb `--help` is also key-free:
 
 ```bash
-aex models list           # canonical models + their default provider
-aex providers list        # providers + the models each serves
-aex tools list            # complete builtin tool set
-aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
+npx aex models list           # canonical models + their default provider
+npx aex providers list        # providers + the models each serves
+npx aex tools list            # complete builtin tool set
+npx aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
+npx aex run --help            # flags for one verb (no API key required)
 ```
 
 Errors are typed and actionable. Every `openSession()` / `run()` config-validation

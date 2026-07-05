@@ -793,9 +793,26 @@ export interface PlatformSubmission {
   /**
    * Assistant-output granularity. `buffered` (the default) emits one event per
    * assistant message; `stream` emits the agent's per-token text deltas as they
-   * arrive. Buffered is quieter and cheaper; stream suits live typing UIs.
+   * arrive, THEN a final coalesced block. Streaming is CAPABILITY-GATED: it is
+   * only honored for a streamable provider (see {@link STREAMABLE_SHAPES}) and a
+   * `stream` mode on a non-streamable provider is rejected at parse
+   * ({@link assertStreamableOutputMode}) — no silent downgrade.
    */
   readonly outputMode?: OutputMode;
+  /**
+   * Structured-output policy. `{ kind: 'text' }` (default) is free-form; a
+   * `{ kind: 'json_schema', … }` requests provider-native constrained decode.
+   * The run's typed outcome is then `decoded | refused` — no untyped path yields
+   * a hallucinated object. Fail-closed for a provider lacking the capability.
+   */
+  readonly responseFormat?: ResponseFormat;
+  /**
+   * Declarative HITL write-gate: the platform parks the session
+   * `awaiting_approval` BEFORE dispatching any listed tool, holding for an
+   * `approve()`/`deny()`. Structural — independent of model prose. Empty/absent
+   * ⇒ no gate.
+   */
+  readonly approvalGate?: ApprovalGate;
   /**
    * Platform-injection controls. The platform prepends a small system
    * prompt (see `platformSystemPrompt`) ahead of `system` to explain
@@ -914,6 +931,15 @@ export interface RunLimits {
    * single source of truth for that wire→boot name mapping.
    */
   readonly maxSpendUsd?: number;
+  /**
+   * Maximum number of agent ITERATIONS (turns) the run may take before the
+   * platform parks it terminal. A positive integer; omitted ⇒ the platform
+   * default (`RUN_DEFAULT_MAX_TURNS`). Previously a bare server literal absent
+   * from both the public contract and the limits SSoT — now a settable dial.
+   * Only shape/positivity are validated here; clamping to the ceiling is the
+   * resolver's job.
+   */
+  readonly maxTurns?: number;
 }
 
 /**
@@ -1010,6 +1036,9 @@ export function parseRunSubmissionRequest(
     trustedReparse: options.trustedReparse === true
   });
   assertRunModelMatchesProvider(provider, submission.model);
+  // Fail-closed streaming: `outputMode:'stream'` on a non-streamable provider is
+  // a hard reject at parse time (no silent downgrade).
+  assertStreamableOutputMode(submission.outputMode, provider);
 
   crossValidateSecretEnvAndValues(submission.secretEnv, secrets.envSecrets);
 
@@ -1101,7 +1130,7 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
     return undefined;
   }
   const value = requireRecord(input, "limits");
-  const allowed = new Set(["maxConcurrentChildRuns", "maxSubagentDepth", "maxSpendUsd"]);
+  const allowed = new Set(["maxConcurrentChildRuns", "maxSubagentDepth", "maxSpendUsd", "maxTurns"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw new Error(`limits.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
@@ -1116,16 +1145,25 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
   // NUMBER, not a positive int. Clamping to the workspace/platform ceiling is the
   // resolver's job; here we only enforce shape + positivity.
   const maxSpendUsd = optionalPositiveNumber(value.maxSpendUsd, "limits.maxSpendUsd");
+  // maxTurns is an ITERATION count — a positive safe integer. Clamp to the ceiling
+  // is the resolver's job; here we enforce shape + positivity only.
+  const maxTurns = optionalPositiveInt(value.maxTurns, "limits.maxTurns");
   // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
   // lands an empty object on the request — matches sibling parsers (parseRunWebhook,
   // parseEnvironment). The resolver supplies platform defaults for absent fields.
-  if (maxConcurrentChildRuns === undefined && maxSubagentDepth === undefined && maxSpendUsd === undefined) {
+  if (
+    maxConcurrentChildRuns === undefined &&
+    maxSubagentDepth === undefined &&
+    maxSpendUsd === undefined &&
+    maxTurns === undefined
+  ) {
     return undefined;
   }
   return {
     ...(maxConcurrentChildRuns !== undefined ? { maxConcurrentChildRuns } : {}),
     ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
-    ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {})
+    ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {})
   };
 }
 
@@ -1237,6 +1275,8 @@ export function parseSubmission(
     "outputs",
     "includeBuiltinTools",
     "outputMode",
+    "responseFormat",
+    "approvalGate",
     "platform"
   ]);
   for (const key of Object.keys(value)) {
@@ -1260,6 +1300,8 @@ export function parseSubmission(
   const outputs = parseOutputs(value.outputs);
   const includeBuiltinTools = parseIncludeBuiltinTools(value.includeBuiltinTools);
   const outputMode = parseOutputMode(value.outputMode);
+  const responseFormat = parseResponseFormat(value.responseFormat);
+  const approvalGate = parseApprovalGate(value.approvalGate);
   const platform = parsePlatformConfig(value.platform);
 
   return {
@@ -1280,6 +1322,8 @@ export function parseSubmission(
     ...(includeBuiltinTools !== undefined ? { includeBuiltinTools } : {}),
     ...(builtinTools.length > 0 ? { builtinTools } : {}),
     ...(outputMode !== undefined ? { outputMode } : {}),
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
+    ...(approvalGate !== undefined ? { approvalGate } : {}),
     ...(platform ? { platform } : {})
   };
 }
@@ -1344,6 +1388,163 @@ function parseOutputMode(input: unknown): OutputMode | undefined {
     throw new Error(`submission.outputMode must be one of ${OUTPUT_MODES.join(", ")}`);
   }
   return input as OutputMode;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming capability model — WS9. `outputMode:'stream'` is capability-gated.
+// ---------------------------------------------------------------------------
+
+/**
+ * The provider wire-SHAPES that have a real per-token streaming producer. This
+ * const is the contracts-side SSoT, pinned EQUAL to the platform's shape SSoT by
+ * a cross-repo parity test so streaming can never be promised for a shape
+ * nothing feeds.
+ */
+export const STREAMABLE_SHAPES = ["anthropic", "openai_chat"] as const;
+export type StreamableShape = (typeof STREAMABLE_SHAPES)[number];
+
+/**
+ * Each provider's wire shape, or `null` when it has no streaming producer wired
+ * yet. `stream` output is only honored for a provider whose shape is streamable.
+ */
+const PROVIDER_STREAM_SHAPE = {
+  anthropic: "anthropic",
+  deepseek: "openai_chat",
+  openai: "openai_chat",
+  gemini: null,
+  mistral: "openai_chat",
+  openrouter: "openai_chat",
+  doubao: "openai_chat",
+  "doubao-cn": "openai_chat"
+} as const satisfies Readonly<Record<RunProvider, StreamableShape | null>>;
+
+/** True when a provider has a streaming producer wired (a {@link STREAMABLE_SHAPES} shape). */
+export function isStreamableProvider(provider: RunProvider): boolean {
+  return PROVIDER_STREAM_SHAPE[provider] !== null;
+}
+
+function streamableProviders(): readonly RunProvider[] {
+  return (Object.keys(PROVIDER_STREAM_SHAPE) as RunProvider[]).filter(isStreamableProvider);
+}
+
+/**
+ * Fail-closed streaming gate: `outputMode:'stream'` on a NON-streamable provider
+ * throws (a HARD reject — no silent downgrade to buffered). Called by
+ * {@link parseRunSubmissionRequest} once mode + provider are both known.
+ */
+export function assertStreamableOutputMode(outputMode: OutputMode | undefined, provider: RunProvider): void {
+  if (outputMode === "stream" && !isStreamableProvider(provider)) {
+    throw new Error(
+      `submission.outputMode 'stream' is not supported for provider ${provider}; ` +
+        `streaming is available for: ${streamableProviders().join(", ")}`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Structured-output (schema-decode) policy — WS10.
+// ---------------------------------------------------------------------------
+
+/** Response-format kinds: free-form `text` (default) or provider-native `json_schema`. */
+export const RESPONSE_FORMAT_KINDS = ["text", "json_schema"] as const;
+export type ResponseFormatKind = (typeof RESPONSE_FORMAT_KINDS)[number];
+
+/**
+ * Structured-output policy. `{ kind: 'text' }` is free-form; `{ kind:
+ * 'json_schema', schema, strict?, name? }` requests provider-native constrained
+ * decode against `schema` (a JSON Schema object).
+ */
+export type ResponseFormat =
+  | { readonly kind: "text" }
+  | {
+      readonly kind: "json_schema";
+      readonly schema: JsonValue;
+      readonly strict?: boolean;
+      readonly name?: string;
+    };
+
+/**
+ * Parse the optional `submission.responseFormat`. Mirrors {@link parseOutputMode}
+ * / {@link OUTPUT_MODES}: absent ⇒ undefined; a bad `kind` or unknown subfield is
+ * rejected (fail-fast). `json_schema` requires a JSON-object `schema`.
+ */
+export function parseResponseFormat(input: unknown): ResponseFormat | undefined {
+  if (input === undefined || input === null) return undefined;
+  const value = requireRecord(input, "submission.responseFormat");
+  const kind = value.kind;
+  if (typeof kind !== "string" || !(RESPONSE_FORMAT_KINDS as readonly string[]).includes(kind)) {
+    throw new Error(`submission.responseFormat.kind must be one of ${RESPONSE_FORMAT_KINDS.join(", ")}`);
+  }
+  if (kind === "text") {
+    for (const key of Object.keys(value)) {
+      if (key !== "kind") {
+        throw new Error(`submission.responseFormat.${key} is not allowed when kind is 'text'`);
+      }
+    }
+    return { kind: "text" };
+  }
+  const allowed = new Set(["kind", "schema", "strict", "name"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) {
+      throw new Error(
+        `submission.responseFormat.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`
+      );
+    }
+  }
+  if (!isRecord(value.schema) || !isJsonValue(value.schema)) {
+    throw new Error("submission.responseFormat.schema must be a JSON-serializable object");
+  }
+  const schema = value.schema as JsonValue;
+  if (value.strict !== undefined && typeof value.strict !== "boolean") {
+    throw new Error("submission.responseFormat.strict must be a boolean");
+  }
+  const name = optionalString(value.name, "submission.responseFormat.name");
+  return {
+    kind: "json_schema",
+    schema,
+    ...(value.strict !== undefined ? { strict: value.strict } : {}),
+    ...(name !== undefined ? { name } : {})
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HITL approval-gate policy — WS10.
+// ---------------------------------------------------------------------------
+
+/** Declarative HITL write-gate: park `awaiting_approval` before any listed tool. */
+export interface ApprovalGate {
+  readonly tools: readonly string[];
+}
+
+/**
+ * Parse the optional `submission.approvalGate`. Absent / empty tool list ⇒
+ * undefined (no gate). Tool names are deduped; the strict allow-list mirrors the
+ * sibling parsers.
+ */
+export function parseApprovalGate(input: unknown): ApprovalGate | undefined {
+  if (input === undefined || input === null) return undefined;
+  const value = requireRecord(input, "submission.approvalGate");
+  for (const key of Object.keys(value)) {
+    if (key !== "tools") {
+      throw new Error(`submission.approvalGate.${key} is not an allowed field; permitted: tools`);
+    }
+  }
+  if (!Array.isArray(value.tools)) {
+    throw new Error("submission.approvalGate.tools must be an array of tool names");
+  }
+  const seen = new Set<string>();
+  const tools: string[] = [];
+  value.tools.forEach((entry, index) => {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new Error(`submission.approvalGate.tools[${index}] must be a non-empty string`);
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      tools.push(entry);
+    }
+  });
+  if (tools.length === 0) return undefined;
+  return { tools };
 }
 
 /**

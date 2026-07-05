@@ -23,10 +23,12 @@ const events = await session.events().list();
 ```
 
 ```ts
-// Stream the RunEvent snapshot shape: yields each event once, stops when the
-// session parks. Backed by polling the aex events endpoint.
+// Stream events as guarded `AexEventView`s: yields each event once, stops when
+// the session parks. Backed by polling the aex events endpoint. Every surface —
+// list(), stream(), streamEnvelopes() — yields the same `AexEventView` with a
+// populated `sequence` and the `is*()` guard methods.
 for await (const event of session.events().stream({ intervalMs: 1000 })) {
-  if (event.type === "TEXT_MESSAGE_CONTENT") {
+  if (event.isTextMessage()) {
     // ...
   }
 }
@@ -79,8 +81,9 @@ They need a global `WebSocket` (Bun or Node ≥ 22).
 
 `aex wait` is the host mirror of `session.wait()`:
 it polls until the session parks and prints the final `Session` record. Exit `0`
-when the session parked cleanly (`idle`/`suspended`), `1` for any other park
-(`error` / a non-clean terminal status), and `3` when `--timeout` elapses first
+when the session parked cleanly (`idle`/`suspended`/`succeeded`), `1` for any
+non-clean terminal outcome (`failed`/`timed_out`/`cancelled`), and `3` when
+`--timeout` elapses first
 (a `--timeout` on `events --follow` / `run --follow` uses the same exit-`3`
 convention). Durations accept `ms`/`s`/`m`/`h` suffixes or a bare millisecond integer.
 
@@ -100,13 +103,34 @@ for await (const event of turn) {
   console.log(event.sequence, event.type);
 }
 
-const result = await turn.done(); // status is usually "idle"
+const result = await turn.done(); // status is the terminal outcome, e.g. "succeeded"
 ```
 
-The turn stream ends when it sees `aex.session.idle`, `aex.session.suspended`, or
-`aex.session.error` for that turn. `aex.run(config)` is a convenience wrapper
-over the same flow: it opens a session, sends `message` once, and returns the
-collected session turn. The returned `runId` is the session id.
+The turn stream ends on the turn's park terminal: a resumable
+`aex.session.idle` / `aex.session.suspended`, a terminal outcome
+`aex.session.succeeded` / `.failed` / `.timed_out` / `.cancelled`, or the held
+`aex.session.awaiting_approval`. (The bare `aex.session.error` park is retired —
+a failed turn is `failed`, a wall-clock kill `timed_out`, a cancel `cancelled`.)
+`aex.run(config)` is a convenience wrapper over the same flow: it opens a
+session, sends `message` once, and returns the collected session turn. The
+returned `runId` is the session id.
+
+## Per-token streaming (`outputMode: 'stream'`)
+
+Assistant-text granularity is controlled by `outputMode` on `openSession` / `run`:
+
+- **`buffered`** (the default) — the assistant text arrives coalesced as one
+  `TEXT_MESSAGE_CONTENT` event per message.
+- **`stream`** — on a **streamable** provider you also receive per-token
+  `TEXT_MESSAGE_CONTENT` **deltas** as the model produces them, and a coalesced
+  final `TEXT_MESSAGE_CONTENT` (the archived twin) always follows. Streamable
+  providers today are Anthropic and the OpenAI-chat-shaped providers (DeepSeek,
+  OpenAI, Mistral, OpenRouter, Doubao / Doubao China).
+
+Streaming is **capability-gated and fail-closed**: requesting `outputMode: 'stream'`
+on a provider that has no streaming producer (currently `gemini`) is a typed
+rejection at submission parse — **not** a silent downgrade to buffered. Choose a
+streamable provider or drop back to `buffered` explicitly.
 
 ## Terminal events vs. the run record
 
@@ -119,12 +143,20 @@ on how the turn ends:
   instead (see below). Expect `RUN_ERROR` on stream-level failures, and treat
   `RUN_FINISHED` — when it does appear — as a low-latency "stop the spinner"
   hint, not a read-consistency barrier.
-- **`aex.session.*` park terminals** — `CUSTOM` events named `aex.session.idle`,
-  `aex.session.suspended`, or `aex.session.error`. On the managed plane these
-  are what actually end a turn: the session parks with the matching status, and
-  by the time the park event is broadcast the session record has already
-  reached that status. This is the terminal you should expect from a managed
-  run's event stream.
+- **`aex.session.*` park terminals** — `CUSTOM` events carrying the turn's
+  OUTCOME: `aex.session.succeeded` / `aex.session.failed` / `aex.session.timed_out`
+  / `aex.session.cancelled`, or a resumable/held park `aex.session.idle` /
+  `aex.session.suspended` / `aex.session.awaiting_approval`. On the managed plane
+  these are what actually end a turn. The park event ends the RENDER; the settle
+  commit (cost + usage + the authoritative outcome) lands shortly after — which
+  is why `run()`/`done()` await settle by DEFAULT and return the outcome as
+  `result.status` with `result.costUsd`/`result.usage` always populated (never a
+  bare `idle`). Pass `await: 'park'` (on `run(...)` or `session.send(msg, {...})`)
+  to return early at the park event when you don't need cost/usage. `result.costUsd`
+  is aex runtime/storage spend and **excludes** your BYOK provider charges — price
+  those from `result.usage` token counts. Ending a raw stream on the park event is
+  fine for live UI; read the settled record (or the default await-settle result)
+  when you need cost/usage/outcome.
 
 Each event the stream yields carries method guards that cover both families so
 you never have to switch on the plane:
@@ -176,7 +208,7 @@ const jsonl = await response.text();
 
 ## Event shape
 
-Events are typed as the discriminated `RunEvent` union for compatibility and as the versioned coordinator envelope for live consumers. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain provider keys, MCP credentials, or runtime secrets supplied when the session was opened.
+Every read and stream surface yields one canonical shape — the versioned coordinator envelope, wrapped as an `AexEventView` with a populated non-optional `sequence` and the `is*()` guard methods. `sequence` is **sparse by design** (it encodes journal position, not a dense 0..N counter), so resume by cursor VALUE (`from: lastSequence`), never by integer adjacency. Tool-call START and RESULT events share a `data.id` join key, exposed as `event.toolCallId()` on those views. aex records raw runtime/provider payloads **after** secret redaction and structural sanitization, so the bytes you see never contain provider keys, MCP credentials, or runtime secrets supplied when the session was opened.
 
 ## Typed helpers
 

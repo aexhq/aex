@@ -26,3 +26,12 @@ export {
 } from "./terminal.js";
 export { expectEventStream, type EventStreamShape } from "./event-stream.js";
 export { expectStructuredError, type StructuredError } from "./structured-error.js";
+// CLI ↔ SDK capability parity: the manifest the `cli-sdk-parity` test asserts
+// against the real SDK reflection + CLI verb registry.
+export {
+  CLI_SDK_PARITY_MANIFEST,
+  CLI_PARITY_NOT_SURFACED,
+  CLI_PARITY_BARE_LIST,
+  CLI_PARITY_PROVIDER_KEY_FLAG,
+  type CliSdkParityManifest
+} from "./cli-sdk-parity.js";

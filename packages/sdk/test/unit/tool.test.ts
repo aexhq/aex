@@ -61,7 +61,30 @@ describe("Tool.fromFiles", () => {
         entry: "index.js",
         files: { "other.js": "export default async function () {}\n" }
       })
-    ).rejects.toThrow(/entry "index\.js" must exist/);
+    ).rejects.toThrow(/entry "index\.js" is not present in files/);
+  });
+
+  it("rejects a non-JS entry at authoring time (WS6 JS-module guard)", async () => {
+    // A shell entry is rejected AT BUILD time, not mid-run by the tool executor.
+    await expect(
+      Tool.fromFiles({
+        name: "calendar_lookup",
+        description: "Non-JS entry.",
+        inputSchema: { type: "object", properties: {}, required: [] },
+        entry: "run.sh",
+        files: { "run.sh": "#!/bin/sh\n" }
+      })
+    ).rejects.toThrow(/entry must be a JS module \(\.js\/\.mjs\/\.cjs\)/);
+
+    // A matching .mjs entry present in files is accepted.
+    const tool = await Tool.fromFiles({
+      name: "calendar_lookup",
+      description: "Good entry.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+      entry: "index.mjs",
+      files: { "index.mjs": "export default async function () {}\n" }
+    });
+    expect(tool.ref.entry).toBe("index.mjs");
   });
 });
 

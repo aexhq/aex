@@ -21,7 +21,6 @@ import {
   makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedRun,
-  takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
 
@@ -63,9 +62,10 @@ export async function runBillingCmd(io: CliIO, argv: readonly string[]): Promise
     return runBillingPortal(io, common.rest.slice(1), common.flags);
   }
 
-  const { present: json, remaining } = takeBooleanFlag(common.rest, "--json");
-  if (remaining.length > 0) {
-    io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
+  // `--json` is a global flag consumed by resolveCommonHostFlags.
+  const json = common.flags.json;
+  if (common.rest.length > 0) {
+    io.stderr(`unexpected arguments: ${common.rest.join(" ")}\n`);
     io.stderr("usage: aex billing [--json] | aex billing ledger [--limit N] | aex billing upgrade pro|team | aex billing portal [common flags]\n");
     return USAGE_ERR;
   }
@@ -96,8 +96,8 @@ async function runBillingUpgrade(
   argv: readonly string[],
   flags: CommonHostFlags
 ): Promise<CliExitCode> {
-  const { present: json, remaining: rest1 } = takeBooleanFlag(argv, "--json");
-  const { value: successUrl, remaining: rest2 } = takeOptionFlag(rest1, "--success-url");
+  const json = flags.json;
+  const { value: successUrl, remaining: rest2 } = takeOptionFlag(argv, "--success-url");
   const { value: cancelUrl, remaining: rest3 } = takeOptionFlag(rest2, "--cancel-url");
   const { value: idempotencyKey, remaining } = takeOptionFlag(rest3, "--idempotency-key");
   const planKey = remaining[0];
@@ -130,8 +130,8 @@ async function runBillingPortal(
   argv: readonly string[],
   flags: CommonHostFlags
 ): Promise<CliExitCode> {
-  const { present: json, remaining: rest1 } = takeBooleanFlag(argv, "--json");
-  const { value: returnUrl, remaining } = takeOptionFlag(rest1, "--return-url");
+  const json = flags.json;
+  const { value: returnUrl, remaining } = takeOptionFlag(argv, "--return-url");
   if (remaining.length > 0) {
     io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
     io.stderr("usage: aex billing portal [--return-url URL] [--json] [common flags]\n");

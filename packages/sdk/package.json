@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
-    "build:unlocked": "bun ./scripts/clean-dist.mjs && bun run --cwd ../.. --filter @aexhq/contracts build && bun run --cwd ../.. --filter @aexhq/cli build && tsc -p tsconfig.build.json && bun ./scripts/bundle-cli.mjs && bun ./scripts/inline-contracts.mjs",
+    "build:unlocked": "bun ./scripts/clean-dist.mjs && bun run --cwd ../.. --filter @aexhq/contracts build && tsc -p tsconfig.build.json && bun run --cwd ../.. --filter @aexhq/cli build && bun ./scripts/bundle-cli.mjs && bun ./scripts/inline-contracts.mjs",
     "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
     "lint:unlocked": "tsc --noEmit",
     "test": "bun run test:unit",

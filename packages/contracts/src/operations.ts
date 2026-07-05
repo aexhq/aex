@@ -1,8 +1,10 @@
 import { strToU8, zipSync } from "fflate";
+import { randomUUID } from "node:crypto";
 import type { HttpClient } from "./http.js";
+import type { AexEvent } from "./event-envelope.js";
 import type { RunUnit } from "./run-unit.js";
 import { normalizeRunUnit } from "./run-unit.js";
-import { RunStateError } from "./sdk-errors.js";
+import { RunConfigValidationError, RunStateError } from "./sdk-errors.js";
 import {
   assertRunRecordArchivePublicSafeV1,
   buildRunRecordDownloadManifestV1,
@@ -19,6 +21,7 @@ import type {
   BillingLedgerQuery,
   BillingPortalRequest,
   BillingSummary,
+  ChildRunRef,
   FileRecord,
   Output,
   OutputLink,
@@ -31,7 +34,6 @@ import type {
   OutputText,
   ReadOutputTextOptions,
   Run,
-  RunEvent,
   RunListPage,
   RunListQuery,
   RunSummary,
@@ -143,8 +145,41 @@ export interface IdempotencyOptions {
   readonly idempotencyKey?: string;
 }
 
+/**
+ * Resolve a caller-supplied idempotency key to the value that ships on the
+ * request. FAIL-FAST: an empty or whitespace-only key THROWS
+ * {@link RunConfigValidationError} — a footgun that silently disabled dedup
+ * (`?? generate()` kept `''`, then a downstream truthy header-drop shipped no
+ * `Idempotency-Key`). An absent key generates a fresh one; a real key is
+ * returned verbatim. The single choke point every send/create/run entry uses.
+ */
+export function resolveIdempotencyKey(key?: string): string {
+  if (key === undefined) {
+    return `aex-idem-${randomUUID()}`;
+  }
+  if (typeof key !== "string" || key.trim().length === 0) {
+    throw new RunConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
+      field: "idempotencyKey",
+      value: key
+    });
+  }
+  return key;
+}
+
+/**
+ * Fail-closed idempotency header builder. An EMPTY string throws (defense in
+ * depth alongside {@link resolveIdempotencyKey}) rather than silently dropping
+ * the header and proceeding non-idempotent; an absent key yields no header.
+ */
 function idempotencyHeaders(options?: IdempotencyOptions): HeadersInit | undefined {
-  return options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : undefined;
+  if (options?.idempotencyKey === undefined) return undefined;
+  if (typeof options.idempotencyKey !== "string" || options.idempotencyKey.trim().length === 0) {
+    throw new RunConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
+      field: "idempotencyKey",
+      value: options.idempotencyKey
+    });
+  }
+  return { "Idempotency-Key": options.idempotencyKey };
 }
 
 export async function createSession(
@@ -159,6 +194,28 @@ export async function createSession(
     body: JSON.stringify(request)
   });
   return unwrapSession(result);
+}
+
+/** The result of a non-blocking {@link submit}: the run id + the created session. */
+export interface SubmitResult {
+  readonly runId: string;
+  readonly session: Session;
+}
+
+/**
+ * Fire-and-forget submit — create the session and post its first turn WITHOUT
+ * awaiting the turn to settle (the honest counterpart to await-settle `run()`).
+ * Returns the `runId` immediately; observe the run via a `webhook`, the event
+ * stream, or by re-opening the session. Mirrors {@link createSession}'s
+ * idempotency handling.
+ */
+export async function submit(
+  http: HttpClient,
+  request: SessionCreateRequest,
+  options?: IdempotencyOptions
+): Promise<SubmitResult> {
+  const session = await createSession(http, request, options);
+  return { runId: session.sessionId ?? session.id, session };
 }
 
 export async function getSession(http: HttpClient, sessionId: string): Promise<Session> {
@@ -249,6 +306,49 @@ export async function resumeSession(
   );
 }
 
+/**
+ * Request the HITL write-gate: park the session `awaiting_approval` before its
+ * next gated action (mirrors {@link suspendSession}). Imperative counterpart to
+ * the declarative submission-time `approvalGate`.
+ */
+export async function requestApproval(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/request-approval`,
+    { method: "POST", ...(headers ? { headers } : {}) }
+  );
+}
+
+/** Approve an `awaiting_approval` session so the held turn resumes (→ running). */
+export async function approveSession(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/approve`,
+    { method: "POST", ...(headers ? { headers } : {}) }
+  );
+}
+
+/** Deny an `awaiting_approval` session so the held turn is cancelled (→ cancelled). */
+export async function denySession(
+  http: HttpClient,
+  sessionId: string,
+  options?: IdempotencyOptions
+): Promise<SessionStateChangeAccepted> {
+  const headers = idempotencyHeaders(options);
+  return http.request<SessionStateChangeAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/deny`,
+    { method: "POST", ...(headers ? { headers } : {}) }
+  );
+}
+
 export async function deleteSession(
   http: HttpClient,
   sessionId: string,
@@ -317,13 +417,13 @@ const LIST_EVENTS_PAGE_BUDGET = 1000;
 export async function listRunEvents(
   http: HttpClient,
   runId: string
-): Promise<readonly RunEvent[]> {
+): Promise<readonly AexEvent[]> {
   const path = `/api/runs/${encodeURIComponent(runId)}/events`;
-  const all: RunEvent[] = [];
+  const all: AexEvent[] = [];
   let cursor: number | undefined;
   for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
     const query = cursor !== undefined ? { cursor: String(cursor) } : {};
-    const result = await http.request<{ readonly events: readonly RunEvent[]; readonly nextCursor?: number | null }>(
+    const result = await http.request<{ readonly events: readonly AexEvent[]; readonly nextCursor?: number | null }>(
       path,
       {},
       query
@@ -382,7 +482,7 @@ export async function findOutput(
   const matches = await findOutputs(http, runId, query);
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0]!;
-  throw new RunStateError("findOutput: output query matched multiple files", {
+  throw new RunStateError("outputs.findOne: output query matched multiple files", {
     runId,
     matches: matches.map((output) => output.filename ?? output.id)
   });
@@ -461,7 +561,7 @@ export function resolveOutputFileSelector(
   if (isPathSelector(selector)) {
     const target = normalizeOutputLookupPath(selector.path);
     if (!target) {
-      throw new RunStateError("downloadOutput: output path must be non-empty", { runId, path: selector.path });
+      throw new RunStateError("outputs.download: output path must be non-empty", { runId, path: selector.path });
     }
     const matches = outputs.filter((output) => {
       if (typeof output.filename !== "string") return false;
@@ -474,17 +574,17 @@ export function resolveOutputFileSelector(
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new RunStateError(
-        `downloadOutput: output path "${selector.path}" matched multiple files`,
+        `outputs.download: output path "${selector.path}" matched multiple files`,
         { runId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
       );
     }
-    throw new RunStateError(`downloadOutput: output path "${selector.path}" was not found`, {
+    throw new RunStateError(`outputs.download: output path "${selector.path}" was not found`, {
       runId,
       path: selector.path
     });
   }
   if (typeof selector?.id !== "string" || selector.id.length === 0) {
-    throw new RunStateError("downloadOutput: selector must include an output id or path", { runId });
+    throw new RunStateError("outputs.download: selector must include an output id or path", { runId });
   }
   return { ...selector, id: selector.id };
 }
@@ -607,6 +707,24 @@ function grepLines(text: string, pattern: string | RegExp): string {
     .split("\n")
     .filter((line) => test(line))
     .join("\n");
+}
+
+/**
+ * List a run's subagent CHILD runs (`GET /runs/:id/children`). Each row is a
+ * {@link ChildRunRef} whose `id` resolves through the run facade (getRun /
+ * events / outputs) — so every child the platform hands you is resolvable. An
+ * empty array means the run spawned no children.
+ */
+export async function listRunChildren(
+  http: HttpClient,
+  runId: string
+): Promise<readonly ChildRunRef[]> {
+  const result = await http.request<
+    { readonly children: readonly ChildRunRef[] } | readonly ChildRunRef[]
+  >(`/api/runs/${encodeURIComponent(runId)}/children`);
+  return Array.isArray(result)
+    ? result
+    : (result as { readonly children: readonly ChildRunRef[] }).children;
 }
 
 export async function cancelRun(http: HttpClient, runId: string): Promise<void> {
@@ -805,7 +923,7 @@ async function collectArtifactBytes(
   return { entries: Object.freeze(entries), captured, errors };
 }
 
-function eventsJsonl(events: readonly RunEvent[]): Uint8Array {
+function eventsJsonl(events: readonly AexEvent[]): Uint8Array {
   return strToU8(events.map((event) => JSON.stringify(event)).join("\n"));
 }
 
@@ -819,6 +937,24 @@ function normalizeOutputLookupPath(path: string): string {
 
 export function filterOutputs(outputs: readonly Output[], query: OutputQuery): readonly Output[] {
   return outputs.filter((output) => outputMatchesQuery(output, query));
+}
+
+/**
+ * The single filename-matcher for cross-run / per-session output SEARCH. A
+ * string is a case-insensitive SUBSTRING match; a RegExp is tested as given (and
+ * reset to `lastIndex = 0` so a reused `/g` regex is safe). Sharing this SSoT is
+ * what closes the T16 crash class: `searchOutputs` no longer assumes `filename`
+ * is a string and passes a RegExp into `escapeRegExp(...).replace(...)`.
+ */
+export function toFilenameMatcher(filename: string | RegExp): (name: string) => boolean {
+  if (typeof filename === "string") {
+    const needle = filename.toLowerCase();
+    return (name: string) => name.toLowerCase().includes(needle);
+  }
+  return (name: string) => {
+    filename.lastIndex = 0;
+    return filename.test(name);
+  };
 }
 
 export function classifyOutput(output: Pick<Output, "filename" | "contentType">): OutputFileType {
@@ -1072,7 +1208,7 @@ function jsonEntry(path: string, value: unknown): ZipEntry {
   };
 }
 
-function jsonlEntry(path: string, events: readonly RunEvent[]): ZipEntry {
+function jsonlEntry(path: string, events: readonly AexEvent[]): ZipEntry {
   return {
     path,
     bytes: eventsJsonl(events),

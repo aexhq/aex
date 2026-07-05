@@ -31,6 +31,7 @@ And whether you can **raise** it: per-run option, per-plan, or no.
 | MCP connect timeout (default) | 30 seconds | aex policy | Per-port via `connectTimeoutMs` | `RUN_DEFAULT_MCP_CONNECT_TIMEOUT_MS` |
 | MCP call timeout (default) | 30 minutes | aex policy | Per-port via `callTimeoutMs` | `RUN_DEFAULT_MCP_CALL_TIMEOUT_MS` |
 | Per-session spend cap | None by default; when set, the session is stopped once its spend would exceed the cap | aex policy | Per-session via `overrides.maxSpendUsd` (a positive USD amount) | — |
+| Max agent iterations (turns) per run | 20 by default; hard ceiling 200 | aex policy | Per-session via `overrides.maxTurns` (a positive integer, clamped to the ceiling) | `RUN_DEFAULT_MAX_TURNS` / `RUN_MAX_TURNS_CEILING` |
 
 ### Output capture (per run)
 
@@ -68,6 +69,29 @@ silently lost.
 | --- | --- | --- | --- | --- |
 | Per-run metadata record TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_RECORD_TTL_SECONDS` |
 | Per-run secret-envelope TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_SECRET_TTL_SECONDS` |
+
+## Sandbox (managed runtime)
+
+Each run executes in an ephemeral Linux container sized by the `runtime` preset.
+A few behaviours are worth knowing before you rely on the filesystem or RAM:
+
+- **Only `/workspace` persists across turns** of the same session. Everything
+  outside `/workspace` is reset between turns and is gone when the session ends —
+  write deliverables and any state you want to survive a turn under `/workspace`.
+- **The image is minimal.** Declare OS/language packages with
+  `environment.packages` so they are present deterministically at boot. A runtime
+  install inside the agent (`pip install`, `apt-get`) is best-effort and
+  **non-persistent** (reset next turn), and `pip` is subject to PEP 668
+  (`externally-managed-environment`) — prefer `environment.packages`, or a
+  virtualenv you create under `/workspace`.
+- **`/proc/meminfo` reports the HOST's RAM, not your preset's.** Your actual
+  memory ceiling is the preset's `memoryMb` (e.g. `shared-0.25x-1gb` = 1 GB, the
+  default; `shared-4x-12gb` = 12 GB). The presets are the SSoT in
+  [`packages/contracts/src/runtime-sizes.ts`](https://github.com/aexhq/aex/blob/main/packages/contracts/src/runtime-sizes.ts);
+  see [Defaults](defaults.md).
+- **The agent loop is bounded** by `maxTurns` (default 20, ceiling 200) — a
+  documented, per-run-overridable limit (see the Run scope table above and
+  `overrides.maxTurns`), not a silent cutoff.
 
 ## Workspace scope
 

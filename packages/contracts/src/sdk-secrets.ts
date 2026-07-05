@@ -216,15 +216,41 @@ function isSecretKey(key: string): boolean {
   return /(?:api[_-]?key|authorization|token|secret|password|credential)/i.test(key);
 }
 
-/** A candidate run is a high-entropy secret if it is both information-dense
- * AND mixes character classes (the property that separates opaque secret blobs
- * from single-class identifiers/paths). */
+/**
+ * A candidate run is a high-entropy secret if it contains an opaque
+ * secret-shaped SEGMENT. The candidate class already excludes `_` so
+ * snake_case names split into sub-candidates; we ADDITIONALLY treat `-` as a
+ * segment boundary here, at the entropy layer, so a kebab-case human name or a
+ * timestamped slug is judged by its PARTS — dictionary words + a decimal number,
+ * each individually low-entropy — not by its (misleadingly high) whole-run
+ * entropy. Concretely a customer secret NAME like `spike17-race-1720000000000`
+ * (and its real-`Date.now()` variants, whose whole-run entropy is ~4.1) has no
+ * opaque segment and SURVIVES — a name is not a credential, and masking it makes
+ * `secret_not_found` unactionable.
+ *
+ * Splitting at the entropy layer (not in the candidate regex) is the precise,
+ * non-weakening choice: an OPAQUE base64url secret that merely CONTAINS a `-`
+ * still masks, because at least one of its `-`-segments is itself a dense,
+ * class-diverse run and trips the gate. A `-`-free candidate is a single
+ * segment, i.e. byte-identical to the pre-fix whole-run check.
+ */
 function looksHighEntropySecret(value: string): boolean {
+  return value.split("-").some(isOpaqueSecretRun);
+}
+
+/**
+ * True when a delimiter-free run is a dense, character-class-diverse opaque
+ * secret: an entropy floor AND ≥2 character classes, and either a digit or an
+ * extreme length. The digit/length clause keeps digit-free mixed-case
+ * identifiers (stack-trace frames, API symbol names the diagnostic bundle
+ * captures) legible while real secret shapes still match. A segment below ~8
+ * chars cannot clear the entropy floor, so dictionary words and short slug parts
+ * fall out on entropy alone — no separate length gate needed here (the
+ * ≥24-char {@link HIGH_ENTROPY_CANDIDATE} bounds the whole candidate).
+ */
+function isOpaqueSecretRun(value: string): boolean {
   if (charClassCount(value) < MIN_CHAR_CLASSES) return false;
   if (shannonEntropyBits(value) < ENTROPY_BITS_PER_CHAR) return false;
-  // Require a digit OR extreme length so digit-free mixed-case identifiers
-  // (stack-trace frames, API symbol names) are not destroyed in diagnostic
-  // output, while real secret shapes (alnum-mixed, or very long) still match.
   return /[0-9]/.test(value) || value.length >= HIGH_ENTROPY_NO_DIGIT_MIN_LEN;
 }
 

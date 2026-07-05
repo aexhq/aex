@@ -25,6 +25,21 @@ import { createHash } from "node:crypto";
  */
 export const AEX_DEFAULT_BASE_URL = "https://api.aex.dev";
 
+/**
+ * Plane → API base URL. When the SDK constructor is given no explicit `baseUrl`
+ * it DERIVES the target from the API key's embedded plane (see
+ * {@link import("./api-key.js").parseApiKey}) rather than blindly defaulting to
+ * prod — so a dev key never silently 401s against `api.aex.dev`.
+ *
+ * `prd` is {@link AEX_DEFAULT_BASE_URL}. `dev` is `null`: the dev plane has no
+ * stable public hostname yet, so a dev key still requires an explicit `baseUrl`
+ * — but the plane-mismatch guard (dev key + prd baseUrl) still fires.
+ */
+export const PLANE_BASE_URLS = {
+  dev: null,
+  prd: AEX_DEFAULT_BASE_URL
+} as const satisfies Readonly<Record<"dev" | "prd", string | null>>;
+
 export function stableStringify(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }

@@ -51,6 +51,11 @@ const flush = async (n = 4): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
 };
 
+/** A settled session record (parked + settle-stamped costUsd) that GET returns. */
+function settledSession(overrides: Record<string, unknown>): Record<string, unknown> {
+  return { id: "run-1", turnSeq: 1, costUsd: 0, ...overrides };
+}
+
 function runClient(session: Record<string, unknown>): {
   readonly client: Aex;
   readonly urls: string[];
@@ -92,10 +97,15 @@ function runClient(session: Record<string, unknown>): {
   return { client: new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch }), urls, sockets, webSocketFactory: factory };
 }
 
-async function collectRun(session: Record<string, unknown>): Promise<{
-  readonly result: RunResult;
-  readonly urls: readonly string[];
-}> {
+/** The CUSTOM `aex.session.<name>` terminal event ending the turn. */
+function terminal(name: string): AexEvent {
+  return evt(1026, "CUSTOM", { name, value: { turnSeq: 1 } });
+}
+
+async function collectRun(
+  session: Record<string, unknown>,
+  terminalEvent: AexEvent = terminal("aex.session.idle")
+): Promise<{ readonly result: RunResult; readonly urls: readonly string[] }> {
   const { client, urls, sockets, webSocketFactory } = runClient(session);
   const promise = client.run(
     {
@@ -109,74 +119,93 @@ async function collectRun(session: Record<string, unknown>): Promise<{
   await flush();
   sockets[0]!.message(evt(1024, "TEXT_MESSAGE_CONTENT", { text: "hello ", messageId: "m1" }));
   sockets[0]!.message(evt(1025, "TEXT_MESSAGE_CONTENT", { text: "world", messageId: "m1" }));
-  sockets[0]!.message(evt(1026, "CUSTOM", { name: session.status === "error" ? "aex.session.error" : "aex.session.idle", value: { turnSeq: 1 } }));
+  sockets[0]!.message(terminalEvent);
 
   return { result: await promise, urls };
 }
 
-describe("Aex.run -> one-shot session RunResult", () => {
-  it("returns a run-compatible result for a parked session turn", async () => {
-    const { result, urls } = await collectRun({
-      id: "run-1",
-      status: "idle",
-      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-      costUsd: 0.0123
-    });
+describe("Aex.run -> unified settled RunResult", () => {
+  it("a clean one-shot reports the SUCCEEDED outcome with cost + usage always present", async () => {
+    const { result, urls } = await collectRun(
+      settledSession({
+        status: "idle",
+        costUsd: 0.0123,
+        costTelemetry: { providerUsage: [{ inputTokens: 10, outputTokens: 5, totalTokens: 15 }] }
+      })
+    );
 
     expect(result.runId).toBe("run-1");
     expect(result.sessionId).toBe("run-1");
     expect(result.ok).toBe(true);
-    expect(result.status).toBe("idle");
-    expect(result.run.status).toBe("idle");
+    // The RESULT status is the OUTCOME (never a bare `idle`)...
+    expect(result.status).toBe("succeeded");
+    // ...while the session RECORD keeps its resumable lifecycle status.
+    expect(result.session?.status).toBe("idle");
     expect(result.text).toBe("hello world");
     expect(result.events.map((e) => e.type)).toEqual(["TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "CUSTOM"]);
-    expect(result.trace.text.map((t) => t.text)).toEqual(["hello ", "world"]);
-    expect(result.outputs).toEqual([{ id: "o1", filename: "report.txt" }]);
-    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+    // cost + usage are NON-optional and always present at a settled read.
     expect(result.costUsd).toBe(0.0123);
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
     expect(result.error).toBeUndefined();
     expect(urls.some((url) => url.includes("/api/runs"))).toBe(false);
   });
 
-  it("omits usage when neither the record nor the events carry token counts", async () => {
-    // The managed plane emits no `aex.usage` events and no record usage today —
-    // the trace-derived summary is `{}`. RunResult.usage documents "when the
-    // deployment exposes it", so an empty object must NOT be promoted (a truthy
-    // `result.usage` with no counts misleads `if (result.usage)` callers).
-    const { result } = await collectRun({ id: "run-1", status: "idle", costUsd: 0.0004 });
-    expect(result.usage).toBeUndefined();
-    expect(result.trace.usage).toEqual({});
+  it("derives usage from costTelemetry.providerUsage (retiring the session.usage path)", async () => {
+    // A record carrying only a legacy top-level `usage` (no costTelemetry) yields
+    // an empty usage — the SDK reads token counts from provider usage only.
+    const { result } = await collectRun(
+      settledSession({ status: "idle", costUsd: 0.0004, usage: { inputTokens: 99 } })
+    );
+    expect(result.usage).toEqual({});
   });
 
-  it("does not promote an empty record usage object either", async () => {
-    const { result } = await collectRun({ id: "run-1", status: "idle", usage: {} });
-    expect(result.usage).toBeUndefined();
+  it("a $0 / turnBilled===0 settle resolves as settled with costUsd:0 (no hang, not undefined)", async () => {
+    const { result } = await collectRun(settledSession({ status: "idle", costUsd: 0 }));
+    expect(result.ok).toBe(true);
+    expect(result.costUsd).toBe(0);
+    expect(result.usage).toEqual({});
   });
 
-  it("returns ok:false with error for an error session by default", async () => {
-    const { result } = await collectRun({ id: "run-1", status: "error", errorMessage: "boom" });
+  it("a CANCELLED turn reports outcome cancelled + ok:false", async () => {
+    const { result } = await collectRun(
+      settledSession({ status: "cancelled", costUsd: 0.01, lastTurnOutcome: "cancelled" }),
+      terminal("aex.session.cancelled")
+    );
+    expect(result.status).toBe("cancelled");
     expect(result.ok).toBe(false);
-    expect(result.status).toBe("error");
-    expect(result.error).toBe("boom");
   });
 
-  it("waits for the settled record so costUsd/usage survive the park-event → settle race", async () => {
-    // Live-observed on dev: the park EVENT ends the stream seconds BEFORE the
-    // settle lambda flips the record and stamps costTelemetry/costUsd, so a
-    // single immediate read returned costUsd: undefined on virtually every
-    // fresh run — despite RunResult documenting the settle-time showback.
-    const urls: string[] = [];
+  it("a wall-clock TIMEOUT reports outcome timed_out + ok:false", async () => {
+    const { result } = await collectRun(
+      settledSession({ status: "timed_out", costUsd: 0.01, lastTurnOutcome: "timed_out" }),
+      terminal("aex.session.timed_out")
+    );
+    expect(result.status).toBe("timed_out");
+    expect(result.ok).toBe(false);
+  });
+
+  it("populates error from the terminal RUN_ERROR event (not just the lagged record)", async () => {
+    // The record has NO errorMessage yet; the RUN_ERROR event carries the
+    // immediate authoritative failure text.
+    const { result } = await collectRun(
+      settledSession({ status: "failed", costUsd: 0 }),
+      evt(1026, "RUN_ERROR", { failureMessage: "invalid provider api key" })
+    );
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("invalid provider api key");
+  });
+
+  it("waits for the settled record so cost/usage survive the park-event → settle race", async () => {
     const sockets: FakeWebSocket[] = [];
     let sessionReads = 0;
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-      urls.push(`${(init?.method ?? "GET").toString()} ${url}`);
+      void init;
       if (url.endsWith("/api/sessions/run-1/events/ticket")) {
         return json({ wsUrl: "wss://events.example.test/sessions/run-1", ticket: "ticket", expiresAtMs: 1 });
       }
-      if (url.endsWith("/api/sessions/run-1/outputs")) {
-        return json({ outputs: [] });
-      }
+      if (url.endsWith("/api/sessions/run-1/outputs")) return json({ outputs: [] });
       if (url.endsWith("/api/sessions/run-1/messages")) {
         return json({
           session: { id: "run-1", status: "running", turnSeq: 1 },
@@ -186,18 +215,22 @@ describe("Aex.run -> one-shot session RunResult", () => {
       }
       if (url.endsWith("/api/sessions/run-1")) {
         sessionReads += 1;
-        // Read 1 (post-stream): settle hasn't landed — record still `running`,
-        // no costUsd. Read 2+: settled.
+        // Read 1 (post-stream): settle hasn't landed — running, no settle stamp.
+        // Read 2+: settled with costUsd + provider usage.
         return json({
           session:
             sessionReads < 2
               ? { id: "run-1", status: "running", turnSeq: 1 }
-              : { id: "run-1", status: "idle", turnSeq: 1, costUsd: 0.0042, usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } }
+              : {
+                  id: "run-1",
+                  status: "idle",
+                  turnSeq: 1,
+                  costUsd: 0.0042,
+                  costTelemetry: { providerUsage: [{ inputTokens: 3, outputTokens: 2, totalTokens: 5 }] }
+                }
         });
       }
-      if (url.endsWith("/api/sessions")) {
-        return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } });
-      }
+      if (url.endsWith("/api/sessions")) return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } });
       return json({});
     };
     const factory = (url: string): FakeWebSocket => {
@@ -208,22 +241,62 @@ describe("Aex.run -> one-shot session RunResult", () => {
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const promise = client.run(
       { model: "claude-haiku-4-5", message: "p", apiKeys: { anthropic: "sk-ant" } },
-      { webSocketFactory: factory, settleConsistent: true }
+      { webSocketFactory: factory }
     );
 
     await flush();
     sockets[0]!.message(evt(1024, "TEXT_MESSAGE_CONTENT", { text: "hi", messageId: "m1" }));
-    sockets[0]!.message(evt(1025, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } }));
+    sockets[0]!.message(terminal("aex.session.idle"));
 
     const result = await promise;
     expect(result.ok).toBe(true);
+    expect(result.status).toBe("succeeded");
     expect(result.costUsd).toBe(0.0042);
     expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
     expect(result.session?.status).toBe("idle");
+    expect(sessionReads).toBeGreaterThanOrEqual(2);
   });
 
-  it("throws when throwOnFailure is set and the session turn did not park cleanly", async () => {
-    const { client, sockets, webSocketFactory } = runClient({ id: "run-1", status: "error", errorMessage: "boom" });
+  it("await:'park' returns at the park event without waiting for settle", async () => {
+    const sockets: FakeWebSocket[] = [];
+    let sessionReads = 0;
+    const fetch: typeof globalThis.fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (url.endsWith("/api/sessions/run-1/events/ticket")) {
+        return json({ wsUrl: "wss://events.example.test/sessions/run-1", ticket: "ticket", expiresAtMs: 1 });
+      }
+      if (url.endsWith("/api/sessions/run-1/outputs")) return json({ outputs: [] });
+      if (url.endsWith("/api/sessions/run-1/messages")) {
+        return json({ session: { id: "run-1", status: "running", turnSeq: 1 }, turn: { sessionId: "run-1", turnSeq: 1 }, eventCursor: 1024 });
+      }
+      if (url.endsWith("/api/sessions/run-1")) {
+        sessionReads += 1;
+        return json({ session: { id: "run-1", status: "running", turnSeq: 1 } });
+      }
+      if (url.endsWith("/api/sessions")) return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } });
+      return json({});
+    };
+    const factory = (url: string): FakeWebSocket => {
+      const ws = new FakeWebSocket(url);
+      sockets.push(ws);
+      return ws;
+    };
+    const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
+    const promise = client.run(
+      { model: "claude-haiku-4-5", message: "p", apiKeys: { anthropic: "sk-ant" } },
+      { webSocketFactory: factory, await: "park" }
+    );
+    await flush();
+    sockets[0]!.message(terminal("aex.session.idle"));
+    const result = await promise;
+    // Only the single post-stream read — no settle poll loop.
+    expect(sessionReads).toBe(1);
+    // The outcome still reads from the carried event.
+    expect(result.status).toBe("succeeded");
+  });
+
+  it("throws when throwOnFailure is set and the turn did not park cleanly", async () => {
+    const { client, sockets, webSocketFactory } = runClient(settledSession({ status: "failed", costUsd: 0 }));
     const promise = client.run(
       {
         model: "claude-haiku-4-5",
@@ -234,8 +307,8 @@ describe("Aex.run -> one-shot session RunResult", () => {
     );
 
     await flush();
-    sockets[0]!.message(evt(1024, "CUSTOM", { name: "aex.session.error", value: { turnSeq: 1 } }));
+    sockets[0]!.message(evt(1026, "RUN_ERROR", { failureMessage: "boom" }));
 
-    await expect(promise).rejects.toThrow(/session run-1 ended error: boom/);
+    await expect(promise).rejects.toThrow(/session run-1 ended failed: boom/);
   });
 });

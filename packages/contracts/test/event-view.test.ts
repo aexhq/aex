@@ -72,7 +72,15 @@ describe("asAexEventView — one type-predicate method per standardized event ty
     const barrier = asAexEventView(envelope({ type: "CUSTOM", data: { name: AEX_RUN_SETTLED_NAME, value: {} } }));
     expect(barrier.isRunSettled()).toBe(true);
 
-    for (const name of ["aex.session.idle", "aex.session.error", "aex.session.suspended"]) {
+    // WS1: resumable parks + terminal outcomes are all settled parks; bare `error` retired.
+    for (const name of [
+      "aex.session.idle",
+      "aex.session.suspended",
+      "aex.session.succeeded",
+      "aex.session.failed",
+      "aex.session.timed_out",
+      "aex.session.cancelled"
+    ]) {
       const parked = asAexEventView(envelope({ type: "CUSTOM", data: { name, value: {} } }));
       expect(parked.isRunSettled()).toBe(true);
     }

@@ -1,12 +1,10 @@
 /**
- * `aex whoami` — GET /api/whoami. Lets agents confirm the token
- * resolves to a workspace + scopes before submitting a real run.
- *
- * `--workspace` is NOT required: the whoami endpoint resolves the
- * principal by the bearer alone and tells the caller which workspace
- * the token belongs to.
+ * `aex whoami` — resolve the API key to its workspace + scopes via the SDK's
+ * `Aex.whoami()`. Lets agents confirm the key before submitting a real run.
+ * Always emits JSON; `--json` is a globally-recognized no-op flag (consumed by
+ * the common-flags parser) so `aex whoami --json` never errors.
  */
-import { operations } from "@aexhq/contracts";
+import { Aex } from "@aexhq/sdk";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -14,7 +12,6 @@ import {
   USAGE_ERR,
   describeApiError,
   emitJsonError,
-  makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
@@ -32,9 +29,9 @@ export async function runWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<
     return USAGE_ERR;
   }
 
-  const http = makeHttpClient(io, common.flags);
+  const aex = new Aex({ baseUrl: common.flags.aexUrl, apiKey: common.flags.apiKey, fetch: io.fetchImpl });
   try {
-    const me = await operations.whoami(http);
+    const me = await aex.whoami();
     io.stdout(JSON.stringify(me) + "\n");
     return SUCCESS;
   } catch (err) {

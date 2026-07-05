@@ -23,6 +23,7 @@ For the hard ceilings and who can raise them, see
 | `timeout` (run deadline) | 8 hours (also the ceiling) | Per-session via `overrides.timeout` (e.g. `"30m"`, `"2h"`). Values outside the run-timeout floor (1 minute) / ceiling (8 hours) are rejected with `RunConfigValidationError` before submission. | `RUN_DEFAULT_TIMEOUT_MS` |
 | `runtime` (machine size) | `shared-0.25x-1gb` — 0.25 vCPU, 1 GB | Per-session via `runtime` (use `Sizes.*` in TypeScript). | `RUN_DEFAULT_RUNTIME_SIZE` |
 | `overrides.maxSpendUsd` (per-session spend cap) | None — no spend cap (the session is still bounded by its `timeout` and any workspace-level cap) | Per-session via `overrides.maxSpendUsd` (a positive USD amount); the session is stopped once its spend would exceed the cap. | — |
+| `overrides.maxTurns` (agent iterations per run) | 20 (ceiling 200) | Per-session via `overrides.maxTurns` (a positive integer, clamped to the ceiling). | `RUN_DEFAULT_MAX_TURNS` |
 
 ## Tools
 

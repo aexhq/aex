@@ -294,6 +294,13 @@ const noConditionalExpect = {
       IfStatement(node) {
         if (!isInsideTestBody(node)) return;
         if (!containsExpectCall(node.consequent)) return;
+        // Guarded-else carve-out: an `else` that ALSO asserts OR THROWS means
+        // neither path is a silent skip. Two legitimate shapes:
+        //   `if (guard) { expect(...) } else { throw ... }`  — narrow-or-fail
+        //   `if (isPosix) { expect(...) } else { expect(...) }` — platform branch
+        // Only a missing / non-asserting-non-throwing else is the anti-pattern
+        // (the falsy path silently checks nothing).
+        if (node.alternate && (containsExpectCall(node.alternate) || bodyContainsThrow(node.alternate))) return;
         // Carve-out: if the immediately preceding sibling statement is
         // `expect(<root of test condition>)...`, this is a legitimate
         // narrow.
@@ -336,6 +343,12 @@ function rootIdentifierOf(node) {
   if (node.type === "Identifier") return node.name;
   if (node.type === "MemberExpression") return rootIdentifierOf(node.object);
   if (node.type === "UnaryExpression") return rootIdentifierOf(node.argument);
+  // Method-guard narrowing: `view.isToolCallStart()` narrows `view`, so its
+  // root reduces to the callee's object — matching a preceding
+  // `expect(view.isToolCallStart()).toBe(true)`. This blesses the
+  // guards-as-METHODS idiom (type-predicate methods on `AexEventView` and on
+  // discriminated results) exactly as it already blesses property narrowing.
+  if (node.type === "CallExpression") return rootIdentifierOf(node.callee);
   return null;
 }
 

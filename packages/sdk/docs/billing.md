@@ -8,6 +8,12 @@ Workspace-level billing, subscription, and webhook verification calls are
 token-scoped like every other client call — the workspace is derived
 server-side from the API key.
 
+The billing reads — `aex.billing()`, `aex.billingLedger()`, and the CLI
+`aex billing` (and its `ledger` sub-verb) — require the **`billing:read`**
+scope; a token without it fails with `403 insufficient_scope` (see
+[Errors](errors.md)). This is why the [Quickstart](quickstart.md) mints
+`billing:read` alongside `runs:read` / `runs:write` / `outputs:read`.
+
 ## Read the billing summary
 
 `aex.billing()` returns the workspace's prepaid balance, current-month spend,

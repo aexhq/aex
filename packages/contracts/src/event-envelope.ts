@@ -347,18 +347,32 @@ export function isRunTerminal(e: AexEvent): boolean {
   return e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 }
 /**
- * The CUSTOM `data.name`s the MANAGED runtime emits as a run/turn's terminal.
- * A managed one-shot run PARKS (session_parked.v1 → `aex.session.idle` / `.error`
- * / `.suspended`) rather than writing a `session_finished` → RUN_FINISHED, so
- * these — not just the AG-UI RUN_FINISHED/RUN_ERROR — are what actually ends a
- * managed run's event stream. Kept in sync with the platform journal projection
- * (`journal-project.ts` session_parked.v1 mapping).
+ * The CUSTOM `data.name`s the MANAGED runtime emits as a run/turn's SETTLED
+ * terminal. A managed one-shot run PARKS (`session_parked.v1` → one of these)
+ * rather than writing a `session_finished` → RUN_FINISHED, so these — not just
+ * the AG-UI RUN_FINISHED/RUN_ERROR — are what actually end a managed run's event
+ * stream. Clean-cut (WS1): the bare `aex.session.error` park is retired in favour
+ * of the terminal OUTCOME vocabulary — a failed turn is `failed`, a wall-clock
+ * kill `timed_out`, a cancel `cancelled`, a clean finish `succeeded`; `idle`/
+ * `suspended` remain the resumable parks. Held `awaiting_approval` is NOT here:
+ * it ends the TURN stream (see `isSessionTurnTerminalEvent` in the SDK) but the
+ * RUN is not settled. Kept byte-in-sync with `@aexhq/shared` `AEX_SESSION_PARKED_NAMES`
+ * and the platform journal projection (`journal-project.ts` session_parked.v1).
  */
-export const AEX_SESSION_PARKED_NAMES = ["aex.session.idle", "aex.session.error", "aex.session.suspended"] as const;
+export const AEX_SESSION_PARKED_NAMES = [
+  "aex.session.idle",
+  "aex.session.suspended",
+  "aex.session.succeeded",
+  "aex.session.failed",
+  "aex.session.timed_out",
+  "aex.session.cancelled"
+] as const;
 /**
- * True for a managed-runtime session-park terminal (idle/error/suspended). The
- * turn's work is done and the record has reached its terminal status; a stream
- * consumer should stop here exactly as it would on RUN_FINISHED/RUN_ERROR.
+ * True for a managed-runtime session-park terminal (a resumable idle/suspended
+ * park OR a terminal succeeded/failed/timed_out/cancelled outcome). The turn's
+ * work is done and the record has reached its terminal status; a stream consumer
+ * should stop here exactly as it would on RUN_FINISHED/RUN_ERROR. (Held
+ * `awaiting_approval` is deliberately excluded — the run is paused, not settled.)
  */
 export function isSessionParked(e: AexEvent): boolean {
   const name = customName(e);
@@ -401,6 +415,30 @@ export const AEX_RUN_SETTLED_NAME = "aex.run.settled";
  */
 export function isRunSettled(e: AexEvent): boolean {
   return customName(e) === AEX_RUN_SETTLED_NAME || isSessionParked(e);
+}
+
+/**
+ * The CUSTOM `data.name` of the HITL write-gate park: the run has reached the
+ * `awaiting_approval` state before a gated action and is holding for an
+ * `approve()`/`deny()`. Structural (independent of model prose).
+ */
+export const AEX_SESSION_AWAITING_APPROVAL_NAME = "aex.session.awaiting_approval";
+/** The CUSTOM `data.name` carrying a schema-decoded value (`{ value }`). */
+export const AEX_RESULT_DECODED_NAME = "aex.result.decoded";
+/** The CUSTOM `data.name` carrying a typed decode refusal (`{ reason, detail? }`). */
+export const AEX_RESULT_REFUSED_NAME = "aex.result.refused";
+
+/** True for the HITL `awaiting_approval` gate event. */
+export function isAwaitingApproval(e: AexEvent): boolean {
+  return customName(e) === AEX_SESSION_AWAITING_APPROVAL_NAME;
+}
+/** True for a schema-decoded terminal result event. */
+export function isResultDecoded(e: AexEvent): boolean {
+  return customName(e) === AEX_RESULT_DECODED_NAME;
+}
+/** True for a typed decode-refusal terminal result event. */
+export function isResultRefused(e: AexEvent): boolean {
+  return customName(e) === AEX_RESULT_REFUSED_NAME;
 }
 export function isFromSource(e: AexEvent, source: AexEventSource): boolean {
   return e.source === source;

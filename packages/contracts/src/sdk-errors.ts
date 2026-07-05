@@ -1,4 +1,5 @@
 import { redactSecrets } from "./sdk-secrets.js";
+import type { AexApiErrorCode } from "./error-codes.js";
 
 export type AexErrorCode =
   | "RUN_CONFIG_INVALID"
@@ -57,17 +58,118 @@ export class CleanupError extends AexError {
 
 /**
  * Thrown by SDK and CLI operations when the dashboard BFF returns a non-2xx
- * response. Carries the HTTP status and parsed body for the caller to inspect.
+ * response. Carries the HTTP status, the redacted parsed body, the server's
+ * STABLE {@link AexApiErrorCode} (when present), and a `requestId` for support.
+ * Construct via {@link import("./error-factory.js").apiErrorFromResponse} — the
+ * single wire→exception mapping — which dispatches to a typed subclass
+ * ({@link AexAuthError} / {@link AexIdempotencyConflictError} /
+ * {@link AexNotFoundError} / {@link AexRateLimitError}).
  */
 export class AexApiError extends AexError {
   readonly status: number;
   readonly body: unknown;
+  /** The server's stable error code, when the body carried a known one. */
+  readonly apiCode: AexApiErrorCode | undefined;
+  /** Request id (body `requestId` or a response header) for support correlation. */
+  readonly requestId: string | undefined;
 
-  constructor(status: number, message: string, body: unknown) {
-    super("API_ERROR", message, body);
+  constructor(
+    status: number,
+    message: string,
+    body: unknown,
+    options?: {
+      readonly apiCode?: AexApiErrorCode | undefined;
+      readonly requestId?: string | undefined;
+      readonly cause?: unknown;
+    }
+  ) {
+    super("API_ERROR", message, body, options?.cause === undefined ? undefined : { cause: options.cause });
     this.status = status;
     this.body = redactSecrets(body);
+    this.apiCode = options?.apiCode;
+    this.requestId = options?.requestId;
   }
+}
+
+/** Shared construction shape for the typed {@link AexApiError} subclasses. */
+export interface AexApiErrorInit {
+  readonly status: number;
+  readonly message: string;
+  readonly body: unknown;
+  readonly apiCode?: AexApiErrorCode | undefined;
+  readonly requestId?: string | undefined;
+  readonly cause?: unknown;
+}
+
+/** 401/403 auth failure (token invalid/revoked/expired, forbidden, insufficient scope). */
+export class AexAuthError extends AexApiError {
+  /** The scope the endpoint required, when the server named it (insufficient_scope). */
+  readonly requiredScope: string | undefined;
+  constructor(init: AexApiErrorInit & { readonly requiredScope?: string | undefined }) {
+    super(init.status, init.message, init.body, {
+      apiCode: init.apiCode,
+      requestId: init.requestId,
+      cause: init.cause
+    });
+    this.requiredScope = init.requiredScope;
+  }
+}
+
+/** 409 — the idempotency key was reused with a different request body. */
+export class AexIdempotencyConflictError extends AexApiError {
+  constructor(init: AexApiErrorInit) {
+    super(init.status, init.message, init.body, {
+      apiCode: init.apiCode,
+      requestId: init.requestId,
+      cause: init.cause
+    });
+  }
+}
+
+/** 404 — the requested resource was not found. */
+export class AexNotFoundError extends AexApiError {
+  constructor(init: AexApiErrorInit) {
+    super(init.status, init.message, init.body, {
+      apiCode: init.apiCode,
+      requestId: init.requestId,
+      cause: init.cause
+    });
+  }
+}
+
+/** 429 — the workspace hit a rate/concurrency limit; retry after a backoff. */
+export class AexRateLimitError extends AexApiError {
+  /** Suggested backoff (ms), when the server advertised one (Retry-After). */
+  readonly retryAfterMs: number | undefined;
+  constructor(init: AexApiErrorInit & { readonly retryAfterMs?: number | undefined }) {
+    super(init.status, init.message, init.body, {
+      apiCode: init.apiCode,
+      requestId: init.requestId,
+      cause: init.cause
+    });
+    this.retryAfterMs = init.retryAfterMs;
+  }
+}
+
+/** True for a 401/403 authentication/authorization failure. */
+export function isAuthError(err: unknown): err is AexAuthError {
+  return err instanceof AexAuthError;
+}
+/** True for a 403 whose cause is a missing scope (`insufficient_scope`). */
+export function isInsufficientScope(err: unknown): boolean {
+  return err instanceof AexAuthError && err.apiCode === "insufficient_scope";
+}
+/** True for a 409 idempotency-key reuse conflict. */
+export function isIdempotencyConflict(err: unknown): err is AexIdempotencyConflictError {
+  return err instanceof AexIdempotencyConflictError;
+}
+/** True for a 404 not-found error. */
+export function isNotFound(err: unknown): err is AexNotFoundError {
+  return err instanceof AexNotFoundError;
+}
+/** True for a 429 rate/concurrency-limit error. */
+export function isRateLimited(err: unknown): err is AexRateLimitError {
+  return err instanceof AexRateLimitError;
 }
 
 /**
@@ -88,6 +190,8 @@ export class AexNetworkError extends AexError {
   readonly causeCode: string | undefined;
   /** Attempts made when a retry layer exhausted its budget; `1` otherwise. */
   readonly attempts: number;
+  /** Total elapsed time (ms) across all attempts, when the retry layer set it. */
+  readonly elapsedMs: number | undefined;
 
   constructor(args: {
     readonly method: string;
@@ -110,6 +214,7 @@ export class AexNetworkError extends AexError {
     this.path = args.path;
     this.causeCode = causeCode;
     this.attempts = args.attempts ?? 1;
+    this.elapsedMs = args.elapsedMs;
   }
 }
 

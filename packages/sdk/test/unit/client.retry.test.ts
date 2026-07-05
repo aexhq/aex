@@ -146,7 +146,9 @@ function harness(
       });
     }
     if (url.endsWith("/api/sessions/run-1")) {
-      return json({ session: finalSession });
+      // Settle-stamped (costUsd present) so the default await-settle resolves on
+      // the first read instead of polling to the deadline.
+      return json({ session: { costUsd: 0, ...finalSession } });
     }
     if (url.endsWith("/api/sessions")) {
       const status = createStatuses[Math.min(createCount, createStatuses.length - 1)] ?? 201;
@@ -329,7 +331,8 @@ describe("Aex throttle error on a provider-throttled turn", () => {
     ]);
 
     expect(result.ok).toBe(false);
-    expect(result.status).toBe("error");
+    // The bare `error` outcome is retired — a RUN_ERROR turn reads `failed`.
+    expect(result.status).toBe("failed");
     expect(result.events.map((event) => event.type)).toEqual(["RUN_ERROR"]);
   });
 

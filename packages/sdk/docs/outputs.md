@@ -4,7 +4,7 @@ title: Outputs
 
 # Outputs
 
-Every session produces durable metadata (status, events, snapshots, cleanup state) and an outputs namespace. By default, managed runs capture every regular file the agent creates or modifies in the container: the runner snapshots the filesystem just before the agent starts, rescans it when the agent exits, and uploads the delta. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `session.download()` returns the public session record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`session.outputs().download()` / `session.events().download()` / `session.downloadMetadata()`) return one slice each.
+Every session produces durable metadata (status, events, cleanup state) and an outputs namespace. By default, managed runs capture the regular files present in the container when the agent exits, EXCLUDING the inputs the platform itself materialized for you (your mounted `files`/`skills`) — those are excluded by IDENTITY (their exact destination paths and skill-dir prefixes), not by any before/after timing comparison. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `session.download()` returns the public session record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`session.outputs().download()` / `session.events().download()` / `session.downloadMetadata()`) return one slice each.
 
 The output verbs below hang off the session's `outputs()` accessor
 (`session.outputs().list()`, `.read()`, `.download()`, …). Reach a handle from a
@@ -28,7 +28,7 @@ await session.download({ to: "./session.zip" });
 ```
 
 ```bash
-aex download <session-id> --out ./session.zip --api-key …
+npx aex download <session-id> --out ./session.zip --api-key …
 ```
 
 ## The three namespaces
@@ -133,6 +133,35 @@ Query fields compose with AND semantics:
 
 `session.outputs().findOne(query)` returns `null` when nothing matches and throws `RunStateError` when the query matches more than one output.
 
+## Searching outputs
+
+Search is metadata-only (reference hits — filename / extension / content type — no bytes). `filename` accepts a `string` (case-insensitive substring) or a `RegExp`. A content-shaped query (`content`/`text`/…) throws a typed "content search unsupported" rather than silently returning zero hits.
+
+```ts
+// One session's outputs:
+const hits = await session.outputs().search({ filename: /report/i });
+
+// Across every run in the workspace (or scope with runIds):
+const all = await aex.outputs.search({ extension: "md", runIds: ["run-a", "run-b"] });
+```
+
+Each hit is `{ runId, outputId, filename?, sizeBytes?, contentType? }`; read the bytes with `session.outputs().read(...)` / `.download(...)`.
+
+## CLI
+
+The `aex outputs` verb is a thin pass-through over the same SDK accessor, so every per-file operation has a subcommand (`npx aex` on a local install):
+
+```bash
+npx aex outputs <session-id>                          # list captured outputs (NDJSON)
+npx aex outputs read <session-id> <path>              # read one file as capped text (JSON)
+npx aex outputs download <session-id> <path> --out f  # download one file's raw bytes
+npx aex outputs link <session-id> <path>              # mint a temporary download URL (JSON)
+npx aex outputs find <session-id> --name S --ext E --type T
+npx aex outputs search --query S --ext E --run-id ID  # cross-run metadata search
+```
+
+`aex outputs search` (no session id) is the cross-run search (`aex.outputs.search`); the whole-namespace zip stays `aex download <session-id>`.
+
 ## Temporary output links
 
 Use `session.outputs().link(selectorOrQuery, options?)` when another process, browser, media tag, or downloader needs a direct artifact URL instead of bytes buffered through the SDK.
@@ -190,7 +219,7 @@ Validation:
 
 Runtime notes:
 
-- The managed runtime captures files by diffing the filesystem against a baseline snapshot taken just before the agent starts. Platform setup files, installed packages, and materialized inputs are already present before the baseline, so they are excluded by timing.
+- The managed runtime captures the regular files under the capture roots at terminal time, EXCLUDING the inputs the platform itself materialized (your mounted `files`/`skills`) by IDENTITY — their exact destination paths and skill-dir prefixes are threaded into the capture filter, so an untouched mounted input is never re-emitted as an output regardless of path policy or timing.
 - If you pass an explicit root that does not exist by terminal time, that root contributes no files.
 
 ## `outputs.deniedDirs` — subtract noise
@@ -208,10 +237,10 @@ aex.openSession({
 
 Mechanism (no platform-magical paths — this is honest):
 
-1. The hosted platform materializes the workspace, opens runtime logs, and records a filesystem baseline across the capture roots.
+1. The hosted platform materializes the workspace (your mounted `files`/`skills`) and records the exact destination paths + skill-dir prefixes it wrote.
 2. The agent runs normally. There is no extra model turn and no synthetic sync instruction.
-3. When the agent exits, the runner rescans the capture roots and finds files that are new or whose metadata changed.
-4. The runner uploads changed regular files to durable run artifact storage. Diagnostic log paths are routed to internal diagnostics under `runs/<runId>/internal/logs/`; other paths are routed to `outputs`.
+3. When the agent exits, the runner scans the capture roots and drops any file whose path is a materialized INPUT (exact path or under a materialized skill dir) — inputs are excluded by WHO PUT THEM THERE (the platform), not by timing.
+4. The runner uploads the remaining regular files to durable run artifact storage. Diagnostic log paths are routed to internal diagnostics under `runs/<runId>/internal/logs/`; other paths are routed to `outputs`.
 
 Cost: output capture does not add a model turn. The runner pays a filesystem scan and upload cost near the end of the run.
 
@@ -228,7 +257,7 @@ Metadata still gets the full treatment. aex captures every regular file the run 
 
 ## Mid-session download semantics
 
-Mid-session calls are **best-effort and side-effect-free**: they expose whatever artifacts have already been uploaded. Files written by the agent are normally uploaded near terminal, after the filesystem diff. If you need the full output set, wait for the session to park and call `session.download()` again.
+Mid-session calls are **best-effort and side-effect-free**: they expose whatever artifacts have already been uploaded. Files written by the agent are normally uploaded near terminal, after the runner scans the capture roots. If you need the full output set, wait for the session to park and call `session.download()` again.
 
 ## Safety
 

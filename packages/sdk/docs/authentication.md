@@ -25,21 +25,45 @@ it once with `aex login`:
 ```ts
 import { Aex } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_API_KEY!); // preferred
-// also accepted: new Aex({ apiKey: ... }) and the alias new Aex({ apiKey: ... })
+const aex = new Aex(process.env.AEX_API_KEY!);
 ```
 
 ```bash
-aex whoami --api-key "$AEX_API_KEY"
+npx aex whoami --api-key "$AEX_API_KEY"
 
 # or persist it once, then omit --api-key on later commands:
-aex login --api-key "$AEX_API_KEY"
-aex whoami
+npx aex login --api-key "$AEX_API_KEY"
+npx aex whoami
 ```
+
+(`new Aex(apiKey)` is the canonical constructor; the equivalent options form is
+documented once in [Credentials](credentials.md).)
 
 The token travels as a standard `Authorization: Bearer` header. Treat it like
 any other secret: keep it in environment variables or a secret manager, never
 in run config, prompts, or committed files.
+
+## Plane routing and the `baseUrl` guard
+
+An aex API key is **self-describing**: it embeds the plane (`dev` / `prd`) and
+region it was minted for. The constructor parses the key and routes accordingly,
+with **zero network**:
+
+- **Omit `baseUrl`** and a `prd` key routes to the canonical hosted API plane
+  (`https://api.aex.dev`). A `dev` key has no stable public host yet, so a dev
+  key with no `baseUrl` throws `CredentialValidationError` asking you to pass one.
+- **Supply a `baseUrl` whose plane disagrees with the key** (e.g. a `dev` key
+  pointed at `https://api.aex.dev`) and the constructor throws
+  `CredentialValidationError` **before any request** — you no longer discover the
+  mismatch as a late `401 token_invalid` after a full round-trip.
+
+```ts
+// prd key → routes to https://api.aex.dev automatically:
+const prd = new Aex(process.env.AEX_PRD_KEY!);
+
+// dev key → pass the dev plane's baseUrl explicitly:
+const dev = new Aex(process.env.AEX_DEV_KEY!, { baseUrl: process.env.AEX_DEV_URL! });
+```
 
 ## Scopes
 

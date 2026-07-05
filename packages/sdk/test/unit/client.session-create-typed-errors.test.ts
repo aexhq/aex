@@ -108,7 +108,7 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     ).rejects.toMatchObject({
       name: "RunConfigValidationError",
       code: "RUN_CONFIG_INVALID",
-      message: expect.stringMatching(/model "totally-unknown-model-xyz" is not a known model id.*pass provider explicitly/)
+      message: expect.stringMatching(/"totally-unknown-model-xyz" is not a known model id.*pass provider explicitly/)
     });
     expect(calls).toBe(0);
   });

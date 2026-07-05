@@ -20,7 +20,17 @@
  * fall through to the transport's usual `AexApiError` / network rejection.
  */
 
-import { AexApiError, AexNetworkError, type FetchLike } from "@aexhq/contracts";
+import {
+  AexNetworkError,
+  AexRateLimitError as AexRateLimitErrorBase,
+  isRateLimited,
+  type FetchLike
+} from "@aexhq/contracts";
+
+// The rate-limit guard is SINGLE-SOURCED in `@aexhq/contracts` (Wave 0 moved it
+// there), so the wire→exception factory (`apiErrorFromResponse`) and this
+// retry-layer error are recognised by the SAME `isRateLimited` — no split-brain.
+export { isRateLimited };
 
 /**
  * HTTP statuses that are transient and worth retrying. The billable submits
@@ -169,16 +179,14 @@ export function isThrottleFault(fault: ProviderFault): boolean {
 }
 
 /**
- * Structured throttle error. Extends {@link AexApiError} so existing
- * `catch (err instanceof AexApiError)` sites keep working, while callers that
- * want the details narrow with {@link isRateLimited} and read `retryAfterMs`,
- * `attempts`, `source`, and `providerFault`. The `message` is a fixed,
- * non-leaky summary — it never echoes the raw error body (which is still
- * available, redacted, on `.body`).
+ * Structured throttle error. Extends the contracts {@link AexRateLimitErrorBase}
+ * (the SINGLE rate-limit class the wire→exception factory also throws, so
+ * `isRateLimited` recognises BOTH — no split-brain) and enriches it with the
+ * retry-layer detail: `attempts`, `source`, and an upstream `providerFault`.
+ * `retryAfterMs` is inherited. The `message` is a fixed, non-leaky summary — it
+ * never echoes the raw error body (which is still available, redacted, on `.body`).
  */
-export class AexRateLimitError extends AexApiError {
-  /** Milliseconds the server/provider asked us to wait, when known. */
-  readonly retryAfterMs?: number;
+export class AexRateLimitError extends AexRateLimitErrorBase {
   /** How many attempts were made before giving up. */
   readonly attempts: number;
   /** Whether the throttle came from the aex API plane or the upstream provider. */
@@ -195,17 +203,16 @@ export class AexRateLimitError extends AexApiError {
     readonly body?: unknown;
     readonly message?: string;
   }) {
-    super(args.status, args.message ?? defaultThrottleMessage(args), args.body);
+    super({
+      status: args.status,
+      message: args.message ?? defaultThrottleMessage(args),
+      body: args.body,
+      ...(args.retryAfterMs !== undefined ? { retryAfterMs: args.retryAfterMs } : {})
+    });
     this.attempts = args.attempts;
     this.source = args.source ?? "api";
-    if (args.retryAfterMs !== undefined) this.retryAfterMs = args.retryAfterMs;
     if (args.providerFault !== undefined) this.providerFault = args.providerFault;
   }
-}
-
-/** Type guard for {@link AexRateLimitError}. */
-export function isRateLimited(err: unknown): err is AexRateLimitError {
-  return err instanceof AexRateLimitError;
 }
 
 function defaultThrottleMessage(args: {

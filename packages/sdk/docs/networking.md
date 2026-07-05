@@ -15,7 +15,13 @@ internet**. Outbound traffic is governed by **two layers**:
    (model providers, built-in tool endpoints, package registries, and related
    well-known development hosts such as `github.com`) and enforces a fixed SSRF
    deny-list: loopback, link-local, cloud-metadata, and other private ranges are
-   always blocked, including hostnames that resolve to those ranges.
+   blocked on the standard proxy path every normal HTTP client uses, including
+   hostnames that resolve to those ranges. Note: on the current managed (Fargate)
+   plane a subprocess that deliberately bypasses the proxy with a **raw socket**
+   can still reach the on-link task-metadata IP (`169.254.170.2`), which exposes
+   non-secret task identity (AWS account id via the task ARN, cluster/image ref)
+   — but **never IAM credentials** (the run's task role is unset, so the metadata
+   credential endpoint serves nothing) and never another tenant's data.
 
 Honest boundary statement: the per-run `allowedHosts` policy is enforced by the
 run's own runtime on the standard proxy path — it is **not** yet enforced at

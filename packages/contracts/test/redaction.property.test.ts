@@ -27,6 +27,14 @@ function shannonBits(s: string): number {
   return bits;
 }
 
+// A GENUINELY dense opaque run: mixed-case, carries a digit, Shannon entropy
+// clears the gate. Used both standalone and as the halves of a dashed secret.
+const denseRun = (min: number, max: number) =>
+  fc
+    .array(fc.constantFrom(...ALNUM), { minLength: min, maxLength: max })
+    .map((a) => a.join(""))
+    .filter((s) => /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s) && shannonBits(s) >= 3.5);
+
 // Generators that each produce a string matching ONE production secret SHAPE.
 const secretShaped = fc.oneof(
   hexish(20).map((s) => `sk-ant-${s}`),
@@ -42,10 +50,13 @@ const secretShaped = fc.oneof(
   // generic high-entropy blob: long, mixed-case, carries a digit, GENUINELY dense
   // (drawn uniformly from a 56-char alphabet so Shannon entropy actually clears
   // the redactor's gate — a low-entropy run like "xxxx…" is *correctly* ignored).
-  fc
-    .array(fc.constantFrom(...ALNUM), { minLength: 28, maxLength: 48 })
-    .map((a) => a.join(""))
-    .filter((s) => /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s) && shannonBits(s) >= 3.5)
+  denseRun(28, 48),
+  // WS7 #5 anti-regression: an opaque secret that CONTAINS a '-' must STILL mask.
+  // The '-'-aware entropy gate splits on '-', but each half here is itself a dense
+  // opaque run, so at least one segment trips the gate and the whole run masks —
+  // the base64url case ('-' is the URL-safe '+'), proving '-'-splitting is a
+  // NAME-precision fix, not a credential-masking weakening.
+  fc.tuple(denseRun(16, 24), denseRun(16, 24)).map(([a, b]) => `${a}-${b}`)
 );
 
 // Benign identifiers that MUST survive redaction unchanged.
@@ -64,6 +75,18 @@ const benignCamel = fc
   .array(fc.constantFrom(...BENIGN_WORDS), { minLength: 2, maxLength: 4 })
   .map((w) => w.map((x, i) => (i === 0 ? x : x[0]!.toUpperCase() + x.slice(1))).join(""))
   .filter((s) => s.length < 40);
+// WS7 #5: kebab-case human NAME / timestamped slug — dictionary words joined by
+// '-', optionally suffixed with a decimal `Date.now()` timestamp. Each '-'
+// segment is a lowercase word or a pure-digit number (neither ≥2 char classes),
+// so the NAME survives even when its whole-run entropy is high (the real-timestamp
+// false-positive the '-'-aware gate fixes). `spike17-race-1720000000000` is one
+// instance of this family.
+const benignKebab = fc
+  .tuple(
+    fc.array(fc.constantFrom(...BENIGN_WORDS), { minLength: 2, maxLength: 5 }),
+    fc.option(fc.integer({ min: 1_000_000_000_000, max: 9_999_999_999_999 }), { nil: undefined })
+  )
+  .map(([words, ts]) => (ts === undefined ? words.join("-") : `${words.join("-")}-${ts}`));
 
 describe("secret redaction (property)", () => {
   it("masks every secret-shaped run (no under-redaction)", () => {
@@ -93,7 +116,7 @@ describe("secret redaction (property)", () => {
 
   it("never over-masks benign identifiers (env names, paths, stack symbols)", () => {
     fc.assert(
-      fc.property(fc.oneof(benignSnake, benignScreaming, benignPath, benignCamel), (ident) => {
+      fc.property(fc.oneof(benignSnake, benignScreaming, benignPath, benignCamel, benignKebab), (ident) => {
         expect(containsSecretLikeValue(ident)).toBe(false);
         expect(redactString(ident)).toBe(ident);
       }),

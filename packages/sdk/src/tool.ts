@@ -58,7 +58,7 @@ export class Tool {
     if (!args || typeof args !== "object") {
       throw new Error("Tool.fromFiles: args is required");
     }
-    const manifest = normalizeToolManifest("Tool.fromFiles", args);
+    const manifest = normalizeToolManifest("Tool.fromFiles", args, args.files);
     const bundled = bundleToolFiles(args.files, manifest, args.meta);
     const contentHash = await hashSkillBundle(bundled.zip);
     const ref: DraftToolRef = {
@@ -154,7 +154,7 @@ export interface ToolUploader {
   }): Promise<{ readonly assetId: string }>;
 }
 
-function normalizeToolManifest(source: string, input: ToolManifestInput): ToolBundleManifest {
+function normalizeToolManifest(source: string, input: ToolManifestInput, files?: SkillFiles): ToolBundleManifest {
   const name = input.name;
   if (typeof name !== "string" || !TOOL_NAME_PATTERN.test(name)) {
     throw new Error(`${source}: name must match ${TOOL_NAME_PATTERN.source}`);
@@ -174,12 +174,35 @@ function normalizeToolManifest(source: string, input: ToolManifestInput): ToolBu
     throw new Error(`${source}: inputSchema.type must be "object"`);
   }
   const entry = normaliseSkillBundlePath(input.entry);
+  assertJsModuleEntry(source, entry, input.entry, files);
   return {
     name,
     description,
     input_schema: inputSchema,
     entry
   };
+}
+
+const JS_MODULE_ENTRY = /\.(?:js|mjs|cjs)$/i;
+
+/**
+ * Validate the tool's ENTRY is a JS module at authoring time (fail-fast), not
+ * mid-run when the runtime module-loader rejects a `run.sh`. The entry must end
+ * in `.js`/`.mjs`/`.cjs` and — when the bundle files are known
+ * ({@link Tool.fromFiles}) — must be present in `files`.
+ */
+function assertJsModuleEntry(source: string, entry: string, rawEntry: string, files: SkillFiles | undefined): void {
+  const basename = entry.split("/").pop() ?? entry;
+  if (!JS_MODULE_ENTRY.test(basename)) {
+    throw new Error(
+      `${source}: entry must be a JS module (.js/.mjs/.cjs) that default-exports a function or { execute }; got ${JSON.stringify(rawEntry)}`
+    );
+  }
+  if (files !== undefined && !(entry in files) && !(rawEntry in files)) {
+    throw new Error(
+      `${source}: entry ${JSON.stringify(rawEntry)} is not present in files (keys: ${Object.keys(files).join(", ") || "(none)"})`
+    );
+  }
 }
 
 function normalizeToolRef(source: string, ref: ToolRef): ToolRef {

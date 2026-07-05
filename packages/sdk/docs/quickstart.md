@@ -16,9 +16,10 @@ This installs the TypeScript SDK exports and the bundled `aex` CLI.
 
 aex is currently in **invite-only beta**: workspaces and API keys are issued
 by the aex team — contact <support@aex.dev> for beta access. Once you have
-access, create a quickstart SDK token with `runs:read`, `runs:write`, and
-`outputs:read` in the dashboard at <https://aex.dev>. The examples also need
-your BYOK provider key for the model you choose. For the Claude examples below:
+access, create a quickstart SDK token with `runs:read`, `runs:write`,
+`outputs:read`, and `billing:read` in the dashboard at <https://aex.dev>. The
+examples also need your BYOK provider key for the model you choose. For the
+Claude examples below:
 
 ```bash
 export AEX_API_KEY="<your-aex-api-key>"
@@ -41,8 +42,15 @@ const session = await aex.openSession({
 });
 
 const first = await session.send("Write a short report and save it as a file.").done();
-console.log(first.status, first.text);
+console.log(first.status, first.costUsd, first.text);
 ```
+
+`send().done()` (and `run()`) **await settle by default**, so the result always
+carries a terminal `status` (`succeeded` / `failed` / `timed_out` / `cancelled`
+— never a bare `idle`) plus `costUsd` and `usage`. Pass `await: 'park'` to
+return early at the render-complete park event when you don't need cost/usage.
+`costUsd` is aex runtime/storage spend and **excludes** your BYOK provider
+charges — price those from `usage` token counts against your provider's rates.
 
 The session parks as `idle` between turns and automatically moves to
 `suspended` after the idle window. Keep the session id and resume later:
@@ -88,7 +96,8 @@ await turn.done();
 const messages = await session.messages().list();
 console.log(messages.at(-1)?.text);
 
-// Poll the record until the session parks (idle / suspended / error).
+// Poll the record until the session parks: a resumable `idle` / `suspended`,
+// or a terminal outcome (`succeeded` / `failed` / `timed_out` / `cancelled`).
 const record = await session.wait();
 console.log(record.status);
 
@@ -96,10 +105,11 @@ console.log(record.status);
 await session.download({ to: "./session.zip" });
 ```
 
-The same run from the bundled CLI:
+The same run from the bundled CLI (`npx aex` on a local install; or
+`npm i -g @aexhq/sdk` for a bare `aex`):
 
 ```bash
-aex run \
+npx aex run \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \

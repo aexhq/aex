@@ -116,12 +116,25 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
       sequence: 0,
       data: { name, value: {} }
     });
-    for (const name of ["aex.session.idle", "aex.session.error", "aex.session.suspended"]) {
+    // WS1 clean-cut: the settled park vocabulary is the resumable parks plus the
+    // terminal outcomes; bare `aex.session.error` is retired (→ `failed`).
+    for (const name of [
+      "aex.session.idle",
+      "aex.session.suspended",
+      "aex.session.succeeded",
+      "aex.session.failed",
+      "aex.session.timed_out",
+      "aex.session.cancelled"
+    ]) {
       expect(isSessionParked(parked(name))).toBe(true);
       // settleConsistent must also terminate at the park (the managed plane never
       // broadcasts the aex.run.settled barrier) rather than hang.
       expect(isRunSettled(parked(name))).toBe(true);
     }
+    // The retired bare `error` park is no longer recognized (→ `failed`).
+    expect(isSessionParked(parked("aex.session.error"))).toBe(false);
+    // A HELD approval gate ends the turn but the RUN is NOT settled.
+    expect(isRunSettled(parked("aex.session.awaiting_approval"))).toBe(false);
     // A non-park CUSTOM (e.g. skill_loaded) is neither.
     expect(isSessionParked(parked("aex.skill_loaded"))).toBe(false);
     expect(isRunSettled(parked("aex.skill_loaded"))).toBe(false);

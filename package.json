@@ -10,8 +10,8 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "bun run --filter @aexhq/contracts build && bun run --filter @aexhq/conformance build && bun run --filter @aexhq/cli build && bun run --filter @aexhq/sdk build",
-    "lint": "bun run brand:check && bun run --filter @aexhq/contracts build && bun run --filter @aexhq/conformance build && bun run --filter @aexhq/sdk build && tsc --noEmit -p tsconfig.scripts.json && bun run --workspaces --if-present --parallel lint && bun run lint:tests",
+    "build": "bun run --filter @aexhq/contracts build && bun run --filter @aexhq/sdk build && bun run --filter @aexhq/conformance build",
+    "lint": "bun run brand:check && bun run --filter @aexhq/contracts build && bun run --filter @aexhq/sdk build && bun run --filter @aexhq/conformance build && tsc --noEmit -p tsconfig.scripts.json && bun run --workspaces --if-present --parallel lint && bun run lint:tests",
     "lint:tests": "eslint --max-warnings=0 && bun scripts/verify-eslint-rules.mjs",
     "lint:tests:verify": "bun scripts/verify-eslint-rules.mjs",
     "brand:check": "bun scripts/cicd/check-old-brand.mjs",

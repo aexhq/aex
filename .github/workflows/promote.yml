@@ -11,6 +11,10 @@ on:
         description: Run ID of the green release.yml run that published this version.
         required: true
         type: string
+      platform_deploy_run_id:
+        description: Run ID of the green aex-platform deploy.yml run that tested this SDK version.
+        required: true
+        type: string
       npm_dist_tag:
         description: npm dist-tag to assign.
         required: true
@@ -56,8 +60,7 @@ jobs:
       # release.yml in THIS repo — the API path is repo-scoped, so a foreign
       # run id 404s; (b) completed with conclusion=success, which release.yml
       # only reaches after static gates, publish, and the published-artifact
-      # smoke pass (the full live matrix is enforced by platform deploy before
-      # promotion per the release runbook, not by this public workflow);
+      # smoke pass;
       # and (c) published THIS version — the npm registry publish timestamp
       # (`time[version]`) must fall inside that run's created_at..updated_at
       # window (created_at, not run_started_at, so re-run attempts of flaky
@@ -104,6 +107,70 @@ jobs:
             exit 1
           fi
           echo "Verified: green release run ${RELEASE_RUN_ID} published @aexhq/sdk@${PACKAGE_VERSION} at ${published_at}."
+
+      # Fail-closed platform proof: promotion also requires a private
+      # aex-platform deploy.yml run whose final Promotion proof job uploaded an
+      # artifact naming this exact SDK version. That artifact is created only
+      # after the dev suite, Spot canary, prd suite, and prod smoke are green.
+      - name: Verify green platform deploy tested this version
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          PLATFORM_DEPLOY_RUN_ID: ${{ inputs.platform_deploy_run_id }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::PLATFORM_REPO_TOKEN is required to verify the private aex-platform deploy proof before promotion."
+            exit 1
+          fi
+          case "${PLATFORM_DEPLOY_RUN_ID}" in
+            ''|*[!0-9]*)
+              echo "::error::platform_deploy_run_id must be a numeric workflow run id (got '${PLATFORM_DEPLOY_RUN_ID}')."
+              exit 1
+              ;;
+          esac
+          run_json="$(gh api "repos/aexhq/aex-platform/actions/runs/${PLATFORM_DEPLOY_RUN_ID}")"
+          workflow_path="$(jq -r '.path' <<<"${run_json}")"
+          status="$(jq -r '.status' <<<"${run_json}")"
+          conclusion="$(jq -r '.conclusion' <<<"${run_json}")"
+          if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]; then
+            echo "::error::Platform run ${PLATFORM_DEPLOY_RUN_ID} is '${workflow_path}', not .github/workflows/deploy.yml."
+            exit 1
+          fi
+          if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
+            echo "::error::Platform deploy run ${PLATFORM_DEPLOY_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green deploy run."
+            exit 1
+          fi
+          rm -rf platform-proof
+          mkdir platform-proof
+          gh run download "${PLATFORM_DEPLOY_RUN_ID}" \
+            --repo aexhq/aex-platform \
+            --name "promotion-proof-${PLATFORM_DEPLOY_RUN_ID}" \
+            --dir platform-proof
+          proof_file="$(find platform-proof -name promotion-proof.json -print -quit)"
+          if [ -z "${proof_file}" ]; then
+            echo "::error::Platform deploy run ${PLATFORM_DEPLOY_RUN_ID} did not include promotion-proof.json."
+            exit 1
+          fi
+          proof_workflow="$(jq -r '.workflow // empty' "${proof_file}")"
+          proof_run_id="$(jq -r '.runId // empty' "${proof_file}")"
+          proof_version="$(jq -r '.sdkVersion // empty' "${proof_file}")"
+          if [ "${proof_workflow}" != "deploy.yml" ] || [ "${proof_run_id}" != "${PLATFORM_DEPLOY_RUN_ID}" ]; then
+            echo "::error::Platform promotion proof does not match deploy run ${PLATFORM_DEPLOY_RUN_ID}."
+            exit 1
+          fi
+          if [ "${proof_version}" != "${PACKAGE_VERSION}" ]; then
+            echo "::error::Platform deploy proof tested sdkVersion='${proof_version}', not '${PACKAGE_VERSION}'."
+            exit 1
+          fi
+          for gate in suite_dev spot_canary_dev suite_prod smoke_prod; do
+            if ! jq -e --arg gate "${gate}" '.gates | index($gate)' "${proof_file}" >/dev/null; then
+              echo "::error::Platform promotion proof is missing gate '${gate}'."
+              exit 1
+            fi
+          done
+          echo "Verified: green aex-platform deploy run ${PLATFORM_DEPLOY_RUN_ID} tested @aexhq/sdk@${PACKAGE_VERSION}."
 
       - name: Assert version exists on npm
         run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"

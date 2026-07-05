@@ -46,7 +46,7 @@ export async function runLoginCmd(io: CliIO, argv: readonly string[]): Promise<C
   }
 
   const resolvedUrl = aexUrl ?? AEX_DEFAULT_BASE_URL;
-  const http = makeHttpClient(io, { apiKey, aexUrl: resolvedUrl, debug });
+  const http = makeHttpClient(io, { apiKey, aexUrl: resolvedUrl, debug, json: false });
   let workspaceId: string | undefined;
   try {
     const me = await operations.whoami(http);
