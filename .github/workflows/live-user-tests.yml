@@ -26,7 +26,7 @@ permissions:
 jobs:
   prepare-artifact:
     name: Prepare SDK artifact
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     outputs:
       version: ${{ steps.artifact.outputs.version }}
       tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
@@ -80,7 +80,7 @@ jobs:
 
   live-user-tests-preflight:
     name: Live user tests preflight
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     environment: live-user-tests
     steps:
       - name: Check live user-test configuration
@@ -147,12 +147,16 @@ jobs:
     needs:
       - prepare-artifact
       - live-user-tests-preflight
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     environment: live-user-tests
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      max-parallel: 1
+      # Full 11-way fan-out (no max-parallel cap): platform's identical
+      # sdk_user_tests job already runs these same shards concurrently against
+      # the same plane, and the preflight above asserts the workspace's
+      # maxConcurrentRuns >= 50, so 11 shards × AEX_USER_TEST_MAX_WORKERS=1 = 11
+      # concurrent runs stay well within budget. Wall-clock ≈ the longest shard.
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     steps:
