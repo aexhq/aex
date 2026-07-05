@@ -331,6 +331,20 @@ describe("live user-test release gate", () => {
     expect(source).toContain("expect(r.settleEndedNaturally).toBe(true);");
   });
 
+  it("waits accepted corrupted-skill runs to terminal before asserting failure shape", () => {
+    const source = read("apps/user-tests/test/live/live-sdk-outputs-and-failures.test.ts");
+    const start = source.indexOf("function buildCorruptedSkillScript");
+    const end = source.indexOf("function buildIncompatibleRuntimeScript");
+    const corruptedSkillScript = source.slice(start, end);
+
+    expect(corruptedSkillScript).toContain("const accepted = JSON.parse(submitBody);");
+    expect(corruptedSkillScript).toContain('"/api/runs/" + encodeURIComponent(runId)');
+    expect(corruptedSkillScript).toContain("terminalStatuses.has(runStatus)");
+    expect(corruptedSkillScript).toContain('"/events?limit=1000"');
+    expect(corruptedSkillScript).toContain('event.type === "RUN_ERROR"');
+    expect(corruptedSkillScript).toContain('terminalData = terminal && terminal.data');
+  });
+
   it("keeps lineage observability scratch output inside the live-test sandbox", () => {
     const source = read("apps/user-tests/test/live/edge-lineage-observability.user.test.ts");
 

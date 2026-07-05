@@ -426,11 +426,69 @@ function buildCorruptedSkillScript(): string {
         if (!submitOk) {
           errorClass = "run-submit-rejected";
           errorMessage = "corrupted skill bundle rejected at status " + res.status + ": " + submitBody.slice(0, 200);
+        } else {
+          try {
+            const accepted = JSON.parse(submitBody);
+            runId = typeof accepted.runId === "string"
+              ? accepted.runId
+              : typeof accepted.id === "string"
+                ? accepted.id
+                : null;
+          } catch {
+            runId = null;
+          }
+          if (!runId) {
+            errorClass = "run-submit-missing-id";
+            errorMessage = "corrupted skill bundle submit was accepted but returned no run id: " + submitBody.slice(0, 200);
+          }
         }
       } catch (e) {
         errorClass = e && e.constructor ? e.constructor.name : "Error";
         errorCode = e && typeof e.code === "string" ? e.code : null;
         errorMessage = e && e.message ? e.message : String(e);
+      }
+    }
+
+    if (submitOk && runId) {
+      const terminalStatuses = new Set(["succeeded", "failed", "cancelled", "canceled", "timed_out", "expired", "deleted"]);
+      const authHeaders = { authorization: "Bearer " + process.env.AEX_API_KEY };
+      const deadline = Date.now() + Number(process.env.FAILURE_WAIT_MS || "120000");
+      while (Date.now() < deadline) {
+        try {
+          const runRes = await fetch(process.env.AEX_API_URL + "/api/runs/" + encodeURIComponent(runId), {
+            headers: authHeaders
+          });
+          if (runRes.ok) {
+            const runBody = await runRes.json();
+            const run = runBody && runBody.run && typeof runBody.run === "object" ? runBody.run : runBody;
+            if (run && typeof run.status === "string") runStatus = run.status;
+            if (run && typeof run.errorMessage === "string") runErrorMessage = run.errorMessage;
+            if (runStatus && terminalStatuses.has(runStatus)) break;
+          }
+        } catch {
+          // Keep polling until the failure contract either appears or times out.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      try {
+        const eventsRes = await fetch(process.env.AEX_API_URL + "/api/runs/" + encodeURIComponent(runId) + "/events?limit=1000", {
+          headers: authHeaders
+        });
+        if (eventsRes.ok) {
+          const eventsBody = await eventsRes.json();
+          const events = Array.isArray(eventsBody.events) ? eventsBody.events : [];
+          const terminal = events.find((event) => event && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"));
+          eventKinds = events.map((event) => event && typeof event.type === "string" ? event.type : "UNKNOWN");
+          terminalKind = terminal && typeof terminal.type === "string" ? terminal.type : null;
+          terminalData = terminal && terminal.data && typeof terminal.data === "object" ? terminal.data : null;
+          streamErrors = events
+            .filter((event) => event && event.type === "CUSTOM" && event.data && event.data.name === "aex.stream_error")
+            .map((event) => event.data && typeof event.data.value === "object" ? event.data.value : event.data);
+        }
+      } catch {
+        // The run record is authoritative for this assertion; events enrich the
+        // failure contract when the stream endpoint is available.
       }
     }
 
