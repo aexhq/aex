@@ -25,7 +25,7 @@ Open durable agent sessions, send turns, stream events, capture outputs, and com
 ```ts
 import { Aex, Models, Sizes } from "@aexhq/sdk";
 
-const aex = new Aex({ apiToken: process.env.AEX_API_TOKEN! });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const session = await aex.openSession({
   model: Models.CLAUDE_HAIKU_4_5,
@@ -43,7 +43,7 @@ console.log(result.status, result.text);
 
 ```bash
 aex run \
-  --api-token "$AEX_API_TOKEN" \
+  --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
   --prompt "Write a short report and save it as a file." \
