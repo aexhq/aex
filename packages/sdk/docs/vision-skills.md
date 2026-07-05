@@ -16,14 +16,14 @@ per-noun "does the frame depict X?" verdict.
 ## Submit the run
 
 ```ts
-import { Aex, Models, Secret, Tools } from "@aexhq/sdk";
+import { Aex, Models, Secret, Skill } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
 const result = await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Read skills/frame-vision-gate/SKILL.md, then caption and verify the frame.",
-  tools: [await Tools.fromSkillDir("./vision-skill", { name: "frame-vision-gate" })],
+  skills: [await Skill.fromDir("./vision-skill", { name: "frame-vision-gate" })],
   environment: {
     secrets: {
       DOUBAO_API_KEY: Secret.value(process.env.DOUBAO_API_KEY!)
@@ -39,7 +39,7 @@ const result = await aex.run({
 console.log(result.runId, result.text);
 ```
 
-`Tools.fromSkillDir("./vision-skill", ...)` is resolved relative to the process
+`Skill.fromDir("./vision-skill", ...)` is resolved relative to the process
 CWD. Run the script from the directory that contains `vision-skill/` (in this
 repo, `examples/`).
 

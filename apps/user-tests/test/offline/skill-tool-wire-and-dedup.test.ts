@@ -49,6 +49,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+async function importSdk() {
+  const sdk = await import("@aexhq/sdk");
+  ok(!("Tools" in sdk), "legacy Tools namespace must not be exported");
+  return sdk;
+}
+
 function headersToObject(headers) {
   const out = {};
   if (!headers) return out;
@@ -155,6 +161,21 @@ function makeFetch() {
       });
     }
 
+    if (url.includes("/api/skills/") && method === "PUT") {
+      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+      return json(200, {
+        skill: {
+          kind: "skill",
+          name,
+          contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          description: body && typeof body.description === "string" ? body.description : "",
+          sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
+          version: 1
+        },
+        updated: true
+      });
+    }
+
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;
       return json(201, {
@@ -197,6 +218,10 @@ function storagePuts(calls) {
   return calls.filter((call) => call.url.includes("object-storage.example.test") && call.method === "PUT");
 }
 
+function upsertSkillCalls(calls) {
+  return calls.filter((call) => call.method === "PUT" && call.url.includes("/api/skills/"));
+}
+
 function resetCalls(calls) {
   calls.length = 0;
 }
@@ -217,8 +242,9 @@ function assetIdFromHash(hash) {
   return "asset_" + hex;
 }
 
-// Skills ingest as TOOLS: build one from a temp dir whose SKILL.md frontmatter
-// carries the name + description, then pass through Tools.fromSkillDir.
+// Skills are first-class session inputs: build one from a temp dir whose
+// SKILL.md frontmatter carries the name + description, then pass through
+// Skill.fromDir and submit it via the top-level skills option.
 function makeSkillDir(name, description) {
   const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
   writeFileSync(
@@ -250,10 +276,8 @@ function assetToolEntries(body) {
   );
 }
 
-function skillToolEntries(body) {
-  return body.submission.tools.filter(
-    (entry) => entry && typeof entry === "object" && entry.kind === "skill"
-  );
+function skillEntries(body) {
+  return body.submission.skills ?? [];
 }
 `;
 
@@ -287,9 +311,9 @@ describe("SDK skill-tool wire serialization + dedup (installed package)", () => 
     return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
   }
 
-  it("reuses one skill-tool instance across sessions, uploading exactly once", async () => {
+  it("reuses one Skill instance across sessions, uploading and upserting exactly once", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools } = await import("@aexhq/sdk");
+const { Aex, Skill } = await importSdk();
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
@@ -298,43 +322,46 @@ const client = new Aex({
   fetch
 });
 
-const skill = await Tools.fromSkillDir(makeSkillDir("reuse-skill", "Reuse across sessions."), { name: "reuse-skill" });
-const assetId = assetIdFromHash(skill.ref.contentHash);
-const expectedEntry = { kind: "skill", assetId, name: "reuse-skill", description: "Reuse across sessions." };
+const skill = await Skill.fromDir(makeSkillDir("reuse-skill", "Reuse across sessions."), { name: "reuse-skill" });
+const expectedEntry = { kind: "skill", name: "reuse-skill" };
 
-// Session A: first use uploads the bundle once.
-await client.sessions.create({ model: "claude-haiku-4-5", tools: [skill], apiKeys: { anthropic: "sk-ant" } });
-deepStrictEqual(skillToolEntries(onlyCreateBody(calls)), [expectedEntry]);
+// Session A: first use uploads the bundle and upserts the workspace skill once.
+await client.sessions.create({ model: "claude-haiku-4-5", skills: [skill], apiKeys: { anthropic: "sk-ant" } });
+deepStrictEqual(skillEntries(onlyCreateBody(calls)), [expectedEntry]);
+deepStrictEqual(onlyCreateBody(calls).submission.tools, []);
 strictEqual(presignCalls(calls).length, 1);
 strictEqual(storagePuts(calls).length, 1);
 strictEqual(finalizeCalls(calls).length, 1);
-// The instance is still a draft (its ref never mutates) but now caches the id.
+strictEqual(upsertSkillCalls(calls).length, 1);
+strictEqual(upsertSkillCalls(calls)[0].body.contentHash, skill.ref.contentHash);
+// The instance is still a draft (its ref never mutates) but now caches the name.
 strictEqual(skill.isDraft, true);
-strictEqual(skill._cachedAssetId, assetId);
+strictEqual(skill._cachedName, "reuse-skill");
 
-// Session B: the SAME instance short-circuits before the uploader — 0 presign.
+// Session B: the SAME instance short-circuits before upload/upsert.
 resetCalls(calls);
-await client.sessions.create({ model: "claude-haiku-4-5", tools: [skill], apiKeys: { anthropic: "sk-ant" } });
-deepStrictEqual(skillToolEntries(onlyCreateBody(calls)), [expectedEntry]);
+await client.sessions.create({ model: "claude-haiku-4-5", skills: [skill], apiKeys: { anthropic: "sk-ant" } });
+deepStrictEqual(skillEntries(onlyCreateBody(calls)), [expectedEntry]);
 strictEqual(presignCalls(calls).length, 0);
 strictEqual(storagePuts(calls).length, 0);
 strictEqual(finalizeCalls(calls).length, 0);
+strictEqual(upsertSkillCalls(calls).length, 0);
 
 // Session C: still cached — a third reuse is still upload-free.
 resetCalls(calls);
-await client.sessions.create({ model: "claude-haiku-4-5", tools: [skill], apiKeys: { anthropic: "sk-ant" } });
-deepStrictEqual(skillToolEntries(onlyCreateBody(calls)), [expectedEntry]);
+await client.sessions.create({ model: "claude-haiku-4-5", skills: [skill], apiKeys: { anthropic: "sk-ant" } });
+deepStrictEqual(skillEntries(onlyCreateBody(calls)), [expectedEntry]);
 strictEqual(presignCalls(calls).length, 0);
 
-console.log(JSON.stringify({ ok: true, assetId, sessionCReuseUploads: presignCalls(calls).length }));
+console.log(JSON.stringify({ ok: true, cachedName: skill._cachedName, sessionCReuseUploads: presignCalls(calls).length }));
 `;
     const result = await runChild(script, "skill-wire-reuse.mjs");
     expect(result).toMatchObject({ ok: true, sessionCReuseUploads: 0 });
   });
 
-  it("regroups interleaved builtins, tools, and skills into builtins -> tools -> skills", async () => {
+  it("keeps tools and first-class skills ordered in their separate submission fields", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, BuiltinTools, Tool, Tools } = await import("@aexhq/sdk");
+const { Aex, BuiltinTools, Tool, Skill } = await importSdk();
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
@@ -343,8 +370,8 @@ const client = new Aex({
   fetch
 });
 
-const skillA = await Tools.fromSkillDir(makeSkillDir("skill-alpha", "Alpha skill."), { name: "skill-alpha" });
-const skillB = await Tools.fromSkillDir(makeSkillDir("skill-bravo", "Bravo skill."), { name: "skill-bravo" });
+const skillA = await Skill.fromDir(makeSkillDir("skill-alpha", "Alpha skill."), { name: "skill-alpha" });
+const skillB = await Skill.fromDir(makeSkillDir("skill-bravo", "Bravo skill."), { name: "skill-bravo" });
 const toolX = await Tool.fromFiles({
   name: "tool_x",
   description: "Tool X.",
@@ -360,28 +387,23 @@ const toolY = await Tool.fromFiles({
   files: { "index.js": "export default async function () { return { content: [] }; }\n" }
 });
 
-// Interleave every kind at the call site, INCLUDING a duplicate builtin and a
-// duplicate custom-tool / skill INSTANCE, to prove: (a) the three groups are
-// regrouped into builtins -> tools -> skills, (b) builtins dedup, (c) custom
-// tools and skills do NOT dedup (two wire entries each) yet a repeated instance
-// uploads only once.
+// Interleave builtins and a custom tool, including a duplicate builtin. Skills
+// are first-class: they ride the separate top-level skills option and preserve
+// that input order.
 await client.sessions.create({
   model: "claude-haiku-4-5",
   tools: [
-    skillA,
     BuiltinTools.web_search,
     toolX,
     BuiltinTools.web_fetch,
-    skillA,
     BuiltinTools.web_search,
-    toolX,
     BuiltinTools.bash
   ],
+  skills: [skillA, skillB],
   apiKeys: { anthropic: "sk-ant" }
 });
 
 const body = onlyCreateBody(calls);
-const skillAEntry = { kind: "skill", assetId: assetIdFromHash(skillA.ref.contentHash), name: "skill-alpha", description: "Alpha skill." };
 const toolXEntry = {
   kind: "asset",
   assetId: assetIdFromHash(toolX.ref.contentHash),
@@ -391,118 +413,147 @@ const toolXEntry = {
   entry: "index.js"
 };
 
-// Full sequence: 3 deduped builtins (first-seen input order) -> 2 tool entries -> 2 skill entries.
+// Tool sequence: 3 deduped builtins (first-seen input order) -> custom tool entry.
 deepStrictEqual(toolEntries(body), [
   "web_search",
   "web_fetch",
   "bash",
-  toolXEntry,
-  toolXEntry,
-  skillAEntry,
-  skillAEntry
+  toolXEntry
 ]);
-strictEqual(toolEntries(body).length, 7);
+strictEqual(toolEntries(body).length, 4);
 deepStrictEqual(builtinEntries(body), ["web_search", "web_fetch", "bash"]);
-// Not deduped by name: the same instance appears twice in each object group.
-strictEqual(assetToolEntries(body).length, 2);
-strictEqual(skillToolEntries(body).length, 2);
-// Repeated INSTANCE = one upload each (tool + skill), cache serves the second use.
-strictEqual(presignCalls(calls).length, 2);
-strictEqual(storagePuts(calls).length, 2);
-strictEqual(finalizeCalls(calls).length, 2);
+deepStrictEqual(skillEntries(body), [
+  { kind: "skill", name: "skill-alpha" },
+  { kind: "skill", name: "skill-bravo" }
+]);
+strictEqual(assetToolEntries(body).length, 1);
+// One custom tool and two skills upload; each skill also upserts once.
+strictEqual(presignCalls(calls).length, 3);
+strictEqual(storagePuts(calls).length, 3);
+strictEqual(finalizeCalls(calls).length, 3);
+strictEqual(upsertSkillCalls(calls).length, 2);
 
-// A separate submit that keeps input order the same still lands the fixed wire
-// order (builtins float to the front, skills sink to the back).
+// A separate submit proves a Skill in tools[] fails fast with a migration hint.
 resetCalls(calls);
+await expectReject(
+  "skill in tools array",
+  () => client.sessions.create({
+    model: "claude-haiku-4-5",
+    tools: [skillA],
+    apiKeys: { anthropic: "sk-ant" }
+  }),
+  /tools\[0\] is a Skill; pass skills via the top-level skills option/
+);
+strictEqual(calls.length, 0);
+
+// A separate submit keeps tools and skills independent.
 await client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [skillB, toolY, BuiltinTools.grep],
+  tools: [toolY, BuiltinTools.grep],
+  skills: [skillB],
   apiKeys: { anthropic: "sk-ant" }
 });
 const body2 = onlyCreateBody(calls);
 strictEqual(body2.submission.tools[0], "grep");
 strictEqual(body2.submission.tools[1].name, "tool_y");
-strictEqual(body2.submission.tools[2].name, "skill-bravo");
+deepStrictEqual(skillEntries(body2), [{ kind: "skill", name: "skill-bravo" }]);
 
 console.log(JSON.stringify({
   ok: true,
   sequence: toolEntries(body).map((e) => (typeof e === "string" ? e : e.name)),
+  skills: skillEntries(body).map((e) => e.name),
   builtins: builtinEntries(body),
   toolCount: assetToolEntries(body).length,
-  skillCount: skillToolEntries(body).length,
-  uploads: 2,
-  reorderedSecond: body2.submission.tools.map((e) => (typeof e === "string" ? e : e.name))
+  skillCount: skillEntries(body).length,
+  uploads: 3,
+  reorderedSecond: {
+    tools: body2.submission.tools.map((e) => (typeof e === "string" ? e : e.name)),
+    skills: skillEntries(body2).map((e) => e.name)
+  }
 }));
 `;
     const result = await runChild(script, "skill-wire-order.mjs");
     expect(result).toMatchObject({
       ok: true,
-      sequence: ["web_search", "web_fetch", "bash", "tool_x", "tool_x", "skill-alpha", "skill-alpha"],
+      sequence: ["web_search", "web_fetch", "bash", "tool_x"],
+      skills: ["skill-alpha", "skill-bravo"],
       builtins: ["web_search", "web_fetch", "bash"],
-      toolCount: 2,
+      toolCount: 1,
       skillCount: 2,
-      uploads: 2,
-      reorderedSecond: ["grep", "tool_y", "skill-bravo"]
+      uploads: 3,
+      reorderedSecond: {
+        tools: ["grep", "tool_y"],
+        skills: ["skill-bravo"]
+      }
     });
   });
 
-  it("content-addresses skill bundles: identical bytes dedup the upload, same name does not", async () => {
+  it("content-addresses skill bundles and rejects duplicate skill names in one session", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools } = await import("@aexhq/sdk");
+const { Aex, Skill } = await importSdk();
 
-// --- Distinct instances, byte-identical files: one stored object, two entries.
+// --- Distinct instances, byte-identical files, different names: one stored
+// object, two workspace skill upserts, two name-only session refs.
 {
   const { calls, fetch } = makeFetch();
   const client = new Aex({ apiKey: "aex_dedup_token", baseUrl: "https://example.invalid", fetch });
 
-  const sX = await Tools.fromSkillDir(makeSkillDir("twin-skill", "Twin skill."), { name: "twin-skill" });
-  const sY = await Tools.fromSkillDir(makeSkillDir("twin-skill", "Twin skill."), { name: "twin-skill" });
+  const sX = await Skill.fromDir(makeSkillDir("twin-skill", "Twin skill."), { name: "twin-skill-x" });
+  const sY = await Skill.fromDir(makeSkillDir("twin-skill", "Twin skill."), { name: "twin-skill-y" });
   ok(sX !== sY, "distinct instances");
   strictEqual(sX.ref.contentHash, sY.ref.contentHash, "byte-identical files hash the same");
 
-  await client.sessions.create({ model: "claude-haiku-4-5", tools: [sX, sY], apiKeys: { anthropic: "sk-ant" } });
-  const entries = skillToolEntries(onlyCreateBody(calls));
-  const sharedAssetId = assetIdFromHash(sX.ref.contentHash);
-  strictEqual(entries.length, 2, "both instances ride as separate wire entries");
-  deepStrictEqual(entries, [
-    { kind: "skill", assetId: sharedAssetId, name: "twin-skill", description: "Twin skill." },
-    { kind: "skill", assetId: sharedAssetId, name: "twin-skill", description: "Twin skill." }
-  ]);
-  // Both presign (each instance has its own cache); only the FIRST stores bytes,
-  // the second is a content-addressed dedup hit (no PUT / no finalize).
-  strictEqual(presignCalls(calls).length, 2);
+  await client.sessions.create({ model: "claude-haiku-4-5", skills: [sX], apiKeys: { anthropic: "sk-ant" } });
+  const entries = skillEntries(onlyCreateBody(calls));
+  deepStrictEqual(entries, [{ kind: "skill", name: "twin-skill-x" }]);
+  strictEqual(presignCalls(calls).length, 1);
   strictEqual(storagePuts(calls).length, 1);
   strictEqual(finalizeCalls(calls).length, 1);
+  strictEqual(upsertSkillCalls(calls).length, 1);
+  strictEqual(upsertSkillCalls(calls)[0].body.contentHash, sX.ref.contentHash);
+
+  resetCalls(calls);
+  await client.sessions.create({ model: "claude-haiku-4-5", skills: [sY], apiKeys: { anthropic: "sk-ant" } });
+  deepStrictEqual(skillEntries(onlyCreateBody(calls)), [{ kind: "skill", name: "twin-skill-y" }]);
+  // Distinct Skill instance: it still presigns, but the server reports an
+  // existing content-addressed object, so no PUT/finalize is needed.
+  strictEqual(presignCalls(calls).length, 1);
+  strictEqual(storagePuts(calls).length, 0);
+  strictEqual(finalizeCalls(calls).length, 0);
+  strictEqual(upsertSkillCalls(calls).length, 1);
+  strictEqual(upsertSkillCalls(calls)[0].body.contentHash, sX.ref.contentHash);
 }
 
-// --- Same name, DIFFERENT bytes: no name-based collapse — two distinct assets.
+// --- Same name, DIFFERENT bytes: duplicate names in one session are rejected
+// before upload; updating the same workspace name is a sequential-session path.
 let sameNameSummary;
 {
   const { calls, fetch } = makeFetch();
   const client = new Aex({ apiKey: "aex_samename_token", baseUrl: "https://example.invalid", fetch });
 
-  const sA = await Tools.fromSkillDir(makeSkillDirBody("dup-name", "Same description.", "# A\nAlpha body.\n"));
-  const sB = await Tools.fromSkillDir(makeSkillDirBody("dup-name", "Same description.", "# B\nBravo body.\n"));
+  const sA = await Skill.fromDir(makeSkillDirBody("dup-name", "Same description.", "# A\nAlpha body.\n"));
+  const sB = await Skill.fromDir(makeSkillDirBody("dup-name", "Same description.", "# B\nBravo body.\n"));
   strictEqual(sA.ref.name, "dup-name");
   strictEqual(sB.ref.name, "dup-name");
   ok(sA.ref.contentHash !== sB.ref.contentHash, "different bytes hash differently");
 
-  await client.sessions.create({ model: "claude-haiku-4-5", tools: [sA, sB], apiKeys: { anthropic: "sk-ant" } });
-  const entries = skillToolEntries(onlyCreateBody(calls));
-  strictEqual(entries.length, 2);
-  // Identical name AND description, but distinct assetId — content is the sole key.
-  strictEqual(entries[0].name, "dup-name");
-  strictEqual(entries[1].name, "dup-name");
-  strictEqual(entries[0].description, "Same description.");
-  strictEqual(entries[1].description, "Same description.");
-  strictEqual(entries[0].assetId, assetIdFromHash(sA.ref.contentHash));
-  strictEqual(entries[1].assetId, assetIdFromHash(sB.ref.contentHash));
-  ok(entries[0].assetId !== entries[1].assetId, "same name does NOT dedup distinct bytes");
-  // Two distinct hashes => two real uploads.
-  strictEqual(presignCalls(calls).length, 2);
-  strictEqual(storagePuts(calls).length, 2);
-  strictEqual(finalizeCalls(calls).length, 2);
-  sameNameSummary = { entries: entries.length, distinctAssets: entries[0].assetId !== entries[1].assetId, uploads: 2 };
+  await expectReject(
+    "duplicate skill names",
+    () => client.sessions.create({ model: "claude-haiku-4-5", skills: [sA, sB], apiKeys: { anthropic: "sk-ant" } }),
+    /skills duplicate name: dup-name/
+  );
+  strictEqual(calls.length, 0);
+
+  await client.sessions.create({ model: "claude-haiku-4-5", skills: [sA], apiKeys: { anthropic: "sk-ant" } });
+  deepStrictEqual(skillEntries(onlyCreateBody(calls)), [{ kind: "skill", name: "dup-name" }]);
+  strictEqual(upsertSkillCalls(calls)[0].body.contentHash, sA.ref.contentHash);
+
+  resetCalls(calls);
+  await client.sessions.create({ model: "claude-haiku-4-5", skills: [sB], apiKeys: { anthropic: "sk-ant" } });
+  deepStrictEqual(skillEntries(onlyCreateBody(calls)), [{ kind: "skill", name: "dup-name" }]);
+  strictEqual(upsertSkillCalls(calls)[0].body.contentHash, sB.ref.contentHash);
+  strictEqual(storagePuts(calls).length, 1);
+  sameNameSummary = { duplicateRejected: true, updatedHash: upsertSkillCalls(calls)[0].body.contentHash === sB.ref.contentHash };
 }
 
 console.log(JSON.stringify({ ok: true, sameName: sameNameSummary }));
@@ -510,57 +561,57 @@ console.log(JSON.stringify({ ok: true, sameName: sameNameSummary }));
     const result = await runChild(script, "skill-wire-dedup.mjs");
     expect(result).toMatchObject({
       ok: true,
-      sameName: { entries: 2, distinctAssets: true, uploads: 2 }
+      sameName: { duplicateRejected: true, updatedHash: true }
     });
   });
 
-  it("guards draft skill-tool serialization before and after upload", async () => {
+  it("guards draft Skill serialization before and after upload", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools } = await import("@aexhq/sdk");
+const { Aex, Skill } = await importSdk();
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({ apiKey: "aex_draft_token", baseUrl: "https://example.invalid", fetch });
 
-const draft = await Tools.fromSkillDir(makeSkillDir("draft-skill", "Draft skill."), { name: "draft-skill" });
+const draft = await Skill.fromDir(makeSkillDir("draft-skill", "Draft skill."), { name: "draft-skill" });
 strictEqual(draft.isDraft, true);
-strictEqual(draft._cachedAssetId, undefined);
+strictEqual(draft._cachedName, undefined);
 strictEqual(draft.ref.kind, "draft");
 
 // A never-uploaded draft cannot become a wire ref on its own.
-const m1 = await expectReject("toJSON before upload", () => draft.toJSON(), /draft skill-tools cannot be JSON-serialised/);
-await expectReject("JSON.stringify before upload", () => JSON.stringify(draft), /draft skill-tools cannot be JSON-serialised/);
+const m1 = await expectReject("toJSON before upload", () => draft.toJSON(), /draft skill cannot be JSON-serialised/);
+await expectReject("JSON.stringify before upload", () => JSON.stringify(draft), /draft skill cannot be JSON-serialised/);
 // No HTTP happened just by serializing.
 strictEqual(calls.length, 0);
 
-// Use it in a session — the prepare step uploads + caches the asset id.
-await client.sessions.create({ model: "claude-haiku-4-5", tools: [draft], apiKeys: { anthropic: "sk-ant" } });
-const assetId = assetIdFromHash(draft.ref.contentHash);
-deepStrictEqual(skillToolEntries(onlyCreateBody(calls)), [
-  { kind: "skill", assetId, name: "draft-skill", description: "Draft skill." }
+// Use it in a session — the prepare step uploads, upserts, and caches the name.
+await client.sessions.create({ model: "claude-haiku-4-5", skills: [draft], apiKeys: { anthropic: "sk-ant" } });
+deepStrictEqual(skillEntries(onlyCreateBody(calls)), [
+  { kind: "skill", name: "draft-skill" }
 ]);
-strictEqual(draft._cachedAssetId, assetId, "asset id cached on the instance");
+strictEqual(upsertSkillCalls(calls)[0].body.contentHash, draft.ref.contentHash);
+strictEqual(draft._cachedName, "draft-skill", "workspace name cached on the instance");
 
-// The instance ref is STILL a draft (the wire ref is minted by prepareTools,
+// The instance ref is STILL a draft (the wire ref is minted by prepareSkills,
 // not written back), so toJSON keeps throwing even after a successful upload.
 strictEqual(draft.isDraft, true);
 strictEqual(draft.ref.kind, "draft");
-await expectReject("toJSON after upload", () => draft.toJSON(), /draft skill-tools cannot be JSON-serialised/);
+await expectReject("toJSON after upload", () => draft.toJSON(), /draft skill cannot be JSON-serialised/);
 
-console.log(JSON.stringify({ ok: true, sampleMessage: m1, cachedAfterUpload: draft._cachedAssetId === assetId }));
+console.log(JSON.stringify({ ok: true, sampleMessage: m1, cachedAfterUpload: draft._cachedName === "draft-skill" }));
 `;
     const result = await runChild(script, "skill-wire-draft.mjs");
     expect(result).toMatchObject({ ok: true, cachedAfterUpload: true });
   });
 
-  it("keeps skill-tools independent of agentsMd/files/mcp and of includeBuiltinTools", async () => {
+  it("keeps first-class skills independent of agentsMd/files/mcp and of includeBuiltinTools", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, AgentsMd, BuiltinTools, File, McpServer, Tools } = await import("@aexhq/sdk");
+const { Aex, AgentsMd, BuiltinTools, File, McpServer, Skill } = await importSdk();
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({ apiKey: "aex_mix_token", baseUrl: "https://example.invalid", fetch });
 
-// --- Non-interference: a skill-tool next to agentsMd, files, and one mcp entry.
-const skill = await Tools.fromSkillDir(makeSkillDir("mixed-skill", "Mixed skill."), { name: "mixed-skill" });
+// --- Non-interference: a first-class skill next to agentsMd, files, and one mcp entry.
+const skill = await Skill.fromDir(makeSkillDir("mixed-skill", "Mixed skill."), { name: "mixed-skill" });
 const agentsMd = await AgentsMd.fromContent("# Rules\nBe brief.\n", { name: "mixed-rules" });
 const file = await File.fromBytes({
   name: "data.csv",
@@ -569,7 +620,7 @@ const file = await File.fromBytes({
 });
 await client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [skill],
+  skills: [skill],
   agentsMd: [agentsMd],
   files: [file],
   mcpServers: [
@@ -578,9 +629,10 @@ await client.sessions.create({
   apiKeys: { anthropic: "sk-ant" }
 });
 const body = onlyCreateBody(calls);
-deepStrictEqual(skillToolEntries(body), [
-  { kind: "skill", assetId: assetIdFromHash(skill.ref.contentHash), name: "mixed-skill", description: "Mixed skill." }
+deepStrictEqual(skillEntries(body), [
+  { kind: "skill", name: "mixed-skill" }
 ]);
+deepStrictEqual(body.submission.tools, []);
 deepStrictEqual(body.submission.agentsMd, [
   { kind: "asset", assetId: assetIdFromHash(agentsMd.ref.contentHash), name: "mixed-rules" }
 ]);
@@ -600,53 +652,58 @@ strictEqual(ids.size, 3, "three distinct asset ids");
 strictEqual(presignCalls(calls).length, 3);
 strictEqual(storagePuts(calls).length, 3);
 strictEqual(finalizeCalls(calls).length, 3);
+strictEqual(upsertSkillCalls(calls).length, 1);
+strictEqual(upsertSkillCalls(calls)[0].body.contentHash, skill.ref.contentHash);
 
-// --- includeBuiltinTools:false with only a skill-tool: the skill still rides
-// the wire (it is not a builtin); the flag is passed through untouched.
+// --- includeBuiltinTools:false with only a skill: the skill still rides
+// submission.skills (it is not a builtin); the flag is passed through untouched.
 resetCalls(calls);
 await client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [skill],
+  skills: [skill],
   includeBuiltinTools: false,
   apiKeys: { anthropic: "sk-ant" }
 });
 const bodyFalse = onlyCreateBody(calls);
 strictEqual(bodyFalse.submission.includeBuiltinTools, false);
-strictEqual(skillToolEntries(bodyFalse).length, 1);
+strictEqual(skillEntries(bodyFalse).length, 1);
 strictEqual(builtinEntries(bodyFalse).length, 0);
+deepStrictEqual(bodyFalse.submission.tools, []);
 
-// --- includeBuiltinTools:true with a builtin + skill: both coexist.
+// --- includeBuiltinTools:true with a builtin + skill: both coexist in separate fields.
 resetCalls(calls);
 await client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [BuiltinTools.web_fetch, skill],
+  tools: [BuiltinTools.web_fetch],
+  skills: [skill],
   includeBuiltinTools: true,
   apiKeys: { anthropic: "sk-ant" }
 });
 const bodyTrue = onlyCreateBody(calls);
 strictEqual(bodyTrue.submission.includeBuiltinTools, true);
 deepStrictEqual(bodyTrue.submission.tools[0], "web_fetch");
-strictEqual(skillToolEntries(bodyTrue).length, 1);
+strictEqual(skillEntries(bodyTrue).length, 1);
 
 // --- includeBuiltinTools:false with an EXPLICIT builtin + skill: the explicit
 // builtin name is still emitted (cherry-picked back) alongside the skill.
 resetCalls(calls);
 await client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [BuiltinTools.grep, skill],
+  tools: [BuiltinTools.grep],
+  skills: [skill],
   includeBuiltinTools: false,
   apiKeys: { anthropic: "sk-ant" }
 });
 const bodyCherry = onlyCreateBody(calls);
 strictEqual(bodyCherry.submission.includeBuiltinTools, false);
 deepStrictEqual(builtinEntries(bodyCherry), ["grep"]);
-strictEqual(skillToolEntries(bodyCherry).length, 1);
+strictEqual(skillEntries(bodyCherry).length, 1);
 
 console.log(JSON.stringify({
   ok: true,
   distinctAssetInputs: ids.size,
-  skillSurvivesFalse: skillToolEntries(bodyFalse).length === 1 && bodyFalse.submission.includeBuiltinTools === false,
-  coexistTrue: bodyTrue.submission.tools.length,
+  skillSurvivesFalse: skillEntries(bodyFalse).length === 1 && bodyFalse.submission.includeBuiltinTools === false,
+  coexistTrue: bodyTrue.submission.tools.length + skillEntries(bodyTrue).length,
   cherryPickedBuiltin: builtinEntries(bodyCherry)
 }));
 `;

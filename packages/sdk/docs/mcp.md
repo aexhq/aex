@@ -29,8 +29,9 @@ For ingestion-style MCP servers that return large JSON blobs (search results,
 catalogue dumps, bulk reads), prefer a skill that writes files instead of
 putting the whole response in model context:
 
-1. Package the upstream as a skill-tool (`Tools.fromSkillDir` /
-   `Tools.fromSkillUrl`) — a CLI binary the agent invokes with its bash tool.
+1. Package the upstream helper as a Skill (`Skill.fromDir` / `Skill.fromUrl`)
+   and pass it via the top-level `skills` option. The skill can include a CLI
+   binary or script that the agent invokes with its bash tool.
 2. Keep any upstream HTTPS credentials in `environment.secrets`.
 3. Have the CLI write the full payload to the session filesystem. By default,
    files it creates or modifies are captured automatically; pass

@@ -10,7 +10,7 @@ The package ships:
 
 - `Aex` for sessions, one-shot runs, inspect, download, cancel, and delete.
 - `sessions` / `openSession()` for durable, resumable agent sessions.
-- Typed run primitives: `Models`, `Providers`, `Sizes`, `Tool` / `Tools` (skill-tools), `AgentsMd`, `File`, `McpServer`, and `Secret`.
+- Typed run primitives: `Models`, `Providers`, `Sizes`, `Skill`, `Tool` / `Tools`, `AgentsMd`, `File`, `McpServer`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, and whoami operations.
 
 ## Install

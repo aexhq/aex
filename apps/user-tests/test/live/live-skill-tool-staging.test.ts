@@ -1,13 +1,12 @@
 /**
  * Live scenario: live-skill-tool-staging.test.ts
  *
- * Exercises the skill-TOOL filesystem-staging contract end-to-end against the
- * deployed hosted API, from the perspective of a real SDK user. A skill-tool's
- * bundle (built with `Tools.fromSkillDir`) is uploaded as an asset; at run time
- * the managed runtime EAGERLY stages every file in the bundle under
- * `/workspace/skills/<name>/` (name = the skill-tool name), and the model calls
- * the synthetic no-arg load-tool to pull the `SKILL.md` body into context. The
- * platform-side load handler (aex-platform runner-image `runSkillTool`):
+ * Exercises the first-class skill filesystem-staging contract end-to-end
+ * against the deployed hosted API, from the perspective of a real SDK user. A
+ * skill bundle (built with `Skill.fromDir`) is uploaded/upserted by workspace
+ * name; at run time the managed runtime EAGERLY stages every file in the bundle
+ * under `/workspace/skills/<name>/`, and the model calls the `skills` meta-tool
+ * to pull the `SKILL.md` body into context. The platform-side load handler:
  *   - reads `<skillDir>/SKILL.md`,
  *   - byte-caps the returned body at `HANDS_SKILL_MD_MAX_BYTES = 400_000`
  *     (appending `\n[skill SKILL.md truncated at 400000 bytes]` when it cut),
@@ -22,7 +21,7 @@
  *      `data/payload.txt` holding a planted token; the agent reads that exact
  *      path with a builtin file tool. Proves the WHOLE bundle (not just
  *      SKILL.md) staged, subdirectory intact, at `/workspace/skills/<name>/`.
- *   2. Load-tool returns the SKILL.md BODY — a token planted only in the
+ *   2. `skills` load returns the SKILL.md BODY — a token planted only in the
  *      SKILL.md prose reaches the model when it loads the skill.
  *   3. Byte-cap — a SKILL.md whose body is ~460 KB (a near-start marker plus a
  *      marker placed PAST the 400_000-byte boundary). The near-start marker
@@ -54,7 +53,7 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "de
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
-    throw new Error(`${name} is required for live skill-tool staging tests.`);
+    throw new Error(`${name} is required for live skill staging tests.`);
   }
   return value;
 }
@@ -130,14 +129,14 @@ function tok(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
 }
 
-/** A valid, unique skill-tool name (SKILL_NAME_PATTERN: lowercase kebab/underscore). */
+/** A valid, unique skill name (SKILL_NAME_PATTERN: lowercase kebab/underscore). */
 function skillName(base: string): string {
   return `${base}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function buildScript(cfg: ScriptConfig): string {
   return `
-    import { Aex, Tools } from "@aexhq/sdk";
+    import { Aex, Skill } from "@aexhq/sdk";
     import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
     import { tmpdir } from "node:os";
     import { join, dirname } from "node:path";
@@ -148,7 +147,7 @@ function buildScript(cfg: ScriptConfig): string {
     });
 
     // Materialize the skill bundle on the local FS (SKILL.md + any extra files,
-    // including subdirectories) then build a skill-tool from the directory.
+    // including subdirectories) then build a first-class Skill from the directory.
     const skillDir = mkdtempSync(join(tmpdir(), "aex-skilltool-"));
     const filesToStage = ${JSON.stringify(cfg.files)};
     for (const f of filesToStage) {
@@ -156,14 +155,14 @@ function buildScript(cfg: ScriptConfig): string {
       mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, f.content);
     }
-    const skill = await Tools.fromSkillDir(skillDir, { name: ${JSON.stringify(cfg.skillName)} });
+    const skill = await Skill.fromDir(skillDir, { name: ${JSON.stringify(cfg.skillName)} });
 
     const runResult = await client.run({
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       system: ${JSON.stringify(cfg.system)},
       message: ${JSON.stringify(cfg.message)},
-      tools: [skill],
+      skills: [skill],
       apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: ${JSON.stringify(cfg.idempotencyPrefix)} + "-" + Date.now()
     }, { timeoutMs: 8 * 60_000 });
@@ -222,7 +221,7 @@ function buildScript(cfg: ScriptConfig): string {
       .join(" ");
     const assistantTextNorm = assistantTextJoined.replace(/\\s+/g, "");
 
-    // The load-tool's returned SKILL.md body (capped + redacted) rides here as a
+    // The skills meta-tool's returned SKILL.md body (capped + redacted) rides here as a
     // normal TOOL_CALL_RESULT; so does the file-read result in case 1.
     const toolResultsJoined = events
       .filter((e) => e.type === "TOOL_CALL_RESULT")
@@ -276,7 +275,7 @@ async function runScenario(installDir: string, scriptName: string, cfg: ScriptCo
   });
   if (child.exitCode !== 0) {
     throw new Error(
-      `skill-tool-staging runner (${scriptName}) exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      `skill-staging runner (${scriptName}) exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
     );
   }
   return JSON.parse(child.stdout.trim()) as CaseResult;
@@ -308,7 +307,7 @@ function assertRunOk(result: CaseResult): void {
 
 let install: InstallResult;
 
-describe("live skill-tool — filesystem staging + byte-cap + secret redaction", () => {
+describe("live skill — filesystem staging + byte-cap + secret redaction", () => {
   beforeAll(async () => {
     install = await installAex();
   }, 240_000);
@@ -353,7 +352,7 @@ describe("live skill-tool — filesystem staging + byte-cap + secret redaction",
   );
 
   it(
-    "load-tool returns the SKILL.md body into the model's context",
+    "skills load returns the SKILL.md body into the model's context",
     async () => {
       const name = skillName("skilltool-body");
       const token = tok("SKILLBODY");
@@ -370,10 +369,10 @@ describe("live skill-tool — filesystem staging + byte-cap + secret redaction",
         ],
         system: "You are running an automated skill-body check. Rely only on the loaded skill's instructions.",
         message:
-          `Call the load tool for the skill named ${name} to pull its instructions into context. Its body contains a ` +
+          `Call the skills tool for the skill named ${name} with action "load" to pull its instructions into context. Its body contains a ` +
           `token. Reply with that token exactly, and nothing else.`,
         // Token planted ONLY in the SKILL.md body ⇒ its presence proves the
-        // load-tool actually returned the body.
+        // skills load actually returned the body.
         checksExpr: `{ bodyTokenPresent: (haystackNorm.includes(${JSON.stringify(token)}) || assistantTextNorm.includes(${JSON.stringify(token)})) }`,
         idempotencyPrefix: "skilltool-body"
       };
@@ -411,7 +410,7 @@ describe("live skill-tool — filesystem staging + byte-cap + secret redaction",
         ],
         system: "You are running an automated byte-cap check. Rely only on the loaded skill's instructions.",
         message:
-          `Call the load tool for the skill named ${name} exactly once to load its instructions. Near the top of ` +
+          `Call the skills tool for the skill named ${name} exactly once with action "load" to load its instructions. Near the top of ` +
           `those instructions is a passphrase line that starts with "CAPSTART-". Reply with only that passphrase.`,
         // Cap contract: the load handler returns utf8Prefix(body, 400000) plus a
         // "[skill SKILL.md truncated at 400000 bytes]" note. So the near-start
@@ -424,7 +423,7 @@ describe("live skill-tool — filesystem staging + byte-cap + secret redaction",
       };
       const result = await runScenario(install.installDir, "skilltool-bytecap.mjs", cfg);
       assertRunOk(result);
-      // Early marker loaded (proves the load-tool ran and the sub-cap prefix survived).
+      // Early marker loaded (proves the skills load ran and the sub-cap prefix survived).
       expect(result.checks["startMarkerPresent"], dump(result)).toBe(true);
       // Core cap proof: the beyond-cap marker never reached the model or the stream.
       expect(result.checks["beyondMarkerAbsent"], dump(result)).toBe(true);
@@ -454,9 +453,9 @@ describe("live skill-tool — filesystem staging + byte-cap + secret redaction",
         ],
         system: "You are running an automated redaction check. Rely only on the loaded skill's instructions.",
         message:
-          `Call the load tool for the skill named ${name} to load its instructions. Near the top is a guard token ` +
+          `Call the skills tool for the skill named ${name} with action "load" to load its instructions. Near the top is a guard token ` +
           `beginning with "GUARD-". Reply with that guard token exactly.`,
-        // guardTokenPresent proves the load-tool ran and delivered the body;
+        // guardTokenPresent proves the skills load ran and delivered the body;
         // secretLeaked scans the ENTIRE serialized run (every channel) for the raw
         // value; redactedMarkerPresent corroborates that redaction actually fired.
         checksExpr:
@@ -467,7 +466,7 @@ describe("live skill-tool — filesystem staging + byte-cap + secret redaction",
       };
       const result = await runScenario(install.installDir, "skilltool-redact.mjs", cfg);
       assertRunOk(result);
-      // The body reached the model (load-tool ran).
+      // The body reached the model (skills load ran).
       expect(result.checks["guardTokenPresent"], dump(result)).toBe(true);
       // Core redaction proof: the secret NEVER appears verbatim in any channel.
       expect(result.checks["secretLeaked"], dump(result)).toBe(false);

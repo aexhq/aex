@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 function read(path: string): string {
-  return readFileSync(resolve(repoRoot, path), "utf8");
+  // Normalize CRLF so multi-line assertions behave the same on Windows
+  // checkouts (autocrlf) and CI.
+  return readFileSync(resolve(repoRoot, path), "utf8").replace(/\r\n/g, "\n");
 }
 
 describe("live user-test release gate", () => {
@@ -58,7 +60,7 @@ describe("live user-test release gate", () => {
     expect(live).toContain("live-user-tests-preflight:");
     expect(live).toContain("name: Live user tests preflight");
     expect(live).toContain("- live-user-tests-preflight");
-    expect(live.indexOf("live-user-tests-preflight:")).toBeLessThan(live.indexOf("live-user-tests:\n    name: Live user tests shard"));
+    expect(live.indexOf("live-user-tests-preflight:")).toBeLessThan(live.indexOf("  live-user-tests:"));
 
     for (const workflow of [release, live]) {
       expect(workflow).toContain("AEX_API_URL: ${{ vars.AEX_API_URL }}");
@@ -79,17 +81,28 @@ describe("live user-test release gate", () => {
     }
   });
 
-  it("serializes live user-test shards against one shared workspace", () => {
-    for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {
-      const workflow = read(path);
-      const strategy = workflow.indexOf("strategy:");
-      const maxParallel = workflow.indexOf("max-parallel: 1", strategy);
-      const matrix = workflow.indexOf("matrix:", strategy);
+  it("keeps the full live matrix in live-user-tests.yml and release.yml on published-artifact smoke", () => {
+    const live = read(".github/workflows/live-user-tests.yml");
+    const release = read(".github/workflows/release.yml");
+    const strategy = live.indexOf("strategy:");
+    const matrix = live.indexOf("matrix:", strategy);
 
-      expect(strategy, path).toBeGreaterThan(-1);
-      expect(maxParallel, path).toBeGreaterThan(strategy);
-      expect(maxParallel, path).toBeLessThan(matrix);
-    }
+    expect(strategy).toBeGreaterThan(-1);
+    expect(matrix).toBeGreaterThan(strategy);
+    expect(live).toContain("name: Live user tests shard ${{ matrix.shard }}/11");
+    expect(live).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]");
+    expect(live).toContain("maxConcurrentRuns >= 50");
+    expect(live).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
+    expect(live).not.toContain("max-parallel: 1");
+
+    expect(release).toContain("name: Published-artifact smoke");
+    expect(release).toContain("needs: publish");
+    expect(release).toContain("bun run test:user:smoke");
+    expect(release).toContain("AEX_USER_TEST_MAX_WORKERS: 2");
+    expect(release).toContain("release-smoke-redacted-log");
+    expect(release).toContain("full behavioral matrix is the");
+    expect(release).not.toContain("name: Live user tests shard");
+    expect(release).not.toContain("scripts/shard-files.mjs --shard");
   });
 
   it("shards live user tests by recorded duration, not file count", () => {
@@ -97,23 +110,23 @@ describe("live user-test release gate", () => {
     // ~1s..6.5min, giving 1m42s..12m7s shard walls, and shard 12/12 once
     // collected ZERO tests). Both release-gate workflows must instead ask
     // scripts/shard-files.mjs for an explicit, duration-balanced,
-    // guaranteed-non-empty file list BEFORE invoking vitest.
-    for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {
-      const workflow = read(path);
+    // guaranteed-non-empty file list BEFORE invoking vitest. release.yml is now
+    // a published-artifact smoke only; the full matrix lives here and in platform
+    // deploy gates.
+    const workflow = read(".github/workflows/live-user-tests.yml");
 
-      expect(workflow, path).toContain(
-        'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"'
-      );
-      expect(workflow, path).toContain("REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/");
-      expect(workflow, path).not.toContain("REPORT: .suite-diagnostics/raw/");
-      expect(workflow, path).toContain('bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"');
-      expect(workflow, path).toContain('node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"');
-      expect(workflow, path).not.toContain("--shard=");
-      const shardCall = workflow.indexOf("scripts/shard-files.mjs --shard");
-      const vitestCall = workflow.indexOf("bun run test:user:files -- $FILES");
-      expect(shardCall, path).toBeGreaterThan(-1);
-      expect(vitestCall, path).toBeGreaterThan(shardCall);
-    }
+    expect(workflow).toContain(
+      'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"'
+    );
+    expect(workflow).toContain("REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/");
+    expect(workflow).not.toContain("REPORT: .suite-diagnostics/raw/");
+    expect(workflow).toContain('bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"');
+    expect(workflow).toContain('node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"');
+    expect(workflow).not.toContain("--shard=");
+    const shardCall = workflow.indexOf("scripts/shard-files.mjs --shard");
+    const vitestCall = workflow.indexOf("bun run test:user:files -- $FILES");
+    expect(shardCall).toBeGreaterThan(-1);
+    expect(vitestCall).toBeGreaterThan(shardCall);
 
     // The explicit-file lane must NOT carry the catch-all `test` positional
     // filter — it would match every file and defeat the shard list.

@@ -1,36 +1,36 @@
 /**
  * Live scenario: live-skill-tool-invocation.test.ts
  *
- * End-to-end proof that a *skill-tool* (the per-skill no-arg "load-tool" built
- * by `Tools.fromSkillDir`) is actually INVOKED by the model and that its
- * `SKILL.md` body drives the answer — not merely that the bundle was staged.
+ * End-to-end proof that a first-class skill is loaded by the model through the
+ * `skills` meta-tool and that its `SKILL.md` body drives the answer — not merely
+ * that the bundle was staged.
  *
- *   SDK → client.run({ tools: [skill-tool, ...] })
- *      → preflight uploads the skill bundle as an asset
- *      → the skill rides in the session `tools` array as a no-arg load-tool
- *      → the model calls the load-tool to pull the SKILL.md body into context
+ *   SDK → client.run({ skills: [skill, ...] })
+ *      → preflight uploads/upserts the skill bundle by workspace name
+ *      → the skill rides in the session `skills` array
+ *      → the model calls `skills({ action:"load", name })` to pull SKILL.md into context
  *      → the body carries a per-run token the model could not otherwise know
  *      → the model emits that token verbatim in its reply
  *
  * Cases (each a single managed DeepSeek run, builtins disarmed so the ONLY
  * tools present are the ones under test):
  *
- *   1. Single skill invoked — one skill-tool whose SKILL.md body defines a
+ *   1. Single skill loaded — one skill whose SKILL.md body defines a
  *      per-run passphrase token. The prompt asks for the passphrase; the run
  *      must succeed AND the planted token must appear in the assistant reply
- *      (proving the load-tool was invoked and its content consumed). We also
- *      assert the load-tool name shows up in the tool-call trace and that the
+ *      (proving the `skills` meta-tool loaded it and its content was consumed).
+ *      We also assert the loaded skill name shows up in the tool-call trace and that the
  *      skill produced a `skill_loaded` event.
  *      This case also covers "behavior actually changes": the token is a fresh
  *      random value per run, so the model can only produce it by loading THIS
  *      run's skill — a control run without the skill would be redundant spend.
  *
- *   2. Two skills, correct one chosen — a RED skill-tool and a BLUE skill-tool
+ *   2. Two skills, correct one chosen — a RED skill and a BLUE skill
  *      each with a distinct token. The prompt asks for the RED passphrase only.
  *      The RED token must appear in the reply and the BLUE token must NOT
  *      (catches "all skills collapsed into one" / wrong-skill selection).
  *
- *   3. Skill-tool + custom Tool together — one run wiring a skill-tool AND a
+ *   3. Skill + custom Tool together — one run wiring a skill AND a
  *      custom `Tool.fromFiles` tool. The prompt drives BOTH: the custom tool
  *      stamps a marker (deterministic echo) and the skill supplies the vault
  *      passphrase. Both must be invoked and produce their deterministic values.
@@ -55,7 +55,7 @@ import { getBunCommand, installAex, runCommand, type InstallResult } from "../_f
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
-    throw new Error(`user-tests live (skill-tool-invocation): required env ${name} is missing.`);
+    throw new Error(`user-tests live (skill-invocation): required env ${name} is missing.`);
   }
   return value;
 }
@@ -128,15 +128,12 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 // managed DeepSeek run, then reduces the raw event stream to a JSON
 // `Observation` on stdout. Raw-event iteration mirrors the proven sibling
 // harnesses (live-sdk-skill-invocation / live-sdk-tool-capability-fuzz):
-//   - TOOL_CALL_START names → which tools (incl. skill load-tools) were invoked
+//   - TOOL_CALL_START names/args → which tools were invoked, including `skills` loads
 //   - TOOL_CALL_RESULT content → deterministic tool outputs
 //   - CUSTOM aex.skill_loaded → which skills were staged into the container
 //   - TEXT_MESSAGE_CONTENT + result.text → the model's answer
 const SCRIPT_PREAMBLE = `
-import { Aex, Tools, Tool } from "@aexhq/sdk";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { Aex, Skill, Tool } from "@aexhq/sdk";
 
 const client = new Aex({
   baseUrl: process.env.AEX_API_URL,
@@ -144,14 +141,6 @@ const client = new Aex({
 });
 const MODEL = process.env.MODEL_DEEPSEEK;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
-
-// Skills are ingested as TOOLS: write the SKILL.md (YAML frontmatter carries
-// the tool name + description) to a temp dir, then build a skill-tool from it.
-function skillDir(md) {
-  const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
-  writeFileSync(join(dir, "SKILL.md"), md);
-  return dir;
-}
 
 function eventData(e) {
   return e && e.data && typeof e.data === "object" ? e.data : {};
@@ -218,8 +207,8 @@ async function observe(result) {
       const id = typeof d.id === "string" ? d.id : null;
       const name = typeof d.name === "string" ? d.name : "";
       if (id && name) nameById.set(id, name);
-      const args =
-        d.arguments && typeof d.arguments === "object" && !Array.isArray(d.arguments) ? d.arguments : {};
+      const rawArgs = d.arguments ?? d.args ?? d.input;
+      const args = rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
       return { id, name, arguments: args };
     });
   const toolResults = events
@@ -336,6 +325,28 @@ function toolCallNames(o: Observation): readonly string[] {
   return o.toolCalls.map((c) => c.name).filter(Boolean);
 }
 
+function toolCallArguments(c: ObservedToolCall): Readonly<Record<string, unknown>> {
+  for (const key of ["arguments", "args", "input"] as const) {
+    const value = c.arguments[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Readonly<Record<string, unknown>>;
+    }
+  }
+  return c.arguments;
+}
+
+function skillLoadNames(o: Observation): readonly string[] {
+  return o.toolCalls
+    .filter((c) => c.name === "skills")
+    .map((c) => {
+      const args = toolCallArguments(c);
+      const action = args["action"];
+      const name = args["name"];
+      return action === "load" && typeof name === "string" ? name : null;
+    })
+    .filter((name): name is string => typeof name === "string");
+}
+
 function normalize(s: string): string {
   return s.replace(/\s+/g, "");
 }
@@ -347,6 +358,7 @@ function diagnostics(o: Observation): string {
     `eventKinds=[${o.eventKinds.join(", ")}]`,
     `skillLoadedNames=[${o.skillLoadedNames.join(", ")}]`,
     `toolCalls=[${toolCallNames(o).join(", ")}]`,
+    `skillLoadNames=[${skillLoadNames(o).join(", ")}]`,
     `toolResults=${JSON.stringify(o.toolResults).slice(0, 1200)}`,
     o.streamErrors.length > 0 ? `streamErrors=${JSON.stringify(o.streamErrors).slice(0, 800)}` : "streamErrors=[]",
     `assistantText=${o.assistantText.slice(0, 800)}`
@@ -372,9 +384,9 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("live skill-tool invocation — model calls the load-tool and follows SKILL.md", () => {
+describe("live skill invocation — model loads first-class skills and follows SKILL.md", () => {
   it(
-    "single skill: load-tool is invoked and its planted token drives the reply",
+    "single skill: skills meta-tool loads it and its planted token drives the reply",
     async () => {
       const skillName = `vault-skill-${nameSuffix()}`;
       const token = plantedToken("SKILL-OK-7F");
@@ -386,27 +398,27 @@ describe("live skill-tool invocation — model calls the load-tool and follows S
         replyLine
       );
       const prompt =
-        `What is the vault passphrase? Use the mounted ${skillName} tool to look it up, ` +
+        `What is the vault passphrase? Use the skills tool to load the mounted skill named ${skillName}, ` +
         `then reply with its \`vault-pass\` line verbatim and nothing else.`;
       const system =
         `Rely on the mounted ${skillName} skill for the vault passphrase. ` +
-        `Do not answer from general memory; call the tool and copy its reply line exactly.`;
+        `Do not answer from general memory; load the skill and copy its reply line exactly.`;
 
       const body = `
-const skill = await Tools.fromSkillDir(skillDir(${JSON.stringify(md)}), { name: ${JSON.stringify(skillName)} });
+const skill = await Skill.fromContent(${JSON.stringify(md)}, { name: ${JSON.stringify(skillName)} });
 const result = await client.run({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
   includeBuiltinTools: false,
-  tools: [skill],
+  skills: [skill],
   apiKeys: { deepseek: DEEPSEEK_KEY },
-  idempotencyKey: "skill-tool-single-" + Date.now()
+  idempotencyKey: "skill-single-" + Date.now()
 }, { timeoutMs: ${RUN_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
 `;
-      const { observation, stdout } = await runScenario(install, "skill-tool-single.mjs", body);
+      const { observation, stdout } = await runScenario(install, "skill-single.mjs", body);
       const dump = diagnostics(observation);
 
       assertCleanTerminal(observation);
@@ -414,8 +426,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
       // The skill bundle was staged into the container.
       expect(observation.skillLoadedNames, dump).toContain(skillName);
 
-      // The model INVOKED the no-arg load-tool (its name rides the tool-call trace).
-      expect(toolCallNames(observation), dump).toContain(skillName);
+      // The model used the single skills meta-tool to load the named skill.
+      expect(toolCallNames(observation), dump).toContain("skills");
+      expect(skillLoadNames(observation), dump).toContain(skillName);
 
       // The per-run token — unknowable without loading THIS run's skill — is in
       // the answer, proving the SKILL.md body drove the reply (also covers the
@@ -450,28 +463,28 @@ process.stdout.write(JSON.stringify(await observe(result)));
         blueReply
       );
       const prompt =
-        `What is the RED passphrase? Use ONLY the mounted ${redName} tool. ` +
-        `Do NOT use the ${blueName} tool. Reply with its \`passphrase-red\` line verbatim and nothing else.`;
+        `What is the RED passphrase? Use the skills tool to load ONLY the mounted skill named ${redName}. ` +
+        `Do NOT load ${blueName}. Reply with its \`passphrase-red\` line verbatim and nothing else.`;
       const system =
         `Two skills are mounted. The RED passphrase lives in ${redName}; the BLUE passphrase lives in ${blueName}. ` +
-        `Answer a RED request using ONLY ${redName}. Never disclose the BLUE passphrase.`;
+        `Answer a RED request by loading ONLY ${redName}. Never disclose the BLUE passphrase.`;
 
       const body = `
-const red = await Tools.fromSkillDir(skillDir(${JSON.stringify(redMd)}), { name: ${JSON.stringify(redName)} });
-const blue = await Tools.fromSkillDir(skillDir(${JSON.stringify(blueMd)}), { name: ${JSON.stringify(blueName)} });
+const red = await Skill.fromContent(${JSON.stringify(redMd)}, { name: ${JSON.stringify(redName)} });
+const blue = await Skill.fromContent(${JSON.stringify(blueMd)}, { name: ${JSON.stringify(blueName)} });
 const result = await client.run({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
   includeBuiltinTools: false,
-  tools: [red, blue],
+  skills: [red, blue],
   apiKeys: { deepseek: DEEPSEEK_KEY },
-  idempotencyKey: "skill-tool-two-" + Date.now()
+  idempotencyKey: "skill-two-" + Date.now()
 }, { timeoutMs: ${RUN_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
 `;
-      const { observation, stdout } = await runScenario(install, "skill-tool-two.mjs", body);
+      const { observation, stdout } = await runScenario(install, "skill-two.mjs", body);
       const dump = diagnostics(observation);
 
       assertCleanTerminal(observation);
@@ -480,8 +493,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
       expect(observation.skillLoadedNames, dump).toContain(redName);
       expect(observation.skillLoadedNames, dump).toContain(blueName);
 
-      // The correct load-tool was invoked and its token drove the reply.
-      expect(toolCallNames(observation), dump).toContain(redName);
+      // The correct skill was loaded through the skills meta-tool and its token drove the reply.
+      expect(toolCallNames(observation), dump).toContain("skills");
+      expect(skillLoadNames(observation), dump).toContain(redName);
       const normalizedAnswer = normalize(observation.assistantText);
       expect(normalizedAnswer, dump).toContain(normalize(redToken));
 
@@ -495,7 +509,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
   );
 
   it(
-    "skill-tool + custom Tool: both are invoked and produce their deterministic values",
+    "skill + custom Tool: skill load and custom tool both produce deterministic values",
     async () => {
       const skillName = `vault-skill-${nameSuffix()}`;
       const token = plantedToken("SKILL-OK-7F");
@@ -510,14 +524,14 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const prompt =
         `Do BOTH steps, in order. ` +
         `1) Call the stamp_marker tool with marker set to "${stamp}". ` +
-        `2) Use the mounted ${skillName} tool to look up the vault passphrase. ` +
+        `2) Use the skills tool to load the mounted skill named ${skillName} and look up the vault passphrase. ` +
         `Then reply on one line containing the stamp_marker result and the skill's \`vault-pass\` line, verbatim.`;
       const system =
         `Use the stamp_marker tool to stamp the marker, and the mounted ${skillName} skill for the ` +
-        `vault passphrase. Do not answer either from memory; call both tools.`;
+        `vault passphrase. Do not answer either from memory; call the custom tool and load the skill.`;
 
       const body = `
-const skill = await Tools.fromSkillDir(skillDir(${JSON.stringify(md)}), { name: ${JSON.stringify(skillName)} });
+const skill = await Skill.fromContent(${JSON.stringify(md)}, { name: ${JSON.stringify(skillName)} });
 const stampTool = await Tool.fromFiles({
   name: "stamp_marker",
   description: "Stamp a caller-provided marker and echo it back verbatim.",
@@ -538,20 +552,22 @@ const result = await client.run({
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
   includeBuiltinTools: false,
-  tools: [skill, stampTool],
+  tools: [stampTool],
+  skills: [skill],
   apiKeys: { deepseek: DEEPSEEK_KEY },
-  idempotencyKey: "skill-tool-plus-custom-" + Date.now()
+  idempotencyKey: "skill-plus-custom-" + Date.now()
 }, { timeoutMs: ${RUN_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
 `;
-      const { observation, stdout } = await runScenario(install, "skill-tool-plus-custom.mjs", body);
+      const { observation, stdout } = await runScenario(install, "skill-plus-custom.mjs", body);
       const dump = diagnostics(observation);
 
       assertCleanTerminal(observation);
 
-      // Skill staged + skill load-tool invoked + its planted token in the reply.
+      // Skill staged + loaded through the skills meta-tool + its planted token in the reply.
       expect(observation.skillLoadedNames, dump).toContain(skillName);
-      expect(toolCallNames(observation), dump).toContain(skillName);
+      expect(toolCallNames(observation), dump).toContain("skills");
+      expect(skillLoadNames(observation), dump).toContain(skillName);
       expect(normalize(observation.assistantText), dump).toContain(normalize(token));
 
       // Custom Tool invoked and executed cleanly, echoing the exact marker.

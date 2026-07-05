@@ -20,6 +20,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+async function importSdk() {
+  const sdk = await import("@aexhq/sdk");
+  ok(!("Tools" in sdk), "legacy Tools namespace must not be exported");
+  return sdk;
+}
+
 function headersToObject(headers) {
   const out = {};
   if (!headers) return out;
@@ -106,6 +112,21 @@ function makeFetch() {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
+    if (url.includes("/api/skills/") && method === "PUT") {
+      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+      return new Response(JSON.stringify({
+        skill: {
+          kind: "skill",
+          name,
+          contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          description: body && typeof body.description === "string" ? body.description : "",
+          sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
+          version: 1
+        },
+        updated: true
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;
       return new Response(JSON.stringify({
@@ -166,6 +187,10 @@ function storagePuts(calls) {
   return calls.filter((call) => call.url.includes("object-storage.example.test") && call.method === "PUT");
 }
 
+function upsertSkillCalls(calls) {
+  return calls.filter((call) => call.method === "PUT" && call.url.includes("/api/skills/"));
+}
+
 function resetCalls(calls) {
   calls.length = 0;
 }
@@ -186,10 +211,9 @@ function assetIdFromHash(hash) {
   return "asset_" + hex;
 }
 
-// Skills are ingested as TOOLS now: there is no in-memory skill factory in the
-// public surface, so build a skill-tool from a temp directory containing a
-// SKILL.md whose YAML frontmatter carries the tool name + description, then
-// pass the result via Tools.fromSkillDir.
+// Skills are first-class session inputs: build one from a temp directory
+// containing a SKILL.md whose YAML frontmatter carries the skill name +
+// description, then pass the result via Skill.fromDir and top-level skills.
 function makeSkillDir(name, description) {
   const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
   writeFileSync(
@@ -199,10 +223,8 @@ function makeSkillDir(name, description) {
   return dir;
 }
 
-function skillToolEntries(body) {
-  return body.submission.tools.filter(
-    (entry) => entry && typeof entry === "object" && entry.kind === "skill"
-  );
+function skillEntries(body) {
+  return body.submission.skills ?? [];
 }
 `;
 
@@ -247,8 +269,8 @@ const {
   Secret,
   Sizes,
   Tool,
-  Tools
-} = await import("@aexhq/sdk");
+  Skill
+} = await importSdk();
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
@@ -257,7 +279,7 @@ const client = new Aex({
   fetch
 });
 
-const skill = await Tools.fromSkillDir(makeSkillDir("alpha-skill", "Use the alpha behavior."), { name: "alpha-skill" });
+const skill = await Skill.fromDir(makeSkillDir("alpha-skill", "Use the alpha behavior."), { name: "alpha-skill" });
 const skillHash = skill.ref.contentHash;
 const tool = await Tool.fromFiles({
   name: "lookup_tool",
@@ -279,7 +301,8 @@ const fileHash = dataFile.ref.contentHash;
 const session = await client.sessions.create({
   model: "claude-haiku-4-5",
   system: "System instructions.",
-  tools: [BuiltinTools.web_fetch, BuiltinTools.web_fetch, tool, skill],
+  tools: [BuiltinTools.web_fetch, BuiltinTools.web_fetch, tool],
+  skills: [skill],
   agentsMd: [agentsMd],
   files: [dataFile],
   mcpServers: [
@@ -322,6 +345,12 @@ strictEqual(session.id, "sess_user_input_1");
 strictEqual(presignCalls(calls).length, 4);
 strictEqual(storagePuts(calls).length, 4);
 strictEqual(finalizeCalls(calls).length, 4);
+strictEqual(upsertSkillCalls(calls).length, 1);
+const skillUpsert = upsertSkillCalls(calls)[0].body;
+strictEqual(skillUpsert.contentHash, skillHash);
+strictEqual(skillUpsert.description, "Use the alpha behavior.");
+strictEqual(typeof skillUpsert.sizeBytes, "number");
+ok(skillUpsert.sizeBytes > 0);
 
 const create = onlyCreateCall(calls);
 strictEqual(create.headers["idempotency-key"], "idem-user-inputs");
@@ -355,9 +384,9 @@ deepStrictEqual(submission.outputs, {
   maxTotalBytes: 2000000,
   maxFiles: 25
 });
-ok(!("skills" in submission), "submission.skills is removed; skill-tools ride submission.tools");
+deepStrictEqual(submission.skills, [{ kind: "skill", name: "alpha-skill" }]);
 strictEqual(submission.tools[0], "web_fetch");
-strictEqual(submission.tools.length, 3, "deduped builtin + custom tool + skill-tool");
+strictEqual(submission.tools.length, 2, "deduped builtin + custom tool");
 deepStrictEqual(submission.tools[1], {
   kind: "asset",
   assetId: assetIdFromHash(toolHash),
@@ -365,12 +394,6 @@ deepStrictEqual(submission.tools[1], {
   description: "Looks up one test value.",
   input_schema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
   entry: "index.js"
-});
-deepStrictEqual(submission.tools[2], {
-  kind: "skill",
-  assetId: assetIdFromHash(skillHash),
-  name: "alpha-skill",
-  description: "Use the alpha behavior."
 });
 deepStrictEqual(submission.agentsMd, [
   { kind: "asset", assetId: assetIdFromHash(agentsHash), name: "rules" }
@@ -400,7 +423,7 @@ console.log(JSON.stringify({
   ok: true,
   createCalls: createBodies(calls).length,
   assetUploads: presignCalls(calls).length,
-  skillNames: skillToolEntries(body).map((entry) => entry.name),
+  skillNames: skillEntries(body).map((entry) => entry.name),
   toolEntries: submission.tools.length
 }));
 `;
@@ -410,13 +433,13 @@ console.log(JSON.stringify({
       createCalls: 1,
       assetUploads: 4,
       skillNames: ["alpha-skill"],
-      toolEntries: 3
+      toolEntries: 2
     });
   });
 
   it("covers skill-tool absence, bad tool entries, ordering, reuse, and many-skill stress", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools } = await import("@aexhq/sdk");
+const { Aex, Skill } = await importSdk();
 
 function makeClient() {
   const harness = makeFetch();
@@ -434,6 +457,7 @@ await none.client.sessions.create({
   apiKeys: { anthropic: "sk-ant" }
 });
 deepStrictEqual(onlyCreateBody(none.calls).submission.tools, []);
+ok(!("skills" in onlyCreateBody(none.calls)));
 strictEqual(presignCalls(none.calls).length, 0);
 
 const fake = makeClient();
@@ -441,69 +465,85 @@ await expectReject("fake tool object", () => fake.client.sessions.create({
   model: "claude-haiku-4-5",
   tools: [{ kind: "workspace", id: "skill_does_not_exist" }],
   apiKeys: { anthropic: "sk-ant" }
-}), /tools\[0\] must be a Tool, a SkillTool, or a builtin tool name/);
+}), /tools\[0\] must be a Tool or a builtin tool name/);
 strictEqual(fake.calls.length, 0);
+
+const staleSkillUse = makeClient();
+const staleSkill = await Skill.fromDir(makeSkillDir("stale-tool-skill", "Must use skills option."), { name: "stale-tool-skill" });
+await expectReject("skill in tools array", () => staleSkillUse.client.sessions.create({
+  model: "claude-haiku-4-5",
+  tools: [staleSkill],
+  apiKeys: { anthropic: "sk-ant" }
+}), /tools\[0\] is a Skill; pass skills via the top-level skills option/);
+strictEqual(staleSkillUse.calls.length, 0);
 
 const order = makeClient();
 const orderedSkills = [];
 for (let i = 0; i < 6; i += 1) {
-  orderedSkills.push(await Tools.fromSkillDir(
+  orderedSkills.push(await Skill.fromDir(
     makeSkillDir("ordered-skill-" + i, "Reply with order " + i + "."),
     { name: "ordered-skill-" + i }
   ));
 }
 await order.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: orderedSkills,
+  skills: orderedSkills,
   apiKeys: { anthropic: "sk-ant" }
 });
 deepStrictEqual(
-  skillToolEntries(onlyCreateBody(order.calls)).map((entry) => entry.name),
+  skillEntries(onlyCreateBody(order.calls)).map((entry) => entry.name),
   orderedSkills.map((skill) => skill.ref.name)
 );
 strictEqual(presignCalls(order.calls).length, 6);
+strictEqual(upsertSkillCalls(order.calls).length, 6);
 
 const repeated = makeClient();
-const reusable = await Tools.fromSkillDir(
+const reusable = await Skill.fromDir(
   makeSkillDir("reusable-skill", "Apply this every time."),
   { name: "reusable-skill" }
 );
-const reusableAssetId = assetIdFromHash(reusable.ref.contentHash);
+await expectReject("duplicate skill names", () => repeated.client.sessions.create({
+  model: "claude-haiku-4-5",
+  skills: [reusable, reusable],
+  apiKeys: { anthropic: "sk-ant" }
+}), /skills duplicate name: reusable-skill/);
+strictEqual(repeated.calls.length, 0);
+
 await repeated.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [reusable, reusable, reusable],
+  skills: [reusable],
   apiKeys: { anthropic: "sk-ant" }
 });
-deepStrictEqual(skillToolEntries(onlyCreateBody(repeated.calls)), [
-  { kind: "skill", assetId: reusableAssetId, name: "reusable-skill", description: "Apply this every time." },
-  { kind: "skill", assetId: reusableAssetId, name: "reusable-skill", description: "Apply this every time." },
-  { kind: "skill", assetId: reusableAssetId, name: "reusable-skill", description: "Apply this every time." }
+deepStrictEqual(skillEntries(onlyCreateBody(repeated.calls)), [
+  { kind: "skill", name: "reusable-skill" }
 ]);
 strictEqual(presignCalls(repeated.calls).length, 1);
+strictEqual(upsertSkillCalls(repeated.calls).length, 1);
 
 resetCalls(repeated.calls);
 await repeated.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [reusable],
+  skills: [reusable],
   apiKeys: { anthropic: "sk-ant" }
 });
-deepStrictEqual(skillToolEntries(onlyCreateBody(repeated.calls)), [
-  { kind: "skill", assetId: reusableAssetId, name: "reusable-skill", description: "Apply this every time." }
+deepStrictEqual(skillEntries(onlyCreateBody(repeated.calls)), [
+  { kind: "skill", name: "reusable-skill" }
 ]);
 strictEqual(presignCalls(repeated.calls).length, 0);
+strictEqual(upsertSkillCalls(repeated.calls).length, 0);
 
 const stress = makeClient();
 const many = [];
 for (let i = 0; i < 64; i += 1) {
   const name = "stress-skill-" + String(i).padStart(2, "0");
-  many.push(await Tools.fromSkillDir(makeSkillDir(name, "Return token " + i + "."), { name }));
+  many.push(await Skill.fromDir(makeSkillDir(name, "Return token " + i + "."), { name }));
 }
 await stress.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: many,
+  skills: many,
   apiKeys: { anthropic: "sk-ant" }
 });
-const stressSkills = skillToolEntries(onlyCreateBody(stress.calls));
+const stressSkills = skillEntries(onlyCreateBody(stress.calls));
 strictEqual(stressSkills.length, 64);
 strictEqual(stressSkills[0].name, "stress-skill-00");
 strictEqual(stressSkills[63].name, "stress-skill-63");
@@ -511,13 +551,15 @@ deepStrictEqual(stressSkills.map((entry) => entry.name), many.map((skill) => ski
 strictEqual(presignCalls(stress.calls).length, 64);
 strictEqual(storagePuts(stress.calls).length, 64);
 strictEqual(finalizeCalls(stress.calls).length, 64);
+strictEqual(upsertSkillCalls(stress.calls).length, 64);
 
 console.log(JSON.stringify({
   ok: true,
   orderedCount: orderedSkills.length,
   stressCount: stressSkills.length,
   repeatedUploadCount: presignCalls(repeated.calls).length,
-  fakeCalls: fake.calls.length
+  fakeCalls: fake.calls.length,
+  staleSkillCalls: staleSkillUse.calls.length
 }));
 `;
     const result = await runChild(script, "sdk-session-inputs-skills.mjs", 180_000);
@@ -526,7 +568,8 @@ console.log(JSON.stringify({
       orderedCount: 6,
       stressCount: 64,
       repeatedUploadCount: 0,
-      fakeCalls: 0
+      fakeCalls: 0,
+      staleSkillCalls: 0
     });
   });
 
@@ -539,8 +582,8 @@ const {
   McpServer,
   Secret,
   Tool,
-  Tools
-} = await import("@aexhq/sdk");
+  Skill
+} = await importSdk();
 
 const { calls, fetch } = makeFetch();
 const client = new Aex({
@@ -572,8 +615,8 @@ const createCases = [
   ["removed parentRunId", () => client.openSession({ ...validCreate, parentRunId: "run_parent" }), /parentRunId is not a supported option/],
   ["removed postHook", () => client.openSession({ ...validCreate, postHook: { command: "bun test" } }), /postHook is not a supported option/],
   ["removed instructions", () => client.openSession({ ...validCreate, instructions: "be brief" }), /instructions is not a supported option/],
-  ["removed skills", () => client.openSession({ ...validCreate, skills: [] }), /skills is not a supported option/],
-  ["bad tool object entry", () => client.openSession({ ...validCreate, tools: [{}] }), /tools\[0\] must be a Tool, a SkillTool, or a builtin tool name/],
+  ["bad skill entry", () => client.openSession({ ...validCreate, skills: [{}] }), /skills\[0\] must be a Skill/],
+  ["bad tool object entry", () => client.openSession({ ...validCreate, tools: [{}] }), /tools\[0\] must be a Tool or a builtin tool name/],
   ["bad tool entry", () => client.openSession({ ...validCreate, tools: ["definitely_not_builtin"] }), /not a builtin tool name/],
   ["bad agentsMd entry", () => client.openSession({ ...validCreate, agentsMd: [{}] }), /agentsMd\[0\] must be an AgentsMd instance/],
   ["bad file entry", () => client.openSession({ ...validCreate, files: [{}] }), /files\[0\] must be a File instance/],
@@ -615,10 +658,10 @@ writeFileSync(
 );
 
 const builderCases = [
-  ["skill bad name", () => Tools.fromSkillDir(validSkillDir, { name: "Bad Name" }), /name must match/],
-  ["skill missing SKILL.md", () => Tools.fromSkillDir(noSkillMdDir), /must contain a SKILL\.md/],
-  ["skill missing description", () => Tools.fromSkillDir(noDescriptionDir), /description is required/],
-  ["skill oversized description", () => Tools.fromSkillDir(oversizedDescriptionDir), /description must be <= 2048 chars/],
+  ["skill bad name", () => Skill.fromDir(validSkillDir, { name: "Bad Name" }), /must match/],
+  ["skill missing SKILL.md", () => Skill.fromDir(noSkillMdDir), /must contain a SKILL\.md/],
+  ["skill missing description", () => Skill.fromDir(noDescriptionDir), /description is required/],
+  ["skill oversized description", () => Skill.fromDir(oversizedDescriptionDir), /description must be <= 2048 chars/],
   ["agents empty content", () => AgentsMd.fromContent("", { name: "rules" }), /content must be a non-empty string/],
   ["agents bad name", () => AgentsMd.fromContent("# x", { name: "Bad" }), /name must match/],
   ["file bad name", () => File.fromBytes({ name: "../secret.txt", bytes: new Uint8Array([1]) }), /valid filename/],
@@ -658,8 +701,8 @@ const invalidNames = ["", "UPPER", "two words", "-starts-bad", "a".repeat(129), 
 for (const name of invalidNames) {
   await expectReject(
     "skill-name fuzz " + JSON.stringify(name),
-    () => Tools.fromSkillDir(validSkillDir, { name }),
-    /name must match|name is required/
+    () => Skill.fromDir(validSkillDir, { name }),
+    /must match|name is required/
   );
 }
 
@@ -696,7 +739,7 @@ console.log(JSON.stringify({
 
   it("covers provider/outputs extremes and empty-shape normalization", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Models, Sizes } = await import("@aexhq/sdk");
+const { Aex, Models, Sizes } = await importSdk();
 const { calls, fetch } = makeFetch();
 const client = new Aex({
   apiKey: "aex_extreme_inputs_token",

@@ -4,6 +4,21 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.39.0
+
+### Added
+
+- Reintroduced Skills as a first-class SDK concept via the top-level `skills`
+  option and `Skill.fromDir` / `fromUrl` / `fromFiles` / `fromContent` /
+  `fromBytes` factories.
+- Added workspace skill lifecycle helpers on `aex.skills` for listing, reading,
+  upserting, and deleting named skill bundles.
+
+### Changed (breaking)
+
+- Skills no longer ride the `tools` array. Passing a `Skill` in `tools` now
+  fails validation; pass skills through the top-level `skills` option instead.
+
 ## 0.38.1
 
 ### Added

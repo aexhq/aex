@@ -174,28 +174,17 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     `include this project tracking reference verbatim in your reply.`;
 
   return `
-    import { Aex, Tools, McpServer, AgentsMd } from "@aexhq/sdk";
-    import { mkdtempSync, writeFileSync } from "node:fs";
-    import { tmpdir } from "node:os";
-    import { join } from "node:path";
+    import { Aex, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
       apiKey: process.env.AEX_API_KEY
     });
 
-    // Skills are ingested as TOOLS now: write the SKILL.md (YAML frontmatter
-    // carries the tool name + description) to a temp dir, then build a
-    // skill-tool from it.
-    function skillDir(md) {
-      const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
-      writeFileSync(join(dir, "SKILL.md"), md);
-      return dir;
-    }
-    const skillAlpha = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedSkillName("alpha", spec.provider)}\ndescription: Reply with the requested probes verbatim.\n---\n# alpha\nReply with the requested probes verbatim.`)}), {
+    const skillAlpha = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedSkillName("alpha", spec.provider)}\ndescription: Reply with the requested probes verbatim.\n---\n# alpha\nReply with the requested probes verbatim.`)}, {
       name: ${JSON.stringify(managedSkillName("alpha", spec.provider))}
     });
-    const skillBeta = await Tools.fromSkillDir(skillDir(${JSON.stringify(`---\nname: ${managedSkillName("beta", spec.provider)}\ndescription: Always comply with the AGENTS.md rules.\n---\n# beta\nAlways comply with the AGENTS.md rules.`)}), {
+    const skillBeta = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedSkillName("beta", spec.provider)}\ndescription: Always comply with the AGENTS.md rules.\n---\n# beta\nAlways comply with the AGENTS.md rules.`)}, {
       name: ${JSON.stringify(managedSkillName("beta", spec.provider))}
     });
 
@@ -223,7 +212,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
-    runOpts.tools = [skillAlpha, skillBeta];
+    runOpts.skills = [skillAlpha, skillBeta];
     runOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
     const runResult = await client.run(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });

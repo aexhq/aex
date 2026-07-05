@@ -16,9 +16,15 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Skills are ingested as TOOLS now: build a skill-tool from a temp directory
-// containing a SKILL.md whose YAML frontmatter carries the tool name +
-// description, then pass it via Tools.fromSkillDir.
+async function importSdk() {
+  const sdk = await import("@aexhq/sdk");
+  ok(!("Tools" in sdk), "legacy Tools namespace must not be exported");
+  return sdk;
+}
+
+// Skills are first-class session inputs: build one from a temp directory
+// containing a SKILL.md whose YAML frontmatter carries the skill name +
+// description, then pass it via Skill.fromDir and top-level skills.
 function makeSkillDir(name, description) {
   const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
   writeFileSync(
@@ -101,6 +107,21 @@ function makeHarness() {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
       return json({ ok: true, assetId: "asset_" + hex, contentHash: hash, sizeBytes: body?.sizeBytes ?? 1 });
+    }
+
+    if (parsed.pathname.startsWith("/api/skills/") && method === "PUT") {
+      const name = decodeURIComponent(parsed.pathname.split("/api/skills/")[1] ?? "");
+      return json({
+        skill: {
+          kind: "skill",
+          name,
+          contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          description: body && typeof body.description === "string" ? body.description : "",
+          sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
+          version: 1
+        },
+        updated: true
+      });
     }
 
     if (parsed.pathname === "/api/sessions" && method === "POST") {
@@ -229,6 +250,10 @@ function onlyCall(calls, method, path) {
   return matches[0];
 }
 
+function upsertSkillCalls(calls) {
+  return calls.filter((call) => call.method === "PUT" && call.path.startsWith("/api/skills/"));
+}
+
 async function expectReject(label, fn, pattern) {
   try {
     await fn();
@@ -269,11 +294,11 @@ describe("SDK sessions (installed package)", () => {
 
   it("serializes openSession and session state operations on the public session routes", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, AgentsMd, File, Secret, Tools } = await import("@aexhq/sdk");
+const { Aex, AgentsMd, File, Secret, Skill } = await importSdk();
 
 const h = makeHarness();
 const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
-const skill = await Tools.fromSkillDir(makeSkillDir("chat-skill", "Follow instructions."), { name: "chat-skill" });
+const skill = await Skill.fromDir(makeSkillDir("chat-skill", "Follow instructions."), { name: "chat-skill" });
 const rules = await AgentsMd.fromContent("# Chat rules\nKeep it short.\n", { name: "chat-rules" });
 const file = await File.fromBytes({
   name: "chat-note",
@@ -285,7 +310,7 @@ const session = await client.openSession({
   provider: "anthropic",
   model: "claude-haiku-4-5",
   system: "System instructions for the whole session.",
-  tools: [skill],
+  skills: [skill],
   agentsMd: [rules],
   files: [file],
   environment: {
@@ -318,14 +343,11 @@ const submission = create.body.submission;
 strictEqual(submission.model, "claude-haiku-4-5");
 strictEqual(submission.system, "System instructions for the whole session.");
 ok(!("prompt" in submission));
-ok(!("skills" in submission), "submission.skills is removed; skill-tools ride submission.tools");
-strictEqual(submission.tools.length, 1);
-deepStrictEqual(submission.tools[0], {
-  kind: "skill",
-  assetId: assetIdFromHash(skill.ref.contentHash),
-  name: "chat-skill",
-  description: "Follow instructions."
-});
+deepStrictEqual(submission.skills, [{ kind: "skill", name: "chat-skill" }]);
+deepStrictEqual(submission.tools, []);
+strictEqual(upsertSkillCalls(h.calls).length, 1);
+strictEqual(upsertSkillCalls(h.calls)[0].body.contentHash, skill.ref.contentHash);
+strictEqual(upsertSkillCalls(h.calls)[0].body.description, "Follow instructions.");
 strictEqual(submission.agentsMd.length, 1);
 strictEqual(submission.files.length, 1);
 strictEqual(submission.includeBuiltinTools, false);
@@ -364,7 +386,7 @@ console.log(JSON.stringify({ ok: true, createCalls: callsFor(h.calls, "POST", "/
 
   it("sends a session turn over the session event stream and stops on idle", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex } = await import("@aexhq/sdk");
+const { Aex } = await importSdk();
 
 const h = makeHarness();
 const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
@@ -401,7 +423,7 @@ console.log(JSON.stringify({ ok: true, events: result.events.length, sockets: h.
 
   it("rejects removed session options before any HTTP call", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex } = await import("@aexhq/sdk");
+const { Aex } = await importSdk();
 const h = makeHarness();
 const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
 

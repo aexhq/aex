@@ -55,7 +55,9 @@ jobs:
       # (GITHUB_TOKEN) we verify that the run (a) is .github/workflows/
       # release.yml in THIS repo — the API path is repo-scoped, so a foreign
       # run id 404s; (b) completed with conclusion=success, which release.yml
-      # only reaches after the live user tests pass (they are the last jobs);
+      # only reaches after static gates, publish, and the published-artifact
+      # smoke pass (the full live matrix is enforced by platform deploy before
+      # promotion per the release runbook, not by this public workflow);
       # and (c) published THIS version — the npm registry publish timestamp
       # (`time[version]`) must fall inside that run's created_at..updated_at
       # window (created_at, not run_started_at, so re-run attempts of flaky
@@ -86,7 +88,7 @@ jobs:
             exit 1
           fi
           if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
-            echo "::error::Release run ${RELEASE_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green release run (live user tests included)."
+            echo "::error::Release run ${RELEASE_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green release run (published-artifact smoke included)."
             exit 1
           fi
           published_at="$(curl -fsSL "https://registry.npmjs.org/@aexhq%2Fsdk" | jq -r --arg v "${PACKAGE_VERSION}" '.time[$v] // empty')"

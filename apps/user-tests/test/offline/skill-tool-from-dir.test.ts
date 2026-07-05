@@ -1,10 +1,10 @@
 /**
- * Blackbox coverage of `Tools.fromSkillDir` filesystem + frontmatter
+ * Blackbox coverage of `Skill.fromDir` filesystem + frontmatter
  * robustness through a clean installed package.
  *
  * `sdk-session-inputs.test.ts` already proves the happy path (a flat SKILL.md
- * dir rides `submission.tools` as a `{ kind:"skill", assetId, name, description }`
- * ref, ordering, reuse dedup, and the name/description reject surface). This
+ * dir rides `submission.skills` as a `{ kind:"skill", name }` ref, ordering,
+ * reuse dedup, and the name/description reject surface). This
  * file goes DEEPER on the directory reader + the minimal YAML-frontmatter
  * parser: nested bundles, binary files, symlink skipping, byte-determinism of
  * the content hash, CRLF / BOM / quoted / extra-key frontmatter, and the exact
@@ -13,8 +13,9 @@
  * Same pattern as the reference: each case runs in a child process whose cwd is
  * the user-test install tempdir, so `import "@aexhq/sdk"` resolves the packed
  * artifact, and a fake fetch captures the exact wire request (POST
- * /api/sessions plus the presign -> PUT -> finalize asset flow) without a live
- * run. Each child logs one small JSON summary that the vitest assertion checks.
+ * /api/sessions plus the presign -> PUT -> finalize asset flow and skill
+ * registry upsert) without a live run. Each child logs one small JSON summary
+ * that the vitest assertion checks.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,6 +27,12 @@ import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+async function importSdk() {
+  const sdk = await import("@aexhq/sdk");
+  ok(!("Tools" in sdk), "legacy Tools namespace must not be exported");
+  return sdk;
+}
 
 function headersToObject(headers) {
   const out = {};
@@ -113,6 +120,21 @@ function makeFetch() {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
+    if (url.includes("/api/skills/") && method === "PUT") {
+      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+      return new Response(JSON.stringify({
+        skill: {
+          kind: "skill",
+          name,
+          contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          description: body && typeof body.description === "string" ? body.description : "",
+          sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
+          version: 1
+        },
+        updated: true
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;
       return new Response(JSON.stringify({
@@ -158,6 +180,10 @@ function storagePuts(calls) {
   return calls.filter((call) => call.url.includes("object-storage.example.test") && call.method === "PUT");
 }
 
+function upsertSkillCalls(calls) {
+  return calls.filter((call) => call.method === "PUT" && call.url.includes("/api/skills/"));
+}
+
 async function expectReject(label, fn, pattern) {
   try {
     await fn();
@@ -174,20 +200,18 @@ function assetIdFromHash(hash) {
   return "asset_" + hex;
 }
 
-function skillToolEntries(body) {
-  return body.submission.tools.filter(
-    (entry) => entry && typeof entry === "object" && entry.kind === "skill"
-  );
+function skillEntries(body) {
+  return body.submission.skills ?? [];
 }
 
 // A fresh, empty scratch dir under the OS temp root. Callers drop a SKILL.md
-// (plus any sibling/nested files) then hand the dir to Tools.fromSkillDir.
+// (plus any sibling/nested files) then hand the dir to Skill.fromDir.
 function freshDir() {
   return mkdtempSync(join(tmpdir(), "aex-skilltool-"));
 }
 `;
 
-describe("Tools.fromSkillDir filesystem + frontmatter robustness (installed package)", () => {
+describe("Skill.fromDir filesystem + frontmatter robustness (installed package)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -219,7 +243,7 @@ describe("Tools.fromSkillDir filesystem + frontmatter robustness (installed pack
 
   it("bundles nested dirs + binary files into one deterministic, content-addressed asset", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools } = await import("@aexhq/sdk");
+const { Aex, Skill } = await importSdk();
 
 function makeClient() {
   const harness = makeFetch();
@@ -247,8 +271,8 @@ function writeNestedSkill(overrides = {}) {
 
 // 1. Two INDEPENDENT builds of byte-identical nested trees yield an identical
 //    content hash / assetId (mtimes are pinned to the zip epoch, entries sorted).
-const a = await Tools.fromSkillDir(writeNestedSkill());
-const b = await Tools.fromSkillDir(writeNestedSkill());
+const a = await Skill.fromDir(writeNestedSkill());
+const b = await Skill.fromDir(writeNestedSkill());
 strictEqual(a.ref.contentHash, b.ref.contentHash, "independent builds must be byte-deterministic");
 strictEqual(assetIdFromHash(a.ref.contentHash), assetIdFromHash(b.ref.contentHash));
 
@@ -256,36 +280,41 @@ strictEqual(assetIdFromHash(a.ref.contentHash), assetIdFromHash(b.ref.contentHas
 //    differently, and a one-byte change to a nested file diverges the hash.
 const flatDir = freshDir();
 writeFileSync(join(flatDir, "SKILL.md"), "---\nname: nested-skill\ndescription: Bundles nested files.\n---\n# nested-skill\nBody.\n");
-const flat = await Tools.fromSkillDir(flatDir);
+const flat = await Skill.fromDir(flatDir);
 ok(flat.ref.contentHash !== a.ref.contentHash, "nested files must contribute to the bundle hash");
-const changed = await Tools.fromSkillDir(writeNestedSkill({ helper: "export const help = () => 43;\n" }));
+const changed = await Skill.fromDir(writeNestedSkill({ helper: "export const help = () => 43;\n" }));
 ok(changed.ref.contentHash !== a.ref.contentHash, "a one-byte nested change must diverge the hash");
 
 // 3. Wire shape: the nested skill uploads exactly ONE asset (presign/PUT/finalize
-//    once) and the skill entry carries only kind/assetId/name/description — no
-//    input_schema, no entry, no file list.
+//    once), upserts the workspace skill once, and the session carries only a
+//    name ref in submission.skills — no assetId, input_schema, entry, or file list.
 const c = makeClient();
-const nested = await Tools.fromSkillDir(writeNestedSkill());
+const nested = await Skill.fromDir(writeNestedSkill());
 await c.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [nested],
+  skills: [nested],
   apiKeys: { anthropic: "sk-ant" }
 });
 strictEqual(presignCalls(c.calls).length, 1);
 strictEqual(storagePuts(c.calls).length, 1);
 strictEqual(finalizeCalls(c.calls).length, 1);
+strictEqual(upsertSkillCalls(c.calls).length, 1);
 ok(storagePuts(c.calls)[0].body && storagePuts(c.calls)[0].body.byteLength > 0, "real zip bytes uploaded");
-const entries = skillToolEntries(onlyCreateBody(c.calls));
+deepStrictEqual(upsertSkillCalls(c.calls)[0].body, {
+  contentHash: nested.ref.contentHash,
+  description: "Bundles nested files.",
+  sizeBytes: storagePuts(c.calls)[0].body.byteLength
+});
+deepStrictEqual(onlyCreateBody(c.calls).submission.tools, []);
+const entries = skillEntries(onlyCreateBody(c.calls));
 deepStrictEqual(entries, [
   {
     kind: "skill",
-    assetId: assetIdFromHash(nested.ref.contentHash),
-    name: "nested-skill",
-    description: "Bundles nested files."
+    name: "nested-skill"
   }
 ]);
 const entryKeys = Object.keys(entries[0]).sort();
-deepStrictEqual(entryKeys, ["assetId", "description", "kind", "name"]);
+deepStrictEqual(entryKeys, ["kind", "name"]);
 
 // 4. A binary (non-UTF-8) file bundles cleanly and is deterministic across builds.
 function writeBinarySkill() {
@@ -296,8 +325,8 @@ function writeBinarySkill() {
   writeFileSync(join(dir, "assets", "blob.bin"), Uint8Array.from([0, 1, 2, 253, 254, 255, 0, 128, 64, 200]));
   return dir;
 }
-const bin1 = await Tools.fromSkillDir(writeBinarySkill());
-const bin2 = await Tools.fromSkillDir(writeBinarySkill());
+const bin1 = await Skill.fromDir(writeBinarySkill());
+const bin2 = await Skill.fromDir(writeBinarySkill());
 strictEqual(bin1.ref.contentHash, bin2.ref.contentHash, "binary bundle must be deterministic");
 ok(bin1.ref.contentHash !== a.ref.contentHash);
 
@@ -309,9 +338,9 @@ function writeDedupSkill(token) {
   writeFileSync(join(dir, "data.txt"), "payload-" + token + "\n");
   return dir;
 }
-const dd1 = await Tools.fromSkillDir(writeDedupSkill("same"));
-const dd2 = await Tools.fromSkillDir(writeDedupSkill("same"));
-const dd3 = await Tools.fromSkillDir(writeDedupSkill("diff"));
+const dd1 = await Skill.fromDir(writeDedupSkill("same"));
+const dd2 = await Skill.fromDir(writeDedupSkill("same"));
+const dd3 = await Skill.fromDir(writeDedupSkill("diff"));
 strictEqual(dd1.ref.contentHash, dd2.ref.contentHash, "byte-identical dirs must dedup to one assetId");
 ok(dd1.ref.contentHash !== dd3.ref.contentHash, "a one-byte change must diverge the assetId");
 
@@ -332,7 +361,7 @@ console.log(JSON.stringify({
       deterministic: true,
       nestedChangesHash: true,
       presign: 1,
-      entryKeys: ["assetId", "description", "kind", "name"],
+      entryKeys: ["kind", "name"],
       binaryDeterministic: true,
       dedup: true,
       diverged: true
@@ -341,7 +370,7 @@ console.log(JSON.stringify({
 
   it("skips symlinks / non-regular files when reading the directory", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Tools } = await import("@aexhq/sdk");
+const { Skill } = await importSdk();
 
 function writeBaseSkill(dir) {
   writeFileSync(join(dir, "SKILL.md"), "---\nname: symlink-skill\ndescription: Symlinks are skipped.\n---\n# symlink-skill\n");
@@ -351,7 +380,7 @@ function writeBaseSkill(dir) {
 // Baseline: SKILL.md + one regular file, no symlink.
 const baseDir = freshDir();
 writeBaseSkill(baseDir);
-const base = await Tools.fromSkillDir(baseDir);
+const base = await Skill.fromDir(baseDir);
 
 // Same regular files PLUS a symlink alias. If the reader followed the symlink
 // it would add an extra "alias.txt" entry and diverge the hash; skipping it
@@ -369,7 +398,7 @@ try {
   // That is a platform limitation, not a product defect — do not fail here.
   symlinkSupported = false;
 }
-const linked = await Tools.fromSkillDir(linkDir);
+const linked = await Skill.fromDir(linkDir);
 if (symlinkSupported) {
   skipped = base.ref.contentHash === linked.ref.contentHash;
   strictEqual(skipped, true, "symlink entry must be skipped (bundle hash unchanged)");
@@ -386,7 +415,7 @@ console.log(JSON.stringify({ ok: true, symlinkSupported, skipped }));
 
   it("lifts + overrides name/description across CRLF, BOM, quoted, and extra-key frontmatter", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools } = await import("@aexhq/sdk");
+const { Aex, Skill } = await importSdk();
 
 function makeClient() {
   const harness = makeFetch();
@@ -406,7 +435,7 @@ function writeSkill(skillMd) {
 
 // { name } override takes precedence over the frontmatter name; description
 // still comes from the frontmatter.
-const overrideSkill = await Tools.fromSkillDir(
+const overrideSkill = await Skill.fromDir(
   writeSkill("---\nname: frontmatter-name\ndescription: Override wins.\n---\n# x\n"),
   { name: "override-name" }
 );
@@ -426,7 +455,7 @@ const variants = {
 };
 const parsed = {};
 for (const [key, md] of Object.entries(variants)) {
-  const skill = await Tools.fromSkillDir(writeSkill(md));
+  const skill = await Skill.fromDir(writeSkill(md));
   parsed[key] = { name: skill.ref.name, description: skill.ref.description };
 }
 deepStrictEqual(parsed.crlf, { name: "crlf-skill", description: "Handles CRLF endings." });
@@ -438,7 +467,7 @@ deepStrictEqual(parsed.extra, { name: "extra-keys-skill", description: "Extra ke
 // Description boundary: EXACTLY 2048 chars is accepted (> 2048 is the reject
 // condition, covered by the reject case).
 const desc2048 = "d".repeat(2048);
-const boundarySkill = await Tools.fromSkillDir(
+const boundarySkill = await Skill.fromDir(
   writeSkill("---\nname: boundary-skill\ndescription: " + desc2048 + "\n---\n# x\n")
 );
 strictEqual(boundarySkill.ref.description.length, 2048, "2048-char description accepted");
@@ -447,20 +476,28 @@ strictEqual(boundarySkill.ref.description.length, 2048, "2048-char description a
 const c = makeClient();
 await c.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [overrideSkill, boundarySkill],
+  skills: [overrideSkill, boundarySkill],
   apiKeys: { anthropic: "sk-ant" }
 });
-const wire = skillToolEntries(onlyCreateBody(c.calls));
+const wire = skillEntries(onlyCreateBody(c.calls));
 strictEqual(wire.length, 2);
 strictEqual(wire[0].name, "override-name");
 strictEqual(wire[1].name, "boundary-skill");
-strictEqual(wire[1].description.length, 2048);
+deepStrictEqual(wire, [
+  { kind: "skill", name: "override-name" },
+  { kind: "skill", name: "boundary-skill" }
+]);
+deepStrictEqual(onlyCreateBody(c.calls).submission.tools, []);
+strictEqual(upsertSkillCalls(c.calls).length, 2);
+const boundaryUpsert = upsertSkillCalls(c.calls).find((call) => call.url.endsWith("/boundary-skill"));
+ok(boundaryUpsert, "boundary skill upsert captured");
+strictEqual(boundaryUpsert.body.description.length, 2048);
 
 console.log(JSON.stringify({
   ok: true,
   parsed,
   overrideName: wire[0].name,
-  boundaryLen: wire[1].description.length
+  boundaryLen: boundaryUpsert.body.description.length
 }));
 `;
     const result = await runChild(script, "skill-tool-from-dir-frontmatter.mjs");
@@ -480,7 +517,7 @@ console.log(JSON.stringify({
 
   it("rejects missing frontmatter fields, oversized descriptions, and invalid names", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Tools } = await import("@aexhq/sdk");
+const { Skill } = await importSdk();
 
 function writeSkillMd(skillMd) {
   const dir = freshDir();
@@ -488,8 +525,8 @@ function writeSkillMd(skillMd) {
   return dir;
 }
 
-// No frontmatter block at all — the parser returns {} and the caller reports
-// the first missing field.
+// No frontmatter block at all — fromDir can derive a name from the temp dir
+// basename, so the caller reports the missing description.
 const noFrontDir = writeSkillMd("# Just a heading, no frontmatter.\nBody only.\n");
 // A dir with no SKILL.md at its root is not a skill bundle.
 const noSkillMdDir = freshDir();
@@ -502,11 +539,11 @@ const dunderDir = writeSkillMd("---\nname: bad__name\ndescription: has a reserve
 const validDir = writeSkillMd("---\nname: valid-name\ndescription: A valid skill.\n---\n# x\n");
 
 const cases = [
-  ["no frontmatter -> missing name", () => Tools.fromSkillDir(noFrontDir), /name is required/],
-  ["no frontmatter + override -> missing description", () => Tools.fromSkillDir(noFrontDir, { name: "override-name" }), /description is required/],
-  ["missing SKILL.md", () => Tools.fromSkillDir(noSkillMdDir), /must contain a SKILL\.md/],
-  ["oversized description", () => Tools.fromSkillDir(oversizedDir), /description must be <= 2048 chars/],
-  ["reserved __ in frontmatter name", () => Tools.fromSkillDir(dunderDir), /must not contain "__"/]
+  ["no frontmatter -> missing description", () => Skill.fromDir(noFrontDir), /description is required/],
+  ["no frontmatter + override -> missing description", () => Skill.fromDir(noFrontDir, { name: "override-name" }), /description is required/],
+  ["missing SKILL.md", () => Skill.fromDir(noSkillMdDir), /must contain a SKILL\.md/],
+  ["oversized description", () => Skill.fromDir(oversizedDir), /description must be <= 2048 chars/],
+  ["reserved __ in frontmatter name", () => Skill.fromDir(dunderDir), /must not contain "__"/]
 ];
 
 const messages = [];
@@ -520,13 +557,13 @@ const invalidNames = ["", "UPPER", "two words", "-starts-bad", "bad__name", "a".
 for (const name of invalidNames) {
   await expectReject(
     "name fuzz " + JSON.stringify(name),
-    () => Tools.fromSkillDir(validDir, { name }),
-    /name must match|name is required|must not contain "__"/
+    () => Skill.fromDir(validDir, { name }),
+    /must match|name is required|must not contain "__"/
   );
 }
 
 // A valid kebab name overriding the frontmatter is accepted.
-const okSkill = await Tools.fromSkillDir(validDir, { name: "valid-kebab-1" });
+const okSkill = await Skill.fromDir(validDir, { name: "valid-kebab-1" });
 strictEqual(okSkill.ref.name, "valid-kebab-1");
 strictEqual(okSkill.isDraft, true);
 

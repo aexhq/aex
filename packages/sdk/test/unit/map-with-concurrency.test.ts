@@ -48,7 +48,7 @@ describe("mapWithConcurrency", () => {
     expect(maxInFlight).toBe(limit); // 12 items / cap 3 → the cap is actually reached
   });
 
-  it("propagates a rejection from any worker", async () => {
+  it("propagates a rejection from any lane", async () => {
     await expect(
       mapWithConcurrency([1, 2, 3], 2, async (item) => {
         if (item === 2) throw new Error("boom on 2");
@@ -57,7 +57,7 @@ describe("mapWithConcurrency", () => {
     ).rejects.toThrow(/boom on 2/);
   });
 
-  it("returns an empty array for empty input (no workers spawned)", async () => {
+  it("returns an empty array for empty input (no lanes spawned)", async () => {
     let calls = 0;
     const out = await mapWithConcurrency([], 5, async (item) => {
       calls++;
@@ -67,7 +67,7 @@ describe("mapWithConcurrency", () => {
     expect(calls).toBe(0);
   });
 
-  it("caps workers at the item count when limit exceeds it", async () => {
+  it("caps lanes at the item count when limit exceeds it", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     const out = await mapWithConcurrency([1, 2], 10, async (item) => {

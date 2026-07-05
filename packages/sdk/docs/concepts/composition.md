@@ -10,7 +10,7 @@ runtime before the first agent turn.
 
 | Need | Primitive |
 | --- | --- |
-| Executable or instructional skill bundles (load-tools) | `Tools.fromSkillDir`, `Tools.fromSkillUrl` |
+| Instructional skill bundles | `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles` |
 | Agent instructions | `AgentsMd.fromPath`, `AgentsMd.fromContent` |
 | Reference files and folders | `File.fromPath`, `File.fromBytes` |
 | Remote tools | `McpServer.remote`, `McpServer.fromId` |
@@ -18,14 +18,14 @@ runtime before the first agent turn.
 | Runtime secrets for your code | `Secret.value`, `Secret.ref`, `environment.secrets` |
 
 ```ts
-import { AgentsMd, File, McpServer, Models, Secret, Tools } from "@aexhq/sdk";
+import { AgentsMd, File, McpServer, Models, Secret, Skill } from "@aexhq/sdk";
 
 await aex.run({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Use the attached docs and tools to produce a report.",
   agentsMd: [await AgentsMd.fromContent("Follow the repo conventions.", { name: "repo-rules" })],
   files: [await File.fromPath("./input")],
-  tools: [await Tools.fromSkillDir("./skills/report-writer", { name: "report-writer" })],
+  skills: [await Skill.fromDir("./skills/report-writer", { name: "report-writer" })],
   mcpServers: [McpServer.remote({ name: "github", url: "https://example.com/mcp" })],
   environment: {
     secrets: { INTERNAL_API_TOKEN: Secret.value(process.env.INTERNAL_API_TOKEN!) },

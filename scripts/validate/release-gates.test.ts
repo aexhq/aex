@@ -51,6 +51,7 @@ describe("release pipeline gates", () => {
     expect(workflow).toContain("release_run_id:");
     expect(workflow).toContain("actions: read");
     expect(workflow).toContain("name: Verify green release run published this version");
+    expect(workflow).toContain("published-artifact");
 
     // The verification is fail-closed: release.yml identity, success
     // conclusion, and the npm publish timestamp inside the run's window.

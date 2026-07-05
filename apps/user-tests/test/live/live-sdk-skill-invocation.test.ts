@@ -149,28 +149,17 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     `copy its canonical reply line exactly. Do not answer from general memory.`;
 
   return `
-    import { Aex, Tools } from "@aexhq/sdk";
-    import { mkdtempSync, writeFileSync } from "node:fs";
-    import { tmpdir } from "node:os";
-    import { join } from "node:path";
+    import { Aex, Skill } from "@aexhq/sdk";
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
       apiKey: process.env.AEX_API_KEY
     });
 
-    // Skills are ingested as TOOLS now: write the SKILL.md (frontmatter carries
-    // name + description) to a temp dir, then build a skill-tool from it.
-    function skillDir(md) {
-      const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
-      writeFileSync(join(dir, "SKILL.md"), md);
-      return dir;
-    }
-
-    const alpha = await Tools.fromSkillDir(skillDir(${JSON.stringify(alphaSkill)}), {
+    const alpha = await Skill.fromContent(${JSON.stringify(alphaSkill)}, {
       name: ${JSON.stringify(alphaName)}
     });
-    const beta = await Tools.fromSkillDir(skillDir(${JSON.stringify(betaSkill)}), {
+    const beta = await Skill.fromContent(${JSON.stringify(betaSkill)}, {
       name: ${JSON.stringify(betaName)}
     });
 
@@ -179,7 +168,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
       message: ${JSON.stringify(prompt)},
-      tools: [alpha, beta],
+      skills: [alpha, beta],
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });

@@ -283,9 +283,10 @@ interface FailureCaseResult {
 }
 
 function buildCorruptedSkillScript(): string {
-  // PKZIP end-of-central-directory record with empty payload — passes
-  // magic-byte sniffing but is unparseable. Submitted via raw fetch (no SDK
-  // client), since the typed tools option won't reference a corrupted asset.
+  // PKZIP end-of-central-directory record with no entries — valid enough to
+  // upload, but not a skill because it has no root SKILL.md. Submitted via raw
+  // fetch (no SDK Skill factory), since Skill.fromBytes() would reject before the
+  // malformed bundle can exercise the hosted materialization path.
   return `
     const corruptedZip = new Uint8Array([0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
@@ -303,33 +304,88 @@ function buildCorruptedSkillScript(): string {
     let eventKinds = [];
     let streamErrors = [];
 
-    // Stage the corrupted bytes directly via the raw /assets
-    // endpoint so we can submit a run that references a malformed
-    // bundle — Tools.fromSkillDir() would build a VALID zip we can't
-    // corrupt at the SDK layer.
-    let corruptAssetId = null;
+    // Stage the corrupted bytes through the supported asset path, then bind that
+    // content hash to a workspace skill name. Skill.fromBytes()/fromDir would
+    // build or validate a good skill bundle, so this raw setup is the only way
+    // to submit a first-class skill whose bytes are malformed.
+    let corruptSkillName = null;
     try {
       const hashBuf = await crypto.subtle.digest("SHA-256", corruptedZip);
       const hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      const res = await fetch(process.env.AEX_API_URL + "/assets", {
+      const contentHash = "sha256:" + hashHex;
+
+      const presignRes = await fetch(process.env.AEX_API_URL + "/assets/presign", {
         method: "POST",
         headers: {
-          "content-type": "application/octet-stream",
-          "content-length": String(corruptedZip.byteLength),
-          "x-asset-hash": "sha256:" + hashHex,
+          "content-type": "application/json",
           authorization: "Bearer " + process.env.AEX_API_KEY
         },
-        body: corruptedZip
+        body: JSON.stringify({ hash: contentHash, sizeBytes: corruptedZip.byteLength })
       });
-      if (res.status === 200 || res.status === 201) {
-        const body = await res.json();
-        corruptAssetId = body.assetId;
+      const presignText = await presignRes.text();
+      submitStatus = presignRes.status;
+      submitBody = presignText.slice(0, 800);
+      if (!presignRes.ok) {
+        errorClass = "asset-presign-rejected";
+        errorMessage = "asset presign rejected at status " + presignRes.status + ": " + submitBody.slice(0, 200);
       } else {
-        // Upload rejected — that's also a structured failure path. Record it.
-        submitStatus = res.status;
-        submitBody = (await res.text()).slice(0, 400);
-        errorClass = "asset-upload-rejected";
-        errorMessage = "upload rejected at status " + res.status;
+        const presign = JSON.parse(presignText);
+        if (presign.uploadUrl) {
+          const putRes = await fetch(presign.uploadUrl, {
+            method: "PUT",
+            headers: {
+              "content-type": "application/zip",
+              ...(presign.requiredHeaders && typeof presign.requiredHeaders === "object" ? presign.requiredHeaders : {})
+            },
+            body: corruptedZip
+          });
+          if (!putRes.ok) {
+            const putText = await putRes.text().catch(() => "");
+            errorClass = "asset-upload-rejected";
+            errorMessage = "direct asset upload rejected at status " + putRes.status + ": " + putText.slice(0, 200);
+          }
+        }
+        if (!errorClass) {
+          const finalizeRes = await fetch(process.env.AEX_API_URL + "/assets/finalize", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: "Bearer " + process.env.AEX_API_KEY
+            },
+            body: JSON.stringify({ hash: contentHash, sizeBytes: corruptedZip.byteLength })
+          });
+          const finalizeText = await finalizeRes.text();
+          submitStatus = finalizeRes.status;
+          submitBody = finalizeText.slice(0, 800);
+          if (!finalizeRes.ok) {
+            errorClass = "asset-finalize-rejected";
+            errorMessage = "asset finalize rejected at status " + finalizeRes.status + ": " + submitBody.slice(0, 200);
+          }
+        }
+        if (!errorClass) {
+          const skillName = "corrupt-skill";
+          const upsertRes = await fetch(process.env.AEX_API_URL + "/api/skills/" + skillName, {
+            method: "PUT",
+            headers: {
+              "content-type": "application/json",
+              authorization: "Bearer " + process.env.AEX_API_KEY
+            },
+            body: JSON.stringify({
+              contentHash,
+              description: "Corrupted skill bundle probe.",
+              sizeBytes: corruptedZip.byteLength
+            })
+          });
+          const upsertText = await upsertRes.text();
+          submitStatus = upsertRes.status;
+          submitBody = upsertText.slice(0, 800);
+          if (upsertRes.ok) {
+            corruptSkillName = skillName;
+          } else {
+            errorClass = "skill-upsert-rejected";
+            errorMessage = "skill upsert rejected at status " + upsertRes.status + ": " + submitBody.slice(0, 200);
+          }
+        }
       }
     } catch (e) {
       errorClass = e && e.constructor ? e.constructor.name : "Error";
@@ -337,15 +393,11 @@ function buildCorruptedSkillScript(): string {
       errorMessage = e && e.message ? e.message : String(e);
     }
 
-    if (corruptAssetId) {
+    if (corruptSkillName) {
       try {
-        // Skills ride submission.tools now as
-        // { kind:"skill", assetId, name, description }. The SDK's typed tools
-        // option only accepts Tool/SkillTool instances (which build VALID
-        // bundles), so reference the corrupted asset through a raw /api/runs
-        // POST — the same hand-crafted wire path the stdio-mcp probe uses. An
-        // unparseable bundle is rejected when the BFF materializes the run
-        // manifest, giving a 4xx-at-submit structured failure.
+        // First-class skills ride submission.skills by name. The BFF resolves the
+        // registry entry to boot-record-only asset metadata, then materialization
+        // rejects the malformed bundle at submit or run time.
         const res = await fetch(process.env.AEX_API_URL + "/api/runs", {
           method: "POST",
           headers: {
@@ -359,7 +411,8 @@ function buildCorruptedSkillScript(): string {
             submission: {
               model: ${JSON.stringify(deepseekModel)},
               prompt: ["Hello."],
-              tools: [{ kind: "skill", assetId: corruptAssetId, name: "corrupt-skill", description: "Corrupted skill bundle probe." }],
+              tools: [],
+              skills: [{ kind: "skill", name: corruptSkillName }],
               agentsMd: [],
               files: [],
               mcpServers: []

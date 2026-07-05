@@ -1,11 +1,11 @@
 /**
- * Blackbox coverage for `Tools.fromSkillUrl` (URL/zip skill ingestion) through
+ * Blackbox coverage for `Skill.fromUrl` (URL/zip skill ingestion) through
  * a clean installed `@aexhq/sdk`.
  *
- * `fromSkillUrl` fetches a zip archive (caller-controlled fetch), optionally
+ * `fromUrl` fetches a zip archive (caller-controlled fetch), optionally
  * integrity-checks it against `sha256`, unzips, strips a single top-level
  * folder, requires a root `SKILL.md`, and reduces to the SAME canonical files
- * map as `Tools.fromSkillDir` — so a URL-sourced skill and the identical local
+ * map as `Skill.fromDir` — so a URL-sourced skill and the identical local
  * dir produce the SAME asset and dedup against each other.
  *
  * These cases run in child processes whose cwd is the user-test install
@@ -26,6 +26,12 @@ import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+async function importSdk() {
+  const sdk = await import("@aexhq/sdk");
+  ok(!("Tools" in sdk), "legacy Tools namespace must not be exported");
+  return sdk;
+}
 
 function headersToObject(headers) {
   const out = {};
@@ -133,6 +139,21 @@ function makeFetch(archives = {}) {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
+    if (url.includes("/api/skills/") && method === "PUT") {
+      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+      return new Response(JSON.stringify({
+        skill: {
+          kind: "skill",
+          name,
+          contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          description: body && typeof body.description === "string" ? body.description : "",
+          sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
+          version: 1
+        },
+        updated: true
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;
       return new Response(JSON.stringify({
@@ -182,10 +203,12 @@ function archiveFetches(calls, host) {
   return calls.filter((call) => call.url.includes(host) && call.method === "GET");
 }
 
-function skillToolEntries(body) {
-  return body.submission.tools.filter(
-    (entry) => entry && typeof entry === "object" && entry.kind === "skill"
-  );
+function upsertSkillCalls(calls) {
+  return calls.filter((call) => call.method === "PUT" && call.url.includes("/api/skills/"));
+}
+
+function skillEntries(body) {
+  return body.submission.skills ?? [];
 }
 
 function assetIdFromHash(hash) {
@@ -209,7 +232,7 @@ const SKILL_MD = "---\nname: alpha-skill\ndescription: Alpha.\n---\n# Alpha\nUse
 const REF_MD = "# Alpha reference\nExtra file that rides in the same bundle.\n";
 `;
 
-describe("Tools.fromSkillUrl (installed package)", () => {
+describe("Skill.fromUrl (installed package)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -241,7 +264,7 @@ describe("Tools.fromSkillUrl (installed package)", () => {
 
   it("ingests a URL skill end-to-end: download, unzip, name override, folder strip, dir<->url dedup", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools, bundleSkillFiles, hashSkillBundle } = await import("@aexhq/sdk");
+const { Aex, Skill, bundleSkillFiles, hashSkillBundle } = await importSdk();
 const { zipSync } = await import("fflate");
 const enc = new TextEncoder();
 
@@ -262,45 +285,52 @@ const happyHash = await hashSkillBundle(happyZip);
 const happyUrl = "https://skills.example.test/alpha.zip";
 const happy = makeClient({ [happyUrl]: { status: 200, bytes: happyZip } });
 
-const skill = await Tools.fromSkillUrl(happyUrl, { fetch: happy.fetch });
+const skill = await Skill.fromUrl(happyUrl, { fetch: happy.fetch });
 strictEqual(skill.isDraft, true);
 strictEqual(skill.ref.kind, "draft");
 strictEqual(skill.ref.name, "alpha-skill");
 strictEqual(skill.ref.description, "Alpha.");
 strictEqual(skill.ref.contentHash, happyHash);
 // A draft skill-tool only becomes a wire ref once uploaded.
-await expectReject("draft toJSON", async () => skill.toJSON(), /draft skill-tools cannot be JSON-serialised/);
+await expectReject("draft toJSON", async () => skill.toJSON(), /draft skill cannot be JSON-serialised/);
 
 await happy.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [skill],
+  skills: [skill],
   apiKeys: { anthropic: "sk-ant" }
 });
 const happyBody = onlyCreateBody(happy.calls);
-strictEqual(happyBody.submission.tools.length, 1, "only the skill-tool rides submission.tools");
-deepStrictEqual(skillToolEntries(happyBody), [
-  { kind: "skill", assetId: assetIdFromHash(happyHash), name: "alpha-skill", description: "Alpha." }
+deepStrictEqual(happyBody.submission.tools, []);
+deepStrictEqual(skillEntries(happyBody), [
+  { kind: "skill", name: "alpha-skill" }
 ]);
 strictEqual(archiveFetches(happy.calls, "skills.example.test").length, 1);
 strictEqual(presignCalls(happy.calls).length, 1);
 strictEqual(storagePuts(happy.calls).length, 1);
 strictEqual(finalizeCalls(happy.calls).length, 1);
+strictEqual(upsertSkillCalls(happy.calls).length, 1);
+deepStrictEqual(upsertSkillCalls(happy.calls)[0].body, {
+  contentHash: happyHash,
+  description: "Alpha.",
+  sizeBytes: storagePuts(happy.calls)[0].body.byteLength
+});
 
 // ---- { name } override: metadata-only, bytes (and asset) unchanged ----
 const ovUrl = "https://skills.example.test/override.zip";
 const ov = makeClient({ [ovUrl]: { status: 200, bytes: happyZip } });
-const ovSkill = await Tools.fromSkillUrl(ovUrl, { fetch: ov.fetch, name: "renamed-skill" });
+const ovSkill = await Skill.fromUrl(ovUrl, { fetch: ov.fetch, name: "renamed-skill" });
 strictEqual(ovSkill.ref.name, "renamed-skill");
 strictEqual(ovSkill.ref.description, "Alpha.");
 strictEqual(ovSkill.ref.contentHash, happyHash, "name override does not change bundle bytes");
 await ov.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [ovSkill],
+  skills: [ovSkill],
   apiKeys: { anthropic: "sk-ant" }
 });
-deepStrictEqual(skillToolEntries(onlyCreateBody(ov.calls)), [
-  { kind: "skill", assetId: assetIdFromHash(happyHash), name: "renamed-skill", description: "Alpha." }
+deepStrictEqual(skillEntries(onlyCreateBody(ov.calls)), [
+  { kind: "skill", name: "renamed-skill" }
 ]);
+strictEqual(upsertSkillCalls(ov.calls)[0].body.contentHash, happyHash);
 
 // ---- Top-level folder strip is transparent to the canonical asset ----
 const rootFiles = { "SKILL.md": SKILL_MD, "reference.md": REF_MD };
@@ -317,8 +347,8 @@ const strip = makeClient({
   [rootUrl]: { status: 200, bytes: rootZip },
   [folderUrl]: { status: 200, bytes: folderZip }
 });
-const rootSkill = await Tools.fromSkillUrl(rootUrl, { fetch: strip.fetch });
-const folderSkill = await Tools.fromSkillUrl(folderUrl, { fetch: strip.fetch });
+const rootSkill = await Skill.fromUrl(rootUrl, { fetch: strip.fetch });
+const folderSkill = await Skill.fromUrl(folderUrl, { fetch: strip.fetch });
 strictEqual(rootSkill.ref.contentHash, rootHash);
 strictEqual(folderSkill.ref.contentHash, rootHash, "stripped folder yields the same canonical asset");
 strictEqual(folderSkill.ref.contentHash, rootSkill.ref.contentHash);
@@ -332,20 +362,21 @@ const dir = mkdtempSync(join(tmpdir(), "aex-skill-dir-"));
 writeFileSync(join(dir, "SKILL.md"), SKILL_MD);
 writeFileSync(join(dir, "reference.md"), REF_MD);
 const dedup = makeClient({ [dedupUrl]: { status: 200, bytes: dedupZip } });
-const dirSkill = await Tools.fromSkillDir(dir);
-const urlSkill = await Tools.fromSkillUrl(dedupUrl, { fetch: dedup.fetch });
+const dirSkill = await Skill.fromDir(dir, { name: "dir-alpha-skill" });
+const urlSkill = await Skill.fromUrl(dedupUrl, { fetch: dedup.fetch, name: "url-alpha-skill" });
 strictEqual(dirSkill.ref.contentHash, dedupHash, "local dir hashes to the canonical bundle");
 strictEqual(urlSkill.ref.contentHash, dedupHash, "url skill hashes to the same canonical bundle");
 await dedup.client.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [dirSkill, urlSkill],
+  skills: [dirSkill, urlSkill],
   apiKeys: { anthropic: "sk-ant" }
 });
-const dedupEntries = skillToolEntries(onlyCreateBody(dedup.calls));
-strictEqual(dedupEntries.length, 2);
-strictEqual(dedupEntries[0].assetId, assetIdFromHash(dedupHash));
-strictEqual(dedupEntries[1].assetId, assetIdFromHash(dedupHash));
-strictEqual(dedupEntries[0].assetId, dedupEntries[1].assetId, "dir + url resolve to one shared asset");
+const dedupEntries = skillEntries(onlyCreateBody(dedup.calls));
+deepStrictEqual(dedupEntries, [
+  { kind: "skill", name: "dir-alpha-skill" },
+  { kind: "skill", name: "url-alpha-skill" }
+]);
+deepStrictEqual(upsertSkillCalls(dedup.calls).map((call) => call.body.contentHash), [dedupHash, dedupHash]);
 // A single real upload despite two distinct instances: the 2nd presign is a
 // content-address dedup hit, so exactly one PUT + one finalize.
 strictEqual(storagePuts(dedup.calls).length, 1);
@@ -363,7 +394,7 @@ console.log(JSON.stringify({
   overrideName: ovSkill.ref.name,
   folderStripMatches: folderSkill.ref.contentHash === rootHash,
   rootVsFolderSameHash: folderSkill.ref.contentHash === rootSkill.ref.contentHash,
-  dedupSameAsset: dedupEntries[0].assetId === dedupEntries[1].assetId,
+  dedupSameHash: upsertSkillCalls(dedup.calls).every((call) => call.body.contentHash === dedupHash),
   dedupPuts: storagePuts(dedup.calls).length,
   dedupFinalizes: finalizeCalls(dedup.calls).length,
   dedupPresigns
@@ -381,18 +412,18 @@ console.log(JSON.stringify({
       overrideName: "renamed-skill",
       folderStripMatches: true,
       rootVsFolderSameHash: true,
-      dedupSameAsset: true,
+      dedupSameHash: true,
       dedupPuts: 1,
       dedupFinalizes: 1,
-      // Dedup is per-instance (_cachedAssetId), so two distinct instances each
-      // presign; the second is a server-side dedup hit (no PUT).
+      // Dedup is per-instance; two distinct Skill instances each presign, and
+      // the second is a server-side content-address hit (no PUT).
       dedupPresigns: 2
     });
   });
 
   it("enforces sha256 integrity on the fetched archive (prefixed + bare hex, mismatch, tamper)", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Aex, Tools, bundleSkillFiles, hashSkillBundle } = await import("@aexhq/sdk");
+const { Aex, Skill, bundleSkillFiles, hashSkillBundle } = await importSdk();
 
 const files = { "SKILL.md": SKILL_MD };
 const zip = bundleSkillFiles(files).zip;
@@ -407,20 +438,21 @@ const prefixedClient = new Aex({
   baseUrl: "https://example.invalid",
   fetch: prefixed.fetch
 });
-const prefixedSkill = await Tools.fromSkillUrl(url, { fetch: prefixed.fetch, sha256: contentHash });
+const prefixedSkill = await Skill.fromUrl(url, { fetch: prefixed.fetch, sha256: contentHash });
 strictEqual(prefixedSkill.ref.contentHash, contentHash);
 await prefixedClient.sessions.create({
   model: "claude-haiku-4-5",
-  tools: [prefixedSkill],
+  skills: [prefixedSkill],
   apiKeys: { anthropic: "sk-ant" }
 });
-deepStrictEqual(skillToolEntries(onlyCreateBody(prefixed.calls)), [
-  { kind: "skill", assetId: assetIdFromHash(contentHash), name: "alpha-skill", description: "Alpha." }
+deepStrictEqual(skillEntries(onlyCreateBody(prefixed.calls)), [
+  { kind: "skill", name: "alpha-skill" }
 ]);
+strictEqual(upsertSkillCalls(prefixed.calls)[0].body.contentHash, contentHash);
 
 // Correct hash, bare-hex form -> also accepted (prefix is optional on input).
 const bare = makeFetch({ [url]: { status: 200, bytes: zip } });
-const bareSkill = await Tools.fromSkillUrl(url, { fetch: bare.fetch, sha256: hex });
+const bareSkill = await Skill.fromUrl(url, { fetch: bare.fetch, sha256: hex });
 strictEqual(bareSkill.ref.contentHash, contentHash);
 
 // Wrong-but-well-formed hash -> integrity error, no upload attempted.
@@ -428,7 +460,7 @@ const wrongHex = hex === "0".repeat(64) ? "1".repeat(64) : "0".repeat(64);
 const wrong = makeFetch({ [url]: { status: 200, bytes: zip } });
 const wrongMsg = await expectReject(
   "wrong sha256",
-  () => Tools.fromSkillUrl(url, { fetch: wrong.fetch, sha256: "sha256:" + wrongHex }),
+  () => Skill.fromUrl(url, { fetch: wrong.fetch, sha256: "sha256:" + wrongHex }),
   /archive integrity check failed/
 );
 strictEqual(presignCalls(wrong.calls).length, 0);
@@ -437,7 +469,7 @@ strictEqual(presignCalls(wrong.calls).length, 0);
 const malformed = makeFetch({ [url]: { status: 200, bytes: zip } });
 await expectReject(
   "malformed sha256",
-  () => Tools.fromSkillUrl(url, { fetch: malformed.fetch, sha256: "not-a-valid-hash" }),
+  () => Skill.fromUrl(url, { fetch: malformed.fetch, sha256: "not-a-valid-hash" }),
   /sha256 must be 64 hex chars/
 );
 
@@ -448,14 +480,14 @@ const otherZip = bundleSkillFiles({
 const tampered = makeFetch({ [url]: { status: 200, bytes: otherZip } });
 await expectReject(
   "tampered bytes",
-  () => Tools.fromSkillUrl(url, { fetch: tampered.fetch, sha256: contentHash }),
+  () => Skill.fromUrl(url, { fetch: tampered.fetch, sha256: contentHash }),
   /archive integrity check failed/
 );
 strictEqual(presignCalls(tampered.calls).length, 0);
 
 console.log(JSON.stringify({
   ok: true,
-  prefixedAssetId: skillToolEntries(onlyCreateBody(prefixed.calls))[0].assetId,
+  prefixedSkillName: skillEntries(onlyCreateBody(prefixed.calls))[0].name,
   bareHexAccepted: bareSkill.ref.contentHash === contentHash,
   wrongRejected: /integrity check failed/.test(wrongMsg),
   integrityRejectPresigns: presignCalls(wrong.calls).length + presignCalls(tampered.calls).length
@@ -464,7 +496,7 @@ console.log(JSON.stringify({
     const result = await runChild(script, "skill-tool-from-url-integrity.mjs", 180_000);
     expect(result).toMatchObject({
       ok: true,
-      prefixedAssetId: expect.stringMatching(/^asset_[0-9a-f]{64}$/),
+      prefixedSkillName: "alpha-skill",
       bareHexAccepted: true,
       wrongRejected: true,
       integrityRejectPresigns: 0
@@ -473,7 +505,7 @@ console.log(JSON.stringify({
 
   it("rejects unfetchable, malformed, skill-less, empty, and slow archives with no session call", async () => {
     const script = CHILD_HARNESS + String.raw`
-const { Tools, bundleSkillFiles } = await import("@aexhq/sdk");
+const { Skill, bundleSkillFiles } = await importSdk();
 const { zipSync } = await import("fflate");
 const enc = new TextEncoder();
 
@@ -481,7 +513,7 @@ const enc = new TextEncoder();
 const notFound = makeFetch({ "https://skills.example.test/missing.zip": { status: 404 } });
 await expectReject(
   "http 404",
-  () => Tools.fromSkillUrl("https://skills.example.test/missing.zip", { fetch: notFound.fetch }),
+  () => Skill.fromUrl("https://skills.example.test/missing.zip", { fetch: notFound.fetch }),
   /returned HTTP 404/
 );
 strictEqual(presignCalls(notFound.calls).length, 0);
@@ -490,7 +522,7 @@ strictEqual(presignCalls(notFound.calls).length, 0);
 const serverErr = makeFetch({ "https://skills.example.test/boom.zip": { status: 500 } });
 await expectReject(
   "http 500",
-  () => Tools.fromSkillUrl("https://skills.example.test/boom.zip", { fetch: serverErr.fetch }),
+  () => Skill.fromUrl("https://skills.example.test/boom.zip", { fetch: serverErr.fetch }),
   /returned HTTP 500/
 );
 
@@ -500,7 +532,7 @@ const notZip = makeFetch({
 });
 await expectReject(
   "not a zip",
-  () => Tools.fromSkillUrl("https://skills.example.test/plain.txt", { fetch: notZip.fetch }),
+  () => Skill.fromUrl("https://skills.example.test/plain.txt", { fetch: notZip.fetch }),
   /could not unzip/
 );
 
@@ -512,7 +544,7 @@ const noSkillZip = zipSync({
 const noSkill = makeFetch({ "https://skills.example.test/noskill.zip": { status: 200, bytes: noSkillZip } });
 await expectReject(
   "no SKILL.md",
-  () => Tools.fromSkillUrl("https://skills.example.test/noskill.zip", { fetch: noSkill.fetch }),
+  () => Skill.fromUrl("https://skills.example.test/noskill.zip", { fetch: noSkill.fetch }),
   /must contain SKILL\.md at its root/
 );
 
@@ -520,7 +552,7 @@ await expectReject(
 const empty = makeFetch({ "https://skills.example.test/empty.zip": { status: 200, bytes: new Uint8Array() } });
 await expectReject(
   "empty body",
-  () => Tools.fromSkillUrl("https://skills.example.test/empty.zip", { fetch: empty.fetch }),
+  () => Skill.fromUrl("https://skills.example.test/empty.zip", { fetch: empty.fetch }),
   /is empty/
 );
 
@@ -540,14 +572,14 @@ const hangingFetch = async (input, init = {}) =>
   });
 const timedOutMsg = await expectReject(
   "timeout",
-  () => Tools.fromSkillUrl("https://skills.example.test/slow.zip", { fetch: hangingFetch, timeoutMs: 50 }),
+  () => Skill.fromUrl("https://skills.example.test/slow.zip", { fetch: hangingFetch, timeoutMs: 50 }),
   /fetch failed for/
 );
 
 // A bad hash never reaches the URL: url is validated first.
 await expectReject(
   "missing url",
-  () => Tools.fromSkillUrl("", { fetch: notFound.fetch }),
+  () => Skill.fromUrl("", { fetch: notFound.fetch }),
   /url is required/
 );
 

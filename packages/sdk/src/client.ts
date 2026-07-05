@@ -2257,12 +2257,12 @@ export async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
-  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+  const lanes = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
     for (let i = next++; i < items.length; i = next++) {
       out[i] = await fn(items[i]!, i);
     }
   });
-  await Promise.all(workers);
+  await Promise.all(lanes);
   return out;
 }
 

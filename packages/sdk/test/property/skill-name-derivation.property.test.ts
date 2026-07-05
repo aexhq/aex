@@ -46,7 +46,7 @@ describe("Skill name derivation — never a silent bad name", () => {
     await fc.assert(
       fc.asyncProperty(messyName, async (name) => {
         const res = await tryDerive(() => Skill.fromContent(skillMd(undefined), { name }));
-        if (res.ok) expect(isGoodName(res.name)).toBe(true);
+        expect(res.ok ? isGoodName(res.name) : true).toBe(true);
       }),
       { numRuns: 300 }
     );
@@ -56,7 +56,7 @@ describe("Skill name derivation — never a silent bad name", () => {
     await fc.assert(
       fc.asyncProperty(messyName, async (name) => {
         const res = await tryDerive(() => Skill.fromFiles({ files: { "SKILL.md": skillMd(name) } }));
-        if (res.ok) expect(isGoodName(res.name)).toBe(true);
+        expect(res.ok ? isGoodName(res.name) : true).toBe(true);
       }),
       { numRuns: 300 }
     );
@@ -66,11 +66,9 @@ describe("Skill name derivation — never a silent bad name", () => {
     await fc.assert(
       fc.asyncProperty(messyName, messyName, async (explicit, fm) => {
         const res = await tryDerive(() => Skill.fromFiles({ name: explicit, files: { "SKILL.md": skillMd(fm) } }));
-        if (res.ok) {
-          expect(isGoodName(res.name)).toBe(true);
-          // When it succeeds, the explicit name won (it is a valid good name).
-          expect(res.name).toBe(explicit);
-        }
+        expect(res.ok ? isGoodName(res.name) : true).toBe(true);
+        // When it succeeds, the explicit name won (it is a valid good name).
+        expect(res.ok ? res.name : explicit).toBe(explicit);
       }),
       { numRuns: 200 }
     );
@@ -92,7 +90,7 @@ describe("Skill name derivation — never a silent bad name", () => {
         }
         try {
           const res = await tryDerive(() => Skill.fromDir(dir));
-          if (res.ok) expect(isGoodName(res.name)).toBe(true);
+          expect(res.ok ? isGoodName(res.name) : true).toBe(true);
         } finally {
           rmSync(root, { recursive: true, force: true });
         }
