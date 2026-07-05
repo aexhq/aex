@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { zipSync } from "fflate";
-import { AgentsMd, Aex, BuiltinTools, File as AexFile, McpServer, Models, Tools, Tool } from "../../src/index.js";
+import { AgentsMd, Aex, BuiltinTools, File as AexFile, McpServer, Models, Skill, Tool } from "../../src/index.js";
 
-/** Build a zip-archived skill (SKILL.md + YAML frontmatter) fetchable by Tools.fromSkillUrl. */
+/** Build a zip-archived skill (SKILL.md + YAML frontmatter) fetchable by Skill.fromUrl. */
 function skillZip(name: string, description: string): Uint8Array {
   const md = `---\nname: ${name}\ndescription: ${description}\n---\n# ${name}\n`;
   return zipSync({ "SKILL.md": new TextEncoder().encode(md) }, { level: 0 });
@@ -91,6 +91,24 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
           sizeBytes: Number(lc["content-length"] ?? "0")
         }),
         { status: 201, headers: { "content-type": "application/json" } }
+      );
+    }
+    if (url.includes("/api/skills/") && method === "PUT") {
+      const reqBody = (body ?? {}) as { contentHash?: string; description?: string; sizeBytes?: number };
+      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+      return new Response(
+        JSON.stringify({
+          skill: {
+            kind: "skill",
+            name,
+            contentHash: reqBody.contentHash,
+            description: reqBody.description,
+            sizeBytes: reqBody.sizeBytes ?? 0,
+            version: 1
+          },
+          updated: true
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
       );
     }
     // Session create (POST /api/sessions) and any other read.
@@ -417,7 +435,7 @@ describe("Aex.openSession — session-create wire shape", () => {
     ).rejects.toThrow(/conflicts/);
   });
 
-  it("rejects non-Tool/SkillTool entries in tools with index in the message", async () => {
+  it("rejects non-Tool entries in tools with index in the message", async () => {
     const { fetch } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
@@ -426,20 +444,30 @@ describe("Aex.openSession — session-create wire shape", () => {
         tools: [{ kind: "workspace", id: "x" } as unknown as Tool],
         apiKeys: { anthropic: "k" }
       })
-    ).rejects.toThrow(/tools\[0\] must be a Tool, a SkillTool, or a builtin tool name/);
+    ).rejects.toThrow(/tools\[0\] must be a Tool or a builtin tool name/);
   });
 
-  it("rejects a legacy `skills` option with a migration hint", async () => {
-    const { fetch } = makeStubFetch();
+  it("accepts Skill entries through the top-level skills option", async () => {
+    const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
-    await expect(
-      client.openSession({
-        model: "claude-haiku-4-5",
-        // `skills` was removed — skill bundles are now tools.
-        skills: [],
-        apiKeys: { anthropic: "k" }
-      } as never)
-    ).rejects.toThrow(/skills are now tools; build one with Tools\.fromSkillDir\/fromSkillUrl/);
+    const zip = skillZip("rules", "Keep responses short.");
+    const skill = await Skill.fromUrl("https://skills.example/rules.zip", {
+      fetch: async () => new Response(zip)
+    });
+
+    await client.openSession({
+      model: "claude-haiku-4-5",
+      skills: [skill],
+      apiKeys: { anthropic: "k" }
+    });
+
+    const upsert = calls.find((call) => call.url === "https://x/api/skills/rules");
+    expect(upsert?.method).toBe("PUT");
+    const create = calls.find((call) => call.url === "https://x/api/sessions")!.body as {
+      submission: Record<string, unknown>;
+    };
+    expect(create.submission.skills).toEqual([{ kind: "skill", name: "rules" }]);
+    expect(create.submission.tools).toEqual([]);
   });
 
   it("auto-uploads an inline AgentsMd to the asset store and submits a plain asset ref", async () => {
@@ -469,11 +497,11 @@ describe("Aex.openSession — session-create wire shape", () => {
     expect(body.submission.agentsMd[0]!.assetId).toMatch(/^asset_[0-9a-f]{64}$/);
   });
 
-  it("auto-uploads a draft SkillTool, AgentsMd, and File refs as assets before creating", async () => {
+  it("auto-uploads and upserts a draft Skill, AgentsMd, and File refs before creating", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const zip = skillZip("rules", "Keep responses short.");
-    const skillTool = await Tools.fromSkillUrl("https://skills.example/rules.zip", {
+    const skillTool = await Skill.fromUrl("https://skills.example/rules.zip", {
       fetch: async () => new Response(zip)
     });
     const agentsMd = await AgentsMd.fromContent("# Session rules\nBe precise.\n", { name: "session-rules" });
@@ -488,7 +516,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
     await client.openSession({
       model: "claude-haiku-4-5",
-      tools: [skillTool],
+      skills: [skillTool],
       agentsMd: [agentsMd],
       files: [file],
       apiKeys: { anthropic: "k" },
@@ -500,10 +528,12 @@ describe("Aex.openSession — session-create wire shape", () => {
     const presignCalls = calls.filter((c) => c.url.endsWith("/assets/presign"));
     const storagePutCalls = calls.filter((c) => c.url.includes("object-storage.example.test") && c.method === "PUT");
     const finalizeCalls = calls.filter((c) => c.url.endsWith("/assets/finalize"));
+    const skillUpsertCalls = calls.filter((c) => c.url === "https://x/api/skills/rules");
     const createCalls = calls.filter((c) => c.url.endsWith("/api/sessions"));
     expect(presignCalls).toHaveLength(3);
     expect(storagePutCalls).toHaveLength(3);
     expect(finalizeCalls).toHaveLength(3);
+    expect(skillUpsertCalls).toHaveLength(1);
     expect(createCalls).toHaveLength(1);
 
     const createBody = createCalls[0]!.body as {
@@ -523,61 +553,55 @@ describe("Aex.openSession — session-create wire shape", () => {
         ...extra
       };
     };
-    // The skill rides `tools` as a value-free skill ref (kind:"skill" + description).
-    expect(submission.tools).toEqual([
-      {
-        kind: "skill",
-        assetId: `asset_${skillHash.slice("sha256:".length)}`,
-        name: "rules",
-        description: "Keep responses short."
-      }
-    ]);
+    expect(skillUpsertCalls[0]!.body).toEqual({
+      contentHash: skillHash,
+      description: "Keep responses short.",
+      sizeBytes: expect.any(Number)
+    });
+    expect(submission.tools).toEqual([]);
+    expect(submission.skills).toEqual([{ kind: "skill", name: "rules" }]);
     expect(submission.agentsMd).toEqual([assetRef("session-rules", agentsMdHash)]);
     expect(submission.files).toEqual([
       assetRef("dataset", fileHash, { mountPath: "/workspace/input/dataset.csv" })
     ]);
   });
 
-  it("uploads a draft skill-tool once and reuses the cached asset id across sessions", async () => {
+  it("uploads draft skill bytes once and reuses the cached asset id across sessions", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     const zip = skillZip("rules", "Keep responses short.");
-    const skillTool = await Tools.fromSkillUrl("https://skills.example/rules.zip", {
+    const skillTool = await Skill.fromUrl("https://skills.example/rules.zip", {
       fetch: async () => new Response(zip)
     });
-    const hex = skillTool.ref.kind === "draft" ? skillTool.ref.contentHash.slice("sha256:".length) : "";
-    const expectedRef = {
-      kind: "skill",
-      assetId: `asset_${hex}`,
-      name: "rules",
-      description: "Keep responses short."
-    };
+    const expectedRef = { kind: "skill", name: "rules" };
 
     await client.openSession({
       model: "claude-haiku-4-5",
-      tools: [skillTool],
+      skills: [skillTool],
       apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-skilltool"
     });
     const firstBody = calls.find((c) => c.url.endsWith("/api/sessions"))!.body as {
-      submission: { tools: ReadonlyArray<Record<string, unknown>> };
+      submission: { skills: ReadonlyArray<Record<string, unknown>> };
     };
-    expect(firstBody.submission.tools).toEqual([expectedRef]);
+    expect(firstBody.submission.skills).toEqual([expectedRef]);
 
-    // The draft is reusable: a second create reuses the cached asset id (no
-    // re-upload) and produces the identical wire ref.
+    // The draft is reusable: a second create reuses the cached workspace upload
+    // state (no asset upload, no registry upsert) and produces the identical
+    // name-only wire ref.
     calls.length = 0;
     await client.openSession({
       model: "claude-haiku-4-5",
-      tools: [skillTool],
+      skills: [skillTool],
       apiKeys: { anthropic: "k" },
       idempotencyKey: "idem-skilltool-2"
     });
     expect(calls.some((c) => c.url.endsWith("/assets/presign"))).toBe(false);
+    expect(calls.filter((c) => c.url === "https://x/api/skills/rules")).toHaveLength(0);
     const secondBody = calls.find((c) => c.url.endsWith("/api/sessions"))!.body as {
-      submission: { tools: ReadonlyArray<Record<string, unknown>> };
+      submission: { skills: ReadonlyArray<Record<string, unknown>> };
     };
-    expect(secondBody.submission.tools).toEqual([expectedRef]);
+    expect(secondBody.submission.skills).toEqual([expectedRef]);
   });
 
   it("rejects non-AgentsMd entries in the agentsMd array with index in the message", async () => {

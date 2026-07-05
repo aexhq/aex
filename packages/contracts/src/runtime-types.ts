@@ -584,6 +584,29 @@ export interface FileRecord {
 }
 
 /**
+ * Wire-level metadata record for a workspace skill as returned by the BFF.
+ *
+ * Workspace skills are named, mutable, by-name-bound bundles: `skill.upload()`
+ * upserts one under a stable `name`; a run references it by that name and the
+ * platform resolves it to the CURRENT bytes at submit time. This record is
+ * METADATA ONLY — the bytes live in the content-addressed asset store keyed by
+ * `contentHash`. `version` bumps each time the bytes change under the name.
+ */
+export interface SkillRecord {
+  readonly id?: string;
+  readonly kind?: "skill";
+  readonly name: string;
+  readonly contentHash: string;
+  readonly description: string;
+  readonly sizeBytes?: number | null;
+  readonly version?: number;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+  readonly deletedAt?: string | null;
+  readonly [key: string]: unknown;
+}
+
+/**
  * Wire-level record for a workspace secret as returned by the BFF.
  *
  * Workspace secrets share the lifecycle SEMANTIC of skills/files: a

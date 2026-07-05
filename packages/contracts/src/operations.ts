@@ -48,6 +48,7 @@ import type {
   RunWebhookDelivery,
   SecretRecord,
   SecretReveal,
+  SkillRecord,
   WebhookSigningSecret,
   WhoAmI
 } from "./runtime-types.js";
@@ -1251,6 +1252,80 @@ function unwrapSecret(result: { readonly secret: SecretRecord } | SecretRecord):
     return (result as { readonly secret: SecretRecord }).secret;
   }
   return result as SecretRecord;
+}
+
+// ===========================================================================
+// Workspace skill registry operations
+//
+// Skills are named, mutable, by-name-bound bundles. `upsertSkill` UPSERTS one by
+// name (the bytes are staged to the content-addressed asset store BEFORE this,
+// via the presign/finalize path); the server compares `contentHash` and no-ops
+// an identical re-upload (`updated:false`). Reads return METADATA only — the
+// bytes are addressed by `contentHash`.
+// ===========================================================================
+
+/** Result of an `upsertSkill`: the stored record + whether the bytes changed. */
+export interface SkillUpsertResult {
+  readonly skill: SkillRecord;
+  readonly updated: boolean;
+}
+
+/**
+ * Upsert a workspace skill by name — `PUT /skills/{name}`. The bundle bytes must
+ * already exist in the asset store (staged via presign/finalize before this
+ * call); the body carries only the metadata. Identical `contentHash` is a no-op
+ * (`updated:false`).
+ */
+export async function upsertSkill(
+  http: HttpClient,
+  args: { readonly name: string; readonly contentHash: string; readonly description: string; readonly sizeBytes: number }
+): Promise<SkillUpsertResult> {
+  const result = await http.request<SkillUpsertResult | SkillRecord>(
+    `/api/skills/${encodeURIComponent(args.name)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        contentHash: args.contentHash,
+        description: args.description,
+        sizeBytes: args.sizeBytes
+      })
+    }
+  );
+  if (result && typeof result === "object" && "skill" in (result as object)) {
+    const wrapped = result as SkillUpsertResult;
+    return { skill: wrapped.skill, updated: wrapped.updated === true };
+  }
+  return { skill: result as SkillRecord, updated: true };
+}
+
+export async function listSkills(http: HttpClient): Promise<readonly SkillRecord[]> {
+  const result = await http.request<{ readonly skills: readonly SkillRecord[] } | readonly SkillRecord[]>(
+    "/api/skills"
+  );
+  if (Array.isArray(result)) {
+    return result;
+  }
+  return (result as { readonly skills: readonly SkillRecord[] }).skills;
+}
+
+export async function getSkill(http: HttpClient, name: string): Promise<SkillRecord> {
+  const result = await http.request<{ readonly skill: SkillRecord } | SkillRecord>(
+    `/api/skills/${encodeURIComponent(name)}`
+  );
+  return unwrapSkill(result);
+}
+
+export async function deleteSkill(http: HttpClient, name: string): Promise<void> {
+  await http.request<unknown>(`/api/skills/${encodeURIComponent(name)}`, {
+    method: "DELETE"
+  });
+}
+
+function unwrapSkill(result: { readonly skill: SkillRecord } | SkillRecord): SkillRecord {
+  if (result && typeof result === "object" && "skill" in (result as object)) {
+    return (result as { readonly skill: SkillRecord }).skill;
+  }
+  return result as SkillRecord;
 }
 
 function hasRun(value: Run | { readonly run: Run }): value is { readonly run: Run } {

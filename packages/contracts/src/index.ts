@@ -18,6 +18,9 @@ export {
   SECRETS_KEY,
   SECRET_ENV_NAME_PATTERN,
   SECRET_HANDLE_PATTERN,
+  SKILLS_MAX,
+  SKILLS_TOOL_DEFINITION,
+  SKILLS_TOOL_NAME,
   crossValidateSecretEnvAndValues,
   packageInstallString,
   parseInlineSecrets,
@@ -25,6 +28,7 @@ export {
   parseRunProvider,
   parseRunSubmissionRequest,
   parseRunWebhook,
+  parseSkills,
   parseSubmission,
   resolveBuiltinToolNames
 } from "./submission.js";

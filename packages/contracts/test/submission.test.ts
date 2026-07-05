@@ -165,43 +165,42 @@ describe("submission parser - removed choice fields", () => {
   );
 });
 
-describe("submission parser - skill tools", () => {
-  const skillTool = {
-    kind: "skill" as const,
-    assetId: `asset_${"a".repeat(64)}`,
-    name: "report-writer",
-    description: "Load the report-writer skill."
-  };
-
-  it("splits a skill-tool out of the tools union into submission.skillTools", () => {
+describe("submission parser - skills (by name)", () => {
+  it("parses submission.skills into name-only refs", () => {
     const req = baseRequest({ provider: "anthropic" });
     const parsed = parseRunSubmissionRequest({
       ...req,
-      submission: { ...req.submission, tools: [skillTool] }
+      submission: { ...req.submission, skills: [{ kind: "skill", name: "report-writer" }] }
     });
-    expect(parsed.submission.skillTools).toEqual([skillTool]);
-    // A skill-tool is not a custom ToolRef, so the `tools` bundle list is empty.
-    expect(parsed.submission.tools).toEqual([]);
+    expect(parsed.submission.skills).toEqual([{ kind: "skill", name: "report-writer" }]);
   });
 
-  it("rejects a skill-tool name containing the reserved '__' separator", () => {
+  it("rejects a skill ref that rides in submission.tools with a redirect message", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
       parseRunSubmissionRequest({
         ...req,
-        submission: { ...req.submission, tools: [{ ...skillTool, name: "bad__name" }] }
+        submission: {
+          ...req.submission,
+          tools: [{ kind: "skill", assetId: `asset_${"a".repeat(64)}`, name: "report-writer", description: "x" }]
+        }
       })
-    ).toThrow(/"__"/);
+    ).toThrow(/skills go in submission\.skills/);
   });
 
-  it("rejects a skill-tool with an unknown field", () => {
+  it("rejects resolvedSkills on the public ingress path", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
       parseRunSubmissionRequest({
         ...req,
-        submission: { ...req.submission, tools: [{ ...skillTool, entry: "SKILL.md" }] }
+        submission: {
+          ...req.submission,
+          resolvedSkills: [
+            { kind: "skill", assetId: `asset_${"a".repeat(64)}`, name: "report-writer", description: "x" }
+          ]
+        }
       })
-    ).toThrow(/not an allowed field for a skill tool/);
+    ).toThrow(/platform-internal/);
   });
 });
 

@@ -67,7 +67,9 @@ import {
   BUILTIN_TOOL_NAMES,
   type BuiltinToolName,
   type RuntimeSize,
-  type SkillToolRef,
+  SKILLS_MAX,
+  type SkillRecord,
+  type SkillRef,
   type ToolRef,
   type WebhookSigningSecret,
   type WebSocketFactory,
@@ -87,7 +89,7 @@ import {
   type RetryOptions
 } from "./retry.js";
 import { Secret, splitSecretEnv } from "./secret.js";
-import { SkillTool } from "./skill-tool.js";
+import { Skill, type SkillUploader } from "./skill.js";
 import { Tool } from "./tool.js";
 
 export interface AexOptions {
@@ -200,10 +202,12 @@ export interface SessionOverrides {
  * Everything the agent needs is spelled out at the call site:
  *
  *   - `model` / `system` — the agent's brief.
- *   - `tools` — custom `Tool` bundles, skill-tools
- *     (`Tools.fromSkillDir` / `Tools.fromSkillUrl`), and builtin tool-name
- *     references; local composition instances are materialized to the hosted
- *     asset store before the session lands.
+ *   - `tools` — custom `Tool` bundles and builtin tool-name references; local
+ *     custom-tool instances are materialized to the hosted asset store before
+ *     the session lands.
+ *   - `skills` — workspace skill bundles from `Skill.fromDir` / `Skill.fromUrl`
+ *     / `Skill.fromFiles` / …; the SDK upserts them by name before the session
+ *     lands, and the wire submission references only those names.
  *   - `agentsMd` / `files` — local composition instances
  *     (`AgentsMd.fromContent` / `File.fromBytes`, …), materialized to the
  *     hosted asset store before the session lands.
@@ -227,12 +231,17 @@ export interface SessionCreateOptions {
   readonly model: RunModel;
   readonly system?: string;
   /**
-   * Tools available to the agent. Each entry is a custom {@link Tool} bundle, a
-   * skill-tool ({@link SkillTool} from `Tools.fromSkillDir` / `Tools.fromSkillUrl`),
-   * or a BUILTIN tool reference — a bare name string, preferably
-   * `BuiltinTools.<name>` so a typo is a compile error.
+   * Tools available to the agent. Each entry is a custom {@link Tool} bundle or
+   * a BUILTIN tool reference — a bare name string, preferably `BuiltinTools.<name>`
+   * so a typo is a compile error.
    */
-  readonly tools?: readonly (Tool | SkillTool | BuiltinToolName)[];
+  readonly tools?: readonly (Tool | BuiltinToolName)[];
+  /**
+   * Workspace skills available to the agent. Build them with the `Skill.from*`
+   * factories; the SDK upserts each bundle into the workspace skill registry by
+   * name, then sends only `{ kind:"skill", name }` in the submission.
+   */
+  readonly skills?: readonly Skill[];
   readonly agentsMd?: readonly AgentsMd[];
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
@@ -1334,6 +1343,33 @@ export class FilesClient {
 }
 
 /**
+ * Workspace skill registry operations exposed under `client.skills`.
+ *
+ * Session creation normally passes `Skill.from*(...)` instances directly in the
+ * `skills` option (auto-upserted by name). This namespace is the metadata
+ * read/delete surface for the named workspace skill registry.
+ */
+export class SkillsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  list(): Promise<readonly SkillRecord[]> {
+    return operations.listSkills(this.#http);
+  }
+
+  get(name: string): Promise<SkillRecord> {
+    return operations.getSkill(this.#http, name);
+  }
+
+  delete(name: string): Promise<void> {
+    return operations.deleteSkill(this.#http, name);
+  }
+}
+
+/**
  * Workspace secret management exposed under `client.secrets`, mirroring
  * `client.agentsMd` / `client.files`.
  *
@@ -1414,6 +1450,7 @@ export class Aex {
   readonly #fetch: FetchLike | undefined;
   readonly agentsMd: AgentsMdClient;
   readonly files: FilesClient;
+  readonly skills: SkillsClient;
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
 
@@ -1447,6 +1484,7 @@ export class Aex {
     this.#fetch = resolved.fetch;
     this.agentsMd = new AgentsMdClient(this.#http);
     this.files = new FilesClient(this.#http);
+    this.skills = new SkillsClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
     this.sessions = new SessionClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
   }
@@ -1464,8 +1502,9 @@ export class Aex {
   /**
    * Internal: materialize raw bytes to the content-addressable asset store
    * (`/assets/presign` → PUT → `/assets/finalize`). Used by the session-create
-   * prepare step to upload draft skill-tool / tool / agentsMd / file bundles so
-   * the wire submission carries only plain `kind:"asset"` / `kind:"skill"` refs.
+   * prepare step to upload draft skill / tool / agentsMd / file bundles so
+   * the wire submission carries only plain `kind:"asset"` refs (skills resolve
+   * to name-only `kind:"skill"` refs after their bytes upload).
    * NOT part of the public API.
    */
   async _uploadAsset(args: {
@@ -1480,6 +1519,20 @@ export class Aex {
       ...(args.contentType ? { contentType: args.contentType } : {}),
       ...(this.#fetch ? { fetch: this.#fetch as unknown as AssetFetch } : {})
     });
+  }
+
+  /**
+   * Internal: upsert already-uploaded skill metadata into the workspace registry.
+   * The bytes are staged through `_uploadAsset`; this call binds the content hash
+   * to a mutable workspace skill name before the run references that name.
+   */
+  async _upsertSkill(args: {
+    readonly name: string;
+    readonly contentHash: string;
+    readonly description: string;
+    readonly sizeBytes: number;
+  }): Promise<{ readonly updated: boolean }> {
+    return operations.upsertSkill(this.#http, args);
   }
 
   /**
@@ -1688,9 +1741,14 @@ export class Aex {
     }
 
     const uploader: AssetUploader = (args) => this._uploadAsset(args);
-    const preparedTools = await prepareTools(options.tools ?? [], uploader);
-    const preparedAgentsMd = await prepareAgentsMd(options.agentsMd ?? [], uploader);
-    const preparedFiles = await prepareFiles(options.files ?? [], uploader);
+    // The four prepare passes touch disjoint instance sets, so run them
+    // concurrently; each internally uploads its drafts with bounded concurrency.
+    const [preparedTools, preparedSkills, preparedAgentsMd, preparedFiles] = await Promise.all([
+      prepareTools(options.tools ?? [], uploader),
+      prepareSkills(options.skills ?? [], this),
+      prepareAgentsMd(options.agentsMd ?? [], uploader),
+      prepareFiles(options.files ?? [], uploader)
+    ]);
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
       []
@@ -1701,13 +1759,13 @@ export class Aex {
     const submission: SessionCreateRequest["submission"] = {
       model: options.model,
       ...(options.system ? { system: options.system } : {}),
-      // Builtin name strings + custom tool refs + skill-tool refs all ride the
-      // one `tools` union; the BFF parser splits them back apart by kind.
+      // Builtin name strings + custom tool refs ride the `tools` union; skills
+      // are first-class name refs in `submission.skills`.
       tools: [
         ...preparedTools.builtinNames,
-        ...preparedTools.refs,
-        ...preparedTools.skillToolRefs
+        ...preparedTools.refs
       ] as unknown as readonly ToolRef[],
+      ...(preparedSkills.length > 0 ? { skills: preparedSkills } : {}),
       agentsMd: preparedAgentsMd,
       files: preparedFiles,
       mcpServers: submissionMcpServers as readonly McpServerRef[],
@@ -2045,7 +2103,6 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     idleTtl: "use overrides.idleTtl.",
     retention: "use overrides.idleTtl.",
     secretEnv: "use environment.secrets.",
-    skills: "skills are now tools; build one with Tools.fromSkillDir/fromSkillUrl and pass it in tools.",
     secrets: "use top-level apiKeys for provider keys and environment.secrets for run secrets.",
     runtimeSize: "use runtime.",
     parentRunId: "subagents are session-internal; parentRunId is not part of the session API.",
@@ -2180,58 +2237,69 @@ async function resolveAssetId(
 }
 
 /**
+ * Max concurrent asset uploads within a single prepare pass. Bounded so a large
+ * tools/files/skills list can't stampede the presign endpoint (the transport
+ * already carries bounded retry); 5 is a comfortable overlap without a burst.
+ */
+const UPLOAD_CONCURRENCY = 5;
+
+/**
+ * Map `items` through `fn` with at most `limit` in flight, PRESERVING ORDER (the
+ * result at index `i` is `fn(items[i], i)` regardless of completion order). A
+ * rejection from any call propagates (the first to reject wins) once the
+ * in-flight batch settles. Exported for direct unit testing; not part of the
+ * public SDK surface (index.ts controls that).
+ */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      out[i] = await fn(items[i]!, i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
  * Split the `tools` union into custom tool refs (drafts eagerly uploaded as
- * assets), skill-tool refs (skill bundles eagerly uploaded as assets), and
- * builtin tool-name references (bare strings, validated against the closed
- * {@link BUILTIN_TOOL_NAMES} set). Builtin names are deduped, in input order;
- * the three groups are recombined on the wire by the caller (the BFF parser
- * splits them back apart by kind).
+ * assets) and builtin tool-name references (bare strings, validated against the
+ * closed {@link BUILTIN_TOOL_NAMES} set). Builtin names are deduped, in input
+ * order.
  */
 async function prepareTools(
-  tools: readonly (Tool | SkillTool | BuiltinToolName)[],
+  tools: readonly (Tool | BuiltinToolName)[],
   uploader: AssetUploader
 ): Promise<{
   readonly refs: readonly ToolRef[];
-  readonly skillToolRefs: readonly SkillToolRef[];
   readonly builtinNames: readonly BuiltinToolName[];
 }> {
-  const refs: ToolRef[] = [];
-  const skillToolRefs: SkillToolRef[] = [];
-  const seenBuiltins = new Set<BuiltinToolName>();
-  const builtinNames: BuiltinToolName[] = [];
-  for (let i = 0; i < tools.length; i++) {
-    const entry = tools[i];
+  // Map with bounded concurrency (order preserved). Each entry resolves to
+  // either a builtin-name marker or an uploaded custom-tool ref; the two groups
+  // are folded back apart afterwards, preserving input order + builtin dedup.
+  type Prepared = { readonly kind: "builtin"; readonly name: BuiltinToolName } | { readonly kind: "ref"; readonly ref: ToolRef };
+  const prepared = await mapWithConcurrency(tools, UPLOAD_CONCURRENCY, async (entry, i): Promise<Prepared> => {
     // A bare string is a builtin tool reference.
     if (typeof entry === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
         throw new RunConfigValidationError(
           `aex: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
-            `expected a Tool, a SkillTool, or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
+            `expected a Tool or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
         );
       }
-      if (!seenBuiltins.has(entry)) {
-        seenBuiltins.add(entry);
-        builtinNames.push(entry);
-      }
-      continue;
-    }
-    // A skill-tool: upload its bundle (if a draft) and emit a `kind:"skill"` ref.
-    if (entry instanceof SkillTool) {
-      const ref = entry.ref;
-      if (ref.kind === "draft") {
-        const bundle = entry._takeDraftBundle();
-        if (!bundle) {
-          throw new RunConfigValidationError(`aex: tools[${i}] is a draft skill-tool but has no bytes`);
-        }
-        const assetId = await resolveAssetId(entry, bundle, uploader);
-        skillToolRefs.push({ kind: "skill", assetId, name: bundle.name, description: bundle.description });
-        continue;
-      }
-      skillToolRefs.push(ref);
-      continue;
+      return { kind: "builtin", name: entry };
     }
     if (!(entry instanceof Tool)) {
-      throw new RunConfigValidationError(`aex: tools[${i}] must be a Tool, a SkillTool, or a builtin tool name`);
+      const maybeEntry: unknown = entry;
+      if (maybeEntry instanceof Skill) {
+        throw new RunConfigValidationError(`aex: tools[${i}] is a Skill; pass skills via the top-level skills option`);
+      }
+      throw new RunConfigValidationError(`aex: tools[${i}] must be a Tool or a builtin tool name`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
@@ -2240,22 +2308,68 @@ async function prepareTools(
         throw new RunConfigValidationError(`aex: tools[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
-      refs.push({ ...bundle.ref, assetId });
-      continue;
+      return { kind: "ref", ref: { ...bundle.ref, assetId } };
     }
-    refs.push(ref);
+    return { kind: "ref", ref };
+  });
+  const refs: ToolRef[] = [];
+  const seenBuiltins = new Set<BuiltinToolName>();
+  const builtinNames: BuiltinToolName[] = [];
+  for (const item of prepared) {
+    if (item.kind === "builtin") {
+      if (!seenBuiltins.has(item.name)) {
+        seenBuiltins.add(item.name);
+        builtinNames.push(item.name);
+      }
+    } else {
+      refs.push(item.ref);
+    }
   }
-  return { refs, skillToolRefs, builtinNames };
+  return { refs, builtinNames };
 }
 
-/** Walk AgentsMd[], eagerly upload drafts as assets, and return plain asset refs. */
+/**
+ * Upload/upsert workspace skills and return public name-only refs. Draft skills
+ * auto-upsert (bytes → asset store, then registry PUT) by name; already-uploaded
+ * skills pass through. Duplicate names are pre-checked (uploads run in parallel,
+ * so the dedup cannot be a running set inside the map).
+ */
+async function prepareSkills(
+  skills: readonly Skill[],
+  uploader: SkillUploader
+): Promise<readonly SkillRef[]> {
+  if (skills.length > SKILLS_MAX) {
+    throw new RunConfigValidationError(`aex: skills exceeds the ${SKILLS_MAX}-skill limit (got ${skills.length})`);
+  }
+  const seen = new Set<string>();
+  for (let i = 0; i < skills.length; i++) {
+    const entry = skills[i];
+    if (!(entry instanceof Skill)) {
+      throw new RunConfigValidationError(
+        `aex: skills[${i}] must be a Skill (Skill.fromDir / fromUrl / fromFiles / fromContent / fromBytes)`
+      );
+    }
+    if (seen.has(entry.name)) {
+      throw new RunConfigValidationError(`aex: skills duplicate name: ${entry.name}`);
+    }
+    seen.add(entry.name);
+  }
+  return mapWithConcurrency(skills, UPLOAD_CONCURRENCY, async (entry, i): Promise<SkillRef> => {
+    const uploaded = entry.isDraft ? await entry.upload(uploader) : entry;
+    const ref = uploaded.ref;
+    if (ref.kind !== "skill") {
+      throw new RunConfigValidationError(`aex: skills[${i}] did not resolve to a workspace skill ref`);
+    }
+    return ref;
+  });
+}
+
+/** Walk AgentsMd[], eagerly upload drafts as assets (bounded concurrency), and return plain asset refs. */
 async function prepareAgentsMd(
   agentsMds: readonly AgentsMd[],
   uploader: AssetUploader
 ): Promise<readonly AgentsMdRef[]> {
-  const refs: AgentsMdRef[] = [];
-  for (let i = 0; i < agentsMds.length; i++) {
-    const entry = agentsMds[i];
+  return mapWithConcurrency(agentsMds, UPLOAD_CONCURRENCY, async (entry, i): Promise<AgentsMdRef> => {
     if (!(entry instanceof AgentsMd)) {
       throw new RunConfigValidationError(`aex: agentsMd[${i}] must be an AgentsMd instance`);
     }
@@ -2266,26 +2380,18 @@ async function prepareAgentsMd(
         throw new RunConfigValidationError(`aex: agentsMd[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
-      refs.push({
-        kind: "asset",
-        assetId,
-        name: bundle.name
-      });
-      continue;
+      return { kind: "asset", assetId, name: bundle.name };
     }
-    refs.push(ref);
-  }
-  return refs;
+    return ref;
+  });
 }
 
-/** Walk File[], eagerly upload drafts as assets, and return plain asset refs. */
+/** Walk File[], eagerly upload drafts as assets (bounded concurrency), and return plain asset refs. */
 async function prepareFiles(
   files: readonly File[],
   uploader: AssetUploader
 ): Promise<readonly FileRef[]> {
-  const refs: FileRef[] = [];
-  for (let i = 0; i < files.length; i++) {
-    const entry = files[i];
+  return mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (entry, i): Promise<FileRef> => {
     if (!(entry instanceof File)) {
       throw new RunConfigValidationError(`aex: files[${i}] must be a File instance`);
     }
@@ -2296,17 +2402,10 @@ async function prepareFiles(
         throw new RunConfigValidationError(`aex: files[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
-      refs.push({
-        kind: "asset",
-        assetId,
-        name: bundle.name,
-        mountPath: bundle.mountPath
-      });
-      continue;
+      return { kind: "asset", assetId, name: bundle.name, mountPath: bundle.mountPath };
     }
-    refs.push(ref);
-  }
-  return refs;
+    return ref;
+  });
 }
 
 function mergeMcpServers(

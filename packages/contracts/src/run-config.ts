@@ -3,11 +3,16 @@
  *
  * Public composition concepts:
  *
- *   - `SkillToolRef` is the wire-level reference to a skill, re-expressed as a
- *     synthetic no-arg "load-tool" the model calls to pull in the skill's
- *     `SKILL.md` body. It carries the uploaded bundle's `assetId` (produced by
- *     the SDK upload path) plus the tool `name` + `description`, and travels in
- *     `submission.tools`.
+ *   - `SkillRef` is the PUBLIC wire-level reference to a workspace skill: just
+ *     `{ kind:"skill", name }`. The binding is BY NAME and mutable — the run
+ *     resolves the name to the workspace skill's current bytes at submit time.
+ *     It travels in `submission.skills` (NOT `submission.tools`).
+ *
+ *   - `ResolvedSkillRef` is the BFF-produced, boot-record-only resolution of a
+ *     `SkillRef`: `{ kind:"skill", assetId, name, description }`. It never
+ *     appears on the public ingress wire — the resolver fills it before
+ *     persisting the boot record so the in-container re-parse can read the
+ *     skill's asset + description without a DB round-trip.
  *
  *   - `McpServerRef` is the non-secret part of an MCP server declaration:
  *     `name` and `url`. Bearer / cookie / per-request headers travel in
@@ -64,6 +69,14 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
  */
 export const TOOL_NAME_PATTERN = SKILL_NAME_PATTERN;
 
+/**
+ * Names reserved by the skills subsystem and therefore usable as neither a
+ * skill name nor a custom tool name. `skills` is the injected meta-tool (see
+ * {@link SKILLS_TOOL_NAME} in `submission.ts`); `skill` is its singular. Both
+ * the SDK factories and the BFF `parseSkills` / `parseTools` reject these.
+ */
+export const SKILL_RESERVED_NAMES: ReadonlySet<string> = new Set(["skills", "skill"]);
+
 // ---------------------------------------------------------------------------
 // Skill bundle limits (uploaded bundles)
 // ---------------------------------------------------------------------------
@@ -99,19 +112,33 @@ export const SKILL_BUNDLE_LIMITS = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// SkillToolRef — a skill re-expressed as a synthetic no-arg "load-tool"
+// SkillRef (public, by-name) + ResolvedSkillRef (boot-record only)
 // ---------------------------------------------------------------------------
 
 /**
- * A skill re-expressed as a TOOL. The model calls this no-arg load-tool to pull
- * the skill's `SKILL.md` body into context; the bundle's files are eagerly
- * staged to `/workspace/skills/<name>/`. It travels in `submission.tools`
- * alongside builtin names and custom {@link ToolRef}s.
+ * The PUBLIC wire reference to a workspace skill — by NAME, no bytes, no hash.
+ * This is what the SDK sends in `submission.skills` and what the idempotency
+ * hash covers. The run resolves the name to the workspace skill's CURRENT bytes
+ * at submit time (a re-upload under the same name changes what later runs see).
  */
-export interface SkillToolRef {
+export interface SkillRef {
+  readonly kind: "skill";
+  readonly name: string; // SKILL_NAME_PATTERN, must not contain "__", not reserved
+}
+
+/**
+ * BFF-produced, BOOT-RECORD-ONLY resolution of a {@link SkillRef}. The submit-time
+ * resolver looks the name up in the workspace skill registry and fills in the
+ * current `assetId` + `description`; this is written to the boot record's trusted
+ * `submission.resolvedSkills` so the in-container re-parse and the manifest /
+ * materialize layers can stage the bundle without a DB round-trip. It NEVER
+ * appears on the public ingress wire (rejected by `parseSubmission` unless the
+ * caller is a trusted re-parse).
+ */
+export interface ResolvedSkillRef {
   readonly kind: "skill";
   readonly assetId: string;      // asset_<sha256hex>; the uploaded skill bundle (zip w/ SKILL.md at root)
-  readonly name: string;         // TOOL_NAME_PATTERN, must not contain "__"
+  readonly name: string;         // SKILL_NAME_PATTERN, must not contain "__"
   readonly description: string;  // 1..2048 chars; lifted from SKILL.md YAML frontmatter SDK-side
 }
 

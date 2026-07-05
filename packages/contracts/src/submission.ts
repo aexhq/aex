@@ -1,4 +1,6 @@
 import {
+  SKILL_NAME_PATTERN,
+  SKILL_RESERVED_NAMES,
   TOOL_NAME_PATTERN,
   normaliseSkillBundlePath,
   parseAssetRefFields,
@@ -8,7 +10,8 @@ import type {
   AgentsMdRef,
   FileRef,
   McpServerRef,
-  SkillToolRef,
+  ResolvedSkillRef,
+  SkillRef,
   ToolInputSchema,
   ToolRef
 } from "./run-config.js";
@@ -722,10 +725,9 @@ function isJsonValue(input: unknown): input is JsonValue {
  * only the non-secret half; bearer headers travel in
  * `secrets.mcpServers` keyed by `name`.
  *
- * `tools` is the union of builtin tool names, custom `ToolRef` bundles, and
- * skill-tools (`{ kind:"skill", … }`); parsing splits them into `tools`,
- * `builtinTools`, and `skillTools`. Skill bundles are content-addressed asset
- * refs snapshotted into the run-owned prefix before dispatch.
+ * `tools` is the union of builtin tool names and custom `ToolRef` bundles;
+ * parsing splits them into `tools` and `builtinTools`. Skills are a SEPARATE
+ * first-class input on `skills` (by-name refs), NOT part of `tools`.
  */
 export interface PlatformSubmission {
   readonly model: RunModel;
@@ -733,13 +735,21 @@ export interface PlatformSubmission {
   readonly prompt: readonly string[];
   readonly tools?: readonly ToolRef[];
   /**
-   * Skill-tools: skills re-expressed as synthetic no-arg load-tools. Derived
-   * from the `tools` union at parse time (the `{ kind:"skill", … }` members),
-   * like {@link builtinTools}. Each becomes a model-visible tool whose call
-   * returns the skill's `SKILL.md` body; the bundle is eagerly staged to
-   * `/workspace/skills/<name>/`.
+   * Workspace skills referenced BY NAME (`{ kind:"skill", name }`). This is the
+   * public ingress shape the SDK sends and the ONLY skill field the idempotency
+   * hash covers. The platform resolves each name to the workspace skill's
+   * current bytes at submit time; a re-upload under the same name changes what
+   * later runs see (the name-only ref, and therefore the hash, is unchanged).
    */
-  readonly skillTools?: readonly SkillToolRef[];
+  readonly skills?: readonly SkillRef[];
+  /**
+   * BOOT-RECORD-ONLY, trusted resolution of {@link skills}. The BFF resolver
+   * fills this (name → current `assetId` + `description`) before persisting the
+   * boot record; the in-container re-parse and manifest/materialize layers read
+   * it. Rejected on public ingress (only accepted under a trusted re-parse) and
+   * NOT part of the idempotency hash — it is derived, like sealed secrets.
+   */
+  readonly resolvedSkills?: readonly ResolvedSkillRef[];
   readonly agentsMd: readonly AgentsMdRef[];
   readonly files: readonly FileRef[];
   readonly mcpServers: readonly McpServerRef[];
@@ -943,7 +953,15 @@ export type PlatformRunSubmissionInput = Omit<
   readonly timeout?: string;
 };
 
-export interface ParseRunSubmissionOptions {}
+export interface ParseRunSubmissionOptions {
+  /**
+   * Set by the in-container re-parse of the boot record (`aws-compose.ts`) to
+   * accept trusted-only fields the BFF resolver wrote after ingress — currently
+   * `submission.resolvedSkills`. On the public ingress path this stays `false`
+   * so a caller can never inject a resolved skill (asset + description).
+   */
+  readonly trustedReparse?: boolean;
+}
 
 export function parseRunSubmissionRequest(
   input: unknown,
@@ -980,7 +998,6 @@ export function parseRunSubmissionRequest(
     assertNoSecretBearingFields(fieldValue, [key]);
   }
   const provider = parseRunProvider(value.provider);
-  void options;
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
   const timeoutMs = parseRunTimeout(value.timeout);
   const webhook = parseRunWebhook(value.webhook);
@@ -989,7 +1006,9 @@ export function parseRunSubmissionRequest(
   const secrets = parseInlineSecrets(value.secrets);
   enforceCredentialSecretPolicy(secrets, provider);
 
-  const submission = parseSubmission(value.submission);
+  const submission = parseSubmission(value.submission, {
+    trustedReparse: options.trustedReparse === true
+  });
   assertRunModelMatchesProvider(provider, submission.model);
 
   crossValidateSecretEnvAndValues(submission.secretEnv, secrets.envSecrets);
@@ -1196,13 +1215,18 @@ export function enforceCredentialSecretPolicy(
   }
 }
 
-export function parseSubmission(input: unknown): PlatformSubmission {
+export function parseSubmission(
+  input: unknown,
+  options: { readonly trustedReparse?: boolean } = {}
+): PlatformSubmission {
   const value = requireRecord(input, "submission.submission");
   const allowed = new Set([
     "model",
     "system",
     "prompt",
     "tools",
+    "skills",
+    "resolvedSkills",
     "agentsMd",
     "files",
     "mcpServers",
@@ -1223,7 +1247,9 @@ export function parseSubmission(input: unknown): PlatformSubmission {
   const model = parseRunModel(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
-  const { tools, skillTools, builtinTools } = parseTools(value.tools);
+  const { tools, builtinTools } = parseTools(value.tools);
+  const skills = parseSkills(value.skills);
+  const resolvedSkills = parseResolvedSkills(value.resolvedSkills, options.trustedReparse === true);
   const agentsMd = parseAgentsMd(value.agentsMd);
   const files = parseFiles(value.files);
   const mcpServers = parseMcpServers(value.mcpServers);
@@ -1241,7 +1267,8 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     ...(system ? { system } : {}),
     prompt,
     tools,
-    ...(skillTools.length > 0 ? { skillTools } : {}),
+    ...(skills.length > 0 ? { skills } : {}),
+    ...(resolvedSkills.length > 0 ? { resolvedSkills } : {}),
     agentsMd,
     files,
     mcpServers,
@@ -1387,6 +1414,45 @@ export const BuiltinTools = {
  * It is the complete closed builtin set.
  */
 export const DEFAULT_BUILTIN_TOOLS: readonly BuiltinToolName[] = BUILTIN_TOOL_NAMES;
+
+// ---------------------------------------------------------------------------
+// The default `skills` meta-tool
+// ---------------------------------------------------------------------------
+
+/**
+ * Fixed name of the single skills meta-tool. Deliberately NOT a member of
+ * {@link BUILTIN_TOOL_NAMES} (that closed set is the customer-cherry-pickable
+ * toggle surface, pinned equal to `HANDS_TOOLS`) — the skills tool is IMPLIED by
+ * a run having ≥1 skill, not chosen, and is injected platform-side. Kept in
+ * lockstep with {@link SKILL_RESERVED_NAMES} so it can never be shadowed by a
+ * custom tool or skill of the same name.
+ */
+export const SKILLS_TOOL_NAME = "skills";
+
+/**
+ * The single default `skills` meta-tool (list/load) the platform injects when a
+ * run references ≥1 workspace skill. Shared by the platform tool composer and
+ * kept adjacent to the reserved-name guard so the model-visible contract and the
+ * name reservation stay in one place. It replaces the former N per-skill no-arg
+ * load-tools with one arg-taking dispatcher.
+ */
+export const SKILLS_TOOL_DEFINITION = {
+  name: "skills",
+  description:
+    "List and load the workspace SKILLS available to this run. Call with {action:'list'} to see each skill's " +
+    "name + description (cheap; do this first). Call with {action:'load', name:'<skill>'} to read that skill's " +
+    "full SKILL.md instructions into context before doing work the skill governs. A skill's supporting files are " +
+    "already on disk under /workspace/skills/<name>/ — load pulls the instructions; read_file/bash read the rest.",
+  input_schema: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["list", "load"], description: "'list' all skills, or 'load' one by name." },
+      name: { type: "string", description: "Skill name to load (required when action='load')." }
+    },
+    required: ["action"],
+    additionalProperties: false
+  }
+} as const;
 
 /**
  * Resolve the set of builtin tool NAMES a submission injects, deduplicated and
@@ -1643,24 +1709,23 @@ function parsePrompt(input: unknown): readonly string[] {
 }
 
 /**
- * Parse the `submission.tools` union: each entry is one of THREE shapes —
+ * Parse the `submission.tools` union: each entry is one of TWO shapes —
  *   (a) a BARE STRING: a builtin tool reference (validated against
  *       {@link BUILTIN_TOOL_NAMES}).
  *   (b) `{ kind:"asset", … }`: a custom tool bundle ({@link ToolRef}).
- *   (c) `{ kind:"skill", assetId, name, description }`: a skill re-expressed as
- *       a synthetic no-arg load-tool ({@link SkillToolRef}).
- * Returns the three groups split: `tools` (custom bundles), `skillTools`
- * (skill-tools), and `builtinTools` (the deduped builtin-name references, in
- * {@link BUILTIN_TOOL_NAMES} order). Tool `name`s and `assetId`s are deduped
- * across ALL object kinds so a name/asset names at most one tool.
+ * Returns the two groups split: `tools` (custom bundles) and `builtinTools`
+ * (the deduped builtin-name references, in {@link BUILTIN_TOOL_NAMES} order).
+ * Tool `name`s and `assetId`s are deduped so a name/asset names at most one tool.
+ *
+ * Skills are NO LONGER a tool kind: a `{ kind:"skill" }` entry here is rejected
+ * with a redirect to `submission.skills` (see {@link parseSkills}).
  */
 function parseTools(input: unknown): {
   readonly tools: readonly ToolRef[];
-  readonly skillTools: readonly SkillToolRef[];
   readonly builtinTools: readonly BuiltinToolName[];
 } {
   if (input === undefined) {
-    return { tools: [], skillTools: [], builtinTools: [] };
+    return { tools: [], builtinTools: [] };
   }
   if (!Array.isArray(input)) {
     throw new Error("submission.tools must be an array of builtin tool names or ToolRef objects");
@@ -1669,7 +1734,6 @@ function parseTools(input: unknown): {
   const seenAssetIds = new Set<string>();
   const seenBuiltins = new Set<string>();
   const tools: ToolRef[] = [];
-  const skillTools: SkillToolRef[] = [];
   input.forEach((item, index) => {
     const path = `submission.tools[${index}]`;
     // A bare string is a builtin tool reference (e.g. BuiltinTools.web_search).
@@ -1684,46 +1748,13 @@ function parseTools(input: unknown): {
       return;
     }
     const raw = requireRecord(item, path);
-    // A skill-tool is a synthetic no-arg load-tool: { kind:"skill", assetId,
-    // name, description }. Its call returns the skill's SKILL.md body; it carries
-    // no input_schema / entry (unlike a custom ToolRef).
+    // Skills are a separate first-class input now. A skill ref must not ride the
+    // tools union — point the caller at submission.skills instead of silently
+    // dropping or mis-binding it.
     if (raw.kind === "skill") {
-      for (const key of Object.keys(raw)) {
-        if (key !== "kind" && key !== "assetId" && key !== "name" && key !== "description") {
-          throw new Error(
-            `${path}.${key} is not an allowed field for a skill tool; permitted: kind, assetId, name, description`
-          );
-        }
-      }
-      const skillFields = parseAssetRefFields(
-        { kind: "asset", assetId: raw.assetId, name: raw.name },
-        path
+      throw new Error(
+        `${path} is a skill ref; skills go in submission.skills (by name), not submission.tools`
       );
-      if (!TOOL_NAME_PATTERN.test(skillFields.name)) {
-        throw new Error(`${path}.name must match ${TOOL_NAME_PATTERN.source}`);
-      }
-      if (skillFields.name.includes("__")) {
-        throw new Error(`${path}.name must not contain "__"; that separator is reserved for MCP tools`);
-      }
-      if (seenNames.has(skillFields.name)) {
-        throw new Error(`submission.tools duplicate name: ${skillFields.name}`);
-      }
-      seenNames.add(skillFields.name);
-      if (seenAssetIds.has(skillFields.assetId)) {
-        throw new Error(`submission.tools duplicate assetId: ${skillFields.assetId}`);
-      }
-      seenAssetIds.add(skillFields.assetId);
-      const skillDescription = requireString(raw.description, `${path}.description`);
-      if (skillDescription.trim().length === 0 || skillDescription.length > 2048) {
-        throw new Error(`${path}.description must be non-empty and <= 2048 chars`);
-      }
-      skillTools.push({
-        kind: "skill",
-        assetId: skillFields.assetId,
-        name: skillFields.name,
-        description: skillDescription
-      });
-      return;
     }
     for (const key of Object.keys(raw)) {
       if (
@@ -1782,7 +1813,126 @@ function parseTools(input: unknown): {
     });
   });
   const builtinTools = BUILTIN_TOOL_NAMES.filter((name) => seenBuiltins.has(name));
-  return { tools, skillTools, builtinTools };
+  return { tools, builtinTools };
+}
+
+/**
+ * Upper bound on the number of workspace skills a single run may reference.
+ * A run's skill list is a discovery surface, not a bulk-mount channel; 64 is
+ * generous headroom over any realistic per-run set while capping the meta-tool
+ * `list` payload and the submit-time resolution fan-out.
+ */
+export const SKILLS_MAX = 64;
+
+/**
+ * Parse `submission.skills`: an array of PUBLIC by-name skill refs
+ * (`{ kind:"skill", name }`). Validates each `name` against
+ * {@link SKILL_NAME_PATTERN}, rejects the `__` MCP separator and the reserved
+ * skills names, dedups by name, and bounds the list at {@link SKILLS_MAX}.
+ */
+export function parseSkills(input: unknown): readonly SkillRef[] {
+  if (input === undefined || input === null) {
+    return [];
+  }
+  if (!Array.isArray(input)) {
+    throw new Error("submission.skills must be an array of { kind:'skill', name } refs");
+  }
+  if (input.length > SKILLS_MAX) {
+    throw new Error(`submission.skills exceeds the ${SKILLS_MAX}-skill limit (got ${input.length})`);
+  }
+  const seen = new Set<string>();
+  return input.map((item, index): SkillRef => {
+    const path = `submission.skills[${index}]`;
+    const raw = requireRecord(item, path);
+    for (const key of Object.keys(raw)) {
+      if (key !== "kind" && key !== "name") {
+        throw new Error(`${path}.${key} is not an allowed field for a skill ref; permitted: kind, name`);
+      }
+    }
+    if (raw.kind !== "skill") {
+      throw new Error(`${path}.kind must be 'skill' (got ${JSON.stringify(raw.kind)})`);
+    }
+    const name = requireString(raw.name, `${path}.name`);
+    assertValidSkillName(name, `${path}.name`);
+    if (seen.has(name)) {
+      throw new Error(`submission.skills duplicate name: ${name}`);
+    }
+    seen.add(name);
+    return { kind: "skill", name };
+  });
+}
+
+/**
+ * Parse `submission.resolvedSkills`: the BOOT-RECORD-ONLY resolved refs
+ * (`{ kind:"skill", assetId, name, description }`) the BFF resolver writes.
+ * REJECTED on the public ingress path (`trusted === false`) so a caller can
+ * never inject an asset + description; only the in-container trusted re-parse
+ * (`trustedReparse: true`) accepts them.
+ */
+function parseResolvedSkills(input: unknown, trusted: boolean): readonly ResolvedSkillRef[] {
+  if (input === undefined || input === null) {
+    return [];
+  }
+  if (!trusted) {
+    throw new Error(
+      "submission.resolvedSkills is a platform-internal (boot-record) field and may not be set by callers; " +
+        "reference workspace skills by name via submission.skills"
+    );
+  }
+  if (!Array.isArray(input)) {
+    throw new Error("submission.resolvedSkills must be an array of resolved skill refs");
+  }
+  if (input.length > SKILLS_MAX) {
+    throw new Error(`submission.resolvedSkills exceeds the ${SKILLS_MAX}-skill limit (got ${input.length})`);
+  }
+  const seenNames = new Set<string>();
+  const seenAssetIds = new Set<string>();
+  return input.map((item, index): ResolvedSkillRef => {
+    const path = `submission.resolvedSkills[${index}]`;
+    const raw = requireRecord(item, path);
+    for (const key of Object.keys(raw)) {
+      if (key !== "kind" && key !== "assetId" && key !== "name" && key !== "description") {
+        throw new Error(
+          `${path}.${key} is not an allowed field for a resolved skill ref; permitted: kind, assetId, name, description`
+        );
+      }
+    }
+    if (raw.kind !== "skill") {
+      throw new Error(`${path}.kind must be 'skill' (got ${JSON.stringify(raw.kind)})`);
+    }
+    const fields = parseAssetRefFields({ kind: "asset", assetId: raw.assetId, name: raw.name }, path);
+    assertValidSkillName(fields.name, `${path}.name`);
+    if (seenNames.has(fields.name)) {
+      throw new Error(`submission.resolvedSkills duplicate name: ${fields.name}`);
+    }
+    seenNames.add(fields.name);
+    if (seenAssetIds.has(fields.assetId)) {
+      throw new Error(`submission.resolvedSkills duplicate assetId: ${fields.assetId}`);
+    }
+    seenAssetIds.add(fields.assetId);
+    const description = requireString(raw.description, `${path}.description`);
+    if (description.trim().length === 0 || description.length > 2048) {
+      throw new Error(`${path}.description must be non-empty and <= 2048 chars`);
+    }
+    return { kind: "skill", assetId: fields.assetId, name: fields.name, description };
+  });
+}
+
+/**
+ * Shared skill-name gate for {@link parseSkills} / {@link parseResolvedSkills}
+ * (and mirrored SDK-side in `Skill`): pattern + `__` MCP separator + reserved
+ * names (`skills`, `skill`).
+ */
+function assertValidSkillName(name: string, field: string): void {
+  if (!SKILL_NAME_PATTERN.test(name)) {
+    throw new Error(`${field} must match ${SKILL_NAME_PATTERN.source}`);
+  }
+  if (name.includes("__")) {
+    throw new Error(`${field} must not contain "__"; that separator is reserved for MCP tools`);
+  }
+  if (SKILL_RESERVED_NAMES.has(name)) {
+    throw new Error(`${field} must not be a reserved skills name (${[...SKILL_RESERVED_NAMES].join(", ")})`);
+  }
 }
 
 function parseAgentsMd(input: unknown): readonly AgentsMdRef[] {

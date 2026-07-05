@@ -1,9 +1,9 @@
 /**
  * Public surface of the `aex` SDK.
  *
- * `Aex` is the single SDK client. Composition primitives are `Tool` / `Tools`
- * (skill-tools), `McpServer`, `AgentsMd`, `File`, and `Secret`. Everything else
- * is types, errors, and event type guards re-exported from `@aexhq/contracts`.
+ * `Aex` is the single SDK client. Composition primitives are `Tool`, `Skill`,
+ * `McpServer`, `AgentsMd`, `File`, and `Secret`. Everything else is types,
+ * errors, and event type guards re-exported from `@aexhq/contracts`.
  */
 
 export {
@@ -13,7 +13,8 @@ export {
   SecretsClient,
   SessionClient,
   SessionHandle,
-  SessionTurnStream
+  SessionTurnStream,
+  SkillsClient
 } from "./client.js";
 export type {
   AexOptions,
@@ -43,7 +44,7 @@ export type {
 
 // Composition primitives
 export { Tool } from "./tool.js";
-export { SkillTool, Tools } from "./skill-tool.js";
+export { Skill } from "./skill.js";
 export { AgentsMd } from "./agents-md.js";
 export { File } from "./file.js";
 export { McpServer } from "./mcp-server.js";
@@ -76,6 +77,8 @@ export type { ProviderFault, RetryOptions } from "./retry.js";
 export {
   MCP_SERVER_NAME_PATTERN,
   SKILL_BUNDLE_LIMITS,
+  SKILL_NAME_PATTERN,
+  SKILL_RESERVED_NAMES,
   SkillBundleValidationError,
   normaliseSkillBundlePath,
   validateSkillBundleEntry,
@@ -88,7 +91,8 @@ export type {
   McpServerRef,
   SkillBundleEntry,
   SkillBundleManifest,
-  SkillToolRef,
+  SkillRecord as SkillRecordWire,
+  SkillRef,
   ToolInputSchema,
   ToolRef
 } from "@aexhq/contracts";

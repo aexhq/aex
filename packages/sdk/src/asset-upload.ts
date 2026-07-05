@@ -1,7 +1,7 @@
 /**
  * Asset materialization for the SDK run / session path.
  *
- * Every inline skill-tool / `Tool` / `AgentsMd` / `File` draft is materialized
+ * Every inline `Skill` / `Tool` / `AgentsMd` / `File` draft is materialized
  * to the hosted API's content-addressable asset store before the session
  * starts, so the wire submission carries only storage-neutral refs.
  *

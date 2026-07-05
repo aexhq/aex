@@ -4,7 +4,7 @@ import type { SkillFiles } from "./bundle.js";
 
 /**
  * Fetch a zip-archived skill from a URL and reduce it to the same in-memory
- * `SkillFiles` map that `Tools.fromSkillDir` consumes.
+ * `SkillFiles` map that `Skill.fromDir` consumes.
  *
  * This runs in the SDK process (the caller's own app), so the URL is
  * caller-controlled — there is no SSRF surface here. Host the skill yourself
@@ -37,12 +37,12 @@ export async function fetchSkillArchive(
   opts: FetchSkillArchiveOptions = {}
 ): Promise<SkillFiles> {
   if (typeof url !== "string" || url.length === 0) {
-    throw new Error("Tools.fromSkillUrl: url is required");
+    throw new Error("Skill.fromUrl: url is required");
   }
   const fetchImpl = opts.fetch ?? (globalThis as { fetch?: FetchLike }).fetch;
   if (typeof fetchImpl !== "function") {
     throw new Error(
-      "Tools.fromSkillUrl: global fetch is unavailable; pass args.fetch " +
+      "Skill.fromUrl: global fetch is unavailable; pass args.fetch " +
         "(Bun, Node 18+, or a fetch-capable runtime is required)"
     );
   }
@@ -66,31 +66,31 @@ async function download(url: string, fetchImpl: FetchLike, timeoutMs: number): P
   try {
     res = await fetchImpl(url, { signal: controller.signal });
   } catch (err) {
-    throw new Error(`Tools.fromSkillUrl: fetch failed for ${redactUrl(url)}: ${errMessage(err)}`);
+    throw new Error(`Skill.fromUrl: fetch failed for ${redactUrl(url)}: ${errMessage(err)}`);
   } finally {
     clearTimeout(timer);
   }
   if (!res.ok) {
-    throw new Error(`Tools.fromSkillUrl: fetch for ${redactUrl(url)} returned HTTP ${res.status}`);
+    throw new Error(`Skill.fromUrl: fetch for ${redactUrl(url)} returned HTTP ${res.status}`);
   }
   // Early guard on a declared size so a clearly-too-big archive fails before
   // we buffer it. The authoritative caps are re-checked by bundleSkillFiles.
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
     throw new Error(
-      `Tools.fromSkillUrl: archive at ${redactUrl(url)} declares ${declared} bytes, ` +
+      `Skill.fromUrl: archive at ${redactUrl(url)} declares ${declared} bytes, ` +
         `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
     );
   }
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (bytes.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
     throw new Error(
-      `Tools.fromSkillUrl: archive at ${redactUrl(url)} is ${bytes.byteLength} bytes, ` +
+      `Skill.fromUrl: archive at ${redactUrl(url)} is ${bytes.byteLength} bytes, ` +
         `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
     );
   }
   if (bytes.byteLength === 0) {
-    throw new Error(`Tools.fromSkillUrl: archive at ${redactUrl(url)} is empty`);
+    throw new Error(`Skill.fromUrl: archive at ${redactUrl(url)} is empty`);
   }
   return bytes;
 }
@@ -99,14 +99,14 @@ async function verifySha256(bytes: Uint8Array, expected: string, url: string): P
   const want = (expected.startsWith("sha256:") ? expected.slice("sha256:".length) : expected).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(want)) {
     throw new Error(
-      `Tools.fromSkillUrl: sha256 must be 64 hex chars (optionally prefixed "sha256:"), ` +
+      `Skill.fromUrl: sha256 must be 64 hex chars (optionally prefixed "sha256:"), ` +
         `got ${JSON.stringify(expected)}`
     );
   }
   const got = await sha256Hex(bytes);
   if (got !== want) {
     throw new Error(
-      `Tools.fromSkillUrl: archive integrity check failed for ${redactUrl(url)}: ` +
+      `Skill.fromUrl: archive integrity check failed for ${redactUrl(url)}: ` +
         `expected sha256:${want} but downloaded bytes hash to sha256:${got}`
     );
   }
@@ -121,7 +121,7 @@ function unzip(bytes: Uint8Array, url: string): Record<string, Uint8Array> {
     return unzipSync(bytes);
   } catch (err) {
     throw new Error(
-      `Tools.fromSkillUrl: could not unzip the archive at ${redactUrl(url)} ` +
+      `Skill.fromUrl: could not unzip the archive at ${redactUrl(url)} ` +
         `(expected a .zip): ${errMessage(err)}`
     );
   }
@@ -152,7 +152,7 @@ function resolveSkillRoot(entries: Record<string, Uint8Array>, url: string): Ski
 
   const paths = Object.keys(files);
   if (paths.length === 0) {
-    throw new Error(`Tools.fromSkillUrl: archive at ${redactUrl(url)} contains no files`);
+    throw new Error(`Skill.fromUrl: archive at ${redactUrl(url)} contains no files`);
   }
 
   if (Object.prototype.hasOwnProperty.call(files, "SKILL.md")) {
@@ -173,7 +173,7 @@ function resolveSkillRoot(entries: Record<string, Uint8Array>, url: string): Ski
 
   const roots = [...new Set(paths.map((p) => (p.includes("/") ? `${p.split("/")[0]}/` : p)))].sort();
   throw new Error(
-    `Tools.fromSkillUrl: fetched archive at ${redactUrl(url)} must contain SKILL.md at its root, ` +
+    `Skill.fromUrl: fetched archive at ${redactUrl(url)} must contain SKILL.md at its root, ` +
       `or inside a single top-level folder. Found top-level entries: ${roots.join(", ")}`
   );
 }
@@ -201,7 +201,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
   if (!subtle) {
     throw new Error(
-      "Tools.fromSkillUrl: globalThis.crypto.subtle is unavailable; " +
+      "Skill.fromUrl: globalThis.crypto.subtle is unavailable; " +
         "Bun, Node 18+, or a Web-Crypto-capable runtime is required"
     );
   }

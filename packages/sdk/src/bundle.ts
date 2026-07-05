@@ -11,11 +11,10 @@ import { SKILL_BUNDLE_LIMITS, validateSkillBundleEntry, type ToolInputSchema } f
  * recomputes the canonical hash on receipt — SDK-side hashing is NOT
  * part of any contract, so we don't expose one for workspace uploads.
  *
- * For transient (per-run) skills the SDK does compute an advisory
- * `sha256` of the canonicalised zip via `hashSkillBundle()` — it travels
- * in the `InlineSkillRef.contentHash` field, is used for retry
- * de-dup and janitor reconciliation, and is recomputed server-side
- * (mismatch → submission rejected).
+ * For workspace skills the SDK computes an advisory `sha256` of the
+ * canonicalised zip via `hashSkillBundle()` before upserting the skill by name.
+ * The platform verifies the hash against the uploaded bytes and uses it for
+ * deduplication.
  */
 export interface BundledSkill {
   readonly zip: Uint8Array;
@@ -174,12 +173,11 @@ export function bundleToolFiles(
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 
 /**
- * Compute `sha256:<hex>` of the given canonicalised zip bytes. Used by
- * `Tools.fromSkillDir` / `Tools.fromSkillUrl` to populate the draft
- * skill-tool's `contentHash` field. The hash is advisory — the BFF
- * recomputes server-side after re-canonicalising the zip; a mismatch is
- * rejected. Web-Crypto-only so the SDK works in Bun, Node, edge runtimes,
- * and browsers without polyfills.
+ * Compute `sha256:<hex>` of the given canonicalised zip bytes. Used by the
+ * `Skill.from*` / `File` / `AgentsMd` factories to populate the draft's
+ * `contentHash` field. The hash is advisory — the BFF verifies
+ * it against the uploaded zip; a mismatch is rejected. Web-Crypto-only so the
+ * SDK works in Bun, Node, edge runtimes, and browsers without polyfills.
  */
 export async function hashSkillBundle(zipBytes: Uint8Array): Promise<string> {
   const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
