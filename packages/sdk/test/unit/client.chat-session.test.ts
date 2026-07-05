@@ -194,6 +194,81 @@ describe("Aex sessions", () => {
     expect(seen).toEqual([4096, 4097]);
   });
 
+  it("yields events carrying the is*() type-guard methods, and narrows in the branch", async () => {
+    const { client, sockets, webSocketFactory } = makeClient();
+    const session = await client.openSession({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-ant" }
+    });
+    const texts: string[] = [];
+    const toolNames: string[] = [];
+    let sawSettled = false;
+    const consume = (async () => {
+      for await (const evt of session.send("continue", { webSocketFactory })) {
+        if (evt.isTextMessage()) {
+          // `evt.data.text` is narrowed to `string` — no cast needed.
+          texts.push(evt.data.text);
+        } else if (evt.isToolCallStart()) {
+          toolNames.push(evt.data.name);
+        }
+        if (evt.isRunSettled()) sawSettled = true;
+        // The lifecycle discriminants are mutually exclusive on a text event.
+        if (evt.isTextMessage()) {
+          expect(evt.isToolCallStart()).toBe(false);
+          expect(evt.isCustom()).toBe(false);
+          expect(evt.isEventChannel()).toBe(true);
+        }
+      }
+    })();
+
+    await flush();
+    sockets[0]!.message(event(4096));
+    sockets[0]!.message(
+      event(4097, {
+        source: "agent",
+        type: "TOOL_CALL_START",
+        data: { id: "tc1", name: "read_file", arguments: { path: "/x" } }
+      })
+    );
+    sockets[0]!.message(
+      event(4098, {
+        source: "runtime",
+        type: "CUSTOM",
+        data: { name: "aex.session.idle", value: { turnSeq: 1 } }
+      })
+    );
+    await consume;
+
+    expect(texts).toEqual(["hello"]);
+    expect(toolNames).toEqual(["read_file"]);
+    expect(sawSettled).toBe(true);
+  });
+
+  it("collected result.events carry the is*() methods too", async () => {
+    const { client, sockets, webSocketFactory } = makeClient();
+    const promise = client.sessions.run({
+      model: "claude-haiku-4-5",
+      message: "say hello",
+      apiKeys: { anthropic: "sk-ant" },
+      stream: { webSocketFactory }
+    });
+
+    await flush();
+    sockets[0]!.message(event(4096));
+    sockets[0]!.message(
+      event(4097, {
+        source: "runtime",
+        type: "CUSTOM",
+        data: { name: "aex.session.idle", value: { turnSeq: 1 } }
+      })
+    );
+
+    const result = await promise;
+    expect(result.events[0]!.isTextMessage()).toBe(true);
+    expect(result.events[1]!.isCustom()).toBe(true);
+    expect(result.events[1]!.isRunSettled()).toBe(true);
+  });
+
   it("openSession rehydrates an existing session handle", async () => {
     const { client, calls } = makeClient();
     const session = await client.openSession("sess_1");

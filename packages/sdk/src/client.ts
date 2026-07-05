@@ -7,12 +7,14 @@ import {
   RunConfigValidationError,
   RunStateError,
   SecretString,
+  asAexEventView,
   customName,
   isRunSettled,
   operations,
   providersForModel,
   streamCoordinatorEvents,
   type AexEvent,
+  type AexEventView,
   type AgentsMdRecord,
   type AgentsMdRef,
   type BillingCheckoutRequest,
@@ -144,8 +146,8 @@ export interface RunResult {
   readonly text: string;
   /** Assistant messages projected from the settled event stream. */
   readonly messages: readonly Message[];
-  /** The session turn event stream. */
-  readonly events: readonly RunEvent[];
+  /** The session turn event stream — each event carries the `is*()` type-guard methods. */
+  readonly events: readonly AexEventView[];
   /** Decoded view of the events: tool calls + usage + assistant text. */
   readonly trace: RunTrace;
   /** The run's captured output files. */
@@ -314,23 +316,23 @@ export interface SessionTurnResult {
   readonly turn: SessionTurn;
   readonly status: string;
   readonly text: string;
-  readonly events: readonly SessionEvent[];
+  readonly events: readonly AexEventView[];
   readonly outputs: readonly Output[];
   readonly messages: readonly Message[];
 }
 
 export interface SessionRunResult extends SessionTurnResult {}
 
-export class SessionTurnStream implements AsyncIterable<SessionEvent> {
-  readonly #run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>;
-  #generator: AsyncGenerator<SessionEvent, SessionTurnResult, void> | undefined;
+export class SessionTurnStream implements AsyncIterable<AexEventView> {
+  readonly #run: () => AsyncGenerator<AexEventView, SessionTurnResult, void>;
+  #generator: AsyncGenerator<AexEventView, SessionTurnResult, void> | undefined;
   #outcome:
     | { readonly ok: true; readonly value: SessionTurnResult }
     | { readonly ok: false; readonly error: unknown }
     | undefined;
   #done: Promise<SessionTurnResult> | undefined;
 
-  constructor(run: () => AsyncGenerator<SessionEvent, SessionTurnResult, void>) {
+  constructor(run: () => AsyncGenerator<AexEventView, SessionTurnResult, void>) {
     this.#run = run;
   }
 
@@ -340,14 +342,14 @@ export class SessionTurnStream implements AsyncIterable<SessionEvent> {
    * single generator — a fresh generator per consumer would re-POST the
    * message as a second billable turn (or 409 `session_busy` mid-turn).
    */
-  #shared(): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+  #shared(): AsyncGenerator<AexEventView, SessionTurnResult, void> {
     this.#generator ??= this.#capture(this.#run());
     return this.#generator;
   }
 
   async *#capture(
-    generator: AsyncGenerator<SessionEvent, SessionTurnResult, void>
-  ): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+    generator: AsyncGenerator<AexEventView, SessionTurnResult, void>
+  ): AsyncGenerator<AexEventView, SessionTurnResult, void> {
     try {
       let next = await generator.next();
       while (!next.done) {
@@ -362,7 +364,7 @@ export class SessionTurnStream implements AsyncIterable<SessionEvent> {
     }
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
+  [Symbol.asyncIterator](): AsyncIterator<AexEventView> {
     const generator = this.#shared();
     // Deliberately do NOT forward `return()`: `break`-ing out of a
     // `for await` loop must not close the in-flight turn — `done()` can
@@ -433,11 +435,11 @@ export interface SessionMessages {
  * coordinator envelope iterator, and the events-namespace archive.
  */
 export interface SessionEvents {
-  list(): Promise<readonly SessionEvent[]>;
-  last(): Promise<SessionEvent | undefined>;
-  first(): Promise<SessionEvent | undefined>;
+  list(): Promise<readonly AexEventView[]>;
+  last(): Promise<AexEventView | undefined>;
+  first(): Promise<AexEventView | undefined>;
   stream(options?: StreamEventsOptions): AsyncIterable<RunEvent>;
-  streamEnvelopes(options?: StreamEnvelopesOptions): AsyncIterable<AexEvent>;
+  streamEnvelopes(options?: StreamEnvelopesOptions): AsyncIterable<AexEventView>;
   archiveLink(options?: OutputLinkOptions): Promise<OutputLink>;
   /** Download the events-namespace archive as a zip. */
   download(options?: OutputDownloadOptions): Promise<Uint8Array>;
@@ -514,7 +516,7 @@ export class SessionHandle {
     });
   }
 
-  async *#send(input: SessionInput, options: InternalSessionSendOptions): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
+  async *#send(input: SessionInput, options: InternalSessionSendOptions): AsyncGenerator<AexEventView, SessionTurnResult, void> {
     const idempotencyKey = options.idempotencyKey ?? generateIdempotencyKey();
     this.#lastSend = { input, idempotencyKey };
     const accepted = await operations.sendSessionMessage(
@@ -525,7 +527,7 @@ export class SessionHandle {
     );
     this.#session = accepted.session;
     const turn = accepted.turn;
-    const events: SessionEvent[] = [];
+    const events: AexEventView[] = [];
     for await (const event of streamSessionTurnEvents(this.#http, this.id, turn, {
       ...options,
       from: options.from ?? accepted.eventCursor ?? turn.eventCursor ?? 0
@@ -620,7 +622,8 @@ export class SessionHandle {
   events(): SessionEvents {
     const http = this.#http;
     const id = this.id;
-    const list = (): Promise<readonly SessionEvent[]> => operations.listSessionEvents(http, id);
+    const list = async (): Promise<readonly AexEventView[]> =>
+      (await operations.listSessionEvents(http, id)).map(asAexEventView);
     return {
       list,
       last: async () => (await list()).at(-1),
@@ -861,9 +864,9 @@ async function* streamSessionTurnEvents(
   sessionId: string,
   turn: SessionTurn,
   options: InternalSessionSendOptions
-): AsyncGenerator<SessionEvent, void, void> {
+): AsyncGenerator<AexEventView, void, void> {
   const first = await operations.getSessionCoordinatorTicket(http, sessionId);
-  yield* streamCoordinatorEvents({
+  for await (const event of streamCoordinatorEvents({
     wsUrl: first.wsUrl,
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, sessionId)).ticket,
@@ -872,7 +875,9 @@ async function* streamSessionTurnEvents(
     ...(options.webSocketFactory ? { webSocketFactory: options.webSocketFactory } : {}),
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {})
-  });
+  })) {
+    yield asAexEventView(event);
+  }
 }
 
 /**
@@ -918,9 +923,9 @@ async function* streamSessionEnvelopes(
   http: HttpClient,
   id: string,
   options: StreamEnvelopesOptions
-): AsyncIterable<AexEvent> {
+): AsyncIterable<AexEventView> {
   const first = await operations.getSessionCoordinatorTicket(http, id);
-  yield* streamCoordinatorEvents({
+  for await (const event of streamCoordinatorEvents({
     wsUrl: first.wsUrl,
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, id)).ticket,
@@ -928,7 +933,9 @@ async function* streamSessionEnvelopes(
     // the earlier RUN_FINISHED UX signal.
     ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
     ...(options.signal ? { signal: options.signal } : {})
-  });
+  })) {
+    yield asAexEventView(event);
+  }
 }
 
 /**
@@ -1600,7 +1607,7 @@ export class Aex {
         await session.delete();
       }
       const run = sessionToRun(sessionRecord);
-      const events = turnResult.events as unknown as readonly RunEvent[];
+      const events = turnResult.events;
       const outputs = turnResult.outputs;
       const ok = turnResult.status === "idle" || turnResult.status === "suspended";
       if (!ok && scopedSignal?.signal.aborted) {
@@ -1614,7 +1621,7 @@ export class Aex {
             `session.cancel() or resume with openSession(${JSON.stringify(runId)})`
         );
       }
-      const trace = runTraceFromEvents(events);
+      const trace = runTraceFromEvents(events as unknown as readonly RunEvent[]);
       // Surface the trace-derived usage at the top level when the run record does
       // not carry its own usage (the managed plane doesn't populate session.usage);
       // the per-event trace still yields token counts (pre-launch edge-sweep F5).

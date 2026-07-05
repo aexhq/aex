@@ -203,30 +203,20 @@ export type {
   RunProvider
 } from "@aexhq/contracts";
 
-// Event guards. The lifecycle/channel guards (isRunStarted/isRunError/isCustom/
-// isLog/…) operate on the coordinator `AexEvent` envelope; isTextMessage /
-// isToolCallStart / isToolCallResult / isRunFinished narrow the loose `RunEvent`
-// snapshot shape `listEvents` / `RunResult.events` return, typing `.data`.
-export {
-  AEX_RUN_SETTLED_NAME,
-  isCustom,
-  isEventChannel,
-  isFromSource,
-  isLog,
-  isRunError,
-  isRunFinished,
-  isRunSettled,
-  isRunStarted,
-  isRunTerminal,
-  isTextMessage,
-  isToolCallResult,
-  isToolCallStart
-} from "@aexhq/contracts";
+// Event methods. Every event the SDK yields — the turn stream (`session.send()`),
+// `session.events().list()`, `session.events().streamEnvelopes()`, and
+// `RunResult.events` — is an `AexEventView`: the coordinator envelope enriched
+// with one type-guard METHOD per standardized event type, so a consumer branches
+// with `event.isTextMessage()` / `event.isToolCallStart()` / `event.isRunError()`
+// / … instead of a free-function guard or a raw `event.type === "…"` compare.
+// `isTextMessage()` / `isToolCallStart()` / `isToolCallResult()` additionally
+// NARROW `event.data` to that type's fields (e.g. `event.data.text` is `string`).
+export { AEX_RUN_SETTLED_NAME } from "@aexhq/contracts";
 export type {
-  RunFinishedRunEvent,
-  TextMessageRunEvent,
-  ToolCallResultRunEvent,
-  ToolCallStartRunEvent
+  AexEventView,
+  TextMessageEventView,
+  ToolCallResultEventView,
+  ToolCallStartEventView
 } from "@aexhq/contracts";
 
 // Secret utilities

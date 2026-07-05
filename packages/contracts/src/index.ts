@@ -60,6 +60,7 @@ export type {
 export * from "./runtime-sizes.js";
 export * from "./runner-event.js";
 export * from "./event-envelope.js";
+export * from "./event-view.js";
 export * from "./connection-ticket.js";
 export * from "./event-stream-client.js";
 export * from "./run-unit.js";

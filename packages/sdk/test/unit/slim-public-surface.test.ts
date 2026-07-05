@@ -15,6 +15,23 @@ const removedRootExports = [
   "textOf"
 ] as const;
 
+// The free-function event guards were replaced by `event.is*()` methods on the
+// `AexEventView` the SDK yields, so none of them are on the public surface.
+const removedEventGuards = [
+  "isCustom",
+  "isEventChannel",
+  "isFromSource",
+  "isLog",
+  "isRunError",
+  "isRunFinished",
+  "isRunSettled",
+  "isRunStarted",
+  "isRunTerminal",
+  "isTextMessage",
+  "isToolCallResult",
+  "isToolCallStart"
+] as const;
+
 describe("slim launch root SDK surface", () => {
   it("centers the public runtime surface on Aex", async () => {
     const sdk = await import("../../src/index.js");
@@ -23,6 +40,9 @@ describe("slim launch root SDK surface", () => {
     expect(typeof root["Aex"]).toBe("function");
     for (const name of removedRootExports) {
       expect(root[name], `${name} should not be exported from the root SDK surface`).toBeUndefined();
+    }
+    for (const name of removedEventGuards) {
+      expect(root[name], `${name} should be a method on the event, not a root SDK export`).toBeUndefined();
     }
   });
 

@@ -13,7 +13,7 @@
  * `session_busy` while the first turn is still in flight (observed live).
  */
 import { describe, expect, it } from "vitest";
-import type { SessionEvent } from "@aexhq/contracts";
+import type { AexEventView } from "@aexhq/contracts";
 import { SessionTurnStream } from "../../src/client.js";
 
 type Result = { readonly status: string; readonly text: string };
@@ -25,7 +25,7 @@ function makeStream(events: readonly string[], result: Result, counter: { runs: 
       if (failAt !== undefined && i === failAt) {
         throw new Error("boom");
       }
-      yield { type } as unknown as SessionEvent;
+      yield { type } as unknown as AexEventView;
     }
     return result as never;
   });

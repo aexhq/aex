@@ -126,14 +126,15 @@ on how the turn ends:
   reached that status. This is the terminal you should expect from a managed
   run's event stream.
 
-The SDK's helpers cover both families so you never have to switch on the plane:
+Each event the stream yields carries method guards that cover both families so
+you never have to switch on the plane:
 
-- `isRunTerminal(event)` — true for the AG-UI `RUN_FINISHED` / `RUN_ERROR` pair.
-- `isRunSettled(event)` — true for the `aex.run.settled` settle barrier **and**
+- `event.isRunTerminal()` — true for the AG-UI `RUN_FINISHED` / `RUN_ERROR` pair.
+- `event.isRunSettled()` — true for the `aex.run.settled` settle barrier **and**
   for any `aex.session.*` park terminal. The managed plane does not broadcast a
   separate `aex.run.settled` barrier — the park event plays that role — so
-  `isRunSettled` is the one guard that reliably means "this stream is done and
-  the record is authoritative".
+  `event.isRunSettled()` is the one check that reliably means "this stream is done
+  and the record is authoritative".
 
 To read the authoritative status consistently, use one of:
 
@@ -154,8 +155,8 @@ for await (const event of session.events().streamEnvelopes({ settleConsistent: t
 const settled = await aex.sessions.get(session.id); // parked/terminal here
 ```
 
-`settleConsistent: true` makes the iterator end exactly when `isRunSettled(event)`
-first fires; on a raw stream, apply `isRunSettled(event)` yourself. What it
+`settleConsistent: true` makes the iterator end exactly when `event.isRunSettled()`
+first fires; on a raw stream, call `event.isRunSettled()` yourself. What it
 guarantees: when the stream ends, a subsequent `aex.sessions.get(id)` reads a
 parked/terminal status and `session.outputs().list()` is complete. Outputs are
 uploaded before the terminal is broadcast, so they are readable the moment the
@@ -179,30 +180,32 @@ Events are typed as the discriminated `RunEvent` union for compatibility and as 
 
 ## Typed helpers
 
-The package exports conservative type guards over run events:
+Every event the SDK yields — the turn stream (`session.send()`),
+`session.events().list()`, `session.events().streamEnvelopes()`, and
+`RunResult.events` — carries a type-guard **method** for each standardized event
+type, so you branch on the event without importing a free function or writing a
+raw `event.type === "…"` compare:
 
 ```ts
-import {
-  isRunStarted,
-  isRunFinished,
-  isRunError,
-  isRunTerminal,
-  isRunSettled,
-  isTextMessage,
-  isToolCallStart,
-  isToolCallResult,
-  isCustom,
-  isLog,
-  isEventChannel
-} from "@aexhq/sdk";
+for await (const event of session.send("Continue the task.")) {
+  if (event.isTextMessage()) {
+    process.stdout.write(event.data.text); // `data.text` is typed `string` here
+  } else if (event.isToolCallStart()) {
+    console.log("tool:", event.data.name); // `data.name` is typed `string` here
+  } else if (event.isRunError()) {
+    console.error("run error");
+  }
+}
 ```
 
-All guards test the `type` discriminant at runtime. `isTextMessage`,
-`isToolCallStart`, `isToolCallResult`, and `isRunFinished` operate on the loose
-`RunEvent` snapshot (`session.events().list()` / `RunResult.events`) and additionally NARROW
-`event.data` to the fields that event type carries — e.g. inside
-`if (isTextMessage(e))`, `e.data.text` is typed `string`. The lifecycle/channel
-guards (`isRunStarted`, `isRunError`, `isCustom`, `isLog`, …) operate on the
-coordinator envelope and narrow only the discriminant. Use `result.text` or
-`session.messages.all()` when you need assistant text without inspecting the
-event stream directly.
+The full method set: `isRunStarted()`, `isRunFinished()`, `isRunError()`,
+`isRunTerminal()`, `isTextMessage()`, `isToolCallStart()`, `isToolCallResult()`,
+`isCustom()`, `isLog()`, `isEventChannel()`, `isRunSettled()`, and
+`isFromSource(source)`. All test the `type` (or `channel`/`source`) discriminant
+at runtime. `isTextMessage()`, `isToolCallStart()`, and `isToolCallResult()` are
+TS type predicates: inside the guarded branch `event.data` NARROWS to that event
+type's payload fields (e.g. `event.data.text` is typed `string`). Annotate a
+narrowed event with the exported `TextMessageEventView` / `ToolCallStartEventView`
+/ `ToolCallResultEventView` types, or a raw event with `AexEventView`. Use
+`result.text` or `session.messages.all()` when you need assistant text without
+inspecting the event stream directly.
