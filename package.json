@@ -20,6 +20,7 @@
     "test:unit": "bun run build && bun run --workspaces --if-present --parallel test:unit && bun run --filter @aexhq/sdk test:security && bun run vitest run --root scripts/validate",
     "test:user": "bun run --filter @aexhq/user-tests test:user",
     "test:user:files": "bun run --filter @aexhq/user-tests test:user:files",
+    "test:user:smoke": "bun run --filter @aexhq/user-tests test:user:smoke",
     "test:user:admission-gates": "bun run --filter @aexhq/user-tests test:user:admission-gates",
     "test:user:offline": "bun run --filter @aexhq/user-tests test:user:offline",
     "test:user:heavy": "bun run --filter @aexhq/user-tests test:user:heavy",

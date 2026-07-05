@@ -298,20 +298,20 @@ jobs:
         run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
 
   live-user-tests:
-    name: Live user tests shard ${{ matrix.shard }}/11
+    # Published-artifact SMOKE (not the full behavioral matrix). release.yml
+    # publishes to a pre-release dist-tag, then this proves the PUBLISHED
+    # @aexhq/sdk + CLI installs from npm and runs end-to-end — a DeepSeek SDK
+    # round-trip on the managed runtime and the installed CLI
+    # (apps/user-tests/vitest.smoke.config.ts). The full test/live/** matrix
+    # runs against this same published sdk_version across dev + prd in platform
+    # deploy.yml (aws-suite.yml sdk_user_tests), which the release runbook (§4.7)
+    # requires green before promoting to `latest` — so re-running the whole
+    # suite here was redundant with that deploy gate.
+    name: Published-artifact smoke
     needs: publish
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     environment: live-user-tests
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      # Full 11-way fan-out (no max-parallel cap): platform's identical
-      # sdk_user_tests job already runs these same shards concurrently against
-      # the same plane, and the preflight above asserts the workspace's
-      # maxConcurrentRuns >= 50, so 11 shards × AEX_USER_TEST_MAX_WORKERS=1 = 11
-      # concurrent runs stay well within budget. Wall-clock ≈ the longest shard.
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -327,7 +327,7 @@ jobs:
       - name: Wait for published SDK installability
         run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.publish.outputs.version }}"
 
-      - name: Live user tests
+      - name: Published-artifact smoke
         shell: bash
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
@@ -335,27 +335,27 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
-          AEX_USER_TEST_MAX_WORKERS: 1
-          RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/release-live-user-tests-shard-${{ matrix.shard }}.log
-          REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/release-live-user-tests-shard-${{ matrix.shard }}.report.json
+          # Two smoke files; run both at once (2 live runs is trivially within
+          # the workspace's maxConcurrentRuns >= 50 the preflight asserts).
+          AEX_USER_TEST_MAX_WORKERS: 2
+          RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/release-smoke.log
+          REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/release-smoke.report.json
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "$RAW_LOG")"
-          # Duration-balanced sharding: shard-files.mjs LPT bin-packs the
-          # collected test files by recorded duration (shard-durations.json)
-          # and fails loudly if a shard would be empty — unlike vitest
-          # --shard, which splits by file count and can collect zero tests.
-          FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"
-          bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"
+          # Smoke-only: install the PUBLISHED @aexhq/sdk@<version> from npm and
+          # exercise the SDK + CLI end-to-end. The full behavioral matrix is the
+          # deploy.yml gate (see the job comment above).
+          bun run test:user:smoke -- --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"
           node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"
 
-      - name: Redact live user test log
+      - name: Redact smoke log
         if: ${{ always() }}
         env:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/release-live-user-tests-shard-${{ matrix.shard }}.log
-          REDACTED_LOG: ${{ github.workspace }}/.suite-diagnostics/redacted/release-live-user-tests-shard-${{ matrix.shard }}.log
+          RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/release-smoke.log
+          REDACTED_LOG: ${{ github.workspace }}/.suite-diagnostics/redacted/release-smoke.log
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "$REDACTED_LOG")"
@@ -369,7 +369,7 @@ jobs:
           }
           let text = existsSync(rawPath)
             ? readFileSync(rawPath, "utf8")
-            : "release live-user-tests log was not created before diagnostics collection.\n";
+            : "release published-artifact smoke log was not created before diagnostics collection.\n";
 
           for (const name of ["AEX_API_KEY", "DEEPSEEK_API_KEY"]) {
             const value = process.env[name];
@@ -404,11 +404,11 @@ jobs:
           }
           NODE
 
-      - name: Upload redacted live user test log
+      - name: Upload redacted smoke log
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: release-live-user-tests-shard-${{ matrix.shard }}-redacted-log
+          name: release-smoke-redacted-log
           path: .suite-diagnostics/redacted
           if-no-files-found: error
           retention-days: 14
