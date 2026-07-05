@@ -1,7 +1,7 @@
 /**
  * Node/Bun-only directory walk with fidelity capture + `.aexignore` filtering.
  *
- * Shared by `File.fromPath` (customer files) and `readDirectoryAsFiles`
+ * Shared by `File.fromPath` (customer files) and `readDirectoryWithFidelity`
  * (skills/tools). Captures, in ONE deterministic walk:
  *   - regular files (bytes),
  *   - executable bits (`mode & 0o111` → normalised 0o755 bucket, listed in `exec`),

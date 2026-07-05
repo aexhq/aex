@@ -4,9 +4,10 @@ import {
   type FetchLike,
   type SkillRef
 } from "@aexhq/contracts";
-import { bundleSkillFiles, hashSkillBundle, type SkillFiles } from "./bundle.js";
+import { bundleSkillFiles, hashSkillBundle, type BundleMeta, type SkillFiles } from "./bundle.js";
 import { fetchSkillArchive } from "./fetch-archive.js";
-import { readDirectoryAsFiles } from "./node-fs.js";
+import { readDirectoryWithFidelity } from "./node-fs.js";
+import type { IgnoreOptions } from "./node-walk.js";
 import { unzipSync } from "fflate";
 
 /**
@@ -81,12 +82,21 @@ export class Skill {
    * Read a local skill directory. It must contain `SKILL.md` at its root, whose
    * YAML frontmatter supplies `description` and (unless `args.name` is given)
    * `name`. When neither an explicit name nor a frontmatter name is present, the
-   * slugified directory basename is used. Symlinks / non-regular files are
-   * skipped. Bun/Node filesystem runtimes only.
+   * slugified directory basename is used.
+   *
+   * The directory is walked with FIDELITY (the same walk `File.fromPath` uses):
+   * `.aexignore` + the always-on defaults (`.git/`, `node_modules/`, …) prune the
+   * upload — so a skill dir carrying `node_modules` no longer ships it — and
+   * executable bits + symlinks are captured into a `.aexmeta.json` sidecar
+   * (emitted only when such metadata exists, so a pure-content skill dir stays
+   * byte-identical → dedup continuity). Bun/Node filesystem runtimes only.
    */
-  static async fromDir(rootDir: string, args: { readonly name?: string } = {}): Promise<Skill> {
-    const files = await readDirectoryAsFiles(rootDir);
-    return Skill.#fromFiles("Skill.fromDir", files, args.name, dirBasename(rootDir));
+  static async fromDir(
+    rootDir: string,
+    args: { readonly name?: string; readonly ignore?: IgnoreOptions } = {}
+  ): Promise<Skill> {
+    const { files, meta } = await readDirectoryWithFidelity(rootDir, args.ignore);
+    return Skill.#fromFiles("Skill.fromDir", files, args.name, dirBasename(rootDir), meta);
   }
 
   /**
@@ -116,13 +126,20 @@ export class Skill {
 
   /**
    * Build a draft skill from an in-memory files map (path -> string | bytes).
-   * Requires a root `SKILL.md`. Universal (no filesystem access).
+   * Requires a root `SKILL.md`. Universal (no filesystem access). An optional
+   * `meta` (exec bits + symlinks) is threaded to the bundler for callers that
+   * carry fidelity metadata alongside a hand-built map; omit it and a plain map
+   * stays byte-identical to the pre-fidelity output.
    */
-  static async fromFiles(args: { readonly name?: string; readonly files: SkillFiles }): Promise<Skill> {
+  static async fromFiles(args: {
+    readonly name?: string;
+    readonly files: SkillFiles;
+    readonly meta?: BundleMeta;
+  }): Promise<Skill> {
     if (!args || typeof args !== "object" || args.files === undefined) {
       throw new Error("Skill.fromFiles: { files } is required");
     }
-    return Skill.#fromFiles("Skill.fromFiles", args.files, args.name, undefined);
+    return Skill.#fromFiles("Skill.fromFiles", args.files, args.name, undefined, args.meta);
   }
 
   /** Convenience: build a single-file skill from a `SKILL.md` string. */
@@ -226,7 +243,8 @@ export class Skill {
     source: string,
     files: SkillFiles,
     explicitName: string | undefined,
-    dirBasename: string | undefined
+    dirBasename: string | undefined,
+    meta?: BundleMeta
   ): Promise<Skill> {
     const front = extractSkillFrontmatter(source, files);
     const name = deriveSkillName(source, front.name, explicitName, dirBasename);
@@ -239,7 +257,7 @@ export class Skill {
     if (description.length > 2048) {
       throw new Error(`${source}: description must be <= 2048 chars`);
     }
-    const bundled = bundleSkillFiles(files);
+    const bundled = bundleSkillFiles(files, meta);
     const contentHash = await hashSkillBundle(bundled.zip);
     const ref: DraftSkillRef = { kind: "draft", name, description, contentHash };
     return new Skill(ref, description, bundled.zip);

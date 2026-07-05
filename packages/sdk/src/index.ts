@@ -51,7 +51,7 @@ export { McpServer } from "./mcp-server.js";
 export { Secret } from "./secret.js";
 export type { SecretEnvSubmissionEntry } from "./secret.js";
 export { bundleSkillFiles, hashSkillBundle } from "./bundle.js";
-export type { BundledSkill, BundledTool, SkillFiles, ToolBundleManifest } from "./bundle.js";
+export type { BundledSkill, BundledTool, BundleMeta, SkillFiles, ToolBundleManifest } from "./bundle.js";
 
 // Errors
 export {

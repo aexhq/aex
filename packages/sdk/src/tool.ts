@@ -8,10 +8,12 @@ import {
 import {
   bundleToolFiles,
   hashSkillBundle,
+  type BundleMeta,
   type SkillFiles,
   type ToolBundleManifest
 } from "./bundle.js";
-import { readDirectoryAsFiles } from "./node-fs.js";
+import { readDirectoryWithFidelity } from "./node-fs.js";
+import type { IgnoreOptions } from "./node-walk.js";
 
 export interface ToolManifestInput {
   readonly name: string;
@@ -50,12 +52,14 @@ export class Tool {
     this.#assetId = assetId;
   }
 
-  static async fromFiles(args: ToolManifestInput & { readonly files: SkillFiles }): Promise<Tool> {
+  static async fromFiles(
+    args: ToolManifestInput & { readonly files: SkillFiles; readonly meta?: BundleMeta }
+  ): Promise<Tool> {
     if (!args || typeof args !== "object") {
       throw new Error("Tool.fromFiles: args is required");
     }
     const manifest = normalizeToolManifest("Tool.fromFiles", args);
-    const bundled = bundleToolFiles(args.files, manifest);
+    const bundled = bundleToolFiles(args.files, manifest, args.meta);
     const contentHash = await hashSkillBundle(bundled.zip);
     const ref: DraftToolRef = {
       kind: "draft",
@@ -66,8 +70,16 @@ export class Tool {
     return new Tool(ref, bundled.zip);
   }
 
-  static async fromPath(rootDir: string): Promise<Tool> {
-    const files = await readDirectoryAsFiles(rootDir);
+  /**
+   * Read a local tool bundle directory (`tool.json` at its root + support files).
+   * The directory is walked with FIDELITY (the same walk `File.fromPath` uses):
+   * `.aexignore` + the always-on defaults (`.git/`, `node_modules/`, …) prune the
+   * upload, and executable bits + symlinks are captured into a `.aexmeta.json`
+   * sidecar (emitted only when such metadata exists, so a pure-content tool dir
+   * stays byte-identical → dedup continuity). Bun/Node filesystem runtimes only.
+   */
+  static async fromPath(rootDir: string, args?: { readonly ignore?: IgnoreOptions }): Promise<Tool> {
+    const { files, meta } = await readDirectoryWithFidelity(rootDir, args?.ignore);
     const rawManifest = files["tool.json"];
     if (rawManifest === undefined) {
       throw new Error('Tool.fromPath: tool.json is required at the tool bundle root');
@@ -85,7 +97,8 @@ export class Tool {
     const { ["tool.json"]: _manifest, ...bundleFiles } = files;
     return Tool.fromFiles({
       ...(parsed as ToolManifestInput),
-      files: bundleFiles
+      files: bundleFiles,
+      meta
     });
   }
 

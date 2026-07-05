@@ -1,46 +1,47 @@
-import { readFile, readdir, stat } from "node:fs/promises";
-import { join, posix, relative, sep } from "node:path";
-import type { SkillFiles } from "./bundle.js";
+import { readFile } from "node:fs/promises";
+import type { BundleMeta } from "./bundle.js";
+import { walkDirectory, type IgnoreOptions } from "./node-walk.js";
 
 /**
- * Walk a local directory and load every regular file into an in-memory
- * `SkillFiles` map. Symlinks and non-regular files are skipped (a
- * symlink that points outside the root would still be skipped because
- * we use `lstat` semantics). Paths are normalised to forward-slash
- * relative form so they can flow into `bundleSkillFiles` directly.
+ * Fidelity-aware read of a local skill/tool directory into an in-memory files map
+ * plus its bundle metadata. Delegates to the shared {@link walkDirectory} (the
+ * SAME fidelity walk `File.fromPath` uses), so skills/tools now honor `.aexignore`
+ * + the always-on defaults (`.git/`, `node_modules/`, …), capture executable bits
+ * + symlinks into `meta` (destined for the `.aexmeta.json` sidecar), and never
+ * silently vanish a non-regular file (surfaced in `dropped`).
  *
- * Bun/Node filesystem runtimes only. Browser callers should use
- * `bundleSkillFiles` with a pre-built files map instead.
+ * INVARIANT: for a directory with NO exec bits, NO symlinks, and NO ignored paths,
+ * `meta` is empty → the downstream bundler emits NO sidecar, so the bundle bytes
+ * are byte-identical to the pre-fidelity `readDirectoryAsFiles` output (dedup
+ * continuity). Only metadata (or an `.aexignore`/ignored path) changes the bytes.
+ *
+ * Bun/Node filesystem runtimes only. Browser callers pass a pre-built files map to
+ * `bundleSkillFiles` / `bundleToolFiles` directly and never reach this module.
  */
-export async function readDirectoryAsFiles(rootDir: string): Promise<SkillFiles> {
-  if (typeof rootDir !== "string" || !rootDir) {
-    throw new Error("readDirectoryAsFiles: rootDir is required");
-  }
-  const rootStat = await stat(rootDir);
-  if (!rootStat.isDirectory()) {
-    throw new Error(`readDirectoryAsFiles: ${rootDir} is not a directory`);
-  }
-  const files: Record<string, Uint8Array> = {};
-  await walk(rootDir, rootDir, files);
-  return files;
+export interface DirectoryBundle {
+  /** Regular-file bytes, keyed by forward-slash bundle-relative path. */
+  readonly files: Record<string, Uint8Array>;
+  /** Exec bits + symlinks → the `.aexmeta.json` sidecar (empty ⇒ no sidecar emitted). */
+  readonly meta: BundleMeta;
+  /** Non-regular files skipped (FIFO/socket/device) — never silently vanished. Sorted. */
+  readonly dropped: readonly string[];
+  /** Count of paths pruned by the ignore layers (`.aexignore` + defaults). */
+  readonly ignoredCount: number;
 }
 
-async function walk(rootDir: string, currentDir: string, out: Record<string, Uint8Array>): Promise<void> {
-  const entries = await readdir(currentDir, { withFileTypes: true });
-  for (const dirent of entries) {
-    const full = join(currentDir, dirent.name);
-    if (dirent.isSymbolicLink()) {
-      continue;
-    }
-    if (dirent.isDirectory()) {
-      await walk(rootDir, full, out);
-      continue;
-    }
-    if (!dirent.isFile()) {
-      continue;
-    }
-    const rel = relative(rootDir, full);
-    const posixPath = sep === "/" ? rel : rel.split(sep).join(posix.sep);
-    out[posixPath] = await readFile(full);
+export async function readDirectoryWithFidelity(rootDir: string, ignore?: IgnoreOptions): Promise<DirectoryBundle> {
+  if (typeof rootDir !== "string" || !rootDir) {
+    throw new Error("readDirectoryWithFidelity: rootDir is required");
   }
+  const walk = await walkDirectory(rootDir, ignore);
+  const files: Record<string, Uint8Array> = {};
+  for (const entry of walk.entries) {
+    files[entry.rel] = new Uint8Array(await readFile(entry.absPath));
+  }
+  return {
+    files,
+    meta: { exec: walk.exec, symlinks: walk.symlinks },
+    dropped: walk.dropped,
+    ignoredCount: walk.ignoredCount
+  };
 }
