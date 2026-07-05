@@ -368,12 +368,12 @@ console.log(JSON.stringify({
     });
   });
 
-  it("skips symlinks / non-regular files when reading the directory", async () => {
+  it("captures symlinks into the fidelity sidecar when reading the directory", async () => {
     const script = CHILD_HARNESS + String.raw`
 const { Skill } = await importSdk();
 
 function writeBaseSkill(dir) {
-  writeFileSync(join(dir, "SKILL.md"), "---\nname: symlink-skill\ndescription: Symlinks are skipped.\n---\n# symlink-skill\n");
+  writeFileSync(join(dir, "SKILL.md"), "---\nname: symlink-skill\ndescription: Symlinks are captured with fidelity.\n---\n# symlink-skill\n");
   writeFileSync(join(dir, "real.txt"), "real content\n");
 }
 
@@ -382,13 +382,14 @@ const baseDir = freshDir();
 writeBaseSkill(baseDir);
 const base = await Skill.fromDir(baseDir);
 
-// Same regular files PLUS a symlink alias. If the reader followed the symlink
-// it would add an extra "alias.txt" entry and diverge the hash; skipping it
-// keeps the bundle byte-identical to the baseline.
+// Same regular files PLUS a symlink alias. Phase B2.5 fidelity CAPTURES the
+// symlink into the '.aexmeta.json' sidecar (verbatim target — the container
+// restore decides whether it may be recreated), so the bundle hash DIVERGES
+// from the symlink-free baseline rather than staying byte-identical.
 const linkDir = freshDir();
 writeBaseSkill(linkDir);
 let symlinkSupported = false;
-let skipped = null;
+let captured = null;
 try {
   // "file" type matters on Windows; harmless elsewhere.
   symlinkSync(join(linkDir, "real.txt"), join(linkDir, "alias.txt"), "file");
@@ -400,16 +401,16 @@ try {
 }
 const linked = await Skill.fromDir(linkDir);
 if (symlinkSupported) {
-  skipped = base.ref.contentHash === linked.ref.contentHash;
-  strictEqual(skipped, true, "symlink entry must be skipped (bundle hash unchanged)");
+  captured = base.ref.contentHash !== linked.ref.contentHash;
+  strictEqual(captured, true, "symlink entry must be CAPTURED into the fidelity sidecar (bundle hash changes)");
 }
 
-console.log(JSON.stringify({ ok: true, symlinkSupported, skipped }));
+console.log(JSON.stringify({ ok: true, symlinkSupported, captured }));
 `;
     const result = await runChild(script, "skill-tool-from-dir-symlink.mjs");
     expect(result).toMatchObject({ ok: true });
     if (result.symlinkSupported) {
-      expect(result.skipped).toBe(true);
+      expect(result.captured).toBe(true);
     }
   });
 
