@@ -43,6 +43,7 @@ import {
   type SessionListPage,
   type SessionListQuery,
   type SessionMessage,
+  type SessionMessageAccepted,
   type SessionRetentionPolicy,
   type SessionStateChangeAccepted,
   type SessionTurn,
@@ -517,12 +518,7 @@ export class SessionHandle {
   async *#send(input: SessionInput, options: InternalSessionSendOptions): AsyncGenerator<SessionEvent, SessionTurnResult, void> {
     const idempotencyKey = options.idempotencyKey ?? generateIdempotencyKey();
     this.#lastSend = { input, idempotencyKey };
-    const accepted = await operations.sendSessionMessage(
-      this.#http,
-      this.id,
-      { input },
-      { idempotencyKey }
-    );
+    const accepted = await this.#acceptTurn(input, idempotencyKey, options.signal);
     this.#session = accepted.session;
     const turn = accepted.turn;
     const events: SessionEvent[] = [];
@@ -548,6 +544,62 @@ export class SessionHandle {
       outputs,
       messages
     };
+  }
+
+  /**
+   * POST the next turn, reconciling the settle-lag race. A turn stream ends on
+   * the idle park EVENT, but the session RECORD can lag at `running` for a short
+   * window before the platform commits it — so an immediate follow-up `send()`
+   * 409s `session_busy` even though, from the caller's view, the previous turn
+   * already parked. When that happens we poll the record until it leaves
+   * `running`, then retry the SAME idempotent POST (a replay de-duplicates, so
+   * this never creates a second billable turn). A session that stays busy past
+   * {@link SESSION_BUSY_RECONCILE_DEADLINE_MS} is a genuinely in-flight turn: we
+   * surface a clear, bounded {@link RunStateError} rather than masking it or
+   * waiting forever. Any non-`running` busy status (suspended / cancelling /
+   * deleted) is a real rejection and passes straight through.
+   */
+  async #acceptTurn(
+    input: SessionInput,
+    idempotencyKey: string,
+    signal: AbortSignal | undefined
+  ): Promise<SessionMessageAccepted> {
+    const deadline = Date.now() + SESSION_BUSY_RECONCILE_DEADLINE_MS;
+    for (;;) {
+      try {
+        return await operations.sendSessionMessage(this.#http, this.id, { input }, { idempotencyKey });
+      } catch (err) {
+        if (!isSettlingSessionBusy(err) || signal?.aborted) throw err;
+        if (Date.now() >= deadline) {
+          throw new RunStateError(
+            `SessionHandle.send: session ${this.id} was still running ${SESSION_BUSY_RECONCILE_DEADLINE_MS}ms after the previous turn parked — a turn is still in flight`,
+            { sessionId: this.id, status: "running", cause: err }
+          );
+        }
+        await this.#awaitLeftRunning(deadline, signal);
+      }
+    }
+  }
+
+  /**
+   * Poll the session record until it is no longer `running`/`creating`, or the
+   * reconcile deadline elapses. Updates the stored record so the eventual retry
+   * (or the terminal error) reflects the freshest status.
+   */
+  async #awaitLeftRunning(deadline: number, signal: AbortSignal | undefined): Promise<void> {
+    for (;;) {
+      try {
+        await sleep(SESSION_BUSY_RECONCILE_INTERVAL_MS, signal);
+      } catch {
+        return; // aborted — let the retry POST surface the real state
+      }
+      const record = await operations.getSession(this.#http, this.id).catch(() => undefined);
+      if (record !== undefined) {
+        this.#session = record;
+        if (record.status !== "running" && record.status !== "creating") return;
+      }
+      if (Date.now() >= deadline) return;
+    }
   }
 
   async suspend(options: Pick<SessionSendOptions, "idempotencyKey"> = {}): Promise<SessionStateChangeAccepted> {
@@ -1924,6 +1976,29 @@ async function settledSessionRecord(
     }
   }
   return undefined;
+}
+
+/**
+ * How long a follow-up `send()` waits for the session RECORD to catch up after
+ * our own turn parked idle before treating the `session_busy` as a genuinely
+ * in-flight turn (ms). The idle park EVENT ends the turn stream, but the record
+ * commit lags briefly behind it.
+ */
+const SESSION_BUSY_RECONCILE_DEADLINE_MS = 30_000;
+/** Interval between record reads while reconciling a settle-lag `session_busy` (ms). */
+const SESSION_BUSY_RECONCILE_INTERVAL_MS = 500;
+
+/**
+ * A 409 `session_busy` whose CURRENT status is `running` — the one case that is
+ * transient: the platform is still catching up from our own just-parked turn.
+ * The 409 body carries `{ error:"session_busy", status:<current> }`; any other
+ * busy status (suspended / cancelling / deleted) is a real, non-retryable
+ * rejection that must surface immediately.
+ */
+function isSettlingSessionBusy(err: unknown): boolean {
+  if (!(err instanceof AexApiError) || err.status !== 409) return false;
+  const body = asRecord(err.body);
+  return body.error === "session_busy" && body.status === "running";
 }
 
 /**
