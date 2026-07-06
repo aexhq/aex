@@ -217,6 +217,9 @@ h3 {
   display: grid;
   grid-template-columns: max-content max-content 1fr;
   align-items: start;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .ant-tab-input {
@@ -244,6 +247,8 @@ h3 {
 .ant-code-panel {
   display: none;
   grid-column: 1 / -1;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   padding: 1rem;
   overflow-x: auto;
@@ -325,6 +330,32 @@ h3 {
 @media (max-width: 860px) {
   .ant-hero h1 {
     font-size: 2.3rem;
+  }
+
+  .ant-actions {
+    align-items: stretch;
+  }
+
+  .ant-button {
+    justify-content: center;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .ant-sample {
+    max-width: 100%;
+  }
+
+  .ant-sample > header {
+    flex-wrap: wrap;
+  }
+
+  .ant-code-tabs {
+    grid-template-columns: repeat(2, minmax(0, max-content));
+  }
+
+  .ant-code-panel {
+    white-space: pre;
   }
 
   .ant-grid {

@@ -25,6 +25,7 @@ const guideSources = [
   ["defaults.md", "defaults"],
   ["limits-and-quotas.md", "limits-and-quotas"],
   ["errors.md", "errors"],
+  ["retries.md", "retries"],
   ["secrets.md", "secrets"],
   ["credentials.md", "credentials"],
   ["networking.md", "networking"],
@@ -72,7 +73,7 @@ async function syncOverviewPages() {
     `${JSON.stringify(
       {
         title: "aex",
-        pages: ["index", "features", "concepts", "guides", "reference"]
+        pages: ["index", "features", "examples", "integrations", "concepts", "guides", "reference", "changelog", "support"]
       },
       null,
       2

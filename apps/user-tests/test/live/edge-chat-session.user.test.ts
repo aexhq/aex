@@ -224,7 +224,8 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
         "edge-replaylast.mjs",
         `
     const session = await client.sessions.create(CREATE);
-    const t1 = await session.send("Reply with exactly: alpha", { idempotencyKey: "edge-replay-k1", idleTimeoutMs: 180000 }).done();
+    const replayKey = "edge-replay-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+    const t1 = await session.send("Reply with exactly: alpha", { idempotencyKey: replayKey, idleTimeoutMs: 180000 }).done();
     const turn1Seq = t1.turn && typeof t1.turn.turnSeq === "number" ? t1.turn.turnSeq : -1;
     await settleIdle(session);
 
@@ -254,6 +255,8 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
     } catch (e) { replayNoSend = { threw: true, ...errInfo(e) }; }
 
     const out = {
+      sessionId: session.id,
+      replayKeySuffix: replayKey.slice(-10),
       turn1Seq,
       turn1Text: String(t1.text).slice(0, 60),
       replayDedup,

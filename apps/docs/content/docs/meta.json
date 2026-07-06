@@ -3,8 +3,12 @@
   "pages": [
     "index",
     "features",
+    "examples",
+    "integrations",
     "concepts",
     "guides",
-    "reference"
+    "reference",
+    "changelog",
+    "support"
   ]
 }

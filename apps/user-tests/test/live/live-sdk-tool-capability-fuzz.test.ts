@@ -735,7 +735,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
         `1. custom_transform with ${JSON.stringify(transformInput)}.`,
         "2. custom_context with an empty object.",
         `3. custom_failure with {"reason":"expected_${testCase.text}"}. This failure is expected; continue.`,
-        `Reply with CUSTOM_FUZZ_OK ${expectedTransform} ${testCase.appMode} ${secretDigest}.`
+        `Reply with CUSTOM_FUZZ_OK ${expectedTransform} ${testCase.appMode} redacted-secret.`
       ].join("\n");
       const body = `
 const transform = await Tool.fromFiles({
@@ -829,17 +829,26 @@ process.stdout.write(JSON.stringify(await observe(result)));
         observation,
         ["custom_transform", "custom_context", "custom_failure"],
         stdout,
-        [customSecret]
+        [customSecret, secretDigest]
       );
       const dump = diagnostics(observation);
       const text = allObservedText(observation);
       expect(text, dump).toContain(expectedTransform);
       expect(text, dump).toContain(testCase.appMode);
-      expect(text, dump).toContain(secretDigest);
+      expect(text.includes(customSecret), dump).toBe(false);
+      expect(text.includes(secretDigest), dump).toBe(false);
       const transformCall = observation.toolCalls.find(
         (call) => call.name === "custom_transform"
       );
       expect(transformCall?.arguments, dump).toEqual(transformInput);
+      const contextResult = observation.toolResults.find(
+        (result) => result.name === "custom_context"
+      );
+      expect(contextResult?.isError, dump).toBe(false);
+      expect(contextResult?.text, dump).toContain(`mode=${testCase.appMode}`);
+      expect(contextResult?.text.includes(customSecret), dump).toBe(false);
+      expect(contextResult?.text.includes(secretDigest), dump).toBe(false);
+      expect(/REDACTED|\*{3}/.test(contextResult?.text ?? ""), dump).toBe(true);
       const failureResult = observation.toolResults.find(
         (result) => result.name === "custom_failure"
       );

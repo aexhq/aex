@@ -88,11 +88,6 @@ const metadata = await aex.secrets.get("serper-api-key");
 
 ## Inject A Workspace Secret Into A Run
 
-> **Availability note:** workspace-secret `Secret.ref(...)` injection requires
-> the next platform deploy — on the current hosted plane the referenced
-> variable can resolve empty inside the run. Per-run `Secret.value(...)`
-> secrets are unaffected. This note will be removed once the deploy lands.
-
 Reference workspace secrets with `Secret.ref(name)`. The value resolves
 server-side and is injected as the named environment variable.
 

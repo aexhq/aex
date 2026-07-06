@@ -126,7 +126,9 @@ function makeHarness(): Harness {
           id: SESSION_ID,
           status: "idle",
           turnSeq: 1,
-          usage: { inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+          costTelemetry: {
+            providerUsage: [{ inputTokens: 3, outputTokens: 5, totalTokens: 8 }]
+          },
           costUsd: 0.001
         }
       });
@@ -274,16 +276,22 @@ function expectedMessages(specs: readonly TextEventSpec[]): readonly Message[] {
 }
 
 function expectedTraceText(specs: readonly TextEventSpec[]): RunResult["trace"]["text"] {
-  return specs.map((spec) => ({
-    text: spec.text,
-    ...(spec.messageId !== undefined ? { messageId: spec.messageId } : {})
-  }));
+  return specs.map((spec, i) => {
+    const sequence = TEXT_SEQUENCE_START + i;
+    return {
+      text: spec.text,
+      ...(spec.messageId !== undefined ? { messageId: spec.messageId } : {}),
+      seq: sequence,
+      recordedAt: eventTime(sequence)
+    };
+  });
 }
 
 function assertRunEventProjection(result: RunResult, specs: readonly TextEventSpec[]): void {
   expect(result.runId).toBe(SESSION_ID);
   expect(result.sessionId).toBe(SESSION_ID);
-  expect(result.status).toBe("idle");
+  expect(result.status).toBe("succeeded");
+  expect(result.session?.status).toBe("idle");
   expect(result.ok).toBe(true);
   expect(result.text).toBe(specs.map((spec) => spec.text).join(""));
   expect(result.messages).toEqual(expectedMessages(specs));

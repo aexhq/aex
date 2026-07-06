@@ -8,10 +8,6 @@ aex can notify your endpoint when a run finishes. Webhooks are **per-run**: you
 pass a callback URL with the submission, and the platform delivers exactly one
 `run.finished` event to it when the run reaches its terminal state.
 
-> **Availability note:** terminal webhook delivery for session-based runs
-> requires the next platform deploy — on the current hosted plane a session
-> run's webhook may not fire. This note will be removed once the deploy lands.
-
 ## Register a callback
 
 ```ts
