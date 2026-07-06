@@ -4,6 +4,30 @@ import { makeIo } from "./support.js";
 
 const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
+function runSubmitHandler(call: { readonly url: string; readonly init: RequestInit }): Response {
+  const path = new URL(call.url).pathname;
+  if (path === "/api/sessions") {
+    return new Response(JSON.stringify({ id: "s1", status: "idle" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }
+  if (path === "/api/sessions/s1/messages") {
+    return new Response(JSON.stringify({
+      session: { id: "s1", status: "running", turnSeq: 1, turnStatus: "launching" },
+      turn: { sessionId: "s1", turnSeq: 1 },
+      eventCursor: 1
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }
+  return new Response(JSON.stringify({ error: "unexpected", path }), {
+    status: 404,
+    headers: { "content-type": "application/json" }
+  });
+}
+
 describe("aex run --run-timeout floor (T6d — SSoT parser, sync reject)", () => {
   it("rejects a sub-1m --run-timeout synchronously, firing NO network call", async () => {
     const cap = makeIo({
@@ -35,15 +59,11 @@ describe("aex run --run-timeout floor (T6d — SSoT parser, sync reject)", () =>
         "--run-timeout", "2h",
         ...COMMON
       ],
-      fetchHandler: () =>
-        new Response(JSON.stringify({ id: "s1", status: "running" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        })
+      fetchHandler: runSubmitHandler
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls).toHaveLength(1);
+    expect(cap.calls).toHaveLength(2);
     expect(new URL(cap.calls[0]!.url).pathname).toBe("/api/sessions");
     expect(cap.calls[0]!.body).toMatchObject({ timeout: "2h" });
   });

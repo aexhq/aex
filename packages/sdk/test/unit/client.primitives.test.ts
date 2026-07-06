@@ -49,6 +49,7 @@ class AutoWS implements WebSocketLike {
 interface Env {
   readonly client: Aex;
   readonly bodies: Record<string, unknown>[];
+  readonly headers: Array<Record<string, string>>;
   readonly urls: string[];
 }
 
@@ -56,10 +57,12 @@ const RealWebSocket = globalThis.WebSocket;
 
 function makeEnv(session: Record<string, unknown> = { id: "run-1", status: "idle", turnSeq: 1, costUsd: 0.001, costTelemetry: { providerUsage: [{ totalTokens: 5 }] } }): Env {
   const bodies: Record<string, unknown>[] = [];
+  const headers: Array<Record<string, string>> = [];
   const urls: string[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     urls.push(`${(init?.method ?? "GET").toString()} ${url}`);
+    headers.push(headersRecord(init?.headers));
     if (typeof init?.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
     const json = (b: unknown, status = 200): Response =>
       new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
@@ -78,7 +81,18 @@ function makeEnv(session: Record<string, unknown> = { id: "run-1", status: "idle
     if (url.endsWith("/api/sessions")) return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } }, 201);
     return json({});
   };
-  return { client: new Aex({ apiKey: "tk", baseUrl: "https://x", fetch }), bodies, urls };
+  return { client: new Aex({ apiKey: "tk", baseUrl: "https://x", fetch }), bodies, headers, urls };
+}
+
+function headersRecord(input: HeadersInit | undefined): Record<string, string> {
+  if (!input) return {};
+  if (input instanceof Headers) {
+    return Object.fromEntries(input.entries());
+  }
+  if (Array.isArray(input)) {
+    return Object.fromEntries(input.map(([key, value]) => [key.toLowerCase(), value]));
+  }
+  return Object.fromEntries(Object.entries(input).map(([key, value]) => [key.toLowerCase(), value]));
 }
 
 beforeEach(() => {
@@ -134,17 +148,25 @@ describe("run<T> — typed schema-decode outcome (WS10)", () => {
 
 describe("aex.submit — fire-and-forget (WS10)", () => {
   it("resolves with {runId, session} WITHOUT opening a coordinator socket", async () => {
-    const { client, bodies } = makeEnv();
+    const { client, bodies, headers, urls } = makeEnv();
     const { runId, session } = await client.submit({
       model: "claude-haiku-4-5",
       message: "go",
+      idempotencyKey: "submit-key",
+      messageIdempotencyKey: "turn-key",
       apiKeys: { anthropic: "sk-ant" }
     });
     expect(runId).toBe("run-1");
     expect(session).toBeInstanceOf(SessionHandle);
     expect((globalThis as { __wsOpened?: () => number }).__wsOpened!()).toBe(0);
-    // The create body carried the first-turn input.
-    expect(bodies[0]!.input).toBe("go");
+    expect(urls.filter((url) => url.startsWith("POST https://x/api/sessions"))).toEqual([
+      "POST https://x/api/sessions",
+      "POST https://x/api/sessions/run-1/messages"
+    ]);
+    expect("input" in bodies[0]!).toBe(false);
+    expect(bodies[1]!.input).toBe("go");
+    expect(headers[0]!["idempotency-key"]).toBe("submit-key");
+    expect(headers[1]!["idempotency-key"]).toBe("turn-key");
   });
 });
 

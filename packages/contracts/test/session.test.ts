@@ -75,6 +75,48 @@ describe("session contracts", () => {
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ input: "continue" });
   });
 
+  it("submit creates the session and dispatches the first turn with a derived message key", async () => {
+    const { http, calls } = httpStub();
+    const result = await operations.submit(
+      http,
+      {
+        provider: "deepseek",
+        submission: { model: "deepseek-v4-flash", tools: [], mcpServers: [], agentsMd: [], files: [] },
+        secrets: { apiKeys: { deepseek: "sk-test" } },
+        input: "start now"
+      },
+      { idempotencyKey: "idem-create" }
+    );
+
+    expect(result.runId).toBe("sess_1");
+    expect(result.session.status).toBe("running");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.path).toBe("/api/sessions");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(calls[0]!.init.headers).toEqual({ "Idempotency-Key": "idem-create" });
+    expect(JSON.parse(calls[0]!.init.body as string)).not.toHaveProperty("input");
+    expect(calls[1]!.path).toBe("/api/sessions/sess_1/messages");
+    expect(calls[1]!.init.method).toBe("POST");
+    expect(calls[1]!.init.headers).toEqual({ "Idempotency-Key": "idem-create:message" });
+    expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ input: "start now" });
+  });
+
+  it("submit accepts an explicit first-turn idempotency key", async () => {
+    const { http, calls } = httpStub();
+    await operations.submit(
+      http,
+      {
+        provider: "deepseek",
+        submission: { model: "deepseek-v4-flash", tools: [], mcpServers: [], agentsMd: [], files: [] },
+        secrets: { apiKeys: { deepseek: "sk-test" } },
+        input: "start now"
+      },
+      { idempotencyKey: "idem-create", messageIdempotencyKey: "idem-turn" }
+    );
+
+    expect(calls[1]!.init.headers).toEqual({ "Idempotency-Key": "idem-turn" });
+  });
+
   it("uses the session event ticket route", async () => {
     const { http, calls } = httpStub();
     const ticket = await operations.getSessionCoordinatorTicket(http, "sess_1");

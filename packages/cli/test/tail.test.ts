@@ -67,10 +67,12 @@ function makeIo(opts: {
   nextSocket: (minCount?: number) => Promise<FakeWebSocket>;
   fireSigint: () => void;
   socketUrls: string[];
+  requests: Array<{ readonly method: string; readonly path: string; readonly body: unknown }>;
 } {
   const state = { stdout: "", stderr: "", exit: null as number | null };
   const sockets: FakeWebSocket[] = [];
   const socketUrls: string[] = [];
+  const requests: Array<{ readonly method: string; readonly path: string; readonly body: unknown }> = [];
   let waiters: Array<() => void> = [];
   let sigint: (() => void) | undefined;
   const io: CliIO = {
@@ -83,7 +85,17 @@ function makeIo(opts: {
     fetchImpl: async (url, init) => {
       const u = String(url);
       const parsed = new URL(u);
-      if (parsed.pathname === "/api/sessions" && init?.method === "POST") {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      let body: unknown;
+      if (typeof init?.body === "string") {
+        try {
+          body = JSON.parse(init.body) as unknown;
+        } catch {
+          body = init.body;
+        }
+      }
+      requests.push({ method, path: parsed.pathname, body });
+      if (parsed.pathname === "/api/sessions" && method === "POST") {
         return new Response(
           JSON.stringify({
             id: "run-x",
@@ -94,6 +106,25 @@ function makeIo(opts: {
             createdAt: "2026-01-01T00:00:00Z"
           }),
           { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (parsed.pathname === "/api/sessions/run-x/messages" && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: "run-x",
+              status: "running",
+              turnSeq: 1,
+              turnStatus: "launching",
+              provider: "anthropic",
+              model: "claude-haiku-4-5",
+              runtime: "managed",
+              createdAt: "2026-01-01T00:00:00Z"
+            },
+            turn: { sessionId: "run-x", turnSeq: 1 },
+            eventCursor: 1024
+          }),
+          { status: 202, headers: { "content-type": "application/json" } }
         );
       }
       if (u.endsWith("/events/ticket")) {
@@ -147,7 +178,8 @@ function makeIo(opts: {
     exit: () => state.exit,
     nextSocket,
     fireSigint: () => sigint?.(),
-    socketUrls
+    socketUrls,
+    requests
   };
 }
 
@@ -289,6 +321,8 @@ describe("aex run --follow", () => {
     await done;
 
     expect(cap.exit()).toBe(0);
+    expect(cap.requests.some((request) => request.path === "/api/sessions/run-x/messages")).toBe(true);
+    expect(cap.requests.find((request) => request.path === "/api/sessions/run-x/messages")?.body).toEqual({ input: ["hi"] });
     expect(cap.socketUrls[0]).toContain("from=0");
     const lines = cap.out().trim().split("\n");
     const accepted = JSON.parse(lines[0]!) as { id: string; status: string };
@@ -299,6 +333,31 @@ describe("aex run --follow", () => {
     expect(firstEvent.type).toBe("RUN_STARTED");
     expect(secondEvent).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", sequence: 1 });
     expect(final).toMatchObject({ id: "run-x", status: "succeeded" });
+  });
+
+  it("includes the accepted session state when follow times out", async () => {
+    const cap = makeIo({
+      argv: [
+        "run",
+        "--model", "claude-haiku-4-5",
+        "--prompt", "hi",
+        "--anthropic-api-key", "sk-ant-test",
+        "--follow",
+        "--timeout", "0ms",
+        ...COMMON
+      ],
+      runStatus: "running"
+    });
+    await runCli(cap.io);
+
+    expect(cap.exit()).toBe(3);
+    expect(JSON.parse(cap.err().trim())).toMatchObject({
+      error: "run_follow_timeout",
+      sessionId: "run-x",
+      sessionStatus: "running",
+      turnSeq: 1,
+      turnStatus: "launching"
+    });
   });
 });
 

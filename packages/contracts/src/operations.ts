@@ -145,6 +145,10 @@ export interface IdempotencyOptions {
   readonly idempotencyKey?: string;
 }
 
+export interface SubmitOptions extends IdempotencyOptions {
+  readonly messageIdempotencyKey?: string;
+}
+
 /**
  * Resolve a caller-supplied idempotency key to the value that ships on the
  * request. FAIL-FAST: an empty or whitespace-only key THROWS
@@ -212,10 +216,33 @@ export interface SubmitResult {
 export async function submit(
   http: HttpClient,
   request: SessionCreateRequest,
-  options?: IdempotencyOptions
+  options?: SubmitOptions
 ): Promise<SubmitResult> {
-  const session = await createSession(http, request, options);
+  const createKey = resolveIdempotencyKey(options?.idempotencyKey);
+  const messageKey =
+    options?.messageIdempotencyKey !== undefined
+      ? resolveIdempotencyKey(options.messageIdempotencyKey)
+      : `${createKey}:message`;
+  const { input, ...createRequest } = request;
+  assertSubmitInput(input);
+
+  const created = await createSession(http, createRequest, { idempotencyKey: createKey });
+  const sessionId = created.sessionId ?? created.id;
+  const accepted = await sendSessionMessage(http, sessionId, { input }, { idempotencyKey: messageKey });
+  const session = accepted.session;
   return { runId: session.sessionId ?? session.id, session };
+}
+
+function assertSubmitInput(input: SessionCreateRequest["input"]): asserts input is string | readonly string[] {
+  const ok =
+    (typeof input === "string" && input.length > 0) ||
+    (Array.isArray(input) && input.length > 0 && input.every((segment) => typeof segment === "string" && segment.length > 0));
+  if (!ok) {
+    throw new RunConfigValidationError("submit: request.input must be a non-empty string or string array", {
+      field: "input",
+      value: input
+    });
+  }
 }
 
 export async function getSession(http: HttpClient, sessionId: string): Promise<Session> {

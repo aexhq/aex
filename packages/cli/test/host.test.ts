@@ -595,16 +595,22 @@ describe("aex download", () => {
   });
 });
 
-// `aex run` now delegates to the SDK's `aex.submit()`: create the session AND
-// post the first turn in ONE `POST /api/sessions` call, with the prompt riding
-// the create body's `input` (never the submission). The CLI prints the accepted
-// session record from that single call.
+// `aex run` uses the shared submit transport: create a session, then post the
+// first turn to the session messages endpoint. The CLI prints the accepted
+// session record from the message response.
 function sessionRunHandler(sessionId: string, status = "running"): (call: FetchCall) => Response {
   const ok = (body: unknown): Response =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   return (call) => {
     if (call.url.endsWith("/api/sessions")) {
-      return ok({ id: sessionId, status });
+      return ok({ id: sessionId, status: "idle", turnSeq: 0, turnStatus: "idle" });
+    }
+    if (call.url.endsWith(`/api/sessions/${sessionId}/messages`)) {
+      return ok({
+        session: { id: sessionId, status, turnSeq: 1, turnStatus: "launching" },
+        turn: { sessionId, turnSeq: 1 },
+        eventCursor: 1
+      });
     }
     return ok({});
   };
@@ -640,16 +646,20 @@ describe("aex run", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // ONE call: create + first turn in a single POST /api/sessions (the SDK's submit()).
-    expect(cap.calls).toHaveLength(1);
+    expect(cap.calls).toHaveLength(2);
     const create = cap.calls[0]!;
+    const message = cap.calls[1]!;
     expect(create.url).toBe("https://dash.example/api/sessions");
     expect(create.init.method).toBe("POST");
+    expect(message.url).toBe("https://dash.example/api/sessions/sess-1/messages");
+    expect(message.init.method).toBe("POST");
     // idempotency is header-carried on create (not in the body).
     expect((create.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-deterministic");
+    expect((message.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-deterministic:message");
     const createBody = create.body as Record<string, unknown>;
     expect(createBody.workspaceId).toBeUndefined();
     expect("idempotencyKey" in createBody).toBe(false);
+    expect("input" in createBody).toBe(false);
     expect("postHook" in createBody).toBe(false);
     expect(createBody.retention).toEqual({ idleTtl: "3m" });
     const submission = createBody.submission as Record<string, unknown>;
@@ -669,8 +679,8 @@ describe("aex run", () => {
         headers: { Authorization: "Bearer t-from-config" }
       }
     ]);
-    // the prompt rides the single create call's `input`.
-    expect(createBody.input).toEqual(["hi"]);
+    // the prompt rides the first-turn message call, not the create body.
+    expect(message.body).toEqual({ input: ["hi"] });
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
     expect(printed).toMatchObject({ id: "sess-1", status: "running" });
   });
@@ -711,8 +721,9 @@ describe("aex run", () => {
         headers: { Authorization: "Bearer t" }
       }
     ]);
-    // prompt rode the single create call's `input`, not the submission.
-    expect(body.input).toEqual(["hello"]);
+    // the prompt rides the first-turn message call, not the create body.
+    expect("input" in body).toBe(false);
+    expect(cap.calls[1]!.body).toEqual({ input: ["hello"] });
   });
 
   it("opens DeepSeek sessions with --provider deepseek and --deepseek-api-key", async () => {
@@ -928,8 +939,9 @@ describe("aex run", () => {
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // the escaped literal rides the single create call's `input`.
+    // the escaped literal rides the first-turn message call's `input`.
     const body = cap.calls[0]!.body as Record<string, unknown>;
-    expect(body.input).toEqual(["@alice please look at this"]);
+    expect("input" in body).toBe(false);
+    expect(cap.calls[1]!.body).toEqual({ input: ["@alice please look at this"] });
   });
 });

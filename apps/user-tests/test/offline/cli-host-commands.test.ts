@@ -75,7 +75,15 @@ async function startFakeApi(): Promise<FakeApi> {
 
     // --- session endpoints (run/status/events/wait/cancel speak these) ---
     if (req.method === "POST" && url.pathname === "/api/sessions") {
-      json(res, 200, { id: "run-cli-1", status: "running", provider: "deepseek", runtime: "managed" });
+      json(res, 200, { id: "run-cli-1", status: "idle", provider: "deepseek", runtime: "managed" });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/sessions/run-cli-1/messages") {
+      json(res, 200, {
+        session: { id: "run-cli-1", status: "running", provider: "deepseek", runtime: "managed" },
+        turn: { sessionId: "run-cli-1", turnSeq: 1 },
+        eventCursor: 1
+      });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/sessions/run-cli-1") {
@@ -301,11 +309,12 @@ describe("installed CLI host commands", () => {
 
     expect(api.requests.every((request) => request.authorization === "Bearer tok-installed-cli")).toBe(true);
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
-    // `aex run` submits the session and first turn in one request.
-    expect(methodPaths[0]).toBe("POST /api/sessions");
+    // `aex run` creates the session, then posts the first turn as a message.
+    expect(methodPaths.slice(0, 2)).toEqual(["POST /api/sessions", "POST /api/sessions/run-cli-1/messages"]);
     expect(methodPaths).toEqual(
       expect.arrayContaining([
         "POST /api/sessions",
+        "POST /api/sessions/run-cli-1/messages",
         "GET /api/sessions/run-cli-1",
         "GET /api/sessions/run-cli-1/events",
         "POST /api/sessions/run-cli-1/cancel",
@@ -317,20 +326,23 @@ describe("installed CLI host commands", () => {
       ])
     );
 
-    // submit request: the session-create body carries the first-turn input;
-    // the idempotency key rides the Idempotency-Key header.
+    // submit transport: create carries session config, message carries the
+    // first-turn input, and both idempotency keys ride request headers.
     const createReq = api.requests[0]!;
+    const messageReq = api.requests[1]!;
     const submit = createReq.body as Record<string, unknown>;
     expect(submit.workspaceId).toBeUndefined();
     expect(submit.provider).toBe("deepseek");
     expect(submit).not.toHaveProperty("region");
     expect(submit).not.toHaveProperty("idempotencyKey");
+    expect(submit).not.toHaveProperty("input");
     expect(createReq.idempotencyKey).toBe("cli-host-installed-shape");
     expect(submit.retention).toEqual({ idleTtl: "3m" });
     expect(submit.secrets).toEqual({ apiKeys: { deepseek: "sk-deepseek-test" } });
     expect(submit.submission).toMatchObject({ model: "deepseek-v4-flash" });
     expect(submit.submission).not.toHaveProperty("prompt");
-    expect(submit.input).toEqual(["hello_from_installed_cli"]);
+    expect(messageReq.idempotencyKey).toBe("cli-host-installed-shape:message");
+    expect(messageReq.body).toEqual({ input: ["hello_from_installed_cli"] });
   });
 
   it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {

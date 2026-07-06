@@ -23,13 +23,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "lint": "tsc --noEmit -p tsconfig.json",
+    "build:parity-deps": "bun run --cwd ../.. --filter @aexhq/sdk build && bun run --cwd ../.. --filter @aexhq/cli build",
+    "lint": "bun run build:parity-deps && tsc --noEmit -p tsconfig.json",
     "pretest": "bun run build",
-    "test:unit": "vitest run"
+    "test:unit": "bun run build:parity-deps && vitest run"
   },
   "devDependencies": {
-    "@aexhq/cli": "workspace:*",
-    "@aexhq/sdk": "workspace:*",
     "@types/node": "22.15.3",
     "typescript": "5.8.3",
     "vitest": "3.1.2"

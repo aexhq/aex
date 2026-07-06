@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { Aex } from "@aexhq/sdk";
-import type { SessionOutputs, SessionRunOptions } from "@aexhq/sdk";
-import { CLI_VERB_NAMES, OUTPUTS_SUBVERBS, RUN_FLAGS, findVerbSpec } from "@aexhq/cli";
+import { Aex } from "../../sdk/dist/index.js";
+import type { SessionOutputs, SessionRunOptions } from "../../sdk/dist/index.js";
+import { CLI_VERB_NAMES, OUTPUTS_SUBVERBS, RUN_FLAGS, findVerbSpec } from "../../cli/dist/index.js";
 import {
   CLI_PARITY_BARE_LIST,
   CLI_PARITY_NOT_SURFACED,

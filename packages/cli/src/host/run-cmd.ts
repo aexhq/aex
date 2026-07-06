@@ -398,8 +398,8 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     return USAGE_ERR;
   }
 
-  // Fire-and-forget submit: create the session + POST the first turn in one
-  // call, then print the accepted session record.
+  // Fire-and-forget submit: create the session, post the first turn, then print
+  // the accepted session record.
   let session;
   try {
     session = await submitCliRun(http, io.fetchImpl, options);
@@ -446,6 +446,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
         sessionId: session.id,
         lastSeq,
+        ...followTimeoutContext(session),
         hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
       });
       return TIMEOUT_ERR;
@@ -462,6 +463,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
       sessionId: session.id,
       lastSeq,
+      ...followTimeoutContext(session),
       hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
     });
     return TIMEOUT_ERR;
@@ -536,6 +538,18 @@ function baseName(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, "");
   const i = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return i >= 0 ? trimmed.slice(i + 1) : trimmed;
+}
+
+function followTimeoutContext(session: {
+  readonly status?: unknown;
+  readonly turnSeq?: unknown;
+  readonly turnStatus?: unknown;
+}): Record<string, string | number> {
+  return {
+    ...(typeof session.status === "string" ? { sessionStatus: session.status } : {}),
+    ...(typeof session.turnSeq === "number" ? { turnSeq: session.turnSeq } : {}),
+    ...(typeof session.turnStatus === "string" ? { turnStatus: session.turnStatus } : {})
+  };
 }
 
 /**

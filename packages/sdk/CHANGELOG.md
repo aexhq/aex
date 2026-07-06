@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.1
+
+### Fixed
+
+- Fixed the shared fire-and-forget submit transport used by the bundled CLI so
+  `aex run --follow` dispatches the first turn instead of creating an idle
+  session and waiting for events that can never arrive.
+
 ## 0.40.0
 
 ### Changed (breaking)

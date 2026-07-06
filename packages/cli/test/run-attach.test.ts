@@ -39,7 +39,17 @@ function attachFetch(call: FetchCall): Response {
     });
   }
   if (url.pathname === "/api/sessions" && call.init.method === "POST") {
-    return new Response(JSON.stringify({ id: "s1", status: "running", provider: "anthropic", runtime: "managed" }), {
+    return new Response(JSON.stringify({ id: "s1", status: "idle", provider: "anthropic", runtime: "managed" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }
+  if (url.pathname === "/api/sessions/s1/messages" && call.init.method === "POST") {
+    return new Response(JSON.stringify({
+      session: { id: "s1", status: "running", turnSeq: 1, turnStatus: "launching", provider: "anthropic", runtime: "managed" },
+      turn: { sessionId: "s1", turnSeq: 1 },
+      eventCursor: 1
+    }), {
       status: 200,
       headers: { "content-type": "application/json" }
     });
@@ -83,7 +93,9 @@ describe("aex run --skill/--tool/--agents-md/--file (T6a attach)", () => {
     const create = cap.calls.find((call) => new URL(call.url).pathname === "/api/sessions");
     expect(create).toBeDefined();
     const body = create!.body as Record<string, unknown>;
-    expect(body.input).toEqual(["hi"]);
+    expect("input" in body).toBe(false);
+    const message = cap.calls.find((call) => new URL(call.url).pathname === "/api/sessions/s1/messages");
+    expect(message?.body).toEqual({ input: ["hi"] });
     const submission = body.submission as {
       skills?: unknown[];
       tools?: Array<{ kind?: string }>;

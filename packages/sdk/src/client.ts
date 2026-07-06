@@ -2212,14 +2212,17 @@ export class Aex {
    * a `webhook`, the event stream, or `openSession(runId)`.
    */
   async submit(options: SessionRunOptions): Promise<SubmitResult> {
-    const { message, deleteAfter: _deleteAfter, messageIdempotencyKey: _messageIdempotencyKey, stream: _stream, ...createOptions } = options;
+    const { message, deleteAfter: _deleteAfter, messageIdempotencyKey, stream: _stream, ...createOptions } = options;
     assertNoLegacySessionFields(options, "Aex.submit");
     const input = normaliseSessionInput(message, "Aex.submit", "message");
     const request = await this.#buildSessionCreateRequest(createOptions);
     const { runId, session } = await operations.submit(
       this.#http,
       { ...request, input },
-      { idempotencyKey: operations.resolveIdempotencyKey(createOptions.idempotencyKey) }
+      {
+        idempotencyKey: operations.resolveIdempotencyKey(createOptions.idempotencyKey),
+        ...(messageIdempotencyKey !== undefined ? { messageIdempotencyKey } : {})
+      }
     );
     return { runId, session: new SessionHandle(this.#http, session, this.#fetch) };
   }

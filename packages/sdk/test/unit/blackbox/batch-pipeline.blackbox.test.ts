@@ -54,8 +54,10 @@ describe("blackbox: fire-and-forget submit", () => {
 
     expect(typeof submitted.runId).toBe("string");
     expect(submitted.session).toBeDefined();
-    // Non-blocking: only the create was issued — no settle GET, no event ticket.
-    expect(platform.requests.filter((r) => r.startsWith("POST /api/sessions")).length).toBe(1);
+    // Non-blocking submit still dispatches the first turn, but never opens a
+    // stream or polls for settle.
+    expect(platform.requests.filter((r) => r === "POST /api/sessions")).toHaveLength(1);
+    expect(platform.requests.filter((r) => /POST \/api\/sessions\/[^/]+\/messages/.test(r))).toHaveLength(1);
     expect(platform.requests.some((r) => r.includes("/events/ticket"))).toBe(false);
     expect(platform.requests.some((r) => r.startsWith("GET /api/sessions/"))).toBe(false);
   });
