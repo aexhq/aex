@@ -18,6 +18,8 @@ import type { SkillFiles } from "./bundle.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+class SkillArchiveDownloadError extends Error {}
+
 export interface FetchSkillArchiveOptions {
   /**
    * Optional integrity check over the downloaded archive bytes:
@@ -62,37 +64,95 @@ export async function fetchSkillArchive(
 async function download(url: string, fetchImpl: FetchLike, timeoutMs: number): Promise<Uint8Array> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
   try {
-    res = await fetchImpl(url, { signal: controller.signal });
+    const res = await fetchImpl(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new SkillArchiveDownloadError(`Skill.fromUrl: fetch for ${redactUrl(url)} returned HTTP ${res.status}`);
+    }
+    // Early guard on a declared size so a clearly-too-big archive fails before
+    // we buffer it. The authoritative caps are re-checked by bundleSkillFiles.
+    const declaredRaw = res.headers.get("content-length");
+    const declared = declaredRaw !== null && /^\d+$/.test(declaredRaw) ? Number(declaredRaw) : undefined;
+    if (declared !== undefined && declared > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
+      throw new SkillArchiveDownloadError(
+        `Skill.fromUrl: archive at ${redactUrl(url)} declares ${declared} bytes, ` +
+          `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
+      );
+    }
+    const bytes = await readResponseBytes(res, url, controller.signal);
+    if (bytes.byteLength === 0) {
+      throw new SkillArchiveDownloadError(`Skill.fromUrl: archive at ${redactUrl(url)} is empty`);
+    }
+    return bytes;
   } catch (err) {
+    if (err instanceof SkillArchiveDownloadError) throw err;
     throw new Error(`Skill.fromUrl: fetch failed for ${redactUrl(url)}: ${errMessage(err)}`);
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    throw new Error(`Skill.fromUrl: fetch for ${redactUrl(url)} returned HTTP ${res.status}`);
+}
+
+async function readResponseBytes(res: Response, url: string, signal: AbortSignal): Promise<Uint8Array> {
+  if (!res.body) {
+    const bytes = new Uint8Array(await withAbort(res.arrayBuffer(), signal));
+    ensureWithinCompressedCap(bytes.byteLength, url);
+    return bytes;
   }
-  // Early guard on a declared size so a clearly-too-big archive fails before
-  // we buffer it. The authoritative caps are re-checked by bundleSkillFiles.
-  const declared = Number(res.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
-    throw new Error(
-      `Skill.fromUrl: archive at ${redactUrl(url)} declares ${declared} bytes, ` +
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await withAbort(reader.read(), signal);
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      ensureWithinCompressedCap(total, url);
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return concatBytes(chunks, total);
+}
+
+function ensureWithinCompressedCap(bytes: number, url: string): void {
+  if (bytes > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
+    throw new SkillArchiveDownloadError(
+      `Skill.fromUrl: archive at ${redactUrl(url)} is ${bytes} bytes, ` +
         `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
     );
   }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (bytes.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
-    throw new Error(
-      `Skill.fromUrl: archive at ${redactUrl(url)} is ${bytes.byteLength} bytes, ` +
-        `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
-    );
+}
+
+function concatBytes(chunks: readonly Uint8Array[], total: number): Uint8Array {
+  if (chunks.length === 1) return chunks[0]!;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
   }
-  if (bytes.byteLength === 0) {
-    throw new Error(`Skill.fromUrl: archive at ${redactUrl(url)} is empty`);
+  return out;
+}
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+function abortError(): Error {
+  if (typeof DOMException === "function") {
+    return new DOMException("The operation was aborted", "AbortError");
   }
-  return bytes;
+  const err = new Error("The operation was aborted");
+  err.name = "AbortError";
+  return err;
 }
 
 async function verifySha256(bytes: Uint8Array, expected: string, url: string): Promise<void> {

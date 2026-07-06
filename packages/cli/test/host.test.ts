@@ -157,6 +157,20 @@ describe("aex status", () => {
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown");
   });
+
+  it("rejects unknown flags before making a network call", async () => {
+    const cap = makeHostIo({
+      argv: ["status", "run-1", "--typo-flag", ...COMMON],
+      fetchHandler: () => {
+        throw new Error("status should not fetch after an unknown flag");
+      }
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.calls).toHaveLength(0);
+    expect(cap.stderr).toContain("unknown flag: --typo-flag");
+    expect(cap.stderr).toContain("usage: aex status");
+  });
 });
 
 describe("aex deliveries", () => {

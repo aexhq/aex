@@ -76,6 +76,30 @@ await cp(contractsDistDir, inlinedDir, {
   },
 });
 
+async function listFilesRecursive(dir) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const full = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursive(full));
+    } else if (entry.isFile()) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+const strippedSourceMaps = [];
+for (const file of await listFilesRecursive(inlinedDir)) {
+  if (!file.endsWith(".js")) continue;
+  const before = await readFile(file, "utf8");
+  const after = before.replace(/(?:\r?\n)?\/\/# sourceMappingURL=.*(?:\r?\n)?$/u, "\n");
+  if (after === before) continue;
+  await writeFile(file, after, "utf8");
+  strippedSourceMaps.push(relative(inlinedDir, file));
+}
+
 // 2. Rewrite SDK dist files that import from @aexhq/contracts. We only
 //    look at the dist root (one level), not _contracts/ — those files
 //    came from packages/contracts/dist and don't reference the bare
@@ -133,5 +157,6 @@ if (leaks.length > 0) {
 
 console.log(
   `inlined @aexhq/contracts into ${relative(sdkRoot, inlinedDir)} ` +
-    `(rewrote ${rewritten.length} file${rewritten.length === 1 ? "" : "s"}: ${rewritten.join(", ")})`
+    `(rewrote ${rewritten.length} file${rewritten.length === 1 ? "" : "s"}: ${rewritten.join(", ")}; ` +
+    `stripped sourcemap comments from ${strippedSourceMaps.length} file${strippedSourceMaps.length === 1 ? "" : "s"})`
 );

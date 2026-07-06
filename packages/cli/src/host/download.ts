@@ -25,6 +25,7 @@ import {
   describeApiError,
   emitJsonError,
   makeHttpClient,
+  rejectUnknownFlags,
   resolveCommonHostFlags,
   refuseInsideManagedRun,
   takeFlagValue
@@ -62,9 +63,12 @@ export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promis
   }
   const namespace = onlyFlag.value as Namespace | null;
 
-  const positional = onlyFlag.remaining.filter((arg) => !arg.startsWith("--"));
+  const usage = "usage: aex download <session-id> [--only outputs|events|metadata] [--out path] [common flags]";
+  const unknown = rejectUnknownFlags(io, onlyFlag.remaining, usage);
+  if (unknown) return unknown;
+  const positional = onlyFlag.remaining;
   if (positional.length !== 1) {
-    io.stderr("usage: aex download <session-id> [--only outputs|events|metadata] [--out path] [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;

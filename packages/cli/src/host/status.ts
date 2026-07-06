@@ -11,6 +11,7 @@ import {
   describeApiError,
   emitJsonError,
   makeHttpClient,
+  rejectUnknownFlags,
   resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
@@ -23,9 +24,12 @@ export async function runStatusCmd(io: CliIO, argv: readonly string[]): Promise<
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
   }
-  const positional = common.rest.filter((arg) => !arg.startsWith("--"));
+  const usage = "usage: aex status <session-id> [common flags]";
+  const unknown = rejectUnknownFlags(io, common.rest, usage);
+  if (unknown) return unknown;
+  const positional = common.rest;
   if (positional.length !== 1) {
-    io.stderr("usage: aex status <session-id> [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;

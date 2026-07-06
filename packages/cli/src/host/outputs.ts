@@ -23,6 +23,7 @@ import {
   describeApiError,
   emitJsonError,
   makeHttpClient,
+  rejectUnknownFlags,
   refuseInsideManagedRun,
   resolveCommonHostFlags,
   takeFlagValue
@@ -60,9 +61,12 @@ export async function runOutputsCmd(io: CliIO, argv: readonly string[]): Promise
 
 /** `aex outputs <session-id>` — list every captured output as NDJSON. */
 async function outputsList(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const positional = args.filter((a) => !a.startsWith("--"));
+  const usage = "usage: aex outputs <session-id> [common flags]";
+  const unknown = rejectUnknownFlags(io, args, usage);
+  if (unknown) return unknown;
+  const positional = args;
   if (positional.length !== 1) {
-    io.stderr("usage: aex outputs <session-id> [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;
@@ -77,9 +81,12 @@ async function outputsList(io: CliIO, http: HttpClient, args: readonly string[])
 
 /** `aex outputs read <session-id> <path>` — read one file as capped text. */
 async function outputsRead(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const positional = args.filter((a) => !a.startsWith("--"));
+  const usage = "usage: aex outputs read <session-id> <path> [common flags]";
+  const unknown = rejectUnknownFlags(io, args, usage);
+  if (unknown) return unknown;
+  const positional = args;
   if (positional.length !== 2) {
-    io.stderr("usage: aex outputs read <session-id> <path> [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const [sessionId, selector] = positional as [string, string];
@@ -97,9 +104,12 @@ async function outputsDownload(io: CliIO, http: HttpClient, args: readonly strin
   const outFlag = takeFlagValue(args, "--out");
   if (outFlag.error) { io.stderr(`${outFlag.error}\n`); return USAGE_ERR; }
   void flags;
-  const positional = outFlag.remaining.filter((a) => !a.startsWith("--"));
+  const usage = "usage: aex outputs download <session-id> <path> [--out file] [common flags]";
+  const unknown = rejectUnknownFlags(io, outFlag.remaining, usage);
+  if (unknown) return unknown;
+  const positional = outFlag.remaining;
   if (positional.length !== 2) {
-    io.stderr("usage: aex outputs download <session-id> <path> [--out file] [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const [sessionId, selector] = positional as [string, string];
@@ -121,9 +131,12 @@ async function outputsDownload(io: CliIO, http: HttpClient, args: readonly strin
 
 /** `aex outputs link <session-id> <path>` — mint a temporary download URL. */
 async function outputsLink(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const positional = args.filter((a) => !a.startsWith("--"));
+  const usage = "usage: aex outputs link <session-id> <path> [common flags]";
+  const unknown = rejectUnknownFlags(io, args, usage);
+  if (unknown) return unknown;
+  const positional = args;
   if (positional.length !== 2) {
-    io.stderr("usage: aex outputs link <session-id> <path> [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const [sessionId, selector] = positional as [string, string];
@@ -144,9 +157,12 @@ async function outputsFind(io: CliIO, http: HttpClient, args: readonly string[])
   const contentType = takeFlagValue(type.remaining, "--content-type");
   const err = name.error ?? ext.error ?? type.error ?? contentType.error;
   if (err) { io.stderr(`${err}\n`); return USAGE_ERR; }
-  const positional = contentType.remaining.filter((a) => !a.startsWith("--"));
+  const usage = "usage: aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT] [common flags]";
+  const unknown = rejectUnknownFlags(io, contentType.remaining, usage);
+  if (unknown) return unknown;
+  const positional = contentType.remaining;
   if (positional.length !== 1) {
-    io.stderr("usage: aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT] [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;
@@ -175,6 +191,14 @@ async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[
   const runIds = collectRepeated(limit.remaining, "--run-id");
   const err = query.error ?? name.error ?? ext.error ?? contentType.error ?? limit.error ?? runIds.error;
   if (err) { io.stderr(`${err}\n`); return USAGE_ERR; }
+  const usage = "usage: aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--run-id ID] [--limit N] [common flags]";
+  const unknown = rejectUnknownFlags(io, runIds.remaining, usage);
+  if (unknown) return unknown;
+  if (runIds.remaining.length > 0) {
+    io.stderr(`unexpected arguments: ${runIds.remaining.join(" ")}\n`);
+    io.stderr(`${usage}\n`);
+    return USAGE_ERR;
+  }
   // `--query`/`--name` are filename substring matches (metadata-only search).
   const filename = query.value ?? name.value;
   let limitValue: number | undefined;

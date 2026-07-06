@@ -19,6 +19,7 @@ import {
   emitJsonError,
   extractCommonHostFlags,
   makeHttpClient,
+  rejectUnknownFlags,
   refuseInsideManagedRun
 } from "./common.js";
 import { AEX_DEFAULT_BASE_URL } from "@aexhq/contracts";
@@ -35,13 +36,16 @@ export async function runLoginCmd(io: CliIO, argv: readonly string[]): Promise<C
     return USAGE_ERR;
   }
   const { apiKey, aexUrl, debug, rest } = extracted.flags;
-  const positional = rest.filter((a) => !a.startsWith("--"));
+  const loginUsage = "usage: aex login --api-key <token> [--aex-url <url>]";
+  const unknown = rejectUnknownFlags(io, rest, loginUsage);
+  if (unknown) return unknown;
+  const positional = rest;
   if (positional.length > 0) {
     io.stderr(`unexpected arguments: ${positional.join(" ")}\n`);
     return USAGE_ERR;
   }
   if (!apiKey) {
-    io.stderr("usage: aex login --api-key <token> [--aex-url <url>]\n");
+    io.stderr(`${loginUsage}\n`);
     return USAGE_ERR;
   }
 
@@ -84,6 +88,14 @@ export async function runLogoutCmd(io: CliIO, argv: readonly string[]): Promise<
     io.stderr(`${extracted.reason}\n`);
     return USAGE_ERR;
   }
+  const logoutUsage = "usage: aex logout";
+  const unknown = rejectUnknownFlags(io, extracted.flags.rest, logoutUsage);
+  if (unknown) return unknown;
+  if (extracted.flags.rest.length > 0) {
+    io.stderr(`unexpected arguments: ${extracted.flags.rest.join(" ")}\n`);
+    io.stderr(`${logoutUsage}\n`);
+    return USAGE_ERR;
+  }
   await io.configStore.clear();
   io.stdout(JSON.stringify({ ok: true, cleared: true, configPath: io.configStore.location() }) + "\n");
   return SUCCESS;
@@ -97,6 +109,14 @@ export async function runAuthStatusCmd(io: CliIO, argv: readonly string[]): Prom
   const extracted = extractCommonHostFlags(argv);
   if (!extracted.ok) {
     io.stderr(`${extracted.reason}\n`);
+    return USAGE_ERR;
+  }
+  const authUsage = "usage: aex auth status";
+  const unknown = rejectUnknownFlags(io, extracted.flags.rest, authUsage);
+  if (unknown) return unknown;
+  if (extracted.flags.rest.length > 0) {
+    io.stderr(`unexpected arguments: ${extracted.flags.rest.join(" ")}\n`);
+    io.stderr(`${authUsage}\n`);
     return USAGE_ERR;
   }
   const stored = await io.configStore.read();

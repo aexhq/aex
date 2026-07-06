@@ -242,7 +242,7 @@ const LOCAL_INSTALL_DOCS = [
 // A bare `aex <verb>` command line (not prose like "aex is an agent…"): the
 // footgun after a LOCAL `npm i`, where the binary is not on PATH.
 const BARE_AEX_CMD =
-  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|outputs|download|cancel|delete|delete-asset|billing|webhooks|sessions|runs|deliveries|debug)\b/m;
+  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|outputs|download|cancel|delete|delete-asset|billing|webhooks|sessions|runs|deliveries)\b/m;
 
 describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
   it("onboarding docs use ONE constructor form: the string arg, never the object literal", () => {

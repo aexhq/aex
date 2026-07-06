@@ -10,6 +10,18 @@ function fileResponse(text: string, contentLength = text.length): Response {
   return new Response(text, { status: 200, headers: { "content-length": String(contentLength) } });
 }
 
+function streamedFileResponse(bytes: Uint8Array): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      }
+    }),
+    { status: 200 }
+  );
+}
+
 function clientFor(handler: (url: string) => Response): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -40,6 +52,17 @@ describe("aex.sessions.outputs(id).read", () => {
     expect(result.text).toBe("x".repeat(10));
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(1000);
+  });
+
+  it("reports truncated when a no-content-length stream returns one chunk larger than maxBytes", async () => {
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) return streamedFileResponse(new TextEncoder().encode("x".repeat(25)));
+      throw new Error(`unexpected ${url}`);
+    });
+    const result = await client.sessions.outputs("run-1").read({ id: "out-1" }, { maxBytes: 10 });
+    expect(result.text).toBe("x".repeat(10));
+    expect(result.truncated).toBe(true);
+    expect(result.totalBytes).toBe(25);
   });
 
   it("resolves a path selector via listOutputs, then downloads by id", async () => {

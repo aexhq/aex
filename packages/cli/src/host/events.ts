@@ -19,6 +19,7 @@ import {
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
+  rejectUnknownFlags,
   refuseInsideManagedRun,
   takeBooleanFlag,
   takeOptionFlag
@@ -43,9 +44,12 @@ export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<
     }
     timeoutMs = parsed.ms;
   }
-  const positional = timeoutFlag.remaining.filter((arg) => !arg.startsWith("--"));
+  const usage = "usage: aex events <session-id> [--follow] [--timeout <dur>] [common flags]";
+  const unknown = rejectUnknownFlags(io, timeoutFlag.remaining, usage);
+  if (unknown) return unknown;
+  const positional = timeoutFlag.remaining;
   if (positional.length !== 1) {
-    io.stderr("usage: aex events <session-id> [--follow] [--timeout <dur>] [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;

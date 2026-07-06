@@ -708,7 +708,7 @@ async function readCappedText(
     await reader.cancel().catch(() => {});
   }
   const merged = concatBytes(chunks).subarray(0, maxBytes);
-  const truncated = declared !== undefined ? declared > maxBytes : sawMore;
+  const truncated = declared !== undefined ? declared > maxBytes : read > maxBytes || sawMore;
   const totalBytes = declared ?? read;
   return { text: decoder.decode(merged), truncated, totalBytes };
 }

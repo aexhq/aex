@@ -28,13 +28,6 @@ export const AEX_INDEX_PATH = "/mnt/session/uploads/aex/index.json";
 export interface CliIO {
   readonly readFile: (path: string) => Promise<string>;
   readonly writeFile: (path: string, data: Uint8Array) => Promise<void>;
-  /**
-   * Recursively create a directory (mkdir -p). Used by the operator
-   * `aex debug` command to materialize a nested local bundle directory.
-   * Optional: subcommands that only write single files (e.g. `download`)
-   * do not need it, so a fake IO may omit it.
-   */
-  readonly mkdirp?: (path: string) => Promise<void>;
   readonly fetchImpl: typeof fetch;
   readonly stdout: (chunk: string) => void;
   readonly stderr: (chunk: string) => void;

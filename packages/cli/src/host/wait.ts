@@ -26,6 +26,7 @@ import {
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
+  rejectUnknownFlags,
   refuseInsideManagedRun,
   takeOptionFlag
 } from "./common.js";
@@ -64,9 +65,12 @@ export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<Cl
     intervalMs = parsed.ms!;
   }
 
-  const positional = intervalFlag.remaining.filter((arg) => !arg.startsWith("--"));
+  const usage = "usage: aex wait <session-id> [--timeout <dur>] [--interval <dur>] [common flags]";
+  const unknown = rejectUnknownFlags(io, intervalFlag.remaining, usage);
+  if (unknown) return unknown;
+  const positional = intervalFlag.remaining;
   if (positional.length !== 1) {
-    io.stderr("usage: aex wait <session-id> [--timeout <dur>] [--interval <dur>] [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;

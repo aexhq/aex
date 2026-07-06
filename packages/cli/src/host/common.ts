@@ -172,6 +172,14 @@ export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult
   };
 }
 
+export function rejectUnknownFlags(io: CliIO, rest: readonly string[], usage: string): CliExitCode | null {
+  const unknown = rest.find((arg) => arg.startsWith("--"));
+  if (unknown === undefined) return null;
+  io.stderr(`unknown flag: ${unknown}\n`);
+  io.stderr(`${usage}\n`);
+  return USAGE_ERR;
+}
+
 /**
  * Resolve the common host flags with the stored-config fallback (DX1).
  * Precedence: `--api-key` flag > stored token; `--aex-url` flag > stored url >

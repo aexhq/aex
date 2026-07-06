@@ -118,9 +118,6 @@ const webSocketFactory: CliIO["webSocketFactory"] =
 const io: CliIO = {
   readFile: (path) => readFile(path, "utf8"),
   writeFile: (path, data) => writeFile(path, data),
-  mkdirp: async (path) => {
-    await mkdir(path, { recursive: true });
-  },
   fetchImpl: fetch,
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk),

@@ -219,11 +219,6 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     name: "runtime-sizes",
     summary: "List managed runtime presets (no token needed).",
     usage: ["aex runtime-sizes list [--json]"]
-  },
-  {
-    name: "debug",
-    summary: "Operator: read the AWS plane directly (AWS creds, not --api-key).",
-    usage: ["aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]"]
   }
 ];
 

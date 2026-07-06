@@ -86,6 +86,7 @@ describe("aex --help", () => {
     expect(cap.stdout).not.toContain("--workspace");
     expect(cap.stdout).not.toContain("proxy");
     expect(cap.stdout).not.toContain("--proxy-endpoint");
+    expect(cap.stdout).not.toContain("aex debug");
   });
 
   it("advertises --aex-url as optional with the api.aex.dev default", async () => {
@@ -145,6 +146,13 @@ describe("removed commands", () => {
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown subcommand: proxy");
+  });
+
+  it("treats the private debug verb as an unknown subcommand", async () => {
+    const cap = makeIo({ argv: ["debug", "run-1"] });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("unknown subcommand: debug");
   });
 
   it("exits 2 on unknown subcommand", async () => {

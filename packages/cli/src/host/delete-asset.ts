@@ -14,6 +14,7 @@ import {
   describeApiError,
   emitJsonError,
   makeHttpClient,
+  rejectUnknownFlags,
   resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
@@ -26,9 +27,12 @@ export async function runDeleteAssetCmd(io: CliIO, argv: readonly string[]): Pro
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
   }
-  const positional = common.rest.filter((arg) => !arg.startsWith("--"));
+  const usage = "usage: aex delete-asset <hash> [common flags]";
+  const unknown = rejectUnknownFlags(io, common.rest, usage);
+  if (unknown) return unknown;
+  const positional = common.rest;
   if (positional.length !== 1) {
-    io.stderr("usage: aex delete-asset <hash> [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const hash = positional[0]!;

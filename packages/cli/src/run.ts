@@ -25,10 +25,7 @@
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
- *   Operator (AWS creds, not `--api-key`):
- *     - `aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch]`
- *
- * Every host subcommand (except the operator `debug` verb) requires
+ * Every host subcommand requires
  * `--api-key`. `--aex-url` is
  * optional and defaults to `https://api.aex.dev`. There is no
  * `--workspace` flag — the workspace is derived server-side from the
@@ -58,7 +55,6 @@ import {
   runWebhooksCmd,
   runRunsCmd,
   runSessionsCmd,
-  runDebugCmd,
   runLoginCmd,
   runLogoutCmd,
   runAuthStatusCmd,
@@ -174,11 +170,6 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       return runToolsCmd(io, rest);
     case "runtime-sizes":
       return runRuntimeSizesCmd(io, rest);
-    case "debug":
-      // Operator/admin command: reads the AWS plane directly (S3 + DDB + SFN +
-      // CloudWatch) via the standard AWS SDK credential chain. NOT an
-      // --api-key verb — distinct from the public host commands above.
-      return runDebugCmd(io, rest);
     default:
       io.stderr(`unknown subcommand: ${sub}\n`);
       io.stderr("run `aex --help` for usage\n");
@@ -220,7 +211,6 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex providers list [--json]                List providers + their models (no token needed)\n");
   io.stdout("  aex tools list [--json]                    List builtin tools (all default; no token needed)\n");
   io.stdout("  aex runtime-sizes list [--json]            List managed runtime presets (no token needed)\n");
-  io.stdout("  aex debug <run-id> [--plane dev|prd] [--region eu-west-2] [--cloudwatch] [--with-outputs]   (operator; AWS creds)\n");
   io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
   io.stdout("  --api-key <token>         REQUIRED — aex SDK API key (workspace is derived from it)\n");

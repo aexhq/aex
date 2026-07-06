@@ -17,7 +17,6 @@ export { runWhoamiCmd } from "./whoami.js";
 export { runBillingCmd } from "./billing.js";
 export { runWebhooksCmd } from "./webhooks-cmd.js";
 export { runRunsCmd, runSessionsCmd } from "./list-cmds.js";
-export { runDebugCmd } from "./debug.js";
 export { runLoginCmd, runLogoutCmd, runAuthStatusCmd } from "./auth-cmd.js";
 export { runModelsCmd, runProvidersCmd, runToolsCmd, runRuntimeSizesCmd } from "./discover-cmd.js";
 export { runTailCmd } from "./tail.js";

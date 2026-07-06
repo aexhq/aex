@@ -23,6 +23,7 @@ import {
   isSessionParked,
   makeHttpClient,
   parseDuration,
+  rejectUnknownFlags,
   refuseInsideManagedRun,
   resolveCommonHostFlags,
   takeBooleanFlag,
@@ -70,9 +71,12 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
     timeoutMs = parsed.ms;
   }
 
-  const positional = timeoutFlag.remaining.filter((a) => !a.startsWith("--"));
+  const usage = "usage: aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--from <seq>] [--settle] [--timeout <dur>] [common flags]";
+  const unknown = rejectUnknownFlags(io, timeoutFlag.remaining, usage);
+  if (unknown) return unknown;
+  const positional = timeoutFlag.remaining;
   if (positional.length !== 1) {
-    io.stderr("usage: aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--from <seq>] [--settle] [--timeout <dur>] [common flags]\n");
+    io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;

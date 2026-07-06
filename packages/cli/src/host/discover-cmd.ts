@@ -21,7 +21,7 @@ import {
   type RunProvider
 } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
-import { type CliExitCode, SUCCESS, USAGE_ERR, takeBooleanFlag } from "./common.js";
+import { type CliExitCode, SUCCESS, USAGE_ERR, rejectUnknownFlags, takeBooleanFlag } from "./common.js";
 
 const DEFAULT_BUILTIN_SET = new Set<string>(DEFAULT_BUILTIN_TOOLS);
 
@@ -129,10 +129,12 @@ function stripListSubcommand(argv: readonly string[]): readonly string[] {
 
 /** Reject stray positional args (a typo'd subcommand) with a clear error. */
 function hasUnknown(io: CliIO, rest: readonly string[], verb: string): boolean {
-  const stray = rest.filter((a) => !a.startsWith("--"));
+  const usage = `usage: aex ${verb} list [--json]`;
+  if (rejectUnknownFlags(io, rest, usage)) return true;
+  const stray = rest;
   if (stray.length > 0) {
-    io.stderr(`usage: aex ${verb} list [--json]\n`);
     io.stderr(`unexpected arguments: ${stray.join(" ")}\n`);
+    io.stderr(`${usage}\n`);
     return true;
   }
   return false;

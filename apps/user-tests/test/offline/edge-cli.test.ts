@@ -253,26 +253,21 @@ describe("installed aex CLI — offline edge cases", () => {
 
   // ---------------------------------------------------------------- unknown-flag consistency (FINDING)
 
-  it("whoami rejects an unknown flag but a read verb silently ignores it (inconsistency)", async () => {
+  it("whoami and read verbs both reject unknown flags before network", async () => {
     // whoami: extra args (incl. unknown --flags) are rejected -> exit 2.
     const whoami = await runCli(["whoami", "--typo-flag", "--api-key", "dummy"]);
     expect(whoami.exitCode, diag("aex whoami --typo-flag", whoami)).toBe(2);
     expect(whoami.stderr).toMatch(/unexpected arguments: --typo-flag/);
 
-    // status: an unknown --flag is filtered out of the positional check and
-    // silently ignored, so the command proceeds to the network (which we point
-    // at an unroutable port). Observable proof: it fails as a RUNTIME error
-    // (exit 1, "status_failed") NOT a usage error (exit 2) — the typo was
-    // accepted. A user typo like `aex events <id> --folow` degrades the same
-    // silent way (one-shot instead of following).
     const status = await runCli([
       "status", "some-run-id",
       "--typo-flag",
       "--api-key", "dummy",
       "--aex-url", "http://127.0.0.1:9"
     ]);
-    expect(status.exitCode, diag("aex status --typo-flag", status)).toBe(1);
-    expect(status.stderr).toMatch(/status_failed/);
-    expect(status.stderr).not.toMatch(/usage: aex status/);
+    expect(status.exitCode, diag("aex status --typo-flag", status)).toBe(2);
+    expect(status.stderr).toMatch(/unknown flag: --typo-flag/);
+    expect(status.stderr).toMatch(/usage: aex status/);
+    expect(status.stderr).not.toMatch(/status_failed/);
   });
 });

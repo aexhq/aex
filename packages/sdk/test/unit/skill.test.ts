@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zipSync } from "fflate";
-import { Skill } from "../../src/index.js";
+import { Skill, SKILL_BUNDLE_LIMITS } from "../../src/index.js";
 
 const TEXT = new TextEncoder();
 
@@ -185,6 +185,79 @@ describe("Skill — factory equivalence + fromUrl", () => {
     const skill = await Skill.fromContent(skillMd("inline", "Inline skill."));
     expect(skill.name).toBe("inline");
     expect(skill.description).toBe("Inline skill.");
+  });
+
+  it("aborts a URL archive response body when timeoutMs expires after headers", async () => {
+    const fetch = async (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull() {
+            return new Promise<void>((_resolve, reject) => {
+              const signal = init?.signal;
+              const rejectAbort = () => reject(new Error("body aborted"));
+              if (signal?.aborted) {
+                rejectAbort();
+                return;
+              }
+              signal?.addEventListener("abort", rejectAbort, { once: true });
+            });
+          }
+        }),
+        { status: 200 }
+      );
+
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    const didNotAbort = new Promise<never>((_resolve, reject) => {
+      guard = setTimeout(() => reject(new Error("body read did not abort")), 500);
+    });
+    try {
+      await expect(
+        Promise.race([
+          Skill.fromUrl("https://x/slow.zip", { name: "slow", fetch, timeoutMs: 20 }),
+          didNotAbort
+        ])
+      ).rejects.toThrow(/fetch failed for https:\/\/x\/slow\.zip/);
+    } finally {
+      if (guard) clearTimeout(guard);
+    }
+  });
+
+  it("stops reading a no-content-length URL body once the compressed cap is exceeded", async () => {
+    const originalCap = SKILL_BUNDLE_LIMITS.maxCompressedBytes;
+    let pulls = 0;
+    SKILL_BUNDLE_LIMITS.maxCompressedBytes = 8;
+    try {
+      const fetch = async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1;
+              if (pulls <= 2) {
+                controller.enqueue(new Uint8Array(5));
+                return;
+              }
+              return new Promise<void>(() => {});
+            }
+          }),
+          { status: 200 }
+        );
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      const didNotStopAtCap = new Promise<never>((_resolve, reject) => {
+        guard = setTimeout(() => reject(new Error("body read did not stop at compressed cap")), 500);
+      });
+      try {
+        await expect(
+          Promise.race([
+            Skill.fromUrl("https://x/too-big.zip", { name: "too-big", fetch }),
+            didNotStopAtCap
+          ])
+        ).rejects.toThrow(/exceeding the 8-byte compressed cap/);
+      } finally {
+        if (guard) clearTimeout(guard);
+      }
+    } finally {
+      SKILL_BUNDLE_LIMITS.maxCompressedBytes = originalCap;
+    }
   });
 });
 
