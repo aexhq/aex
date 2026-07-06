@@ -30,17 +30,34 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
   it(
     "an allowed host is reachable and a non-allowed host is blocked on the same managed run",
     async () => {
+      const probe = `set -u
+probe_https() {
+  reached="$1"
+  blocked="$2"
+  url="$3"
+  name="$(printf "%s" "$reached" | tr "A-Z" "a-z")"
+  body="/tmp/aex-networking-$name.body"
+  err="/tmp/aex-networking-$name.err"
+  code="$(curl -sS -m 10 -o "$body" -w "%{http_code}" "$url" 2>"$err" || true)"
+  if [ -n "$code" ] && [ "$code" != "000" ]; then
+    printf "%s_HTTP_%s\\n" "$reached" "$code"
+  else
+    printf "%s_HTTP_%s\\n" "$blocked" "\${code:-000}"
+  fi
+}
+a="$(probe_https ALLOWED_REACHED ALLOWED_FAILED https://example.com/)"
+o="$(probe_https OTHER_REACHED OTHER_BLOCKED https://api.github.com/)"
+printf "%s %s\\n" "$a" "$o"`;
+      const prompt =
+        "Using the shell, run exactly this bash script without replacing it with curl exit-code shortcuts. " +
+        "Classify reachability from HTTP status: HTTP 000, connection refused, timeout, or proxy/gate failure means BLOCKED. " +
+        `Script:\n${probe}\n` +
+        "Reply with ONLY the final two probe tokens separated by a single space.";
       const script = sdkRunnerScript({
         run: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
-          message: [
-            "Using the shell, make two separate HTTPS GET requests with curl -sS -m 10:",
-            "Judge each by whether you actually REACHED the site (got its real response), not merely whether any bytes came back — a proxy 403/Forbidden means BLOCKED, not reached.",
-            "1) https://example.com — if you reached the host and got its normal response, note the token ALLOWED_REACHED; if blocked/refused/timed out/proxy-403, note ALLOWED_FAILED.",
-            "2) https://api.github.com — if you reached the host and got its normal API response, note the token OTHER_REACHED; if blocked/refused/timed out/proxy-403, note OTHER_BLOCKED.",
-            "Reply with ONLY the two tokens separated by a space."
-          ],
+          message: ${JSON.stringify(prompt)},
           environment: { networking: { mode: "limited", allowedHosts: ["example.com"] } },
           apiKeys: { deepseek: DEEPSEEK_KEY },
           idempotencyKey: "user-networking-" + Date.now()

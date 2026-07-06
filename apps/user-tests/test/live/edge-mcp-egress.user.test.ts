@@ -244,14 +244,43 @@ interface EgressResult {
 }
 
 function egressChildScript(): string {
+  const probe = `set -u
+probe_https() {
+  label="$1"
+  url="$2"
+  body="/tmp/aex-egress-$label.body"
+  err="/tmp/aex-egress-$label.err"
+  code="$(curl -sS -m 8 -o "$body" -w "%{http_code}" "$url" 2>"$err" || true)"
+  if [ -n "$code" ] && [ "$code" != "000" ]; then
+    printf "%s_REACHED_HTTP_%s\\n" "$label" "$code"
+  else
+    printf "%s_BLOCKED_HTTP_%s\\n" "$label" "\${code:-000}"
+  fi
+}
+probe_imds() {
+  body="/tmp/aex-egress-imds.body"
+  headers="/tmp/aex-egress-imds.headers"
+  err="/tmp/aex-egress-imds.err"
+  code="$(curl -sS -m 8 -D "$headers" -o "$body" -w "%{http_code}" http://169.254.169.254/latest/meta-data/ 2>"$err" || true)"
+  text="$(cat "$headers" "$body" "$err" 2>/dev/null | tr "A-Z" "a-z" || true)"
+  if [ -z "$code" ] || [ "$code" = "000" ]; then
+    printf "IMDS_BLOCKED_HTTP_%s\\n" "\${code:-000}"
+  elif [ "$code" = "403" ] && printf "%s" "$text" | grep -Eq "proxy|forbidden|plain-http|egress|not permitted|metadata|link-local"; then
+    printf "IMDS_BLOCKED_HTTP_%s\\n" "$code"
+  else
+    printf "IMDS_REACHED_HTTP_%s\\n" "$code"
+  fi
+}
+a="$(probe_https ALLOWED https://example.com/)"
+o="$(probe_https OTHER https://api.github.com/)"
+i="$(probe_imds)"
+printf "%s %s %s\\n" "$a" "$o" "$i"`;
   const prompt =
-    "Using the shell, run exactly these three commands with curl and report each outcome. " +
-    "Judge each by whether you REACHED the target (got its real response body/headers), not whether any bytes came back — " +
-    "a proxy 403/Forbidden, connection refused, or timeout means BLOCKED, not reached. " +
-    "1) curl -sS -m 8 https://example.com/ — if reached, note ALLOWED_REACHED; else ALLOWED_BLOCKED. " +
-    "2) curl -sS -m 8 https://api.github.com/ — if reached, note OTHER_REACHED; else OTHER_BLOCKED. " +
-    "3) curl -sS -m 8 http://169.254.169.254/latest/meta-data/ — if reached, note IMDS_REACHED; else IMDS_BLOCKED. " +
-    "Reply with ONLY the three tokens separated by single spaces.";
+    "Using the shell, run exactly this bash script without replacing it with curl exit-code shortcuts. " +
+    "Classify reachability from HTTP status and proxy/gate response text: proxy 403/Forbidden, connection refused, HTTP 000, or timeout means BLOCKED. " +
+    "A real IMDS response, including IMDSv2 401, means IMDS_REACHED. " +
+    `Script:\n${probe}\n` +
+    "Reply with ONLY the final three probe tokens separated by single spaces.";
   return `
     import { Aex } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
