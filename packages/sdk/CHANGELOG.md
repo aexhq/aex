@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.2
+
+### Fixed
+
+- Made `aex run --follow` wait briefly for the final session record to reach a
+  parked status after terminal stream events, avoiding false failures when the
+  managed-plane event stream is ahead of the session mirror.
+
 ## 0.40.1
 
 ### Fixed

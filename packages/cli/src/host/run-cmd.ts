@@ -27,10 +27,12 @@ import {
   resolveModelProvider,
   RUNTIME_SIZES,
   RUN_PROVIDERS,
+  type HttpClient,
   type JsonValue,
   type PlatformEnvironment,
   type RunModel,
   type RunProvider,
+  type Session,
   type RuntimeSize
 } from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
@@ -47,6 +49,7 @@ import {
   describeApiError,
   emitJsonError,
   isSessionOk,
+  isSessionParked,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
@@ -74,6 +77,8 @@ import { openEnvelopeStream } from "./stream-render.js";
 
 /** Default idle window a one-shot session may sit before the platform reaps it. Mirrors the SDK. */
 const DEFAULT_SESSION_IDLE_TTL = "3m";
+const FOLLOW_SETTLE_POLL_DEADLINE_MS = 60_000;
+const FOLLOW_SETTLE_POLL_INTERVAL_MS = 750;
 
 export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedRun(io, "run")) return USAGE_ERR;
@@ -474,7 +479,7 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
   }
 
   try {
-    const final = await operations.getSession(http, session.id);
+    const final = await followSettledSessionRecord(http, session.id, controller.signal);
     io.stdout(JSON.stringify(final) + "\n");
     if (isSessionOk(final.status)) return SUCCESS;
     io.stderr(
@@ -490,6 +495,42 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     io.stderr(`final status fetch failed: ${(err as Error).message}\n`);
     return RUNTIME_ERR;
   }
+}
+
+async function followSettledSessionRecord(http: HttpClient, sessionId: string, signal: AbortSignal): Promise<Session> {
+  const deadline = Date.now() + FOLLOW_SETTLE_POLL_DEADLINE_MS;
+  let last = await operations.getSession(http, sessionId);
+  if (isSessionParked(last.status)) return last;
+
+  while (signal.aborted !== true && Date.now() < deadline) {
+    try {
+      await sleep(FOLLOW_SETTLE_POLL_INTERVAL_MS, signal);
+    } catch {
+      return last;
+    }
+    const next = await operations.getSession(http, sessionId).catch(() => undefined);
+    if (next === undefined) continue;
+    last = next;
+    if (isSessionParked(next.status)) return next;
+  }
+  return last;
+}
+
+async function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener("abort", abort);
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const abort = (): void => {
+      clearTimeout(timer);
+      cleanup();
+      reject(new Error("aborted"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 /* ---------- attach-primitive builders ---------- */

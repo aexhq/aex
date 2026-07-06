@@ -57,6 +57,7 @@ const flush = async (n = 6): Promise<void> => {
 
 function makeIo(opts: {
   argv: readonly string[];
+  finalStatuses?: readonly string[];
   runStatus?: string;
   noWs?: boolean;
 }): {
@@ -73,6 +74,8 @@ function makeIo(opts: {
   const sockets: FakeWebSocket[] = [];
   const socketUrls: string[] = [];
   const requests: Array<{ readonly method: string; readonly path: string; readonly body: unknown }> = [];
+  const finalStatuses = opts.finalStatuses ?? [opts.runStatus ?? "succeeded"];
+  let finalReadCount = 0;
   let waiters: Array<() => void> = [];
   let sigint: (() => void) | undefined;
   const io: CliIO = {
@@ -134,7 +137,9 @@ function makeIo(opts: {
         );
       }
       // getSession (final record read; runId === sessionId)
-      return new Response(JSON.stringify({ id: "run-x", status: opts.runStatus ?? "succeeded", model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" }), {
+      const status = finalStatuses[Math.min(finalReadCount, finalStatuses.length - 1)]!;
+      finalReadCount += 1;
+      return new Response(JSON.stringify({ id: "run-x", status, model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -358,6 +363,32 @@ describe("aex run --follow", () => {
       turnSeq: 1,
       turnStatus: "launching"
     });
+  });
+
+  it("waits for the session record to park after a terminal stream event", async () => {
+    const cap = makeIo({
+      argv: [
+        "run",
+        "--model", "claude-haiku-4-5",
+        "--prompt", "hi",
+        "--anthropic-api-key", "sk-ant-test",
+        "--follow",
+        ...COMMON
+      ],
+      finalStatuses: ["running", "idle"]
+    });
+    const done = runCli(cap.io);
+    const ws = await cap.nextSocket();
+    ws.message(evt(0, "RUN_STARTED"));
+    ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "live" }));
+    ws.message(evt(2, "RUN_FINISHED"));
+    await done;
+
+    expect(cap.exit()).toBe(0);
+    const getSessionReads = cap.requests.filter((request) => request.method === "GET" && request.path === "/api/sessions/run-x");
+    expect(getSessionReads).toHaveLength(2);
+    const final = JSON.parse(cap.out().trim().split("\n").at(-1)!) as { id: string; status: string };
+    expect(final).toEqual({ id: "run-x", status: "idle", model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" });
   });
 });
 
