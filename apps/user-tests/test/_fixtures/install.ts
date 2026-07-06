@@ -338,6 +338,42 @@ export interface RunResult {
   readonly signal: NodeJS.Signals | null;
 }
 
+interface PreparedSpawn {
+  readonly command: string;
+  readonly args: string[];
+  readonly options: Pick<SpawnOptions, "shell" | "windowsVerbatimArguments">;
+}
+
+function prepareSpawn(command: string, args: readonly string[], env: NodeJS.ProcessEnv): PreparedSpawn {
+  if (isWindowsCommandShim(command)) {
+    return {
+      command: env.ComSpec ?? "cmd.exe",
+      args: ["/d", "/s", "/c", windowsCommandLine(command, args)],
+      options: { shell: false, windowsVerbatimArguments: true }
+    };
+  }
+
+  return {
+    command,
+    args: [...args],
+    options: { shell: false }
+  };
+}
+
+function isWindowsCommandShim(command: string): boolean {
+  return process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command);
+}
+
+function windowsCommandLine(command: string, args: readonly string[]): string {
+  const argv = [command, ...args].map(quoteWindowsCommandArg).join(" ");
+  return `"${argv}"`;
+}
+
+function quoteWindowsCommandArg(value: string): string {
+  if (value.length === 0) return '""';
+  return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, "$1$1")}"`;
+}
+
 export async function runCommand(
   command: string,
   args: readonly string[],
@@ -347,14 +383,15 @@ export async function runCommand(
   const { timeoutMs: _omit, ...spawnOptions } = options;
   void _omit;
   const env = withBunOnPath(spawnOptions.env);
+  const prepared = prepareSpawn(command, args, env);
   return await new Promise<RunResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    const child = spawn(command, args as string[], {
+    const child = spawn(prepared.command, prepared.args, {
       ...spawnOptions,
       env,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32"
+      ...prepared.options
     });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");

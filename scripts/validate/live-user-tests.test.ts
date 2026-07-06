@@ -179,7 +179,10 @@ describe("live user-test release gate", () => {
     expect(wrapper).toContain("await buildConformance();");
     expect(wrapper).toContain('["run", "--cwd", repoRoot, "--filter", "@aexhq/conformance", "build"]');
     expect(wrapper).toContain("const vitestArgs = process.argv.slice(2);");
+    expect(wrapper).toContain("buildUserVitestSpawnInvocation(vitestArgs)");
     expect(wrapper).toContain('["run", "vitest", "run", ...vitestArgs]');
+    expect(wrapper).toContain("options: { shell: false }");
+    expect(wrapper).not.toContain('shell: process.platform === "win32"');
   });
 
   it("treats blank live-test model vars as missing", () => {
@@ -243,10 +246,15 @@ describe("live user-test release gate", () => {
       "apps/user-tests/test/live/providers/live-sdk-anthropic-managed.test.ts"
     );
     expect(anthropicProviderTest).toContain('requireEnv("ANTHROPIC_API_KEY")');
+    expect(anthropicProviderTest).toContain("function liveFailureDiagnostic(result: LiveResult)");
+    expect(anthropicProviderTest).toContain("[REDACTED_ANTHROPIC_KEY]");
+    expect(anthropicProviderTest).toContain("expect(result.runStatus, diagnostic).toBe(\"succeeded\")");
 
     // The non-gating on-demand workflow is the one place the Anthropic key flows.
     const onDemand = read(".github/workflows/live-on-demand-tests.yml");
     expect(onDemand).toContain("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}");
+    expect(onDemand).toContain("required provider keys hard-fail");
+    expect(onDemand).not.toContain("self-skips when its key is unset");
   });
 
   it("fans out provider and heavy on-demand suites after one artifact preparation", () => {

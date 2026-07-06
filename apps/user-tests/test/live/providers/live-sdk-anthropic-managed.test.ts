@@ -71,6 +71,17 @@ interface LiveResult {
   readonly leakedProviderKey: boolean;
 }
 
+function liveFailureDiagnostic(result: LiveResult): string {
+  const safe = {
+    ...result,
+    assistantTextJoined:
+      result.assistantTextJoined.length > 1000
+        ? result.assistantTextJoined.slice(0, 1000) + "...[truncated]"
+        : result.assistantTextJoined
+  };
+  return JSON.stringify(safe, null, 2).split(anthropicKey).join("[REDACTED_ANTHROPIC_KEY]");
+}
+
 describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed runtime", () => {
   let install: InstallResult;
 
@@ -204,20 +215,21 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
       }
 
       const result = JSON.parse(child.stdout.trim()) as LiveResult;
+      const diagnostic = liveFailureDiagnostic(result);
 
-      expect(result.runtime).toBe("managed");
-      expect(result.provider).toBe("anthropic");
-      expect(result.runStatus).toBe("succeeded");
+      expect(result.runtime, diagnostic).toBe("managed");
+      expect(result.provider, diagnostic).toBe("anthropic");
+      expect(result.runStatus, diagnostic).toBe("succeeded");
 
       // Real managed-runtime event frame.
-      expect(result.terminalKind).toBe("RUN_FINISHED");
-      expect(result.eventKinds).toContain("RUN_FINISHED");
-      expect(result.assistantTextEventCount).toBeGreaterThan(0);
-      expect(result.assistantTextJoined.length).toBeGreaterThan(0);
+      expect(result.terminalKind, diagnostic).toBe("RUN_FINISHED");
+      expect(result.eventKinds, diagnostic).toContain("RUN_FINISHED");
+      expect(result.assistantTextEventCount, diagnostic).toBeGreaterThan(0);
+      expect(result.assistantTextJoined.length, diagnostic).toBeGreaterThan(0);
       // Strip whitespace before matching the probe — managed-runtime stream
       // fragments responses across content blocks (per token), so the
       // joined text may have spaces in the middle of the probe.
-      expect(result.assistantTextJoined.replace(/\s+/g, "")).toContain(result.probe);
+      expect(result.assistantTextJoined.replace(/\s+/g, ""), diagnostic).toContain(result.probe);
 
       // Terminal carries reason: "complete". runtimeExitCode is NOT asserted
       // here — runner.mjs emits a terminal with { runtimeExitCode } AFTER the
@@ -232,9 +244,9 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
       // tracked as a managed-runtime refactor — until then, runtimeExitCode is
       // observability, not contract, and not asserted.
       const terminal = result.terminalData ?? {};
-      expect(terminal["reason"]).toBe("complete");
+      expect(terminal["reason"], diagnostic).toBe("complete");
 
-      expect(result.leakedProviderKey).toBe(false);
+      expect(result.leakedProviderKey, diagnostic).toBe(false);
     },
     11 * 60 * 1000
   );

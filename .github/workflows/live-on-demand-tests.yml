@@ -5,7 +5,8 @@ name: Live On-Demand Tests
 # runs them both:
 #   1. Per-provider correctness matrix (apps/user-tests/test/live/providers/) —
 #      one minimal round-trip per extra provider (doubao, future
-#      openai/gemini/mistral/openrouter); each self-skips when its key is unset.
+#      openai/gemini/mistral/openrouter); required provider keys hard-fail when
+#      unset, so only dispatch this suite from a fully provisioned environment.
 #   2. Heavy full-feature long session (test:user:heavy) — one maximal-submission
 #      DeepSeek-managed run exercising the entire feature surface.
 #
@@ -141,9 +142,9 @@ jobs:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AEX_USER_TEST_ANTHROPIC_MODEL: ${{ vars.AEX_USER_TEST_ANTHROPIC_MODEL }}
-          # One key env per extra provider. Each test self-skips when its key is
-          # empty, so add a provider's secret here when you want this dispatch to
-          # exercise it (future: OPENAI_API_KEY, GEMINI_API_KEY, etc.).
+          # One key env per extra provider. Tests hard-fail when their key is
+          # empty; add a provider's secret here before requiring its evidence
+          # (future: OPENAI_API_KEY, GEMINI_API_KEY, etc.).
           DOUBAO_API_KEY: ${{ secrets.DOUBAO_API_KEY }}
           AEX_USER_TEST_DOUBAO_MODEL: ${{ vars.AEX_USER_TEST_DOUBAO_MODEL }}
           AEX_USER_TEST_DOUBAO_PROVIDER: ${{ vars.AEX_USER_TEST_DOUBAO_PROVIDER }}
