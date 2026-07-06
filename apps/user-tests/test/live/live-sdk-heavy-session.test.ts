@@ -301,30 +301,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       let outputSource = "fallback result.outputs";
       let outputListError = null;
       let listedOutputCount = null;
-      try {
-        const listedEvents = await session.events().list();
-        listedEventCount = Array.isArray(listedEvents) ? listedEvents.length : null;
-        if (Array.isArray(listedEvents) && listedEvents.length > 0) {
-          const useListedEvents = hasTerminalEvent(listedEvents) || !hasTerminalEvent(fallbackEvents);
-          events = useListedEvents ? listedEvents : fallbackEvents;
-          eventSource = useListedEvents ? "session.events().list" : "fallback result.events";
-        }
-      } catch (err) {
-        eventListError = err && err.message ? err.message : String(err);
-        events = fallbackEvents;
-      }
-      try {
-        const listedOutputs = await session.outputs().list();
-        listedOutputCount = Array.isArray(listedOutputs) ? listedOutputs.length : null;
-        if (Array.isArray(listedOutputs)) {
-          outputs = listedOutputs;
-          outputSource = "session.outputs().list";
-        }
-      } catch (err) {
-        outputListError = err && err.message ? err.message : String(err);
-        outputs = fallbackOutputs;
-      }
-
       // CUSTOM envelopes nest the original payload under data.value.
       function customName(e) {
         return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
@@ -372,6 +348,29 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       }
       function hasTerminalEvent(list) {
         return list.some((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR" || isSessionIdle(e));
+      }
+      try {
+        const listedEvents = await session.events().list();
+        listedEventCount = Array.isArray(listedEvents) ? listedEvents.length : null;
+        if (Array.isArray(listedEvents) && listedEvents.length > 0) {
+          const useListedEvents = hasTerminalEvent(listedEvents) || !hasTerminalEvent(fallbackEvents);
+          events = useListedEvents ? listedEvents : fallbackEvents;
+          eventSource = useListedEvents ? "session.events().list" : "fallback result.events";
+        }
+      } catch (err) {
+        eventListError = err && err.message ? err.message : String(err);
+        events = fallbackEvents;
+      }
+      try {
+        const listedOutputs = await session.outputs().list();
+        listedOutputCount = Array.isArray(listedOutputs) ? listedOutputs.length : null;
+        if (Array.isArray(listedOutputs)) {
+          outputs = listedOutputs;
+          outputSource = "session.outputs().list";
+        }
+      } catch (err) {
+        outputListError = err && err.message ? err.message : String(err);
+        outputs = fallbackOutputs;
       }
 
       const notifications = events.filter((e) => e.type === "CUSTOM");

@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.5
+
+### Fixed
+
+- Fixed the heavy live release test so it can prefer the complete
+  `session.events().list()` transcript without falling back to the shorter
+  one-shot result event list.
+
 ## 0.40.4
 
 ### Fixed

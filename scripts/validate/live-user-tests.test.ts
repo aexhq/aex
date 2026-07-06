@@ -306,6 +306,12 @@ describe("live user-test release gate", () => {
     expect(source).toContain("channelProbeSources");
     expect(source).toContain("channelProbeMisses");
     expect(source).toContain("succeeded but missed channel probes");
+    expect(source.indexOf("const SESSION_TERMINAL_NAMES = new Set([")).toBeLessThan(
+      source.indexOf("const listedEvents = await session.events().list();")
+    );
+    expect(source.indexOf("function hasTerminalEvent(list)")).toBeLessThan(
+      source.indexOf("const listedEvents = await session.events().list();")
+    );
     expect(source).not.toContain('"RUN_FINISHED",\n  "TEXT_MESSAGE_CONTENT"');
     expect(source).not.toContain('name: "heavy-alpha-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-beta-${spec.provider}"');
