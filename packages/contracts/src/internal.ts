@@ -1,9 +1,241 @@
-// Workspace-internal entry point. Re-exports the submission building blocks
-// (leaf parsers, helper validators, shared constants) so the platform-only
-// `@aexhq/shared` package can reuse them instead of hand-mirroring ~1.8k lines
-// of validator code. NOT part of the public `@aexhq/contracts` surface — do
-// NOT add this to the package `index`; consumers reach it via the explicit
+import { extractErrorCode, redactUrl } from "./sdk-errors.js";
+
+// Workspace-internal entry point. Re-exports submission building blocks and
+// hosts small shared helpers so public packages can avoid hand-mirroring
+// behavior. NOT part of the public `@aexhq/contracts` surface; do NOT add this
+// to the package `index`. Consumers reach it via the explicit
 // `@aexhq/contracts/internal` subpath.
 export * from "./models.js";
 export * from "./post-hook.js";
 export * from "./submission.js";
+
+/**
+ * Subset of `HttpClient` needed by the asset uploader. Defined structurally so
+ * SDK and CLI tests can supply thin stubs without dragging in the full client.
+ */
+export interface AssetsHttpClient {
+  request<T>(
+    path: string,
+    init?: RequestInit,
+    query?: Record<string, string>
+  ): Promise<T>;
+}
+
+/** Minimal fetch shape for the direct-to-storage PUT. */
+export type AssetFetch = (
+  input: string,
+  init?: RequestInit
+) => Promise<{
+  readonly ok: boolean;
+  readonly status: number;
+  text(): Promise<string>;
+  readonly headers?: { get(name: string): string | null };
+}>;
+
+export interface UploadAssetArgs {
+  readonly http: AssetsHttpClient;
+  readonly bytes: Uint8Array;
+  /** `sha256:<hex>` - the canonical content hash declared on the wire. */
+  readonly hash: string;
+  readonly contentType?: string;
+  readonly fetch?: AssetFetch;
+}
+
+export interface UploadedAsset {
+  readonly assetId: string;
+  readonly contentHash: string;
+  readonly sizeBytes: number;
+  /** true if identical bytes were already present (dedup hit). */
+  readonly exists: boolean;
+}
+
+const DIRECT_UPLOAD_MAX_ATTEMPTS = 3;
+
+/**
+ * Upload `bytes` to the hosted API's content-addressable asset store via the
+ * direct-to-storage presign flow shared by SDK and CLI callers.
+ */
+export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset> {
+  const expected = args.hash.startsWith("sha256:") ? args.hash.slice("sha256:".length) : args.hash;
+  const actual = await computeSha256Hex(args.bytes);
+  if (actual !== expected) {
+    throw new Error(
+      `uploadAsset: client-side hash mismatch: computed sha256:${actual} ` +
+        `but caller declared ${args.hash}. Aborting to avoid uploading corrupted data.`
+    );
+  }
+  const contentHashHeader = `sha256:${actual}`;
+
+  const presign = await args.http.request<{
+    ok: boolean;
+    exists: boolean;
+    assetId?: string;
+    contentHash?: string;
+    sizeBytes?: number;
+    uploadUrl?: string;
+    requiredHeaders?: Record<string, string>;
+  }>("/assets/presign", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
+  });
+
+  if (presign.exists) {
+    const contentHash = presign.contentHash ?? contentHashHeader;
+    return {
+      assetId: presign.assetId ?? assetIdFromContentHash(contentHash),
+      contentHash,
+      sizeBytes: presign.sizeBytes ?? args.bytes.byteLength,
+      exists: true
+    };
+  }
+  if (!presign.uploadUrl) {
+    throw new Error("uploadAsset: presign returned no uploadUrl and exists:false");
+  }
+
+  const doFetch = args.fetch ?? (globalThis.fetch as unknown as AssetFetch);
+  const putHeaders: Record<string, string> = {
+    "content-type": args.contentType ?? "application/zip",
+    ...(presign.requiredHeaders ?? {})
+  };
+  await putWithRetry(doFetch, presign.uploadUrl, {
+    method: "PUT",
+    headers: putHeaders,
+    body: args.bytes
+  });
+
+  const fin = await args.http.request<{
+    ok: boolean;
+    assetId?: string;
+    contentHash?: string;
+    sizeBytes?: number;
+  }>("/assets/finalize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
+  });
+  const contentHash = fin.contentHash ?? presign.contentHash ?? contentHashHeader;
+  return {
+    assetId: fin.assetId ?? presign.assetId ?? assetIdFromContentHash(contentHash),
+    contentHash,
+    sizeBytes: fin.sizeBytes ?? args.bytes.byteLength,
+    exists: false
+  };
+}
+
+async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
+  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
+  if (!subtle) {
+    throw new Error(
+      "uploadAsset: globalThis.crypto.subtle is not available; " +
+        "Bun, Node 18+, or a Web-Crypto-capable runtime is required"
+    );
+  }
+  const digest = await subtle.digest("SHA-256", bytes as unknown as BufferSource);
+  return bufferToHex(digest);
+}
+
+function assetIdFromContentHash(contentHash: string): string {
+  const hex = contentHash.startsWith("sha256:") ? contentHash.slice("sha256:".length) : contentHash;
+  return `asset_${hex}`;
+}
+
+async function putWithRetry(fetchImpl: AssetFetch, uploadUrl: string, init: RequestInit): Promise<void> {
+  for (let attempt = 1; attempt <= DIRECT_UPLOAD_MAX_ATTEMPTS; attempt++) {
+    let response: Awaited<ReturnType<AssetFetch>>;
+    try {
+      response = await fetchImpl(uploadUrl, init);
+    } catch (err) {
+      if (attempt < DIRECT_UPLOAD_MAX_ATTEMPTS && isRetryableUploadError(err)) {
+        continue;
+      }
+      throw directUploadNetworkError(uploadUrl, err, attempt);
+    }
+
+    if (response.ok) return;
+
+    if (attempt < DIRECT_UPLOAD_MAX_ATTEMPTS && isRetryableUploadStatus(response.status)) {
+      await response.text().catch(() => "");
+      continue;
+    }
+
+    const detail = await response.text().catch(() => "");
+    throw directUploadResponseError(uploadUrl, response.status, detail, attempt);
+  }
+}
+
+function isRetryableUploadStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isRetryableUploadError(err: unknown): boolean {
+  if (isNamedError(err, "AbortError")) return false;
+  return true;
+}
+
+function directUploadNetworkError(uploadUrl: string, err: unknown, attempts: number): Error {
+  const safeUrl = redactUrl(uploadUrl);
+  const code = extractErrorCode(err);
+  const detail = sanitizeUploadText(errorMessage(err)).slice(0, 500);
+  return new Error(
+    `uploadAsset: direct upload PUT failed for ${safeUrl} after ${attemptsLabel(attempts)}` +
+      (code ? ` (${code})` : "") +
+      (detail ? `: ${detail}` : "")
+  );
+}
+
+function directUploadResponseError(uploadUrl: string, status: number, detail: string, attempts: number): Error {
+  const safeUrl = redactUrl(uploadUrl);
+  const safeDetail = sanitizeUploadText(detail).slice(0, 500);
+  return new Error(
+    `uploadAsset: direct upload PUT failed for ${safeUrl} with status ${status}` +
+      (attempts > 1 ? ` after ${attemptsLabel(attempts)}` : "") +
+      (safeDetail ? `: ${safeDetail}` : "")
+  );
+}
+
+function attemptsLabel(attempts: number): string {
+  return attempts === 1 ? "1 attempt" : `${attempts} attempts`;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === "string") return err;
+  return String(err);
+}
+
+function isNamedError(err: unknown, name: string): boolean {
+  return stringProperty(err, "name") === name;
+}
+
+function stringProperty(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const prop = (value as Record<string, unknown>)[key];
+  return typeof prop === "string" && prop.length > 0 ? prop : undefined;
+}
+
+function sanitizeUploadText(text: string): string {
+  return text
+    .replace(/https?:\/\/[^\s<>"'`]+/g, (raw) => redactUrlPreservingTrailingPunctuation(raw))
+    .replace(
+      /\b(?:X-Amz-(?:Algorithm|Credential|Date|Expires|Security-Token|Signature|SignedHeaders)|AWSAccessKeyId|Signature|Credential|Security-Token|AccessKeyId|SecretAccessKey|SessionToken)=([^&\s<>"'`]+)/gi,
+      "[redacted]"
+    )
+    .replace(/\bAKIA[0-9A-Z]{8,}\b/g, "[redacted]");
+}
+
+function redactUrlPreservingTrailingPunctuation(raw: string): string {
+  const trailing = raw.match(/[),.;:!?]+$/)?.[0] ?? "";
+  const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
+  return `${redactUrl(candidate)}${trailing}`;
+}
+
+function bufferToHex(buffer: ArrayBuffer): string {
+  const view = new Uint8Array(buffer);
+  let out = "";
+  for (let i = 0; i < view.length; i++) {
+    const byte = view[i] as number;
+    out += byte.toString(16).padStart(2, "0");
+  }
+  return out;
+}

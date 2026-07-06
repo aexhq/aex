@@ -13,7 +13,8 @@
     "packages/conformance/src"
   ],
   "temporaryAllowedPublicImports": [
-    "@aexhq/contracts"
+    "@aexhq/contracts",
+    "@aexhq/contracts/internal"
   ],
   "sdkPackage": {
     "dir": "packages/sdk",

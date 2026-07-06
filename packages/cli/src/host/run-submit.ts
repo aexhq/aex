@@ -35,6 +35,7 @@ import {
   type ToolInputSchema,
   type ToolRef
 } from "@aexhq/contracts";
+import { uploadAsset as uploadHostAsset } from "@aexhq/contracts/internal";
 
 const TEXT = new TextEncoder();
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
@@ -292,7 +293,7 @@ async function prepareTools(
       }
       return { kind: "builtin" as const, name: entry };
     }
-    const uploaded = await uploadAsset(http, fetchImpl, {
+    const uploaded = await stageAsset(http, fetchImpl, {
       bytes: entry.bytes,
       hash: entry.ref.contentHash,
       contentType: "application/zip"
@@ -331,7 +332,7 @@ async function prepareSkills(
     seen.add(skill.name);
   }
   return mapWithConcurrency(skills, UPLOAD_CONCURRENCY, async (skill) => {
-    await uploadAsset(http, fetchImpl, { bytes: skill.bytes, hash: skill.contentHash, contentType: "application/zip" });
+    await stageAsset(http, fetchImpl, { bytes: skill.bytes, hash: skill.contentHash, contentType: "application/zip" });
     await operations.upsertSkill(http, {
       name: skill.name,
       contentHash: skill.contentHash,
@@ -348,7 +349,7 @@ async function prepareAgentsMd(
   agentsMds: readonly CliAgentsMdDraft[]
 ): Promise<readonly AgentsMdRef[]> {
   return mapWithConcurrency(agentsMds, UPLOAD_CONCURRENCY, async (entry) => {
-    const uploaded = await uploadAsset(http, fetchImpl, {
+    const uploaded = await stageAsset(http, fetchImpl, {
       bytes: entry.bytes,
       hash: entry.contentHash,
       contentType: "application/zip"
@@ -363,7 +364,7 @@ async function prepareFiles(
   files: readonly CliFileDraft[]
 ): Promise<readonly FileRef[]> {
   return mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (entry) => {
-    const uploaded = await uploadAsset(http, fetchImpl, {
+    const uploaded = await stageAsset(http, fetchImpl, {
       bytes: entry.bytes,
       hash: entry.contentHash,
       contentType: "application/zip"
@@ -397,69 +398,18 @@ function sessionEnvironmentForWire(environment: CliSessionEnvironmentOptions | u
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
-async function uploadAsset(
+async function stageAsset(
   http: HttpClient,
   fetchImpl: FetchLike | undefined,
   args: { readonly bytes: Uint8Array; readonly hash: string; readonly contentType?: string }
 ): Promise<{ readonly assetId: string; readonly contentHash: string; readonly sizeBytes: number; readonly exists: boolean }> {
-  const expected = args.hash.startsWith("sha256:") ? args.hash.slice("sha256:".length) : args.hash;
-  const actual = await sha256Hex(args.bytes);
-  if (actual !== expected) {
-    throw new Error(`uploadAsset: client-side hash mismatch: computed sha256:${actual} but caller declared ${args.hash}`);
-  }
-  const contentHash = `sha256:${actual}`;
-  const presign = await http.request<{
-    readonly exists: boolean;
-    readonly assetId?: string;
-    readonly contentHash?: string;
-    readonly sizeBytes?: number;
-    readonly uploadUrl?: string;
-    readonly requiredHeaders?: Record<string, string>;
-  }>("/assets/presign", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ hash: contentHash, sizeBytes: args.bytes.byteLength })
+  return uploadHostAsset({
+    http,
+    bytes: args.bytes,
+    hash: args.hash,
+    ...(args.contentType !== undefined ? { contentType: args.contentType } : {}),
+    ...(fetchImpl !== undefined ? { fetch: fetchImpl } : {})
   });
-  if (presign.exists) {
-    const storedHash = presign.contentHash ?? contentHash;
-    return {
-      assetId: presign.assetId ?? assetIdFromContentHash(storedHash),
-      contentHash: storedHash,
-      sizeBytes: presign.sizeBytes ?? args.bytes.byteLength,
-      exists: true
-    };
-  }
-  if (!presign.uploadUrl) {
-    throw new Error("uploadAsset: presign returned no uploadUrl and exists:false");
-  }
-  const doFetch = fetchImpl ?? (globalThis.fetch as FetchLike);
-  const put = await doFetch(presign.uploadUrl, {
-    method: "PUT",
-    headers: {
-      "content-type": args.contentType ?? "application/zip",
-      ...(presign.requiredHeaders ?? {})
-    },
-    body: args.bytes
-  });
-  if (!put.ok) {
-    throw new Error(`uploadAsset: direct upload PUT failed with status ${put.status}`);
-  }
-  const fin = await http.request<{
-    readonly assetId?: string;
-    readonly contentHash?: string;
-    readonly sizeBytes?: number;
-  }>("/assets/finalize", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ hash: contentHash, sizeBytes: args.bytes.byteLength })
-  });
-  const storedHash = fin.contentHash ?? presign.contentHash ?? contentHash;
-  return {
-    assetId: fin.assetId ?? presign.assetId ?? assetIdFromContentHash(storedHash),
-    contentHash: storedHash,
-    sizeBytes: fin.sizeBytes ?? args.bytes.byteLength,
-    exists: false
-  };
 }
 
 function bundleSkillFiles(files: Readonly<Record<string, string | Uint8Array>>): Uint8Array {
@@ -659,11 +609,6 @@ function bufferToHex(buffer: ArrayBuffer): string {
     out += byte.toString(16).padStart(2, "0");
   }
   return out;
-}
-
-function assetIdFromContentHash(contentHash: string): string {
-  const hex = contentHash.startsWith("sha256:") ? contentHash.slice("sha256:".length) : contentHash;
-  return `asset_${hex}`;
 }
 
 async function mapWithConcurrency<T, R>(
