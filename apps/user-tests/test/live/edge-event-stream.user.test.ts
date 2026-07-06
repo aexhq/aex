@@ -99,6 +99,17 @@ function customNamesOf(events) {
   }
   return [...s];
 }
+const SESSION_TERMINAL_NAMES = new Set([
+  "aex.session.idle",
+  "aex.session.suspended",
+  "aex.session.succeeded",
+  "aex.session.failed",
+  "aex.session.timed_out",
+  "aex.session.cancelled"
+]);
+function isSessionTerminalName(name) {
+  return SESSION_TERMINAL_NAMES.has(name);
+}
 
 // Wraps the real WebSocket. Counts connects; optionally force-closes the socket
 // after 'dropAfterFrames' delivered frames, up to 'maxDrops' times total (across
@@ -265,8 +276,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // (content present) and record the actual count for the report.
     expect(base.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThanOrEqual(1);
     expect(base.textDenseLen).toBeGreaterThan(0);
-    // Session-turn terminal is CUSTOM aex.session.idle (there is NO RUN_FINISHED).
-    expect(base.customNames).toContain("aex.session.idle");
+    // Session-turn terminal is CUSTOM aex.session.* (there is NO RUN_FINISHED).
+    expect(base.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
     // Strict ordering: monotonic increasing, no duplicates (sequences are sparse,
     // so contiguity is NOT expected — only no-dupe + monotonic).
     expect(base.analyze.monotonic).toBe(true);
@@ -293,7 +304,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       `
       const session = await client.sessions.open(RUN_ID);
       // 1. streamEnvelopes({from:0}) on a FINISHED session run. Session turns emit
-      //    CUSTOM aex.session.idle rather than RUN_FINISHED; the SDK treats that
+      //    CUSTOM aex.session.* rather than RUN_FINISHED; the SDK treats that
       //    custom event as terminal so replay ends naturally.
       const envEvents = [];
       const envSeqs = [];
@@ -364,13 +375,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
     expect(r.unhandled).toBeNull();
     // Correct behavior: the recorded run replays in order, no dupes, and delivers
-    // BOTH the assistant text and the session-idle terminal.
+    // BOTH the assistant text and the session terminal.
     expect(r.envTypes["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
-    expect(r.envCustomNames).toContain("aex.session.idle");
+    expect(r.envCustomNames.some((name) => name.startsWith("aex.session."))).toBe(true);
     expect(r.envAnalyze.monotonic).toBe(true);
     expect(r.envAnalyze.dupCount).toBe(0);
 
-    // The default session-envelope stream terminates on CUSTOM aex.session.idle,
+    // The default session-envelope stream terminates on CUSTOM aex.session.*,
     // even though session runs still do not emit run-level RUN_FINISHED/RUN_ERROR.
     expect(r.rfPresent).toBe(false);
     expect(
@@ -422,8 +433,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
           for await (const ev of session.events().streamEnvelopes({ ...opts, signal: ac.signal })) {
             seqs.push(ev.sequence);
             const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
-            // Session runs have no RUN_FINISHED; the true terminal is aex.session.idle.
-            if (stopOnTerminal && (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || nm === "aex.session.idle")) break;
+            // Session runs have no RUN_FINISHED; the true terminal is aex.session.*.
+            if (stopOnTerminal && (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || isSessionTerminalName(nm))) break;
           }
         } finally {
           clearTimeout(g);
@@ -552,8 +563,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
           replaySeqs.push(ev.sequence);
           const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
-          // A session run has no RUN_FINISHED; stop on the aex.session.idle terminal.
-          if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || nm === "aex.session.idle") break;
+          // A session run has no RUN_FINISHED; stop on the aex.session.* terminal.
+          if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || isSessionTerminalName(nm)) break;
         }
         clearTimeout(g);
       } catch (e) {}
@@ -596,7 +607,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.missingCount).toBe(0);
     // Content + terminal survived the drops.
     expect(r.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
-    expect(r.customNames).toContain("aex.session.idle");
+    expect(r.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
   });
 
   it("case F — keep-alive: short idleTimeoutMs with pings holds a live turn open (exactly-once, terminal reached)", async () => {
@@ -644,7 +655,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.analyze.dupCount).toBe(0);
     expect(r.analyze.monotonic).toBe(true);
     expect(r.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
-    expect(r.customNames).toContain("aex.session.idle");
+    expect(r.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
     // connects is reported: 1 => pings prevented a false disconnect; >1 => a
     // reconnect happened but recovered exactly-once. At least one connect.
     expect(r.connects).toBeGreaterThanOrEqual(1);

@@ -9,6 +9,7 @@ import {
   SecretString,
   asAexEventView,
   customName,
+  isSessionParked as isSessionParkedEvent,
   isRunSettled,
   assertStreamableOutputMode,
   operations,
@@ -1262,11 +1263,15 @@ async function* streamSessionEnvelopes(
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, id)).ticket,
     // settleConsistent ends the stream on the post-mirror barrier instead of
     // the earlier RUN_FINISHED UX signal.
-    ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
+    isTerminal: options.settleConsistent ? isRunSettled : isSessionEnvelopeTerminal,
     ...(options.signal ? { signal: options.signal } : {})
   })) {
     yield asAexEventView(event);
   }
+}
+
+function isSessionEnvelopeTerminal(event: AexEvent): boolean {
+  return event.type === "RUN_FINISHED" || event.type === "RUN_ERROR" || isSessionParkedEvent(event);
 }
 
 /**
@@ -1792,12 +1797,14 @@ export interface StreamEnvelopesOptions {
   readonly signal?: AbortSignal;
   /**
    * End the stream settle-consistently. By default the iterator ends on the
-   * AG-UI terminal event (RUN_FINISHED / RUN_ERROR) — the render-complete UX
-   * signal, which the runner emits BEFORE the platform commits the run record,
-   * so a `getRun` immediately after can still read `running`. With
-   * `settleConsistent: true` the iterator keeps reading PAST the terminal event
-   * until the post-mirror `aex.run.settled` barrier, so when it ends a
-   * subsequent `getRun` is guaranteed terminal and `listOutputs` is complete.
+   * AG-UI terminal event (RUN_FINISHED / RUN_ERROR) or the managed-session
+   * terminal park (`aex.session.succeeded` / failed / timed_out / cancelled /
+   * idle / suspended). These are render-complete UX signals, emitted before the
+   * platform commit is necessarily read-consistent, so a `getRun` immediately
+   * after can still read `running`. With `settleConsistent: true` the iterator
+   * keeps reading PAST the render terminal until the post-mirror
+   * `aex.run.settled` barrier, so when it ends a subsequent `getRun` is
+   * guaranteed terminal and `listOutputs` is complete.
    * Note: outputs are durable at the RUN_FINISHED event already; this only adds
    * the run-RECORD consistency barrier.
    */

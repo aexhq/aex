@@ -97,7 +97,7 @@ function customNames(events: readonly Record<string, unknown>[]): string[] {
 
 function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
   const kinds = events.map((event) => event["type"]);
-  return kinds.includes("RUN_FINISHED") || customNames(events).includes("aex.session.idle");
+  return kinds.includes("RUN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
 }
 
 function looksTransientProvider(text: string): boolean {

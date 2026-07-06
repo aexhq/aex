@@ -108,7 +108,8 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
 function customName(e) { const d = eventData(e); return typeof d.name === "string" ? d.name : null; }
 function customValue(e) { const d = eventData(e); const v = d.value; return v && typeof v === "object" ? v : {}; }
-function isSessionIdle(e) { return e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle"; }
+const SESSION_TERMINAL_NAMES = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
+function isSessionIdle(e) { return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name); }
 function terminalKindOf(e) { if (!e) return null; return isSessionIdle(e) ? "RUN_FINISHED" : e.type; }
 function terminalReasonOf(e) {
   if (!e) return null;

@@ -158,7 +158,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
       `;
       const r = await runChild("edge-baseline.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
       expect(r.ok).toBe(true);
-      expect(["idle", "suspended"]).toContain(r.status);
+      expect(["idle", "suspended", "succeeded"]).toContain(r.status);
       expect(String(r.denseText)).toContain(String(r.probe));
       expect(Number(r.eventCount)).toBeGreaterThan(0);
       expect(r.leaked).toBe(false);
@@ -278,7 +278,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
       `;
       const r = await runChild("edge-unicode-message.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
       expect(r.ok).toBe(true);
-      expect(["idle", "suspended"]).toContain(r.status);
+      expect(["idle", "suspended", "succeeded"]).toContain(r.status);
       expect(Number(r.textLen)).toBeGreaterThan(0);
       expect(String(r.denseText)).toContain(String(r.probe));
       expect(r.leaked).toBe(false);

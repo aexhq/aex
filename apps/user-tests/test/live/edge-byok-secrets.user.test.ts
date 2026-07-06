@@ -297,8 +297,9 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         // Scan the WHOLE surface set plus every error string for the bad key.
         const scan = leakScan(surfaces, BAD_KEY, { text: text + " " + errorMessage + " " + (threw || "") });
         // Look for a stream_error / error event as an additional failure signal.
+        const errorSessionNames = new Set(["aex.session.error", "aex.session.failed"]);
         const errorEventKinds = surfaces.events
-          .filter((e) => e && (e.type === "RUN_ERROR" || (e.type === "CUSTOM" && e.data && (e.data.name === "aex.stream_error" || e.data.name === "aex.session.error"))))
+          .filter((e) => e && (e.type === "RUN_ERROR" || (e.type === "CUSTOM" && e.data && (e.data.name === "aex.stream_error" || errorSessionNames.has(e.data.name)))))
           .map((e) => e.type + (e.data && e.data.name ? ":" + e.data.name : ""));
         process.stdout.write(JSON.stringify({
           runId, status: statusOf(runResult), threw,

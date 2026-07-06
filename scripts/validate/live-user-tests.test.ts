@@ -289,8 +289,9 @@ describe("live user-test release gate", () => {
     expect(source).toContain('managedHeavySkillName("beta", "deepseek")');
     expect(source).toContain('managedHeavySkillName("gamma", "deepseek")');
     expect(source).toContain("produced no skill_loaded event");
-    expect(source).toContain('return isSessionIdle(e) ? "aex.session.idle" : e.type;');
-    expect(source).toContain('expect(["RUN_FINISHED", "aex.session.idle"]).toContain(result.terminalKind);');
+    expect(source).toContain("return isSessionIdle(e) ? customName(e) : e.type;");
+    expect(source).toContain('"aex.session.succeeded"');
+    expect(source).toContain('expect(["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"]).toContain(result.terminalKind);');
     expect(source).toContain("const maxChannelProbeRetries = 2;");
     expect(source).toContain("recordChannelProbeSources");
     expect(source).toContain('"toolCallStart"');

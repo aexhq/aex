@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { Aex } from "../../src/index.js";
+import type { AexEvent, JsonValue } from "@aexhq/contracts";
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -27,6 +28,48 @@ function makeFetch(plan: ReadonlyArray<{ match: RegExp; respond: () => Response 
   };
   return { fetch: fakeFetch, calls };
 }
+
+function evt(sequence: number, type: AexEvent["type"], data: Record<string, JsonValue> = {}): AexEvent {
+  return {
+    specversion: "1.0",
+    id: `run-abc:${sequence}`,
+    source: type === "CUSTOM" ? "runtime" : "agent",
+    type,
+    subject: "run-abc",
+    time: new Date(sequence).toISOString(),
+    sequence,
+    data
+  };
+}
+
+class FakeWebSocket {
+  readonly url: string;
+  readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  addEventListener(type: "open" | "message" | "close" | "error", cb: (ev: { data?: unknown }) => void): void {
+    (this.#listeners[type] ??= []).push(cb);
+  }
+
+  close(): void {
+    this.#emit("close", {});
+  }
+
+  message(event: AexEvent): void {
+    this.#emit("message", { data: JSON.stringify(event) });
+  }
+
+  #emit(type: string, ev: { data?: unknown }): void {
+    for (const cb of this.#listeners[type] ?? []) cb(ev);
+  }
+}
+
+const flush = async (n = 4): Promise<void> => {
+  for (let i = 0; i < n; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
 
 describe("SessionHandle.streamEvents — polling the coordinator-backed /events", () => {
   it("yields events, dedupes by id across polls, and stops when the session parks", async () => {
@@ -85,5 +128,43 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
     expect(events).toEqual([]);
     // The loop was provably live (polling started) before the abort stopped it.
     expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handling", () => {
+  it("default stream ends naturally on a clean managed-session terminal", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const originalWebSocket = globalThis.WebSocket;
+    const fakeConstructor = class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    };
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = fakeConstructor;
+
+    try {
+      const { fetch: f } = makeFetch([
+        { match: /\/sessions\/run-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/run-abc", ticket: "ticket" }) },
+        { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "succeeded" }) }
+      ]);
+      const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
+      const session = await client.openSession("run-abc");
+      const iterator = session.events().streamEnvelopes({ from: 0 })[Symbol.asyncIterator]();
+
+      const first = iterator.next();
+      await flush();
+      sockets[0]!.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "hello", messageId: "m1" }));
+      await expect(first).resolves.toMatchObject({ done: false, value: { type: "TEXT_MESSAGE_CONTENT" } });
+
+      const second = iterator.next();
+      await flush();
+      sockets[0]!.message(evt(2, "CUSTOM", { name: "aex.session.succeeded", value: { turnSeq: 1, reason: "completed" } }));
+      await expect(second).resolves.toMatchObject({ done: false, value: { type: "CUSTOM" } });
+
+      await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    } finally {
+      (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
+    }
   });
 });

@@ -77,6 +77,9 @@ const CREATE = {
   system: "You are a terse assistant. Follow the user's instructions exactly and reply with as few words as possible.",
   overrides: { idleTtl: "10m" }
 };
+const CLEAN_SESSION_STATUSES = ["idle", "succeeded"];
+const CLEAN_SESSION_EVENT_NAMES = new Set(["aex.session.idle", "aex.session.succeeded"]);
+const CANCEL_SESSION_EVENT_NAMES = new Set(["aex.session.idle", "aex.session.cancelled"]);
 function errInfo(e){
   return {
     name: e && e.name ? String(e.name) : null,
@@ -85,6 +88,8 @@ function errInfo(e){
   };
 }
 function dense(s){ return String(s == null ? "" : s).replace(/\\s+/g, "").toLowerCase(); }
+function isCleanSessionEvent(e){ return e && e.type === "CUSTOM" && e.data && CLEAN_SESSION_EVENT_NAMES.has(e.data.name); }
+function isCancelSessionEvent(e){ return e && e.type === "CUSTOM" && e.data && CANCEL_SESSION_EVENT_NAMES.has(e.data.name); }
 // Settle barrier: .done() reports idle optimistically from the idle EVENT while
 // the server may still hold the turn lock ("running"/"suspending"). Poll the
 // authoritative record until it parks before the next mutating op.
@@ -194,10 +199,10 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
 
       const dump = JSON.stringify(result, null, 2);
       expect(result.fatal, dump).toBeUndefined();
-      expect(result.turn1Status, dump).toBe("idle");
-      expect(result.turn2Status, dump).toBe("idle");
+      expect(["idle", "succeeded"], dump).toContain(result.turn1Status);
+      expect(["idle", "succeeded"], dump).toContain(result.turn2Status);
       expect(result.contextRetained, dump).toBe(true);
-      expect(result.turn3Status, dump).toBe("idle");
+      expect(["idle", "succeeded"], dump).toContain(result.turn3Status);
       expect(result.freshResumed, dump).toBe(true);
       // messages() correctness + ordering.
       expect(result.msgListEqualsAll, dump).toBe(true);
@@ -367,8 +372,8 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
 
       const dump = JSON.stringify(result, null, 2);
       expect(result.fatal, dump).toBeUndefined();
-      expect(result.turn1Status, dump).toBe("idle");
-      expect(result.t1Settled, dump).toBe("idle");
+      expect(["idle", "succeeded"], dump).toContain(result.turn1Status);
+      expect(["idle", "succeeded"], dump).toContain(result.t1Settled);
       // Once the turn settles, suspend() must actually reach "suspended".
       expect(result.suspendSettled, dump).toBe("suspended");
       // After a suspend the conversation must be continuable (auto-resume or
@@ -480,13 +485,11 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       await new Promise((r) => setTimeout(r, 2500));
     }
 
-    // WHY the session parked rides the aex.session.idle custom event.
+    // WHY the session parked rides the aex.session.* custom event.
     let idleReason = null;
     try {
       const evs = await session.events().list();
-      const idleEv = (Array.isArray(evs) ? evs : []).filter(
-        (e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle"
-      ).pop();
+      const idleEv = (Array.isArray(evs) ? evs : []).filter(isCancelSessionEvent).pop();
       idleReason = idleEv && idleEv.data.value ? idleEv.data.value.reason : null;
     } catch (e) { idleReason = { error: errInfo(e) }; }
 
@@ -507,9 +510,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.fatal, dump).toBeUndefined();
       const cancel = result.cancel as Record<string, unknown>;
       expect(cancel.ok, dump).toBe(true);
-      // Terminal at-rest state is idle (sessions have no "cancelled" status) —
-      // NOT stuck cancelling, NOT suspended-with-the-cancel-lost.
-      expect(result.finalStatus, dump).toBe("idle");
+      // Terminal at-rest state records the cancel outcome, either through the
+      // legacy idle park or the unified session terminal vocabulary.
+      expect(["idle", "cancelled", "canceled"], dump).toContain(result.finalStatus);
       // The park reason must record the cancel, not claim a clean completion
       // (a launch-phase cancel produces no assistant work to complete).
       expect(result.idleReason, dump).toBe("cancel_requested");

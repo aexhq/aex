@@ -196,8 +196,16 @@ function eventData(event) {
   return event && event.data && typeof event.data === "object" ? event.data : {};
 }
 
+const SESSION_TERMINAL_NAMES = new Set([
+  "aex.session.idle",
+  "aex.session.suspended",
+  "aex.session.succeeded",
+  "aex.session.failed",
+  "aex.session.timed_out",
+  "aex.session.cancelled"
+]);
 function isSessionIdle(event) {
-  return event && event.type === "CUSTOM" && event.data && event.data.name === "aex.session.idle";
+  return event && event.type === "CUSTOM" && event.data && SESSION_TERMINAL_NAMES.has(event.data.name);
 }
 
 function terminalKindOf(event) {

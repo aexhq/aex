@@ -364,12 +364,21 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         const value = e && e.data ? e.data.value : null;
         return value && typeof value === "object" ? value : {};
       }
+      const SESSION_TERMINAL_NAMES = new Set([
+        "aex.session.idle",
+        "aex.session.suspended",
+        "aex.session.succeeded",
+        "aex.session.failed",
+        "aex.session.timed_out",
+        "aex.session.cancelled"
+      ]);
       function isSessionIdle(e) {
-        return customName(e) === "aex.session.idle";
+        const name = customName(e);
+        return name !== null && SESSION_TERMINAL_NAMES.has(name);
       }
       function terminalKindOf(e) {
         if (!e) return null;
-        return isSessionIdle(e) ? "aex.session.idle" : e.type;
+        return isSessionIdle(e) ? customName(e) : e.type;
       }
       function terminalDataOf(e) {
         if (!e) return null;
@@ -592,11 +601,11 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
 
   // Lifecycle: succeeded, framed RUN_STARTED … terminal, terminal reason
   // "complete", runtimeExitCode 0-or-absent. Managed session turns park with
-  // CUSTOM aex.session.idle rather than emitting RUN_FINISHED.
+  // CUSTOM aex.session.* rather than emitting RUN_FINISHED.
   if (result.runStatus !== "succeeded") {
     throw new Error(`expected runStatus "succeeded" but got "${result.runStatus}"\n\n${dump()}`);
   }
-  expect(["RUN_FINISHED", "aex.session.idle"]).toContain(result.terminalKind);
+  expect(["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"]).toContain(result.terminalKind);
   expect(result.eventKinds).toContain("RUN_STARTED");
   if (result.terminalKind === "RUN_FINISHED") {
     expect(result.eventKinds).toContain("RUN_FINISHED");

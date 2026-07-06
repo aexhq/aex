@@ -136,8 +136,16 @@ const toolResultText = events
   .filter((e) => e.type === "TOOL_CALL_RESULT")
   .map((e) => JSON.stringify(e && e.data !== undefined ? e.data : ""))
   .join(" ");
+const SESSION_TERMINAL_NAMES = new Set([
+  "aex.session.idle",
+  "aex.session.suspended",
+  "aex.session.succeeded",
+  "aex.session.failed",
+  "aex.session.timed_out",
+  "aex.session.cancelled"
+]);
 function isSessionIdle(e) {
-  return e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+  return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name);
 }
 function terminalKindOf(e) {
   if (!e) return null;

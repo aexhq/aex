@@ -1,5 +1,5 @@
 /**
- * Live edge-case sweep: sessions.list / searchOutputs / SessionHandle.unit /
+ * Live edge-case sweep: sessions.list / outputs.search / SessionHandle.unit /
  * the client `debug` option.
  *
  * Acts as a real customer hammering these four verbs of the installed
@@ -10,7 +10,7 @@
  *
  * Surface under test (packages/sdk/src/client.ts):
  *   - SessionClient.list(query)            pagination / filter / order / bogus cursor
- *   - SessionClient.searchOutputs(query)   cross-session output search + cursor-dedup termination
+ *   - Aex.outputs.search(query)            cross-session output search + cursor-dedup termination
  *   - SessionHandle.unit()                 the self-contained RunUnit read shape
  *   - AexOptions.debug (true | function)   redacted per-request stderr trace, no secret leak
  *
@@ -162,9 +162,9 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("edge: sessions.list / searchOutputs / unit / debug", () => {
+describe("edge: sessions.list / outputs.search / unit / debug", () => {
   it(
-    "A search+unit: a marker deliverable is found by searchOutputs (scoped + cross-session), and unit() returns a coherent RunUnit",
+    "A search+unit: a marker deliverable is found by outputs.search (scoped + cross-session), and unit() returns a coherent RunUnit",
     async () => {
       const marker = "EDGES" + Math.random().toString(36).slice(2, 10).toUpperCase();
       const filename = "edgesearch_" + marker + ".txt";
@@ -241,9 +241,9 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
           };
         }, 120000));
 
-        // ---- searchOutputs : SCOPED (runIds) — fast + deterministic ------
+        // ---- outputs.search : SCOPED (runIds) — fast + deterministic -----
         probes.push(await probe("search_scoped_marker", async () => {
-          const page = await client.sessions.searchOutputs({ runIds: [runId], filename: MARKER });
+          const page = await client.outputs.search({ runIds: [runId], filename: MARKER });
           return {
             hits: page.hits.length,
             runIds: [...new Set(page.hits.map((h) => h.runId))],
@@ -252,37 +252,37 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
           };
         }, 30000));
         probes.push(await probe("search_scoped_ext", async () => {
-          const page = await client.sessions.searchOutputs({ runIds: [runId], extension: "txt" });
+          const page = await client.outputs.search({ runIds: [runId], extension: "txt" });
           return { hits: page.hits.length };
         }, 30000));
         probes.push(await probe("search_scoped_nomatch", async () => {
-          const page = await client.sessions.searchOutputs({ runIds: [runId], filename: "zzz-no-such-marker-" + Date.now() });
+          const page = await client.outputs.search({ runIds: [runId], filename: "zzz-no-such-marker-" + Date.now() });
           return { hits: page.hits.length, isArray: Array.isArray(page.hits) };
         }, 30000));
         probes.push(await probe("search_scoped_empty_query", async () => {
-          const page = await client.sessions.searchOutputs({ runIds: [runId] });
+          const page = await client.outputs.search({ runIds: [runId] });
           return { hits: page.hits.length };
         }, 30000));
         // Duplicate runId in the allow-list must NOT double-count past the limit.
         probes.push(await probe("search_dup_runids", async () => {
-          const page = await client.sessions.searchOutputs({ runIds: [runId, runId, runId], filename: MARKER });
+          const page = await client.outputs.search({ runIds: [runId, runId, runId], filename: MARKER });
           return { hits: page.hits.length };
         }, 30000));
 
-        // ---- searchOutputs : UNSCOPED limit — proves EARLY termination ---
+        // ---- outputs.search : UNSCOPED limit — proves EARLY termination ---
         // No filter + small limit returns as soon as the limit hits are collected,
         // so it must scan only a few sessions (NOT the whole workspace).
         probes.push(await probe("search_limit_early_stop", async () => {
           const t0 = Date.now();
-          const page = await client.sessions.searchOutputs({ limit: 2 });
+          const page = await client.outputs.search({ limit: 2 });
           return { hits: page.hits.length, ms: Date.now() - t0 };
         }, 60000));
 
-        // ---- searchOutputs : UNSCOPED marker — cross-session + full-scan
+        // ---- outputs.search : UNSCOPED marker — cross-session + full-scan
         //      termination (exercises the seenCursors dedup on the real workspace).
         probes.push(await probe("search_unscoped_marker", async () => {
           const t0 = Date.now();
-          const page = await client.sessions.searchOutputs({ filename: MARKER });
+          const page = await client.outputs.search({ filename: MARKER });
           return {
             hits: page.hits.length,
             foundThisRun: page.hits.some((h) => h.runId === runId),
@@ -299,7 +299,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
 
       expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
 
-      // ================= searchOutputs — the correct behaviors ===========
+      // ================= outputs.search — the correct behaviors ==========
       const sm = byLabel(probes, "search_scoped_marker");
       expect(sm.ok, `scoped marker search threw: ${JSON.stringify(sm.error)}${ctx}`).toBe(true);
       const smv = sm.value as { hits: number; allThisRun: boolean; names: (string | null)[] };
@@ -321,7 +321,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       expect(es.ok, `limit early-stop search threw/hung: ${JSON.stringify(es.error)}${ctx}`).toBe(true);
       expect((es.value as { hits: number }).hits, `limit:2 returned more than 2 hits (limit not honored)${ctx}`).toBeLessThanOrEqual(2);
 
-      // ---- searchOutputs unscoped full-scan termination ----------------
+      // ---- outputs.search unscoped full-scan termination ----------------
       const us = byLabel(probes, "search_unscoped_marker");
       // Two acceptable outcomes: it TERMINATED and found our marker, or it merely
       // ran out of the race budget on a large workspace (PROBE_TIMEOUT). A
@@ -340,11 +340,11 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       // eslint-disable-next-line no-console
       console.log(
         us.ok
-          ? `[edge-list-search] unscoped searchOutputs full-scan terminated in ${(us.value as { ms: number }).ms}ms with ${(us.value as { hits: number }).hits} hit(s)`
-          : `[edge-list-search] NOTE: unscoped searchOutputs did not terminate cleanly: ${JSON.stringify(us.error)}`
+          ? `[edge-list-search] unscoped outputs.search full-scan terminated in ${(us.value as { ms: number }).ms}ms with ${(us.value as { hits: number }).hits} hit(s)`
+          : `[edge-list-search] NOTE: unscoped outputs.search did not terminate cleanly: ${JSON.stringify(us.error)}`
       );
 
-      // ---- searchOutputs dup-runIds (LOW finding, reported not gated) ----
+      // ---- outputs.search dup-runIds (LOW finding, reported not gated) ----
       // A single deliverable, but its runId repeated 3x in the allow-list. The
       // SDK iterates runIds verbatim (no dedup), so the same (runId,outputId)
       // hit is emitted once per repeat → duplicated hits. Low severity, but a
@@ -353,7 +353,7 @@ describe("edge: sessions.list / searchOutputs / unit / debug", () => {
       if (dup.ok) {
         const dupHits = (dup.value as { hits: number }).hits;
         // eslint-disable-next-line no-console
-        console.log(`[edge-list-search] FINDING(low): searchOutputs does NOT dedup runIds — [runId,runId,runId] gave ${dupHits} hits for a single output (expected ${smv.hits}).`);
+        console.log(`[edge-list-search] FINDING(low): outputs.search does NOT dedup runIds — [runId,runId,runId] gave ${dupHits} hits for a single output (expected ${smv.hits}).`);
       }
 
       // ================= unit() — RunUnit contract check =================

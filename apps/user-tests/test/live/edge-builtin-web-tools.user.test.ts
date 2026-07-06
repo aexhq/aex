@@ -178,7 +178,7 @@ describe("edge: built-in web tools work and fail honestly", () => {
       const out = await runChild(install, "web-fetch-ssrf-probe.mjs", body);
       const dump = JSON.stringify(out).slice(0, 1200);
       expect(out.error, `web_fetch run threw before returning diagnostics: ${dump}`).toBeNull();
-      expect(out.status, `web_fetch run did not survive as an idle session: ${dump}`).toBe("idle");
+      expect(["idle", "succeeded"], `web_fetch run did not survive cleanly: ${dump}`).toContain(out.status);
       const fetchResult = out.fetchResult as { isError: boolean; text: string } | null;
       expect(fetchResult, `web_fetch did not emit a tool result: ${dump}`).not.toBeNull();
       expect(fetchResult!.isError, `web_fetch unexpectedly succeeded for a private target: ${dump}`).toBe(true);

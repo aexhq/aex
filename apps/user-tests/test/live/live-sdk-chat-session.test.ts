@@ -4,7 +4,7 @@
  * Exercises the resumable chat/session API through a freshly installed SDK
  * against the hosted API:
  *   - create a session, send a turn over the coordinator stream, and stop on
- *     `aex.session.idle` instead of `RUN_FINISHED`.
+ *     a clean `aex.session.*` turn terminal instead of `RUN_FINISHED`.
  *   - suspend an idle session, resume it, then send a follow-up turn that uses
  *     the prior turn's conversational context.
  *   - assert raw message idempotency and busy-session rejection on the same
@@ -108,6 +108,9 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         const probe = "REF.chat." + Math.random().toString(36).slice(2, 10);
         const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
 
+        const CLEAN_SESSION_STATUSES = ["idle", "succeeded"];
+        const CLEAN_SESSION_TERMINAL_NAMES = ["aex.session.idle", "aex.session.succeeded"];
+
         async function pollSession(id, wanted, timeoutMs = 240000) {
           const deadline = Date.now() + timeoutMs;
           let session = null;
@@ -119,8 +122,9 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           throw new Error("session " + id + " did not reach " + wanted.join("/") + ": " + JSON.stringify(session));
         }
 
-        async function listEventsSettled(session, requiredName, timeoutMs = 90000) {
+        async function listEventsSettled(session, requiredNames, timeoutMs = 90000) {
           const deadline = Date.now() + timeoutMs;
+          const wanted = Array.isArray(requiredNames) ? requiredNames : [requiredNames];
           let events = [];
           while (Date.now() < deadline) {
             events = await session.events().list();
@@ -128,7 +132,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
               .filter((e) => e.type === "CUSTOM")
               .map((e) => e.data && e.data.name)
               .filter(Boolean);
-            if (names.includes(requiredName)) return events;
+            if (names.some((name) => wanted.includes(name))) return events;
             await new Promise((r) => setTimeout(r, 1000));
           }
           return events;
@@ -156,7 +160,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           "Remember this reference for later: " + probe + ". Reply with exactly: ready " + probe,
           { idempotencyKey: "chat-session-first-" + Date.now(), idleTimeoutMs: 240000 }
         ).done();
-        const firstIdle = await pollSession(session.id, ["idle"]);
+        const firstIdle = await pollSession(session.id, CLEAN_SESSION_STATUSES);
 
         const suspended = await session.suspend({ idempotencyKey: "chat-session-suspend-" + Date.now() });
         const suspendedRecord = suspended.session;
@@ -169,8 +173,8 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           "What reference did I ask you to remember? Reply with exactly the reference and no other words.",
           { idempotencyKey: "chat-session-second-" + Date.now(), idleTimeoutMs: 240000 }
         ).done();
-        const secondIdle = await pollSession(session.id, ["idle"]);
-        const idleEvents = await listEventsSettled(session, "aex.session.idle");
+        const secondIdle = await pollSession(session.id, CLEAN_SESSION_STATUSES);
+        const idleEvents = await listEventsSettled(session, CLEAN_SESSION_TERMINAL_NAMES);
         // The suite runs 11 shards against one shared workspace and the list is
         // newest-first, so with a "since" lower bound this session is the LAST
         // item in the range — concurrent shards' newer sessions fill page one.
@@ -179,8 +183,9 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         let listed = false;
         let page;
         let cursor;
+        const listStatus = CLEAN_SESSION_STATUSES.includes(secondIdle.status) ? secondIdle.status : undefined;
         do {
-          page = await client.sessions.list({ status: "idle", limit: 25, since: session.record.createdAt, ...(cursor ? { cursor } : {}) });
+          page = await client.sessions.list({ ...(listStatus ? { status: listStatus } : {}), limit: 25, since: session.record.createdAt, ...(cursor ? { cursor } : {}) });
           if (listedIn(page)) { listed = true; break; }
           cursor = page.nextCursor;
         } while (cursor);
@@ -226,18 +231,18 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       const result = JSON.parse(child.stdout.trim()) as ChatSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);
 
-      expect(result.firstStatus, dump()).toBe("idle");
-      expect(result.firstPolledStatus, dump()).toBe("idle");
+      expect(["idle", "succeeded"], dump()).toContain(result.firstStatus);
+      expect(["idle", "succeeded"], dump()).toContain(result.firstPolledStatus);
       expect(result.idleTtl, dump()).toBe("1d");
       expect(result.suspendedStatus, dump()).toBe("suspended");
-      expect(result.resumedStatus, dump()).toBe("idle");
-      expect(result.secondStatus, dump()).toBe("idle");
-      expect(result.secondPolledStatus, dump()).toBe("idle");
+      expect(["idle", "succeeded"], dump()).toContain(result.resumedStatus);
+      expect(["idle", "succeeded"], dump()).toContain(result.secondStatus);
+      expect(["idle", "succeeded"], dump()).toContain(result.secondPolledStatus);
       expect(result.listed, dump()).toBe(true);
       expect(result.firstText.replace(/\s+/g, ""), dump()).toContain(result.probe);
       expect(result.secondText.replace(/\s+/g, ""), dump()).toContain(result.probe);
       expect(result.snapshotTypes, dump()).toContain("CUSTOM");
-      expect(result.customNames, dump()).toContain("aex.session.idle");
+      expect(result.customNames.some((name) => name === "aex.session.idle" || name === "aex.session.succeeded"), dump()).toBe(true);
       expect(result.customNames, dump()).toContain("aex.session.suspended");
       expect(result.runFinishedCount, dump()).toBe(0);
       expect(result.leakedKey, dump()).toBe(false);
@@ -283,6 +288,9 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           return { status: res.status, body, text };
         }
 
+        const CLEAN_SESSION_STATUSES = ["idle", "succeeded"];
+        const CLEAN_SESSION_TERMINAL_NAMES = ["aex.session.idle", "aex.session.succeeded"];
+
         async function pollSession(id, wanted, timeoutMs = 300000) {
           const deadline = Date.now() + timeoutMs;
           let session = null;
@@ -299,7 +307,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           let events = [];
           while (Date.now() < deadline) {
             events = await session.events().list();
-            if (events.some((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle")) return events;
+            if (events.some((e) => e.type === "CUSTOM" && e.data && CLEAN_SESSION_TERMINAL_NAMES.includes(e.data.name))) return events;
             await new Promise((r) => setTimeout(r, 1000));
           }
           return events;
@@ -337,7 +345,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           body: JSON.stringify({ input: "This should be rejected while the prior turn is running." })
         });
 
-        const finalSession = await pollSession(session.id, ["idle", "error"]);
+        const finalSession = await pollSession(session.id, [...CLEAN_SESSION_STATUSES, "error", "failed", "timed_out", "cancelled"]);
         const events = await listEventsSettled(session);
         await session.delete({ idempotencyKey: "chat-raw-delete-" + Date.now() });
 
@@ -377,7 +385,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       const result = JSON.parse(child.stdout.trim()) as RawSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);
 
-      expect(result.createStatus, dump()).toBe("idle");
+      expect(["idle", "succeeded"], dump()).toContain(result.createStatus);
       expect(result.firstStatus, dump()).toBeGreaterThanOrEqual(200);
       expect(result.firstStatus, dump()).toBeLessThan(300);
       expect(result.replayStatus, dump()).toBeGreaterThanOrEqual(200);
@@ -387,8 +395,8 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       expect(result.conflictStatus, dump()).toBe(409);
       expect(result.conflictError, dump()).toBe("idempotency_conflict");
       expect(result.busyStatus, dump()).toBe(409);
-      expect(result.finalStatus, dump()).toBe("idle");
-      expect(result.customNames, dump()).toContain("aex.session.idle");
+      expect(["idle", "succeeded"], dump()).toContain(result.finalStatus);
+      expect(result.customNames.some((name) => name === "aex.session.idle" || name === "aex.session.succeeded"), dump()).toBe(true);
       expect(result.runFinishedCount, dump()).toBe(0);
       expect(result.leakedKey, dump()).toBe(false);
     },

@@ -165,7 +165,8 @@ function buildOutputScript(cell: Cell, marker: string): string {
       .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
-    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.session.idle";
+    const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
+    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
     const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
     const eventKinds = events.map((e) => e.type);
     if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");

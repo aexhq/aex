@@ -19,7 +19,7 @@
  *
  * OBSERVED BEHAVIOR (dev, 2026-07-02): invalid MCP refs are ACCEPTED at
  * submission (HTTP 200 — a run is created) and only rejected ~45s later as a
- * `aex.session.error` carrying the canonical `parseMcpServerRef` deny reason.
+ * `aex.session.failed` carrying the canonical `parseMcpServerRef` deny reason.
  * Security holds (fail-closed, target never dialed, no metadata leak), but the
  * documented "SSRF guard at the parser boundary" is NOT applied synchronously
  * at the API create endpoint. These fail-closed runs invoke no LLM (they error
@@ -166,7 +166,8 @@ function validationChildScript(): string {
         try {
           const s = await client.sessions.open(runId);
           const events = await s.events().list();
-          const errEvt = events.find((e) => e.type === "CUSTOM" && e.data && String(e.data.name || "").includes("error"))
+          const errEvt = events.find((e) => e.type === "CUSTOM" && e.data && ["aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"].includes(String(e.data.name || "")))
+            || events.find((e) => e.type === "CUSTOM" && e.data && String(e.data.name || "").includes("error"))
             || events.find((e) => e.type === "RUN_ERROR");
           if (errEvt) reason = (errEvt.data && errEvt.data.value && errEvt.data.value.reason) || JSON.stringify(errEvt.data).slice(0, 300);
           dialed = events.some((e) => e.type === "TOOL_CALL_START");
@@ -326,7 +327,7 @@ function assertFailedClosed(s: SubmissionCase): void {
   // The run must not have succeeded on a bad ref.
   expect(s.status === "succeeded", `bad MCP ref run SUCCEEDED (should fail closed): ${dump}`).toBe(false);
   // It must be rejected somewhere: either a thrown API error OR an error terminal.
-  const rejected = s.threw !== null || s.status === "error" || s.reason !== null;
+  const rejected = s.threw !== null || s.status === "error" || s.status === "failed" || s.reason !== null;
   expect(rejected, `bad MCP ref was neither rejected nor errored: ${dump}`).toBe(true);
 }
 

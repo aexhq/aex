@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.3
+
+### Fixed
+
+- Made `session.events().streamEnvelopes()` complete on managed-session
+  terminal events such as `aex.session.succeeded`, matching the current hosted
+  session event contract.
+
 ## 0.40.2
 
 ### Fixed

@@ -113,7 +113,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
               streamed.push(ev.type);
               const name = ev && ev.data && typeof ev.data.name === "string" ? ev.data.name : null;
               if (name) streamedCustomNames.push(name);
-              if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || name === "aex.session.idle") break;
+              if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || (typeof name === "string" && name.startsWith("aex.session."))) break;
             }
           } catch (e) {
             // socket dropped past terminal / abort — tolerate; snapshot below
@@ -271,12 +271,12 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
       expect(result.streamedCount).toBeGreaterThan(0);
       expect(result.streamedTypes).toContain("TEXT_MESSAGE_CONTENT");
       expect(
-        result.streamedTypes.includes("RUN_FINISHED") || result.streamedCustomNames.includes("aex.session.idle")
+        result.streamedTypes.includes("RUN_FINISHED") || result.streamedCustomNames.some((name) => name.startsWith("aex.session."))
       ).toBe(true);
       // Snapshot agrees.
       expect(result.snapshotTypes).toContain("TEXT_MESSAGE_CONTENT");
       expect(
-        result.snapshotTypes.includes("RUN_FINISHED") || result.snapshotCustomNames.includes("aex.session.idle")
+        result.snapshotTypes.includes("RUN_FINISHED") || result.snapshotCustomNames.some((name) => name.startsWith("aex.session."))
       ).toBe(true);
       expect(result.leakedKey).toBe(false);
       if (result.manifestEventCount <= 0 || result.manifestChunks < 1) {

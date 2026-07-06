@@ -282,7 +282,7 @@ process.exit(0);
       //      deployed two-tier contract so this doubles as a regression guard.
       expect(result.malformedToken.rejected).toBe(true);
       expect(result.malformedToken.isApiError).toBe(true);
-      expect(result.malformedToken.name).toBe("AexApiError");
+      expect(result.malformedToken.name).toBe("AexAuthError");
       expect(result.malformedToken.status).toBe(400);
       expect(result.malformedToken.bodyError).toBe("malformed_token");
       expect(result.malformedToken.hasMessage).toBe(true);
