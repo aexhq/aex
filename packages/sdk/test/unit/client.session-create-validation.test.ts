@@ -55,6 +55,21 @@ describe("Aex.openSession — removed field validation", () => {
     expect(rec.calls).toHaveLength(0);
   });
 
+  it("rejects the legacy parentRunId field without an HTTP call", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+
+    await expect(
+      client.openSession({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        parentRunId: "run_parent"
+      } as never)
+    ).rejects.toThrow(/parentRunId is not a supported option; subagent lineage is assigned by the platform/);
+
+    expect(rec.calls).toHaveLength(0);
+  });
+
   it("rejects a message field without an HTTP call (was silently dropped: empty session, no turn)", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });

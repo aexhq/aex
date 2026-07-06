@@ -28,7 +28,8 @@
       "aex": "./dist/cli.mjs"
     },
     "allowedRuntimeDependencies": [
-      "fflate"
+      "fflate",
+      "ignore"
     ],
     "allowedPackedPathPrefixes": [
       "package.json",
@@ -48,10 +49,14 @@
     "sourcePackage": "@aexhq/contracts",
     "sdkPackedPrefix": "dist/_contracts/",
     "allowedModuleFiles": [
+      "./api-key.js",
+      "./bundle-manifest.js",
       "./connection-ticket.js",
+      "./error-codes.js",
+      "./error-factory.js",
       "./event-envelope.js",
-      "./event-guards.js",
       "./event-stream-client.js",
+      "./event-view.js",
       "./http.js",
       "./index.js",
       "./internal.js",
@@ -79,6 +84,7 @@
       "./stable.js",
       "./status.js",
       "./submission.js",
+      "./suggest.js",
       "./webhook-verify.js"
     ],
     "contractsBarrelExportSpecifiers": [
@@ -88,6 +94,7 @@
       "./runtime-sizes.js",
       "./runner-event.js",
       "./event-envelope.js",
+      "./event-view.js",
       "./connection-ticket.js",
       "./event-stream-client.js",
       "./run-unit.js",
@@ -98,6 +105,7 @@
       "./run-record.js",
       "./run-retention.js",
       "./run-config.js",
+      "./bundle-manifest.js",
       "./stable.js",
       "./sdk-secrets.js",
       "./sdk-errors.js",
@@ -107,7 +115,11 @@
       "./run-artifacts.js",
       "./operations.js",
       "./sse.js",
-      "./webhook-verify.js"
+      "./webhook-verify.js",
+      "./error-codes.js",
+      "./error-factory.js",
+      "./suggest.js",
+      "./api-key.js"
     ]
   }
 }

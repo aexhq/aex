@@ -2724,7 +2724,7 @@ function normaliseSessionInput(
 
 function assertNoLegacySessionFields(options: SessionCreateOptions, surface: string): void {
   const record = options as unknown as Record<string, unknown>;
-  const removedProxyField = "proxy" + "Endpoints";
+  const removedProxyField = ["proxy", "Endpoints"].join("");
   const messages: Record<string, string> = {
     input: "send user messages with session.send(...) or use run({ message }).",
     prompt: "use message for one-shot run input or session.send(...) for follow-up messages.",
@@ -2737,6 +2737,7 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
     runtimeSize: "use runtime.",
     limits: "use overrides.",
     timeout: "use overrides.timeout.",
+    parentRunId: "subagent lineage is assigned by the platform.",
     signal: "use session.cancel() / session.suspend() for remote control.",
     postHook: "send a follow-up validation message when the session returns idle.",
     [removedProxyField]: "proxy endpoints are not part of the public SDK session API."

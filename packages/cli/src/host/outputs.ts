@@ -1,7 +1,5 @@
 /**
- * `aex outputs` — a THIN pass-through over the SDK's outputs accessor
- * (`aex.sessions.outputs(id)` / cross-run `aex.outputs`), so the CLI mirrors the
- * SDK's per-file output surface 1:1 instead of only listing:
+ * `aex outputs` — host CLI wrappers over the public output operations:
  *
  *   aex outputs <session-id>                          List captured outputs (NDJSON)
  *   aex outputs read <session-id> <path>              Read one file as capped text (JSON)
@@ -13,7 +11,7 @@
  * `aex outputs search` (no session id) is the CROSS-RUN metadata search
  * (`aex.outputs.search`); the whole-namespace zip stays `aex download`.
  */
-import { Aex, type OutputFileType, type OutputQuery, type OutputSearchQuery } from "@aexhq/sdk";
+import { operations, type HttpClient, type Output, type OutputFileType, type OutputQuery, type OutputSearchHit, type OutputSearchQuery } from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import {
@@ -24,6 +22,7 @@ import {
   collectRepeated,
   describeApiError,
   emitJsonError,
+  makeHttpClient,
   refuseInsideManagedRun,
   resolveCommonHostFlags,
   takeFlagValue
@@ -41,26 +40,26 @@ export async function runOutputsCmd(io: CliIO, argv: readonly string[]): Promise
   }
   const args = common.rest;
   const sub = args[0];
-  const aex = new Aex({ baseUrl: common.flags.aexUrl, apiKey: common.flags.apiKey, fetch: io.fetchImpl });
+  const http = makeHttpClient(io, common.flags);
 
   switch (sub) {
     case "read":
-      return outputsRead(io, aex, args.slice(1));
+      return outputsRead(io, http, args.slice(1));
     case "download":
-      return outputsDownload(io, aex, args.slice(1), common.flags);
+      return outputsDownload(io, http, args.slice(1), common.flags);
     case "link":
-      return outputsLink(io, aex, args.slice(1));
+      return outputsLink(io, http, args.slice(1));
     case "find":
-      return outputsFind(io, aex, args.slice(1));
+      return outputsFind(io, http, args.slice(1));
     case "search":
-      return outputsSearch(io, aex, args.slice(1));
+      return outputsSearch(io, http, args.slice(1));
     default:
-      return outputsList(io, aex, args);
+      return outputsList(io, http, args);
   }
 }
 
 /** `aex outputs <session-id>` — list every captured output as NDJSON. */
-async function outputsList(io: CliIO, aex: Aex, args: readonly string[]): Promise<CliExitCode> {
+async function outputsList(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const positional = args.filter((a) => !a.startsWith("--"));
   if (positional.length !== 1) {
     io.stderr("usage: aex outputs <session-id> [common flags]\n");
@@ -68,7 +67,7 @@ async function outputsList(io: CliIO, aex: Aex, args: readonly string[]): Promis
   }
   const sessionId = positional[0]!;
   try {
-    const outputs = await aex.sessions.outputs(sessionId).list();
+    const outputs = await operations.listSessionOutputs(http, sessionId);
     for (const out of outputs) io.stdout(JSON.stringify(out) + "\n");
     return SUCCESS;
   } catch (err) {
@@ -77,7 +76,7 @@ async function outputsList(io: CliIO, aex: Aex, args: readonly string[]): Promis
 }
 
 /** `aex outputs read <session-id> <path>` — read one file as capped text. */
-async function outputsRead(io: CliIO, aex: Aex, args: readonly string[]): Promise<CliExitCode> {
+async function outputsRead(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const positional = args.filter((a) => !a.startsWith("--"));
   if (positional.length !== 2) {
     io.stderr("usage: aex outputs read <session-id> <path> [common flags]\n");
@@ -85,7 +84,7 @@ async function outputsRead(io: CliIO, aex: Aex, args: readonly string[]): Promis
   }
   const [sessionId, selector] = positional as [string, string];
   try {
-    const text = await aex.sessions.outputs(sessionId).read({ path: selector });
+    const text = await operations.readOutputText(http, sessionId, { path: selector });
     io.stdout(JSON.stringify(text) + "\n");
     return SUCCESS;
   } catch (err) {
@@ -94,7 +93,7 @@ async function outputsRead(io: CliIO, aex: Aex, args: readonly string[]): Promis
 }
 
 /** `aex outputs download <session-id> <path> [--out file]` — one file's raw bytes. */
-async function outputsDownload(io: CliIO, aex: Aex, args: readonly string[], flags: CommonHostFlags): Promise<CliExitCode> {
+async function outputsDownload(io: CliIO, http: HttpClient, args: readonly string[], flags: CommonHostFlags): Promise<CliExitCode> {
   const outFlag = takeFlagValue(args, "--out");
   if (outFlag.error) { io.stderr(`${outFlag.error}\n`); return USAGE_ERR; }
   void flags;
@@ -106,7 +105,7 @@ async function outputsDownload(io: CliIO, aex: Aex, args: readonly string[], fla
   const [sessionId, selector] = positional as [string, string];
   let bytes: Uint8Array;
   try {
-    bytes = await aex.sessions.outputs(sessionId).download({ path: selector });
+    bytes = (await operations.downloadOutput(http, sessionId, { path: selector })).bytes;
   } catch (err) {
     return outputsError(io, "outputs_download_failed", err, { sessionId, path: selector });
   }
@@ -121,7 +120,7 @@ async function outputsDownload(io: CliIO, aex: Aex, args: readonly string[], fla
 }
 
 /** `aex outputs link <session-id> <path>` — mint a temporary download URL. */
-async function outputsLink(io: CliIO, aex: Aex, args: readonly string[]): Promise<CliExitCode> {
+async function outputsLink(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const positional = args.filter((a) => !a.startsWith("--"));
   if (positional.length !== 2) {
     io.stderr("usage: aex outputs link <session-id> <path> [common flags]\n");
@@ -129,7 +128,7 @@ async function outputsLink(io: CliIO, aex: Aex, args: readonly string[]): Promis
   }
   const [sessionId, selector] = positional as [string, string];
   try {
-    const link = await aex.sessions.outputs(sessionId).link({ path: selector });
+    const link = await operations.outputLink(http, sessionId, { path: selector });
     io.stdout(JSON.stringify(link) + "\n");
     return SUCCESS;
   } catch (err) {
@@ -138,7 +137,7 @@ async function outputsLink(io: CliIO, aex: Aex, args: readonly string[]): Promis
 }
 
 /** `aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]`. */
-async function outputsFind(io: CliIO, aex: Aex, args: readonly string[]): Promise<CliExitCode> {
+async function outputsFind(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const name = takeFlagValue(args, "--name");
   const ext = takeFlagValue(name.remaining, "--ext");
   const type = takeFlagValue(ext.remaining, "--type");
@@ -158,7 +157,7 @@ async function outputsFind(io: CliIO, aex: Aex, args: readonly string[]): Promis
     ...(contentType.value !== null ? { contentType: contentType.value } : {})
   };
   try {
-    const hits = await aex.sessions.outputs(sessionId).find(query);
+    const hits = await searchSessionOutputs(http, sessionId, query);
     for (const hit of hits) io.stdout(JSON.stringify(hit) + "\n");
     return SUCCESS;
   } catch (err2) {
@@ -167,7 +166,7 @@ async function outputsFind(io: CliIO, aex: Aex, args: readonly string[]): Promis
 }
 
 /** `aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--run-id ID] [--limit N]` — cross-run. */
-async function outputsSearch(io: CliIO, aex: Aex, args: readonly string[]): Promise<CliExitCode> {
+async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const query = takeFlagValue(args, "--query");
   const name = takeFlagValue(query.remaining, "--name");
   const ext = takeFlagValue(name.remaining, "--ext");
@@ -195,7 +194,7 @@ async function outputsSearch(io: CliIO, aex: Aex, args: readonly string[]): Prom
     ...(limitValue !== undefined ? { limit: limitValue } : {})
   };
   try {
-    const page = await aex.outputs.search(search);
+    const page = await searchWorkspaceOutputs(http, search);
     io.stdout(JSON.stringify(page) + "\n");
     return SUCCESS;
   } catch (err2) {
@@ -210,6 +209,74 @@ function outputsError(io: CliIO, code: string, err: unknown, extra: Record<strin
     ...(d.status !== undefined ? { status: d.status } : {}),
     ...(d.remedy ? { remedy: d.remedy } : {})
   });
+}
+
+async function searchWorkspaceOutputs(
+  http: HttpClient,
+  query: OutputSearchQuery
+): Promise<{ readonly hits: readonly OutputSearchHit[] }> {
+  assertMetadataOnlyOutputSearch(query, "aex outputs search");
+  const runIds = query.runIds && query.runIds.length > 0 ? [...query.runIds] : undefined;
+  const limit = query.limit ?? 100;
+  const hits: OutputSearchHit[] = [];
+  const candidates = runIds ?? await listRecentRunIds(http, limit);
+  for (const runId of candidates) {
+    const outputs = await searchSessionOutputs(http, runId, query);
+    for (const output of outputs) {
+      hits.push(outputHit(runId, output));
+      if (hits.length >= limit) return { hits };
+    }
+  }
+  return { hits };
+}
+
+async function listRecentRunIds(http: HttpClient, limit: number): Promise<string[]> {
+  const out: string[] = [];
+  let cursor: string | undefined;
+  while (out.length < limit) {
+    const page = await operations.listSessions(http, { limit: Math.min(100, limit - out.length), ...(cursor ? { cursor } : {}) });
+    out.push(...page.sessions.map((session) => session.id));
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return out;
+}
+
+async function searchSessionOutputs(
+  http: HttpClient,
+  sessionId: string,
+  query: Omit<OutputSearchQuery, "runIds">
+): Promise<readonly Output[]> {
+  const listQuery: OutputQuery = {
+    ...(query.extension !== undefined ? { extension: query.extension } : {}),
+    ...(query.contentType !== undefined ? { contentType: query.contentType } : {})
+  };
+  const outputs = await operations.listSessionOutputs(
+    http,
+    sessionId,
+    Object.keys(listQuery).length > 0 ? listQuery : undefined
+  );
+  if (query.filename === undefined) return outputs;
+  const match = operations.toFilenameMatcher(query.filename);
+  return outputs.filter((output) => typeof output.filename === "string" && match(output.filename));
+}
+
+function outputHit(runId: string, output: Output): OutputSearchHit {
+  return {
+    runId,
+    outputId: output.id,
+    ...(output.filename !== undefined ? { filename: output.filename } : {}),
+    ...(output.sizeBytes !== undefined ? { sizeBytes: output.sizeBytes } : {}),
+    ...(output.contentType !== undefined ? { contentType: output.contentType } : {})
+  };
+}
+
+function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
+  for (const key of ["content", "text", "query", "grep", "body"]) {
+    if (Object.prototype.hasOwnProperty.call(query, key)) {
+      throw new Error(`${surface}: ${key} is not supported; output search is metadata-only`);
+    }
+  }
 }
 
 function baseName(p: string): string {

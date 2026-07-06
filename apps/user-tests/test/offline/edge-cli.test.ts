@@ -134,7 +134,8 @@ describe("installed aex CLI — offline edge cases", () => {
       "--api-key", "dummy"
     ]);
     expect(r.exitCode, diag("aex run bad model", r)).toBe(2);
-    expect(r.stderr).toMatch(/--model must be one of/);
+    expect(r.stderr).toMatch(/"claude-haiku" is not a known model id/);
+    expect(r.stderr).toMatch(/pass provider explicitly/);
     expect(r.stderr).toMatch(/did you mean "claude-haiku-4-5"/);
   });
 
@@ -233,7 +234,6 @@ describe("installed aex CLI — offline edge cases", () => {
     const SECRET_KEY = "SUPERSECRETKEY-do-not-leak-8842";
     const r = await runCli([
       "run",
-      "--provider", "anthropic",
       "--anthropic-api-key", SECRET_KEY,
       "--model", "definitely-not-a-model",
       "--prompt", "hi",
@@ -243,7 +243,7 @@ describe("installed aex CLI — offline edge cases", () => {
     // Rejected at model validation (no network), but --debug has already
     // printed the auth-source line to stderr by then.
     expect(r.exitCode, diag("aex run --debug (bad model)", r)).toBe(2);
-    expect(r.stderr).toMatch(/--model must be one of/);
+    expect(r.stderr).toMatch(/"definitely-not-a-model" is not a known model id/);
     const combined = r.stdout + r.stderr;
     expect(combined, "api key leaked to output").not.toContain(SECRET_TOKEN);
     expect(combined, "provider key leaked to output").not.toContain(SECRET_KEY);

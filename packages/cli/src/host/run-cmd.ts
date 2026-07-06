@@ -1,16 +1,13 @@
 /**
- * `aex run` — one-shot over the session API, a THIN pass-through over the SDK's
- * `Aex` client (dependency-inverted: the CLI constructs `new Aex(...)` and calls
- * `submit()` rather than re-implementing create+send over the raw `operations`
- * layer). This makes capability + validation single-sourced in the SDK, so the
- * CLI physically cannot drift from it:
- *   - model / provider / run-timeout are arbitrated by the SDK (no CLI-local
+ * `aex run` — one-shot over the session API. Host CLI parsing stays thin and
+ * submits through the shared public contracts transport (`operations.submit`):
+ *   - model / provider / run-timeout are arbitrated by shared contracts (no CLI-local
  *     `RUN_MODELS` gate, no `parseDuration`-only floor check); an unknown model
  *     with an explicit `--provider` is forward-compat accepted, a typo yields a
  *     shared "did you mean?" hint.
  *   - skills / tools / agentsMd / files ATTACH via `--skill`/`--tool`/
- *     `--agents-md`/`--file`, mapped to SDK `Skill`/`Tool`/`AgentsMd`/`File`
- *     instances the SDK prepares + uploads.
+ *     `--agents-md`/`--file`, staged through the same public asset protocol the
+ *     SDK uses.
  *
  * Two input modes (mutually exclusive):
  *   1. `--config <path>` — run-request JSON `{ model, system?, prompt,
@@ -23,6 +20,7 @@
  * the common `--api-key <token>`.
  */
 import {
+  operations,
   parseRunRequestConfig,
   parseRunTimeout,
   providersForModel,
@@ -35,16 +33,6 @@ import {
   type RunProvider,
   type RuntimeSize
 } from "@aexhq/contracts";
-import {
-  Aex,
-  AgentsMd,
-  File as AexFile,
-  McpServer,
-  Skill,
-  Tool,
-  type SessionEnvironmentOptions,
-  type SessionRunOptions
-} from "@aexhq/sdk";
 import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import {
@@ -59,6 +47,7 @@ import {
   describeApiError,
   emitJsonError,
   isSessionOk,
+  makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
   refuseInsideManagedRun,
@@ -67,6 +56,21 @@ import {
   takeFlagValue,
   takeOptionFlag
 } from "./common.js";
+import {
+  buildCliAgentsMd,
+  buildCliFile,
+  buildCliSkill,
+  buildCliTool,
+  submitCliRun,
+  toCliSessionEnvironment,
+  type CliAgentsMdDraft,
+  type CliFileDraft,
+  type CliMcpServer,
+  type CliRunSubmitOptions,
+  type CliSkillDraft,
+  type CliToolDraft
+} from "./run-submit.js";
+import { openEnvelopeStream } from "./stream-render.js";
 
 /** Default idle window a one-shot session may sit before the platform reaps it. Mirrors the SDK. */
 const DEFAULT_SESSION_IDLE_TTL = "3m";
@@ -332,20 +336,20 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
       return USAGE_ERR;
     }
   }
-  const mcpServers = configMcpServers.map((m) => {
+  const mcpServers: CliMcpServer[] = configMcpServers.map((m) => {
     const headers = mcpHeaderBag.get(m.name);
-    return McpServer.remote({
+    return {
       name: m.name,
       url: m.url,
       ...(headers && Object.keys(headers).length > 0 ? { headers } : {})
-    });
+    };
   });
 
   // ---------------- Build the SDK attach primitives (T6a) ----------------------
-  let skills: Skill[];
-  let tools: Tool[];
-  let agentsMd: AgentsMd[];
-  let files: AexFile[];
+  let skills: CliSkillDraft[];
+  let tools: CliToolDraft[];
+  let agentsMd: CliAgentsMdDraft[];
+  let files: CliFileDraft[];
   try {
     skills = await Promise.all(skillFlags.values.map((ref) => buildSkill(io, ref)));
     tools = await Promise.all(toolFlags.values.map((ref) => buildTool(io, ref)));
@@ -356,11 +360,11 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     return USAGE_ERR;
   }
 
-  const environment = toSessionEnvironment(configEnvironment);
+  const environment = toCliSessionEnvironment(configEnvironment);
   const runtimeSize = (runtimeSizeFlag.value as RuntimeSize | null) ?? configRuntimeSize;
   const timeout = runTimeoutFlag.value ?? configTimeout;
 
-  const options: SessionRunOptions = {
+  const options: CliRunSubmitOptions = {
     message: promptArray,
     provider,
     model,
@@ -382,14 +386,23 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     ...(idempotency.value ? { idempotencyKey: idempotency.value } : {})
   };
 
-  const aex = new Aex({ baseUrl: common.flags.aexUrl, apiKey: common.flags.apiKey, fetch: io.fetchImpl });
+  const http = makeHttpClient(io, common.flags);
+
+  if (follow.present && !io.webSocketFactory) {
+    io.stderr(
+      JSON.stringify({
+        error: "websocket_unavailable",
+        message: "`aex run --follow` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun."
+      }) + "\n"
+    );
+    return USAGE_ERR;
+  }
 
   // Fire-and-forget submit: create the session + POST the first turn in one
-  // call, then print the accepted session record (the SDK owns the wire shape).
+  // call, then print the accepted session record.
   let session;
   try {
-    const submitted = await aex.submit(options);
-    session = submitted.session;
+    session = await submitCliRun(http, io.fetchImpl, options);
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "run_failed", d.message, {
@@ -398,13 +411,18 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
     });
   }
 
-  io.stdout(JSON.stringify(session.record) + "\n");
+  io.stdout(JSON.stringify(session) + "\n");
   if (!follow.present) return SUCCESS;
 
-  // `--follow`: stream the turn's events (NDJSON) until the session parks, then
-  // print the final record. Streaming rides the SDK's polling event accessor.
+  // `--follow`: stream the live coordinator envelopes as NDJSON until the
+  // session parks, then print the final session record.
   const controller = new AbortController();
   let timedOut = false;
+  let interrupted = false;
+  io.onSignal?.("SIGINT", () => {
+    interrupted = true;
+    controller.abort();
+  });
   const timer =
     followTimeoutMs === null
       ? null
@@ -412,26 +430,49 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
           timedOut = true;
           controller.abort();
         }, followTimeoutMs);
+  let lastSeq = -1;
   try {
-    for await (const event of session.events().stream({ signal: controller.signal })) {
+    const stream = openEnvelopeStream(io, http, session.id, {
+      signal: controller.signal,
+      ...(common.flags.debug ? { debug: (line: string) => io.stderr(`[aex] ${line}\n`) } : {})
+    });
+    for await (const event of stream) {
+      lastSeq = event.sequence;
       io.stdout(JSON.stringify(event) + "\n");
     }
   } catch (err) {
-    io.stderr(`(transient) event stream failed: ${(err as Error).message}\n`);
-  } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut) {
+      emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
+        sessionId: session.id,
+        lastSeq,
+        hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
+      });
+      return TIMEOUT_ERR;
+    }
+    if (interrupted) {
+      io.stderr(`(interrupted) followed up to seq ${lastSeq}\n`);
+      return SUCCESS;
+    }
+    io.stderr(`(transient) event stream failed: ${(err as Error).message}\n`);
   }
+  if (timer) clearTimeout(timer);
 
   if (timedOut) {
     emitJsonError(io, "run_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
       sessionId: session.id,
+      lastSeq,
       hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
     });
     return TIMEOUT_ERR;
   }
+  if (interrupted) {
+    io.stderr(`(interrupted) followed up to seq ${lastSeq}\n`);
+    return SUCCESS;
+  }
 
   try {
-    const final = await session.refresh();
+    const final = await operations.getSession(http, session.id);
     io.stdout(JSON.stringify(final) + "\n");
     if (isSessionOk(final.status)) return SUCCESS;
     io.stderr(
@@ -451,35 +492,32 @@ export async function runRunCmd(io: CliIO, argv: readonly string[]): Promise<Cli
 
 /* ---------- attach-primitive builders ---------- */
 
-async function buildSkill(io: CliIO, ref: string): Promise<Skill> {
+async function buildSkill(io: CliIO, ref: string): Promise<CliSkillDraft> {
   const content = await readAtFile(io, ref);
-  return Skill.fromContent(content);
+  return buildCliSkill(content, ref);
 }
 
-async function buildTool(io: CliIO, ref: string): Promise<Tool> {
+async function buildTool(io: CliIO, ref: string): Promise<CliToolDraft> {
   const content = await readAtFile(io, ref);
   const entry = baseName(stripAt(ref));
   const name = deriveName(ref, 1);
-  // A single-file `--tool @x.js` has no declared arg schema; default to an
-  // open object so the SDK's authoring-time entry/manifest guard is satisfied.
-  return Tool.fromFiles({
+  return buildCliTool({
     name,
     description: `Custom tool ${name}`,
     entry,
-    inputSchema: { type: "object", properties: {}, additionalProperties: true },
-    files: { [entry]: content }
+    content
   });
 }
 
-async function buildAgentsMd(io: CliIO, ref: string): Promise<AgentsMd> {
+async function buildAgentsMd(io: CliIO, ref: string): Promise<CliAgentsMdDraft> {
   const content = await readAtFile(io, ref);
-  return AgentsMd.fromContent(content, { name: deriveName(ref, 2) });
+  return buildCliAgentsMd(content, deriveName(ref, 2));
 }
 
-async function buildFile(io: CliIO, ref: string): Promise<AexFile> {
+async function buildFile(io: CliIO, ref: string): Promise<CliFileDraft> {
   const content = await readAtFile(io, ref);
   const name = baseName(stripAt(ref));
-  return AexFile.fromBytes({ name, bytes: new TextEncoder().encode(content) });
+  return buildCliFile({ name, content });
 }
 
 /* ---------- helpers ---------- */
@@ -511,17 +549,6 @@ function deriveName(ref: string, minLen: number): string {
   let slug = noExt.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   while (slug.length < minLen) slug += "x";
   return slug;
-}
-
-/** Map a run-config `PlatformEnvironment` onto the SDK's `SessionEnvironmentOptions`. */
-function toSessionEnvironment(env: PlatformEnvironment | undefined): SessionEnvironmentOptions | undefined {
-  if (!env) return undefined;
-  const out: SessionEnvironmentOptions = {
-    ...(env.networking ? { networking: env.networking } : {}),
-    ...(env.packages ? { packages: env.packages } : {}),
-    ...(env.envVars ? { variables: env.envVars } : {})
-  };
-  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 /**

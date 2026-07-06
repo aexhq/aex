@@ -146,7 +146,7 @@ ok(badRequest, "400 should reject");
 strictEqual(d.attempts.length, 1);
 strictEqual(isRateLimited(badRequest), false);
 
-// 5) retry:false disables the layer — a 429 is a single plain AexApiError.
+// 5) retry:false disables retry attempts but still maps a raw 429 as rate-limited.
 const e = makeFetch([429]);
 const off = new Aex({
   apiKey: "aex_retry_token",
@@ -162,7 +162,7 @@ try {
 }
 ok(raw, "429 should reject with retry disabled");
 strictEqual(e.attempts.length, 1);
-strictEqual(isRateLimited(raw), false);
+strictEqual(isRateLimited(raw), true);
 strictEqual(raw instanceof AexApiError, true);
 
 // 6) A handle exposes replayLast for replaying a throttled turn.

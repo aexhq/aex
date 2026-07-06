@@ -605,7 +605,7 @@ const createCases = [
     model: "gpt-4.1",
     provider: "anthropic",
     apiKeys: { anthropic: "sk-ant" }
-  }), /provider "anthropic" is not available/],
+  }), /model "gpt-4\.1" is not available for provider anthropic; available: openai/],
   ["removed prompt", () => client.openSession({ ...validCreate, prompt: "hello" }), /prompt is not a supported option/],
   ["removed secrets", () => client.openSession({ ...validCreate, secrets: { apiKeys: { anthropic: "sk-ant" } } }), /secrets is not a supported option/],
   ["removed secretEnv", () => client.openSession({ ...validCreate, secretEnv: { X: Secret.value("v") } }), /secretEnv is not a supported option/],

@@ -82,6 +82,20 @@ function makeIo(opts: {
     cwd: () => "/tmp",
     fetchImpl: async (url, init) => {
       const u = String(url);
+      const parsed = new URL(u);
+      if (parsed.pathname === "/api/sessions" && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: "run-x",
+            status: "running",
+            provider: "anthropic",
+            model: "claude-haiku-4-5",
+            runtime: "managed",
+            createdAt: "2026-01-01T00:00:00Z"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
       if (u.endsWith("/events/ticket")) {
         return new Response(
           JSON.stringify({ wsUrl: "wss://co/runs/run-x/subscribe", ticket: "tkt", expiresAtMs: Date.now() + 60_000 }),
@@ -251,6 +265,40 @@ describe("aex tail", () => {
     await done;
     const seqs = cap.out().trim().split("\n").map((l) => (JSON.parse(l) as AexEvent).sequence);
     expect(seqs).toEqual([0, 1]);
+  });
+});
+
+describe("aex run --follow", () => {
+  it("streams live coordinator envelopes as NDJSON after submit", async () => {
+    const cap = makeIo({
+      argv: [
+        "run",
+        "--model", "claude-haiku-4-5",
+        "--prompt", "hi",
+        "--anthropic-api-key", "sk-ant-test",
+        "--follow",
+        ...COMMON
+      ],
+      runStatus: "succeeded"
+    });
+    const done = runCli(cap.io);
+    const ws = await cap.nextSocket();
+    ws.message(evt(0, "RUN_STARTED"));
+    ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "live" }));
+    ws.message(evt(2, "RUN_FINISHED"));
+    await done;
+
+    expect(cap.exit()).toBe(0);
+    expect(cap.socketUrls[0]).toContain("from=0");
+    const lines = cap.out().trim().split("\n");
+    const accepted = JSON.parse(lines[0]!) as { id: string; status: string };
+    const firstEvent = JSON.parse(lines[1]!) as AexEvent;
+    const secondEvent = JSON.parse(lines[2]!) as AexEvent;
+    const final = JSON.parse(lines.at(-1)!) as { id: string; status: string };
+    expect(accepted).toMatchObject({ id: "run-x", status: "running" });
+    expect(firstEvent.type).toBe("RUN_STARTED");
+    expect(secondEvent).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", sequence: 1 });
+    expect(final).toMatchObject({ id: "run-x", status: "succeeded" });
   });
 });
 

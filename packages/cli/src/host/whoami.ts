@@ -1,10 +1,10 @@
 /**
- * `aex whoami` — resolve the API key to its workspace + scopes via the SDK's
- * `Aex.whoami()`. Lets agents confirm the key before submitting a real run.
+ * `aex whoami` — resolve the API key to its workspace + scopes via the public
+ * whoami operation. Lets agents confirm the key before submitting a real run.
  * Always emits JSON; `--json` is a globally-recognized no-op flag (consumed by
  * the common-flags parser) so `aex whoami --json` never errors.
  */
-import { Aex } from "@aexhq/sdk";
+import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -12,6 +12,7 @@ import {
   USAGE_ERR,
   describeApiError,
   emitJsonError,
+  makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedRun
 } from "./common.js";
@@ -29,9 +30,9 @@ export async function runWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<
     return USAGE_ERR;
   }
 
-  const aex = new Aex({ baseUrl: common.flags.aexUrl, apiKey: common.flags.apiKey, fetch: io.fetchImpl });
+  const http = makeHttpClient(io, common.flags);
   try {
-    const me = await aex.whoami();
+    const me = await operations.whoami(http);
     io.stdout(JSON.stringify(me) + "\n");
     return SUCCESS;
   } catch (err) {

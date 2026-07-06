@@ -1,13 +1,14 @@
 // CLI ↔ SDK capability parity manifest.
 //
-// The `@aexhq/cli` is a THIN pass-through over `@aexhq/sdk`: every public SDK
+// The CLI is implemented against the public contracts layer, but it must still
+// expose the same user-facing capability surface as the SDK: every public SDK
 // capability (an `Aex` client method, a `run` option, an outputs-accessor
 // method) must surface as a registered CLI verb / flag / sub-verb. This
 // manifest enumerates that surface and maps each capability onto its CLI
 // counterpart; the conformance `cli-sdk-parity` test then asserts, against the
 // REAL SDK reflection + the REAL CLI verb registry, that the mapping is
-// complete and honest — turning "mirrors the SDK 1:1" from a comment into a
-// CI-enforced invariant.
+// complete and honest — turning "matches the SDK's public surface" from a
+// comment into a CI-enforced invariant.
 //
 // A capability the CLI intentionally does NOT surface (a purely programmatic
 // convenience, or an option with no scriptable analogue) maps to

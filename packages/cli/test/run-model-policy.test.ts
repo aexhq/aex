@@ -1,5 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-import { Aex, type SessionRunOptions } from "@aexhq/sdk";
+import { describe, expect, it } from "vitest";
 import { runCli } from "../src/run.js";
 import { makeIo } from "./support.js";
 
@@ -7,10 +6,6 @@ const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
 describe("aex run model policy (T6c/T6g — SDK arbitrates, no RUN_MODELS gate)", () => {
   it("accepts a forward-compat unknown model when --provider is explicit", async () => {
-    const submit = vi
-      .spyOn(Aex.prototype, "submit")
-      .mockResolvedValue({ runId: "r1", session: { record: { id: "s1", status: "running" } } } as never);
-
     const cap = makeIo({
       argv: [
         "run",
@@ -19,18 +14,22 @@ describe("aex run model policy (T6c/T6g — SDK arbitrates, no RUN_MODELS gate)"
         "--deepseek-api-key", "sk-ds-1",
         "--prompt", "hi",
         ...COMMON
-      ]
+      ],
+      fetchHandler: () =>
+        new Response(JSON.stringify({ id: "s1", status: "running" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
     });
     await runCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(submit).toHaveBeenCalledTimes(1);
-    const options = submit.mock.calls[0]![0] as SessionRunOptions;
-    expect(options.model).toBe("future-model-x");
-    expect(options.provider).toBe("deepseek");
+    expect(cap.calls).toHaveLength(1);
+    const body = cap.calls[0]!.body as { provider?: string; submission?: { model?: string } };
+    expect(body.provider).toBe("deepseek");
+    expect(body.submission?.model).toBe("future-model-x");
   });
 
   it("emits a shared did-you-mean hint for a typo'd known model (no --provider)", async () => {
-    const submit = vi.spyOn(Aex.prototype, "submit");
     const cap = makeIo({
       argv: [
         "run",
@@ -43,6 +42,6 @@ describe("aex run model policy (T6c/T6g — SDK arbitrates, no RUN_MODELS gate)"
     await runCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain('did you mean "deepseek-v4-flash"');
-    expect(submit).not.toHaveBeenCalled();
+    expect(cap.calls).toHaveLength(0);
   });
 });

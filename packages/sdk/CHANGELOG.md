@@ -4,6 +4,19 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.0
+
+### Changed (breaking)
+
+- Removed the CLI package's runtime dependency on SDK client internals from the
+  bundled SDK tarball. Host CLI commands now submit and read through public
+  contract operations directly.
+
+### Fixed
+
+- Restored SDK validation for the removed `parentRunId` session submission
+  field so legacy subagent lineage input fails before any HTTP request.
+
 ## 0.39.0
 
 ### Added

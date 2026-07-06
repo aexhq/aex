@@ -192,7 +192,8 @@ function makeHarness() {
     }
     if (parsed.pathname === "/api/sessions/sess_user_1" && method === "GET") {
       if (sessionStatus === "running") sessionStatus = "idle";
-      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq } });
+      const settled = sessionStatus === "idle" ? { costUsd: 0 } : {};
+      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq, ...settled } });
     }
 
     return json({ ok: true });
@@ -210,6 +211,7 @@ function makeHarness() {
       setTimeout(() => {
         this.message(event(10, "TEXT_MESSAGE_CONTENT", { text: "hello from chat" }));
         this.message(event(11, "CUSTOM", { name: "aex.session.idle", value: { sessionId: "sess_user_1", turnSeq: seq } }));
+        this.close();
       }, 0);
     }
     addEventListener(type, cb) {
@@ -412,7 +414,8 @@ const result = await session.send(["hello", "again"], {
 }).done();
 
 strictEqual(result.sessionId, "sess_user_1");
-strictEqual(result.status, "idle");
+strictEqual(result.status, "succeeded");
+strictEqual(result.session.status, "idle");
 strictEqual(result.turn.turnSeq, 1);
 strictEqual(result.text, "hello from chat");
 deepStrictEqual(result.outputs, [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }]);
@@ -446,24 +449,26 @@ const session = await client.sessions.create({
 
 // First turn parks idle.
 const first = await session.send("hello", { webSocketFactory: h.webSocketFactory }).done();
-strictEqual(first.status, "idle");
+strictEqual(first.status, "succeeded");
+strictEqual(first.session.status, "idle");
 
 // The platform is still catching up from that park: the very next send's POST is
 // rejected once with session_busy (status running). The SDK must reconcile —
 // wait for the record to leave running, then retry — not surface the 409.
 h.armBusy(1);
 const second = await session.send("again", { webSocketFactory: h.webSocketFactory }).done();
-strictEqual(second.status, "idle");
+strictEqual(second.status, "succeeded");
+strictEqual(second.session.status, "idle");
 strictEqual(second.turn.turnSeq, 2);
 
 const messagePosts = callsFor(h.calls, "POST", "/api/sessions/sess_user_1/messages").length;
 // turn 1 (1 POST) + turn 2 (the 409 + the reconciled retry = 2 POSTs).
 strictEqual(messagePosts, 3);
 
-console.log(JSON.stringify({ ok: true, status: second.status, messagePosts }));
+console.log(JSON.stringify({ ok: true, status: second.status, sessionStatus: second.session.status, messagePosts }));
 `;
     const result = await runChild(script, "sdk-chat-idle-send-reconcile.mjs");
-    expect(result).toMatchObject({ ok: true, status: "idle", messagePosts: 3 });
+    expect(result).toMatchObject({ ok: true, status: "succeeded", sessionStatus: "idle", messagePosts: 3 });
   });
 
   it("rejects removed session options before any HTTP call", async () => {
@@ -492,7 +497,7 @@ await expectReject("provider mismatch", () => client.openSession({
   provider: "anthropic",
   model: "gpt-4.1",
   apiKeys: { anthropic: "sk-ant" }
-}), /provider "anthropic" is not available/);
+}), /model "gpt-4\.1" is not available for provider anthropic; available: openai/);
 
 strictEqual(h.calls.length, 0);
 console.log(JSON.stringify({ ok: true, rejects: 5, calls: h.calls.length }));

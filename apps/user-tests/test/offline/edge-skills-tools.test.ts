@@ -230,9 +230,9 @@ const cases = [
   ["reserved __ in name", { ...base, inputSchema: okSchema, name: "bad__name" }, /must not contain "__"/],
   ["invalid name UPPER", { ...base, inputSchema: okSchema, name: "BadName" }, /name must match/],
   ["invalid name spaces", { ...base, inputSchema: okSchema, name: "two words" }, /name must match/],
-  ["entry not in files", { ...base, inputSchema: okSchema, entry: "missing.js" }, /entry "missing\.js" must exist/],
+  ["entry not in files", { ...base, inputSchema: okSchema, entry: "missing.js" }, /entry "missing\.js" is not present in files/],
   ["reserved tool.json key", { ...base, inputSchema: okSchema, files: { "index.js": "export default async () => 'x';\n", "tool.json": "{}" } }, /must not include reserved "tool\.json"/],
-  ["empty files map", { ...base, inputSchema: okSchema, files: {} }, /files map cannot be empty/],
+  ["empty files map", { ...base, inputSchema: okSchema, files: {} }, /entry "index\.js" is not present in files \(keys: \(none\)\)/],
   ["path traversal in entry", { ...base, inputSchema: okSchema, entry: "../evil.js" }, /'\.\.' segment/],
   ["path traversal file key", { ...base, inputSchema: okSchema, files: { "index.js": "export default async () => 'x';\n", "../evil.js": "x" } }, /'\.\.' segment/]
 ];

@@ -75,14 +75,7 @@ async function startFakeApi(): Promise<FakeApi> {
 
     // --- session endpoints (run/status/events/wait/cancel speak these) ---
     if (req.method === "POST" && url.pathname === "/api/sessions") {
-      json(res, 200, { id: "run-cli-1", status: "creating", provider: "deepseek", runtime: "managed" });
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/sessions/run-cli-1/messages") {
-      json(res, 200, {
-        session: { id: "run-cli-1", status: "running", provider: "deepseek", runtime: "managed" },
-        turn: { turnSeq: 0 }
-      });
+      json(res, 200, { id: "run-cli-1", status: "running", provider: "deepseek", runtime: "managed" });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/sessions/run-cli-1") {
@@ -308,12 +301,11 @@ describe("installed CLI host commands", () => {
 
     expect(api.requests.every((request) => request.authorization === "Bearer tok-installed-cli")).toBe(true);
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
-    // `aex run` opens a session, then sends the first turn.
+    // `aex run` submits the session and first turn in one request.
     expect(methodPaths[0]).toBe("POST /api/sessions");
     expect(methodPaths).toEqual(
       expect.arrayContaining([
         "POST /api/sessions",
-        "POST /api/sessions/run-cli-1/messages",
         "GET /api/sessions/run-cli-1",
         "GET /api/sessions/run-cli-1/events",
         "POST /api/sessions/run-cli-1/cancel",
@@ -325,8 +317,8 @@ describe("installed CLI host commands", () => {
       ])
     );
 
-    // create request: the session-create body carries no prompt (nor the
-    // idempotency key — that rides the Idempotency-Key header).
+    // submit request: the session-create body carries the first-turn input;
+    // the idempotency key rides the Idempotency-Key header.
     const createReq = api.requests[0]!;
     const submit = createReq.body as Record<string, unknown>;
     expect(submit.workspaceId).toBeUndefined();
@@ -338,11 +330,7 @@ describe("installed CLI host commands", () => {
     expect(submit.secrets).toEqual({ apiKeys: { deepseek: "sk-deepseek-test" } });
     expect(submit.submission).toMatchObject({ model: "deepseek-v4-flash" });
     expect(submit.submission).not.toHaveProperty("prompt");
-
-    // first-turn message: the prompt rides the message input.
-    const messageReq = api.requests.find((r) => r.path === "/api/sessions/run-cli-1/messages");
-    expect(messageReq, "expected a POST to the session messages endpoint").toBeDefined();
-    expect((messageReq!.body as Record<string, unknown>).input).toEqual(["hello_from_installed_cli"]);
+    expect(submit.input).toEqual(["hello_from_installed_cli"]);
   });
 
   it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {
