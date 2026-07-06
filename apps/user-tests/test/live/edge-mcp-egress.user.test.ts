@@ -97,6 +97,8 @@ interface SubmissionCase {
   readonly resolveMs: number;
   readonly runId: string | null;
   readonly status: string | null;
+  readonly failureClass: string | null;
+  readonly errorMessage: string | null;
   readonly threw: string | null;
   readonly reason: string | null;
   readonly dialed: boolean;
@@ -146,6 +148,7 @@ function validationChildScript(): string {
     async function submitBad(label, mcpServers) {
       const t0 = Date.now();
       let runId = null, status = null, threw = null;
+      let failureClass = null, errorMessage = null;
       try {
         const res = await client.run({
           provider: process.env.PROVIDER,
@@ -165,11 +168,18 @@ function validationChildScript(): string {
       if (runId) {
         try {
           const s = await client.sessions.open(runId);
+          try {
+            const rec = await client.sessions.get(runId);
+            status = typeof rec.status === "string" ? rec.status : status;
+            failureClass = typeof rec.failureClass === "string" ? rec.failureClass : null;
+            errorMessage = typeof rec.errorMessage === "string" ? rec.errorMessage : null;
+            if (reason === null && errorMessage !== null) reason = errorMessage;
+          } catch {}
           const events = await s.events().list();
           const errEvt = events.find((e) => e.type === "CUSTOM" && e.data && ["aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"].includes(String(e.data.name || "")))
             || events.find((e) => e.type === "CUSTOM" && e.data && String(e.data.name || "").includes("error"))
             || events.find((e) => e.type === "RUN_ERROR");
-          if (errEvt) reason = (errEvt.data && errEvt.data.value && errEvt.data.value.reason) || JSON.stringify(errEvt.data).slice(0, 300);
+          if (errEvt && reason === null) reason = (errEvt.data && errEvt.data.value && errEvt.data.value.reason) || JSON.stringify(errEvt.data).slice(0, 300);
           dialed = events.some((e) => e.type === "TOOL_CALL_START");
           const serialized = JSON.stringify(events);
           // Real IMDS content markers (the deny-reason text legitimately
@@ -179,7 +189,7 @@ function validationChildScript(): string {
           }
         } catch (e) { reason = "inspect-err:" + String(e && e.message).slice(0, 120); }
       }
-      return { label, resolveMs: Date.now() - t0, runId, status, threw, reason, dialed, metaLeak };
+      return { label, resolveMs: Date.now() - t0, runId, status, failureClass, errorMessage, threw, reason, dialed, metaLeak };
     }
 
     const submission = await Promise.all([
@@ -332,7 +342,7 @@ function assertFailedClosed(s: SubmissionCase): void {
 }
 
 function rejectionText(s: SubmissionCase): string {
-  return `${s.reason ?? ""} ${s.threw ?? ""}`.toLowerCase();
+  return `${s.reason ?? ""} ${s.errorMessage ?? ""} ${s.failureClass ?? ""} ${s.threw ?? ""}`.toLowerCase();
 }
 
 describe("edge: McpServer primitive + MCP declaration + egress allowlist (security)", () => {

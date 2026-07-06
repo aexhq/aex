@@ -92,6 +92,35 @@ describe("aex.outputs.search (cross-run)", () => {
     expect(page.hits[0]!.runId).toBe("run-a");
   });
 
+  it("unscoped search stops paging sessions once the hit limit is satisfied", async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      calls.push(url);
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/sessions" && parsed.searchParams.get("cursor") === null) {
+        return jsonResponse({ sessions: [{ id: "run-a" }], nextCursor: "page-2" });
+      }
+      if (parsed.pathname === "/api/sessions" && parsed.searchParams.get("cursor") === "page-2") {
+        return jsonResponse({ sessions: [{ id: "run-b" }] });
+      }
+      if (/\/api\/sessions\/run-a\/outputs$/.test(parsed.pathname)) {
+        return jsonResponse({ outputs: OUTPUTS["run-a"] });
+      }
+      if (/\/api\/sessions\/run-b\/outputs$/.test(parsed.pathname)) {
+        return jsonResponse({ outputs: OUTPUTS["run-b"] });
+      }
+      throw new Error(`no responder for ${url}`);
+    });
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: fetchImpl });
+
+    const page = await client.outputs.search({ limit: 1 });
+
+    expect(page.hits).toHaveLength(1);
+    expect(page.hits[0]!.runId).toBe("run-a");
+    expect(calls.some((u) => new URL(u).searchParams.get("cursor") === "page-2")).toBe(false);
+  });
+
   it("falls back to the whole workspace via listSessions when no runIds given", async () => {
     const { client, calls } = makeClient();
     const page = await client.outputs.search({ extension: "md" });

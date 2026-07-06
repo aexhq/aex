@@ -649,9 +649,16 @@ export class SessionHandle {
       } catch (err) {
         if (!isSettlingSessionBusy(err) || signal?.aborted) throw err;
         if (Date.now() >= deadline) {
+          const apiErr = err instanceof AexApiError ? err : undefined;
           throw new RunStateError(
             `SessionHandle.send: session ${this.id} was still running ${SESSION_BUSY_RECONCILE_DEADLINE_MS}ms after the previous turn parked — a turn is still in flight`,
-            { sessionId: this.id, status: "running", cause: err }
+            {
+              sessionId: this.id,
+              sessionStatus: "running",
+              ...(apiErr !== undefined ? { httpStatus: apiErr.status, apiCode: apiErr.apiCode, requestId: apiErr.requestId } : {}),
+              cause: err
+            },
+            { cause: err }
           );
         }
         await this.#awaitLeftRunning(deadline, signal);
@@ -977,8 +984,9 @@ export class OutputsClient {
     // Dedup the caller-supplied allow-list so a run repeated in `runIds` (from
     // concatenating corpora) isn't scanned twice and doesn't inflate hit count.
     const unscoped = query.runIds === undefined;
-    const runIds = unscoped ? await this.#allRunIds() : [...new Set(query.runIds)];
     const limit = query.limit ?? 100;
+    if (unscoped) return this.#searchWorkspace(query, limit);
+    const runIds = [...new Set(query.runIds)];
     const hits: OutputSearchHit[] = [];
     for (const runId of runIds) {
       let outputs: readonly Output[];
@@ -996,9 +1004,9 @@ export class OutputsClient {
     return { hits };
   }
 
-  /** Enumerate every run id in the workspace by paging `listSessions`. */
-  async #allRunIds(): Promise<readonly string[]> {
-    const ids: string[] = [];
+  /** Scan the workspace lazily by paging sessions and stopping once the hit limit is satisfied. */
+  async #searchWorkspace(query: Omit<OutputSearchQuery, "runIds">, limit: number): Promise<OutputSearchPage> {
+    const hits: OutputSearchHit[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
@@ -1008,11 +1016,26 @@ export class OutputsClient {
         }
         seenCursors.add(cursor);
       }
-      const page = await operations.listSessions(this.#http, cursor ? { cursor } : {});
-      for (const session of page.sessions) ids.push(session.id);
+      const page = await operations.listSessions(this.#http, {
+        limit: Math.max(1, Math.min(limit || 100, 100)),
+        ...(cursor ? { cursor } : {})
+      });
+      for (const session of page.sessions) {
+        let outputs: readonly Output[];
+        try {
+          outputs = await searchRunOutputs(this.#http, session.id, query);
+        } catch (err) {
+          if (isMissingOutputsSession(err)) continue;
+          throw err;
+        }
+        for (const hit of outputHits(session.id, outputs, limit - hits.length)) {
+          hits.push(hit);
+          if (hits.length >= limit) return { hits };
+        }
+      }
       cursor = page.nextCursor;
     } while (cursor);
-    return ids;
+    return { hits };
   }
 }
 
@@ -1368,6 +1391,8 @@ function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
 
 /** Project a run's output files to reference-only {@link OutputSearchHit}s, capped. */
 function outputHits(runId: string, outputs: readonly Output[], limit: number): OutputSearchHit[] {
+  const cap = Math.max(0, Math.floor(limit));
+  if (cap === 0) return [];
   const hits: OutputSearchHit[] = [];
   for (const o of outputs) {
     hits.push({
@@ -1377,7 +1402,7 @@ function outputHits(runId: string, outputs: readonly Output[], limit: number): O
       ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
       ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
     });
-    if (hits.length >= limit) break;
+    if (hits.length >= cap) break;
   }
   return hits;
 }
@@ -2617,6 +2642,7 @@ function sessionToRun(session: Session): Run {
     ...(typeof session.createdAt === "string" ? { createdAt: session.createdAt } : {}),
     ...(typeof session.updatedAt === "string" ? { updatedAt: session.updatedAt } : {}),
     ...(session.errorMessage !== undefined ? { errorMessage: session.errorMessage } : {}),
+    ...(session.failureClass !== undefined ? { failureClass: session.failureClass } : {}),
     ...(session.usage ? { usage: session.usage } : {})
   };
 }

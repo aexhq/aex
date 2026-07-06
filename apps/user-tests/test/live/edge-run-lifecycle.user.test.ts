@@ -49,7 +49,9 @@ function errInfo(e){
     name: e && e.name ? e.name : null,
     message: e && e.message ? String(e.message) : String(e),
     status: (e && typeof e.status === "number") ? e.status : null,
-    code: (e && e.code) ? e.code : null
+    code: (e && e.code) ? e.code : null,
+    apiCode: e && e.apiCode ? String(e.apiCode) : null,
+    requestId: e && e.requestId ? String(e.requestId) : null
   };
 }
 function leaks(obj){ try { return JSON.stringify(obj).includes(KEY); } catch { return false; } }
@@ -127,7 +129,7 @@ describe("live dev-plane — edge cases for client.run submission + idempotency 
       expect(r.emptyArr).toMatch(/non-empty string or string array/);
       expect(r.emptySegment).toMatch(/segments must be non-empty strings/);
       expect(r.missingKey).toMatch(/provider API key is required/);
-      expect(r.badProvider).toMatch(/is not available for model/);
+      expect(r.badProvider).toMatch(/not available for (?:model|provider)/);
       expect(r.legacyPrompt).toMatch(/prompt is not a supported option/);
     },
     150_000

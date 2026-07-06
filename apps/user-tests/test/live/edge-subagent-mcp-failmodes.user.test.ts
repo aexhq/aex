@@ -264,8 +264,8 @@ describe("live DEV — subagent + MCP failure modes", () => {
       expect(record?.errorMessage ?? "", `MCP discovery still hit egress policy: ${dump}`).not.toMatch(
         /egress|denied|not allowed|407/i
       );
-      expect((out.sendResult as { status?: string } | null)?.status, `MCP run did not settle cleanly: ${dump}`).toBe(
-        "idle"
+      expect(["idle", "succeeded"], `MCP run did not settle cleanly: ${dump}`).toContain(
+        (out.sendResult as { status?: string } | null)?.status
       );
     },
     10 * 60_000

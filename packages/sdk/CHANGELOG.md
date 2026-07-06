@@ -4,6 +4,17 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.4
+
+### Fixed
+
+- Added `failureClass` to the typed `Run` record and preserved it when a
+  session-backed one-shot result is exposed through the run-compatible view.
+- Made unscoped `outputs.search()` scan sessions lazily and stop after the
+  requested result limit instead of enumerating every session up front.
+- Updated live-session diagnostics for current managed terminals and sparse
+  event-stream sequence cursors.
+
 ## 0.40.3
 
 ### Fixed

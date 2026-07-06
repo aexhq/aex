@@ -280,7 +280,11 @@ describe("live user-test release gate", () => {
 
   it("keeps heavy live-test skill names and assertions on one contract", () => {
     const source = read("apps/user-tests/test/live/live-sdk-heavy-session.test.ts");
+    const fixture = read("apps/user-tests/test/_fixtures/heavy-session-shape.ts");
 
+    expect(source).toContain(
+      'import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";'
+    );
     expect(source).toContain('function managedHeavySkillName(role: "alpha" | "beta" | "gamma", provider: CaseSpec["provider"]): string');
     expect(source).toContain('name: ${JSON.stringify(managedHeavySkillName("alpha", spec.provider))}');
     expect(source).toContain('name: ${JSON.stringify(managedHeavySkillName("beta", spec.provider))}');
@@ -288,10 +292,13 @@ describe("live user-test release gate", () => {
     expect(source).toContain('managedHeavySkillName("alpha", "deepseek")');
     expect(source).toContain('managedHeavySkillName("beta", "deepseek")');
     expect(source).toContain('managedHeavySkillName("gamma", "deepseek")');
-    expect(source).toContain("produced no skill_loaded event");
+    expect(source).toContain("assertManagedShape(result, [");
+    expect(fixture).toContain("produced no skill_loaded event");
+    expect(fixture).toContain('const SUCCESS_TERMINAL_KINDS = ["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"] as const;');
+    expect(fixture).toContain('if (result.terminalKind === "RUN_FINISHED")');
+    expect(fixture).toContain("legacy RUN_FINISHED stream did not include RUN_STARTED");
     expect(source).toContain("return isSessionIdle(e) ? customName(e) : e.type;");
-    expect(source).toContain('"aex.session.succeeded"');
-    expect(source).toContain('expect(["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"]).toContain(result.terminalKind);');
+    expect(fixture).toContain('"aex.session.succeeded"');
     expect(source).toContain("const maxChannelProbeRetries = 2;");
     expect(source).toContain("recordChannelProbeSources");
     expect(source).toContain('"toolCallStart"');

@@ -1,5 +1,5 @@
 import { redactSecrets } from "./sdk-secrets.js";
-import type { AexApiErrorCode } from "./error-codes.js";
+import { isAexApiErrorCode, type AexApiErrorCode } from "./error-codes.js";
 
 export type AexErrorCode =
   | "RUN_CONFIG_INVALID"
@@ -45,8 +45,27 @@ export class ProviderError extends AexError {
 }
 
 export class RunStateError extends AexError {
-  constructor(message: string, details?: unknown) {
-    super("RUN_STATE_ERROR", message, details);
+  /**
+   * HTTP status from a wrapped API rejection, when this state error is a
+   * bounded client-side interpretation of that rejection.
+   */
+  readonly status: number | undefined;
+  /** Stable API code from a wrapped API rejection, when available. */
+  readonly apiCode: AexApiErrorCode | undefined;
+  /** Request id from a wrapped API rejection, when available. */
+  readonly requestId: string | undefined;
+
+  constructor(message: string, details?: unknown, options?: { readonly cause?: unknown }) {
+    const detailRecord = details && typeof details === "object" && !Array.isArray(details)
+      ? (details as Record<string, unknown>)
+      : undefined;
+    const cause = options?.cause ?? detailRecord?.cause;
+    super("RUN_STATE_ERROR", message, details, cause === undefined ? undefined : { cause });
+    const status = detailRecord?.httpStatus ?? detailRecord?.status;
+    const apiCode = detailRecord?.apiCode;
+    this.status = typeof status === "number" ? status : undefined;
+    this.apiCode = isAexApiErrorCode(apiCode) ? apiCode : undefined;
+    this.requestId = typeof detailRecord?.requestId === "string" ? detailRecord.requestId : undefined;
   }
 }
 

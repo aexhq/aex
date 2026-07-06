@@ -411,13 +411,17 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
   it("case C — replay-from-seq: streamEnvelopes({from:midSeq}) yields EXACTLY the tail of the full stream (no gap/dupe)", async () => {
     const r = await spawnScript<{
+      readonly runId: string;
       readonly fullCount: number;
+      readonly fullSeqs: readonly number[];
       readonly midSeq: number;
       readonly midMatchesTail: boolean;
       readonly midAnalyze: Analyze;
       readonly midFirstSeq: number | null;
+      readonly snapshotMaxSeq: number;
       readonly beyondFrom: number;
       readonly beyondCount: number;
+      readonly beyondSeqs: readonly number[];
       readonly beyondEndedNaturally: boolean;
       readonly beyondMs: number;
       readonly unhandled: string | null;
@@ -451,22 +455,30 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const mid = (await drain({ from: midSeq }, 40000, true)).seqs;
       const midMatchesTail = JSON.stringify(mid) === JSON.stringify(expectedTail);
 
-      // Edge: subscribe from a cursor BEYOND the finished run's terminal. There is
-      // no future event to deliver — does it end cleanly or hang until the idle
-      // watchdog / reconnect loop? Hard-guarded so the test itself never hangs.
-      const beyondFrom = full[full.length - 1] + 1000;
+      // Edge: subscribe from a cursor BEYOND the finished run's durable tail. The
+      // projected sequence space is sparse (raw row seq * 1024 + subslot), and
+      // settle may append a barrier after the render terminal, so compute the real
+      // max from the snapshot instead of guessing terminal+1000.
+      const snapshotEvents = await session.events().list();
+      const snapshotSeqs = snapshotEvents.map((e) => e.sequence).filter((s) => typeof s === "number");
+      const snapshotMaxSeq = Math.max(...full, ...snapshotSeqs);
+      const beyondFrom = snapshotMaxSeq + 1;
       const start = Date.now();
       const beyond = await drain({ from: beyondFrom }, 12000, false);
       const beyondMs = Date.now() - start;
 
       await emit({
+        runId: RUN_ID,
         fullCount: full.length,
+        fullSeqs: full,
         midSeq,
         midMatchesTail,
         midAnalyze: analyze(mid),
         midFirstSeq: mid.length ? mid[0] : null,
+        snapshotMaxSeq,
         beyondFrom,
         beyondCount: beyond.seqs.length,
+        beyondSeqs: beyond.seqs,
         beyondEndedNaturally: !beyond.aborted,
         beyondMs
       });
@@ -485,7 +497,18 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // subscribe past the terminal has no event to deliver; we only require it not
     // to deliver phantom events. Whether it self-terminates is captured for the
     // report (design edge), not hard-asserted.
-    expect(r.beyondCount).toBe(0);
+    expect(
+      r.beyondCount,
+      `from>tail replay delivered events: ${JSON.stringify({
+        runId: r.runId,
+        fullSeqs: r.fullSeqs,
+        snapshotMaxSeq: r.snapshotMaxSeq,
+        beyondFrom: r.beyondFrom,
+        beyondSeqs: r.beyondSeqs,
+        beyondEndedNaturally: r.beyondEndedNaturally,
+        beyondMs: r.beyondMs
+      })}`
+    ).toBe(0);
   });
 
   it("case D — abort DURING replay via AbortSignal: clean stop, no unhandled rejection", async () => {

@@ -188,12 +188,13 @@ describe("Aex.run -> unified settled RunResult", () => {
     // The record has NO errorMessage yet; the RUN_ERROR event carries the
     // immediate authoritative failure text.
     const { result } = await collectRun(
-      settledSession({ status: "failed", costUsd: 0 }),
+      settledSession({ status: "failed", costUsd: 0, failureClass: "provider-permanent" }),
       evt(1026, "RUN_ERROR", { failureMessage: "invalid provider api key" })
     );
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
     expect(result.error).toBe("invalid provider api key");
+    expect(result.run.failureClass).toBe("provider-permanent");
   });
 
   it("waits for the settled record so cost/usage survive the park-event → settle race", async () => {

@@ -10,7 +10,7 @@
  * bounded error instead of hanging or masking a real in-flight turn.
  */
 import { describe, expect, it, vi } from "vitest";
-import { AexApiError, type AexEvent, type WebSocketLike } from "@aexhq/contracts";
+import { AexApiError, RunStateError, type AexEvent, type WebSocketLike } from "@aexhq/contracts";
 import { Aex } from "../../src/index.js";
 
 interface HarnessState {
@@ -191,13 +191,14 @@ describe("session idle -> send reconcile", () => {
     vi.useFakeTimers();
     try {
       const pending = session.send("busy").done();
-      const assertion = expect(pending).rejects.toMatchObject({
-        code: "RUN_STATE_ERROR",
-        message: expect.stringMatching(/still running .* after the previous turn parked/)
-      });
+      const errPromise = pending.catch((e: unknown) => e);
       // Advance past the reconcile deadline (30s) so the bounded loop gives up.
       await vi.advanceTimersByTimeAsync(31_000);
-      await assertion;
+      const err = await errPromise;
+      expect(err).toBeInstanceOf(RunStateError);
+      expect((err as RunStateError).code).toBe("RUN_STATE_ERROR");
+      expect((err as RunStateError).status).toBe(409);
+      expect((err as RunStateError).message).toMatch(/still running .* after the previous turn parked/);
     } finally {
       vi.useRealTimers();
     }

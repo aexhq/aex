@@ -170,6 +170,28 @@ describe("aex.submit — fire-and-forget (WS10)", () => {
   });
 });
 
+describe("sessions.get — terminal failure projection", () => {
+  it("preserves failed status, outcome, failureClass, and errorMessage", async () => {
+    const { client } = makeEnv({
+      id: "run-1",
+      status: "failed",
+      turnSeq: 1,
+      lastTurnOutcome: "failed",
+      failureClass: "provider-permanent",
+      errorMessage: "llm provider rejected the request (HTTP 401) - not retryable",
+      costUsd: 0,
+      usage: {}
+    });
+
+    const session = await client.sessions.get("run-1");
+
+    expect(session.status).toBe("failed");
+    expect(session.lastTurnOutcome).toBe("failed");
+    expect(session.failureClass).toBe("provider-permanent");
+    expect(session.errorMessage).toMatch(/401/);
+  });
+});
+
 describe("aex.batch — real cost/usage rollup (WS10)", () => {
   it("sums settle-stamped per-item costs and buckets failures", async () => {
     const { client } = makeEnv();

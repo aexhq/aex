@@ -400,12 +400,15 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
     async () => {
       const body = `
         const probes = [];
-        const first = await client.sessions.list({ limit: 5 });
+        const listSince = new Date(Date.now() - 20 * 60_000).toISOString();
+        const listQuery = (extra = {}) => ({ since: listSince, ...extra });
+        const first = await client.sessions.list(listQuery({ limit: 5 }));
         const firstMeta = {
           count: first.sessions.length,
           hasCursor: typeof first.nextCursor === "string",
           statuses: [...new Set(first.sessions.map((s) => s.status))],
-          ids: first.sessions.map((s) => s.id)
+          ids: first.sessions.map((s) => s.id),
+          since: listSince
         };
 
         // Full paginated walk: bounded, cursor-dedup, id-dedup, ordering.
@@ -422,7 +425,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
               if (cursors.has(cursor)) { sawRepeatedCursor = true; break; }
               cursors.add(cursor);
             }
-            const page = await client.sessions.list({ limit: 10, ...(cursor ? { cursor } : {}) });
+            const page = await client.sessions.list(listQuery({ limit: 10, ...(cursor ? { cursor } : {}) }));
             pages++;
             for (const s of page.sessions) { ids.push(s.id); stamps.push({ c: s.createdAt, u: s.updatedAt }); }
             cursor = page.nextCursor;
@@ -452,7 +455,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
 
         // Bogus cursor: must be a CLEAN error or an empty/sane page — never a hang/loop.
         probes.push(await probe("bogus_cursor", async () => {
-          const page = await client.sessions.list({ cursor: "garbage-not-a-real-cursor-" + Date.now() });
+          const page = await client.sessions.list(listQuery({ cursor: "garbage-not-a-real-cursor-" + Date.now() }));
           return {
             returned: page.sessions.length,
             nextCursorIsString: typeof page.nextCursor === "string"
@@ -464,17 +467,17 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
         probes.push(await probe("limit_negative", async () => (await client.sessions.list({ limit: -5 })).sessions.length, 20000));
 
         probes.push(await probe("status_idle", async () => {
-          const p = await client.sessions.list({ status: "idle", limit: 25 });
+          const p = await client.sessions.list(listQuery({ status: "idle", limit: 25 }));
           return { count: p.sessions.length, statuses: [...new Set(p.sessions.map((s) => s.status))] };
         }, 20000));
         probes.push(await probe("status_bogus", async () => {
-          const p = await client.sessions.list({ status: "not_a_real_status_xyz", limit: 5 });
+          const p = await client.sessions.list(listQuery({ status: "not_a_real_status_xyz", limit: 5 }));
           return { count: p.sessions.length };
         }, 20000));
 
         probes.push(await probe("order_stable", async () => {
-          const a = await client.sessions.list({ limit: 8 });
-          const b = await client.sessions.list({ limit: 8 });
+          const a = await client.sessions.list(listQuery({ limit: 8 }));
+          const b = await client.sessions.list(listQuery({ limit: 8 }));
           return {
             same: JSON.stringify(a.sessions.map((s) => s.id)) === JSON.stringify(b.sessions.map((s) => s.id)),
             n: a.sessions.length

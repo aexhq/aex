@@ -88,7 +88,7 @@ async function runChild(
   writeFileSync(
     scriptPath,
     `
-    import { Aex } from "@aexhq/sdk";
+    import { Aex, isTerminalSessionStatus } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     ${body}
     `
@@ -123,7 +123,7 @@ describe("edge: openrouter managed run fails honestly", () => {
     "an openrouter run with a bad key surfaces a provider auth failure, not a recovery crash-loop",
     async () => {
       const body = `
-        const out = { sessionId: null, status: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null };
+        const out = { sessionId: null, status: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null, pollTrace: [] };
         let sid = null;
         const t0 = Date.now();
         try {
@@ -142,8 +142,17 @@ describe("edge: openrouter managed run fails honestly", () => {
           const deadline = Date.now() + 9 * 60_000;
           while (Date.now() < deadline) {
             const rec = await client.sessions.get(sid);
-            if (rec.status === "error" || rec.status === "idle" || rec.status === "suspended") {
+            out.pollTrace.push({
+              t: Date.now() - t0,
+              status: rec.status,
+              lastTurnOutcome: rec.lastTurnOutcome ?? null,
+              failureClass: rec.failureClass ?? null,
+              hasErrorMessage: Boolean(rec.errorMessage)
+            });
+            if (out.pollTrace.length > 12) out.pollTrace.shift();
+            if (isTerminalSessionStatus(rec.status)) {
               out.status = rec.status;
+              out.lastTurnOutcome = rec.lastTurnOutcome ?? null;
               out.failureClass = rec.failureClass ?? null;
               out.errorMessage = (rec.errorMessage ?? "").slice(0, 300);
               break;
@@ -161,7 +170,7 @@ describe("edge: openrouter managed run fails honestly", () => {
       const out = await runChild(install, "openrouter-badkey-probe.mjs", body, 12 * 60_000);
       const dump = JSON.stringify(out).slice(0, 1200);
       expect(out.error, `OpenRouter probe threw before terminal diagnostics: ${dump}`).toBeNull();
-      expect(out.status, `OpenRouter bad-key probe did not terminalize as error: ${dump}`).toBe("error");
+      expect(out.status, `OpenRouter bad-key probe did not terminalize as failed: ${dump}`).toBe("failed");
       expect(out.failureClass, `OpenRouter bad-key probe did not expose provider auth failure: ${dump}`).toBe(
         "provider-permanent"
       );

@@ -34,6 +34,12 @@ export interface Run {
   readonly startedAt?: string;
   readonly errorMessage?: string | null;
   /**
+   * Settle-written failure taxonomy for a failed run (e.g.
+   * `provider-permanent`, `invalid_submission`) — the class a caller can branch
+   * on, complementing the human-readable `errorMessage`.
+   */
+  readonly failureClass?: string | null;
+  /**
    * Aggregate token usage when a deployment chooses to expose it on the run
    * record. Mid-run this is not populated. Settled provider/runtime usage is
    * exposed through {@link costTelemetry}; per-turn usage breadcrumbs, when a

@@ -39,13 +39,14 @@
  *
  * Managed cells (full assertion set — "validate all aspects"):
  *   - run reached `succeeded`; runtime/provider echo back correctly.
- *   - event log is framed RUN_STARTED … terminal, where managed session turns
- *     may park with CUSTOM `aex.session.idle` instead of RUN_FINISHED; terminal
- *     reason is "complete", runtimeExitCode 0-or-absent.
+ *   - terminal event is observed. Legacy run streams are framed
+ *     RUN_STARTED ... RUN_FINISHED; managed session turns may complete with
+ *     CUSTOM `aex.session.succeeded` or park with CUSTOM `aex.session.idle`.
+ *     terminal reason is "complete", runtimeExitCode 0-or-absent.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
- *     superset of every type aex emits on a successful run —
- *     RUN_STARTED, TEXT_MESSAGE_CONTENT, TOOL_CALL_START, TOOL_CALL_RESULT,
- *     CUSTOM (RUN_FINISHED may be absent on parked sessions; RUN_ERROR is
+ *     superset of every event type required for a successful managed session:
+ *     TEXT_MESSAGE_CONTENT, TOOL_CALL_START, TOOL_CALL_RESULT, CUSTOM
+ *     (RUN_FINISHED may be absent on managed sessions; RUN_ERROR is
  *     failure-only and is covered by live-sdk-outputs-and-failures.test.ts).
  *     See AEX_EVENT_TYPES
  *     in packages/contracts/src/event-envelope.ts — the single source of
@@ -74,6 +75,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
@@ -104,57 +106,6 @@ const CUSTOM_OUTPUT_DIR = "/workspace/outputs/heavy";
 
 function managedHeavySkillName(role: "alpha" | "beta" | "gamma", provider: CaseSpec["provider"]): string {
   return `heavy-${role}-managed-${provider}`;
-}
-
-// Every event type aex emits on a SUCCESSFUL run. Mirror of
-// AEX_EVENT_TYPES in packages/contracts/src/event-envelope.ts minus
-// RUN_ERROR (failure-only; covered by live-sdk-outputs-and-failures).
-// Hardcoded rather than imported because the user-tests layer never
-// imports @aexhq/* workspace packages.
-const EXPECTED_SUCCESS_EVENT_TYPES = [
-  "RUN_STARTED",
-  "TEXT_MESSAGE_CONTENT",
-  "TOOL_CALL_START",
-  "TOOL_CALL_RESULT",
-  "CUSTOM"
-] as const;
-
-interface Probes {
-  readonly system: string;
-  readonly agentsMd: string;
-  readonly prompt: string;
-  readonly out: readonly [string, string, string];
-}
-
-interface CaseResult {
-  readonly runId: string;
-  readonly attempts: number;
-  readonly runStatus: string;
-  readonly runtime: string;
-  readonly provider: string;
-  readonly probes: Probes;
-  readonly eventCount: number;
-  readonly eventKinds: readonly string[];
-  readonly eventTypeSet: readonly string[];
-  readonly toolCallStartCount: number;
-  readonly toolCallResultCount: number;
-  readonly notificationKinds: readonly string[];
-  readonly skillLoadedNames: readonly string[];
-  readonly assistantTextJoined: string;
-  readonly assistantTextEventCount: number;
-  readonly terminalKind: string | null;
-  readonly terminalData: Record<string, unknown> | null;
-  readonly outputCount: number;
-  readonly outputs: readonly { filename: string | null; sizeBytes: number; sample: string | null }[];
-  readonly outProbesFound: readonly string[];
-  readonly channelProbeSources: Readonly<Record<string, readonly string[]>>;
-  readonly channelProbeMisses: readonly string[];
-  readonly retryReasons: readonly string[];
-  readonly leakedDeepseekKey: boolean;
-  // Full payload of every runner-sourced stream_error — captures the
-  // actual exception message + phase when materialize / manifest fetch
-  // fails, right before a runner_error terminal.
-  readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
 }
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -344,15 +295,33 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
       let events = fallbackEvents;
       let outputs = fallbackOutputs;
+      let eventSource = "fallback result.events";
+      let eventListError = null;
+      let listedEventCount = null;
+      let outputSource = "fallback result.outputs";
+      let outputListError = null;
+      let listedOutputCount = null;
       try {
         const listedEvents = await session.events().list();
+        listedEventCount = Array.isArray(listedEvents) ? listedEvents.length : null;
         if (Array.isArray(listedEvents) && listedEvents.length > 0) {
-          events = hasTerminalEvent(listedEvents) || !hasTerminalEvent(fallbackEvents) ? listedEvents : fallbackEvents;
+          const useListedEvents = hasTerminalEvent(listedEvents) || !hasTerminalEvent(fallbackEvents);
+          events = useListedEvents ? listedEvents : fallbackEvents;
+          eventSource = useListedEvents ? "session.events().list" : "fallback result.events";
         }
-        const listedOutputs = await session.outputs().list();
-        if (Array.isArray(listedOutputs)) outputs = listedOutputs;
-      } catch {
+      } catch (err) {
+        eventListError = err && err.message ? err.message : String(err);
         events = fallbackEvents;
+      }
+      try {
+        const listedOutputs = await session.outputs().list();
+        listedOutputCount = Array.isArray(listedOutputs) ? listedOutputs.length : null;
+        if (Array.isArray(listedOutputs)) {
+          outputs = listedOutputs;
+          outputSource = "session.outputs().list";
+        }
+      } catch (err) {
+        outputListError = err && err.message ? err.message : String(err);
         outputs = fallbackOutputs;
       }
 
@@ -494,6 +463,10 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         eventCount: events.length,
         eventKinds: events.map((e) => e.type),
         eventTypeSet,
+        eventSource,
+        eventListError,
+        fallbackEventCount: fallbackEvents.length,
+        listedEventCount,
         toolCallStartCount,
         toolCallResultCount,
         notificationKinds,
@@ -503,6 +476,10 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         terminalKind: terminalKindOf(terminal),
         terminalData: terminalDataOf(terminal),
         outputCount: outputs.length,
+        outputSource,
+        outputListError,
+        fallbackOutputCount: fallbackOutputs.length,
+        listedOutputCount,
         outputs: outputsCollected,
         outProbesFound: Array.from(outProbesFound),
         channelProbeSources,
@@ -560,133 +537,6 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   return JSON.parse(child.stdout.trim()) as CaseResult;
 }
 
-// Self-diagnosing dump shared by every assertion path. The heavy case
-// touches many surfaces, so a failure must be self-explanatory from the
-// CI log alone (.managed-runtime-logs samples + streamErrors carry the real cause).
-function dumpCase(result: CaseResult): string {
-  const lines: string[] = [];
-  lines.push(`runId=${result.runId} runtime=${result.runtime} provider=${result.provider}`);
-  lines.push(`runStatus=${result.runStatus} terminalKind=${result.terminalKind} attempts=${result.attempts}`);
-  lines.push(`terminalData=${JSON.stringify(result.terminalData)}`);
-  lines.push(`eventTypeSet=[${result.eventTypeSet.join(", ")}]`);
-  lines.push(
-    `toolCallStart=${result.toolCallStartCount} toolCallResult=${result.toolCallResultCount} ` +
-      `assistantText=${result.assistantTextEventCount} events=${result.eventCount}`
-  );
-  lines.push(`notificationKinds=[${result.notificationKinds.join(", ")}]`);
-  lines.push(`skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`);
-  lines.push(`channelProbeSources=${JSON.stringify(result.channelProbeSources)}`);
-  lines.push(`channelProbeMisses=[${result.channelProbeMisses.join(", ")}] retryReasons=[${result.retryReasons.join(", ")}]`);
-  lines.push(`outProbesFound=[${result.outProbesFound.join(", ")}] of [${result.probes.out.join(", ")}]`);
-  if (result.streamErrors.length > 0) {
-    lines.push(`streamErrors:`);
-    for (const se of result.streamErrors) {
-      lines.push(`  - ${JSON.stringify(se).slice(0, 800)}`);
-    }
-  }
-  lines.push(`outputs=${result.outputs.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
-  for (const o of result.outputs) {
-    if (o.filename && o.filename.startsWith(".runtime/")) {
-      lines.push(`--- ${o.filename} (sample, first 256 bytes) ---`);
-      lines.push(o.sample ?? "(empty)");
-      lines.push(`--- end ${o.filename} ---`);
-    }
-  }
-  lines.push(`assistantTextJoined=${result.assistantTextJoined.slice(0, 1000)}`);
-  return lines.join("\n");
-}
-
-function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly [string, string, string]): void {
-  const dump = (): string => dumpCase(result);
-
-  // Lifecycle: succeeded, framed RUN_STARTED … terminal, terminal reason
-  // "complete", runtimeExitCode 0-or-absent. Managed session turns park with
-  // CUSTOM aex.session.* rather than emitting RUN_FINISHED.
-  if (result.runStatus !== "succeeded") {
-    throw new Error(`expected runStatus "succeeded" but got "${result.runStatus}"\n\n${dump()}`);
-  }
-  expect(["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"]).toContain(result.terminalKind);
-  expect(result.eventKinds).toContain("RUN_STARTED");
-  if (result.terminalKind === "RUN_FINISHED") {
-    expect(result.eventKinds).toContain("RUN_FINISHED");
-    expect(result.eventKinds.indexOf("RUN_STARTED")).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
-  } else {
-    expect(result.eventKinds).toContain("CUSTOM");
-  }
-  const terminal = result.terminalData ?? {};
-  if (terminal["reason"] !== "complete") {
-    throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dump()}`);
-  }
-  const exitCode = terminal["runtimeExitCode"];
-  if (exitCode !== undefined && exitCode !== 0) {
-    throw new Error(`runtimeExitCode=${exitCode}\n\n${dump()}`);
-  }
-
-  // Full event vocabulary: every type aex emits on success is
-  // present. Forced by the submission (text reply, ls + write tool
-  // calls, skill_loaded CUSTOM notifications).
-  for (const type of EXPECTED_SUCCESS_EVENT_TYPES) {
-    if (!result.eventTypeSet.includes(type)) {
-      throw new Error(`expected event type "${type}" was not observed\n\n${dump()}`);
-    }
-  }
-  // The agent actually used tools.
-  if (result.toolCallStartCount <= 0 || result.toolCallResultCount <= 0) {
-    throw new Error(
-      `expected tool-call events (start>0 && result>0) but got start=${result.toolCallStartCount} result=${result.toolCallResultCount}\n\n${dump()}`
-    );
-  }
-
-  // Every submitted skill materialized into the container.
-  if (result.skillLoadedNames.length < expectedSkillPrefixes.length) {
-    throw new Error(
-      `expected at least ${expectedSkillPrefixes.length} skill_loaded events, got ${result.skillLoadedNames.length}\n\n${dump()}`
-    );
-  }
-  for (const prefix of expectedSkillPrefixes) {
-    if (!result.skillLoadedNames.some((n) => n.startsWith(prefix))) {
-      throw new Error(`skill "${prefix}" produced no skill_loaded event\n\n${dump()}`);
-    }
-  }
-
-  // The agent produced a real reply.
-  expect(result.assistantTextEventCount).toBeGreaterThan(0);
-  expect(result.assistantTextJoined.length).toBeGreaterThan(0);
-
-  // system + AGENTS.md + prompt all reached the model via the recipe. The proof
-  // can surface in assistant text or in tool-call events, because the model may
-  // satisfy the acknowledgement by running a tool and returning its result.
-  if (result.channelProbeMisses.length > 0) {
-    const probeByChannel: Record<string, string> = {
-      system: result.probes.system,
-      agentsMd: result.probes.agentsMd,
-      prompt: result.probes.prompt
-    };
-    const missing = result.channelProbeMisses.map((channel) => `${channel}=${probeByChannel[channel] ?? "(unknown)"}`);
-    throw new Error(`channel probes did not round-trip in the event transcript: ${missing.join(", ")}\n\n${dump()}`);
-  }
-
-  // Outputs pipeline: every captured output downloads cleanly, and at
-  // least one agent-written file carries its REF-out token (the
-  // write → capture → object storage → download path works end-to-end). We require
-  // ≥1 (not all 3) so a single missed write doesn't flip a hard gate on
-  // model write-variance — the dump records exactly which were found.
-  for (const out of result.outputs) {
-    expect(out.sizeBytes).toBeGreaterThanOrEqual(0);
-    if (out.sample !== null) {
-      expect(out.sample.startsWith("(download error"), dump()).toBe(false);
-    }
-  }
-  if (result.outProbesFound.length < 1) {
-    throw new Error(
-      `no agent-written output file carried any expected REF-out token; outputs pipeline unverified\n\n${dump()}`
-    );
-  }
-
-  // No secret leakage anywhere in the SDK-visible payload.
-  expect(result.leakedDeepseekKey, dump()).toBe(false);
-}
-
 let install: InstallResult;
 
 beforeAll(async () => {
@@ -713,6 +563,9 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
           timeoutMs: 12 * 60_000
         },
         install.installDir
+      );
+      console.info(
+        `[user-tests] heavy-session runId=${result.runId} status=${result.runStatus} terminalKind=${result.terminalKind ?? "(none)"}`
       );
       assertManagedShape(result, [
         managedHeavySkillName("alpha", "deepseek"),

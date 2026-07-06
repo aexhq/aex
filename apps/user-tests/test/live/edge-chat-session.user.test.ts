@@ -84,7 +84,9 @@ function errInfo(e){
   return {
     name: e && e.name ? String(e.name) : null,
     message: String(e && e.message !== undefined ? e.message : e),
-    status: (e && typeof e.status === "number") ? e.status : null
+    status: (e && typeof e.status === "number") ? e.status : null,
+    apiCode: e && e.apiCode ? String(e.apiCode) : null,
+    requestId: e && e.requestId ? String(e.requestId) : null
   };
 }
 function dense(s){ return String(s == null ? "" : s).replace(/\\s+/g, "").toLowerCase(); }
@@ -481,7 +483,7 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
     while (Date.now() < deadline) {
       const rec = await client.sessions.get(session.id).catch(() => null);
       if (rec && timeline[timeline.length - 1] !== rec.status) timeline.push(rec.status);
-      if (rec && (rec.status === "idle" || rec.status === "suspended" || rec.status === "error")) { final = rec; break; }
+      if (rec && ["idle","suspended","error","failed","timed_out","cancelled","canceled"].includes(rec.status)) { final = rec; break; }
       await new Promise((r) => setTimeout(r, 2500));
     }
 
