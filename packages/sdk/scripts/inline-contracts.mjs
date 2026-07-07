@@ -13,7 +13,8 @@
 //      skipping sourcemap / tsbuildinfo files (point at source paths
 //      that are not in the tarball anyway).
 //   2. Rewrite every `from "@aexhq/contracts"` in the SDK's emitted
-//      dist/*.js and dist/*.d.ts to `from "./_contracts/index.js"`.
+//      dist/*.js and dist/*.d.ts to `from "./_contracts/index.js"`,
+//      and every supported contracts subpath to its inlined sibling.
 //      Files inside _contracts/ already use relative imports between
 //      siblings so no further rewriting is needed there.
 //   3. Sanity-check: no `@aexhq/contracts` string survives in the SDK's
@@ -30,7 +31,7 @@
 // rewritten files (the source string is gone after the first pass).
 
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -41,7 +42,7 @@ const sdkDistDir = resolve(sdkRoot, "dist");
 const inlinedDir = resolve(sdkDistDir, "_contracts");
 
 const CONTRACTS_IMPORT_SPECIFIER = "@aexhq/contracts";
-const REWRITE_TARGET = "./_contracts/index.js";
+const CONTRACTS_IMPORT_PREFIX = `${CONTRACTS_IMPORT_SPECIFIER}/`;
 
 async function fileExists(path) {
   try {
@@ -117,29 +118,60 @@ async function listSdkDistRoots() {
   return files;
 }
 
-const FROM_CONTRACTS = new RegExp(`from\\s+["']${CONTRACTS_IMPORT_SPECIFIER}["']`, "g");
-const IMPORT_BARE_CONTRACTS = new RegExp(`import\\s+["']${CONTRACTS_IMPORT_SPECIFIER}["']`, "g");
+async function rewriteTargetForSpecifier(specifier) {
+  if (specifier === CONTRACTS_IMPORT_SPECIFIER) return "./_contracts/index.js";
+  if (!specifier.startsWith(CONTRACTS_IMPORT_PREFIX)) return null;
+  const subpath = specifier.slice(CONTRACTS_IMPORT_PREFIX.length);
+  if (!/^[A-Za-z0-9._/-]+$/.test(subpath) || subpath.includes("..")) {
+    throw new Error(`inline-contracts: refusing unsupported contracts subpath ${specifier}`);
+  }
+  const target = resolve(inlinedDir, `${subpath}.js`);
+  const rel = relative(inlinedDir, target);
+  if (rel.startsWith("..") || rel.includes(`..${sep}`) || rel === "") {
+    throw new Error(`inline-contracts: contracts subpath escapes inlined dir: ${specifier}`);
+  }
+  if (!(await fileExists(target))) {
+    throw new Error(`inline-contracts: ${specifier} maps to missing inlined module ${relative(sdkDistDir, target)}`);
+  }
+  return `./_contracts/${subpath}.js`;
+}
+
+async function rewriteContractsSpecifier(match, quote, specifier) {
+  const target = await rewriteTargetForSpecifier(specifier);
+  if (target === null) return match;
+  return match.replace(`${quote}${specifier}${quote}`, `${quote}${target}${quote}`);
+}
+
+async function rewriteContractsSpecifiers(text) {
+  let out = "";
+  let cursor = 0;
+  const pattern = /\b(?:from|import)\s+(["'])(@aexhq\/contracts(?:\/[A-Za-z0-9._/-]+)?)\1/g;
+  for (const match of text.matchAll(pattern)) {
+    out += text.slice(cursor, match.index);
+    out += await rewriteContractsSpecifier(match[0], match[1], match[2]);
+    cursor = match.index + match[0].length;
+  }
+  return out + text.slice(cursor);
+}
 
 const rewritten = [];
 for (const file of await listSdkDistRoots()) {
   const before = await readFile(file, "utf8");
   if (!before.includes(CONTRACTS_IMPORT_SPECIFIER)) continue;
-  const after = before
-    .replace(FROM_CONTRACTS, `from "${REWRITE_TARGET}"`)
-    .replace(IMPORT_BARE_CONTRACTS, `import "${REWRITE_TARGET}"`);
+  const after = await rewriteContractsSpecifiers(before);
   if (after === before) continue;
   await writeFile(file, after, "utf8");
   rewritten.push(relative(sdkDistDir, file));
 }
 
-// 3. Sanity-check: no bare @aexhq/contracts specifier survived in the
+// 3. Sanity-check: no @aexhq/contracts specifier survived in the
 //    SDK dist root (sourcemaps may still reference it as a string but
 //    we removed those above).
 async function scanForLeaks() {
   const leaked = [];
   for (const file of await listSdkDistRoots()) {
     const contents = await readFile(file, "utf8");
-    if (contents.includes(`"${CONTRACTS_IMPORT_SPECIFIER}"`)) {
+    if (contents.match(/["']@aexhq\/contracts(?:\/[^"']*)?["']/)) {
       leaked.push(relative(sdkDistDir, file));
     }
   }

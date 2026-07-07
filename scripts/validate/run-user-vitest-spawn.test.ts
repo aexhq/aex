@@ -60,20 +60,24 @@ describe("run-user-vitest argv spawning", () => {
         `${JSON.stringify({ ComSpec: "C:\\Windows\\System32\\cmd.exe" })})`
     );
 
-    if (process.platform === "win32") {
-      expect(invocation.command).toBe("C:\\Windows\\System32\\cmd.exe");
-      expect(invocation.args).toEqual([
-        "/d",
-        "/s",
-        "/c",
-        `"\"${command}\" \"--testNamePattern\" \"${pattern}\""`
-      ]);
-      expect(invocation.options).toEqual({ shell: false, windowsVerbatimArguments: true });
-      return;
-    }
+    const expected =
+      process.platform === "win32"
+        ? {
+            command: "C:\\Windows\\System32\\cmd.exe",
+            args: [
+              "/d",
+              "/s",
+              "/c",
+              `"\"${command}\" \"--testNamePattern\" \"${pattern}\""`
+            ],
+            options: { shell: false, windowsVerbatimArguments: true }
+          }
+        : {
+            command,
+            args: ["--testNamePattern", pattern],
+            options: { shell: false }
+          };
 
-    expect(invocation.command).toBe(command);
-    expect(invocation.args).toEqual(["--testNamePattern", pattern]);
-    expect(invocation.options).toEqual({ shell: false });
+    expect(invocation).toEqual(expected);
   });
 });

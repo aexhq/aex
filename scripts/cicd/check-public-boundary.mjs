@@ -272,6 +272,7 @@ function checkSdkBunPack() {
 
   const secretOffenders = [];
   const surfaceOffenders = [];
+  const importOffenders = [];
   for (const file of files) {
     if (!isTextPackFile(file)) continue;
     const abs = resolve(pkgDir, file);
@@ -287,12 +288,24 @@ function checkSdkBunPack() {
     for (const { name, pattern } of packedSurfacePatterns()) {
       if (pattern.test(text)) surfaceOffenders.push(`${file} contains removed public surface term ${name}`);
     }
+    if (!file.startsWith(contractsPrefix)) {
+      for (const specifier of importSpecifiers(text)) {
+        if (specifier === baseline.contractsInline.sourcePackage || specifier.startsWith(`${baseline.contractsInline.sourcePackage}/`)) {
+          importOffenders.push(`${file} imports ${specifier}`);
+        }
+      }
+    }
   }
   if (secretOffenders.length > 0) {
     failures.push(`SDK packed file secret-shaped content:\n${secretOffenders.map((o) => `  ${o}`).join("\n")}`);
   }
   if (surfaceOffenders.length > 0) {
     failures.push(`SDK packed file public-surface leak(s):\n${surfaceOffenders.map((o) => `  ${o}`).join("\n")}`);
+  }
+  if (importOffenders.length > 0) {
+    failures.push(
+      `SDK packed file unresolved workspace import(s):\n${importOffenders.map((o) => `  ${o}`).join("\n")}`
+    );
   }
 }
 

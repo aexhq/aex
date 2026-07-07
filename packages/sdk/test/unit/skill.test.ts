@@ -223,41 +223,35 @@ describe("Skill — factory equivalence + fromUrl", () => {
   });
 
   it("stops reading a no-content-length URL body once the compressed cap is exceeded", async () => {
-    const originalCap = SKILL_BUNDLE_LIMITS.maxCompressedBytes;
-    let pulls = 0;
-    SKILL_BUNDLE_LIMITS.maxCompressedBytes = 8;
-    try {
-      const fetch = async () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            pull(controller) {
-              pulls += 1;
-              if (pulls <= 2) {
-                controller.enqueue(new Uint8Array(5));
-                return;
+    let reads = 0;
+    let cancelled = false;
+    const oversizedChunk = { byteLength: SKILL_BUNDLE_LIMITS.maxCompressedBytes + 1 } as Uint8Array;
+
+    const fetch = async () =>
+      ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body: {
+          getReader() {
+            return {
+              async read() {
+                reads += 1;
+                return { done: false, value: oversizedChunk };
+              },
+              async cancel() {
+                cancelled = true;
               }
-              return new Promise<void>(() => {});
-            }
-          }),
-          { status: 200 }
-        );
-      let guard: ReturnType<typeof setTimeout> | undefined;
-      const didNotStopAtCap = new Promise<never>((_resolve, reject) => {
-        guard = setTimeout(() => reject(new Error("body read did not stop at compressed cap")), 500);
-      });
-      try {
-        await expect(
-          Promise.race([
-            Skill.fromUrl("https://x/too-big.zip", { name: "too-big", fetch }),
-            didNotStopAtCap
-          ])
-        ).rejects.toThrow(/exceeding the 8-byte compressed cap/);
-      } finally {
-        if (guard) clearTimeout(guard);
-      }
-    } finally {
-      SKILL_BUNDLE_LIMITS.maxCompressedBytes = originalCap;
-    }
+            };
+          }
+        }
+      }) as Response;
+
+    await expect(Skill.fromUrl("https://x/too-big.zip", { name: "too-big", fetch })).rejects.toThrow(
+      new RegExp(`exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`)
+    );
+    expect(reads).toBe(1);
+    expect(cancelled).toBe(true);
   });
 });
 

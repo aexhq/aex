@@ -4,6 +4,15 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.6
+
+### Fixed
+
+- Published the current CLI unknown-flag validation so read commands reject
+  invalid flags before attempting network calls.
+- Fixed the generated SDK package so internal contract helpers are inlined into
+  the tarball instead of importing `@aexhq/contracts/internal` at runtime.
+
 ## 0.40.5
 
 ### Fixed
