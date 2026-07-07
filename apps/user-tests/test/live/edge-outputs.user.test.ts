@@ -70,6 +70,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 /** Small helpers injected into every child script. */
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
+  import { strFromU8, unzipSync } from "fflate";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
   const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
@@ -99,10 +100,24 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
       };
     }
   }
-  const zipProbe = (bytes) => ({
-    byteLength: bytes ? bytes.byteLength : 0,
-    magicOk: !!bytes && bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04
-  });
+  const zipProbe = (bytes) => {
+    const magicOk = !!bytes && bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+    const entries = magicOk ? unzipSync(bytes) : {};
+    const manifestBytes = entries["manifest.json"];
+    const manifest = manifestBytes ? JSON.parse(strFromU8(manifestBytes)) : null;
+    const errors = Array.isArray(manifest?.errors) ? manifest.errors : [];
+    return {
+      byteLength: bytes ? bytes.byteLength : 0,
+      magicOk,
+      hasManifest: !!manifest,
+      manifestErrors: errors.map((error) => ({
+        namespace: error.namespace ?? null,
+        id: error.id ?? null,
+        filename: error.filename ?? null,
+        message: String(error.message ?? "").slice(0, 300)
+      }))
+    };
+  };
   const dec = (bytes) => new TextDecoder().decode(bytes);
 `;
 
@@ -312,9 +327,11 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       for (const label of ["download_outputs_zip", "download_outputs_zip_timeout_option", "download_all_zip", "download_metadata_zip"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
-        const z = p.value as { byteLength: number; magicOk: boolean };
+        const z = p.value as { byteLength: number; magicOk: boolean; hasManifest: boolean; manifestErrors: unknown[] };
         expect(z.byteLength, `${label} empty${ctx}`).toBeGreaterThan(0);
         expect(z.magicOk, `${label} not a valid zip${ctx}`).toBe(true);
+        expect(z.hasManifest, `${label} missing manifest.json${ctx}`).toBe(true);
+        expect(z.manifestErrors, `${label} manifest recorded per-artifact download errors${ctx}`).toEqual([]);
       }
 
       // 8. Bad selectors error CLEANLY (a real error, not a hang/PROBE_TIMEOUT).
@@ -530,9 +547,11 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       for (const label of ["download_outputs_zip", "download_all_zip", "download_metadata_zip"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw on a no-output run: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
-        const z = p.value as { byteLength: number; magicOk: boolean };
+        const z = p.value as { byteLength: number; magicOk: boolean; hasManifest: boolean; manifestErrors: unknown[] };
         expect(z.byteLength, `${label} empty on no-output run${ctx}`).toBeGreaterThan(0);
         expect(z.magicOk, `${label} not a valid zip on no-output run${ctx}`).toBe(true);
+        expect(z.hasManifest, `${label} missing manifest.json on no-output run${ctx}`).toBe(true);
+        expect(z.manifestErrors, `${label} manifest recorded per-artifact download errors on no-output run${ctx}`).toEqual([]);
       }
     },
     10 * 60_000

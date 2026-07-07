@@ -34,7 +34,7 @@ function stalledFileResponse(): Response {
   );
 }
 
-function clientFor(handler: (url: string) => Response): Aex {
+function clientFor(handler: (url: string) => Response | Promise<Response>): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     return handler(url);
@@ -116,11 +116,33 @@ describe("aex.sessions.outputs(id).read", () => {
       throw new Error(`unexpected ${url}`);
     });
 
-    await expect(client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 })).rejects.toMatchObject({
+    const error = await rejectionOf(client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 }));
+    expect(error).toMatchObject({
       code: "NETWORK_ERROR",
       attempts: 2,
       causeCode: "ETIMEDOUT"
     });
+    expect((error as Error).message).toContain("phase=body-read");
+    expect(downloadCalls).toBe(2);
+  });
+
+  it("identifies download-open timeouts before a response body exists", async () => {
+    let downloadCalls = 0;
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) {
+        downloadCalls += 1;
+        return new Promise<Response>(() => {});
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const error = await rejectionOf(client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 }));
+    expect(error).toMatchObject({
+      code: "NETWORK_ERROR",
+      attempts: 2,
+      causeCode: "ETIMEDOUT"
+    });
+    expect((error as Error).message).toContain("phase=download-open");
     expect(downloadCalls).toBe(2);
   });
 
@@ -133,3 +155,12 @@ describe("aex.sessions.outputs(id).read", () => {
     expect(result.text).toBe("BETA\ngamma beta");
   });
 });
+
+async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected promise to reject");
+}

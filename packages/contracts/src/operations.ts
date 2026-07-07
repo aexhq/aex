@@ -698,7 +698,7 @@ async function downloadOutputResponse(http: HttpClient, path: string, timeoutMs:
     http.download(path, { signal: controller.signal }),
     timeoutMs,
     () => controller.abort(),
-    "output response"
+    "download-open"
   );
   return response;
 }
@@ -722,7 +722,7 @@ async function outputTransferWithRetry<T>(
     method: "GET",
     host: "",
     path,
-    cause: lastTimeout ?? new OutputTransferTimeoutError("output transfer", timeoutMs),
+    cause: lastTimeout ?? new OutputTransferTimeoutError("unknown", timeoutMs),
     attempts: OUTPUT_FILE_TRANSFER_ATTEMPTS,
     elapsedMs: Date.now() - startedMs
   });
@@ -738,12 +738,16 @@ function normalizeOutputTransferTimeoutMs(value: number | undefined): number {
   return Math.max(1, Math.floor(value));
 }
 
+type OutputTransferPhase = "download-open" | "body-read" | "unknown";
+
 class OutputTransferTimeoutError extends Error {
   readonly code = "ETIMEDOUT";
+  readonly phase: OutputTransferPhase;
 
-  constructor(label: string, timeoutMs: number) {
-    super(`${label} timed out after ${timeoutMs}ms`);
+  constructor(phase: OutputTransferPhase, timeoutMs: number) {
+    super(`output transfer phase=${phase} timed out after ${timeoutMs}ms`);
     this.name = "OutputTransferTimeoutError";
+    this.phase = phase;
   }
 }
 
@@ -751,14 +755,14 @@ async function withOutputTransferTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   abort: () => void,
-  label: string
+  phase: OutputTransferPhase
 ): Promise<T> {
   let timedOut = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
       timedOut = true;
-      reject(new OutputTransferTimeoutError(label, timeoutMs));
+      reject(new OutputTransferTimeoutError(phase, timeoutMs));
       queueMicrotask(() => {
         try {
           abort();
@@ -771,7 +775,7 @@ async function withOutputTransferTimeout<T>(
   try {
     return await Promise.race([promise, timeoutPromise]);
   } catch (err) {
-    if (timedOut && isAbortLikeError(err)) throw new OutputTransferTimeoutError(label, timeoutMs);
+    if (timedOut && isAbortLikeError(err)) throw new OutputTransferTimeoutError(phase, timeoutMs);
     throw err;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
@@ -790,7 +794,7 @@ async function readResponseBytes(response: Response, timeoutMs: number): Promise
       response.arrayBuffer(),
       timeoutMs,
       () => {},
-      "output body"
+      "body-read"
     );
     return new Uint8Array(buffer);
   }
@@ -805,7 +809,7 @@ async function readResponseBytes(response: Response, timeoutMs: number): Promise
         () => {
           void reader.cancel().catch(() => {});
         },
-        "output body"
+        "body-read"
       );
       if (done) break;
       if (value && value.byteLength > 0) chunks.push(value);
@@ -834,7 +838,7 @@ async function readCappedText(
   if (!body) {
     // No streaming body (some fetch polyfills) — buffer, then slice to the cap.
     const buf = new Uint8Array(
-      await withOutputTransferTimeout(response.arrayBuffer(), timeoutMs, () => {}, "output body")
+      await withOutputTransferTimeout(response.arrayBuffer(), timeoutMs, () => {}, "body-read")
     );
     const total = declared ?? buf.byteLength;
     return {
@@ -855,7 +859,7 @@ async function readCappedText(
         () => {
           void reader.cancel().catch(() => {});
         },
-        "output body"
+        "body-read"
       );
       if (done) break;
       if (value && value.byteLength > 0) {
@@ -871,7 +875,7 @@ async function readCappedText(
         () => {
           void reader.cancel().catch(() => {});
         },
-        "output body"
+        "body-read"
       );
       if (!next.done && next.value && next.value.byteLength > 0) sawMore = true;
     }
