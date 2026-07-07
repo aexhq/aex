@@ -46,4 +46,15 @@ describe("repository hygiene", () => {
 
     expect(dangling).toEqual([]);
   });
+
+  it("serializes docs generation with SDK dist rebuilds", () => {
+    const pkg = JSON.parse(read("apps/docs/package.json")) as {
+      readonly scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.generate).toBe(
+      "bun ../../scripts/with-generated-dist-lock.mjs bun run generate:unlocked"
+    );
+    expect(pkg.scripts?.["generate:unlocked"]).toBe("bun ../../scripts/docs/generate-all.mjs");
+  });
 });

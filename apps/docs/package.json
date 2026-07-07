@@ -15,7 +15,8 @@
     "react-dom": "19.2.6"
   },
   "scripts": {
-    "generate": "bun ../../scripts/docs/generate-all.mjs",
+    "generate": "bun ../../scripts/with-generated-dist-lock.mjs bun run generate:unlocked",
+    "generate:unlocked": "bun ../../scripts/docs/generate-all.mjs",
     "predev": "bun run generate",
     "dev": "next dev",
     "prebuild": "bun run generate",
