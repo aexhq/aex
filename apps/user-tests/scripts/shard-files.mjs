@@ -15,8 +15,8 @@
 //     matrix job can never silently pass with zero coverage.
 //
 // Usage:
-//   node scripts/shard-files.mjs --shard <i>/<N>      # newline-separated files for shard i
-//   node scripts/shard-files.mjs --summary <N>        # per-shard predicted seconds (all shards)
+//   node scripts/shard-files.mjs --shard <i>/<N> [--exclude-file <rel>]...
+//   node scripts/shard-files.mjs --summary <N> [--exclude-file <rel>]...
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -108,11 +108,44 @@ export function lptPartition(files, durations, shardCount) {
   return bins;
 }
 
+export function excludeFiles(files, excludedFiles) {
+  if (excludedFiles.length === 0) return files;
+  const available = new Set(files);
+  const missing = excludedFiles.filter((file) => !available.has(file));
+  if (missing.length > 0) {
+    throw new Error(`excluded file(s) are not collected: ${missing.join(", ")}`);
+  }
+  const excluded = new Set(excludedFiles);
+  return files.filter((file) => !excluded.has(file));
+}
+
+function parseArgs(argv) {
+  let mode;
+  let value;
+  const excludedFiles = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--shard" || arg === "--summary") {
+      if (mode !== undefined) throw new Error("choose only one of --shard or --summary");
+      mode = arg;
+      value = argv[++i];
+      if (value === undefined) throw new Error(`${arg} requires a value`);
+    } else if (arg === "--exclude-file") {
+      const file = argv[++i];
+      if (file === undefined || file === "") throw new Error("--exclude-file requires a relative test path");
+      excludedFiles.push(file);
+    } else {
+      throw new Error(`unknown argument: ${arg}`);
+    }
+  }
+  return { mode, value, excludedFiles };
+}
+
 function main(argv) {
-  const [flag, value] = argv;
+  const { mode, value, excludedFiles } = parseArgs(argv);
   const durations = loadDurations();
-  const files = collectTestFiles();
-  if (flag === "--shard") {
+  const files = excludeFiles(collectTestFiles(), excludedFiles);
+  if (mode === "--shard") {
     const match = /^([0-9]+)\/([0-9]+)$/.exec(value ?? "");
     if (!match) throw new Error(`--shard expects <i>/<N>, got: ${value}`);
     const index = Number(match[1]);
@@ -122,7 +155,7 @@ function main(argv) {
     process.stdout.write(bins[index - 1].files.join("\n") + "\n");
     return;
   }
-  if (flag === "--summary") {
+  if (mode === "--summary") {
     const count = Number(value);
     const bins = lptPartition(files, durations, count);
     for (const [i, bin] of bins.entries()) {
@@ -130,7 +163,7 @@ function main(argv) {
     }
     return;
   }
-  throw new Error("usage: shard-files.mjs --shard <i>/<N> | --summary <N>");
+  throw new Error("usage: shard-files.mjs --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]...");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

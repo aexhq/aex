@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { collectTestFiles, loadDurations, lptPartition } from "../../apps/user-tests/scripts/shard-files.mjs";
+import { collectTestFiles, excludeFiles, loadDurations, lptPartition } from "../../apps/user-tests/scripts/shard-files.mjs";
 import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -70,6 +70,25 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(() => lptPartition(["a.ts", "b.ts"], durations, 3)).toThrow(/empty/);
     expect(() => lptPartition([], durations, 1)).toThrow(/no test files/);
     expect(() => lptPartition(["a.ts"], durations, 0)).toThrow(/invalid shard count/);
+  });
+
+  it("applies environment-specific file exclusions before partitioning", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const filtered = excludeFiles(files, ["test/live/live-default-base-url.test.ts"]);
+    const durations = loadDurations();
+
+    expect(files).toContain("test/live/live-default-base-url.test.ts");
+    expect(filtered).not.toContain("test/live/live-default-base-url.test.ts");
+    expect(filtered.length).toBe(files.length - 1);
+
+    const bins = lptPartition(filtered, durations, 48);
+    expect(bins).toHaveLength(48);
+    for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
+    expect(bins.flatMap((bin) => bin.files)).not.toContain("test/live/live-default-base-url.test.ts");
+  });
+
+  it("fails loudly when asked to exclude a non-collected file", () => {
+    expect(() => excludeFiles(["a.ts"], ["missing.ts"])).toThrow(/excluded file/);
   });
 
   it("keeps the checked-in durations file keyed to real, collectable test files", () => {

@@ -143,7 +143,7 @@ jobs:
           echo "live-user-tests /api/whoami preflight passed (status=${status}, requestId=${request_id:-unknown}, maxConcurrentRuns=${max_concurrent_runs})."
 
   live-user-tests:
-    name: Live user tests shard ${{ matrix.shard }}/11
+    name: Live user tests shard ${{ matrix.shard }}/48
     needs:
       - prepare-artifact
       - live-user-tests-preflight
@@ -152,13 +152,13 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      # Full 11-way fan-out (no max-parallel cap): platform's identical
+      # Full 48-way fan-out (no max-parallel cap): platform's matching
       # sdk_user_tests job already runs these same shards concurrently against
       # the same plane, and the preflight above asserts the workspace's
-      # maxConcurrentRuns >= 50, so 11 shards × AEX_USER_TEST_MAX_WORKERS=1 = 11
-      # concurrent runs stay well within budget. Wall-clock ≈ the longest shard.
+      # maxConcurrentRuns >= 50, so 48 shards x AEX_USER_TEST_MAX_WORKERS=1 = 48
+      # concurrent runs stay within budget. Wall-clock is the longest shard.
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -213,7 +213,7 @@ jobs:
           # collected test files by recorded duration (shard-durations.json)
           # and fails loudly if a shard would be empty — unlike vitest
           # --shard, which splits by file count and can collect zero tests.
-          FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/11)"
+          FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/48)"
           bun run test:user:files -- $FILES --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"
           node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"
 
