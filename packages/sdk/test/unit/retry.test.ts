@@ -232,6 +232,26 @@ describe("withRetry: transient handling", () => {
     expect(slept).toEqual([5000]);
   });
 
+  it("uses the budget-checked jitter sample as the exact slept delay", async () => {
+    const { fetch } = scriptedFetch([json({}, 429), json({ ok: true }, 200)]);
+    const slept: number[] = [];
+    const samples = [0.1, 0.9];
+    let clock = 0;
+    const wrapped = withRetry(fetch, { maxAttempts: 2, initialDelayMs: 100, maxDelayMs: 100, maxElapsedMs: 50 }, {
+      random: () => samples.shift() ?? 0,
+      now: () => clock,
+      sleep: async (ms: number) => {
+        slept.push(ms);
+        clock += ms;
+      }
+    });
+
+    const res = await wrapped("https://x", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(slept).toEqual([10]);
+    expect(samples).toEqual([0.9]);
+  });
+
   it("throws a structured AexRateLimitError once 429 retries are exhausted", async () => {
     const { fetch, calls } = scriptedFetch([
       json({ error: "limit" }, 429, { "retry-after": "2", "x-request-id": "req-header" })

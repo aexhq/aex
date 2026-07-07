@@ -26,6 +26,16 @@ import {
   isRateLimited,
   type FetchLike
 } from "@aexhq/contracts";
+import {
+  abortableSleep,
+  computeRetryBackoffDelayMs,
+  computeRetryDelayMs,
+  isRateLimitHttpStatus,
+  isRetryableHttpStatus,
+  parseRetryAfterMs as parseRetryAfterHeaderMs,
+  RATE_LIMIT_HTTP_STATUS,
+  RETRYABLE_HTTP_STATUS
+} from "@aexhq/contracts/internal";
 
 // The rate-limit guard is SINGLE-SOURCED in `@aexhq/contracts` (Wave 0 moved it
 // there), so the wire→exception factory (`apiErrorFromResponse`) and this
@@ -37,14 +47,14 @@ export { isRateLimited };
  * carry an idempotency key, so re-issuing them is safe. Everything not in this
  * set (400/401/403/404/409/422/…) is a definitive client error and fails fast.
  */
-export const RETRYABLE_STATUS: readonly number[] = [429, 500, 502, 503, 504, 529];
+export const RETRYABLE_STATUS: readonly number[] = RETRYABLE_HTTP_STATUS;
 
 /**
  * The subset of {@link RETRYABLE_STATUS} the platform / upstream provider uses to
  * say "slow down": 429 rate-limit, 503 unavailable, 529 overloaded. When retries
  * for one of these run out, the wrapper raises an {@link AexRateLimitError}.
  */
-export const RATE_LIMIT_STATUS: readonly number[] = [429, 503, 529];
+export const RATE_LIMIT_STATUS: readonly number[] = RATE_LIMIT_HTTP_STATUS;
 
 /**
  * Tunes the built-in retry loop. All fields are optional; omit the whole
@@ -97,11 +107,11 @@ export function resolveRetryConfig(options: RetryOptions | undefined): ResolvedR
 }
 
 export function isRetryableStatus(status: number): boolean {
-  return RETRYABLE_STATUS.includes(status);
+  return isRetryableHttpStatus(status);
 }
 
 export function isRateLimitStatus(status: number): boolean {
-  return RATE_LIMIT_STATUS.includes(status);
+  return isRateLimitHttpStatus(status);
 }
 
 /**
@@ -110,17 +120,7 @@ export function isRateLimitStatus(status: number): boolean {
  * handled. Returns `undefined` for a missing or unparseable value.
  */
 export function parseRetryAfterMs(headerValue: string | null | undefined, now: number = Date.now()): number | undefined {
-  if (headerValue === null || headerValue === undefined) return undefined;
-  const trimmed = headerValue.trim();
-  if (trimmed.length === 0) return undefined;
-  if (/^\d+$/.test(trimmed)) {
-    return Number(trimmed) * 1000;
-  }
-  const dateMs = Date.parse(trimmed);
-  if (!Number.isNaN(dateMs)) {
-    return Math.max(0, dateMs - now);
-  }
-  return undefined;
+  return parseRetryAfterHeaderMs(headerValue, now);
 }
 
 /**
@@ -134,9 +134,7 @@ export function computeBackoffDelayMs(
   attemptNumber: number,
   random: () => number
 ): number {
-  const exponent = Math.max(0, attemptNumber - 1);
-  const nominal = Math.min(config.maxDelayMs, config.initialDelayMs * 2 ** exponent);
-  return Math.round(random() * nominal);
+  return computeRetryBackoffDelayMs(config, attemptNumber, random);
 }
 
 /** Combine the server's `Retry-After` (a floor) with our jittered backoff. */
@@ -146,8 +144,7 @@ function nextDelayMs(
   random: () => number,
   retryAfterMs: number | undefined
 ): number {
-  const backoff = computeBackoffDelayMs(config, attemptNumber, random);
-  return retryAfterMs === undefined ? backoff : Math.max(retryAfterMs, backoff);
+  return computeRetryDelayMs(config, attemptNumber, random, retryAfterMs);
 }
 
 /**
@@ -355,22 +352,7 @@ export interface RetryDeps {
   readonly now?: () => number;
 }
 
-const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
-  new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(signal?.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError"));
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
+const defaultSleep = abortableSleep;
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
@@ -436,7 +418,7 @@ export function withRetry(
         if (attempt >= config.maxAttempts) {
           throw networkRetryExhausted(err, input, init, attempt, now() - startedAt);
         }
-        const delay = computeBackoffDelayMs(config, attempt, random);
+        const delay = nextDelayMs(config, attempt, random, undefined);
         if (now() - startedAt + delay > config.maxElapsedMs) {
           throw networkRetryExhausted(err, input, init, attempt, now() - startedAt);
         }
@@ -451,13 +433,12 @@ export function withRetry(
       }
 
       const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"), now());
-      const willRetry =
-        attempt < config.maxAttempts &&
-        now() - startedAt + nextDelayMs(config, attempt, random, retryAfterMs) <= config.maxElapsedMs;
+      const delay = attempt < config.maxAttempts ? nextDelayMs(config, attempt, random, retryAfterMs) : undefined;
+      const willRetry = delay !== undefined && now() - startedAt + delay <= config.maxElapsedMs;
 
       if (willRetry) {
         await drain(response);
-        await sleep(nextDelayMs(config, attempt, random, retryAfterMs), signal ?? undefined);
+        await sleep(delay, signal ?? undefined);
         continue;
       }
 

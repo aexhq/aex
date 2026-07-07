@@ -7,6 +7,7 @@ import { extractErrorCode, redactUrl } from "./sdk-errors.js";
 // `@aexhq/contracts/internal` subpath.
 export * from "./models.js";
 export * from "./post-hook.js";
+export * from "./retry-core.js";
 export * from "./submission.js";
 
 /**

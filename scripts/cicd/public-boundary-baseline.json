@@ -78,6 +78,7 @@
       "./runtime-manifest.js",
       "./runtime-security-profile.js",
       "./runtime-types.js",
+      "./retry-core.js",
       "./sdk-errors.js",
       "./sdk-secrets.js",
       "./side-effect-audit.js",
