@@ -40,6 +40,17 @@ function downloadClient(): Aex {
   return new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch });
 }
 
+function stalledFileResponse(): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull() {
+        // Simulates a body stream that opened but stopped delivering bytes.
+      }
+    }),
+    { status: 200 }
+  );
+}
+
 describe("SessionHandle download { to } options", () => {
   it("download writes the zip to disk and still returns the bytes", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
@@ -66,5 +77,29 @@ describe("SessionHandle download { to } options", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("downloadOutput retries a stalled selected-output body once", async () => {
+    let downloadCalls = 0;
+    const fetch: typeof globalThis.fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (url.endsWith("/api/sessions/run-1")) {
+        return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/api/runs/run-1/outputs/abc/download")) {
+        downloadCalls += 1;
+        return downloadCalls === 1 ? stalledFileResponse() : new Response("hello", { status: 200 });
+      }
+      throw new Error(`No fake responder for ${url}`);
+    };
+    const session = await new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }).openSession("run-1");
+
+    const bytes = await session.outputs().download({ id: "abc" }, { timeoutMs: 1 });
+
+    expect(new TextDecoder().decode(bytes)).toBe("hello");
+    expect(downloadCalls).toBe(2);
   });
 });

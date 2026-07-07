@@ -22,6 +22,18 @@ function streamedFileResponse(bytes: Uint8Array): Response {
   );
 }
 
+function stalledFileResponse(): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull() {
+        // Intentionally never enqueue: simulates a response body that connected
+        // but then stopped delivering bytes.
+      }
+    }),
+    { status: 200 }
+  );
+}
+
 function clientFor(handler: (url: string) => Response): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -76,6 +88,40 @@ describe("aex.sessions.outputs(id).read", () => {
     const result = await client.sessions.outputs("run-1").read({ path: "report.md" });
     expect(result.output.id).toBe("out-9");
     expect(result.text).toContain("# Report");
+  });
+
+  it("retries an idempotent read once when the output body stalls", async () => {
+    let downloadCalls = 0;
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) {
+        downloadCalls += 1;
+        return downloadCalls === 1 ? stalledFileResponse() : fileResponse("after retry");
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const result = await client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 });
+
+    expect(result.text).toBe("after retry");
+    expect(downloadCalls).toBe(2);
+  });
+
+  it("surfaces a structured network timeout after both read attempts stall", async () => {
+    let downloadCalls = 0;
+    const client = clientFor((url) => {
+      if (url.endsWith("/outputs/out-1/download")) {
+        downloadCalls += 1;
+        return stalledFileResponse();
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    await expect(client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 })).rejects.toMatchObject({
+      code: "NETWORK_ERROR",
+      attempts: 2,
+      causeCode: "ETIMEDOUT"
+    });
+    expect(downloadCalls).toBe(2);
   });
 
   it("grep keeps only matching lines of the capped text", async () => {

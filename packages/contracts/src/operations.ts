@@ -4,7 +4,7 @@ import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
 import type { RunUnit } from "./run-unit.js";
 import { normalizeRunUnit } from "./run-unit.js";
-import { RunConfigValidationError, RunStateError } from "./sdk-errors.js";
+import { AexNetworkError, RunConfigValidationError, RunStateError } from "./sdk-errors.js";
 import {
   assertRunRecordArchivePublicSafeV1,
   buildRunRecordDownloadManifestV1,
@@ -619,21 +619,29 @@ export function resolveOutputFileSelector(
 export async function downloadOutput(
   http: HttpClient,
   runId: string,
-  selector: OutputFileSelector
+  selector: OutputFileSelector,
+  options?: OutputTransferOptions
 ): Promise<OutputFileDownload> {
   const output = isPathSelector(selector)
     ? resolveOutputFileSelector(await listOutputs(http, runId), selector, runId)
     : resolveOutputFileSelector([], selector, runId);
-  const { response } = await http.download(
-    `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`
-  );
-  return { output, bytes: new Uint8Array(await response.arrayBuffer()) };
+  const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
+  const path = `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`;
+  return { output, bytes: await downloadOutputBytesWithRetry(http, path, timeoutMs) };
 }
 
 /** Byte ceiling for {@link readOutputText} — a hard cap even if a caller asks for more. */
 export const READ_OUTPUT_TEXT_MAX_BYTES = 10_000_000;
 /** Default `maxBytes` for {@link readOutputText} — a chat-sized preview. */
 export const READ_OUTPUT_TEXT_DEFAULT_BYTES = 50_000;
+/** Default per-attempt timeout while fetching or reading one output body. */
+export const OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS = 15_000;
+/** Idempotent output GETs retry once on a transfer timeout. */
+export const OUTPUT_FILE_TRANSFER_ATTEMPTS = 2;
+
+export interface OutputTransferOptions {
+  readonly timeoutMs?: number;
+}
 
 /**
  * Read ONE output file as byte-capped, decoded UTF-8 text. Built for handing a run
@@ -654,12 +662,158 @@ export async function readOutputText(
   const output = isPathSelector(selector)
     ? resolveOutputFileSelector(await listOutputs(http, runId), selector, runId)
     : resolveOutputFileSelector([], selector, runId);
-  const { response } = await http.download(
-    `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`
-  );
-  const capped = await readCappedText(response, maxBytes);
+  const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
+  const path = `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`;
+  const capped = await readOutputTextWithRetry(http, path, maxBytes, timeoutMs);
   const text = options?.grep === undefined ? capped.text : grepLines(capped.text, options.grep);
   return { output, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
+}
+
+async function downloadOutputBytesWithRetry(
+  http: HttpClient,
+  path: string,
+  timeoutMs: number
+): Promise<Uint8Array> {
+  return outputTransferWithRetry(path, timeoutMs, async () => {
+    const response = await downloadOutputResponse(http, path, timeoutMs);
+    return readResponseBytes(response, timeoutMs);
+  });
+}
+
+async function readOutputTextWithRetry(
+  http: HttpClient,
+  path: string,
+  maxBytes: number,
+  timeoutMs: number
+): Promise<{ readonly text: string; readonly truncated: boolean; readonly totalBytes: number }> {
+  return outputTransferWithRetry(path, timeoutMs, async () => {
+    const response = await downloadOutputResponse(http, path, timeoutMs);
+    return readCappedText(response, maxBytes, timeoutMs);
+  });
+}
+
+async function downloadOutputResponse(http: HttpClient, path: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const { response } = await withOutputTransferTimeout(
+    http.download(path, { signal: controller.signal }),
+    timeoutMs,
+    () => controller.abort(),
+    "output response"
+  );
+  return response;
+}
+
+async function outputTransferWithRetry<T>(
+  path: string,
+  timeoutMs: number,
+  action: () => Promise<T>
+): Promise<T> {
+  const startedMs = Date.now();
+  let lastTimeout: OutputTransferTimeoutError | undefined;
+  for (let attempt = 1; attempt <= OUTPUT_FILE_TRANSFER_ATTEMPTS; attempt += 1) {
+    try {
+      return await action();
+    } catch (err) {
+      if (!(err instanceof OutputTransferTimeoutError)) throw err;
+      lastTimeout = err;
+    }
+  }
+  throw new AexNetworkError({
+    method: "GET",
+    host: "",
+    path,
+    cause: lastTimeout ?? new OutputTransferTimeoutError("output transfer", timeoutMs),
+    attempts: OUTPUT_FILE_TRANSFER_ATTEMPTS,
+    elapsedMs: Date.now() - startedMs
+  });
+}
+
+function normalizeOutputTransferTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RunConfigValidationError("outputs.download: timeoutMs must be a positive finite number", {
+      timeoutMs: value
+    });
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+class OutputTransferTimeoutError extends Error {
+  readonly code = "ETIMEDOUT";
+
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = "OutputTransferTimeoutError";
+  }
+}
+
+async function withOutputTransferTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  abort: () => void,
+  label: string
+): Promise<T> {
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(new OutputTransferTimeoutError(label, timeoutMs));
+      queueMicrotask(() => {
+        try {
+          abort();
+        } catch {
+          // Best effort: the timeout itself is the user-facing failure.
+        }
+      });
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } catch (err) {
+    if (timedOut && isAbortLikeError(err)) throw new OutputTransferTimeoutError(label, timeoutMs);
+    throw err;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+function isAbortLikeError(err: unknown): boolean {
+  const name = (err as { readonly name?: unknown } | null | undefined)?.name;
+  return name === "AbortError";
+}
+
+async function readResponseBytes(response: Response, timeoutMs: number): Promise<Uint8Array> {
+  const body = response.body;
+  if (!body) {
+    const buffer = await withOutputTransferTimeout(
+      response.arrayBuffer(),
+      timeoutMs,
+      () => {},
+      "output body"
+    );
+    return new Uint8Array(buffer);
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      const { done, value } = await withOutputTransferTimeout(
+        reader.read(),
+        timeoutMs,
+        () => {
+          void reader.cancel().catch(() => {});
+        },
+        "output body"
+      );
+      if (done) break;
+      if (value && value.byteLength > 0) chunks.push(value);
+    }
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+  return concatBytes(chunks);
 }
 
 /**
@@ -670,7 +824,8 @@ export async function readOutputText(
  */
 async function readCappedText(
   response: Response,
-  maxBytes: number
+  maxBytes: number,
+  timeoutMs: number
 ): Promise<{ readonly text: string; readonly truncated: boolean; readonly totalBytes: number }> {
   const declaredRaw = response.headers.get("content-length");
   const declared = declaredRaw !== null && /^\d+$/.test(declaredRaw) ? Number(declaredRaw) : undefined;
@@ -678,7 +833,9 @@ async function readCappedText(
   const body = response.body;
   if (!body) {
     // No streaming body (some fetch polyfills) — buffer, then slice to the cap.
-    const buf = new Uint8Array(await response.arrayBuffer());
+    const buf = new Uint8Array(
+      await withOutputTransferTimeout(response.arrayBuffer(), timeoutMs, () => {}, "output body")
+    );
     const total = declared ?? buf.byteLength;
     return {
       text: decoder.decode(buf.subarray(0, maxBytes)),
@@ -692,7 +849,14 @@ async function readCappedText(
   let sawMore = false;
   try {
     while (read < maxBytes) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withOutputTransferTimeout(
+        reader.read(),
+        timeoutMs,
+        () => {
+          void reader.cancel().catch(() => {});
+        },
+        "output body"
+      );
       if (done) break;
       if (value && value.byteLength > 0) {
         read += value.byteLength;
@@ -701,11 +865,18 @@ async function readCappedText(
     }
     if (read >= maxBytes) {
       // We hit the cap; peek once more to learn whether bytes remain, then stop.
-      const next = await reader.read();
+      const next = await withOutputTransferTimeout(
+        reader.read(),
+        timeoutMs,
+        () => {
+          void reader.cancel().catch(() => {});
+        },
+        "output body"
+      );
       if (!next.done && next.value && next.value.byteLength > 0) sawMore = true;
     }
   } finally {
-    await reader.cancel().catch(() => {});
+    void reader.cancel().catch(() => {});
   }
   const merged = concatBytes(chunks).subarray(0, maxBytes);
   const truncated = declared !== undefined ? declared > maxBytes : read > maxBytes || sawMore;
@@ -918,7 +1089,8 @@ async function collectArtifactBytes(
   runId: string,
   items: readonly Output[],
   zipPrefix: string,
-  namespace: ArtifactNamespace
+  namespace: ArtifactNamespace,
+  timeoutMs = OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS
 ): Promise<CollectedArtifacts> {
   const entries: ZipEntry[] = [];
   const captured: RunRecordArtifactSummaryV1[] = [];
@@ -927,12 +1099,10 @@ async function collectArtifactBytes(
   for (const item of items) {
     const rel = item.filename ?? item.id;
     try {
-      const { response } = await http.download(
-        `/api/runs/${encodeURIComponent(runId)}/${namespace}/${encodeURIComponent(item.id)}/download`
-      );
+      const path = `/api/runs/${encodeURIComponent(runId)}/${namespace}/${encodeURIComponent(item.id)}/download`;
       entries.push({
         path: `${zipPrefix}${rel}`,
-        bytes: new Uint8Array(await response.arrayBuffer()),
+        bytes: await downloadOutputBytesWithRetry(http, path, timeoutMs),
         ...(item.contentType !== undefined ? { contentType: item.contentType } : {}),
         customerContent: true
       });
@@ -1191,9 +1361,14 @@ export async function download(http: HttpClient, runId: string): Promise<Uint8Ar
  * layout: `<rel>` per file plus a `manifest.json`
  * (`{ runId, namespace: "outputs", outputs[], errors[] }`).
  */
-export async function downloadOutputs(http: HttpClient, runId: string): Promise<Uint8Array> {
+export async function downloadOutputs(
+  http: HttpClient,
+  runId: string,
+  options?: OutputTransferOptions
+): Promise<Uint8Array> {
   const outputs = await listOutputs(http, runId);
-  const { entries, captured, errors } = await collectArtifactBytes(http, runId, outputs, "", "outputs");
+  const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
+  const { entries, captured, errors } = await collectArtifactBytes(http, runId, outputs, "", "outputs", timeoutMs);
   return zipEntries([
     ...entries,
     jsonEntry("manifest.json", { runId, namespace: "outputs", outputs: captured, errors })

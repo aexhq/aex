@@ -1310,10 +1310,11 @@ async function downloadSessionOutput(
 ): Promise<Uint8Array> {
   // One selector-resolution path: the contracts `downloadOutput` lists-if-path
   // then downloads, throwing with PUBLIC verb names — no duplicated resolver.
+  const transferOptions = options?.timeoutMs === undefined ? undefined : { timeoutMs: options.timeoutMs };
   const bytes =
     selector === undefined
-      ? await operations.downloadOutputs(http, id)
-      : (await operations.downloadOutput(http, id, selector)).bytes;
+      ? await operations.downloadOutputs(http, id, transferOptions)
+      : (await operations.downloadOutput(http, id, selector, transferOptions)).bytes;
   return writeOptionalFile(bytes, options?.to);
 }
 
@@ -1859,6 +1860,11 @@ export type OutputLinkSelector = string | OutputFileSelector | OutputQuery;
 
 export interface OutputDownloadOptions {
   readonly to?: string;
+  /**
+   * Per-attempt timeout for fetching and reading the selected output body.
+   * Defaults to 15_000ms; idempotent output downloads retry once on timeout.
+   */
+  readonly timeoutMs?: number;
 }
 
 /**

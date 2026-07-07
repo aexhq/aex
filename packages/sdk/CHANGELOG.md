@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.8
+
+### Fixed
+
+- Bounded output file body transfers and retried idempotent output reads and
+  downloads once when a response body stalls, surfacing a structured
+  `NETWORK_ERROR` instead of hanging until an outer test or caller timeout.
+
 ## 0.40.7
 
 ### Fixed

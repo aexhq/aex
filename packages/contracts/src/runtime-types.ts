@@ -533,6 +533,12 @@ export interface ReadOutputTextOptions {
    */
   readonly maxBytes?: number;
   /**
+   * Per-attempt timeout for fetching and reading the selected output body.
+   * Defaults to 15_000ms; idempotent output reads retry once on timeout before
+   * surfacing a structured NETWORK_ERROR.
+   */
+  readonly timeoutMs?: number;
+  /**
    * When set, return only the lines of the (capped) text matching this pattern.
    * A string is matched literally (case-insensitive); a RegExp is used as given.
    */

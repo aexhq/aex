@@ -75,14 +75,15 @@ const CHILD_PRELUDE = `
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
 
+  const PROBE_TIMEOUT_MS = 45000;
   // Wrap a probe so ONE failing/hanging verb never aborts the whole script:
-  // record a structured {label, ok, value|error}. A hard 20s race turns a hang
-  // into a reported error rather than a silent whole-child timeout.
+  // record a structured {label, ok, value|error}. The SDK has its own bounded
+  // output transfer timeout/retry; this outer race catches anything below it.
   async function probe(label, fn) {
     try {
       const value = await Promise.race([
         Promise.resolve().then(fn),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("PROBE_TIMEOUT_20S")), 20000))
+        new Promise((_, rej) => setTimeout(() => rej(new Error("PROBE_TIMEOUT_45S")), PROBE_TIMEOUT_MS))
       ]);
       return { label, ok: true, value };
     } catch (e) {
@@ -189,6 +190,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probe("read_exact", async () => await outs.read({ path: exactPath })));
         probes.push(await probe("read_output_obj", async () => report ? await outs.read(report) : null));
         probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
+        probes.push(await probe("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: 5000 }) : null));
         probes.push(await probe("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
         probes.push(await probe("find_extension", async () => (await outs.find({ extension: "txt" })).length));
         probes.push(await probe("find_type_text", async () => (await outs.find({ type: "text" })).length));
@@ -219,8 +221,14 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           const bytes = await outs.download(report);
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
+        probes.push(await probe("download_selector_timeout_option", async () => {
+          if (!report) return null;
+          const bytes = await outs.download(report, { timeoutMs: 5000 });
+          return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
+        }));
         // archive verbs.
         probes.push(await probe("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
+        probes.push(await probe("download_outputs_zip_timeout_option", async () => zipProbe(await outs.download(undefined, { timeoutMs: 5000 }))));
         probes.push(await probe("download_all_zip", async () => zipProbe(await session.download())));
         probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
@@ -257,7 +265,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         .toEqual(new Set(listMeta.map((o) => o.id)));
 
       // 4. read via every selector shape returns the exact content.
-      for (const label of ["read_suffix", "read_exact", "read_output_obj", "read_by_id"]) {
+      for (const label of ["read_suffix", "read_exact", "read_output_obj", "read_by_id", "read_timeout_option"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
         const v = p.value as { text: string; truncated: boolean; totalBytes: number; output?: { sizeBytes?: number } };
@@ -296,7 +304,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       const dv = dsel.value as { len: number; text: string };
       expect(dv.text, `download(selector) content mismatch${ctx}`).toBe(r.marker);
       expect(dv.len, `download(selector) len != sizeBytes${ctx}`).toBe(report!.sizeBytes);
-      for (const label of ["download_outputs_zip", "download_all_zip", "download_metadata_zip"]) {
+      const dselTimeout = byLabel(probes, "download_selector_timeout_option");
+      expect(dselTimeout.ok, `download(selector, timeoutMs) threw: ${JSON.stringify(dselTimeout.error)}${ctx}`).toBe(true);
+      const dtv = dselTimeout.value as { len: number; text: string };
+      expect(dtv.text, `download(selector, timeoutMs) content mismatch${ctx}`).toBe(r.marker);
+      expect(dtv.len, `download(selector, timeoutMs) len != sizeBytes${ctx}`).toBe(report!.sizeBytes);
+      for (const label of ["download_outputs_zip", "download_outputs_zip_timeout_option", "download_all_zip", "download_metadata_zip"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
         const z = p.value as { byteLength: number; magicOk: boolean };
@@ -400,10 +413,14 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
     async () => {
       const marker = "CAFE" + Math.random().toString(36).slice(2, 8).toUpperCase();
       // Filename with a non-ASCII char (é) AND a space.
+      const command =
+        "mkdir -p /workspace/outputs && printf '%s' '" + marker + "' > '/workspace/outputs/café menu.txt'";
       const prompt =
-        `Run EXACTLY this shell command, do not alter the filename in any way: ` +
-        "mkdir -p /workspace/outputs && printf '%s' '" + marker + "' > '/workspace/outputs/café menu.txt' ; " +
-        `then reply with the single word done.`;
+        `Use the shell tool once. The complete shell command is between the fences; do not add prose or tokens to it.\n` +
+        "```bash\n" +
+        command +
+        "\n```\n" +
+        `After the command succeeds, reply with exactly: done`;
       const body = `
         const runResult = await client.run({
           provider: PROVIDER,
