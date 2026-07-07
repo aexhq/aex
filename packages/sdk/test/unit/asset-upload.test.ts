@@ -12,6 +12,12 @@ import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/a
 import { AexApiError, AexNetworkError } from "../../src/index.js";
 
 const bytes = new TextEncoder().encode("hello skill bundle");
+const noDelayRetry = {
+  initialDelayMs: 0,
+  maxDelayMs: 0,
+  random: () => 0,
+  sleep: async () => undefined
+};
 // sha256("hello skill bundle") — precomputed so the client-side check passes.
 async function hashOf(b: Uint8Array): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", b);
@@ -178,7 +184,7 @@ describe("uploadAsset (direct-to-storage)", () => {
       .mockResolvedValueOnce({ ok: false, status: 500, text: async () => "InternalError" })
       .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "" });
 
-    const out = await uploadAsset({ http, bytes, hash, fetch });
+    const out = await uploadAsset({ http, bytes, hash, fetch, retry: noDelayRetry });
 
     expect(out.exists).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(3);
@@ -206,7 +212,7 @@ describe("uploadAsset (direct-to-storage)", () => {
 
     let thrown: unknown;
     try {
-      await uploadAsset({ http, bytes, hash, fetch });
+      await uploadAsset({ http, bytes, hash, fetch, retry: noDelayRetry });
     } catch (err) {
       thrown = err;
     }

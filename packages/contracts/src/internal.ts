@@ -1,4 +1,8 @@
-import { putDirectUploadWithRetry, type AssetFetch } from "./asset-upload-helper.js";
+import {
+  putDirectUploadWithRetry,
+  type AssetFetch,
+  type AssetUploadRetryOptions
+} from "./asset-upload-helper.js";
 
 // Workspace-internal entry point. Re-exports submission building blocks and
 // hosts small shared helpers so public packages can avoid hand-mirroring
@@ -11,14 +15,26 @@ export * from "./retry-core.js";
 export * from "./submission.js";
 export {
   DIRECT_UPLOAD_MAX_ATTEMPTS,
+  DIRECT_UPLOAD_INITIAL_DELAY_MS,
+  DIRECT_UPLOAD_MAX_DELAY_MS,
+  DIRECT_UPLOAD_MAX_ELAPSED_MS,
+  directUploadRetryDelayMs,
   directUploadNetworkError,
   directUploadResponseError,
   isRetryableUploadError,
   isRetryableUploadStatus,
   putDirectUploadWithRetry,
+  resolveAssetUploadRetryConfig,
+  withinDirectUploadRetryBudget,
   sanitizeUploadText
 } from "./asset-upload-helper.js";
-export type { AssetFetch, AssetUploadResponse } from "./asset-upload-helper.js";
+export type {
+  AssetFetch,
+  AssetUploadResponse,
+  AssetUploadRetryOptions,
+  AssetUploadSleep,
+  ResolvedAssetUploadRetryConfig
+} from "./asset-upload-helper.js";
 
 /**
  * Subset of `HttpClient` needed by the asset uploader. Defined structurally so
@@ -39,6 +55,7 @@ export interface UploadAssetArgs {
   readonly hash: string;
   readonly contentType?: string;
   readonly fetch?: AssetFetch;
+  readonly retry?: AssetUploadRetryOptions;
 }
 
 export interface UploadedAsset {
@@ -96,11 +113,16 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     "content-type": args.contentType ?? "application/zip",
     ...(presign.requiredHeaders ?? {})
   };
-  await putDirectUploadWithRetry(doFetch, presign.uploadUrl, {
-    method: "PUT",
-    headers: putHeaders,
-    body: args.bytes
-  });
+  await putDirectUploadWithRetry(
+    doFetch,
+    presign.uploadUrl,
+    {
+      method: "PUT",
+      headers: putHeaders,
+      body: args.bytes
+    },
+    args.retry
+  );
 
   const fin = await args.http.request<{
     ok: boolean;

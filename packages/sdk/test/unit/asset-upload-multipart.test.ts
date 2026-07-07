@@ -8,6 +8,13 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { uploadAssetMultipart, type AssetsHttpClient, type AssetFetch, type ZipStreamDriver } from "../../src/asset-upload.js";
 
+const noDelayRetry = {
+  initialDelayMs: 0,
+  maxDelayMs: 0,
+  random: () => 0,
+  sleep: async () => undefined
+};
+
 /** A driver emitting a deterministic payload of `size` bytes in `chunk`-sized pushes. */
 function driverOf(size: number, chunk = 7000): { drive: ZipStreamDriver; payload: Uint8Array; hashHex: string } {
   const payload = new Uint8Array(size);
@@ -159,7 +166,7 @@ describe("uploadAssetMultipart — dedup + retry + abort", () => {
     const attempts = new Map<number, number>();
     const fetch = makeFetch({ bodies, attempts, fault: (pn, attempt) => (pn === 2 && attempt === 1 ? { status: 503 } : null) });
     const { drive, payload } = driverOf(3 * 1024); // 3 parts
-    await uploadAssetMultipart({ http, drive, fetch, partSize: 1024, partConcurrency: 1 });
+    await uploadAssetMultipart({ http, drive, fetch, partSize: 1024, partConcurrency: 1, retry: noDelayRetry });
     expect(attempts.get(2)).toBe(2); // part 2 retried once
     expect(attempts.get(1)).toBe(1);
     expect([...reassemble(bodies)]).toEqual([...payload]);
