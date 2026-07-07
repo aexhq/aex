@@ -209,20 +209,34 @@ describe("operations.downloadOutput", () => {
 });
 
 describe("operations.downloadEvents", () => {
-  it("zips the indexed event archive as events.jsonl", async () => {
+  it("zips the indexed event archive with an events namespace manifest", async () => {
     const entries = unzipSync(await operations.downloadEvents(runWithOutput(), "run-1"));
-    expect(Object.keys(entries)).toEqual(["events.jsonl"]);
+    expect(Object.keys(entries).sort()).toEqual(["events.jsonl", "manifest.json"]);
     expect(decode(entries["events.jsonl"]!).split("\n").map((l) => JSON.parse(l))).toEqual([
       { seq: 0, kind: "a" },
       { seq: 1, kind: "b" }
     ]);
+    const manifest = JSON.parse(decode(entries["manifest.json"]!));
+    expect(manifest).toMatchObject({
+      runId: "run-1",
+      namespace: "events",
+      files: [{ path: "events.jsonl", role: "typed_events", status: "present", recordCount: 2 }],
+      errors: []
+    });
   });
 });
 
 describe("operations.downloadMetadata", () => {
-  it("zips the run record as run.json", async () => {
+  it("zips the run record with a metadata namespace manifest", async () => {
     const entries = unzipSync(await operations.downloadMetadata(runWithOutput(), "run-1"));
-    expect(Object.keys(entries)).toEqual(["run.json"]);
+    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "run.json"]);
     expect(JSON.parse(decode(entries["run.json"]!)).id).toBe("run-1");
+    const manifest = JSON.parse(decode(entries["manifest.json"]!));
+    expect(manifest).toMatchObject({
+      runId: "run-1",
+      namespace: "metadata",
+      files: [{ path: "run.json", role: "run_metadata", status: "present" }],
+      errors: []
+    });
   });
 });

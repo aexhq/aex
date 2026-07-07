@@ -79,15 +79,42 @@ const CHILD_PRELUDE = `
     status: e && typeof e.status === "number" ? e.status : null,
     code: e && typeof e.code === "string" ? e.code : null
   });
+  const RAW_CONNECT_TRANSIENT_CODES = new Set([
+    "ConnectionRefused",
+    "ECONNREFUSED",
+    "EAI_AGAIN",
+    "ETIMEDOUT",
+    "UND_ERR_CONNECT_TIMEOUT"
+  ]);
+  const rawErrorCode = (e) => {
+    if (e && typeof e.code === "string") return e.code;
+    if (e && e.cause && typeof e.cause.code === "string") return e.cause.code;
+    const message = e && e.message ? String(e.message) : String(e);
+    const match = /\\b(ConnectionRefused|E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)\\b/.exec(message);
+    return match ? match[1] : null;
+  };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const raw = async (method, path, body) => {
-    const res = await fetch(process.env.AEX_API_URL + path, {
-      method,
-      headers: { authorization: "Bearer " + process.env.AEX_API_KEY, "content-type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined
-    });
-    let parsed = null;
-    try { parsed = await res.json(); } catch {}
-    return { status: res.status, body: parsed };
+    const url = process.env.AEX_API_URL + path;
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { authorization: "Bearer " + process.env.AEX_API_KEY, "content-type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        let parsed = null;
+        try { parsed = await res.json(); } catch {}
+        return { status: res.status, body: parsed };
+      } catch (e) {
+        const code = rawErrorCode(e);
+        if (attempt === maxAttempts || !RAW_CONNECT_TRANSIENT_CODES.has(code)) throw e;
+        console.error("raw API fetch transient " + code + " for " + method + " " + path + " attempt " + attempt + "/" + maxAttempts);
+        await sleep(250 * attempt);
+      }
+    }
+    throw new Error("unreachable raw retry loop");
   };
 `;
 

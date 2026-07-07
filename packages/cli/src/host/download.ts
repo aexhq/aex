@@ -9,7 +9,7 @@
  * (deliverables), plus `manifest.json`.
  *
  * `--only outputs|events|metadata` downloads just that one
- * namespace (files at the zip root).
+ * namespace (files plus `manifest.json` at the zip root).
  *
  * `--out` resolves relative to the host CWD; if omitted the file is
  * written to `aex-session-<session-id>[-<namespace>].zip` in the current

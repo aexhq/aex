@@ -103,12 +103,14 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const zipProbe = (bytes) => {
     const magicOk = !!bytes && bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
     const entries = magicOk ? unzipSync(bytes) : {};
+    const entryNames = Object.keys(entries).sort();
     const manifestBytes = entries["manifest.json"];
     const manifest = manifestBytes ? JSON.parse(strFromU8(manifestBytes)) : null;
     const errors = Array.isArray(manifest?.errors) ? manifest.errors : [];
     return {
       byteLength: bytes ? bytes.byteLength : 0,
       magicOk,
+      entries: entryNames,
       hasManifest: !!manifest,
       manifestErrors: errors.map((error) => ({
         namespace: error.namespace ?? null,

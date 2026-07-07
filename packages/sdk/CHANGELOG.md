@@ -4,6 +4,20 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.10
+
+### Changed
+
+- Added `manifest.json` to the `session.events().download()` and
+  `session.downloadMetadata()` namespace archives so every public archive zip is
+  self-describing.
+
+### Fixed
+
+- Retried transient connection-establishment failures in raw live user-test
+  probes without retrying received HTTP responses, keeping high-fanout release
+  gates from failing on a single no-response connect timeout.
+
 ## 0.40.9
 
 ### Fixed

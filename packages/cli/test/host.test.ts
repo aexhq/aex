@@ -582,7 +582,7 @@ describe("aex download", () => {
     expect(cap.calls).toHaveLength(0);
   });
 
-  it("--only metadata reads only the run record", async () => {
+  it("--only metadata reads the run record and manifest", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
       argv: ["download", "run-1", "--only", "metadata", ...COMMON],
@@ -594,7 +594,13 @@ describe("aex download", () => {
     expect(cap.calls).toHaveLength(1);
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/runs/run-1");
     const entries = unzipSync(writes.get([...writes.keys()][0]!)!);
-    expect(Object.keys(entries)).toEqual(["run.json"]);
+    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "run.json"]);
+    expect(JSON.parse(new TextDecoder().decode(entries["manifest.json"]!))).toMatchObject({
+      runId: "run-1",
+      namespace: "metadata",
+      files: [{ path: "run.json", role: "run_metadata", status: "present" }],
+      errors: []
+    });
   });
 
   it("rejects an unknown --only namespace with a usage error", async () => {

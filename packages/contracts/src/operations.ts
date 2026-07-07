@@ -1059,8 +1059,8 @@ export async function getWebhookSigningSecret(http: HttpClient): Promise<Webhook
  * with a matching `download*` verb:
  *
  *   - `outputs`  — the run's real deliverables (`runs/<id>/outputs/`).
- *   - `events`   — typed event-channel records (`events.jsonl`).
- *   - `metadata` — the run record (`run.json`).
+ *   - `events`   — typed event-channel records (`events.jsonl`) plus its namespace manifest.
+ *   - `metadata` — the run record (`run.json`) plus its namespace manifest.
  *
  * `download` bundles all three as top-level folders; `downloadOutputs` /
  * `downloadEvents` / `downloadMetadata` each bundle one.
@@ -1381,20 +1381,36 @@ export async function downloadOutputs(
 
 /**
  * Download only the event archive (the `events` namespace). Always includes
- * typed `events.jsonl`.
+ * typed `events.jsonl` plus `manifest.json`.
  */
 export async function downloadEvents(http: HttpClient, runId: string): Promise<Uint8Array> {
   const events = await listRunEvents(http, runId);
-  return zipEntries([jsonlEntry("events.jsonl", events)]);
+  return zipEntries([
+    jsonlEntry("events.jsonl", events),
+    jsonEntry("manifest.json", {
+      runId,
+      namespace: "events",
+      files: [{ path: "events.jsonl", role: "typed_events", status: "present", recordCount: events.length }],
+      errors: []
+    })
+  ]);
 }
 
 /**
  * Download only the run record (the `metadata` namespace) as a zip
- * containing `run.json`.
+ * containing `run.json` plus `manifest.json`.
  */
 export async function downloadMetadata(http: HttpClient, runId: string): Promise<Uint8Array> {
   const run = await getRun(http, runId);
-  return zipEntries([jsonEntry("run.json", run)]);
+  return zipEntries([
+    jsonEntry("run.json", run),
+    jsonEntry("manifest.json", {
+      runId,
+      namespace: "metadata",
+      files: [{ path: "run.json", role: "run_metadata", status: "present" }],
+      errors: []
+    })
+  ]);
 }
 
 function zipEntries(entries: readonly ZipEntry[]): Uint8Array {

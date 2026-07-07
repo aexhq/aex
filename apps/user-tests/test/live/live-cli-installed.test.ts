@@ -212,7 +212,7 @@ describe("live hosted API via installed CLI", () => {
       });
       expect(existsSync(archivePath)).toBe(true);
       const entries = unzipSync(new Uint8Array(readFileSync(archivePath)));
-      expect(Object.keys(entries).sort()).toEqual(["events.jsonl"]);
+      expect(Object.keys(entries).sort()).toEqual(["events.jsonl", "manifest.json"]);
       const archivedEvents = parseJsonLines(new TextDecoder().decode(entries["events.jsonl"]!));
       expect(hasCleanTerminal(archivedEvents)).toBe(true);
       return;

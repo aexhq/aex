@@ -38,8 +38,8 @@ A session's downloadable content is organised into three logical namespaces, eac
 | Namespace | What it holds | Verb | CLI |
 | --- | --- | --- | --- |
 | `outputs` | The session's real deliverables. | `session.outputs().download()` | `download <id> --only outputs` |
-| `events` | Typed event-channel records (`events.jsonl`). | `session.events().download()` | `download <id> --only events` |
-| `metadata` | The session record (`run.json`). | `session.downloadMetadata()` | `download <id> --only metadata` |
+| `events` | Typed event-channel records (`events.jsonl`) plus a namespace manifest. | `session.events().download()` | `download <id> --only events` |
+| `metadata` | The session record (`run.json`) plus a namespace manifest. | `session.downloadMetadata()` | `download <id> --only metadata` |
 
 Platform diagnostics are stored outside the public archive under `runs/<runId>/internal/logs/` for internal/admin access only. They are not exposed by the SDK download helpers or the public CLI.
 
@@ -66,7 +66,7 @@ manifest.json         # RunRecordManifestV1
 | `outputs[]` | `{ id, filename, sizeBytes?, contentType? }` — one row per file successfully written under `outputs/`. |
 | `errors[]` | `{ namespace, id, filename, message }` — per-artifact byte fetches that failed during assembly. Best-effort: a failure records an entry here and is skipped from the tree rather than aborting the whole zip. |
 
-The single-namespace verbs return the same per-file bytes at the zip root (e.g. `session.outputs().download()` -> `report.txt` + a `manifest.json`; `session.events().download()` -> `events.jsonl`).
+The single-namespace verbs return the same per-file bytes at the zip root (e.g. `session.outputs().download()` -> `report.txt` + `manifest.json`; `session.events().download()` -> `events.jsonl` + `manifest.json`; `session.downloadMetadata()` -> `run.json` + `manifest.json`).
 
 ## Downloading one output
 
@@ -253,7 +253,7 @@ Capture notes:
 
 ## Runs without explicit `outputs.allowedDirs`
 
-Metadata still gets the full treatment. aex captures every regular file the run created or modified outside mandatory platform excludes. A run that produces no files still returns a zip with `run.json`, `events.jsonl`, and an empty `outputs/` directory (manifest `outputs: []`).
+Metadata still gets the full treatment. aex captures every regular file the run created or modified outside mandatory platform excludes. A run that produces no files still returns a whole-session zip with `metadata/run.json`, `events/events.jsonl`, and `manifest.json` (manifest `outputs: []`).
 
 ## Mid-session download semantics
 
