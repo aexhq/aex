@@ -19,15 +19,20 @@
  *   3. POST /assets/finalize → confirms the object exists (HEAD only).
  *
  */
-
-import { extractErrorCode, redactUrl } from "@aexhq/contracts";
-import type { AssetFetch, AssetsHttpClient, UploadedAsset } from "@aexhq/contracts/internal";
+import {
+  DIRECT_UPLOAD_MAX_ATTEMPTS,
+  directUploadNetworkError,
+  directUploadResponseError,
+  isRetryableUploadError,
+  isRetryableUploadStatus,
+  type AssetFetch,
+  type AssetsHttpClient,
+  type UploadedAsset
+} from "@aexhq/contracts/internal";
 import type { ByteSink } from "./canonical-zip.js";
 
 export { uploadAsset } from "@aexhq/contracts/internal";
 export type { AssetFetch, AssetsHttpClient, UploadAssetArgs, UploadedAsset } from "@aexhq/contracts/internal";
-
-const DIRECT_UPLOAD_MAX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -144,6 +149,9 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
     let url = urlByPart.get(partNumber);
     if (!url) url = await refreshPartUrl(partNumber);
     const etag = await putPartWithRetry(doFetch, url, bytes, args.contentType, () => refreshPartUrl(partNumber));
+    if (!etag) {
+      throw new Error(`uploadAssetMultipart: part ${partNumber} PUT succeeded without an ETag header`);
+    }
     parts.push({ partNumber, etag });
   };
 
@@ -302,70 +310,4 @@ async function putPartWithRetry(
     throw directUploadResponseError(currentUrl, response.status, detail, attempt);
   }
   throw directUploadResponseError(currentUrl, 0, "exhausted retries", DIRECT_UPLOAD_MAX_ATTEMPTS);
-}
-
-function isRetryableUploadStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
-}
-
-function isRetryableUploadError(err: unknown): boolean {
-  if (isNamedError(err, "AbortError")) return false;
-  return true;
-}
-
-function directUploadNetworkError(uploadUrl: string, err: unknown, attempts: number): Error {
-  const safeUrl = redactUrl(uploadUrl);
-  const code = extractErrorCode(err);
-  const detail = sanitizeUploadText(errorMessage(err)).slice(0, 500);
-  return new Error(
-    `uploadAsset: direct upload PUT failed for ${safeUrl} after ${attemptsLabel(attempts)}` +
-      (code ? ` (${code})` : "") +
-      (detail ? `: ${detail}` : "")
-  );
-}
-
-function directUploadResponseError(uploadUrl: string, status: number, detail: string, attempts: number): Error {
-  const safeUrl = redactUrl(uploadUrl);
-  const safeDetail = sanitizeUploadText(detail).slice(0, 500);
-  return new Error(
-    `uploadAsset: direct upload PUT failed for ${safeUrl} with status ${status}` +
-      (attempts > 1 ? ` after ${attemptsLabel(attempts)}` : "") +
-      (safeDetail ? `: ${safeDetail}` : "")
-  );
-}
-
-function attemptsLabel(attempts: number): string {
-  return attempts === 1 ? "1 attempt" : `${attempts} attempts`;
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message || err.name;
-  if (typeof err === "string") return err;
-  return String(err);
-}
-
-function isNamedError(err: unknown, name: string): boolean {
-  return stringProperty(err, "name") === name;
-}
-
-function stringProperty(value: unknown, key: string): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const prop = (value as Record<string, unknown>)[key];
-  return typeof prop === "string" && prop.length > 0 ? prop : undefined;
-}
-
-function sanitizeUploadText(text: string): string {
-  return text
-    .replace(/https?:\/\/[^\s<>"'`]+/g, (raw) => redactUrlPreservingTrailingPunctuation(raw))
-    .replace(
-      /\b(?:X-Amz-(?:Algorithm|Credential|Date|Expires|Security-Token|Signature|SignedHeaders)|AWSAccessKeyId|Signature|Credential|Security-Token|AccessKeyId|SecretAccessKey|SessionToken)=([^&\s<>"'`]+)/gi,
-      "[redacted]"
-    )
-    .replace(/\bAKIA[0-9A-Z]{8,}\b/g, "[redacted]");
-}
-
-function redactUrlPreservingTrailingPunctuation(raw: string): string {
-  const trailing = raw.match(/[),.;:!?]+$/)?.[0] ?? "";
-  const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
-  return `${redactUrl(candidate)}${trailing}`;
 }
