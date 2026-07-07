@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.7
+
+### Fixed
+
+- Routed self-describing dev-plane API keys to the canonical
+  `https://dev-api.aex.dev` endpoint when `baseUrl` is omitted, and kept the
+  wrong-plane guard symmetric across dev and prd canonical hosts.
+
 ## 0.40.6
 
 ### Fixed
