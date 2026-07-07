@@ -279,7 +279,7 @@ jobs:
           name: live-user-tests-shard-${{ matrix.shard }}-redacted-log
           path: .suite-diagnostics/redacted
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       # The expensive, optional suites (per-provider matrix and heavy
       # full-feature session) are NOT run here — they live in the

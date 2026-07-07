@@ -28,7 +28,7 @@ describe("live user-test release gate", () => {
     expect(workflow).toContain('mkdir -p "$(dirname "$RAW_LOG")"');
     expect(workflow).toContain('mkdir -p "$(dirname "$REDACTED_LOG")"');
     expect(workflow).toContain("path: .suite-diagnostics/redacted");
-    expect(workflow).toContain("retention-days: 14");
+    expect(workflow).toContain("retention-days: 7");
     expect(workflow).toContain('["AEX_API_KEY", "DEEPSEEK_API_KEY"]');
     expect(workflow).toContain("text.split(value).join(`[REDACTED:${name}]`)");
     expect(workflow).not.toContain("path: .suite-diagnostics/raw");

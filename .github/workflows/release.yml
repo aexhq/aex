@@ -411,4 +411,4 @@ jobs:
           name: release-smoke-redacted-log
           path: .suite-diagnostics/redacted
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
