@@ -15,7 +15,7 @@ describe("live user-test release gate", () => {
   it("uploads only a redacted live-test log artifact", () => {
     const workflow = read(".github/workflows/live-user-tests.yml");
 
-    expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/48");
+    expect(workflow).toContain("name: Live user tests shard ${{ matrix.shard }}/50");
     expect(workflow).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12");
     expect(workflow).toContain("RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log");
     expect(workflow).toContain("REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json");
@@ -89,9 +89,9 @@ describe("live user-test release gate", () => {
 
     expect(strategy).toBeGreaterThan(-1);
     expect(matrix).toBeGreaterThan(strategy);
-    expect(live).toContain("name: Live user tests shard ${{ matrix.shard }}/48");
+    expect(live).toContain("name: Live user tests shard ${{ matrix.shard }}/50");
     expect(live).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12");
-    expect(live).toContain("46, 47, 48]");
+    expect(live).toContain("48, 49, 50]");
     expect(live).toContain("maxConcurrentRuns >= 50");
     expect(live).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
     expect(live).not.toContain("max-parallel: 1");
@@ -117,7 +117,7 @@ describe("live user-test release gate", () => {
     const workflow = read(".github/workflows/live-user-tests.yml");
 
     expect(workflow).toContain(
-      'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/48)"'
+      'FILES="$(node apps/user-tests/scripts/shard-files.mjs --shard ${{ matrix.shard }}/50)"'
     );
     expect(workflow).toContain("REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/");
     expect(workflow).not.toContain("REPORT: .suite-diagnostics/raw/");
@@ -214,7 +214,7 @@ describe("live user-test release gate", () => {
 
   it("keeps the release gate on the DeepSeek gate provider only (no Anthropic billing dependency)", () => {
     // 2026-07-03: the shared BYOK ANTHROPIC_API_KEY ran out of credit and
-    // killed 6/11 gating live shards. Gating tests exercise PLATFORM behavior,
+    // killed multiple gating live shards. Gating tests exercise PLATFORM behavior,
     // so they all run on the funded DeepSeek gate provider (SSoT fixture);
     // Anthropic coverage lives in the non-gating providers suite.
     for (const path of [".github/workflows/live-user-tests.yml", ".github/workflows/release.yml"]) {

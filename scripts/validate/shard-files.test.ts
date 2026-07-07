@@ -22,19 +22,19 @@ describe("shard-files duration-balanced bin packing", () => {
     const files = collectTestFiles(userTestsRoot);
     const durations = loadDurations();
 
-    expect(files.length).toBeGreaterThanOrEqual(11);
+    expect(files.length).toBeGreaterThanOrEqual(50);
     // Excluded explicit gates never leak into the default sweep.
     expect(files).not.toContain("test/live/edge-admission-gates.user.test.ts");
     expect(files).not.toContain("test/live/live-sdk-heavy-session.test.ts");
     expect(files).not.toContain("test/live/live-api-fuzz.test.ts");
     expect(files).not.toContain("test/live/live-sdk-tool-capability-fuzz.test.ts");
     expect(files.some((f) => f.startsWith("test/live/providers/"))).toBe(false);
-    // Provider-specific suites (Anthropic BYOK, doubao, …) are non-gating:
-    // they live under test/live/providers/ and never enter the 11 shards.
+    // Provider-specific suites (Anthropic BYOK, doubao, ...) are non-gating:
+    // they live under test/live/providers/ and never enter the 50 shards.
     expect(files).not.toContain("test/live/live-sdk-anthropic-managed.test.ts");
     expect(files).not.toContain("test/live/providers/live-sdk-anthropic-managed.test.ts");
 
-    const bins = lptPartition(files, durations, 11);
+    const bins = lptPartition(files, durations, 50);
     const all = bins.flatMap((bin) => bin.files);
     // Completeness + disjointness: every collected file in exactly one shard.
     expect([...all].sort()).toEqual([...files].sort());
@@ -42,7 +42,7 @@ describe("shard-files duration-balanced bin packing", () => {
     for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
 
     // Deterministic: same inputs => identical partition.
-    const again = lptPartition(files, durations, 11);
+    const again = lptPartition(files, durations, 50);
     expect(again.map((b) => b.files)).toEqual(bins.map((b) => b.files));
   });
 
@@ -81,8 +81,8 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(filtered).not.toContain("test/live/live-default-base-url.test.ts");
     expect(filtered.length).toBe(files.length - 1);
 
-    const bins = lptPartition(filtered, durations, 48);
-    expect(bins).toHaveLength(48);
+    const bins = lptPartition(filtered, durations, 50);
+    expect(bins).toHaveLength(50);
     for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
     expect(bins.flatMap((bin) => bin.files)).not.toContain("test/live/live-default-base-url.test.ts");
   });

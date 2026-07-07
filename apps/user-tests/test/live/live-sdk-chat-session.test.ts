@@ -175,7 +175,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         ).done();
         const secondIdle = await pollSession(session.id, CLEAN_SESSION_STATUSES);
         const idleEvents = await listEventsSettled(session, CLEAN_SESSION_TERMINAL_NAMES);
-        // The suite runs 11 shards against one shared workspace and the list is
+        // The suite runs many shards against one shared workspace and the list is
         // newest-first, so with a "since" lower bound this session is the LAST
         // item in the range — concurrent shards' newer sessions fill page one.
         // Follow nextCursor pages; "since" keeps the page space small and finite.

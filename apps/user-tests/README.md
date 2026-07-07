@@ -47,9 +47,9 @@ bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 Offline runs use `vitest.offline.config.ts` and default to 4 parallel test files.
 Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
 uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
-SDK artifact, splits the live sweep into 11 shards, and runs 1 test file at a
-time per shard so the hosted-plane pressure stays bounded while the shard tail
-gets shorter.
+SDK artifact, splits the live sweep into 50 non-empty shards, and runs 1 test
+file at a time per shard so the hosted-plane pressure stays bounded while the
+shard tail gets shorter.
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
 `test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
@@ -80,7 +80,7 @@ offline scenarios before publish and the live scenarios against the exact
 published version after npm visibility. The offline path needs no provider key.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
-the configured hosted API. The workflow runs the default sweep as 11 shards.
+the configured hosted API. The workflow runs the default sweep as 50 shards.
 They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
