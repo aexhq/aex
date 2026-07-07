@@ -1,6 +1,6 @@
 /**
  * LIVE edge-case sweep of the SDK's HTTP / validation / auth error surface against
- * the DEV plane, from a real customer's installed `@aexhq/sdk`. NO runs are ever
+ * the target live plane, from a real customer's installed `@aexhq/sdk`. NO runs are ever
  * dispatched (no provider key needed, zero Fargate cost) — every case is a
  * validation reject, an auth reject, a 404, or a bounded network failure.
  *
@@ -16,7 +16,7 @@
  *   5. Unreachable baseUrl → the retry loop gives up with a bounded network error
  *      (does NOT hang), surfacing a real Error rather than swallowing it.
  *
- * Required env (exported by the shared live runner from .env.dev):
+ * Required env (exported by the shared live runner for the target plane):
  *   AEX_API_URL, AEX_API_KEY
  */
 import { writeFileSync } from "node:fs";
@@ -65,7 +65,7 @@ interface EdgeErr {
   readonly message?: string | null;
 }
 
-describe("live dev plane — SDK error/validation/auth edge cases", () => {
+describe("live plane — SDK error/validation/auth edge cases", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -82,7 +82,7 @@ describe("live dev plane — SDK error/validation/auth edge cases", () => {
       const bogusSession = "sess_edge_missing_" + Math.random().toString(36).slice(2, 10);
       const script = String.raw`
 import {
-  Aex, AexApiError, AexError, RunConfigValidationError
+  Aex, AexApiError, AexError, RunConfigValidationError, parseApiKey
 } from "@aexhq/sdk";
 
 const apiUrl = process.env.AEX_API_URL;
@@ -102,7 +102,11 @@ function crc32b36(input) {
   return ((crc ^ 0xffffffff) >>> 0).toString(36);
 }
 function craftWellFormedToken() {
-  const body = ["aex", "dev", "euw2", "wwwwwwww", "feedfacecafebeef"].join("_");
+  const parsedApiKey = parseApiKey(apiKey);
+  const activePlane = parsedApiKey && (parsedApiKey.plane === "dev" || parsedApiKey.plane === "prd")
+    ? parsedApiKey.plane
+    : apiUrl.replace(/\/+$/, "") === "https://api.aex.dev" ? "prd" : "dev";
+  const body = ["aex", activePlane, "euw2", "wwwwwwww", "feedfacecafebeef"].join("_");
   return body + "_" + crc32b36(body);
 }
 
@@ -275,7 +279,7 @@ process.exit(0);
       const result = JSON.parse(child.stdout.trim()) as EdgeResult;
 
       // (1a) Malformed token: clean, typed auth-class reject — no hang, no leak.
-      //      NOTE: dev returns 400 `malformed_token` here (not 401). The SDK
+      //      NOTE: the hosted API returns 400 `malformed_token` here (not 401). The SDK
       //      surfaces it correctly as a typed AexApiError; the 400-vs-401 status
       //      is flagged as a contract finding (contradicts live-api-fuzz's
       //      "garbage bearer ⇒ 401/403" invariant). We assert the actual

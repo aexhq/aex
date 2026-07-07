@@ -2505,30 +2505,22 @@ export class Aex {
  * Resolve the effective `baseUrl` from a self-describing API key (ZERO-network):
  *   - key omitted-of-shape (opaque/legacy): return the caller's `baseUrl`
  *     unchanged (HttpClient falls back to the prd default).
- *   - `baseUrl` omitted: DERIVE it from the key's plane; a plane with no default
- *     host (dev) requires an explicit `baseUrl` — throw with that guidance.
+ *   - `baseUrl` omitted: DERIVE it from the key's plane.
  *   - `baseUrl` supplied but its plane DISAGREES with the key's plane: throw
- *     {@link CredentialValidationError} BEFORE any request (the exact `dev key
- *     against the prd default → bare token_invalid` trap).
+ *     {@link CredentialValidationError} BEFORE any request.
  */
 function resolveBaseUrlForKey(apiKey: string, baseUrl: string | undefined): string | undefined {
   const parsed = parseApiKey(apiKey);
   if (parsed === null) return baseUrl;
   const planeUrl = PLANE_BASE_URLS[parsed.plane];
   if (baseUrl === undefined) {
-    if (planeUrl === null) {
-      throw new CredentialValidationError(
-        `Aex: this API key is for the ${parsed.plane} plane, which has no default host — pass baseUrl explicitly.`,
-        { plane: parsed.plane }
-      );
-    }
     return planeUrl;
   }
-  // The only client-detectable mismatch: a non-prd key pointed at the canonical
-  // prd host (dev has no canonical host to compare a prd key against).
-  if (baseUrl === PLANE_BASE_URLS.prd && parsed.plane !== "prd") {
+  const canonicalPlane =
+    baseUrl === PLANE_BASE_URLS.dev ? "dev" : baseUrl === PLANE_BASE_URLS.prd ? "prd" : undefined;
+  if (canonicalPlane !== undefined && canonicalPlane !== parsed.plane) {
     throw new CredentialValidationError(
-      `Aex: this API key is for the ${parsed.plane} plane but baseUrl targets the prd plane (${PLANE_BASE_URLS.prd}) — ` +
+      `Aex: this API key is for the ${parsed.plane} plane but baseUrl targets the ${canonicalPlane} plane (${baseUrl}) — ` +
         `pass the ${parsed.plane} plane baseUrl, or omit baseUrl to auto-route.`,
       { plane: parsed.plane, baseUrl }
     );

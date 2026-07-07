@@ -3,34 +3,35 @@
  * (WS11 plane routing / P5, T15 tool entry).
  *
  * The findings this pins closed:
- *   WS11  a self-describing key whose plane can't be routed fails fast in the
- *         CONSTRUCTOR, ZERO-network, with a typed error — not a bare 401 after a
- *         full round-trip.
+ *   WS11  self-describing keys route to their canonical plane host with
+ *         ZERO-network constructor behavior and no late wrong-plane 401.
  *   T15   a tool authored with a non-JS entry is rejected at AUTHORING time — the
  *         validation happens where the developer is, not mid-run in the container.
  */
 import { describe, expect, it } from "vitest";
-import { Aex, CredentialValidationError, Tool } from "../../../src/index.js";
+import { Aex, Tool } from "../../../src/index.js";
 import { formatApiKey } from "@aexhq/contracts";
 
 const WORKSPACE_ID = "0f9a1b2c-3d4e-5f60-7182-93a4b5c6d7e8";
 const SECRET = "deadbeefcafef00dfeedface00c0ffee11223344556677";
 
 describe("blackbox: plane routing guard (constructor, zero-network)", () => {
-  it("throws a typed CredentialValidationError for a dev key with no baseUrl — before any fetch", () => {
+  it("routes a dev key with no baseUrl to dev-api.aex.dev", async () => {
     const devKey = formatApiKey({ plane: "dev", region: "eu-west-2", workspaceId: WORKSPACE_ID, secret: SECRET });
-    let fetchCalls = 0;
+    const seen: string[] = [];
     const spyFetch: typeof globalThis.fetch = async (...args) => {
-      fetchCalls += 1;
-      void args;
-      return new Response("{}");
+      const [input] = args;
+      seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      return new Response(JSON.stringify({ workspaceId: WORKSPACE_ID }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
     };
 
-    // The dev plane has no default host, so a self-describing dev key REQUIRES an
-    // explicit baseUrl — the constructor fails fast rather than deferring to a 401.
-    expect(() => new Aex({ apiKey: devKey, fetch: spyFetch })).toThrow(CredentialValidationError);
-    // Zero-network: nothing was requested during the failed construction.
-    expect(fetchCalls).toBe(0);
+    const client = new Aex({ apiKey: devKey, fetch: spyFetch });
+    expect(seen).toEqual([]);
+    await client.whoami();
+    expect(seen[0]).toContain("https://dev-api.aex.dev");
   });
 
   it("constructs fine when the same dev key is paired with an explicit baseUrl", () => {

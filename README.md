@@ -27,8 +27,9 @@ set both credentials before running the examples: `AEX_API_KEY` authenticates
 to aex, and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
 
 An API key is self-describing: the SDK constructor reads its plane from the key
-and routes to it (a `prd` key → `https://api.aex.dev`) with zero network. A key
-whose plane disagrees with an explicit `baseUrl` throws a
+and routes to it (`prd` → `https://api.aex.dev`, `dev` →
+`https://dev-api.aex.dev`) with zero network. A key whose plane disagrees with
+an explicit `baseUrl` throws a
 `CredentialValidationError` up front, instead of a late `token_invalid`.
 
 ```bash

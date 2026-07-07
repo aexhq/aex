@@ -1,8 +1,8 @@
 /**
  * WS11 — the constructor parses the self-describing API key and routes by plane
  * ZERO-network: a plane/baseUrl mismatch throws before any request; a prd key
- * with no baseUrl auto-derives `api.aex.dev`; a dev key (no default host) needs
- * an explicit baseUrl.
+ * with no baseUrl auto-derives `api.aex.dev`; a dev key with no baseUrl
+ * auto-derives `dev-api.aex.dev`.
  */
 import { describe, expect, it, vi } from "vitest";
 import { formatApiKey, PLANE_BASE_URLS } from "@aexhq/contracts";
@@ -20,6 +20,14 @@ describe("constructor plane guard (WS11)", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("throws on a prd key pointed at the dev host, making ZERO fetch calls", () => {
+    const fetch = vi.fn(async () => new Response("{}"));
+    expect(() => new Aex(prdKey, { baseUrl: PLANE_BASE_URLS.dev, fetch: fetch as unknown as typeof globalThis.fetch })).toThrow(
+      CredentialValidationError
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("a prd key with no baseUrl auto-routes to api.aex.dev", async () => {
     const seen: string[] = [];
     const fetch: typeof globalThis.fetch = async (input) => {
@@ -31,8 +39,15 @@ describe("constructor plane guard (WS11)", () => {
     expect(seen[0]).toContain(PLANE_BASE_URLS.prd);
   });
 
-  it("a dev key with no baseUrl requires an explicit baseUrl (dev has no default host)", () => {
-    expect(() => new Aex(devKey)).toThrow(CredentialValidationError);
+  it("a dev key with no baseUrl auto-routes to dev-api.aex.dev", async () => {
+    const seen: string[] = [];
+    const fetch: typeof globalThis.fetch = async (input) => {
+      seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
+      return new Response(JSON.stringify({ workspaceId: "ws123" }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const client = new Aex(devKey, { fetch });
+    await client.whoami();
+    expect(seen[0]).toContain(PLANE_BASE_URLS.dev);
   });
 
   it("a dev key with an explicit non-prd baseUrl is accepted", () => {

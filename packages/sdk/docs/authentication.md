@@ -49,9 +49,9 @@ An aex API key is **self-describing**: it embeds the plane (`dev` / `prd`) and
 region it was minted for. The constructor parses the key and routes accordingly,
 with **zero network**:
 
-- **Omit `baseUrl`** and a `prd` key routes to the canonical hosted API plane
-  (`https://api.aex.dev`). A `dev` key has no stable public host yet, so a dev
-  key with no `baseUrl` throws `CredentialValidationError` asking you to pass one.
+- **Omit `baseUrl`** and the key routes to its canonical hosted API plane:
+  `prd` keys route to `https://api.aex.dev`, and `dev` keys route to
+  `https://dev-api.aex.dev`.
 - **Supply a `baseUrl` whose plane disagrees with the key** (e.g. a `dev` key
   pointed at `https://api.aex.dev`) and the constructor throws
   `CredentialValidationError` **before any request** — you no longer discover the
@@ -61,8 +61,8 @@ with **zero network**:
 // prd key → routes to https://api.aex.dev automatically:
 const prd = new Aex(process.env.AEX_PRD_KEY!);
 
-// dev key → pass the dev plane's baseUrl explicitly:
-const dev = new Aex(process.env.AEX_DEV_KEY!, { baseUrl: process.env.AEX_DEV_URL! });
+// dev key → routes to https://dev-api.aex.dev automatically:
+const dev = new Aex(process.env.AEX_DEV_KEY!);
 ```
 
 ## Scopes
