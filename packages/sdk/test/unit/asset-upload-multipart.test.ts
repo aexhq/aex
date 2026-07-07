@@ -77,6 +77,7 @@ function makeFetch(opts: {
   bodies: Map<number, Uint8Array>;
   attempts: Map<number, number>;
   fault?: (partNumber: number, attempt: number) => { status: number } | null;
+  missingEtag?: (partNumber: number) => boolean;
 }): AssetFetch {
   return async (url, init) => {
     const pn = partNumberOf(url);
@@ -87,7 +88,12 @@ function makeFetch(opts: {
       return { ok: false, status: fault.status, text: async () => "err", headers: { get: () => null } };
     }
     opts.bodies.set(pn, init!.body as Uint8Array);
-    return { ok: true, status: 200, text: async () => "", headers: { get: (h: string) => (h.toLowerCase() === "etag" ? `"etag-${pn}"` : null) } };
+    return {
+      ok: true,
+      status: 200,
+      text: async () => "",
+      headers: { get: (h: string) => (h.toLowerCase() === "etag" && !opts.missingEtag?.(pn) ? `"etag-${pn}"` : null) }
+    };
   };
 }
 
@@ -181,6 +187,23 @@ describe("uploadAssetMultipart — dedup + retry + abort", () => {
     const fetch = makeFetch({ bodies, attempts, fault: () => ({ status: 400 }) }); // always 400 (non-retryable)
     const { drive } = driverOf(2 * 1024);
     await expect(uploadAssetMultipart({ http, drive, fetch, partSize: 1024, partConcurrency: 2 })).rejects.toThrow();
+    expect(rec.aborts).toBe(1);
+    expect(rec.finalizeBodies.length).toBe(0);
+  });
+
+  it("aborts before finalize when object storage omits the part ETag", async () => {
+    const rec: Recorder = { presignBodies: [], finalizeBodies: [], aborts: 0, refreshes: 0 };
+    const http = makeHttp({ rec });
+    const bodies = new Map<number, Uint8Array>();
+    const attempts = new Map<number, number>();
+    const fetch = makeFetch({ bodies, attempts, missingEtag: (pn) => pn === 1 });
+    const { drive } = driverOf(1024);
+
+    await expect(uploadAssetMultipart({ http, drive, fetch, partSize: 1024, partConcurrency: 1 })).rejects.toThrow(
+      /part 1 PUT succeeded without an ETag header/
+    );
+
+    expect(attempts.get(1)).toBe(1);
     expect(rec.aborts).toBe(1);
     expect(rec.finalizeBodies.length).toBe(0);
   });
