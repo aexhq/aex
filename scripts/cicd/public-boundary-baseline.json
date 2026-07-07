@@ -51,6 +51,7 @@
     "sdkPackedPrefix": "dist/_contracts/",
     "allowedModuleFiles": [
       "./api-key.js",
+      "./asset-upload-helper.js",
       "./bundle-manifest.js",
       "./connection-ticket.js",
       "./error-codes.js",
