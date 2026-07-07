@@ -20,12 +20,17 @@
  *
  */
 import {
-  DIRECT_UPLOAD_MAX_ATTEMPTS,
+  abortableSleep,
+  directUploadRetryDelayMs,
   directUploadNetworkError,
   directUploadResponseError,
   isRetryableUploadError,
   isRetryableUploadStatus,
+  parseRetryAfterMs,
+  resolveAssetUploadRetryConfig,
+  withinDirectUploadRetryBudget,
   type AssetFetch,
+  type AssetUploadRetryOptions,
   type AssetsHttpClient,
   type UploadedAsset
 } from "@aexhq/contracts/internal";
@@ -72,6 +77,7 @@ export interface UploadAssetStreamArgs {
   readonly drive: ZipStreamDriver;
   readonly contentType?: string;
   readonly fetch?: AssetFetch;
+  readonly retry?: AssetUploadRetryOptions;
   readonly partSize?: number;
   readonly partConcurrency?: number;
 }
@@ -148,7 +154,14 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
   const uploadOnePart = async (partNumber: number, bytes: Uint8Array): Promise<void> => {
     let url = urlByPart.get(partNumber);
     if (!url) url = await refreshPartUrl(partNumber);
-    const etag = await putPartWithRetry(doFetch, url, bytes, args.contentType, () => refreshPartUrl(partNumber));
+    const etag = await putPartWithRetry(
+      doFetch,
+      url,
+      bytes,
+      args.contentType,
+      () => refreshPartUrl(partNumber),
+      args.retry
+    );
     if (!etag) {
       throw new Error(`uploadAssetMultipart: part ${partNumber} PUT succeeded without an ETag header`);
     }
@@ -275,11 +288,18 @@ async function putPartWithRetry(
   url: string,
   bytes: Uint8Array,
   contentType: string | undefined,
-  refreshUrl: () => Promise<string>
+  refreshUrl: () => Promise<string>,
+  retryOptions: AssetUploadRetryOptions | undefined
 ): Promise<string> {
   let currentUrl = url;
   let refreshed = false;
-  for (let attempt = 1; attempt <= DIRECT_UPLOAD_MAX_ATTEMPTS; attempt++) {
+  const retryConfig = resolveAssetUploadRetryConfig(retryOptions);
+  const sleep = retryOptions?.sleep ?? abortableSleep;
+  const random = retryOptions?.random ?? Math.random;
+  const now = retryOptions?.now ?? Date.now;
+  const startedAt = now();
+
+  for (let attempt = 1; attempt <= retryConfig.maxAttempts; attempt++) {
     let response: Awaited<ReturnType<AssetFetch>>;
     try {
       response = await fetchImpl(currentUrl, {
@@ -288,7 +308,14 @@ async function putPartWithRetry(
         body: bytes as unknown as BodyInit
       });
     } catch (err) {
-      if (attempt < DIRECT_UPLOAD_MAX_ATTEMPTS && isRetryableUploadError(err)) continue;
+      if (attempt < retryConfig.maxAttempts && isRetryableUploadError(err)) {
+        const delay = directUploadRetryDelayMs(retryConfig, attempt, random, undefined);
+        if (!withinDirectUploadRetryBudget(retryConfig, startedAt, delay, now)) {
+          throw directUploadNetworkError(currentUrl, err, attempt);
+        }
+        await sleep(delay);
+        continue;
+      }
       throw directUploadNetworkError(currentUrl, err, attempt);
     }
     if (response.ok) {
@@ -302,12 +329,19 @@ async function putPartWithRetry(
       currentUrl = await refreshUrl();
       continue;
     }
-    if (attempt < DIRECT_UPLOAD_MAX_ATTEMPTS && isRetryableUploadStatus(response.status)) {
+    if (attempt < retryConfig.maxAttempts && isRetryableUploadStatus(response.status)) {
+      const retryAfterMs = parseRetryAfterMs(response.headers?.get("retry-after"), now());
+      const delay = directUploadRetryDelayMs(retryConfig, attempt, random, retryAfterMs);
+      if (!withinDirectUploadRetryBudget(retryConfig, startedAt, delay, now)) {
+        const detail = await response.text().catch(() => "");
+        throw directUploadResponseError(currentUrl, response.status, detail, attempt);
+      }
       await response.text().catch(() => "");
+      await sleep(delay);
       continue;
     }
     const detail = await response.text().catch(() => "");
     throw directUploadResponseError(currentUrl, response.status, detail, attempt);
   }
-  throw directUploadResponseError(currentUrl, 0, "exhausted retries", DIRECT_UPLOAD_MAX_ATTEMPTS);
+  throw directUploadResponseError(currentUrl, 0, "exhausted retries", retryConfig.maxAttempts);
 }
