@@ -1,0 +1,206 @@
+#!/usr/bin/env bun
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+
+const REQUIRED_ENV = ["AEX_API_URL", "AEX_API_KEY", "DEEPSEEK_API_KEY"];
+const DEFAULT_ATTEMPTS = 4;
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_BASE_DELAY_MS = 1_000;
+const DEFAULT_MAX_DELAY_MS = 8_000;
+const DEFAULT_MIN_MAX_CONCURRENT_RUNS = 50;
+
+class PreflightFatalError extends Error {}
+
+export function retryDelayMs(attempt, options = {}) {
+  const baseDelayMs = positiveInt(options.baseDelayMs, DEFAULT_BASE_DELAY_MS);
+  const maxDelayMs = positiveInt(options.maxDelayMs, DEFAULT_MAX_DELAY_MS);
+  return Math.min(maxDelayMs, baseDelayMs * attempt);
+}
+
+export function retryAfterDelayMs(value, attempt, options = {}) {
+  const maxDelayMs = positiveInt(options.maxDelayMs, DEFAULT_MAX_DELAY_MS);
+  const seconds = Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isInteger(seconds) || seconds < 1) return retryDelayMs(attempt, options);
+  return Math.min(maxDelayMs, seconds * 1000);
+}
+
+export function isRetryableWhoamiStatus(status) {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+export function fetchFailureCode(error) {
+  for (const candidate of causeCandidates(error)) {
+    if (typeof candidate.code === "string" && candidate.code.trim() !== "") return candidate.code;
+    if (typeof candidate.name === "string" && /AbortError|TimeoutError/.test(candidate.name)) return candidate.name;
+    const message = typeof candidate.message === "string" ? candidate.message : "";
+    const codeMatch = /\b(E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)\b/.exec(message);
+    if (codeMatch?.[1]) return codeMatch[1];
+  }
+  return "unknown";
+}
+
+export function isRetryableFetchFailure(error) {
+  const code = fetchFailureCode(error);
+  return code === "unknown" || new Set([
+    "AbortError",
+    "ECONNABORTED",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "EAI_AGAIN",
+    "ENETDOWN",
+    "ENETRESET",
+    "ENETUNREACH",
+    "ETIMEDOUT",
+    "TimeoutError",
+    "UND_ERR_BODY_TIMEOUT",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_SOCKET"
+  ]).has(code);
+}
+
+export async function checkLiveUserTestsPreflight(options = {}) {
+  const env = options.env ?? process.env;
+  const out = options.out ?? process.stdout;
+  const err = options.err ?? process.stderr;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const sleepFn = options.sleepFn ?? sleep;
+
+  const missing = REQUIRED_ENV.filter((name) => !env[name]);
+  if (missing.length > 0) {
+    throw new Error(`live-user-tests environment is missing required value(s): ${missing.join(", ")}`);
+  }
+
+  const attempts = envInt(env, "LIVE_USER_TEST_PREFLIGHT_ATTEMPTS", DEFAULT_ATTEMPTS, 10);
+  const timeoutMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 120_000);
+  const baseDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS", DEFAULT_BASE_DELAY_MS, 60_000);
+  const maxDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_MAX_MS", DEFAULT_MAX_DELAY_MS, 120_000);
+  const minMaxConcurrentRuns = envInt(
+    env,
+    "LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS",
+    DEFAULT_MIN_MAX_CONCURRENT_RUNS,
+    10_000
+  );
+  const url = new URL("/api/whoami", `${String(env.AEX_API_URL).replace(/\/+$/, "")}/`);
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(fetchImpl, url, env.AEX_API_KEY, timeoutMs);
+      const text = await res.text().catch(() => "");
+      const body = parseJsonObject(text);
+      const requestId = responseRequestId(res);
+      if (!res.ok) {
+        const bodyCode = bodyCodeOf(body);
+        if (attempt < attempts && isRetryableWhoamiStatus(res.status)) {
+          const delayMs = retryAfterDelayMs(res.headers.get("retry-after"), attempt, { baseDelayMs, maxDelayMs });
+          err.write(
+            `live-user-tests /api/whoami transient HTTP ${res.status} (bodyCode=${bodyCode}, requestId=${requestId}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delayMs}ms\n`
+          );
+          await sleepFn(delayMs);
+          continue;
+        }
+        throw new PreflightFatalError(
+          `live-user-tests /api/whoami preflight failed (status=${res.status}, requestId=${requestId}, bodyCode=${bodyCode}). Check the AEX_API_URL/AEX_API_KEY pairing.`
+        );
+      }
+
+      const maxConcurrentRuns = body?.limits?.maxConcurrentRuns;
+      if (!Number.isInteger(maxConcurrentRuns)) {
+        throw new PreflightFatalError(
+          `live-user-tests /api/whoami response did not include integer limits.maxConcurrentRuns (requestId=${requestId}).`
+        );
+      }
+      if (maxConcurrentRuns < minMaxConcurrentRuns) {
+        throw new PreflightFatalError(
+          `live-user-tests workspace maxConcurrentRuns=${maxConcurrentRuns} is below required minimum ${minMaxConcurrentRuns} (requestId=${requestId}).`
+        );
+      }
+      out.write(
+        `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentRuns=${maxConcurrentRuns}, attempt=${attempt}/${attempts}).\n`
+      );
+      return { status: res.status, requestId, maxConcurrentRuns, attempt, attempts };
+    } catch (error) {
+      if (error instanceof PreflightFatalError) throw error;
+      if (attempt < attempts && isRetryableFetchFailure(error)) {
+        const delayMs = retryDelayMs(attempt, { baseDelayMs, maxDelayMs });
+        err.write(
+          `live-user-tests /api/whoami transient fetch failure (code=${fetchFailureCode(error)}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delayMs}ms\n`
+        );
+        await sleepFn(delayMs);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error("live-user-tests /api/whoami preflight retry loop exhausted.");
+}
+
+async function fetchWithTimeout(fetchImpl, url, token, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error("AEX_LIVE_PREFLIGHT_TIMEOUT")), timeoutMs);
+  timeout.unref?.();
+  try {
+    return await fetchImpl(url, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseJsonObject(text) {
+  try {
+    const parsed = text ? JSON.parse(text) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function bodyCodeOf(body) {
+  return typeof body?.error === "string" ? body.error : typeof body?.code === "string" ? body.code : "(none)";
+}
+
+function responseRequestId(res) {
+  return (
+    res.headers.get("x-amzn-requestid") ??
+    res.headers.get("x-request-id") ??
+    res.headers.get("apigw-requestid") ??
+    "unknown"
+  );
+}
+
+function envInt(env, name, fallback, max) {
+  return positiveInt(env[name], fallback, max);
+}
+
+function positiveInt(value, fallback, max = Number.POSITIVE_INFINITY) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
+function causeCandidates(error) {
+  const out = [];
+  const seen = new Set();
+  const visit = (value) => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    out.push(value);
+    visit(value.cause);
+    if (Array.isArray(value.errors)) {
+      for (const inner of value.errors) visit(inner);
+    }
+  };
+  visit(error);
+  return out;
+}
+
+if (fileURLToPath(import.meta.url) === process.argv[1]) {
+  checkLiveUserTestsPreflight().catch((error) => {
+    process.stderr.write(`::error::${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+}

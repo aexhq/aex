@@ -162,63 +162,12 @@ jobs:
     environment: live-user-tests
     steps:
       - name: Check live user-test configuration
-        shell: bash
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50
-        run: |
-          set -euo pipefail
-          missing=()
-          for name in AEX_API_URL AEX_API_KEY DEEPSEEK_API_KEY; do
-            if [ -z "${!name:-}" ]; then
-              missing+=("$name")
-            fi
-          done
-          if [ "${#missing[@]}" -gt 0 ]; then
-            joined="$(IFS=', '; echo "${missing[*]}")"
-            echo "::error::live-user-tests environment is missing required value(s): ${joined}"
-            exit 1
-          fi
-          headers="$(mktemp)"
-          body="$(mktemp)"
-          status="$(
-            curl -sS \
-              --connect-timeout 10 \
-              --max-time 30 \
-              -o "$body" \
-              -D "$headers" \
-              -w "%{http_code}" \
-              -H "Authorization: Bearer ${AEX_API_KEY}" \
-              "${AEX_API_URL%/}/api/whoami" || true
-          )"
-          request_id="$(awk 'tolower($1) == "x-amzn-requestid:" { print $2; exit }' "$headers" | tr -d '\r')"
-          if ! [[ "$status" =~ ^[0-9]{3}$ ]]; then
-            echo "::error::live-user-tests /api/whoami preflight did not receive an HTTP status (status=${status:-curl_failed}, requestId=${request_id:-unknown}). Check API reachability."
-            exit 1
-          fi
-          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-            echo "::error::live-user-tests /api/whoami preflight failed (status=${status:-curl_failed}, requestId=${request_id:-unknown}). Check the AEX_API_URL/AEX_API_KEY pairing."
-            exit 1
-          fi
-          max_concurrent_runs="$(
-            node -e '
-              const fs = require("node:fs");
-              const body = JSON.parse(fs.readFileSync(process.argv[1], "utf8") || "{}");
-              const value = body?.limits?.maxConcurrentRuns;
-              if (!Number.isInteger(value)) process.exit(2);
-              process.stdout.write(String(value));
-            ' "$body"
-          )" || {
-            echo "::error::live-user-tests /api/whoami response did not include integer limits.maxConcurrentRuns (requestId=${request_id:-unknown})."
-            exit 1
-          }
-          if [ "$max_concurrent_runs" -lt "$LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS" ]; then
-            echo "::error::live-user-tests workspace maxConcurrentRuns=${max_concurrent_runs} is below required minimum ${LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS} (requestId=${request_id:-unknown})."
-            exit 1
-          fi
-          echo "live-user-tests /api/whoami preflight passed (status=${status}, requestId=${request_id:-unknown}, maxConcurrentRuns=${max_concurrent_runs})."
+        run: bun scripts/cicd/preflight-live-user-tests.mjs
 
   publish:
     name: Publish @aexhq/sdk

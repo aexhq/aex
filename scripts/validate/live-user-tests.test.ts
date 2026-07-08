@@ -66,19 +66,16 @@ describe("live user-test release gate", () => {
       expect(workflow).toContain("AEX_API_URL: ${{ vars.AEX_API_URL }}");
       expect(workflow).toContain("AEX_API_KEY: ${{ secrets.AEX_API_KEY }}");
       expect(workflow).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
-      expect(workflow).toContain("live-user-tests environment is missing required value(s)");
-      expect(workflow).toContain('"${AEX_API_URL%/}/api/whoami"');
-      expect(workflow).toContain("-H \"Authorization: Bearer ${AEX_API_KEY}\"");
-      expect(workflow).toContain("live-user-tests /api/whoami preflight failed");
+      expect(workflow).toContain("bun scripts/cicd/preflight-live-user-tests.mjs");
       expect(workflow).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50");
-      expect(workflow).toContain("awk 'tolower($1) == \"x-amzn-requestid:\"");
-      expect(workflow).toContain("preflight did not receive an HTTP status");
-      expect(workflow).toContain("limits.maxConcurrentRuns");
-      expect(workflow).toContain("workspace maxConcurrentRuns=${max_concurrent_runs} is below required minimum");
-      expect(workflow).toContain("maxConcurrentRuns=${max_concurrent_runs}");
-      expect(workflow).toContain("requestId=${request_id:-unknown}");
       expect(workflow).not.toContain("AEX_API_TOKEN");
     }
+    const preflight = read("scripts/cicd/preflight-live-user-tests.mjs");
+    expect(preflight).toContain("live-user-tests environment is missing required value(s)");
+    expect(preflight).toContain('new URL("/api/whoami"');
+    expect(preflight).toContain("isRetryableWhoamiStatus");
+    expect(preflight).toContain("limits.maxConcurrentRuns");
+    expect(preflight).toContain("maxConcurrentRuns=${maxConcurrentRuns}");
   });
 
   it("keeps the full live matrix in live-user-tests.yml and release.yml on published-artifact smoke", () => {
