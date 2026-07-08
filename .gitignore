@@ -14,6 +14,7 @@ coverage/
 # npm pack / publish artifacts
 *.tgz
 .release-diagnostics/
+.release-worktrees/
 **/test/fixtures/api-recordings/**/*.raw.json
 **/test/fixtures/api-recordings/**/*.secret.json
 .claude/

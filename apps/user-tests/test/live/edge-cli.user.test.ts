@@ -92,6 +92,10 @@ function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
   return kinds.includes("RUN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
 }
 
+function looksTransientProvider(text: string): boolean {
+  return /transient-provider|assistant_message_no_public_content|provider returned no public assistant content|provider .*retry later/i.test(text);
+}
+
 describe("live DEV plane via installed aex CLI — edge cases", () => {
   let install: InstallResult;
   let binPath: string;
@@ -195,81 +199,94 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
   it(
     "run --follow with a UNICODE prompt reaches a clean terminal, prints the id + assistant text, and the read verbs work",
     async () => {
-      const asciiId = `EDGE-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      // Unicode round-trip via a UTF-8 prompt file (@path) so the marker is not
-      // mangled by the host shell before it reaches the CLI. Tests the CLI's
-      // file-read + JSON transmission path for multi-byte content.
-      const unicodeMarker = "日本語 café";
-      const promptPath = join(install.installDir, `edge-cli-prompt-${asciiId}.txt`);
-      writeFileSync(promptPath, `Output verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
+      const diagnostics: string[] = [];
+      const maxAttempts = 3;
 
-      const run = await runCli(
-        [
-          "run",
-          "--provider", GATE_PROVIDER,
-          "--model", model,
-          "--prompt", `@${promptPath}`,
-          "--deepseek-api-key", providerKey,
-          "--idempotency-key", `edge-cli-${asciiId.toLowerCase()}`,
-          "--follow",
-          "--timeout", "8m",
-          ...common()
-        ],
-        10 * 60_000
-      );
-      expect(run.exitCode, diag("aex run --follow", run)).toBe(0);
-      assertNoSecretLeak("run", run);
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const asciiId = `EDGE-${Date.now().toString(36)}-${attempt}-${Math.random().toString(36).slice(2, 8)}`;
+        // Unicode round-trip via a UTF-8 prompt file (@path) so the marker is not
+        // mangled by the host shell before it reaches the CLI. Tests the CLI's
+        // file-read + JSON transmission path for multi-byte content.
+        const unicodeMarker = "日本語 café";
+        const promptPath = join(install.installDir, `edge-cli-prompt-${asciiId}.txt`);
+        writeFileSync(promptPath, `Output verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
 
-      const runLines = parseJsonLines(run.stdout);
-      const initial = runLines[0]!;
-      const sessionId = initial["id"];
-      expect(typeof sessionId, diag("aex run --follow", run)).toBe("string");
-      const finalFromFollow = [...runLines]
-        .reverse()
-        .find((l) => l["id"] === sessionId && typeof l["status"] === "string");
-      expect(SESSION_PARKED_OK, diag("aex run --follow", run)).toContain(finalFromFollow?.["status"]);
+        const run = await runCli(
+          [
+            "run",
+            "--provider", GATE_PROVIDER,
+            "--model", model,
+            "--prompt", `@${promptPath}`,
+            "--deepseek-api-key", providerKey,
+            "--idempotency-key", `edge-cli-${asciiId.toLowerCase()}`,
+            "--follow",
+            "--timeout", "8m",
+            ...common()
+          ],
+          10 * 60_000
+        );
+        const runDiag = diag("aex run --follow", run);
+        if (run.exitCode !== 0) {
+          diagnostics.push(`attempt ${attempt}: ${runDiag}`);
+          if (attempt < maxAttempts && looksTransientProvider(runDiag)) continue;
+        }
+        expect(run.exitCode, `${runDiag}\n\nprior attempts:\n${diagnostics.join("\n\n")}`).toBe(0);
+        assertNoSecretLeak("run", run);
 
-      const id = sessionId as string;
+        const runLines = parseJsonLines(run.stdout);
+        const initial = runLines[0]!;
+        const sessionId = initial["id"];
+        expect(typeof sessionId, runDiag).toBe("string");
+        const finalFromFollow = [...runLines]
+          .reverse()
+          .find((l) => l["id"] === sessionId && typeof l["status"] === "string");
+        expect(SESSION_PARKED_OK, runDiag).toContain(finalFromFollow?.["status"]);
 
-      // status: id + clean status
-      const status = await runCli(["status", id, ...common()]);
-      expect(status.exitCode, diag("aex status", status)).toBe(0);
-      const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
-      expect(statusDoc["id"], diag("aex status", status)).toBe(id);
-      expect(SESSION_PARKED_OK, diag("aex status", status)).toContain(statusDoc["status"]);
-      assertNoSecretLeak("status", status);
+        const id = sessionId as string;
 
-      // events: RUN_STARTED + clean terminal + the assistant echoed the markers
-      const events = await runCli(["events", id, ...common()]);
-      expect(events.exitCode, diag("aex events", events)).toBe(0);
-      const eventRows = parseJsonLines(events.stdout);
-      expect(eventRows.map((e) => e["type"]), diag("aex events", events)).toContain("RUN_STARTED");
-      expect(hasCleanTerminal(eventRows), diag("aex events", events)).toBe(true);
-      const joined = eventText(eventRows).replace(/\s+/g, "");
-      expect(joined, diag("aex events", events)).toContain(asciiId);
-      // Unicode round-trip: the multi-byte marker survived arg-file -> CLI ->
-      // API -> model -> event stream -> CLI stdout decode.
-      expect(joined, "unicode marker did not round-trip through the CLI").toContain("日本語");
-      expect(joined, "latin-1 marker did not round-trip through the CLI").toContain("café");
-      assertNoSecretLeak("events", events);
+        // status: id + clean status
+        const status = await runCli(["status", id, ...common()]);
+        expect(status.exitCode, diag("aex status", status)).toBe(0);
+        const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
+        expect(statusDoc["id"], diag("aex status", status)).toBe(id);
+        expect(SESSION_PARKED_OK, diag("aex status", status)).toContain(statusDoc["status"]);
+        assertNoSecretLeak("status", status);
 
-      // outputs: exit 0 (list may be empty for a pure text turn)
-      const outputs = await runCli(["outputs", id, ...common()]);
-      expect(outputs.exitCode, diag("aex outputs", outputs)).toBe(0);
-      const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
-      for (const o of outputRows) expect(typeof o["id"], diag("aex outputs", outputs)).toBe("string");
-      assertNoSecretLeak("outputs", outputs);
+        // events: RUN_STARTED + clean terminal + the assistant echoed the markers
+        const events = await runCli(["events", id, ...common()]);
+        expect(events.exitCode, diag("aex events", events)).toBe(0);
+        const eventRows = parseJsonLines(events.stdout);
+        expect(eventRows.map((e) => e["type"]), diag("aex events", events)).toContain("RUN_STARTED");
+        expect(hasCleanTerminal(eventRows), diag("aex events", events)).toBe(true);
+        const joined = eventText(eventRows).replace(/\s+/g, "");
+        expect(joined, diag("aex events", events)).toContain(asciiId);
+        // Unicode round-trip: the multi-byte marker survived arg-file -> CLI ->
+        // API -> model -> event stream -> CLI stdout decode.
+        expect(joined, "unicode marker did not round-trip through the CLI").toContain("日本語");
+        expect(joined, "latin-1 marker did not round-trip through the CLI").toContain("café");
+        assertNoSecretLeak("events", events);
 
-      // download --only events -> a real zip with events.jsonl
-      const zipPath = join(install.installDir, `edge-cli-events-${id}.zip`);
-      const download = await runCli(["download", id, "--only", "events", "--out", zipPath, ...common()]);
-      expect(download.exitCode, diag("aex download --only events", download)).toBe(0);
-      expect(JSON.parse(download.stdout.trim())).toMatchObject({ sessionId: id, namespace: "events", path: zipPath });
-      expect(existsSync(zipPath), diag("aex download --only events", download)).toBe(true);
-      const entries = unzipSync(new Uint8Array(readFileSync(zipPath)));
-      expect(Object.keys(entries)).toContain("events.jsonl");
-      assertNoSecretLeak("download", download);
+        // outputs: exit 0 (list may be empty for a pure text turn)
+        const outputs = await runCli(["outputs", id, ...common()]);
+        expect(outputs.exitCode, diag("aex outputs", outputs)).toBe(0);
+        const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
+        for (const o of outputRows) expect(typeof o["id"], diag("aex outputs", outputs)).toBe("string");
+        assertNoSecretLeak("outputs", outputs);
+
+        // download --only events -> a real zip with events.jsonl
+        const zipPath = join(install.installDir, `edge-cli-events-${id}.zip`);
+        const download = await runCli(["download", id, "--only", "events", "--out", zipPath, ...common()]);
+        expect(download.exitCode, diag("aex download --only events", download)).toBe(0);
+        expect(JSON.parse(download.stdout.trim())).toMatchObject({ sessionId: id, namespace: "events", path: zipPath });
+        expect(existsSync(zipPath), diag("aex download --only events", download)).toBe(true);
+        const entries = unzipSync(new Uint8Array(readFileSync(zipPath)));
+        expect(Object.keys(entries)).toContain("events.jsonl");
+        assertNoSecretLeak("download", download);
+        return;
+      }
+
+      throw new Error(`edge CLI live test failed after ${maxAttempts} attempts:\n${diagnostics.join("\n\n")}`);
     },
-    12 * 60_000
+    30 * 60_000
   );
 });
