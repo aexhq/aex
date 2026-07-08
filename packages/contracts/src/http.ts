@@ -25,9 +25,10 @@ export interface HttpClientOptions {
   /** When set, every request emits a redacted one-line trace here. */
   readonly debug?: DebugSink;
   /**
-   * Retry transient transport failures for idempotent GET/HEAD requests.
+   * Retry transient transport failures for idempotent requests.
    * Disabled by default; host CLIs enable this so a single dropped API
-   * connection does not fail read-only commands.
+   * connection does not fail read-only commands or billable writes carrying
+   * an `Idempotency-Key`.
    */
   readonly retryTransientGets?: boolean | TransientGetRetryOptions;
 }
@@ -101,7 +102,7 @@ export class HttpClient {
       }
     }
     const method = methodOf(init.method);
-    const retry = retryForMethod(method, this.#retryTransientGets);
+    const retry = retryForRequest(method, headers, this.#retryTransientGets);
     const requestStartedMs = Date.now();
     for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
       const startedMs = Date.now();
@@ -143,7 +144,7 @@ export class HttpClient {
       ...normalizeHeaders(init.headers)
     };
     const method = methodOf(init.method);
-    const retry = retryForMethod(method, this.#retryTransientGets);
+    const retry = retryForRequest(method, headers, this.#retryTransientGets);
     const requestStartedMs = Date.now();
     for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
       const startedMs = Date.now();
@@ -212,11 +213,28 @@ function methodOf(method: string | undefined): string {
   return (method ?? "GET").toUpperCase();
 }
 
-function retryForMethod(method: string, retry: ResolvedTransientGetRetry | null): ResolvedTransientGetRetry {
-  if (!retry || (method !== "GET" && method !== "HEAD")) {
+function retryForRequest(
+  method: string,
+  headers: Readonly<Record<string, string>>,
+  retry: ResolvedTransientGetRetry | null
+): ResolvedTransientGetRetry {
+  if (!retry || (!isMethodIdempotent(method) && !hasIdempotencyKey(headers))) {
     return { ...DEFAULT_TRANSIENT_GET_RETRY, maxAttempts: 1 };
   }
   return retry;
+}
+
+function isMethodIdempotent(method: string): boolean {
+  return method === "GET" || method === "HEAD";
+}
+
+function hasIdempotencyKey(headers: Readonly<Record<string, string>>): boolean {
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === "idempotency-key" && value.trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function shouldRetryTransientRead(err: unknown, retry: ResolvedTransientGetRetry, attempt: number): boolean {

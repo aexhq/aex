@@ -772,6 +772,57 @@ describe("aex run", () => {
     expect(cap.calls[1]!.body).toEqual({ input: ["hello"] });
   });
 
+  it("retries a transient create-session transport failure with the same idempotency key", async () => {
+    let creates = 0;
+    const cap = makeHostIo({
+      argv: [
+        "run",
+        "--model",
+        "claude-haiku-4-5",
+        "--prompt",
+        "hello",
+        "--anthropic-api-key",
+        "sk-ant-2",
+        "--idempotency-key",
+        "idem-retry",
+        ...COMMON
+      ],
+      fetchHandler: (call) => {
+        if (call.url.endsWith("/api/sessions")) {
+          creates += 1;
+          if (creates === 1) throw undiciFetchFailed();
+          return new Response(JSON.stringify({ id: "sess-retry", status: "idle", turnSeq: 0, turnStatus: "idle" }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (call.url.endsWith("/api/sessions/sess-retry/messages")) {
+          return new Response(
+            JSON.stringify({
+              session: { id: "sess-retry", status: "running", turnSeq: 1, turnStatus: "launching" },
+              turn: { sessionId: "sess-retry", turnSeq: 1 },
+              eventCursor: 1
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        throw new Error(`unexpected URL ${call.url}`);
+      }
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(creates).toBe(2);
+    expect(cap.calls).toHaveLength(3);
+    const firstCreate = cap.calls[0]!;
+    const secondCreate = cap.calls[1]!;
+    expect(firstCreate.url).toBe("https://dash.example/api/sessions");
+    expect(secondCreate.url).toBe("https://dash.example/api/sessions");
+    expect((firstCreate.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-retry");
+    expect((secondCreate.init.headers as Record<string, string>)["Idempotency-Key"]).toBe("idem-retry");
+    expect(secondCreate.body).toEqual(firstCreate.body);
+    expect(cap.calls[2]!.url).toBe("https://dash.example/api/sessions/sess-retry/messages");
+  });
+
   it("opens DeepSeek sessions with --provider deepseek and --deepseek-api-key", async () => {
     const cap = makeHostIo({
       argv: [

@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.15
+
+### Fixed
+
+- Retried transient CLI submit transport failures when the session create
+  carries an `Idempotency-Key`, while preserving fail-fast behavior for
+  non-idempotent POST requests.
+
 ## 0.40.14
 
 ### Fixed
