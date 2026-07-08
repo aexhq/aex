@@ -72,10 +72,12 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
+  const noRetryClient = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY, retry: false });
   const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
   const MAX_SAFE_CAP = Number(process.env.AEX_ADMISSION_GATES_MAX_SAFE_CAP ?? "10");
+  const HOLD_SECONDS = Number(process.env.AEX_ADMISSION_GATES_HOLD_SECONDS ?? "45");
   const errShape = (e) => ({
     name: e && e.constructor ? e.constructor.name : "Error",
     message: e && e.message ? String(e.message).slice(0, 300) : String(e),
@@ -171,7 +173,7 @@ describe("edge: session-path admission gates", () => {
     "the plan concurrency cap rejects turns beyond maxConcurrentRuns",
     async () => {
       const body = `
-        const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, initialRunning: 0, runIds: [] };
+        const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, initialRunning: 0, runIds: [], retryDisabledForOverflow: true };
         const me = await client.whoami();
         out.cap = me.limits.maxConcurrentRuns;
         if (!Number.isFinite(MAX_SAFE_CAP) || MAX_SAFE_CAP < 1) {
@@ -186,56 +188,120 @@ describe("edge: session-path admission gates", () => {
           console.log(JSON.stringify(out));
           process.exit(0);
         }
-        const n = out.cap + 1;
-        try {
-          const initialPage = await client.sessions.list({ limit: 50 });
-          out.initialRunning = initialPage.sessions.filter((s) => s.status === "running").length;
-          out.peakRunning = Math.max(out.peakRunning, out.initialRunning);
-        } catch {}
-        const done = { flag: false };
-        const poller = (async () => {
-          while (!done.flag) {
-            await new Promise((r) => setTimeout(r, 5000));
+        if (!Number.isFinite(HOLD_SECONDS) || HOLD_SECONDS < 10 || HOLD_SECONDS > 120) {
+          out.setupError = "invalid_hold_seconds";
+          out.holdSeconds = HOLD_SECONDS;
+          console.log(JSON.stringify(out));
+          process.exit(0);
+        }
+        const startedAt = Date.now();
+        const runningCount = async () => {
+          const page = await client.sessions.list({ limit: 50 });
+          const running = page.sessions.filter((s) => s.status === "running").length;
+          out.peakRunning = Math.max(out.peakRunning, running);
+          return running;
+        };
+        const waitForRunning = async (target, timeoutMs, label) => {
+          const deadline = Date.now() + timeoutMs;
+          let last = 0;
+          while (Date.now() < deadline) {
             try {
-              const page = await client.sessions.list({ limit: 50 });
-              const running = page.sessions.filter((s) => s.status === "running").length;
-              out.peakRunning = Math.max(out.peakRunning, running);
-            } catch {}
+              last = await runningCount();
+              if (last >= target) return true;
+            } catch (e) {
+              out.otherErrors.push({ phase: label, err: errShape(e) });
+            }
+            await sleep(2000);
           }
-        })();
-        const results = await Promise.all(
-          Array.from({ length: n }, (_, i) =>
-            client
+          out.waitTimedOut = label;
+          out.lastRunning = last;
+          return false;
+        };
+        const waitForIdle = async (timeoutMs) => {
+          const deadline = Date.now() + timeoutMs;
+          while (Date.now() < deadline) {
+            const running = await runningCount();
+            if (running === 0) return true;
+            await sleep(2000);
+          }
+          out.setupError = "workspace_not_idle";
+          out.initialRunning = await runningCount();
+          return false;
+        };
+        if (!(await waitForIdle(60000))) {
+          console.log(JSON.stringify(out));
+          process.exit(0);
+        }
+        out.initialRunning = await runningCount();
+        const nonce = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+        const holderMessage = (i) => [
+          "Use the bash tool exactly once to run this command:",
+          "\`sleep " + HOLD_SECONDS + "; echo OK-" + i + "\`",
+          "After the tool result, reply with exactly: OK-" + i
+        ];
+        const holderPromises = [];
+        try {
+          for (let i = 0; i < out.cap; i += 1) {
+            const session = await client.openSession({
+              provider: PROVIDER,
+              model: MODEL,
+              includeBuiltinTools: true,
+              apiKeys: { [PROVIDER]: PROVIDER_KEY },
+              idempotencyKey: "admission-holder-create-" + nonce + "-" + i
+            });
+            out.runIds.push(session.id);
+            holderPromises.push(
+              session
+                .send(holderMessage(i), {
+                  idempotencyKey: "admission-holder-turn-" + nonce + "-" + i,
+                  await: "park"
+                })
+                .done()
+                .then(
+                  () => ({ ok: true, runId: session.id }),
+                  (e) => ({ ok: false, runId: session.id, err: errShape(e) })
+                )
+            );
+          }
+          if (!(await waitForRunning(out.cap, 120000, "cap_saturation"))) {
+            out.setupError = "cap_not_saturated";
+          } else {
+            const extra = await noRetryClient
               .run(
                 {
                   provider: PROVIDER,
                   model: MODEL,
-                  includeBuiltinTools: false,
+                  includeBuiltinTools: true,
                   apiKeys: { [PROVIDER]: PROVIDER_KEY },
-                  message: "Reply with exactly: OK-" + i
+                  idempotencyKey: "admission-overflow-create-" + nonce,
+                  message: holderMessage("overflow")
                 },
-                { timeoutMs: 240000 }
+                { timeoutMs: 180000, await: "park" }
               )
               .then(
                 (r) => ({ ok: true, runId: r.runId }),
                 (e) => ({ ok: false, err: errShape(e) })
-              )
-          )
-        );
-        done.flag = true;
-        await poller;
-        for (const r of results) {
-          if (r.ok) {
-            out.admitted += 1;
-            out.runIds.push(r.runId);
-          } else if (r.err.status === 429 || /concurrency/i.test(r.err.message)) {
-            out.rejected429 += 1;
-          } else {
-            out.otherErrors.push(r.err);
+              );
+            if (extra.ok) {
+              out.admitted += 1;
+              out.runIds.push(extra.runId);
+            } else if (extra.err.status === 429 || /concurrency/i.test(extra.err.message)) {
+              out.rejected429 += 1;
+              out.rejection = extra.err;
+            } else {
+              out.otherErrors.push(extra.err);
+            }
           }
-        }
-        for (const id of out.runIds) {
-          await raw("DELETE", "/api/sessions/" + id).catch(() => {});
+          const holders = await Promise.all(holderPromises);
+          for (const r of holders) {
+            if (r.ok) out.admitted += 1;
+            else out.otherErrors.push(r.err);
+          }
+        } finally {
+          for (const id of out.runIds) {
+            await raw("DELETE", "/api/sessions/" + id).catch(() => {});
+          }
+          out.elapsedMs = Date.now() - startedAt;
         }
         console.log(JSON.stringify(out));
       `;
