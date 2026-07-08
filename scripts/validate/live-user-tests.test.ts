@@ -346,6 +346,20 @@ describe("live user-test release gate", () => {
     expect(source).toContain('token, redirect: "manual"');
   });
 
+  it("keeps edge output transfer probes live-plane realistic and diagnostic", () => {
+    const source = read("apps/user-tests/test/live/edge-outputs.user.test.ts");
+
+    expect(source).toContain("const LIVE_OUTPUT_TRANSFER_TIMEOUT_MS = 20_000;");
+    expect(source).not.toContain("timeoutMs: 5000");
+    expect(source).toContain("HTTP_DEBUG_LINES");
+    expect(source).toContain("redactedUrlForDebug");
+    expect(source).toContain("fetch: tracedFetch");
+    expect(source).toContain('debug: (line) => pushHttpDebug("[sdk] " + line)');
+    expect(source).toContain("httpDebug: debugTail()");
+    expect(source).toContain("const ctxPayload =");
+    expect(source).toContain("httpDebug: r.httpDebug");
+  });
+
   it("keeps event-stream settle consistency aligned with session-park terminals", () => {
     const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
 

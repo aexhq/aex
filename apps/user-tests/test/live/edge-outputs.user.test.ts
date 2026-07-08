@@ -71,7 +71,43 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 const CHILD_PRELUDE = `
   import { Aex } from "@aexhq/sdk";
   import { strFromU8, unzipSync } from "fflate";
-  const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
+  const HTTP_DEBUG_LINES = [];
+  const pushHttpDebug = (line) => {
+    HTTP_DEBUG_LINES.push(String(line).slice(0, 500));
+    if (HTTP_DEBUG_LINES.length > 80) HTTP_DEBUG_LINES.shift();
+  };
+  const redactedUrlForDebug = (input) => {
+    const raw = typeof input === "string" || input instanceof URL ? String(input) : (input && typeof input.url === "string" ? input.url : "");
+    try {
+      const u = new URL(raw);
+      return u.origin + u.pathname;
+    } catch {
+      return "[non-url]";
+    }
+  };
+  const tracedFetch = async (input, init) => {
+    const started = Date.now();
+    const method = (init && init.method) || (input && typeof input.method === "string" ? input.method : "GET");
+    const url = redactedUrlForDebug(input);
+    try {
+      const res = await fetch(input, init);
+      const finalUrl = res.url ? " final=" + redactedUrlForDebug(res.url) : "";
+      pushHttpDebug("[fetch] " + method + " " + url + " -> " + res.status + " " + (Date.now() - started) + "ms" + finalUrl);
+      return res;
+    } catch (error) {
+      const name = error && error.constructor ? error.constructor.name : "Error";
+      const message = error && error.message ? String(error.message).slice(0, 180) : String(error);
+      pushHttpDebug("[fetch] " + method + " " + url + " !! " + name + ": " + message + " " + (Date.now() - started) + "ms");
+      throw error;
+    }
+  };
+  const client = new Aex({
+    baseUrl: process.env.AEX_API_URL,
+    apiKey: process.env.AEX_API_KEY,
+    fetch: tracedFetch,
+    debug: (line) => pushHttpDebug("[sdk] " + line)
+  });
+  const debugTail = () => HTTP_DEBUG_LINES.slice(-80);
   const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
@@ -207,7 +243,8 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probe("read_exact", async () => await outs.read({ path: exactPath })));
         probes.push(await probe("read_output_obj", async () => report ? await outs.read(report) : null));
         probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
-        probes.push(await probe("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: 5000 }) : null));
+        const LIVE_OUTPUT_TRANSFER_TIMEOUT_MS = 20_000;
+        probes.push(await probe("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }) : null));
         probes.push(await probe("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
         probes.push(await probe("find_extension", async () => (await outs.find({ extension: "txt" })).length));
         probes.push(await probe("find_type_text", async () => (await outs.find({ type: "text" })).length));
@@ -240,12 +277,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         }));
         probes.push(await probe("download_selector_timeout_option", async () => {
           if (!report) return null;
-          const bytes = await outs.download(report, { timeoutMs: 5000 });
+          const bytes = await outs.download(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS });
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
         // archive verbs.
         probes.push(await probe("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
-        probes.push(await probe("download_outputs_zip_timeout_option", async () => zipProbe(await outs.download(undefined, { timeoutMs: 5000 }))));
+        probes.push(await probe("download_outputs_zip_timeout_option", async () => zipProbe(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }))));
         probes.push(await probe("download_all_zip", async () => zipProbe(await session.download())));
         probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
@@ -256,11 +293,22 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probe("link_expires_zero", async () => await outs.link({ filename: "report.txt" }, { expiresIn: 0 })));
         probes.push(await probe("link_expires_badpreset", async () => await outs.link({ filename: "report.txt" }, { expiresIn: "5m" })));
 
-        process.stdout.write(JSON.stringify({ runId, status, marker: ${JSON.stringify(marker)}, listMeta, findMeta, reportIdx, exactPath, probes }));
+        process.stdout.write(JSON.stringify({ runId, status, marker: ${JSON.stringify(marker)}, listMeta, findMeta, reportIdx, exactPath, httpDebug: debugTail(), probes }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-out-A.mjs", body, 9 * 60_000);
-      const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 4000)}`;
+      const ctxPayload = {
+        httpDebug: r.httpDebug,
+        runId: r.runId,
+        status: r.status,
+        marker: r.marker,
+        listMeta: r.listMeta,
+        findMeta: r.findMeta,
+        reportIdx: r.reportIdx,
+        exactPath: r.exactPath,
+        probes: r.probes
+      };
+      const ctx = `\n\n${JSON.stringify(ctxPayload, null, 2).slice(0, 6000)}`;
       const probes = r.probes as ProbeResult[];
       const listMeta = r.listMeta as Array<{ id: string; filename: string | null; sizeBytes: number | null }>;
       const findMeta = r.findMeta as Array<{ id: string; filename: string | null }>;
