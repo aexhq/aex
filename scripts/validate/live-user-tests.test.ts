@@ -351,7 +351,7 @@ describe("live user-test release gate", () => {
 
     expect(source).toContain("stream ends at the session-park terminal");
     expect(source).toContain("expect(r.settleHasBarrier).toBe(false);");
-    expect(source).toContain("expect(r.settleEndedNaturally).toBe(true);");
+    expect(source).toMatch(/expect\(\s*r\.settleEndedNaturally[\s\S]*?\)\.toBe\(true\);/);
   });
 
   it("waits accepted corrupted-skill runs to terminal before asserting failure shape", () => {
