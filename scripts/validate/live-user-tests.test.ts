@@ -63,6 +63,13 @@ describe("live user-test release gate", () => {
     expect(live.indexOf("live-user-tests-preflight:")).toBeLessThan(live.indexOf("  live-user-tests:"));
 
     for (const workflow of [release, live]) {
+      const preflightStart = workflow.indexOf("live-user-tests-preflight:");
+      const preflightEnd = workflow.indexOf("run: bun scripts/cicd/preflight-live-user-tests.mjs", preflightStart);
+      const preflightBlock = workflow.slice(preflightStart, preflightEnd);
+
+      expect(preflightBlock).toContain("uses: actions/checkout@v6");
+      expect(preflightBlock).toContain("uses: oven-sh/setup-bun@v2");
+      expect(preflightBlock).toContain('bun-version: "1.3.14"');
       expect(workflow).toContain("AEX_API_URL: ${{ vars.AEX_API_URL }}");
       expect(workflow).toContain("AEX_API_KEY: ${{ secrets.AEX_API_KEY }}");
       expect(workflow).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
