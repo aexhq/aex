@@ -38,6 +38,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { isPreCreateTransportFailure } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -193,14 +194,6 @@ async function runScenario(install: InstallResult, scriptName: string, body: str
     throw new Error(`${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
   }
   return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
-}
-
-function isPreCreateTransportFailure(o: Observation): boolean {
-  return (
-    o.runId === null &&
-    o.threw !== null &&
-    /socket connection was closed unexpectedly|fetch failed|ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET|terminated/i.test(o.threw)
-  );
 }
 
 async function runScenarioWithPreCreateRetry(
