@@ -370,6 +370,32 @@ describe("live user-test release gate", () => {
     expect(source).toContain("httpDebug: r.httpDebug");
   });
 
+  it("keeps edge output success probes resilient to transient idempotent GET failures", () => {
+    const source = read("apps/user-tests/test/live/edge-outputs.user.test.ts");
+
+    expect(source).toContain("async function probeIdempotent(label, fn)");
+    expect(source).toContain("transient failure");
+    expect(source).toContain("isTransientProbeError(result.error)");
+    for (const field of ["causeCode", "attempts", "elapsedMs", "method", "host", "path"]) {
+      expect(source).toContain(field);
+    }
+    for (const label of [
+      "read_suffix",
+      "read_exact",
+      "read_timeout_option",
+      "download_selector",
+      "download_outputs_zip",
+      "download_all_zip",
+      "download_metadata_zip"
+    ]) {
+      expect(source).toContain(`probeIdempotent("${label}"`);
+    }
+    for (const label of ["read_missing_path", "download_missing_id", "link_nomatch"]) {
+      expect(source).toContain(`probe("${label}"`);
+      expect(source).not.toContain(`probeIdempotent("${label}"`);
+    }
+  });
+
   it("keeps event-stream settle consistency aligned with session-park terminals", () => {
     const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
 

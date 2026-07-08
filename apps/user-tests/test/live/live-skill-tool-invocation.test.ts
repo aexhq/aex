@@ -51,6 +51,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -268,25 +269,27 @@ async function runScenario(
   scriptName: string,
   body: string
 ): Promise<{ readonly observation: Observation; readonly stdout: string }> {
-  const scriptPath = join(install.installDir, scriptName);
-  writeFileSync(scriptPath, buildScript(body));
-  const passEnv = buildPassEnv({
-    AEX_API_URL: apiUrl,
-    AEX_API_KEY: apiKey,
-    DEEPSEEK_KEY: deepseekKey,
-    MODEL_DEEPSEEK: deepseekModel
+  return withPreCreateTransportRetry(`skill-tool ${scriptName}`, async () => {
+    const scriptPath = join(install.installDir, scriptName);
+    writeFileSync(scriptPath, buildScript(body));
+    const passEnv = buildPassEnv({
+      AEX_API_URL: apiUrl,
+      AEX_API_KEY: apiKey,
+      DEEPSEEK_KEY: deepseekKey,
+      MODEL_DEEPSEEK: deepseekModel
+    });
+    const child = await runCommand(getBunCommand(), [scriptPath], {
+      cwd: install.installDir,
+      timeoutMs: CHILD_TIMEOUT_MS,
+      env: passEnv
+    });
+    if (child.exitCode !== 0) {
+      throw new Error(
+        `${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      );
+    }
+    return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
   });
-  const child = await runCommand(getBunCommand(), [scriptPath], {
-    cwd: install.installDir,
-    timeoutMs: CHILD_TIMEOUT_MS,
-    env: passEnv
-  });
-  if (child.exitCode !== 0) {
-    throw new Error(
-      `${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-    );
-  }
-  return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
 }
 
 // --- outer-harness helpers ------------------------------------------------

@@ -113,6 +113,20 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
 
   const PROBE_TIMEOUT_MS = 45000;
+  const errorStringField = (error, key) => {
+    const value = error && error[key];
+    return typeof value === "string" ? value : null;
+  };
+  const errorNumberField = (error, key) => {
+    const value = error && error[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const errorCauseCode = (error) => {
+    const direct = errorStringField(error, "causeCode");
+    if (direct) return direct;
+    const cause = error && error.cause;
+    return cause && typeof cause.code === "string" ? cause.code : null;
+  };
   // Wrap a probe so ONE failing/hanging verb never aborts the whole script:
   // record a structured {label, ok, value|error}. The SDK has its own bounded
   // output transfer timeout/retry; this outer race catches anything below it.
@@ -131,10 +145,43 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
           name: e && e.constructor ? e.constructor.name : "Error",
           message: e && e.message ? String(e.message) : String(e),
           status: e && typeof e.status === "number" ? e.status : null,
-          code: e && typeof e.code === "string" ? e.code : null
+          code: e && typeof e.code === "string" ? e.code : null,
+          causeCode: errorCauseCode(e),
+          attempts: errorNumberField(e, "attempts"),
+          elapsedMs: errorNumberField(e, "elapsedMs"),
+          method: errorStringField(e, "method"),
+          host: errorStringField(e, "host"),
+          path: errorStringField(e, "path")
         }
       };
     }
+  }
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const transientProbeRe = /\\b(NETWORK_ERROR|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR|FailedToOpenSocket|fetch failed|socket|connection|timeout)\\b/i;
+  const probeErrorText = (error) => [
+    error && error.name,
+    error && error.message,
+    error && error.code,
+    error && error.causeCode
+  ].filter(Boolean).join(" ");
+  const isTransientProbeError = (error) => {
+    if (!error) return false;
+    if (typeof error.status === "number" && [408, 425, 429, 500, 502, 503, 504, 529].includes(error.status)) return true;
+    if (error.code === "NETWORK_ERROR") return true;
+    return transientProbeRe.test(probeErrorText(error));
+  };
+  async function probeIdempotent(label, fn) {
+    const maxAttempts = 3;
+    let last = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await probe(label, fn);
+      if (result.ok) return result;
+      last = result;
+      if (attempt >= maxAttempts || !isTransientProbeError(result.error)) return result;
+      pushHttpDebug("[probe] " + label + " transient failure " + attempt + "/" + maxAttempts + ": " + probeErrorText(result.error).slice(0, 180));
+      await sleep(1000 * attempt);
+    }
+    return last;
   }
   const zipProbe = (bytes) => {
     const magicOk = !!bytes && bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
@@ -189,7 +236,23 @@ async function runChild(
   }
 }
 
-type ProbeResult = { label: string; ok: boolean; value?: unknown; error?: { name: string; message: string; status: number | null; code: string | null } };
+type ProbeResult = {
+  label: string;
+  ok: boolean;
+  value?: unknown;
+  error?: {
+    name: string;
+    message: string;
+    status: number | null;
+    code: string | null;
+    causeCode?: string | null;
+    attempts?: number | null;
+    elapsedMs?: number | null;
+    method?: string | null;
+    host?: string | null;
+    path?: string | null;
+  };
+};
 function byLabel(probes: ProbeResult[], label: string): ProbeResult {
   const p = probes.find((x) => x.label === label);
   if (!p) throw new Error(`probe "${label}" missing from child output; got: ${probes.map((x) => x.label).join(", ")}`);
@@ -239,52 +302,49 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         const exactPath = report ? report.filename : "report.txt";
 
         const probes = [];
-        probes.push(await probe("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
-        probes.push(await probe("read_exact", async () => await outs.read({ path: exactPath })));
-        probes.push(await probe("read_output_obj", async () => report ? await outs.read(report) : null));
-        probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
+        probes.push(await probeIdempotent("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
+        probes.push(await probeIdempotent("read_exact", async () => await outs.read({ path: exactPath })));
+        probes.push(await probeIdempotent("read_output_obj", async () => report ? await outs.read(report) : null));
+        probes.push(await probeIdempotent("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
         const LIVE_OUTPUT_TRANSFER_TIMEOUT_MS = 20_000;
-        probes.push(await probe("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }) : null));
-        probes.push(await probe("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
-        probes.push(await probe("find_extension", async () => (await outs.find({ extension: "txt" })).length));
-        probes.push(await probe("find_type_text", async () => (await outs.find({ type: "text" })).length));
-        probes.push(await probe("findOne_match", async () => { const o = await outs.findOne({ filename: "report.txt" }); return o ? { id: o.id, filename: o.filename ?? null } : null; }));
-        probes.push(await probe("findOne_nomatch_null", async () => await outs.findOne({ filename: "does-not-exist-xyz.txt" })));
-        probes.push(await probe("last", async () => { const o = await outs.last(); return o ? (o.filename ?? o.id) : null; }));
-        probes.push(await probe("first", async () => { const o = await outs.first(); return o ? (o.filename ?? o.id) : null; }));
+        probes.push(await probeIdempotent("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }) : null));
+        probes.push(await probeIdempotent("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
+        probes.push(await probeIdempotent("find_extension", async () => (await outs.find({ extension: "txt" })).length));
+        probes.push(await probeIdempotent("find_type_text", async () => (await outs.find({ type: "text" })).length));
+        probes.push(await probeIdempotent("findOne_match", async () => { const o = await outs.findOne({ filename: "report.txt" }); return o ? { id: o.id, filename: o.filename ?? null } : null; }));
+        probes.push(await probeIdempotent("findOne_nomatch_null", async () => await outs.findOne({ filename: "does-not-exist-xyz.txt" })));
+        probes.push(await probeIdempotent("last", async () => { const o = await outs.last(); return o ? (o.filename ?? o.id) : null; }));
+        probes.push(await probeIdempotent("first", async () => { const o = await outs.first(); return o ? (o.filename ?? o.id) : null; }));
 
         // link + fetch a presigned URL, then GET it with global fetch.
-        probes.push(await probe("link", async () => {
+        probes.push(await probeIdempotent("link", async () => {
           const link = await outs.link({ filename: "report.txt" });
-          let getStatus = null, getText = null;
-          try {
-            const resp = await fetch(link.url);
-            getStatus = resp.status;
-            getText = (await resp.text()).slice(0, 256);
-          } catch (e) { getText = "(GET error: " + (e && e.message) + ")"; }
+          const resp = await fetch(link.url);
+          const getStatus = resp.status;
+          const getText = (await resp.text()).slice(0, 256);
           return { hasUrl: typeof link.url === "string" && link.url.length > 0, expiresInSeconds: link.expiresInSeconds ?? null, getStatus, getText };
         }));
-        probes.push(await probe("fetch", async () => {
+        probes.push(await probeIdempotent("fetch", async () => {
           const resp = await outs.fetch({ filename: "report.txt" });
           return { status: resp.status, text: (await resp.text()).slice(0, 256) };
         }));
 
         // download one file's raw bytes (by Output selector).
-        probes.push(await probe("download_selector", async () => {
+        probes.push(await probeIdempotent("download_selector", async () => {
           if (!report) return null;
           const bytes = await outs.download(report);
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
-        probes.push(await probe("download_selector_timeout_option", async () => {
+        probes.push(await probeIdempotent("download_selector_timeout_option", async () => {
           if (!report) return null;
           const bytes = await outs.download(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS });
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
         // archive verbs.
-        probes.push(await probe("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
-        probes.push(await probe("download_outputs_zip_timeout_option", async () => zipProbe(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }))));
-        probes.push(await probe("download_all_zip", async () => zipProbe(await session.download())));
-        probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
+        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
+        probes.push(await probeIdempotent("download_outputs_zip_timeout_option", async () => zipProbe(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }))));
+        probes.push(await probeIdempotent("download_all_zip", async () => zipProbe(await session.download())));
+        probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         // Bad-selector / boundary probes — must error CLEANLY (no hang).
         probes.push(await probe("read_missing_path", async () => await outs.read({ path: "nope-" + Date.now() + ".txt", match: "suffix" })));
@@ -421,18 +481,18 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         const sizeBytes = big ? (big.sizeBytes ?? null) : null;
 
         const probes = [];
-        probes.push(await probe("download_full", async () => {
+        probes.push(await probeIdempotent("download_full", async () => {
           if (!big) return null;
           const bytes = await outs.download(big);
           const text = dec(bytes);
           return { len: bytes.byteLength, allA: /^A+$/.test(text), first: text.slice(0, 4), last: text.slice(-4) };
         }));
-        probes.push(await probe("read_default_cap", async () => {
+        probes.push(await probeIdempotent("read_default_cap", async () => {
           if (!big) return null;
           const t = await outs.read(big);
           return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes };
         }));
-        probes.push(await probe("read_raised_cap", async () => {
+        probes.push(await probeIdempotent("read_raised_cap", async () => {
           if (!big || sizeBytes == null) return null;
           const t = await outs.read(big, { maxBytes: sizeBytes + 5000 });
           return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes, allA: /^A+$/.test(t.text) };
@@ -507,10 +567,10 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         const target = listed.find((o) => (o.filename || "").endsWith("menu.txt")) || null;
 
         const probes = [];
-        probes.push(await probe("read_suffix_unicode", async () => target ? (await outs.read({ path: "café menu.txt", match: "suffix" })).text : null));
-        probes.push(await probe("read_by_id", async () => target ? (await outs.read({ id: target.id })).text : null));
-        probes.push(await probe("download_by_id", async () => { if (!target) return null; const b = await outs.download(target); return { len: b.byteLength, text: dec(b) }; }));
-        probes.push(await probe("link_fetch_unicode", async () => {
+        probes.push(await probeIdempotent("read_suffix_unicode", async () => target ? (await outs.read({ path: "café menu.txt", match: "suffix" })).text : null));
+        probes.push(await probeIdempotent("read_by_id", async () => target ? (await outs.read({ id: target.id })).text : null));
+        probes.push(await probeIdempotent("download_by_id", async () => { if (!target) return null; const b = await outs.download(target); return { len: b.byteLength, text: dec(b) }; }));
+        probes.push(await probeIdempotent("link_fetch_unicode", async () => {
           if (!target) return null;
           const link = await outs.link({ id: target.id });
           const resp = await fetch(link.url);
@@ -567,15 +627,15 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         const outs = await session.outputs();
 
         const probes = [];
-        probes.push(await probe("list_len", async () => (await outs.list()).length));
-        probes.push(await probe("find_all_len", async () => (await outs.find({})).length));
-        probes.push(await probe("last_undefined", async () => (await outs.last()) === undefined));
-        probes.push(await probe("first_undefined", async () => (await outs.first()) === undefined));
-        probes.push(await probe("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
+        probes.push(await probeIdempotent("list_len", async () => (await outs.list()).length));
+        probes.push(await probeIdempotent("find_all_len", async () => (await outs.find({})).length));
+        probes.push(await probeIdempotent("last_undefined", async () => (await outs.last()) === undefined));
+        probes.push(await probeIdempotent("first_undefined", async () => (await outs.first()) === undefined));
+        probes.push(await probeIdempotent("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
         probes.push(await probe("read_missing", async () => await outs.read({ path: "whatever.txt", match: "suffix" })));
-        probes.push(await probe("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
-        probes.push(await probe("download_all_zip", async () => zipProbe(await session.download())));
-        probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
+        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
+        probes.push(await probeIdempotent("download_all_zip", async () => zipProbe(await session.download())));
+        probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         process.stdout.write(JSON.stringify({ runId, status, probes }));
         process.exit(0);

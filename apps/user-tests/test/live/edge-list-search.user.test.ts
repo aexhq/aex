@@ -478,9 +478,14 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
         probes.push(await probe("order_stable", async () => {
           const a = await client.sessions.list(listQuery({ limit: 8 }));
           const b = await client.sessions.list(listQuery({ limit: 8 }));
+          const project = (sessions) => sessions.map((s) => ({ id: s.id, createdAt: s.createdAt, updatedAt: s.updatedAt, status: s.status }));
+          const aSessions = project(a.sessions);
+          const bSessions = project(b.sessions);
           return {
-            same: JSON.stringify(a.sessions.map((s) => s.id)) === JSON.stringify(b.sessions.map((s) => s.id)),
-            n: a.sessions.length
+            same: JSON.stringify(aSessions.map((s) => s.id)) === JSON.stringify(bSessions.map((s) => s.id)),
+            n: a.sessions.length,
+            a: aSessions,
+            b: bSessions
           };
         }, 20000));
 

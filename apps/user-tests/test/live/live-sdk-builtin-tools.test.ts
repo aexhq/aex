@@ -21,6 +21,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -201,7 +202,7 @@ function dumpResult(cell: Cell, result: CaseResult): string {
   return lines.join("\n");
 }
 
-async function runCell(cell: Cell, mode: "positive" | "negative", installDir: string): Promise<CaseResult> {
+async function runCellOnce(cell: Cell, mode: "positive" | "negative", installDir: string): Promise<CaseResult> {
   const marker = `BUILTIN-OK-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
   const script = buildScript(cell, mode, marker);
   const scriptPath = join(installDir, `builtins-${cell.id}-${mode}.mjs`);
@@ -223,6 +224,10 @@ async function runCell(cell: Cell, mode: "positive" | "negative", installDir: st
     );
   }
   return JSON.parse(child.stdout.trim()) as CaseResult;
+}
+
+async function runCell(cell: Cell, mode: "positive" | "negative", installDir: string): Promise<CaseResult> {
+  return withPreCreateTransportRetry(`builtins ${cell.id} ${mode}`, () => runCellOnce(cell, mode, installDir));
 }
 
 let install: InstallResult;

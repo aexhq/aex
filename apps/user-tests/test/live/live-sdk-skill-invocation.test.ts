@@ -30,6 +30,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -285,7 +286,7 @@ function dumpResult(cell: Cell, result: CaseResult): string {
   return lines.join("\n");
 }
 
-async function runCell(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
+async function runCellOnce(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
   const script = buildScript(cell, uniqueToken);
   const scriptPath = join(installDir, `skill-invocation-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
@@ -306,6 +307,10 @@ async function runCell(cell: Cell, installDir: string, uniqueToken: string): Pro
     );
   }
   return JSON.parse(child.stdout.trim()) as CaseResult;
+}
+
+async function runCell(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
+  return withPreCreateTransportRetry(`skill-invocation ${cell.id}`, () => runCellOnce(cell, installDir, uniqueToken));
 }
 
 let install: InstallResult;
