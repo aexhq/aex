@@ -1,7 +1,10 @@
-import { pathToFileURL } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { describe, expect, it } from "vitest";
 
-const mod = await import(pathToFileURL(`${process.cwd()}/scripts/cicd/preflight-live-user-tests.mjs`).href);
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const preflightUrl = pathToFileURL(resolve(repoRoot, "scripts/cicd/preflight-live-user-tests.mjs")).href;
 
 const baseEnv = {
   AEX_API_URL: "https://dev-api.aex.dev",
@@ -11,75 +14,104 @@ const baseEnv = {
   LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS: "1"
 };
 
-function response(status: number, body: unknown, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), { status, headers });
+interface ChildResult {
+  readonly ok: boolean;
+  readonly message?: string;
+  readonly result?: {
+    readonly status: number;
+    readonly maxConcurrentRuns: number;
+    readonly attempt: number;
+  };
+  readonly calls: number;
+  readonly sleeps: number[];
+  readonly logs: string;
+  readonly out: string;
+}
+
+function runScenario(scenario: string): ChildResult {
+  const code = `
+    const mod = await import(${JSON.stringify(preflightUrl)});
+    const scenario = ${JSON.stringify(scenario)};
+    const baseEnv = ${JSON.stringify(baseEnv)};
+    const sleeps = [];
+    const logs = [];
+    const out = [];
+    let calls = 0;
+    const response = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers });
+    const fetchImpl = async () => {
+      calls += 1;
+      if (scenario === "retry503") {
+        return calls === 1
+          ? response(503, { error: "db_resuming" }, { "apigw-requestid": "req-1", "retry-after": "3" })
+          : response(200, { limits: { maxConcurrentRuns: 50 } }, { "x-amzn-requestid": "req-2" });
+      }
+      if (scenario === "auth401") return response(401, { error: "unauthorized" });
+      if (scenario === "lowLimit") return response(200, { limits: { maxConcurrentRuns: 49 } });
+      return response(200, { limits: { maxConcurrentRuns: 50 } });
+    };
+    try {
+      const env = scenario === "missingEnv" ? { AEX_API_URL: baseEnv.AEX_API_URL } : baseEnv;
+      const result = await mod.checkLiveUserTestsPreflight({
+        env,
+        fetchImpl,
+        sleepFn: async (ms) => { sleeps.push(ms); },
+        err: { write: (s) => logs.push(s) },
+        out: { write: (s) => out.push(s) }
+      });
+      process.stdout.write(JSON.stringify({ ok: true, result, calls, sleeps, logs: logs.join(""), out: out.join("") }));
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+        calls,
+        sleeps,
+        logs: logs.join(""),
+        out: out.join("")
+      }));
+    }
+  `;
+  return JSON.parse(
+    execFileSync(process.execPath, ["--input-type=module", "--eval", code], {
+      cwd: repoRoot,
+      encoding: "utf8"
+    })
+  ) as ChildResult;
 }
 
 describe("live user-test preflight", () => {
-  it("retries transient HTTP whoami failures without logging secrets", async () => {
-    const logs: string[] = [];
-    const out: string[] = [];
-    const sleepFn = vi.fn(async () => {});
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        response(503, { error: "db_resuming" }, { "apigw-requestid": "req-1", "retry-after": "3" })
-      )
-      .mockResolvedValueOnce(response(200, { limits: { maxConcurrentRuns: 50 } }, { "x-amzn-requestid": "req-2" }));
+  it("retries transient HTTP whoami failures without logging secrets", () => {
+    const result = runScenario("retry503");
 
-    const result = await mod.checkLiveUserTestsPreflight({
-      env: baseEnv,
-      fetchImpl,
-      sleepFn,
-      err: { write: (s: string) => logs.push(s) },
-      out: { write: (s: string) => out.push(s) }
-    });
-
-    expect(result).toMatchObject({ status: 200, maxConcurrentRuns: 50, attempt: 2 });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(sleepFn).toHaveBeenCalledWith(3000);
-    expect(logs.join("")).toContain("transient HTTP 503");
-    expect(logs.join("")).toContain("requestId=req-1");
-    expect(`${logs.join("")}${out.join("")}`).not.toContain(baseEnv.AEX_API_KEY);
-    expect(`${logs.join("")}${out.join("")}`).not.toContain(baseEnv.DEEPSEEK_API_KEY);
+    expect(result.ok).toBe(true);
+    expect(result.result).toMatchObject({ status: 200, maxConcurrentRuns: 50, attempt: 2 });
+    expect(result.calls).toBe(2);
+    expect(result.sleeps).toEqual([3000]);
+    expect(result.logs).toContain("transient HTTP 503");
+    expect(result.logs).toContain("requestId=req-1");
+    expect(`${result.logs}${result.out}`).not.toContain(baseEnv.AEX_API_KEY);
+    expect(`${result.logs}${result.out}`).not.toContain(baseEnv.DEEPSEEK_API_KEY);
   });
 
-  it("does not retry deterministic auth failures", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(response(401, { error: "unauthorized" }));
+  it("does not retry deterministic auth failures", () => {
+    const result = runScenario("auth401");
 
-    await expect(
-      mod.checkLiveUserTestsPreflight({
-        env: baseEnv,
-        fetchImpl,
-        sleepFn: async () => {},
-        err: { write: () => {} },
-        out: { write: () => {} }
-      })
-    ).rejects.toThrow(/status=401/);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/status=401/);
+    expect(result.calls).toBe(1);
   });
 
-  it("fails when required environment values are missing", async () => {
-    await expect(
-      mod.checkLiveUserTestsPreflight({
-        env: { AEX_API_URL: "https://dev-api.aex.dev" },
-        fetchImpl: async () => response(200, {}),
-        sleepFn: async () => {},
-        err: { write: () => {} },
-        out: { write: () => {} }
-      })
-    ).rejects.toThrow("AEX_API_KEY, DEEPSEEK_API_KEY");
+  it("fails when required environment values are missing", () => {
+    const result = runScenario("missingEnv");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("AEX_API_KEY, DEEPSEEK_API_KEY");
+    expect(result.calls).toBe(0);
   });
 
-  it("requires the workspace concurrency floor", async () => {
-    await expect(
-      mod.checkLiveUserTestsPreflight({
-        env: baseEnv,
-        fetchImpl: async () => response(200, { limits: { maxConcurrentRuns: 49 } }),
-        sleepFn: async () => {},
-        err: { write: () => {} },
-        out: { write: () => {} }
-      })
-    ).rejects.toThrow("maxConcurrentRuns=49");
+  it("requires the workspace concurrency floor", () => {
+    const result = runScenario("lowLimit");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("maxConcurrentRuns=49");
   });
 });
