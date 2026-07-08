@@ -29,17 +29,20 @@ error). See [Credentials](../credentials.md).
 
 ## Depth and breadth limits
 
-Delegation is bounded by two server-enforced lineage limits:
+Delegation is bounded by server-enforced lineage budgets. The runtime is
+designed for broad fan-out, across hundreds and even thousands of concurrent
+child agents per root, and for high levels of recursive subagent depth. Exact
+operational limits are platform-managed and may change as the runtime scales.
 
-| Limit | Value | Behavior at the limit |
+| Limit | Runtime posture | Behavior at the limit |
 | --- | --- | --- |
-| Max depth | **5** — the root run is depth 0 and may spawn down to depth 5; a depth-5 run may not spawn further | The spawn is rejected with a `depth_exceeded` tool error (the parent keeps running). |
-| Concurrent children per lineage root | **1000** live (non-terminal) descendants by default; hard platform ceiling **4096** | Further spawns are refused until a child settles. |
+| Max recursive subagent depth | Supports high levels of nested delegation, bounded server-side. | A further spawn is rejected with a `depth_exceeded` tool error (the parent keeps running). |
+| Concurrent children per lineage root | Designed to scale across hundreds, even thousands, of live descendants, bounded server-side. | Further spawns are refused until a child settles. |
 
 The whole descendant subtree of one root shares a single depth and breadth
 budget, enforced server-side at every level — a grandchild spawn counts against
-the same root budget as a direct child. Values are mirrored in
-[Limits & quotas](../limits-and-quotas.md).
+the same root budget as a direct child. These budgets are not public per-session
+dials today.
 
 ## Where children run: `in-process` vs `container`
 
@@ -84,5 +87,5 @@ Every child — in-process or container — is a first-class run record:
 - Turn delegation off for a run by cherry-picking builtins without `subagent`
   (see [Agent tools](agent-tools.md)) or setting `includeBuiltinTools: false`.
 - A per-session spend cap (`overrides.maxSpendUsd`) bounds the parent's spend.
-- The depth/breadth limits above are platform defaults and are not settable
+- The depth/breadth budgets above are platform-managed and are not settable
   per-session today.

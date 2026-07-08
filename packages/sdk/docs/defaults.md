@@ -48,10 +48,13 @@ For the hard ceilings and who can raise them, see
 
 ## Subagents
 
+Subagent breadth and depth are platform-managed budgets rather than fixed public
+numeric entitlements; exact operational values may change as capacity evolves.
+
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| Concurrent child runs per lineage root | 1000 (live, non-terminal child runs) | Platform default (subagents run in-process; no public per-run override). Hard ceiling 4096. | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
-| Max subagent depth | 5 | Platform default (subagents run in-process; no public per-run override). | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
+| Concurrent child runs per lineage root | Platform-managed; designed to scale across hundreds, even thousands, of live child agents. | No public per-run override; contact support for unusually large workloads. | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
+| Max subagent depth | Platform-managed; supports high recursive subagent depth. | No public per-run override. | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
 
 ## Workspace
 

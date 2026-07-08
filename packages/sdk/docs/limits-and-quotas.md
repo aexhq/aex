@@ -58,10 +58,15 @@ silently lost.
 
 ### Subagents (per run lineage)
 
+Subagent lineage bounds are enforced server-side but are intentionally not
+advertised as fixed public ceilings because capacity can change. The runtime
+posture is high fan-out and high recursive depth; exact admission is governed
+by the platform at spawn time.
+
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Max subagent depth (`subagent` tool) | 5 (a depth-5 lineage may not spawn deeper) | aex policy | No public per-run override (subagents run in-process) | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
-| Concurrent child runs per lineage root | 1000 live (non-terminal); hard ceiling 4096 | aex policy | No public per-run override (subagents run in-process) | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
+| Max subagent depth (`subagent` tool) | High recursive subagent depth, bounded server-side. | aex policy | No public per-run override (subagents run in-process) | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
+| Concurrent child runs per lineage root | Designed to scale across hundreds, even thousands, of live child agents, bounded server-side. | aex policy | No public per-run override (subagents run in-process) | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
 
 ### Retention (per run)
 
@@ -98,7 +103,7 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
 | Workspace storage cap | 500 GB (decimal; admins uncapped — not a customer entitlement) | Workspace default | Per-plane via env `AEX_WORKSPACE_STORAGE_CAP_BYTES` | `WORKSPACE_DEFAULT_STORAGE_CAP_BYTES` |
-| Max concurrent runs per workspace | Plan-based: **5** live (non-terminal) root runs on the free plan, **50** on Pro, **200** on Team; hard platform ceiling **200**. One more submit past the cap fails with `429 workspace_concurrency_exceeded` (see [Errors](errors.md)). Subagent children are governed separately by the per-lineage caps below. Read your effective cap from `aex.whoami().limits.maxConcurrentRuns`. | Workspace default (per plan) | Per-plan (upgrade) or per-workspace override (contact support), clamped to the 200 ceiling | `PLANS[planKey].maxConcurrentRuns` / `WORKSPACE_MAX_CONCURRENT_RUNS_CEILING` |
+| Max concurrent runs per workspace | Plan-based: **5** live (non-terminal) root runs on the free plan, **50** on Pro, **200** on Team; hard platform ceiling **200**. One more submit past the cap fails with `429 workspace_concurrency_exceeded` (see [Errors](errors.md)). Subagent children are governed separately by the platform-managed per-lineage budgets above. Read your effective cap from `aex.whoami().limits.maxConcurrentRuns`. | Workspace default (per plan) | Per-plan (upgrade) or per-workspace override (contact support), clamped to the 200 ceiling | `PLANS[planKey].maxConcurrentRuns` / `WORKSPACE_MAX_CONCURRENT_RUNS_CEILING` |
 | Monthly workspace spend cap | **$250** per rolling UTC calendar month by default; `0` = unlimited. A submit past the cap fails with `402 workspace_spend_cap_exceeded` (see [Errors](errors.md)). | Workspace default | Per-workspace override (contact support) | `WORKSPACE_DEFAULT_SPEND_CAP_USD` |
 | Skill bundle max compressed size (`.zip`) | 10 GiB (enforced at upload by the SDK and re-enforced server-side) | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxCompressedBytes` |
 | Skill bundle max decompressed size (sum of uncompressed file sizes) | 50 MB | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxDecompressedBytes` |
