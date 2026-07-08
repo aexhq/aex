@@ -163,10 +163,11 @@ you never have to switch on the plane:
 
 - `event.isRunTerminal()` — true for the AG-UI `RUN_FINISHED` / `RUN_ERROR` pair.
 - `event.isRunSettled()` — true for the `aex.run.settled` settle barrier **and**
-  for any `aex.session.*` park terminal. The managed plane does not broadcast a
-  separate `aex.run.settled` barrier — the park event plays that role — so
-  `event.isRunSettled()` is the one check that reliably means "this stream is done
-  and the record is authoritative".
+  for any `aex.session.*` park terminal. The managed plane emits the barrier after
+  settle when it is delivered to the stream; the park event remains a terminal
+  fallback for streams that do not receive a later barrier. `event.isRunSettled()`
+  is the one check that reliably means "this stream is done and the record is
+  authoritative".
 
 To read the authoritative status consistently, use one of:
 

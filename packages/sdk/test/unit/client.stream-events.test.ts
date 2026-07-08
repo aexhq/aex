@@ -201,7 +201,8 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
           signal: controller.signal,
           idleTimeoutMs: 0,
           pingIntervalMs: 0,
-          eventQuietRecheckMs: 20
+          eventQuietRecheckMs: 20,
+          terminalDrainGraceMs: 20
         })) {
           void event;
           // This test only needs the reconnect side effect.

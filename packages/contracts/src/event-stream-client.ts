@@ -84,6 +84,13 @@ export interface CoordinatorStreamOptions {
    * 90s. Set 0 to disable.
    */
   readonly eventQuietRecheckMs?: number;
+  /**
+   * A WebSocket can receive a live terminal frame before the post-open replay
+   * has backfilled lower-sequence frames. If a terminal event arrives with a
+   * sequence gap, hold it briefly so replayed content can be delivered first.
+   * Default 1s. Set 0 to disable.
+   */
+  readonly terminalDrainGraceMs?: number;
 }
 
 // The default terminal predicate ends the stream on the AG-UI terminals AND on
@@ -108,6 +115,8 @@ const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 const DEFAULT_PING_INTERVAL_MS = 15_000;
 /** Default event-quiet recheck window (a silent reconnect, so the cost of a false positive is small). */
 const DEFAULT_EVENT_QUIET_RECHECK_MS = 90_000;
+/** Default drain window for terminal-before-replay races. */
+const DEFAULT_TERMINAL_DRAIN_GRACE_MS = 1_000;
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
@@ -120,6 +129,7 @@ export async function* streamCoordinatorEvents(
   const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
   const eventQuietRecheckMs = opts.eventQuietRecheckMs ?? DEFAULT_EVENT_QUIET_RECHECK_MS;
+  const terminalDrainGraceMs = opts.terminalDrainGraceMs ?? DEFAULT_TERMINAL_DRAIN_GRACE_MS;
   let cursor = (opts.from ?? 0) - 1;
   let attempts = 0;
   let done = false;
@@ -131,7 +141,9 @@ export async function* streamCoordinatorEvents(
     url.searchParams.set("from", String(cursor + 1));
     const ws = makeWs(url.toString());
 
-    const queue: AexEvent[] = [];
+    const pending: AexEvent[] = [];
+    const seenSequences = new Set<number>();
+    let terminalDrainUntil = 0;
     let closed = false;
     let disconnectReason = "";
     let resolveNext: (() => void) | null = null;
@@ -141,6 +153,31 @@ export async function* streamCoordinatorEvents(
         resolveNext = null;
         r();
       }
+    };
+    const waitForWake = (timeoutMs?: number): Promise<void> =>
+      new Promise<void>((resolve) => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const finish = (): void => {
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          if (resolveNext === finish) resolveNext = null;
+          resolve();
+        };
+        resolveNext = finish;
+        if (typeof timeoutMs === "number") timer = setTimeout(finish, timeoutMs);
+      });
+    const sortPending = (): void => {
+      pending.sort((a, b) => a.sequence - b.sequence);
+    };
+    const terminalWaitMs = (): number | null => {
+      if (pending.length === 0) return null;
+      sortPending();
+      const next = pending[0]!;
+      if (!isTerminal(next) || terminalDrainUntil <= 0) return null;
+      const remaining = terminalDrainUntil - Date.now();
+      return remaining > 0 ? remaining : null;
     };
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -217,8 +254,16 @@ export async function* streamCoordinatorEvents(
         const evt = JSON.parse(data) as AexEvent;
         if (typeof evt.sequence === "number") {
           armQuiet(); // a real event frame proves the delivery pipeline, not just the socket
-          if (evt.sequence > cursor) {
-            queue.push(evt);
+          if (evt.sequence > cursor && !seenSequences.has(evt.sequence)) {
+            if (
+              terminalDrainGraceMs > 0 &&
+              isTerminal(evt) &&
+              evt.sequence > cursor + 1
+            ) {
+              terminalDrainUntil = Math.max(terminalDrainUntil, Date.now() + terminalDrainGraceMs);
+            }
+            seenSequences.add(evt.sequence);
+            pending.push(evt);
             wake();
           }
         }
@@ -261,8 +306,11 @@ export async function* streamCoordinatorEvents(
 
     try {
       while (true) {
-        while (queue.length > 0) {
-          const evt = queue.shift()!;
+        while (pending.length > 0) {
+          if (terminalWaitMs() !== null) break;
+          sortPending();
+          const evt = pending.shift()!;
+          if (evt.sequence <= cursor) continue;
           cursor = evt.sequence;
           yield evt;
           if (isTerminal(evt)) done = true;
@@ -271,10 +319,9 @@ export async function* streamCoordinatorEvents(
           closeQuietly(ws);
           break;
         }
+        const waitMs = terminalWaitMs();
         if (closed) break; // transport ended → fall through to reconnect
-        await new Promise<void>((resolve) => {
-          resolveNext = resolve;
-        });
+        await waitForWake(waitMs ?? undefined);
       }
     } finally {
       stopTimers();

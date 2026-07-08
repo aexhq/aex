@@ -4,6 +4,15 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.13
+
+### Fixed
+
+- Held gapped terminal WebSocket events briefly so replay backfill can deliver
+  lower-sequence text frames before a finished session stream ends.
+- Updated settle-consistent event stream docs and tests for the
+  `aex.run.settled` barrier emitted by the hosted planes.
+
 ## 0.40.12
 
 ### Fixed

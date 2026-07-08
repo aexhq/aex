@@ -21,6 +21,11 @@ const evt = (sequence: number, type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT", 
   data: {}
 });
 
+const sessionIdle = (sequence: number): AexEvent => ({
+  ...evt(sequence, "CUSTOM", "runtime"),
+  data: { name: "aex.session.idle", value: { state: "idle", reason: "complete" } }
+});
+
 class FakeWebSocket implements WebSocketLike {
   readonly url: string;
   readonly #listeners: Record<string, Array<(ev: { data?: unknown }) => void>> = {};
@@ -88,16 +93,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     // A managed one-shot run PARKS (CUSTOM aex.session.idle) instead of emitting
     // RUN_FINISHED. The default terminal predicate must treat that as terminal,
     // else streamEnvelopes() over a finished managed run hangs on the watchdog.
-    const idle: AexEvent = {
-      specversion: "1.0",
-      id: "r:2",
-      source: "runtime",
-      type: "CUSTOM",
-      subject: "r",
-      time: new Date(2).toISOString(),
-      sequence: 2,
-      data: { name: "aex.session.idle", value: { state: "idle", reason: "complete" } }
-    };
+    const idle = sessionIdle(2);
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
       wsUrl: "wss://co/runs/r/subscribe",
@@ -118,6 +114,84 @@ describe("streamCoordinatorEvents — live fanout", () => {
 
     expect(received).toEqual([0, 1, 2]);
     expect(ws!.closed).toBe(true);
+  });
+
+  it("drains replay backfill before yielding a gapped terminal event", async () => {
+    vi.useFakeTimers();
+    try {
+      let ws: FakeWebSocket | undefined;
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        fetchTicket: async () => "tkt",
+        webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
+        idleTimeoutMs: 0,
+        pingIntervalMs: 0,
+        eventQuietRecheckMs: 0,
+        terminalDrainGraceMs: 1000
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      ws!.message(sessionIdle(3072));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([]);
+
+      ws!.message(evt(0));
+      ws!.message(evt(1024));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([0, 1024]);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await consume;
+
+      expect(received).toEqual([0, 1024, 3072]);
+      expect(ws!.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds a gapped terminal even when an earlier replay frame is already buffered", async () => {
+    vi.useFakeTimers();
+    try {
+      let ws: FakeWebSocket | undefined;
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        fetchTicket: async () => "tkt",
+        webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
+        idleTimeoutMs: 0,
+        pingIntervalMs: 0,
+        eventQuietRecheckMs: 0,
+        terminalDrainGraceMs: 1000
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      ws!.message(evt(0));
+      ws!.message(sessionIdle(3072));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([0]);
+
+      ws!.message(evt(1024));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(received).toEqual([0, 1024]);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await consume;
+
+      expect(received).toEqual([0, 1024, 3072]);
+      expect(ws!.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("preserves existing WebSocket URL query parameters", async () => {

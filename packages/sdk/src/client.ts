@@ -1290,7 +1290,8 @@ async function* streamSessionEnvelopes(
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {}),
-    ...(options.eventQuietRecheckMs !== undefined ? { eventQuietRecheckMs: options.eventQuietRecheckMs } : {})
+    ...(options.eventQuietRecheckMs !== undefined ? { eventQuietRecheckMs: options.eventQuietRecheckMs } : {}),
+    ...(options.terminalDrainGraceMs !== undefined ? { terminalDrainGraceMs: options.terminalDrainGraceMs } : {})
   })) {
     yield asAexEventView(event);
   }
@@ -1842,6 +1843,11 @@ export interface StreamEnvelopesOptions {
    */
   readonly eventQuietRecheckMs?: number;
   /**
+   * Drain window for a live terminal frame that arrives before replay backfill.
+   * Default 1s. Set 0 to disable.
+   */
+  readonly terminalDrainGraceMs?: number;
+  /**
    * End the stream settle-consistently. By default the iterator ends on the
    * AG-UI terminal event (RUN_FINISHED / RUN_ERROR) or the managed-session
    * terminal park (`aex.session.succeeded` / failed / timed_out / cancelled /
@@ -1849,8 +1855,9 @@ export interface StreamEnvelopesOptions {
    * platform commit is necessarily read-consistent, so a `getRun` immediately
    * after can still read `running`. With `settleConsistent: true` the iterator
    * keeps reading PAST the render terminal until the post-mirror
-   * `aex.run.settled` barrier, so when it ends a subsequent `getRun` is
-   * guaranteed terminal and `listOutputs` is complete.
+   * `aex.run.settled` barrier when the plane emits it, or a session park
+   * fallback otherwise. When it ends a subsequent `getRun` is guaranteed
+   * terminal and `listOutputs` is complete.
    * Note: outputs are durable at the RUN_FINISHED event already; this only adds
    * the run-RECORD consistency barrier.
    */

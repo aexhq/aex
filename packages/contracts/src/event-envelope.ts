@@ -408,10 +408,9 @@ export function customName(e: AexEvent): string | null {
 export const AEX_RUN_SETTLED_NAME = "aex.run.settled";
 /**
  * True for the settle-consistency barrier event (post-mirror, read-consistent).
- * Also true for a managed-runtime session-park terminal: the managed plane does
- * NOT broadcast the `aex.run.settled` barrier, and by the time a run parks its
- * record has reached a terminal status — so a `settleConsistent` stream ends at
- * the park instead of hanging forever waiting for a barrier that never arrives.
+ * Also true for a managed-runtime session-park terminal: the current plane emits
+ * an `aex.run.settled` barrier after settle, but a stream may still observe the
+ * park as the terminal event when no later barrier is delivered.
  */
 export function isRunSettled(e: AexEvent): boolean {
   return customName(e) === AEX_RUN_SETTLED_NAME || isSessionParked(e);

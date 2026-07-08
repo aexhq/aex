@@ -127,8 +127,8 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
       "aex.session.cancelled"
     ]) {
       expect(isSessionParked(parked(name))).toBe(true);
-      // settleConsistent must also terminate at the park (the managed plane never
-      // broadcasts the aex.run.settled barrier) rather than hang.
+      // settleConsistent may terminate at the park if no later aex.run.settled
+      // barrier is delivered to this stream.
       expect(isRunSettled(parked(name))).toBe(true);
     }
     // The retired bare `error` park is no longer recognized (→ `failed`).

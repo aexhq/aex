@@ -292,6 +292,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       readonly envTypes: Record<string, number>;
       readonly envCustomNames: readonly string[];
       readonly envAnalyze: Analyze;
+      readonly envCount: number;
+      readonly envSeqs: readonly number[];
       readonly endedNaturally: boolean;
       readonly rfPresent: boolean;
       readonly settleEndedNaturally: boolean;
@@ -319,7 +321,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const ac = new AbortController();
       const start = Date.now();
       const guard = setTimeout(() => ac.abort(), 30000);
-      for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
+      for await (const ev of session.events().streamEnvelopes({
+        from: 0,
+        signal: ac.signal,
+        idleTimeoutMs: 6000,
+        pingIntervalMs: 1000,
+        eventQuietRecheckMs: 2000
+      })) {
         envEvents.push(ev);
         envSeqs.push(ev.sequence);
         // safety: if a run-level terminal ever appears, stop too.
@@ -387,6 +395,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         envTypes: typeCounts(envEvents),
         envCustomNames: customNamesOf(envEvents),
         envAnalyze: analyze(envSeqs),
+        envCount: envEvents.length,
+        envSeqs,
         endedNaturally,
         rfPresent,
         settleEndedNaturally,
@@ -409,8 +419,39 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.unhandled).toBeNull();
     // Correct behavior: the recorded run replays in order, no dupes, and delivers
     // BOTH the assistant text and the session terminal.
-    expect(r.envTypes["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
-    expect(r.envCustomNames.some((name) => name.startsWith("aex.session."))).toBe(true);
+    expect(
+      r.envTypes["TEXT_MESSAGE_CONTENT"] ?? 0,
+      `streamEnvelopes({from:0}) did not replay assistant text: ${JSON.stringify({
+        runId: r.runId,
+        envTypes: r.envTypes,
+        envCustomNames: r.envCustomNames,
+        envCount: r.envCount,
+        envSeqs: r.envSeqs,
+        envAnalyze: r.envAnalyze,
+        endedNaturally: r.endedNaturally,
+        settleTypes: r.settleTypes,
+        settleCustomNames: r.settleCustomNames,
+        settleCount: r.settleCount,
+        settleSeqs: r.settleSeqs,
+        settleAnalyze: r.settleAnalyze,
+        settleErr: r.settleErr,
+        settleMs: r.settleMs,
+        pollTypes: r.pollTypes,
+        pollCount: r.pollCount,
+        pollErr: r.pollErr
+      })}`
+    ).toBeGreaterThan(0);
+    expect(
+      r.envCustomNames.some((name) => name.startsWith("aex.session.")),
+      `streamEnvelopes({from:0}) did not replay a session terminal: ${JSON.stringify({
+        runId: r.runId,
+        envTypes: r.envTypes,
+        envCustomNames: r.envCustomNames,
+        envCount: r.envCount,
+        envSeqs: r.envSeqs,
+        envAnalyze: r.envAnalyze
+      })}`
+    ).toBe(true);
     expect(r.envAnalyze.monotonic).toBe(true);
     expect(r.envAnalyze.dupCount).toBe(0);
 
@@ -429,11 +470,21 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         pollErr: r.pollErr
       })}`
     ).toBe(true);
-    // settleConsistent waits for the post-mirror aex.run.settled barrier on
-    // run-finished paths. Managed session turns do not emit that barrier; the
-    // stream ends at the session-park terminal because the record is already
-    // terminal by then.
-    expect(r.settleHasBarrier).toBe(false);
+    // settleConsistent waits for the post-mirror aex.run.settled barrier when
+    // the stream receives it; session park remains the terminal fallback.
+    expect(
+      r.settleCustomNames.some((name) => name.startsWith("aex.session.")) || r.settleHasBarrier,
+      `settleConsistent replay saw neither session park nor settle barrier: ${JSON.stringify({
+        runId: r.runId,
+        settleTypes: r.settleTypes,
+        settleCustomNames: r.settleCustomNames,
+        settleCount: r.settleCount,
+        settleSeqs: r.settleSeqs,
+        settleAnalyze: r.settleAnalyze,
+        settleErr: r.settleErr,
+        settleMs: r.settleMs
+      })}`
+    ).toBe(true);
     expect(
       r.settleEndedNaturally,
       `streamEnvelopes({from:0, settleConsistent:true}) replay did not end naturally (30s guard aborted): ${JSON.stringify({
@@ -466,6 +517,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       readonly runId: string;
       readonly fullCount: number;
       readonly fullSeqs: readonly number[];
+      readonly fullTypes: Record<string, number>;
+      readonly fullCustomNames: readonly string[];
       readonly midSeq: number;
       readonly midMatchesTail: boolean;
       readonly midAnalyze: Analyze;
@@ -482,11 +535,19 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       `
       const session = await client.sessions.open(RUN_ID);
       async function drain(opts, guardMs, stopOnTerminal) {
+        const events = [];
         const seqs = [];
         const ac = new AbortController();
         const g = setTimeout(() => ac.abort(), guardMs);
         try {
-          for await (const ev of session.events().streamEnvelopes({ ...opts, signal: ac.signal })) {
+          for await (const ev of session.events().streamEnvelopes({
+            idleTimeoutMs: 6000,
+            pingIntervalMs: 1000,
+            eventQuietRecheckMs: 2000,
+            ...opts,
+            signal: ac.signal
+          })) {
+            events.push(ev);
             seqs.push(ev.sequence);
             const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
             // Session runs have no RUN_FINISHED; the true terminal is aex.session.*.
@@ -495,11 +556,12 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         } finally {
           clearTimeout(g);
         }
-        return { seqs, aborted: ac.signal.aborted };
+        return { events, seqs, aborted: ac.signal.aborted };
       }
 
       // Full replay to learn the sequence space + pick a mid cursor.
-      const full = (await drain({ from: 0 }, 40000, true)).seqs;
+      const fullReplay = await drain({ from: 0 }, 40000, true);
+      const full = fullReplay.seqs;
       const midSeq = full[Math.floor(full.length / 2)];
       const expectedTail = full.filter((s) => s >= midSeq);
 
@@ -523,6 +585,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         runId: RUN_ID,
         fullCount: full.length,
         fullSeqs: full,
+        fullTypes: typeCounts(fullReplay.events),
+        fullCustomNames: customNamesOf(fullReplay.events),
         midSeq,
         midMatchesTail,
         midAnalyze: analyze(mid),
@@ -540,6 +604,24 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
     expect(r.unhandled).toBeNull();
     expect(r.fullCount).toBeGreaterThan(2);
+    expect(
+      r.fullTypes["TEXT_MESSAGE_CONTENT"] ?? 0,
+      `full replay did not include assistant text: ${JSON.stringify({
+        runId: r.runId,
+        fullTypes: r.fullTypes,
+        fullCustomNames: r.fullCustomNames,
+        fullSeqs: r.fullSeqs
+      })}`
+    ).toBeGreaterThan(0);
+    expect(
+      r.fullCustomNames.some((name) => name.startsWith("aex.session.")),
+      `full replay did not include a session terminal: ${JSON.stringify({
+        runId: r.runId,
+        fullTypes: r.fullTypes,
+        fullCustomNames: r.fullCustomNames,
+        fullSeqs: r.fullSeqs
+      })}`
+    ).toBe(true);
     // The key reliability property: resume-from-cursor is exactly the tail.
     expect(r.midMatchesTail).toBe(true);
     expect(r.midFirstSeq).toBeGreaterThanOrEqual(r.midSeq);
