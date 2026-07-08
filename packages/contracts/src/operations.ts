@@ -635,7 +635,7 @@ export const READ_OUTPUT_TEXT_MAX_BYTES = 10_000_000;
 /** Default `maxBytes` for {@link readOutputText} — a chat-sized preview. */
 export const READ_OUTPUT_TEXT_DEFAULT_BYTES = 50_000;
 /** Default per-attempt timeout while fetching or reading one output body. */
-export const OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS = 15_000;
+export const OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS = 30_000;
 /** Idempotent output GETs retry once on a transfer timeout. */
 export const OUTPUT_FILE_TRANSFER_ATTEMPTS = 2;
 

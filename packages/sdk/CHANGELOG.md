@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.14
+
+### Fixed
+
+- Increased the default per-attempt output transfer timeout to 30s so live
+  output reads tolerate slower S3 redirect opens under high-concurrency user
+  test fanout.
+
 ## 0.40.13
 
 ### Fixed

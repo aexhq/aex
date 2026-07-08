@@ -144,6 +144,10 @@ describe("operations.downloadOutputs", () => {
 });
 
 describe("operations.downloadOutput", () => {
+  it("uses a 30s default per-attempt output transfer timeout for live redirects", () => {
+    expect(operations.OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS).toBe(30_000);
+  });
+
   it("downloads an output by exact listed filename", async () => {
     const result = await operations.downloadOutput(runWithOutput(), "run-1", { path: "/report.txt" });
 

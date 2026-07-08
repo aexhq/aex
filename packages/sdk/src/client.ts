@@ -1889,7 +1889,7 @@ export interface OutputDownloadOptions {
   readonly to?: string;
   /**
    * Per-attempt timeout for fetching and reading the selected output body.
-   * Defaults to 15_000ms; idempotent output downloads retry once on timeout.
+   * Defaults to 30_000ms; idempotent output downloads retry once on timeout.
    */
   readonly timeoutMs?: number;
 }
