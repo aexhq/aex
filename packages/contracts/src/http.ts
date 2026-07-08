@@ -1,4 +1,4 @@
-import { AexError, AexNetworkError, redactUrl } from "./sdk-errors.js";
+import { AexError, AexNetworkError, extractErrorCode, redactUrl } from "./sdk-errors.js";
 import { apiErrorFromResponse } from "./error-factory.js";
 import { AEX_DEFAULT_BASE_URL } from "./stable.js";
 
@@ -24,6 +24,18 @@ export interface HttpClientOptions {
   readonly fetch?: FetchLike;
   /** When set, every request emits a redacted one-line trace here. */
   readonly debug?: DebugSink;
+  /**
+   * Retry transient transport failures for idempotent GET/HEAD requests.
+   * Disabled by default; host CLIs enable this so a single dropped API
+   * connection does not fail read-only commands.
+   */
+  readonly retryTransientGets?: boolean | TransientGetRetryOptions;
+}
+
+export interface TransientGetRetryOptions {
+  readonly maxAttempts?: number;
+  readonly baseDelayMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -37,6 +49,7 @@ export class HttpClient {
   readonly #apiKey: string;
   readonly #fetch: FetchLike;
   readonly #debug: DebugSink | undefined;
+  readonly #retryTransientGets: ResolvedTransientGetRetry | null;
 
   constructor(options: HttpClientOptions) {
     if (!options.apiKey) {
@@ -56,6 +69,7 @@ export class HttpClient {
     this.#apiKey = options.apiKey;
     this.#fetch = options.fetch ?? fetch;
     this.#debug = options.debug;
+    this.#retryTransientGets = resolveTransientGetRetry(options.retryTransientGets);
   }
 
   /** Emit a redacted round-trip trace (no auth header, body, or query). */
@@ -86,24 +100,33 @@ export class HttpClient {
         headers["content-type"] = "application/json";
       }
     }
-    const startedMs = Date.now();
-    let response: Response;
-    try {
-      response = await this.#fetch(url, { ...init, headers });
-    } catch (err) {
-      throw toNetworkError(init.method, url, err);
+    const method = methodOf(init.method);
+    const retry = retryForMethod(method, this.#retryTransientGets);
+    const requestStartedMs = Date.now();
+    for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+      const startedMs = Date.now();
+      try {
+        const response = await this.#fetch(url, { ...init, headers });
+        this.#trace(method, url, response.status, startedMs);
+        const body = await readJson(response);
+        if (!response.ok) {
+          const errorBody = withResponseRequestId(body, response.headers);
+          throw apiErrorFromResponse({
+            status: response.status,
+            body: errorBody,
+            message: extractErrorMessage(errorBody)
+          });
+        }
+        return body as T;
+      } catch (err) {
+        if (shouldRetryTransientRead(err, retry, attempt)) {
+          await sleepBeforeRetry(this.#debug, method, url, err, retry, attempt);
+          continue;
+        }
+        throw toNetworkError(method, url, err, retry.maxAttempts > 1 ? attempt : undefined, Date.now() - requestStartedMs);
+      }
     }
-    this.#trace(init.method, url, response.status, startedMs);
-    const body = await readJson(response);
-    if (!response.ok) {
-      const errorBody = withResponseRequestId(body, response.headers);
-      throw apiErrorFromResponse({
-        status: response.status,
-        body: errorBody,
-        message: extractErrorMessage(errorBody)
-      });
-    }
-    return body as T;
+    throw new Error("HttpClient.request retry loop exhausted");
   }
 
   async download(
@@ -119,25 +142,111 @@ export class HttpClient {
       authorization: `Bearer ${this.#apiKey}`,
       ...normalizeHeaders(init.headers)
     };
-    const startedMs = Date.now();
-    let response: Response;
-    try {
-      response = await this.#fetch(url, { ...init, headers });
-    } catch (err) {
-      throw toNetworkError(init.method, url, err);
+    const method = methodOf(init.method);
+    const retry = retryForMethod(method, this.#retryTransientGets);
+    const requestStartedMs = Date.now();
+    for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+      const startedMs = Date.now();
+      try {
+        const response = await this.#fetch(url, { ...init, headers });
+        this.#trace(method, url, response.status, startedMs);
+        if (!response.ok) {
+          const body = await readJson(response);
+          const errorBody = withResponseRequestId(body, response.headers);
+          throw apiErrorFromResponse({
+            status: response.status,
+            body: errorBody,
+            message: extractErrorMessage(errorBody)
+          });
+        }
+        return { response };
+      } catch (err) {
+        if (shouldRetryTransientRead(err, retry, attempt)) {
+          await sleepBeforeRetry(this.#debug, method, url, err, retry, attempt);
+          continue;
+        }
+        throw toNetworkError(method, url, err, retry.maxAttempts > 1 ? attempt : undefined, Date.now() - requestStartedMs);
+      }
     }
-    this.#trace(init.method, url, response.status, startedMs);
-    if (!response.ok) {
-      const body = await readJson(response);
-      const errorBody = withResponseRequestId(body, response.headers);
-      throw apiErrorFromResponse({
-        status: response.status,
-        body: errorBody,
-        message: extractErrorMessage(errorBody)
-      });
-    }
-    return { response };
+    throw new Error("HttpClient.download retry loop exhausted");
   }
+}
+
+interface ResolvedTransientGetRetry {
+  readonly maxAttempts: number;
+  readonly baseDelayMs: number;
+  readonly sleep: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_TRANSIENT_GET_RETRY: ResolvedTransientGetRetry = {
+  maxAttempts: 3,
+  baseDelayMs: 250,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+};
+
+const TRANSIENT_READ_CODES = new Set([
+  "ConnectionRefused",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+  "UND_ERR_BODY_TIMEOUT"
+]);
+
+function resolveTransientGetRetry(
+  retry: HttpClientOptions["retryTransientGets"]
+): ResolvedTransientGetRetry | null {
+  if (!retry) return null;
+  if (retry === true) return DEFAULT_TRANSIENT_GET_RETRY;
+  return {
+    maxAttempts: Math.max(1, retry.maxAttempts ?? DEFAULT_TRANSIENT_GET_RETRY.maxAttempts),
+    baseDelayMs: Math.max(0, retry.baseDelayMs ?? DEFAULT_TRANSIENT_GET_RETRY.baseDelayMs),
+    sleep: retry.sleep ?? DEFAULT_TRANSIENT_GET_RETRY.sleep
+  };
+}
+
+function methodOf(method: string | undefined): string {
+  return (method ?? "GET").toUpperCase();
+}
+
+function retryForMethod(method: string, retry: ResolvedTransientGetRetry | null): ResolvedTransientGetRetry {
+  if (!retry || (method !== "GET" && method !== "HEAD")) {
+    return { ...DEFAULT_TRANSIENT_GET_RETRY, maxAttempts: 1 };
+  }
+  return retry;
+}
+
+function shouldRetryTransientRead(err: unknown, retry: ResolvedTransientGetRetry, attempt: number): boolean {
+  return attempt < retry.maxAttempts && transientReadErrorCode(err) !== undefined;
+}
+
+async function sleepBeforeRetry(
+  debug: DebugSink | undefined,
+  method: string,
+  url: URL,
+  err: unknown,
+  retry: ResolvedTransientGetRetry,
+  attempt: number
+): Promise<void> {
+  const delayMs = retry.baseDelayMs * attempt;
+  debug?.(
+    `[aex] ${method} ${url.pathname} transient ${transientReadErrorCode(err) ?? "network"} ` +
+      `attempt ${attempt}/${retry.maxAttempts}; retrying in ${delayMs}ms`
+  );
+  await retry.sleep(delayMs);
+}
+
+function transientReadErrorCode(err: unknown): string | undefined {
+  if (err instanceof AexError) return undefined;
+  if ((err as { readonly name?: unknown } | null | undefined)?.name === "AbortError") return undefined;
+  const code = extractErrorCode(err);
+  if (code && TRANSIENT_READ_CODES.has(code)) return code;
+  const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  if (/fetch failed|socket hang up|other side closed|terminated|network.*reset/i.test(text)) return "fetch";
+  return undefined;
 }
 
 /**
@@ -146,7 +255,13 @@ export class HttpClient {
  * already-structured aex errors (e.g. a retry layer's AexRateLimitError or
  * AexNetworkError) pass through untouched.
  */
-function toNetworkError(method: string | undefined, url: URL, err: unknown): unknown {
+function toNetworkError(
+  method: string | undefined,
+  url: URL,
+  err: unknown,
+  attempts?: number,
+  elapsedMs?: number
+): unknown {
   if (err instanceof AexError) return err;
   // `DOMException` is not an `Error` subclass on every runtime, so match aborts by name.
   if ((err as { readonly name?: unknown } | null | undefined)?.name === "AbortError") return err;
@@ -154,7 +269,9 @@ function toNetworkError(method: string | undefined, url: URL, err: unknown): unk
     method: (method ?? "GET").toUpperCase(),
     host: url.host,
     path: url.pathname,
-    cause: err
+    cause: err,
+    ...(attempts !== undefined ? { attempts } : {}),
+    ...(elapsedMs !== undefined ? { elapsedMs } : {})
   });
 }
 

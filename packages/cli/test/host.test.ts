@@ -90,6 +90,10 @@ function makeHostIo(opts: {
 
 const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
+function undiciFetchFailed(code = "UND_ERR_CONNECT_TIMEOUT"): TypeError {
+  return new TypeError("fetch failed", { cause: Object.assign(new Error("Connect Timeout Error"), { code }) });
+}
+
 describe("aex whoami", () => {
   it("calls GET /api/whoami without a workspace query and prints the body", async () => {
     const cap = makeHostIo({
@@ -601,6 +605,28 @@ describe("aex download", () => {
       files: [{ path: "run.json", role: "run_metadata", status: "present" }],
       errors: []
     });
+  });
+
+  it("retries transient transport failures for idempotent event download reads", async () => {
+    const writes = new Map<string, Uint8Array>();
+    let eventReads = 0;
+    const cap = makeHostIo({
+      argv: ["download", "run-retry", "--only", "events", "--out", "retry.zip", ...COMMON],
+      writes,
+      fetchHandler: (call) => {
+        if (call.url.endsWith("/api/runs/run-retry/events")) {
+          eventReads += 1;
+          if (eventReads === 1) throw undiciFetchFailed();
+          return json({ events: [{ id: "e1", type: "RUN_STARTED" }] });
+        }
+        throw new Error(`unexpected URL ${call.url}`);
+      }
+    });
+    await runCli(cap.io);
+    expect(cap.exitCode).toBe(0);
+    expect(eventReads).toBe(2);
+    const entries = unzipSync(writes.get([...writes.keys()][0]!)!);
+    expect(Object.keys(entries).sort()).toEqual(["events.jsonl", "manifest.json"]);
   });
 
   it("rejects an unknown --only namespace with a usage error", async () => {

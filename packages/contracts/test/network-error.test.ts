@@ -71,6 +71,77 @@ describe("HttpClient network failures", () => {
     expect(err.message).not.toContain("s3cr3t-query");
   });
 
+  it("retries transient GET request transport failures when enabled", async () => {
+    const raw = undiciFetchFailed("UND_ERR_CONNECT_TIMEOUT", "Connect Timeout Error");
+    const debug: string[] = [];
+    let calls = 0;
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiKey: "t",
+      retryTransientGets: {
+        maxAttempts: 3,
+        baseDelayMs: 0,
+        sleep: async () => {}
+      },
+      debug: (line) => debug.push(line),
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) throw raw;
+        return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+    });
+    await expect(client.request("/api/runs/run-1")).resolves.toMatchObject({ id: "run-1" });
+    expect(calls).toBe(2);
+    expect(debug.join("\n")).toContain("transient UND_ERR_CONNECT_TIMEOUT");
+  });
+
+  it("does not retry transient POST request failures", async () => {
+    const raw = undiciFetchFailed("UND_ERR_CONNECT_TIMEOUT", "Connect Timeout Error");
+    let calls = 0;
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiKey: "t",
+      retryTransientGets: true,
+      fetch: async () => {
+        calls += 1;
+        throw raw;
+      }
+    });
+    const err = await rejectionOf(client.request("/api/sessions", { method: "POST", body: "{}" }));
+    expect(calls).toBe(1);
+    expect(err).toBeInstanceOf(AexNetworkError);
+    expect(err.method).toBe("POST");
+    expect(err.causeCode).toBe("UND_ERR_CONNECT_TIMEOUT");
+  });
+
+  it("reports exhausted transient GET attempts on the final network error", async () => {
+    const raw = undiciFetchFailed("ECONNRESET", "socket hang up");
+    let calls = 0;
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiKey: "t",
+      retryTransientGets: {
+        maxAttempts: 2,
+        baseDelayMs: 0,
+        sleep: async () => {}
+      },
+      fetch: async () => {
+        calls += 1;
+        throw raw;
+      }
+    });
+    const err = await rejectionOf(client.request("/api/runs/run-1"));
+    expect(calls).toBe(2);
+    expect(err).toBeInstanceOf(AexNetworkError);
+    expect(err.method).toBe("GET");
+    expect(err.causeCode).toBe("ECONNRESET");
+    expect(err.attempts).toBe(2);
+    expect(err.message).toContain("after 2 attempts");
+  });
+
   it("wraps download() fetch rejections the same way", async () => {
     const raw = undiciFetchFailed("ENOTFOUND", "getaddrinfo ENOTFOUND api.example.test");
     const client = new HttpClient({

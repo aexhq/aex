@@ -334,6 +334,7 @@ export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
   return new HttpClient({
     baseUrl: flags.aexUrl,
     apiKey: flags.apiKey,
+    retryTransientGets: true,
     fetch: io.fetchImpl as FetchLike,
     // `--debug`: route the transport's redacted per-request traces to stderr.
     ...(flags.debug ? { debug: (line: string) => io.stderr(`${line}\n`) } : {})
