@@ -4,6 +4,16 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.12
+
+### Fixed
+
+- Made coordinator WebSocket streams request replay immediately after opening so
+  finished-session catch-up no longer depends only on the connection-table
+  stream.
+- Added stream self-heal timing controls for live diagnostics around quiet
+  replay and settle-consistent event streams.
+
 ## 0.40.11
 
 ### Fixed

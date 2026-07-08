@@ -11,8 +11,8 @@
  *
  * A silently half-open socket (no close/error, no frames) is the dangerous
  * case: the read loop would block forever and MISS a terminal that was already
- * persisted server-side. So the client sends a tiny keep-alive ping the
- * coordinator answers with a matching pong, and runs an idle
+ * persisted server-side. So the client sends a post-open replay trigger plus a
+ * tiny keep-alive ping the coordinator answers with a matching pong, and runs an idle
  * watchdog: if no frame arrives within {@link CoordinatorStreamOptions.idleTimeoutMs},
  * the socket is treated as dead and reconnected — resume-from-cursor then
  * replays the terminal.
@@ -100,6 +100,8 @@ const isTerminalType = (e: AexEvent): boolean =>
  * the coordinator's pair (aex-platform `packages/shared/src/event-stream-client.ts`).
  */
 const COORDINATOR_PING = "aex:ping";
+/** Post-open replay request; $connect cannot safely PostToConnection before the handshake completes. */
+const COORDINATOR_REPLAY = JSON.stringify({ action: "replay" });
 /** Default half-open watchdog window — 3× the ping cadence, so 2 pongs can be lost. */
 const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 /** Default client keep-alive ping cadence. */
@@ -189,6 +191,14 @@ export async function* streamCoordinatorEvents(
 
     ws.addEventListener("open", () => {
       armIdle();
+      if (typeof ws.send === "function") {
+        try {
+          ws.send(COORDINATOR_REPLAY);
+        } catch {
+          // socket not open / send unsupported — the DDB-stream replay kicker and
+          // quiet-reconnect path still cover replay.
+        }
+      }
       if (pingIntervalMs > 0 && typeof ws.send === "function") {
         pingTimer = setInterval(() => {
           try {

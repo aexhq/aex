@@ -1287,7 +1287,10 @@ async function* streamSessionEnvelopes(
     // settleConsistent ends the stream on the post-mirror barrier instead of
     // the earlier RUN_FINISHED UX signal.
     isTerminal: options.settleConsistent ? isRunSettled : isSessionEnvelopeTerminal,
-    ...(options.signal ? { signal: options.signal } : {})
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
+    ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {}),
+    ...(options.eventQuietRecheckMs !== undefined ? { eventQuietRecheckMs: options.eventQuietRecheckMs } : {})
   })) {
     yield asAexEventView(event);
   }
@@ -1821,6 +1824,23 @@ export interface StreamEnvelopesOptions {
   /** Starting cursor — events with `sequence >= from` are delivered. Default 0. */
   readonly from?: number;
   readonly signal?: AbortSignal;
+  /**
+   * Half-open watchdog window passed to the coordinator stream. If no frame
+   * arrives within this many ms, the SDK reconnects and resumes from the
+   * current cursor. Default 45s. Set 0 to disable.
+   */
+  readonly idleTimeoutMs?: number;
+  /**
+   * Client keep-alive ping cadence passed to the coordinator stream. Default
+   * 15s. Set 0 to disable.
+   */
+  readonly pingIntervalMs?: number;
+  /**
+   * Event-quiet replay self-heal window passed to the coordinator stream. If no
+   * real event frame arrives within this many ms, the SDK reconnects and replays
+   * from the current cursor. Default 90s. Set 0 to disable.
+   */
+  readonly eventQuietRecheckMs?: number;
   /**
    * End the stream settle-consistently. By default the iterator ends on the
    * AG-UI terminal event (RUN_FINISHED / RUN_ERROR) or the managed-session

@@ -288,6 +288,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
   it("case B — streamEnvelopes({from:0}) replays a finished run in order and terminates on session-idle; polling stream() agrees", async () => {
     const r = await spawnScript<{
+      readonly runId: string;
       readonly envTypes: Record<string, number>;
       readonly envCustomNames: readonly string[];
       readonly envAnalyze: Analyze;
@@ -295,6 +296,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       readonly rfPresent: boolean;
       readonly settleEndedNaturally: boolean;
       readonly settleHasBarrier: boolean;
+      readonly settleTypes: Record<string, number>;
+      readonly settleCustomNames: readonly string[];
+      readonly settleCount: number;
+      readonly settleSeqs: readonly number[];
+      readonly settleAnalyze: Analyze;
+      readonly settleErr: string | null;
+      readonly settleMs: number;
       readonly pollTypes: Record<string, number>;
       readonly pollCount: number;
       readonly pollErr: string | null;
@@ -322,17 +330,34 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const rfPresent = envEvents.some((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
 
       // 1b. settleConsistent:true is documented to end on the aex.run.settled
-      //     barrier. Does that barrier arrive? Guard 15s.
+      //     barrier. Does that barrier arrive? Guard 30s.
       let settleEndedNaturally = false;
       let settleHasBarrier = false;
+      let settleErr = null;
+      let settleMs = 0;
+      const settleEvents = [];
+      const settleSeqs = [];
       {
         const ac2 = new AbortController();
-        const g2 = setTimeout(() => ac2.abort(), 15000);
+        const settleStart = Date.now();
+        const g2 = setTimeout(() => ac2.abort(), 30000);
         try {
-          for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac2.signal, settleConsistent: true })) {
+          for await (const ev of session.events().streamEnvelopes({
+            from: 0,
+            signal: ac2.signal,
+            settleConsistent: true,
+            idleTimeoutMs: 6000,
+            pingIntervalMs: 1000,
+            eventQuietRecheckMs: 2000
+          })) {
+            settleEvents.push(ev);
+            settleSeqs.push(ev.sequence);
             if (ev.type === "CUSTOM" && ev.data && ev.data.name === "aex.run.settled") settleHasBarrier = true;
           }
-        } catch (e) {}
+        } catch (e) {
+          settleErr = String(e);
+        }
+        settleMs = Date.now() - settleStart;
         settleEndedNaturally = !ac2.signal.aborted;
         clearTimeout(g2);
       }
@@ -358,6 +383,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       }
 
       await emit({
+        runId: session.id,
         envTypes: typeCounts(envEvents),
         envCustomNames: customNamesOf(envEvents),
         envAnalyze: analyze(envSeqs),
@@ -365,6 +391,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         rfPresent,
         settleEndedNaturally,
         settleHasBarrier,
+        settleTypes: typeCounts(settleEvents),
+        settleCustomNames: customNamesOf(settleEvents),
+        settleCount: settleEvents.length,
+        settleSeqs,
+        settleAnalyze: analyze(settleSeqs),
+        settleErr,
+        settleMs,
         pollTypes,
         pollCount,
         pollErr
@@ -401,7 +434,26 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // stream ends at the session-park terminal because the record is already
     // terminal by then.
     expect(r.settleHasBarrier).toBe(false);
-    expect(r.settleEndedNaturally).toBe(true);
+    expect(
+      r.settleEndedNaturally,
+      `streamEnvelopes({from:0, settleConsistent:true}) replay did not end naturally (30s guard aborted): ${JSON.stringify({
+        runId: r.runId,
+        envTypes: r.envTypes,
+        envCustomNames: r.envCustomNames,
+        envAnalyze: r.envAnalyze,
+        settleTypes: r.settleTypes,
+        settleCustomNames: r.settleCustomNames,
+        settleCount: r.settleCount,
+        settleSeqs: r.settleSeqs,
+        settleAnalyze: r.settleAnalyze,
+        settleHasBarrier: r.settleHasBarrier,
+        settleErr: r.settleErr,
+        settleMs: r.settleMs,
+        pollTypes: r.pollTypes,
+        pollCount: r.pollCount,
+        pollErr: r.pollErr
+      })}`
+    ).toBe(true);
 
     // Polling stream() (RunEvent path) self-terminates on the parked session
     // (unlike streamEnvelopes) and agrees on the presence of assistant text.

@@ -141,6 +141,30 @@ describe("streamCoordinatorEvents — live fanout", () => {
     await consume;
   });
 
+  it("sends a post-open replay request so catch-up does not depend only on the connection stream", async () => {
+    let ws: FakeWebSocket | undefined;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/runs/r/subscribe",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0,
+      eventQuietRecheckMs: 0
+    });
+    const consume = (async () => {
+      for await (const event of gen) {
+        void event;
+      }
+    })();
+
+    await flush();
+    ws!.open();
+    expect(ws!.sent).toEqual([JSON.stringify({ action: "replay" })]);
+    ws!.message(evt(0, "RUN_FINISHED"));
+    await consume;
+  });
+
   it("closes the WebSocket when the caller breaks the iterator early", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({

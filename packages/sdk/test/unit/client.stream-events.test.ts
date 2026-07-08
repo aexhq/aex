@@ -71,6 +71,14 @@ const flush = async (n = 4): Promise<void> => {
   for (let i = 0; i < n; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
 };
 
+const waitFor = async (predicate: () => boolean, timeoutMs = 1500): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting ${timeoutMs}ms for predicate`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+};
+
 describe("SessionHandle.streamEvents — polling the coordinator-backed /events", () => {
   it("yields events, dedupes by id across polls, and stops when the session parks", async () => {
     let listCount = 0;
@@ -163,6 +171,51 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
       await expect(second).resolves.toMatchObject({ done: false, value: { type: "CUSTOM" } });
 
       await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    } finally {
+      (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
+    }
+  });
+
+  it("forwards replay self-heal timing options to the coordinator stream", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const originalWebSocket = globalThis.WebSocket;
+    const fakeConstructor = class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    };
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = fakeConstructor;
+
+    try {
+      const { fetch: f } = makeFetch([
+        { match: /\/sessions\/run-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/run-abc", ticket: "ticket" }) },
+        { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "succeeded" }) }
+      ]);
+      const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
+      const session = await client.openSession("run-abc");
+      const controller = new AbortController();
+      const consume = (async () => {
+        for await (const event of session.events().streamEnvelopes({
+          from: 0,
+          signal: controller.signal,
+          idleTimeoutMs: 0,
+          pingIntervalMs: 0,
+          eventQuietRecheckMs: 20
+        })) {
+          void event;
+          // This test only needs the reconnect side effect.
+        }
+      })();
+
+      await flush();
+      expect(sockets).toHaveLength(1);
+      await waitFor(() => sockets.length >= 2);
+      controller.abort();
+      await consume;
+
+      expect(new URL(sockets[0]!.url).searchParams.get("from")).toBe("0");
+      expect(new URL(sockets[1]!.url).searchParams.get("from")).toBe("0");
     } finally {
       (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
     }
