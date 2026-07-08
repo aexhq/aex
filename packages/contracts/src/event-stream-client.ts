@@ -176,6 +176,7 @@ export async function* streamCoordinatorEvents(
       sortPending();
       const next = pending[0]!;
       if (!isTerminal(next) || terminalDrainUntil <= 0) return null;
+      if (next.sequence <= cursor + 1) return null;
       const remaining = terminalDrainUntil - Date.now();
       return remaining > 0 ? remaining : null;
     };

@@ -363,8 +363,10 @@ describe("live user-test release gate", () => {
   it("keeps event-stream settle consistency aligned with session-park terminals", () => {
     const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
 
-    expect(source).toContain("stream ends at the session-park terminal");
-    expect(source).toContain("expect(r.settleHasBarrier).toBe(false);");
+    expect(source).toContain("settleConsistent waits for the post-mirror aex.run.settled barrier");
+    expect(source).toContain(
+      'r.settleCustomNames.some((name) => name.startsWith("aex.session.")) || r.settleHasBarrier'
+    );
     expect(source).toMatch(/expect\(\s*r\.settleEndedNaturally[\s\S]*?\)\.toBe\(true\);/);
   });
 

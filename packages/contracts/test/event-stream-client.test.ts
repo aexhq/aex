@@ -194,6 +194,43 @@ describe("streamCoordinatorEvents — live fanout", () => {
     }
   });
 
+  it("does not drain a terminal once buffered predecessors make it contiguous", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/runs/r/subscribe",
+        from: 0,
+        fetchTicket: async () => "tkt",
+        webSocketFactory: (url) => {
+          const ws = new FakeWebSocket(url);
+          sockets.push(ws);
+          return ws;
+        },
+        idleTimeoutMs: 0,
+        pingIntervalMs: 0,
+        eventQuietRecheckMs: 0,
+        terminalDrainGraceMs: 1000
+      });
+      const received: number[] = [];
+      const consume = (async () => {
+        for await (const e of gen) received.push(e.sequence);
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0]!.message(evt(0));
+      sockets[0]!.message(sessionIdle(1));
+      await vi.advanceTimersByTimeAsync(0);
+      await consume;
+
+      expect(received).toEqual([0, 1]);
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0]!.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("preserves existing WebSocket URL query parameters", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
