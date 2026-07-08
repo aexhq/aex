@@ -81,6 +81,12 @@ describe("live user-test release gate", () => {
     expect(preflight).toContain("live-user-tests environment is missing required value(s)");
     expect(preflight).toContain('new URL("/api/whoami"');
     expect(preflight).toContain("isRetryableWhoamiStatus");
+    expect(preflight).toContain("retryAfterDelayMs");
+    expect(preflight).toContain('res.headers.get("retry-after")');
+    expect(preflight).toContain('res.headers.get("x-amzn-requestid")');
+    expect(preflight).toContain('res.headers.get("x-request-id")');
+    expect(preflight).toContain('res.headers.get("apigw-requestid")');
+    expect(preflight).toContain("transient HTTP");
     expect(preflight).toContain("limits.maxConcurrentRuns");
     expect(preflight).toContain("maxConcurrentRuns=${maxConcurrentRuns}");
   });
