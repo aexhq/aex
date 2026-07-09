@@ -304,6 +304,7 @@ describe("live user-test release gate", () => {
     expect(source).toContain(
       'import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";'
     );
+    expect(source).toContain('import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";');
     expect(source).toContain('function managedHeavySkillName(role: "alpha" | "beta" | "gamma", provider: CaseSpec["provider"]): string');
     expect(source).toContain('name: ${JSON.stringify(managedHeavySkillName("alpha", spec.provider))}');
     expect(source).toContain('name: ${JSON.stringify(managedHeavySkillName("beta", spec.provider))}');
@@ -319,6 +320,7 @@ describe("live user-test release gate", () => {
     expect(source).toContain("return isSessionIdle(e) ? customName(e) : e.type;");
     expect(fixture).toContain('"aex.session.succeeded"');
     expect(source).toContain("const maxChannelProbeRetries = 2;");
+    expect(source).toContain("withPreCreateTransportRetry(`heavy-session ${spec.provider}`");
     expect(source).toContain("recordChannelProbeSources");
     expect(source).toContain('"toolCallStart"');
     expect(source).toContain('"toolCallResult"');

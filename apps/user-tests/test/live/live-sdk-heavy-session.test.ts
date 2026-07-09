@@ -77,6 +77,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -523,17 +524,19 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
     DEEPSEEK_KEY: deepseekKey
   });
 
-  const child = await runCommand(getBunCommand(), [scriptPath], {
-    cwd: installDir,
-    timeoutMs: spec.timeoutMs,
-    env: passEnv
+  return withPreCreateTransportRetry(`heavy-session ${spec.provider}`, async () => {
+    const child = await runCommand(getBunCommand(), [scriptPath], {
+      cwd: installDir,
+      timeoutMs: spec.timeoutMs,
+      env: passEnv
+    });
+    if (child.exitCode !== 0) {
+      throw new Error(
+        `heavy-session runner exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      );
+    }
+    return JSON.parse(child.stdout.trim()) as CaseResult;
   });
-  if (child.exitCode !== 0) {
-    throw new Error(
-      `heavy-session runner exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-    );
-  }
-  return JSON.parse(child.stdout.trim()) as CaseResult;
 }
 
 let install: InstallResult;

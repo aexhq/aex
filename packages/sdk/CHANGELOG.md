@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.40.16
+
+### Fixed
+
+- Increased direct object-storage upload retry tolerance and kept the heavy
+  live session gate resilient to pre-create transport failures without retrying
+  post-create product assertions.
+
 ## 0.40.15
 
 ### Fixed
