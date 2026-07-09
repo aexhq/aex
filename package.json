@@ -27,6 +27,7 @@
     "test:user:providers": "bun run --filter @aexhq/user-tests test:user:providers",
     "test:user:fuzz": "bun run --filter @aexhq/user-tests test:user:fuzz",
     "test:user:tool-fuzz": "bun run --filter @aexhq/user-tests test:user:tool-fuzz",
+    "gate:feature": "bun scripts/cicd/feature-gate.mjs",
     "capabilities:generate": "bun scripts/generate-capability-matrix.ts --write",
     "capabilities:check": "bun scripts/generate-capability-matrix.ts --check",
     "docs:generate": "bun run --filter @aexhq/docs generate",

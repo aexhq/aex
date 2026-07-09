@@ -66,11 +66,12 @@ export async function checkLiveUserTestsPreflight(options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const sleepFn = options.sleepFn ?? sleep;
 
-  const missing = REQUIRED_ENV.filter((name) => !env[name]);
+  const missing = REQUIRED_ENV.filter((name) => typeof env[name] !== "string" || env[name].trim() === "");
   if (missing.length > 0) {
     throw new Error(`live-user-tests environment is missing required value(s): ${missing.join(", ")}`);
   }
 
+  const apiUrl = parseApiUrl(env.AEX_API_URL, env);
   const attempts = envInt(env, "LIVE_USER_TEST_PREFLIGHT_ATTEMPTS", DEFAULT_ATTEMPTS, 10);
   const timeoutMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 120_000);
   const baseDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS", DEFAULT_BASE_DELAY_MS, 60_000);
@@ -81,7 +82,14 @@ export async function checkLiveUserTestsPreflight(options = {}) {
     DEFAULT_MIN_MAX_CONCURRENT_RUNS,
     10_000
   );
-  const url = new URL("/api/whoami", `${String(env.AEX_API_URL).replace(/\/+$/, "")}/`);
+  const maxMaxConcurrentRuns = optionalPositiveInt(env.LIVE_USER_TEST_MAX_MAX_CONCURRENT_RUNS, 10_000);
+  const expectedApiHost = String(env.AEX_EXPECTED_API_HOST ?? "").trim();
+  if (expectedApiHost && apiUrl.hostname !== expectedApiHost) {
+    throw new PreflightFatalError(
+      `live-user-tests AEX_API_URL host=${apiUrl.hostname} does not match expected host=${expectedApiHost}.`
+    );
+  }
+  const url = new URL("/api/whoami", apiUrl);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -113,6 +121,11 @@ export async function checkLiveUserTestsPreflight(options = {}) {
       if (maxConcurrentRuns < minMaxConcurrentRuns) {
         throw new PreflightFatalError(
           `live-user-tests workspace maxConcurrentRuns=${maxConcurrentRuns} is below required minimum ${minMaxConcurrentRuns} (requestId=${requestId}).`
+        );
+      }
+      if (maxMaxConcurrentRuns !== null && maxConcurrentRuns > maxMaxConcurrentRuns) {
+        throw new PreflightFatalError(
+          `live-user-tests workspace maxConcurrentRuns=${maxConcurrentRuns} is above allowed maximum ${maxMaxConcurrentRuns} (requestId=${requestId}).`
         );
       }
       out.write(
@@ -176,10 +189,45 @@ function envInt(env, name, fallback, max) {
   return positiveInt(env[name], fallback, max);
 }
 
+function optionalPositiveInt(value, max) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  return positiveInt(raw, 0, max);
+}
+
 function positiveInt(value, fallback, max = Number.POSITIVE_INFINITY) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, max);
+}
+
+function parseApiUrl(value, env) {
+  let parsed;
+  try {
+    parsed = new URL(String(value).trim());
+  } catch {
+    throw new PreflightFatalError("live-user-tests AEX_API_URL must be an absolute URL.");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new PreflightFatalError(`live-user-tests AEX_API_URL must use https (host=${parsed.host}).`);
+  }
+  if (String(env.LIVE_USER_TEST_ALLOW_PRIVATE_API_URL ?? "").trim().toLowerCase() !== "true" && isPrivateHost(parsed.hostname)) {
+    throw new PreflightFatalError(`live-user-tests AEX_API_URL host=${parsed.hostname} is not a public live endpoint.`);
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed;
+}
+
+function isPrivateHost(hostname) {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (host === "::1" || host === "[::1]") return true;
+  const ipv4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!ipv4) return false;
+  const [a, b] = ipv4.slice(1, 3).map((part) => Number.parseInt(part, 10));
+  return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
 function causeCandidates(error) {

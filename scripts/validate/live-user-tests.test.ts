@@ -71,6 +71,7 @@ describe("live user-test release gate", () => {
       expect(preflightBlock).toContain("uses: oven-sh/setup-bun@v2");
       expect(preflightBlock).toContain('bun-version: "1.3.14"');
       expect(workflow).toContain("AEX_API_URL: ${{ vars.AEX_API_URL }}");
+      expect(workflow).toContain("AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}");
       expect(workflow).toContain("AEX_API_KEY: ${{ secrets.AEX_API_KEY }}");
       expect(workflow).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
       expect(workflow).toContain("bun scripts/cicd/preflight-live-user-tests.mjs");
@@ -89,6 +90,8 @@ describe("live user-test release gate", () => {
     expect(preflight).toContain("transient HTTP");
     expect(preflight).toContain("limits.maxConcurrentRuns");
     expect(preflight).toContain("maxConcurrentRuns=${maxConcurrentRuns}");
+    expect(preflight).toContain("AEX_EXPECTED_API_HOST");
+    expect(preflight).toContain("LIVE_USER_TEST_MAX_MAX_CONCURRENT_RUNS");
   });
 
   it("keeps the full live matrix in live-user-tests.yml and release.yml on published-artifact smoke", () => {

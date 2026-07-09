@@ -94,6 +94,7 @@ jobs:
       - name: Check live user-test configuration
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
+          AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50

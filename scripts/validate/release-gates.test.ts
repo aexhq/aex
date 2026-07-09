@@ -52,7 +52,9 @@ describe("release pipeline gates", () => {
     expect(workflow).toContain("platform_deploy_run_id:");
     expect(workflow).toContain("actions: read");
     expect(workflow).toContain("name: Verify green release run published this version");
+    expect(workflow).toContain("name: Verify public release manifest");
     expect(workflow).toContain("name: Verify green platform deploy tested this version");
+    expect(workflow).toContain("name: Verify platform validation manifest");
     expect(workflow).toContain("published-artifact");
     expect(workflow).toContain("PLATFORM_REPO_TOKEN");
 
@@ -63,16 +65,56 @@ describe("release pipeline gates", () => {
     expect(workflow).toContain('[ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]');
     expect(workflow).toContain(".time[$v] // empty");
     expect(workflow).toContain('[ "${pub_s}" -lt "${start_s}" ] || [ "${pub_s}" -gt "${end_s}" ]');
+    expect(workflow).toContain('--name "public-release-manifest-${RELEASE_RUN_ID}"');
+    expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs verify-public");
     expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]');
     expect(workflow).toContain('--name "promotion-proof-${PLATFORM_DEPLOY_RUN_ID}"');
+    expect(workflow).toContain('--name "platform-validation-manifest-${PLATFORM_DEPLOY_RUN_ID}"');
+    expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs verify-platform");
     expect(workflow).toContain('proof_version="$(jq -r');
     expect(workflow).toContain('if [ "${proof_version}" != "${PACKAGE_VERSION}" ]');
     expect(workflow).toContain("suite_dev spot_canary_dev suite_prod smoke_prod");
     expect(workflow.indexOf("Verify green release run published this version")).toBeLessThan(
       workflow.indexOf("Add npm dist-tag")
     );
+    expect(workflow.indexOf("Verify public release manifest")).toBeLessThan(
+      workflow.indexOf("Add npm dist-tag")
+    );
     expect(workflow.indexOf("Verify green platform deploy tested this version")).toBeLessThan(
       workflow.indexOf("Add npm dist-tag")
     );
+    expect(workflow.indexOf("Verify platform validation manifest")).toBeLessThan(
+      workflow.indexOf("Add npm dist-tag")
+    );
+  });
+
+  it("emits a public release manifest only after the published-artifact smoke gate", () => {
+    const workflow = read(".github/workflows/release.yml");
+
+    expect(workflow).toContain("public-release-manifest:");
+    expect(workflow).toContain("name: Public release manifest");
+    expect(workflow).toContain("- live-user-tests");
+    expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs write-public");
+    expect(workflow).toContain("name: public-release-manifest-${{ github.run_id }}");
+    expect(workflow).toContain("path: public-release-manifest.json");
+    expect(workflow.indexOf("Published-artifact smoke")).toBeLessThan(
+      workflow.indexOf("public-release-manifest:")
+    );
+  });
+
+  it("keeps feature-gate.yml manual, local, and non-publishing", () => {
+    const workflow = read(".github/workflows/feature-gate.yml");
+    const rootPackageJson = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+
+    expect(rootPackageJson.scripts?.["gate:feature"]).toBe("bun scripts/cicd/feature-gate.mjs");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("push:");
+    expect(workflow).not.toContain("pull_request:");
+    expect(workflow).toContain("bun scripts/cicd/feature-gate.mjs");
+    expect(workflow).toContain("bun run test:user:offline");
+    expect(workflow).toContain("bun run pack:sdk");
+    expect(workflow).not.toContain("npm publish");
+    expect(workflow).not.toContain("npm dist-tag");
+    expect(workflow).not.toContain("AEX_API_KEY");
   });
 });

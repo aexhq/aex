@@ -1,0 +1,154 @@
+name: Feature Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Git ref to diff from.
+        required: false
+        default: origin/main
+        type: string
+      head_ref:
+        description: Git ref to diff to. Empty uses the checked-out revision.
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: feature-gate-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  impact:
+    name: Resolve feature impact
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    outputs:
+      lint: ${{ steps.impact.outputs.lint }}
+      unit_tests: ${{ steps.impact.outputs.unit_tests }}
+      offline_user_tests: ${{ steps.impact.outputs.offline_user_tests }}
+      docs_build: ${{ steps.impact.outputs.docs_build }}
+      pack_sdk: ${{ steps.impact.outputs.pack_sdk }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Resolve changed-path impact
+        id: impact
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          HEAD_REF: ${{ inputs.head_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head="${HEAD_REF:-HEAD}"
+          bun scripts/cicd/feature-gate.mjs \
+            --base "${BASE_REF:-origin/main}" \
+            --head "${head}" \
+            --github-output "$GITHUB_OUTPUT"
+
+  lint:
+    name: Lint
+    needs: impact
+    if: ${{ needs.impact.outputs.lint == 'true' }}
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun ci
+      - run: bun run lint
+
+  unit-tests:
+    name: Unit tests
+    needs: impact
+    if: ${{ needs.impact.outputs.unit_tests == 'true' }}
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun ci
+      - run: bun run test
+
+  offline-user-tests:
+    name: Offline user tests
+    needs: impact
+    if: ${{ needs.impact.outputs.offline_user_tests == 'true' }}
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun ci
+      - run: bun run test:user:offline
+        env:
+          AEX_USER_TEST_OFFLINE_MAX_WORKERS: 4
+
+  docs-build:
+    name: Docs build
+    needs: impact
+    if: ${{ needs.impact.outputs.docs_build == 'true' }}
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun ci
+      - run: bun run docs:build
+
+  pack-sdk:
+    name: Pack SDK
+    needs: impact
+    if: ${{ needs.impact.outputs.pack_sdk == 'true' }}
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun ci
+      - run: bun run pack:sdk
+
+  feature-gate:
+    name: Feature gate result
+    needs:
+      - impact
+      - lint
+      - unit-tests
+      - offline-user-tests
+      - docs-build
+      - pack-sdk
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check feature gate results
+        env:
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          UNIT_TESTS_RESULT: ${{ needs['unit-tests'].result }}
+          OFFLINE_USER_TESTS_RESULT: ${{ needs['offline-user-tests'].result }}
+          DOCS_BUILD_RESULT: ${{ needs['docs-build'].result }}
+          PACK_SDK_RESULT: ${{ needs['pack-sdk'].result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for name in IMPACT LINT UNIT_TESTS OFFLINE_USER_TESTS DOCS_BUILD PACK_SDK; do
+            var="${name}_RESULT"
+            result="${!var}"
+            echo "${name}: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          exit "${failed}"

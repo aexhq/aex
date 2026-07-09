@@ -108,6 +108,30 @@ jobs:
           fi
           echo "Verified: green release run ${RELEASE_RUN_ID} published @aexhq/sdk@${PACKAGE_VERSION} at ${published_at}."
 
+      - name: Verify public release manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf public-release-manifest
+          mkdir public-release-manifest
+          gh run download "${RELEASE_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "public-release-manifest-${RELEASE_RUN_ID}" \
+            --dir public-release-manifest
+          manifest_file="$(find public-release-manifest -name public-release-manifest.json -print -quit)"
+          if [ -z "${manifest_file}" ]; then
+            echo "::error::Release run ${RELEASE_RUN_ID} did not include public-release-manifest.json."
+            exit 1
+          fi
+          bun scripts/cicd/release-manifest.mjs verify-public \
+            --manifest "${manifest_file}" \
+            --version "${PACKAGE_VERSION}" \
+            --run-id "${RELEASE_RUN_ID}"
+
       # Fail-closed platform proof: promotion also requires a private
       # aex-platform deploy.yml run whose final Promotion proof job uploaded an
       # artifact naming this exact SDK version. That artifact is created only
@@ -171,6 +195,32 @@ jobs:
             fi
           done
           echo "Verified: green aex-platform deploy run ${PLATFORM_DEPLOY_RUN_ID} tested @aexhq/sdk@${PACKAGE_VERSION}."
+
+      - name: Verify platform validation manifest
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          PLATFORM_DEPLOY_RUN_ID: ${{ inputs.platform_deploy_run_id }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          PACKAGE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf platform-validation-manifest
+          mkdir platform-validation-manifest
+          gh run download "${PLATFORM_DEPLOY_RUN_ID}" \
+            --repo aexhq/aex-platform \
+            --name "platform-validation-manifest-${PLATFORM_DEPLOY_RUN_ID}" \
+            --dir platform-validation-manifest
+          manifest_file="$(find platform-validation-manifest -name platform-validation-manifest.json -print -quit)"
+          if [ -z "${manifest_file}" ]; then
+            echo "::error::Platform deploy run ${PLATFORM_DEPLOY_RUN_ID} did not include platform-validation-manifest.json."
+            exit 1
+          fi
+          bun scripts/cicd/release-manifest.mjs verify-platform \
+            --manifest "${manifest_file}" \
+            --version "${PACKAGE_VERSION}" \
+            --run-id "${PLATFORM_DEPLOY_RUN_ID}" \
+            --public-release-run-id "${RELEASE_RUN_ID}"
 
       - name: Assert version exists on npm
         run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"

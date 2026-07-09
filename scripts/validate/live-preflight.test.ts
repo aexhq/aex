@@ -50,7 +50,16 @@ function runScenario(scenario: string): ChildResult {
       return response(200, { limits: { maxConcurrentRuns: 50 } });
     };
     try {
-      const env = scenario === "missingEnv" ? { AEX_API_URL: baseEnv.AEX_API_URL } : baseEnv;
+      const env = {
+        ...baseEnv,
+        ...(scenario === "missingEnv" ? { AEX_API_KEY: undefined, DEEPSEEK_API_KEY: undefined } : {}),
+        ...(scenario === "blankEnv" ? { AEX_API_KEY: "   ", DEEPSEEK_API_KEY: "" } : {}),
+        ...(scenario === "privateUrl" ? { AEX_API_URL: "https://127.0.0.1:8787" } : {}),
+        ...(scenario === "allowPrivateUrl" ? { AEX_API_URL: "https://127.0.0.1:8787", LIVE_USER_TEST_ALLOW_PRIVATE_API_URL: "true" } : {}),
+        ...(scenario === "nonHttps" ? { AEX_API_URL: "http://dev-api.aex.dev" } : {}),
+        ...(scenario === "wrongHost" ? { AEX_EXPECTED_API_HOST: "api.aex.dev" } : {}),
+        ...(scenario === "capCeiling" ? { LIVE_USER_TEST_MAX_MAX_CONCURRENT_RUNS: "20" } : {})
+      };
       const result = await mod.checkLiveUserTestsPreflight({
         env,
         fetchImpl,
@@ -108,10 +117,57 @@ describe("live user-test preflight", () => {
     expect(result.calls).toBe(0);
   });
 
+  it("treats blank required environment values as missing", () => {
+    const result = runScenario("blankEnv");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("AEX_API_KEY, DEEPSEEK_API_KEY");
+    expect(result.calls).toBe(0);
+  });
+
   it("requires the workspace concurrency floor", () => {
     const result = runScenario("lowLimit");
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("maxConcurrentRuns=49");
+  });
+
+  it("rejects private live endpoints unless explicitly allowed", () => {
+    const result = runScenario("privateUrl");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("is not a public live endpoint");
+    expect(result.calls).toBe(0);
+  });
+
+  it("can explicitly allow private endpoints for non-live local verification", () => {
+    const result = runScenario("allowPrivateUrl");
+
+    expect(result.ok).toBe(true);
+    expect(result.result).toMatchObject({ status: 200, maxConcurrentRuns: 50 });
+    expect(result.calls).toBe(1);
+  });
+
+  it("rejects non-HTTPS live endpoints before network I/O", () => {
+    const result = runScenario("nonHttps");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("must use https");
+    expect(result.calls).toBe(0);
+  });
+
+  it("requires the expected API host when configured", () => {
+    const result = runScenario("wrongHost");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("does not match expected host=api.aex.dev");
+    expect(result.calls).toBe(0);
+  });
+
+  it("can enforce a concurrency ceiling for feature/admission gates", () => {
+    const result = runScenario("capCeiling");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("above allowed maximum 20");
   });
 });
