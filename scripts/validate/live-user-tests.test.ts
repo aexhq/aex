@@ -421,6 +421,19 @@ describe("live user-test release gate", () => {
     expect(source).toContain("runScenarioWithPreCreateRetry(install, \"edge-dup-name.mjs\", body)");
   });
 
+  it("keeps event-stream child diagnostics classifiable before JSON emit", () => {
+    const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
+
+    expect(source).toContain('import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";');
+    expect(source).toContain('await emitChildFailure("top-level", error);');
+    expect(source).toContain("childFailure: true");
+    expect(source).toContain('runId: __childRunId');
+    expect(source).toContain("isPreCreateChildFailure(error)");
+    expect(source).toContain("childFailureDiagnostic(scriptName, parsed)");
+    expect(source).toContain("did not print JSON: ${JSON.stringify({");
+    expect(source).toContain("redactChildText(child.stdout)");
+  });
+
   it("keeps event-stream settle consistency aligned with session-park terminals", () => {
     const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
 

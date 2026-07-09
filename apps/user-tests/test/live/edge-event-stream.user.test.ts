@@ -25,6 +25,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -56,10 +57,23 @@ const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const RUN_ID = process.env.RUN_ID;
+let __childRunId = null;
 
 let __unhandled = null;
 process.on("unhandledRejection", (e) => { __unhandled = (e && e.stack) ? String(e.stack) : String(e); });
 process.on("uncaughtException", (e) => { __unhandled = (e && e.stack) ? String(e.stack) : String(e); });
+
+function errorText(e) {
+  if (e && e.stack) return String(e.stack);
+  if (e && e.message) return String(e.message);
+  return String(e);
+}
+
+function trackRun(value) {
+  if (value && typeof value.id === "string") __childRunId = value.id;
+  if (value && typeof value.runId === "string") __childRunId = value.runId;
+  return value;
+}
 
 function analyze(seqs) {
   const seen = new Set();
@@ -152,6 +166,17 @@ async function emit(obj) {
   process.stdout.write(JSON.stringify({ ...obj, unhandled: __unhandled }));
   process.exit(0);
 }
+
+async function emitChildFailure(stage, error) {
+  await emit({
+    childFailure: true,
+    stage,
+    runId: __childRunId,
+    threw: errorText(error),
+    name: error && error.name ? String(error.name) : null,
+    unhandledAtFailure: __unhandled
+  });
+}
 `;
 
 interface Analyze {
@@ -165,20 +190,91 @@ interface Analyze {
   readonly max: number | null;
 }
 
+interface ChildFailure {
+  readonly childFailure: true;
+  readonly stage: string;
+  readonly runId: string | null;
+  readonly threw: string;
+  readonly name: string | null;
+  readonly unhandled: string | null;
+  readonly unhandledAtFailure: string | null;
+}
+
 let install: InstallResult;
+
+function redactChildText(text: string): string {
+  return text.split(apiKey).join("[REDACTED_AEX_API_KEY]").split(providerKey).join("[REDACTED_PROVIDER_KEY]");
+}
+
+function isChildFailure(value: unknown): value is ChildFailure {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { readonly childFailure?: unknown }).childFailure === true &&
+      typeof (value as { readonly threw?: unknown }).threw === "string"
+  );
+}
+
+function childFailureDiagnostic(scriptName: string, failure: ChildFailure): string {
+  return redactChildText(
+    JSON.stringify(
+      {
+        scriptName,
+        childFailure: true,
+        stage: failure.stage,
+        runId: failure.runId,
+        name: failure.name,
+        threw: failure.threw,
+        unhandled: failure.unhandled,
+        unhandledAtFailure: failure.unhandledAtFailure
+      },
+      null,
+      2
+    )
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isPreCreateChildFailure(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /"runId":\s*null/.test(text) && isPreCreateTransportMessage(text);
+}
 
 async function spawnScript<T>(
   scriptName: string,
   body: string,
   opts: { readonly extraEnv?: Record<string, string>; readonly timeoutMs?: number } = {}
 ): Promise<T> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await spawnScriptOnce<T>(scriptName, body, opts);
+    } catch (error) {
+      if (attempt >= maxAttempts || !isPreCreateChildFailure(error)) throw error;
+      // eslint-disable-next-line no-console
+      console.warn(`[edge-event-stream ${scriptName}] pre-create child transport failure; retrying ${attempt + 1}/${maxAttempts}`);
+      await sleep(1_500 * attempt);
+    }
+  }
+  throw new Error("unreachable edge-event-stream spawn retry loop");
+}
+
+async function spawnScriptOnce<T>(
+  scriptName: string,
+  body: string,
+  opts: { readonly extraEnv?: Record<string, string>; readonly timeoutMs?: number } = {}
+): Promise<T> {
   const scriptPath = join(install.installDir, scriptName);
-  writeFileSync(scriptPath, `${PREAMBLE}\n${body}\n`);
+  writeFileSync(scriptPath, `${PREAMBLE}\ntry {\n${body}\n} catch (error) {\n  await emitChildFailure("top-level", error);\n}\n`);
 
   const passEnv: Record<string, string> = {
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
-    PROVIDER: GATE_PROVIDER, PROVIDER_KEY: providerKey,
+    PROVIDER: GATE_PROVIDER,
+    PROVIDER_KEY: providerKey,
     MODEL: model,
     ...(opts.extraEnv ?? {})
   };
@@ -196,17 +292,32 @@ async function spawnScript<T>(
     timeoutMs: opts.timeoutMs ?? 4 * 60 * 1000,
     env: passEnv
   });
+  const stdout = redactChildText(child.stdout);
+  const stderr = redactChildText(child.stderr);
   if (child.exitCode !== 0) {
     throw new Error(
-      `child ${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      `child ${scriptName} exited non-zero (${child.exitCode}, signal=${child.signal ?? "none"}):\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
     );
   }
   const out = child.stdout.trim();
+  let parsed: unknown;
   try {
-    return JSON.parse(out) as T;
+    parsed = JSON.parse(out);
   } catch {
-    throw new Error(`child ${scriptName} did not print JSON:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`);
+    throw new Error(
+      `child ${scriptName} did not print JSON: ${JSON.stringify({
+        scriptName,
+        exitCode: child.exitCode,
+        signal: child.signal,
+        stdoutBytes: child.stdout.length,
+        stderrBytes: child.stderr.length
+      })}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
+    );
   }
+  if (isChildFailure(parsed)) {
+    throw new Error(`child ${scriptName} emitted failure diagnostic:\n${childFailureDiagnostic(scriptName, parsed)}`);
+  }
+  return parsed as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,13 +342,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     base = await spawnScript<BaseResult>(
       "edge-evtstream-base.mjs",
       `
-      const session = await client.sessions.create({
+      const session = trackRun(await client.sessions.create({
         provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-base-")} + Date.now(),
         apiKeys: { [PROVIDER]: PROVIDER_KEY }
-      });
+      }));
       const events = [];
       const seqs = [];
       let text = "";
@@ -312,6 +423,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-replay0.mjs",
       `
+      __childRunId = RUN_ID;
       const session = await client.sessions.open(RUN_ID);
       // 1. streamEnvelopes({from:0}) on a FINISHED session run. Session turns emit
       //    CUSTOM aex.session.* rather than RUN_FINISHED; the SDK treats that
@@ -533,6 +645,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-fromseq.mjs",
       `
+      __childRunId = RUN_ID;
       const session = await client.sessions.open(RUN_ID);
       async function drain(opts, guardMs, stopOnTerminal) {
         const events = [];
@@ -654,6 +767,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-abort-replay.mjs",
       `
+      __childRunId = RUN_ID;
       const session = await client.sessions.open(RUN_ID);
       const ac = new AbortController();
       const collected = [];
@@ -697,14 +811,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // The SDK must re-mint a ticket and resume from cursor+1 with no gap/dupe.
       // dropAfterFrames:1 keeps it robust even for sparse, few-event turns.
       const factory = makeFactory({ dropAfterFrames: 1, maxDrops: 2 });
-      const result = await client.run({
+      const result = trackRun(await client.run({
         provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-chaos-")} + Date.now(),
         apiKeys: { [PROVIDER]: PROVIDER_KEY },
         message: "Write four short sentences about mountains. Keep each under 12 words."
-      }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory });
+      }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory }));
 
       const events = Array.isArray(result.events) ? result.events : [];
       const seqs = events.map((e) => e.sequence).filter((s) => typeof s === "number");
@@ -783,14 +897,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // coordinator keeps a legitimately-quiet moment alive; if pings work, connects
       // stays 1 (no false disconnect). Either way the exactly-once contract holds.
       const factory = makeFactory({});
-      const result = await client.run({
+      const result = trackRun(await client.run({
         provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-keepalive-")} + Date.now(),
         apiKeys: { [PROVIDER]: PROVIDER_KEY },
         message: "Write five short sentences about forests. Keep each under 14 words."
-      }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory, idleTimeoutMs: 800, pingIntervalMs: 250 });
+      }, { timeoutMs: 3 * 60 * 1000, webSocketFactory: factory, idleTimeoutMs: 800, pingIntervalMs: 250 }));
 
       const events = Array.isArray(result.events) ? result.events : [];
       const seqs = events.map((e) => e.sequence).filter((s) => typeof s === "number");
@@ -828,13 +942,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-abort-live.mjs",
       `
-      const session = await client.sessions.create({
+      const session = trackRun(await client.sessions.create({
         provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
         idempotencyKey: ${JSON.stringify("edge-evt-abortlive-")} + Date.now(),
         apiKeys: { [PROVIDER]: PROVIDER_KEY }
-      });
+      }));
       // Kick the turn live in the background (its own WS); we abort a SEPARATE
       // streamEnvelopes subscription with a signal while the run is producing.
       const bg = session

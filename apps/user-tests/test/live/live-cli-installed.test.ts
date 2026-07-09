@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type RunResult } from "../_fixtures/install.js";
+import { isPreCreateTransportMessage, withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 interface LiveCliEnv {
   readonly apiBase: string;
@@ -69,6 +70,18 @@ function parseJsonLines(stdout: string): Record<string, unknown>[] {
     .split(/\r?\n/)
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function firstSessionId(stdout: string): string | null {
+  try {
+    for (const line of parseJsonLines(stdout)) {
+      const id = line["id"];
+      if (typeof id === "string" && id.length > 0) return id;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function eventText(events: readonly Record<string, unknown>[]): string {
@@ -128,12 +141,23 @@ describe("live hosted API via installed CLI", () => {
     return ["--api-key", env.apiKey, "--aex-url", env.apiBase];
   }
 
+  async function runCliCreateWithPreCreateRetry(args: readonly string[], timeoutMs: number): Promise<RunResult> {
+    return await withPreCreateTransportRetry("live-cli-installed run --follow", async () => {
+      const result = await runCli(args, timeoutMs);
+      const diag = commandDiagnostic("aex run --follow", result);
+      if (result.exitCode !== 0 && firstSessionId(result.stdout) === null && isPreCreateTransportMessage(diag)) {
+        throw new Error(diag);
+      }
+      return result;
+    });
+  }
+
   it("submits with run --follow, then reads status/events/outputs/wait/download through the installed binary", async () => {
     const diagnostics: string[] = [];
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const marker = `CLI-LIVE-${Date.now().toString(36)}-${attempt}-${Math.random().toString(36).slice(2, 8)}`;
-      const run = await runCli(
+      const run = await runCliCreateWithPreCreateRetry(
         [
           "run",
           "--provider",

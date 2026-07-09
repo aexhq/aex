@@ -12,6 +12,7 @@ describe("pre-create transport failure classifier", () => {
   it("matches common nested transport spellings but requires no run id", () => {
     expect(isPreCreateTransportMessage("TypeError: fetch failed caused by UND_ERR_CONNECT_TIMEOUT")).toBe(true);
     expect(isPreCreateTransportMessage("socket connection was closed unexpectedly")).toBe(true);
+    expect(isPreCreateTransportMessage("POST https://dev-api.aex.dev/api/sessions failed: FailedToOpenSocket after 2 attempts")).toBe(true);
     expect(isPreCreateTransportFailure({ runId: "run_0123456789abcdef0123456789abcdef", threw: "fetch failed" })).toBe(false);
   });
 
