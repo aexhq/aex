@@ -16,10 +16,10 @@ export interface AssetUploadResponse {
 /** Minimal fetch shape for direct-to-storage PUT requests. */
 export type AssetFetch = (input: string, init?: RequestInit) => Promise<AssetUploadResponse>;
 
-export const DIRECT_UPLOAD_MAX_ATTEMPTS = 3;
+export const DIRECT_UPLOAD_MAX_ATTEMPTS = 5;
 export const DIRECT_UPLOAD_INITIAL_DELAY_MS = 500;
 export const DIRECT_UPLOAD_MAX_DELAY_MS = 5_000;
-export const DIRECT_UPLOAD_MAX_ELAPSED_MS = 30_000;
+export const DIRECT_UPLOAD_MAX_ELAPSED_MS = 60_000;
 
 export type AssetUploadSleep = (ms: number, signal?: AbortSignal) => Promise<void>;
 

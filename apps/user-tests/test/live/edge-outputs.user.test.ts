@@ -203,6 +203,21 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
       }))
     };
   };
+  function zipProbeNoTransientManifestErrors(bytes) {
+    const result = zipProbe(bytes);
+    const transientErrors = result.manifestErrors.filter((error) =>
+      transientProbeRe.test(String(error.message ?? ""))
+    );
+    if (transientErrors.length > 0) {
+      const error = new Error(
+        "zip manifest recorded transient per-artifact download errors: " +
+          JSON.stringify(transientErrors).slice(0, 500)
+      );
+      error.code = "NETWORK_ERROR";
+      throw error;
+    }
+    return result;
+  }
   const dec = (bytes) => new TextDecoder().decode(bytes);
 `;
 
@@ -341,9 +356,9 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
         // archive verbs.
-        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
-        probes.push(await probeIdempotent("download_outputs_zip_timeout_option", async () => zipProbe(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }))));
-        probes.push(await probeIdempotent("download_all_zip", async () => zipProbe(await session.download())));
+        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
+        probes.push(await probeIdempotent("download_outputs_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }))));
+        probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
         probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         // Bad-selector / boundary probes — must error CLEANLY (no hang).
@@ -633,8 +648,8 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probeIdempotent("first_undefined", async () => (await outs.first()) === undefined));
         probes.push(await probeIdempotent("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
         probes.push(await probe("read_missing", async () => await outs.read({ path: "whatever.txt", match: "suffix" })));
-        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbe(await outs.download(undefined))));
-        probes.push(await probeIdempotent("download_all_zip", async () => zipProbe(await session.download())));
+        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
+        probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
         probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         process.stdout.write(JSON.stringify({ runId, status, probes }));

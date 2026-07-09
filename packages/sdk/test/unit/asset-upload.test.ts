@@ -218,12 +218,12 @@ describe("uploadAsset (direct-to-storage)", () => {
     }
 
     expect(thrown).toBeInstanceOf(Error);
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(5);
     expect(String((thrown as Error).message)).toContain(
       `https://[redacted]@acct.object-storage.example.test/b/${hex}?[redacted]`
     );
     expect(String((thrown as Error).message)).toContain("ECONNRESET");
-    expect(String((thrown as Error).message)).toContain("after 3 attempts");
+    expect(String((thrown as Error).message)).toContain("after 5 attempts");
     expect(String((thrown as Error).message)).not.toMatch(/X-Amz|Credential=credential|Security-Token|Signature|AKIA_TEST|secret|token/);
   });
 

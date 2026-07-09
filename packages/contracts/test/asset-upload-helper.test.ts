@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  DIRECT_UPLOAD_MAX_ATTEMPTS,
+  DIRECT_UPLOAD_MAX_ELAPSED_MS,
   directUploadNetworkError,
   isRetryableUploadError,
   isRetryableUploadStatus,
@@ -75,6 +77,11 @@ describe("asset upload internal helpers", () => {
     expect(isRetryableUploadError(new TypeError("fetch failed"))).toBe(true);
     expect(isRetryableUploadError(Object.assign(new TypeError("socket reset"), { code: "ECONNRESET" }))).toBe(true);
     expect(isRetryableUploadError(aborted)).toBe(false);
+  });
+
+  it("uses a burst-tolerant default retry budget for direct uploads", () => {
+    expect(DIRECT_UPLOAD_MAX_ATTEMPTS).toBe(5);
+    expect(DIRECT_UPLOAD_MAX_ELAPSED_MS).toBe(60_000);
   });
 
   it("redacts signed URLs, credential query params, and access-key-shaped text", () => {

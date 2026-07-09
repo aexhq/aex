@@ -34,6 +34,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { isPreCreateTransportFailure } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -204,6 +205,33 @@ async function runScenario(install: InstallResult, scriptName: string, body: str
   return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
 }
 
+async function runScenarioWithPreCreateRetry(
+  install: InstallResult,
+  scriptName: string,
+  body: string
+): Promise<{ observation: Observation; stdout: string }> {
+  const maxAttempts = 3;
+  let last: { observation: Observation; stdout: string } | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = await runScenario(install, scriptName, body);
+    last = result;
+    if (!isPreCreateTransportFailure(result.observation) || attempt === maxAttempts) {
+      return result;
+    }
+
+    // No runId means the submit never created a debuggable live run artifact.
+    // Retry only this transport gap; all post-create failures stay single-shot.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[edge-skills-tools] ${scriptName} pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${result.observation.threw}`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+  }
+
+  return last!;
+}
+
 function tag(): string {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
@@ -258,7 +286,7 @@ await runOne({
   idempotencyKey: "edge-throw-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-throw.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-throw.mjs", body);
       const dump = diag(observation);
 
       // A throwing tool must NOT reject the SDK call nor kill the run.
@@ -300,7 +328,7 @@ await runOne({
   idempotencyKey: "edge-cherry-bash-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-cherry-bash.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-cherry-bash.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
@@ -343,7 +371,7 @@ await runOne({
   idempotencyKey: "edge-custom-plus-builtins-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-custom-plus-builtins.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-custom-plus-builtins.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
@@ -385,7 +413,7 @@ await runOne({
   idempotencyKey: "edge-dup-name-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-dup-name.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-dup-name.mjs", body);
       const dump = diag(observation);
 
       // The submission with a duplicate tool name must be handled cleanly.
@@ -430,7 +458,7 @@ await runOne({
   idempotencyKey: "edge-empty-tools-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenario(install, "edge-empty-tools.mjs", body);
+      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-empty-tools.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();

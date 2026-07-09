@@ -376,6 +376,8 @@ describe("live user-test release gate", () => {
     expect(source).toContain("async function probeIdempotent(label, fn)");
     expect(source).toContain("transient failure");
     expect(source).toContain("isTransientProbeError(result.error)");
+    expect(source).toContain("function zipProbeNoTransientManifestErrors(bytes)");
+    expect(source).toContain("zip manifest recorded transient per-artifact download errors");
     for (const field of ["causeCode", "attempts", "elapsedMs", "method", "host", "path"]) {
       expect(source).toContain(field);
     }
@@ -390,10 +392,31 @@ describe("live user-test release gate", () => {
     ]) {
       expect(source).toContain(`probeIdempotent("${label}"`);
     }
+    expect(source).toContain(
+      'probeIdempotent("download_outputs_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined)))'
+    );
+    expect(source).toContain(
+      'probeIdempotent("download_outputs_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS })))'
+    );
+    expect(source).toContain(
+      'probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download()))'
+    );
     for (const label of ["read_missing_path", "download_missing_id", "link_nomatch"]) {
       expect(source).toContain(`probe("${label}"`);
       expect(source).not.toContain(`probeIdempotent("${label}"`);
     }
+  });
+
+  it("keeps edge skills/tools live cases resilient only to pre-create transport failures", () => {
+    const source = read("apps/user-tests/test/live/edge-skills-tools.user.test.ts");
+
+    expect(source).toContain('import { isPreCreateTransportFailure } from "../_fixtures/pre-create-transport.js";');
+    expect(source).toContain("async function runScenarioWithPreCreateRetry(");
+    expect(source).toContain("isPreCreateTransportFailure(result.observation)");
+    expect(source).toContain("[edge-skills-tools]");
+    expect(source).toContain("No runId means the submit never created a debuggable live run artifact.");
+    expect(source).toContain("runScenarioWithPreCreateRetry(install, \"edge-throw.mjs\", body)");
+    expect(source).toContain("runScenarioWithPreCreateRetry(install, \"edge-dup-name.mjs\", body)");
   });
 
   it("keeps event-stream settle consistency aligned with session-park terminals", () => {
