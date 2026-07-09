@@ -28,6 +28,9 @@ const CODE_TO_REGION: Readonly<Record<string, string>> = Object.fromEntries(
 );
 
 const API_KEY_PLANE_SET: ReadonlySet<string> = new Set(API_KEY_PLANES);
+const PUBLIC_WORKSPACE_ID_RE = /^wsp_([0-9a-f]{32})$/i;
+const DASHLESS_UUID_RE = /^[0-9a-f]{32}$/i;
+const UUID_RE = /^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/i;
 
 export interface ParsedApiKey {
   readonly plane: ApiKeyPlane;
@@ -38,12 +41,18 @@ export interface ParsedApiKey {
 }
 
 /**
- * Canonical form of a workspaceId for EMBEDDING in a key: dashes stripped so the
- * whole key is a single double-click-selectable word (`_` is a word char, `-`
- * is not). Kept byte-for-byte in sync with the platform codec.
+ * Canonical form of a workspaceId for EMBEDDING in a key. Public workspace ids
+ * are `wsp_<uuidhex>`, while storage rows still use dashed UUIDs. Keys embed only
+ * the hex field so the token remains underscore-delimited and double-click
+ * selectable.
  */
 export function normalizeWorkspaceId(workspaceId: string): string {
-  return workspaceId.replace(/-/g, "");
+  const trimmed = workspaceId.trim();
+  const publicMatch = PUBLIC_WORKSPACE_ID_RE.exec(trimmed);
+  if (publicMatch) return publicMatch[1]!.toLowerCase();
+  if (DASHLESS_UUID_RE.test(trimmed)) return trimmed.toLowerCase();
+  const uuidMatch = UUID_RE.exec(trimmed);
+  return uuidMatch ? uuidMatch.slice(1).join("").toLowerCase() : trimmed.replace(/-/g, "");
 }
 
 /**
@@ -76,7 +85,8 @@ export function parseApiKey(token: string): ParsedApiKey | null {
  * Assemble a valid API key from its parts (the inverse of {@link parseApiKey}).
  * Unlike the server's `mintApiKeyValue` this takes an EXPLICIT `secret` so it is
  * deterministic — used by codec round-trip / cross-repo parity tests. The
- * embedded workspace id is dash-normalized; `workspaceId` must not contain `_`.
+ * embedded workspace id is normalized; public `wsp_...` ids are accepted and
+ * embedded as their hex field.
  */
 export function formatApiKey(input: {
   readonly plane: ApiKeyPlane;
@@ -88,13 +98,14 @@ export function formatApiKey(input: {
   if (code === undefined) {
     throw new Error(`API key region is not supported: ${input.region}`);
   }
-  if (!input.workspaceId || input.workspaceId.includes("_")) {
+  const workspaceField = normalizeWorkspaceId(input.workspaceId);
+  if (!workspaceField || workspaceField.includes("_")) {
     throw new Error("workspaceId must be non-empty and contain no '_'");
   }
   if (!input.secret || input.secret.includes("_")) {
     throw new Error("secret must be non-empty and contain no '_'");
   }
-  const body = ["aex", input.plane, code, normalizeWorkspaceId(input.workspaceId), input.secret].join("_");
+  const body = ["aex", input.plane, code, workspaceField, input.secret].join("_");
   return `${body}_${crc32Base36(body)}`;
 }
 

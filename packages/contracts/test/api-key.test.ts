@@ -23,6 +23,13 @@ describe("parseApiKey / formatApiKey codec (WS11)", () => {
     }
   }
 
+  it("embeds public wsp_ workspace ids as the dash-free hex token field", () => {
+    const workspaceId = "wsp_5fc4b90e55af46cf9938b70f988e431d";
+    const key = formatApiKey({ plane: "prd", region: "eu-west-2", workspaceId, secret: "deadbeef".repeat(6) });
+    expect(parseApiKey(key)?.workspaceId).toBe("5fc4b90e55af46cf9938b70f988e431d");
+    expect(key.includes("-")).toBe(false);
+  });
+
   it("returns null for opaque / legacy / malformed strings", () => {
     expect(parseApiKey("sk-live-abc123")).toBeNull();
     expect(parseApiKey("")).toBeNull();
