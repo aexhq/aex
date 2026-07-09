@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Aex, type SessionRunResult } from "../../src/index.js";
+import { Aex, type SessionStartResult } from "../../src/index.js";
 import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
 
 interface CapturedRequest {
@@ -116,9 +116,9 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
 }
 
 describe("Aex sessions", () => {
-  it("sessions.run creates a session, sends one message, and stops on a session idle event", async () => {
+  it("sessions.start creates a session, sends one message, and stops on a session idle event", async () => {
     const { client, calls, sockets, webSocketFactory } = makeClient();
-    const promise = client.sessions.run({
+    const promise = client.sessions.start({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
@@ -135,7 +135,7 @@ describe("Aex sessions", () => {
       data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
     }));
 
-    const result: SessionRunResult = await promise;
+    const result: SessionStartResult = await promise;
     expect(result.sessionId).toBe("sess_1");
     // The RESULT status is the terminal OUTCOME (a clean park ⇒ succeeded); the
     // resumable lifecycle `idle` stays on the session record.
@@ -149,12 +149,12 @@ describe("Aex sessions", () => {
     );
     const create = calls.find((call) => call.method === "POST" && call.url.endsWith("/api/sessions"));
     expect((create!.body as Record<string, unknown>).retention).toEqual({ idleTtl: "3m" });
-    expect(calls.some((call) => call.url.endsWith("/api/runs"))).toBe(false);
+    expect(calls.some((call) => call.url.endsWith("/api/sessions"))).toBe(false);
   });
 
   it("patches a stale (running) post-stream record from the terminal event (await:'park')", async () => {
     const { client, sockets, webSocketFactory } = makeClient({ getSessionStatus: "running" });
-    const promise = client.sessions.run({
+    const promise = client.sessions.start({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
@@ -220,7 +220,7 @@ describe("Aex sessions", () => {
         } else if (evt.isToolCallStart()) {
           toolNames.push(evt.data.name);
         }
-        if (evt.isRunSettled()) sawSettled = true;
+        if (evt.isSessionSettled()) sawSettled = true;
         // The lifecycle discriminants are mutually exclusive on a text event.
         // eslint-disable-next-line aex/no-conditional-expect -- per-event-type check over a stream the harness guarantees yields text events; asserts discriminant mutual-exclusivity for each text event.
         if (evt.isTextMessage()) {
@@ -256,7 +256,7 @@ describe("Aex sessions", () => {
 
   it("collected result.events carry the is*() methods too", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
-    const promise = client.sessions.run({
+    const promise = client.sessions.start({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
@@ -276,7 +276,7 @@ describe("Aex sessions", () => {
     const result = await promise;
     expect(result.events[0]!.isTextMessage()).toBe(true);
     expect(result.events[1]!.isCustom()).toBe(true);
-    expect(result.events[1]!.isRunSettled()).toBe(true);
+    expect(result.events[1]!.isSessionSettled()).toBe(true);
   });
 
   it("openSession rehydrates an existing session handle", async () => {
@@ -328,19 +328,19 @@ describe("Aex sessions", () => {
     const { client, calls } = makeClient();
 
     await expect(
-      client.run({
+      client.start({
         model: "claude-haiku-4-5",
         prompt: "legacy one-shot input",
         apiKeys: { anthropic: "sk-ant" }
       } as never)
-    ).rejects.toThrow(/Aex\.run: prompt is not a supported option; use message/);
+    ).rejects.toThrow(/Aex\.start: prompt is not a supported option; use message/);
     await expect(
-      client.sessions.run({
+      client.sessions.start({
         model: "claude-haiku-4-5",
         prompt: "legacy one-shot input",
         apiKeys: { anthropic: "sk-ant" }
       } as never)
-    ).rejects.toThrow(/Aex\.sessions\.run: prompt is not a supported option; use message/);
+    ).rejects.toThrow(/Aex\.sessions\.start: prompt is not a supported option; use message/);
     expect(calls).toHaveLength(0);
   });
 
@@ -348,25 +348,25 @@ describe("Aex sessions", () => {
     const { client, calls } = makeClient();
 
     await expect(
-      client.run({
+      client.start({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-ant" }
       } as never)
-    ).rejects.toThrow(/Aex\.run: message must be a non-empty string or string array/);
+    ).rejects.toThrow(/Aex\.start: message must be a non-empty string or string array/);
     await expect(
-      client.sessions.run({
+      client.sessions.start({
         model: "claude-haiku-4-5",
         message: "",
         apiKeys: { anthropic: "sk-ant" }
       })
-    ).rejects.toThrow(/Aex\.sessions\.run: message must be a non-empty string/);
+    ).rejects.toThrow(/Aex\.sessions\.start: message must be a non-empty string/);
     await expect(
-      client.sessions.run({
+      client.sessions.start({
         model: "claude-haiku-4-5",
         message: ["ok", ""] as never,
         apiKeys: { anthropic: "sk-ant" }
       })
-    ).rejects.toThrow(/Aex\.sessions\.run: message segments must be non-empty strings/);
+    ).rejects.toThrow(/Aex\.sessions\.start: message segments must be non-empty strings/);
     expect(calls).toHaveLength(0);
   });
 
@@ -394,7 +394,7 @@ describe("Aex sessions", () => {
 
     expect(() => session.send("continue", { signal } as never)).toThrow(/signal is not a supported option/);
     await expect(
-      client.run({
+      client.start({
         model: "claude-haiku-4-5",
         message: "continue",
         apiKeys: { anthropic: "sk-ant" },

@@ -1,16 +1,16 @@
 /**
- * SDK shape tests for Secret — the per-run/workspace secret reference builder.
+ * SDK shape tests for Secret — the per-session/workspace secret reference builder.
  *
- * Secrets share the lifecycle SEMANTIC of Skill / File / AgentsMd: per-run by
- * default (vaulted at submit, gone when the run finishes), and PROMOTABLE to a
+ * Secrets share the lifecycle SEMANTIC of Skill / File / AgentsMd: per-session by
+ * default (vaulted at submit, gone when the session finishes), and PROMOTABLE to a
  * persisted, name-searchable workspace secret you can reference and reuse.
  *
- *   - Secret.value("sk-...")  = EPHEMERAL per-run value. Wire { ephemeral: true }
+ *   - Secret.value("sk-...")  = EPHEMERAL per-session value. Wire { ephemeral: true }
  *                               (value-free placeholder) + the value split into
  *                               the vaulted secrets channel, excluded from the
  *                               idempotency hash — exactly how McpServer splits
  *                               headers into secrets.mcpServers. Deleted at the
- *                               run's terminal (no workspace dependency).
+ *                               session's terminal (no workspace dependency).
  *   - secret.upload(client,…) = PROMOTE that value into the workspace secret
  *                               store under a name; returns a Secret.ref.
  *   - Secret.ref("serper")    = WORKSPACE handle ref; wire { ref: "serper" }.
@@ -24,7 +24,7 @@ import { SecretString } from "@aexhq/contracts";
 
 import { Secret } from "../../src/secret.js";
 
-describe("Secret.value (ephemeral, per-run — the default)", () => {
+describe("Secret.value (ephemeral, per-session — the default)", () => {
   it("toSubmissionEntry is a value-free placeholder; the value only via toSecretValue", () => {
     const s = Secret.value("sk-secret-123");
     expect(s.kind).toBe("value");

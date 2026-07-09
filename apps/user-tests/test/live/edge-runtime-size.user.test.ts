@@ -10,7 +10,7 @@
  * public sizes silently fall back to the 0.25 vCPU / 1 GB default task
  * definition — a customer asking for a 4-vCPU/12 GB box gets the smallest
  * shared box with no error and no visible signal. Two observable defects:
- *   1. The run record never echoes `runtimeSize`, so the requested size is
+ *   1. The session record never echoes `runtimeSize`, so the requested size is
  *      unverifiable from any public surface.
  *   2. The server accepts a GARBAGE `runtimeSize` (raw wire, 201) instead of
  *      rejecting it — only the SDK's client-side validation catches typos.
@@ -159,7 +159,7 @@ afterAll(() => {
 
 describe("edge: runtimeSize honored, validated, and visible", () => {
   it(
-    "the run record echoes the requested public runtimeSize",
+    "the session record echoes the requested public runtimeSize",
     async () => {
       const body = `
         const out = { created: null, recordRuntimeSize: null, rawRuntimeSize: null, error: null };
@@ -174,7 +174,7 @@ describe("edge: runtimeSize honored, validated, and visible", () => {
           out.created = session.id;
           const rec = (await client.sessions.open(session.id)).record;
           out.recordRuntimeSize = rec.runtimeSize ?? null;
-          const rawRec = await raw("GET", "/api/runs/" + session.id);
+          const rawRec = await raw("GET", "/api/sessions/" + session.id);
           out.rawRuntimeSize = rawRec.body && rawRec.body.runtimeSize !== undefined ? rawRec.body.runtimeSize : null;
           const h = await client.sessions.open(session.id);
           await h.delete().catch(() => {});
@@ -204,7 +204,7 @@ describe("edge: runtimeSize honored, validated, and visible", () => {
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.runId);
+        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);

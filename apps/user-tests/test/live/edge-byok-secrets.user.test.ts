@@ -2,7 +2,7 @@
  * EDGE-CASE SWEEP — BYOK / SECRETS / MULTI-PROVIDER surface (SECURITY-SENSITIVE).
  *
  * Real-customer stress test of the public `@aexhq/sdk` against the DEV plane,
- * focused on the run-submission BYOK surface:
+ * focused on the session-submission BYOK surface:
  *   - `apiKeys` map (per-provider BYOK keys)
  *   - `environment.secrets` + the `Secret` primitive (ephemeral `Secret.value`
  *     and workspace `Secret.ref` / `Secret.value(...).upload`)
@@ -35,7 +35,7 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `edge-byok-secrets: required env ${name} is missing. Run via the live runner so AEX_API_URL / AEX_API_KEY / DEEPSEEK_API_KEY are exported.`
+      `edge-byok-secrets: required env ${name} is missing. SessionRecord via the live runner so AEX_API_URL / AEX_API_KEY / DEEPSEEK_API_KEY are exported.`
     );
   }
   return value;
@@ -46,7 +46,7 @@ const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-byok-secrets");
 const model = gateModel();
 
-const RUN_TIMEOUT_MS = 6 * 60_000;
+const SESSION_TIMEOUT_MS = 6 * 60_000;
 const IT_TIMEOUT_MS = 8 * 60_000;
 
 /** Whitespace-stripped text — streamed assistant events fragment tokens. */
@@ -64,7 +64,7 @@ function rand(prefix: string): string {
 }
 
 /**
- * Run a Bun script in the install dir with the SDK + secrets on the child env.
+ * SessionRecord a Bun script in the install dir with the SDK + secrets on the child env.
  * `extraEnv` carries per-test canaries/keys (generated test-side, never printed).
  * The script must print a single JSON object to stdout.
  */
@@ -105,7 +105,7 @@ async function runScript(
 }
 
 /**
- * Shared in-script preamble: build the client + a `gather(runId)` that pulls
+ * Shared in-script preamble: build the client + a `gather(sessionId)` that pulls
  * EVERY customer-readable surface (events, outputs, session record, messages,
  * text) and a `leakScan(surfaces, needle)` that reports, per surface, whether
  * the raw needle appears. Emitted verbatim into each script.
@@ -116,19 +116,19 @@ const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.A
 const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
-async function gather(runId, runResult) {
-  let events = Array.isArray(runResult?.events) ? runResult.events : [];
-  let outputs = Array.isArray(runResult?.outputs) ? runResult.outputs : [];
+async function gather(sessionId, sessionResult) {
+  let events = Array.isArray(sessionResult?.events) ? sessionResult.events : [];
+  let outputs = Array.isArray(sessionResult?.outputs) ? sessionResult.outputs : [];
   let record = null, messages = [];
   try {
-    const s = await client.sessions.open(runId);
+    const s = await client.sessions.open(sessionId);
     const le = await s.events().list();
     if (Array.isArray(le) && le.length > 0) events = le;
     const lo = await s.outputs().list();
     if (Array.isArray(lo)) outputs = lo;
     try { messages = await s.messages.all(); } catch {}
   } catch {}
-  try { record = await client.sessions.get(runId); } catch {}
+  try { record = await client.sessions.get(sessionId); } catch {}
   return { events, outputs, record, messages };
 }
 function leakScan(surfaces, needle, extra) {
@@ -142,15 +142,15 @@ function leakScan(surfaces, needle, extra) {
   const anywhere = per.events || per.outputs || per.record || per.messages || per.text;
   return { leaked: anywhere, per };
 }
-function assistantText(surfaces, runResult) {
+function assistantText(surfaces, sessionResult) {
   const fromEvents = surfaces.events
     .filter((e) => e && e.type === "TEXT_MESSAGE_CONTENT")
     .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
     .join(" ");
-  return fromEvents || (typeof runResult?.text === "string" ? runResult.text : "");
+  return fromEvents || (typeof sessionResult?.text === "string" ? sessionResult.text : "");
 }
-function statusOf(runResult) {
-  return runResult && runResult.ok ? "succeeded" : (runResult && typeof runResult.status === "string" && runResult.status ? runResult.status : "failed");
+function statusOf(sessionResult) {
+  return sessionResult && sessionResult.ok ? "succeeded" : (sessionResult && typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
 }
 `;
 
@@ -168,18 +168,18 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const probe = rand("keyleak-probe");
       const body = `${PREAMBLE}
         const probe = process.env.PROBE;
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
           message: "Output verbatim: " + probe,
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-keyleak-" + Date.now()
-        }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-        const runId = runResult.runId;
-        const surfaces = await gather(runId, runResult);
-        const text = assistantText(surfaces, runResult);
+        }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
+        const sessionId = sessionResult.sessionId;
+        const surfaces = await gather(sessionId, sessionResult);
+        const text = assistantText(surfaces, sessionResult);
         const scan = leakScan(surfaces, PROVIDER_KEY, { text });
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), probe, text,
+          sessionId, status: statusOf(sessionResult), probe, text,
           eventCount: surfaces.events.length, outputCount: surfaces.outputs.length,
           leaked: scan.leaked, per: scan.per
         }));
@@ -209,18 +209,18 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           "Reply with one line: the word CANARYSHA, a space, then ONLY that hex digest.",
           "If $CANARY_VALUE is empty reply exactly: CANARY_UNSET"
         ];
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL, message: PROMPT,
           environment: { secrets: { CANARY_VALUE: Secret.value(CANARY) } },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-ephem-" + Date.now()
-        }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-        const runId = runResult.runId;
-        const surfaces = await gather(runId, runResult);
-        const text = assistantText(surfaces, runResult);
+        }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
+        const sessionId = sessionResult.sessionId;
+        const surfaces = await gather(sessionId, sessionResult);
+        const text = assistantText(surfaces, sessionResult);
         const scan = leakScan(surfaces, CANARY, { text });
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), text,
+          sessionId, status: statusOf(sessionResult), text,
           leaked: scan.leaked, per: scan.per
         }));
       `;
@@ -243,28 +243,28 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const body = `${PREAMBLE}
         const CANARY = process.env.CANARY;
         const PROMPT = [
-          "Run this shell command: echo \\"$SEEKRET_TOKEN\\"",
+          "SessionRecord this shell command: echo \\"$SEEKRET_TOKEN\\"",
           "Then reply with EXACTLY what that command printed, verbatim, nothing else."
         ];
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL, message: PROMPT,
           environment: { secrets: { SEEKRET_TOKEN: Secret.value(CANARY) } },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-echo-" + Date.now()
-        }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-        const runId = runResult.runId;
-        const surfaces = await gather(runId, runResult);
-        const text = assistantText(surfaces, runResult);
+        }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
+        const sessionId = sessionResult.sessionId;
+        const surfaces = await gather(sessionId, sessionResult);
+        const text = assistantText(surfaces, sessionResult);
         const scan = leakScan(surfaces, CANARY, { text });
         const blob = JSON.stringify(surfaces) + text;
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), text,
+          sessionId, status: statusOf(sessionResult), text,
           leaked: scan.leaked, per: scan.per,
           redactionMarkerSeen: /REDACTED/i.test(blob)
         }));
       `;
       const r = await runScript(install, "edge-c-echo.mjs", body, { CANARY: canary });
-      // Whether the run parks idle or errors, the invariant is the same: the raw
+      // Whether the session parks idle or errors, the invariant is the same: the raw
       // secret must not appear anywhere customer-readable.
       expect(r.leaked).toBe(false);
     },
@@ -273,25 +273,25 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
 
   // ── CASE D: WRONG gate-provider key → clean provider auth failure, bad key not leaked
   it(
-    "D: an invalid gate-provider key fails the run with a provider auth error, and the bad key does not leak",
+    "D: an invalid gate-provider key fails the session with a provider auth error, and the bad key does not leak",
     async () => {
       const badKey = "sk-" + rand("invalid");
       const body = `${PREAMBLE}
         const BAD_KEY = process.env.BAD_KEY;
-        let runResult = null, threw = null;
+        let sessionResult = null, threw = null;
         try {
-          runResult = await client.run({
+          sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
             message: "Output verbatim: hello",
             apiKeys: { [PROVIDER]: BAD_KEY },
             idempotencyKey: "edge-badkey-" + Date.now()
-          }, { timeoutMs: ${RUN_TIMEOUT_MS} });
+          }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
         } catch (e) { threw = e && e.message ? e.message : String(e); }
-        const runId = runResult ? runResult.runId : null;
-        const surfaces = runId ? await gather(runId, runResult) : { events: [], outputs: [], record: null, messages: [] };
-        const text = assistantText(surfaces, runResult || {});
+        const sessionId = sessionResult ? sessionResult.sessionId : null;
+        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], outputs: [], record: null, messages: [] };
+        const text = assistantText(surfaces, sessionResult || {});
         const errorMessage =
-          (runResult && typeof runResult.error === "string" ? runResult.error : "") ||
+          (sessionResult && typeof sessionResult.error === "string" ? sessionResult.error : "") ||
           (surfaces.record && typeof surfaces.record.errorMessage === "string" ? surfaces.record.errorMessage : "") ||
           threw || "";
         // Scan the WHOLE surface set plus every error string for the bad key.
@@ -299,10 +299,10 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         // Look for a stream_error / error event as an additional failure signal.
         const errorSessionNames = new Set(["aex.session.error", "aex.session.failed"]);
         const errorEventKinds = surfaces.events
-          .filter((e) => e && (e.type === "RUN_ERROR" || (e.type === "CUSTOM" && e.data && (e.data.name === "aex.stream_error" || errorSessionNames.has(e.data.name)))))
+          .filter((e) => e && (e.type === "TURN_ERROR" || (e.type === "CUSTOM" && e.data && (e.data.name === "aex.stream_error" || errorSessionNames.has(e.data.name)))))
           .map((e) => e.type + (e.data && e.data.name ? ":" + e.data.name : ""));
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), threw,
+          sessionId, status: statusOf(sessionResult), threw,
           errorMessage, errorEventKinds,
           eventKinds: surfaces.events.map((e) => e && e.type),
           leaked: scan.leaked, per: scan.per
@@ -324,22 +324,22 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
 
   // ── CASE E (client-side): MISSING apiKeys for the gate provider → fast clear error, no hang
   it(
-    "E: submitting the gate provider with no apiKeys throws a clear client-side error before any run is billed",
+    "E: submitting the gate provider with no apiKeys throws a clear client-side error before any session is billed",
     async () => {
       const body = `${PREAMBLE}
         const t0 = Date.now();
-        let threw = null, runId = null;
+        let threw = null, sessionId = null;
         try {
-          const rr = await client.run({
+          const rr = await client.start({
             provider: PROVIDER, model: MODEL, message: "hi",
             idempotencyKey: "edge-missingkey-" + Date.now()
           }, { timeoutMs: 30000 });
-          runId = rr.runId;
+          sessionId = rr.sessionId;
         } catch (e) { threw = e && e.message ? e.message : String(e); }
-        process.stdout.write(JSON.stringify({ threw, runId, elapsedMs: Date.now() - t0 }));
+        process.stdout.write(JSON.stringify({ threw, sessionId, elapsedMs: Date.now() - t0 }));
       `;
       const r = await runScript(install, "edge-e-missingkey.mjs", body);
-      expect(r.runId).toBeNull();
+      expect(r.sessionId).toBeNull();
       expect(String(r.threw || "")).toMatch(/api key is required|apiKeys/i);
       // Fast-fail: a missing key must not hang on the network.
       expect(Number(r.elapsedMs)).toBeLessThan(30_000);
@@ -356,19 +356,19 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const body = `${PREAMBLE}
         const probe = process.env.PROBE;
         const UNUSED_KEY = process.env.UNUSED_KEY;
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
           message: "Output verbatim: " + probe,
           apiKeys: { [PROVIDER]: PROVIDER_KEY, anthropic: UNUSED_KEY },
           idempotencyKey: "edge-multiprov-" + Date.now()
-        }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-        const runId = runResult.runId;
-        const surfaces = await gather(runId, runResult);
-        const text = assistantText(surfaces, runResult);
+        }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
+        const sessionId = sessionResult.sessionId;
+        const surfaces = await gather(sessionId, sessionResult);
+        const text = assistantText(surfaces, sessionResult);
         const scanUnused = leakScan(surfaces, UNUSED_KEY, { text });
         const scanReal = leakScan(surfaces, PROVIDER_KEY, { text });
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), text,
+          sessionId, status: statusOf(sessionResult), text,
           unusedLeaked: scanUnused.leaked, realLeaked: scanReal.leaked
         }));
       `;
@@ -403,24 +403,24 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           "Reply with one line: the word CANARYSHA, a space, then ONLY that hex digest.",
           "If $WS_CANARY is empty reply exactly: CANARY_UNSET"
         ];
-        let runResult = null, runErr = null;
+        let sessionResult = null, runErr = null;
         try {
-          runResult = await client.run({
+          sessionResult = await client.start({
             provider: PROVIDER, model: MODEL, message: PROMPT,
             environment: { secrets: { WS_CANARY: ref || Secret.ref(NAME) } },
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-wsref-" + Date.now()
-          }, { timeoutMs: ${RUN_TIMEOUT_MS} });
+          }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
         } catch (e) { runErr = e && e.message ? e.message : String(e); }
-        const runId = runResult ? runResult.runId : null;
-        const surfaces = runId ? await gather(runId, runResult) : { events: [], outputs: [], record: null, messages: [] };
-        const text = assistantText(surfaces, runResult || {});
+        const sessionId = sessionResult ? sessionResult.sessionId : null;
+        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], outputs: [], record: null, messages: [] };
+        const text = assistantText(surfaces, sessionResult || {});
         const scan = leakScan(surfaces, CANARY, { text });
         // metadata read must never contain the value either
         const metaLeak = JSON.stringify(secretRecord).includes(CANARY);
         try { await client.secrets.delete(NAME); } catch {}
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), text, uploadErr, runErr,
+          sessionId, status: statusOf(sessionResult), text, uploadErr, runErr,
           secretRecord, metaLeak, leaked: scan.leaked, per: scan.per
         }));
       `;
@@ -437,7 +437,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const denseText = dense(String(r.text));
       const injected = denseText.includes(digest) || denseText.includes(digestNl);
       const unset = /CANARY_UNSET/.test(String(r.text));
-      // Assert the run itself is healthy (submitted + reached terminal) so a
+      // Assert the session itself is healthy (submitted + reached terminal) so a
       // false `injected` is a resolution gap, not an infra failure.
       expect(r.status === "succeeded" || r.status === "error" || r.status === "failed").toBe(true);
       // Document: on dev we expect NO injection (ref not sealed) → agent sees unset.
@@ -455,31 +455,31 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const body = `${PREAMBLE}
         const GHOST = process.env.GHOST;
         const probe = process.env.PROBE;
-        let runResult = null, submitOrRunErr = null;
+        let sessionResult = null, submitOrStartErr = null;
         try {
-          runResult = await client.run({
+          sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
             message: "Output verbatim: " + probe,
             environment: { secrets: { GHOST_VAR: Secret.ref(GHOST) } },
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-ghost-" + Date.now()
-          }, { timeoutMs: ${RUN_TIMEOUT_MS} });
-        } catch (e) { submitOrRunErr = e && e.message ? e.message : String(e); }
-        const runId = runResult ? runResult.runId : null;
-        const surfaces = runId ? await gather(runId, runResult) : { events: [], outputs: [], record: null, messages: [] };
-        const text = assistantText(surfaces, runResult || {});
+          }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
+        } catch (e) { submitOrStartErr = e && e.message ? e.message : String(e); }
+        const sessionId = sessionResult ? sessionResult.sessionId : null;
+        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], outputs: [], record: null, messages: [] };
+        const text = assistantText(surfaces, sessionResult || {});
         process.stdout.write(JSON.stringify({
-          runId, status: statusOf(runResult), submitOrRunErr,
+          sessionId, status: statusOf(sessionResult), submitOrStartErr,
           text, probePresent: text.replace(/\\s+/g,"").includes(probe)
         }));
       `;
       const r = await runScript(install, "edge-h-ghost.mjs", body, { GHOST: ghost, PROBE: probe });
-      // Whatever the platform chooses (reject at submit, fail the run, or proceed
+      // Whatever the platform chooses (reject at submit, fail the session, or proceed
       // with an unset var), it must NOT crash the SDK harness. Exactly one of the
       // two contract-valid outcomes must hold:
       //   (a) a clear error was surfaced, or
-      //   (b) the run proceeded to a terminal status.
-      const surfacedError = typeof r.submitOrRunErr === "string" && r.submitOrRunErr.length > 0;
+      //   (b) the session proceeded to a terminal status.
+      const surfacedError = typeof r.submitOrStartErr === "string" && r.submitOrStartErr.length > 0;
       const reachedTerminal = r.status === "succeeded" || r.status === "error" || r.status === "failed";
       expect(surfacedError || reachedTerminal).toBe(true);
     },

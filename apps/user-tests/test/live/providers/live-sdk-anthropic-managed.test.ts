@@ -6,13 +6,13 @@
  * gate suite, swapped provider, via the BYOK provider-proxy. It lives under
  * test/live/providers/ — the on-demand provider suite EXCLUDED from the
  * default release-gating `test:user` sweep (see vitest.providers.config.ts);
- * it runs only via `test:user:providers` (live-on-demand-tests.yml), so the
+ * it sessions only via `test:user:providers` (live-on-demand-tests.yml), so the
  * release gate never depends on the Anthropic account billing state.
  *
- *   SDK → POST /api/runs { provider: "anthropic" }
- *      → hosted run-lifecycle → managed runtime
+ *   SDK → POST /api/sessions { provider: "anthropic" }
+ *      → hosted session-lifecycle → managed runtime
  *      → /provider-proxy/anthropic-messages/v1/messages
- *      → hosted API injects the run-scoped Anthropic key
+ *      → hosted API injects the session-scoped Anthropic key
  *      → api.anthropic.com /v1/messages → assistant_text event
  *
  * There is no customer runtime selector; every provider uses the same
@@ -50,8 +50,8 @@ const anthropicKey = requireEnv("ANTHROPIC_API_KEY");
 const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-haiku-4-5";
 
 interface LiveResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly probe: string;
@@ -62,9 +62,9 @@ interface LiveResult {
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly outputCount: number;
-  // Per-file filenames + sizes returned by GET /api/runs/:id/outputs.
+  // Per-file filenames + sizes returned by GET /api/sessions/:id/outputs.
   // Captured for diagnostic dumps so a deliverable-related failure is
-  // self-describing without a re-run. Namespace separation is covered by
+  // self-describing without a retry. Namespace separation is covered by
   // live-sdk-download-namespaces.test.ts; this simple text round-trip does not
   // assert that the model/runtime produced no user deliverables.
   readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
@@ -110,25 +110,25 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           apiKey
         });
 
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: "anthropic",
           model,
           message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-anthropic-mgd-" + Date.now(),
           apiKeys: { anthropic: anthropicKey }
         }, { timeoutMs: 8 * 60 * 1000 });
-        const runId = runResult.runId;
+        const sessionId = sessionResult.sessionId;
         const run = {
-          status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
+          status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
           runtime: "managed",
           provider: "anthropic"
         };
-        const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
-        const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+        const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
+        const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
         let events = fallbackEvents;
         let outputs = fallbackOutputs;
         try {
-          const session = await client.sessions.open(runId);
+          const session = await client.sessions.open(sessionId);
           const listedEvents = await session.events().list();
           if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
           const listedOutputs = await session.outputs().list();
@@ -143,17 +143,17 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           .join(" ");
         const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
         const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-        const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+        const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
         const eventKinds = events.map((e) => e.type);
-        if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+        if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
         const terminalData = terminal && isSessionIdle(terminal)
           ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
           : terminal ? terminal.data : null;
 
         const serialized = JSON.stringify({ run, events, outputs });
         const result = {
-          runId: runId,
-          runStatus: run.status,
+          sessionId: sessionId,
+          sessionStatus: session.status,
           runtime: run.runtime ?? "(missing)",
           provider: run.provider ?? "(missing)",
           probe: ${JSON.stringify(probe)},
@@ -161,7 +161,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           eventKinds,
           assistantTextJoined,
           assistantTextEventCount: assistantTextEvents.length,
-          terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+          terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
           terminalData,
           outputCount: outputs.length,
           outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
@@ -219,11 +219,11 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
 
       expect(result.runtime, diagnostic).toBe("managed");
       expect(result.provider, diagnostic).toBe("anthropic");
-      expect(result.runStatus, diagnostic).toBe("succeeded");
+      expect(result.sessionStatus, diagnostic).toBe("succeeded");
 
       // Real managed-runtime event frame.
-      expect(result.terminalKind, diagnostic).toBe("RUN_FINISHED");
-      expect(result.eventKinds, diagnostic).toContain("RUN_FINISHED");
+      expect(result.terminalKind, diagnostic).toBe("TURN_FINISHED");
+      expect(result.eventKinds, diagnostic).toContain("TURN_FINISHED");
       expect(result.assistantTextEventCount, diagnostic).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length, diagnostic).toBeGreaterThan(0);
       // Strip whitespace before matching the probe — managed-runtime stream

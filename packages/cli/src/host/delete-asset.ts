@@ -2,7 +2,7 @@
  * `aex delete-asset <assetId|hash>` — DELETE /assets/{assetId}.
  *
  * Removes a workspace asset blob from the shared content-addressed store.
- * Runs that already snapshotted the asset into their own prefix are
+ * Sessions that already snapshotted the asset into their own prefix are
  * unaffected. Accepts `sha256:<hex>` or a bare 64-hex digest.
  */
 import { operations } from "@aexhq/contracts";
@@ -16,11 +16,11 @@ import {
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";
 
-export async function runDeleteAssetCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "delete-asset")) return USAGE_ERR;
+export async function executeDeleteAssetCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "delete-asset")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

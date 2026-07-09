@@ -14,7 +14,7 @@ export interface RuntimeResources {
 /**
  * The single source of truth: every offered preset, keyed by its wire token.
  * Tokens intentionally remain stable product presets. The smallest
- * (`shared-0.06x-256mb`) tier is for light / IO-bound runs only.
+ * (`shared-0.06x-256mb`) tier is for light / IO-bound sessions only.
  */
 export const RUNTIME_SIZE_PRESETS = {
   "shared-0.06x-256mb": { cpus: 0.0625, memoryMb: 256 },
@@ -69,17 +69,17 @@ export function parseRuntimeSize(input: unknown): RuntimeSize | undefined {
 }
 
 // ===========================================================================
-// Run timeout
+// SessionRecord timeout
 // ===========================================================================
 
-/** Default run deadline when `timeout` is omitted (8 hours). */
-export const DEFAULT_RUN_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+/** Default session deadline when `timeout` is omitted (8 hours). */
+export const DEFAULT_SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
-/** Hard ceiling on a run deadline (8 hours). */
-export const MAX_RUN_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+/** Hard ceiling on a session deadline (8 hours). */
+export const MAX_SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
-/** Floor on a run deadline (1 minute). */
-export const MIN_RUN_TIMEOUT_MS = 60 * 1000;
+/** Floor on a session deadline (1 minute). */
+export const MIN_SESSION_TIMEOUT_MS = 60 * 1000;
 
 const DURATION_PATTERN = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/;
 
@@ -106,9 +106,9 @@ export function parseDurationToMs(input: string): number {
 /**
  * Validate the wire `timeout` field (a duration string) into a bounded ms
  * value. `undefined` (omitted) returns `undefined`; the consumer applies
- * {@link DEFAULT_RUN_TIMEOUT_MS}.
+ * {@link DEFAULT_SESSION_TIMEOUT_MS}.
  */
-export function parseRunTimeout(input: unknown): number | undefined {
+export function parseSessionTimeout(input: unknown): number | undefined {
   if (input === undefined) {
     return undefined;
   }
@@ -116,18 +116,18 @@ export function parseRunTimeout(input: unknown): number | undefined {
     throw new Error(`timeout must be a duration string (e.g. "1h", "30m"); got ${JSON.stringify(input)}`);
   }
   const ms = parseDurationToMs(input);
-  if (ms < MIN_RUN_TIMEOUT_MS) {
-    throw new Error(`timeout must be at least ${MIN_RUN_TIMEOUT_MS}ms (1m); got ${ms}ms`);
+  if (ms < MIN_SESSION_TIMEOUT_MS) {
+    throw new Error(`timeout must be at least ${MIN_SESSION_TIMEOUT_MS}ms (1m); got ${ms}ms`);
   }
-  if (ms > MAX_RUN_TIMEOUT_MS) {
-    throw new Error(`timeout must be at most ${MAX_RUN_TIMEOUT_MS}ms (8h); got ${ms}ms`);
+  if (ms > MAX_SESSION_TIMEOUT_MS) {
+    throw new Error(`timeout must be at most ${MAX_SESSION_TIMEOUT_MS}ms (8h); got ${ms}ms`);
   }
   return ms;
 }
 
 /** Apply the default when a parsed `timeoutMs` is absent. */
-export function resolveRunTimeoutMs(timeoutMs: number | undefined): number {
-  return timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+export function resolveSessionTimeoutMs(timeoutMs: number | undefined): number {
+  return timeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS;
 }
 
 /** Format a millisecond deadline as a second-granularity duration string. */
@@ -136,10 +136,10 @@ export function orchestrationTimeoutString(ms: number): string {
 }
 
 /** Runtime process: time to wait after graceful interrupt before hard kill. */
-export const RUN_PROCESS_KILL_GRACE_MS = 60 * 1000;
+export const SESSION_PROCESS_KILL_GRACE_MS = 60 * 1000;
 
 /**
  * Orchestrator: extra window past `timeoutMs` to wait for terminal callback
  * before host-level cleanup.
  */
-export const RUN_TERMINAL_GRACE_MS = 90 * 1000;
+export const SESSION_TERMINAL_GRACE_MS = 90 * 1000;

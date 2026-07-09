@@ -16,7 +16,7 @@ export function buildPublicReleaseManifest(input) {
     createdAt: now,
     repository: input.repository ?? process.env.GITHUB_REPOSITORY ?? "aexhq/aex",
     workflow: "release.yml",
-    runId: String(input.runId ?? process.env.GITHUB_RUN_ID ?? ""),
+    sessionId: String(input.sessionId ?? process.env.GITHUB_RUN_ID ?? ""),
     runAttempt: String(input.runAttempt ?? process.env.GITHUB_RUN_ATTEMPT ?? ""),
     headSha: input.headSha ?? process.env.GITHUB_SHA ?? "",
     sdk: {
@@ -51,8 +51,8 @@ export function validatePublicReleaseManifest(manifest, expected = {}) {
   if (expected.version && manifest?.sdk?.version !== expected.version) {
     errors.push(`sdk.version must be ${expected.version}`);
   }
-  if (expected.runId && String(manifest?.runId ?? "") !== String(expected.runId)) {
-    errors.push(`runId must be ${expected.runId}`);
+  if (expected.sessionId && String(manifest?.sessionId ?? "") !== String(expected.sessionId)) {
+    errors.push(`sessionId must be ${expected.sessionId}`);
   }
   if (manifest?.repository !== "aexhq/aex") errors.push("repository must be aexhq/aex");
   if (manifest?.workflow !== "release.yml") errors.push("workflow must be release.yml");
@@ -77,11 +77,11 @@ export function validatePlatformValidationManifest(manifest, expected = {}) {
   if (expected.version && manifest?.sdk?.version !== expected.version) {
     errors.push(`sdk.version must be ${expected.version}`);
   }
-  if (expected.runId && String(manifest?.platform?.runId ?? "") !== String(expected.runId)) {
-    errors.push(`platform.runId must be ${expected.runId}`);
+  if (expected.sessionId && String(manifest?.platform?.sessionId ?? "") !== String(expected.sessionId)) {
+    errors.push(`platform.sessionId must be ${expected.sessionId}`);
   }
-  if (expected.publicReleaseRunId && String(manifest?.publicRelease?.runId ?? "") !== String(expected.publicReleaseRunId)) {
-    errors.push(`publicRelease.runId must be ${expected.publicReleaseRunId}`);
+  if (expected.publicReleaseSessionId && String(manifest?.publicRelease?.sessionId ?? "") !== String(expected.publicReleaseSessionId)) {
+    errors.push(`publicRelease.sessionId must be ${expected.publicReleaseSessionId}`);
   }
   for (const gate of REQUIRED_PLATFORM_GATES) {
     if (!Array.isArray(manifest?.gates) || !manifest.gates.includes(gate)) {
@@ -136,7 +136,7 @@ export function main(argv = process.argv.slice(2)) {
   if (args.command === "verify-public") {
     const result = validatePublicReleaseManifest(readJson(requireArg(args, "manifest")), {
       version: requireArg(args, "version"),
-      runId: requireArg(args, "runId")
+      sessionId: requireArg(args, "sessionId")
     });
     if (!result.ok) throw new Error(`public release manifest invalid: ${result.errors.join("; ")}`);
     console.log("public release manifest: ok");
@@ -145,8 +145,8 @@ export function main(argv = process.argv.slice(2)) {
   if (args.command === "verify-platform") {
     const result = validatePlatformValidationManifest(readJson(requireArg(args, "manifest")), {
       version: requireArg(args, "version"),
-      runId: requireArg(args, "runId"),
-      publicReleaseRunId: args.publicReleaseRunId
+      sessionId: requireArg(args, "sessionId"),
+      publicReleaseSessionId: args.publicReleaseSessionId
     });
     if (!result.ok) throw new Error(`platform validation manifest invalid: ${result.errors.join("; ")}`);
     console.log("platform validation manifest: ok");

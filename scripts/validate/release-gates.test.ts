@@ -16,7 +16,7 @@ describe("release pipeline gates", () => {
     const workflow = read(".github/workflows/release.yml");
 
     // The choice list offers only pre-release lanes; `latest` is assigned
-    // exclusively by promote.yml after the release run is green.
+    // exclusively by promote.yml after the release workflow attempt is green.
     expect(workflow).toContain("options:\n          - canary\n          - next");
     expect(workflow).not.toMatch(/^\s*-\s+latest\s*$/m);
 
@@ -39,19 +39,19 @@ describe("release pipeline gates", () => {
     expect(workflow).toContain("if: ${{ env.HAS_PLATFORM_TOKEN != 'true' }}");
     expect(workflow).not.toContain("if: ${{ env.HAS_PLATFORM_TOKEN == 'true' }}");
 
-    // The parity check itself is unchanged and always runs against the
+    // The parity check itself is unchanged and always sessions against the
     // mandatory checkout.
     expect(workflow).toContain("run: bun run contracts:parity:check");
     expect(workflow).toContain("AEX_PLATFORM_DIR: ${{ github.workspace }}/_platform");
   });
 
-  it("requires promote.yml to verify a green release run published the exact version", () => {
+  it("requires promote.yml to verify a green release workflow attempt published the exact version", () => {
     const workflow = read(".github/workflows/promote.yml");
 
-    expect(workflow).toContain("release_run_id:");
-    expect(workflow).toContain("platform_deploy_run_id:");
+    expect(workflow).toContain("release_session_id:");
+    expect(workflow).toContain("platform_deploy_session_id:");
     expect(workflow).toContain("actions: read");
-    expect(workflow).toContain("name: Verify green release run published this version");
+    expect(workflow).toContain("name: Verify green release workflow attempt published this version");
     expect(workflow).toContain("name: Verify public release manifest");
     expect(workflow).toContain("name: Verify green platform deploy tested this version");
     expect(workflow).toContain("name: Verify platform validation manifest");
@@ -59,22 +59,22 @@ describe("release pipeline gates", () => {
     expect(workflow).toContain("PLATFORM_REPO_TOKEN");
 
     // The verification is fail-closed: release.yml identity, success
-    // conclusion, the npm publish timestamp inside the run's window, and a
+    // conclusion, the npm publish timestamp inside the session's window, and a
     // platform deploy proof artifact for the same sdk_version.
     expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/release.yml" ]');
     expect(workflow).toContain('[ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]');
     expect(workflow).toContain(".time[$v] // empty");
     expect(workflow).toContain('[ "${pub_s}" -lt "${start_s}" ] || [ "${pub_s}" -gt "${end_s}" ]');
-    expect(workflow).toContain('--name "public-release-manifest-${RELEASE_RUN_ID}"');
+    expect(workflow).toContain('--name "public-release-manifest-${RELEASE_SESSION_ID}"');
     expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs verify-public");
     expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]');
-    expect(workflow).toContain('--name "promotion-proof-${PLATFORM_DEPLOY_RUN_ID}"');
-    expect(workflow).toContain('--name "platform-validation-manifest-${PLATFORM_DEPLOY_RUN_ID}"');
+    expect(workflow).toContain('--name "promotion-proof-${PLATFORM_DEPLOY_SESSION_ID}"');
+    expect(workflow).toContain('--name "platform-validation-manifest-${PLATFORM_DEPLOY_SESSION_ID}"');
     expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs verify-platform");
     expect(workflow).toContain('proof_version="$(jq -r');
     expect(workflow).toContain('if [ "${proof_version}" != "${PACKAGE_VERSION}" ]');
     expect(workflow).toContain("suite_dev spot_canary_dev suite_prod smoke_prod");
-    expect(workflow.indexOf("Verify green release run published this version")).toBeLessThan(
+    expect(workflow.indexOf("Verify green release workflow attempt published this version")).toBeLessThan(
       workflow.indexOf("Add npm dist-tag")
     );
     expect(workflow.indexOf("Verify public release manifest")).toBeLessThan(

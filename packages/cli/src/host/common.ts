@@ -1,7 +1,7 @@
 /**
  * Shared helpers for every host-side aex subcommand. Common flag
  * parsing, HttpClient construction, manifest detection so we can refuse
- * to run host commands inside a managed run container, and exit codes.
+ * to run host commands inside a managed session container, and exit codes.
  */
 import {
   AEX_DEFAULT_BASE_URL,
@@ -9,7 +9,7 @@ import {
   AexError,
   AexNetworkError,
   HttpClient,
-  TERMINAL_RUN_STATUSES,
+  TERMINAL_SESSION_CONTROL_STATUSES,
   extractErrorCode,
   redactSecrets,
   type FetchLike
@@ -31,7 +31,7 @@ export const RUNTIME_ERR: CliExitCode = { code: 1 };
 /**
  * Distinct exit code for "the wait/follow deadline elapsed before the
  * run reached a terminal status". Separated from RUNTIME_ERR (1) so a
- * script can tell a timeout apart from a run that finished non-succeeded
+ * script can tell a timeout apart from a session that finished non-succeeded
  * (which is also RUNTIME_ERR). Mirrors the SDK's `waitForRun` throwing a
  * dedicated timeout error.
  */
@@ -39,7 +39,7 @@ export const TIMEOUT_ERR: CliExitCode = { code: 3 };
 
 // Membership-tested against the loose `string` status the BFF returns, backed by
 // the canonical terminal set rather than a drift-prone local list.
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
+const TERMINAL_STATUSES = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
 
 /**
  * A session is "parked" once its turn stops making progress — it reached one of
@@ -55,7 +55,7 @@ export function isSessionParked(status: string): boolean {
 /**
  * Whether a parked session ended cleanly (exit code 0). A session parks at
  * `idle`/`suspended` on a good turn; `succeeded` covers a session that surfaces
- * a terminal run status. Everything else parked (`error`/`failed`/`timed_out`/
+ * a terminal session status. Everything else parked (`error`/`failed`/`timed_out`/
  * `cancelled`/`expired`/…) is a non-clean exit.
  */
 export function isSessionOk(status: string): boolean {
@@ -304,7 +304,7 @@ function remedyForStatus(status: number): string | undefined {
   if (status === 403) return "token lacks permission for this workspace/action";
   if (status === 404) return "no such run/resource — verify the id";
   if (status === 429) return "rate limited — retry with backoff";
-  if (status >= 500) return "server error — retry; re-run with --debug to capture the request trace";
+  if (status >= 500) return "server error — retry; re-session with --debug to capture the request trace";
   return undefined;
 }
 
@@ -342,21 +342,21 @@ export function makeHttpClient(io: CliIO, flags: CommonHostFlags): HttpClient {
 }
 
 /**
- * Host subcommands refuse to run inside a managed run container. The
- * heuristic: presence of the per-run manifest at AEX_INDEX_PATH
+ * Host subcommands refuse to execute inside a managed session container. The
+ * heuristic: presence of the per-session manifest at AEX_INDEX_PATH
  * (`/mnt/session/uploads/aex/index.json`) means we're inside a
- * run, not on a developer host.
+ * session, not on a developer host.
  *
  * Fails *closed* on read errors that are not "file not found": if the
  * manifest exists but is unreadable for any other reason (permissions,
- * IO error, etc.) we refuse to run the host verb rather than risk
+ * IO error, etc.) we refuse to execute the host verb rather than risk
  * leaking workspace-management calls into a sandboxed container.
  */
-export async function refuseInsideManagedRun(io: CliIO, verb: string): Promise<boolean> {
+export async function refuseInsideManagedSession(io: CliIO, verb: string): Promise<boolean> {
   try {
     await io.readFile(AEX_INDEX_PATH);
     io.stderr(
-      `\`aex ${verb}\` is a host command and cannot run inside a managed run container.\n` +
+      `\`aex ${verb}\` is a host command and cannot execute inside a managed session container.\n` +
       "Make HTTP calls from your code and pass credentials through secrets.\n"
     );
     return true;
@@ -367,7 +367,7 @@ export async function refuseInsideManagedRun(io: CliIO, verb: string): Promise<b
       return false;
     }
     io.stderr(
-      `\`aex ${verb}\` could not determine whether it is running inside a managed run ` +
+      `\`aex ${verb}\` could not determine whether it is running inside a managed session ` +
       `container (error reading ${AEX_INDEX_PATH}: ${(err as Error).message ?? "unknown"}). ` +
       `Refusing to proceed.\n`
     );

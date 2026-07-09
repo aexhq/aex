@@ -12,13 +12,13 @@
  * A silently half-open socket (no close/error, no frames) is the dangerous
  * case: the read loop would block forever and MISS a terminal that was already
  * persisted server-side. So the client sends a post-open replay trigger plus a
- * tiny keep-alive ping the coordinator answers with a matching pong, and runs an idle
+ * tiny keep-alive ping the coordinator answers with a matching pong, and uses an idle
  * watchdog: if no frame arrives within {@link CoordinatorStreamOptions.idleTimeoutMs},
  * the socket is treated as dead and reconnected — resume-from-cursor then
  * replays the terminal.
  *
  * Filtering and projection are the client's concern (the wire carries the
- * whole run): compose {@link filterStream} with the envelope guards, and
+ * whole session): compose {@link filterStream} with the envelope guards, and
  * {@link mapStream} with {@link toAGUI}, on top of this stream.
  *
  * The WebSocket is injectable so the SDK/CLI use the global `WebSocket`
@@ -38,7 +38,7 @@ export interface WebSocketLike {
 export type WebSocketFactory = (url: string) => WebSocketLike;
 
 export interface CoordinatorStreamOptions {
-  /** Base subscribe URL, e.g. `wss://coordinator/runs/<id>/subscribe`. */
+  /** Base subscribe URL, e.g. `wss://coordinator/sessions/<id>/subscribe`. */
   readonly wsUrl: string;
   /** Starting cursor: events with `sequence >= from` are delivered. Default 0 (from start). */
   readonly from?: number;
@@ -53,10 +53,10 @@ export interface CoordinatorStreamOptions {
   readonly reconnectDelayMs?: number;
   /**
    * Predicate that decides which event ENDS the stream. Default: the AG-UI
-   * terminal events (RUN_FINISHED / RUN_ERROR) — the render-complete UX signal.
-   * Pass {@link isRunSettled} for a settle-consistent stream that keeps reading
-   * PAST RUN_FINISHED until the post-mirror barrier, so the iterator only ends
-   * once a subsequent `getRun` is guaranteed terminal.
+   * terminal events (TURN_FINISHED / TURN_ERROR) — the render-complete UX signal.
+   * Pass {@link isSessionSettled} for a settle-consistent stream that keeps reading
+   * PAST TURN_FINISHED until the post-mirror barrier, so the iterator only ends
+   * once a subsequent `getSessionRecord` is guaranteed terminal.
    */
   readonly isTerminal?: (event: AexEvent) => boolean;
   /**
@@ -68,9 +68,9 @@ export interface CoordinatorStreamOptions {
   /**
    * Client keep-alive ping cadence. The client sends {@link COORDINATOR_PING},
    * which the coordinator answers with a matching pong, so
-   * a legitimately quiet run keeps the socket measurably alive and does not trip
+   * a legitimately quiet session keeps the socket measurably alive and does not trip
    * the watchdog. Default 15s. Set 0 to disable (then only real events reset the
-   * watchdog → quiet runs may reconnect).
+   * watchdog → quiet sessions may reconnect).
    */
   readonly pingIntervalMs?: number;
   /**
@@ -95,11 +95,11 @@ export interface CoordinatorStreamOptions {
 
 // The default terminal predicate ends the stream on the AG-UI terminals AND on
 // the managed runtime's CUSTOM session-park terminal (aex.session.idle/.error/
-// .suspended). A managed one-shot run parks instead of emitting RUN_FINISHED, so
-// WITHOUT the session-park arm a `streamEnvelopes()` over a finished managed run
+// .suspended). A managed one-shot session parks instead of emitting TURN_FINISHED, so
+// WITHOUT the session-park arm a `streamEnvelopes()` over a finished managed session
 // never sees a terminal and hangs on the idle watchdog forever.
 const isTerminalType = (e: AexEvent): boolean =>
-  e.type === "RUN_FINISHED" || e.type === "RUN_ERROR" || isSessionParked(e);
+  e.type === "TURN_FINISHED" || e.type === "TURN_ERROR" || isSessionParked(e);
 
 /**
  * Keep-alive ping the client sends; the coordinator answers it with the matching

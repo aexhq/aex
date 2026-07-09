@@ -14,7 +14,7 @@
  *   + session.download() / session.downloadMetadata()
  *
  * Model: deepseek-v4-flash, BYOK via the gate-provider apiKeys map. Tiny prompts. Four
- * live runs total (A rich-selector-matrix, B large-file round-trip, C
+ * live sessions total (A rich-selector-matrix, B large-file round-trip, C
  * unicode+space filename, D no-outputs), each independent, each probing many
  * facets in ONE child process and emitting a JSON verdict the parent asserts on.
  *
@@ -292,7 +292,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         `/workspace/outputs/report.txt whose ENTIRE contents are exactly these characters: ${marker} ` +
         `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
       const body = `
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
@@ -301,12 +301,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
-        const runId = runResult.runId;
-        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
-        const session = await client.sessions.open(runId);
+        const sessionId = sessionResult.sessionId;
+        const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
+        const session = await client.sessions.open(sessionId);
         const outs = await session.outputs();
 
-        // list (sessions endpoint) and find({}) (runs endpoint) — cross-check parity.
+        // list (sessions endpoint) and find({}) (sessions endpoint) — cross-check parity.
         const listed = await outs.list();
         const listMeta = listed.map((o) => ({ id: o.id, filename: o.filename ?? null, sizeBytes: o.sizeBytes ?? null, contentType: o.contentType ?? null }));
         const found = await outs.find({});
@@ -368,13 +368,13 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probe("link_expires_zero", async () => await outs.link({ filename: "report.txt" }, { expiresIn: 0 })));
         probes.push(await probe("link_expires_badpreset", async () => await outs.link({ filename: "report.txt" }, { expiresIn: "5m" })));
 
-        process.stdout.write(JSON.stringify({ runId, status, marker: ${JSON.stringify(marker)}, listMeta, findMeta, reportIdx, exactPath, httpDebug: debugTail(), probes }));
+        process.stdout.write(JSON.stringify({ sessionId, status, marker: ${JSON.stringify(marker)}, listMeta, findMeta, reportIdx, exactPath, httpDebug: debugTail(), probes }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-out-A.mjs", body, 9 * 60_000);
       const ctxPayload = {
         httpDebug: r.httpDebug,
-        runId: r.runId,
+        sessionId: r.sessionId,
         status: r.status,
         marker: r.marker,
         listMeta: r.listMeta,
@@ -399,7 +399,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       const leaked = listMeta.filter((o) => o.filename && (o.filename.startsWith("runtime/") || o.filename.startsWith("host/")));
       expect(leaked, `diagnostic namespace leaked into outputs list${ctx}`).toEqual([]);
 
-      // 3. list() (sessions endpoint) and find({}) (runs endpoint) agree —
+      // 3. list() (sessions endpoint) and find({}) (sessions endpoint) agree —
       //    the two endpoints must not diverge for the same deliverable set.
       expect(new Set(findMeta.map((o) => o.id)), `list()/find({}) id-set divergence${ctx}`)
         .toEqual(new Set(listMeta.map((o) => o.id)));
@@ -478,7 +478,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         `(60000 bytes, no newline, nothing else). Generate it precisely with a shell command, for example: ` +
         `python3 -c "open('/workspace/outputs/big.txt','w').write('A'*60000)". Then reply with the single word done.`;
       const body = `
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
@@ -487,9 +487,9 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-B-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
-        const runId = runResult.runId;
-        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
-        const session = await client.sessions.open(runId);
+        const sessionId = sessionResult.sessionId;
+        const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
+        const session = await client.sessions.open(sessionId);
         const outs = await session.outputs();
         const listed = await outs.list();
         const big = listed.find((o) => (o.filename || "").endsWith("big.txt")) || null;
@@ -513,7 +513,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes, allA: /^A+$/.test(t.text) };
         }));
 
-        process.stdout.write(JSON.stringify({ runId, status, sizeBytes, filename: big ? big.filename : null, probes }));
+        process.stdout.write(JSON.stringify({ sessionId, status, sizeBytes, filename: big ? big.filename : null, probes }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-out-B.mjs", body, 9 * 60_000);
@@ -564,7 +564,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         "\n```\n" +
         `After the command succeeds, reply with exactly: done`;
       const body = `
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
@@ -573,9 +573,9 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-C-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
-        const runId = runResult.runId;
-        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
-        const session = await client.sessions.open(runId);
+        const sessionId = sessionResult.sessionId;
+        const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
+        const session = await client.sessions.open(sessionId);
         const outs = await session.outputs();
         const listed = await outs.list();
         const listNames = listed.map((o) => o.filename ?? null);
@@ -592,7 +592,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           return { status: resp.status, text: (await resp.text()) };
         }));
 
-        process.stdout.write(JSON.stringify({ runId, status, marker: ${JSON.stringify(marker)}, listNames, targetFilename: target ? target.filename : null, probes }));
+        process.stdout.write(JSON.stringify({ sessionId, status, marker: ${JSON.stringify(marker)}, listNames, targetFilename: target ? target.filename : null, probes }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-out-C.mjs", body, 9 * 60_000);
@@ -624,21 +624,21 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
   );
 
   it(
-    "D: run with NO outputs — list() is empty, bad reads error, archive verbs still yield valid zips",
+    "D: session with NO outputs — list() is empty, bad reads error, archive verbs still yield valid zips",
     async () => {
       const probe = "NOOUT-" + Math.random().toString(36).slice(2, 8);
       const prompt = `Output verbatim: ${probe}. Do not create, write, or save any files.`;
       const body = `
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-out-D-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
-        const runId = runResult.runId;
-        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
-        const session = await client.sessions.open(runId);
+        const sessionId = sessionResult.sessionId;
+        const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
+        const session = await client.sessions.open(sessionId);
         const outs = await session.outputs();
 
         const probes = [];
@@ -652,7 +652,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
         probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
-        process.stdout.write(JSON.stringify({ runId, status, probes }));
+        process.stdout.write(JSON.stringify({ sessionId, status, probes }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-out-D.mjs", body, 9 * 60_000);
@@ -665,7 +665,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       expect(byLabel(probes, "last_undefined").value, `last() should be undefined when empty${ctx}`).toBe(true);
       expect(byLabel(probes, "first_undefined").value, `first() should be undefined when empty${ctx}`).toBe(true);
       const fo = byLabel(probes, "findOne_null");
-      expect(fo.ok && fo.value === null, `findOne on empty run must return null${ctx}`).toBe(true);
+      expect(fo.ok && fo.value === null, `findOne on empty session must return null${ctx}`).toBe(true);
       const rm = byLabel(probes, "read_missing");
       expect(rm.ok, `read of a missing file must throw, not resolve${ctx}`).toBe(false);
       expect(rm.error!.message, `read of missing file hung${ctx}`).not.toContain("PROBE_TIMEOUT");

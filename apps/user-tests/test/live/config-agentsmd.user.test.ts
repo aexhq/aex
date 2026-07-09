@@ -1,7 +1,7 @@
 /**
  * USER TEST (SDK-driven) — multiple `agentsMd` refs are ALL delivered.
  *
- * Validates the FIX end-to-end through the installed SDK: when a run ships
+ * Validates the FIX end-to-end through the installed SDK: when a session ships
  * TWO AgentsMd files, BOTH reach the agent (not just `agentsMd[0]`). Each
  * AGENTS.md states a distinct, benign project fact (a codename); a single
  * question needs both facts, so a correct answer proves both refs landed.
@@ -9,7 +9,7 @@
  * Framing note: we use benign "project facts" rather than "echo these
  * tokens". A natural project-doc question is answered normally.
  *
- * Model-cooperation-dependent: if tokenA is ALSO absent the run was
+ * Model-cooperation-dependent: if tokenA is ALSO absent the session was
  * inconclusive and that assert fails loudly rather than passing silently.
  *
  * Only passes once the agentsMd multi-ref fix is DEPLOYED to the remote
@@ -50,7 +50,7 @@ describe("user/SDK: every agentsMd ref reaches the agent (not just the first)", 
           const a = await AgentsMd.fromContent("# Project notes A\\n\\nThe internal codename for this project is ${tokenA}.", { name: "rules-a" });
           const b = await AgentsMd.fromContent("# Project notes B\\n\\nThe internal codename for the database is ${tokenB}.", { name: "rules-b" });
         `,
-        run: `{
+        session: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: ${JSON.stringify([PROMPT])},

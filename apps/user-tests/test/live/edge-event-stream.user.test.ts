@@ -5,12 +5,12 @@
  *   - `session.send(...)` live async-iteration over the coordinator WebSocket.
  *   - `session.events().streamEnvelopes({ from, signal, settleConsistent })`
  *     (live AexEvent WS, exactly-once cursor resume).
- *   - `session.events().stream({ intervalMs, signal })` (RunEvent HTTP polling).
+ *   - `session.events().stream({ intervalMs, signal })` (TurnEvent HTTP polling).
  *   - Reconnect / replay-from-seq (the key reliability property): forced
  *     mid-turn socket drops must resume with NO duplicates and NO lost events.
  *   - `idleTimeoutMs` / `pingIntervalMs` keep-alive on a live turn.
- *   - AbortSignal mid-run: clean stop, no unhandled rejection.
- *   - Stream a run that already reached terminal (replay then end, no hang).
+ *   - AbortSignal mid-session: clean stop, no unhandled rejection.
+ *   - Stream a session that already reached terminal (replay then end, no hang).
  *
  * All cases drive the INSTALLED @aexhq/sdk in a child bun process, exactly like
  * the sibling live tests. One live run is created in `beforeAll` and REUSED by
@@ -56,8 +56,8 @@ const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.A
 const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
-const RUN_ID = process.env.RUN_ID;
-let __childRunId = null;
+const SESSION_ID = process.env.SESSION_ID;
+let __childSessionId = null;
 
 let __unhandled = null;
 process.on("unhandledRejection", (e) => { __unhandled = (e && e.stack) ? String(e.stack) : String(e); });
@@ -70,8 +70,8 @@ function errorText(e) {
 }
 
 function trackRun(value) {
-  if (value && typeof value.id === "string") __childRunId = value.id;
-  if (value && typeof value.runId === "string") __childRunId = value.runId;
+  if (value && typeof value.id === "string") __childSessionId = value.id;
+  if (value && typeof value.sessionId === "string") __childSessionId = value.sessionId;
   return value;
 }
 
@@ -171,7 +171,7 @@ async function emitChildFailure(stage, error) {
   await emit({
     childFailure: true,
     stage,
-    runId: __childRunId,
+    sessionId: __childSessionId,
     threw: errorText(error),
     name: error && error.name ? String(error.name) : null,
     unhandledAtFailure: __unhandled
@@ -193,7 +193,7 @@ interface Analyze {
 interface ChildFailure {
   readonly childFailure: true;
   readonly stage: string;
-  readonly runId: string | null;
+  readonly sessionId: string | null;
   readonly threw: string;
   readonly name: string | null;
   readonly unhandled: string | null;
@@ -222,7 +222,7 @@ function childFailureDiagnostic(scriptName: string, failure: ChildFailure): stri
         scriptName,
         childFailure: true,
         stage: failure.stage,
-        runId: failure.runId,
+        sessionId: failure.sessionId,
         name: failure.name,
         threw: failure.threw,
         unhandled: failure.unhandled,
@@ -240,7 +240,7 @@ function sleep(ms: number): Promise<void> {
 
 function isPreCreateChildFailure(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
-  return /"runId":\s*null/.test(text) && isPreCreateTransportMessage(text);
+  return /"sessionId":\s*null/.test(text) && isPreCreateTransportMessage(text);
 }
 
 async function spawnScript<T>(
@@ -325,7 +325,7 @@ async function spawnScriptOnce<T>(
 // reused by every read-side case.
 // ---------------------------------------------------------------------------
 interface BaseResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly seqs: readonly number[];
   readonly analyze: Analyze;
   readonly typeCounts: Record<string, number>;
@@ -361,7 +361,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
         .map((e) => e.data && e.data.value ? e.data.value : e.data);
       await emit({
-        runId: session.id,
+        sessionId: session.id,
         seqs,
         analyze: analyze(seqs),
         typeCounts: typeCounts(events),
@@ -380,14 +380,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
   it("case A — live send() async-iteration: ordered content chunks + terminal + monotonic seq", () => {
     expect(base.unhandled).toBeNull();
-    expect(base.runId).toBeTruthy();
+    expect(base.sessionId).toBeTruthy();
     // Assistant text arrived. NOTE (finding): with outputMode:"stream" the managed
     // provider path can deliver the whole multi-sentence reply as ONE
     // TEXT_MESSAGE_CONTENT event (no per-token deltas) — see report. We assert >=1
     // (content present) and record the actual count for the report.
     expect(base.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThanOrEqual(1);
     expect(base.textDenseLen).toBeGreaterThan(0);
-    // Session-turn terminal is CUSTOM aex.session.* (there is NO RUN_FINISHED).
+    // Session-turn terminal is CUSTOM aex.session.* (there is NO TURN_FINISHED).
     expect(base.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
     // Strict ordering: monotonic increasing, no duplicates (sequences are sparse,
     // so contiguity is NOT expected — only no-dupe + monotonic).
@@ -397,9 +397,9 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(base.streamErrors.length).toBe(0);
   });
 
-  it("case B — streamEnvelopes({from:0}) replays a finished run in order and terminates on session-idle; polling stream() agrees", async () => {
+  it("case B — streamEnvelopes({from:0}) replays a finished session in order and terminates on session-idle; polling stream() agrees", async () => {
     const r = await spawnScript<{
-      readonly runId: string;
+      readonly sessionId: string;
       readonly envTypes: Record<string, number>;
       readonly envCustomNames: readonly string[];
       readonly envAnalyze: Analyze;
@@ -423,10 +423,10 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-replay0.mjs",
       `
-      __childRunId = RUN_ID;
-      const session = await client.sessions.open(RUN_ID);
+      __childSessionId = SESSION_ID;
+      const session = await client.sessions.open(SESSION_ID);
       // 1. streamEnvelopes({from:0}) on a FINISHED session run. Session turns emit
-      //    CUSTOM aex.session.* rather than RUN_FINISHED; the SDK treats that
+      //    CUSTOM aex.session.* rather than TURN_FINISHED; the SDK treats that
       //    custom event as terminal so replay ends naturally.
       const envEvents = [];
       const envSeqs = [];
@@ -442,14 +442,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       })) {
         envEvents.push(ev);
         envSeqs.push(ev.sequence);
-        // safety: if a run-level terminal ever appears, stop too.
-        if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
+        // safety: if a session-level terminal ever appears, stop too.
+        if (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR") break;
       }
       clearTimeout(guard);
       const endedNaturally = !ac.signal.aborted;
-      const rfPresent = envEvents.some((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+      const rfPresent = envEvents.some((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR");
 
-      // 1b. settleConsistent:true is documented to end on the aex.run.settled
+      // 1b. settleConsistent:true is documented to end on the aex.session.settled
       //     barrier. Does that barrier arrive? Guard 30s.
       let settleEndedNaturally = false;
       let settleHasBarrier = false;
@@ -472,7 +472,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
           })) {
             settleEvents.push(ev);
             settleSeqs.push(ev.sequence);
-            if (ev.type === "CUSTOM" && ev.data && ev.data.name === "aex.run.settled") settleHasBarrier = true;
+            if (ev.type === "CUSTOM" && ev.data && ev.data.name === "aex.session.settled") settleHasBarrier = true;
           }
         } catch (e) {
           settleErr = String(e);
@@ -482,7 +482,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         clearTimeout(g2);
       }
 
-      // 2. Polling RunEvent stream() over the same finished run — one pass, then it
+      // 2. Polling TurnEvent stream() over the same finished run — one pass, then it
       //    returns because the session is parked. Consistency: same core types.
       let pollTypes = {};
       let pollCount = 0;
@@ -503,7 +503,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       }
 
       await emit({
-        runId: session.id,
+        sessionId: session.id,
         envTypes: typeCounts(envEvents),
         envCustomNames: customNamesOf(envEvents),
         envAnalyze: analyze(envSeqs),
@@ -525,7 +525,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         pollErr
       });
       `,
-      { extraEnv: { RUN_ID: base.runId }, timeoutMs: 4 * 60 * 1000 }
+      { extraEnv: { SESSION_ID: base.sessionId }, timeoutMs: 4 * 60 * 1000 }
     );
 
     expect(r.unhandled).toBeNull();
@@ -534,7 +534,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(
       r.envTypes["TEXT_MESSAGE_CONTENT"] ?? 0,
       `streamEnvelopes({from:0}) did not replay assistant text: ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         envTypes: r.envTypes,
         envCustomNames: r.envCustomNames,
         envCount: r.envCount,
@@ -556,7 +556,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(
       r.envCustomNames.some((name) => name.startsWith("aex.session.")),
       `streamEnvelopes({from:0}) did not replay a session terminal: ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         envTypes: r.envTypes,
         envCustomNames: r.envCustomNames,
         envCount: r.envCount,
@@ -568,7 +568,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.envAnalyze.dupCount).toBe(0);
 
     // The default session-envelope stream terminates on CUSTOM aex.session.*,
-    // even though session runs still do not emit run-level RUN_FINISHED/RUN_ERROR.
+    // even though session sessions still do not emit session-level TURN_FINISHED/TURN_ERROR.
     expect(r.rfPresent).toBe(false);
     expect(
       r.endedNaturally,
@@ -582,12 +582,12 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         pollErr: r.pollErr
       })}`
     ).toBe(true);
-    // settleConsistent waits for the post-mirror aex.run.settled barrier when
+    // settleConsistent waits for the post-mirror aex.session.settled barrier when
     // the stream receives it; session park remains the terminal fallback.
     expect(
       r.settleCustomNames.some((name) => name.startsWith("aex.session.")) || r.settleHasBarrier,
       `settleConsistent replay saw neither session park nor settle barrier: ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         settleTypes: r.settleTypes,
         settleCustomNames: r.settleCustomNames,
         settleCount: r.settleCount,
@@ -600,7 +600,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(
       r.settleEndedNaturally,
       `streamEnvelopes({from:0, settleConsistent:true}) replay did not end naturally (30s guard aborted): ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         envTypes: r.envTypes,
         envCustomNames: r.envCustomNames,
         envAnalyze: r.envAnalyze,
@@ -618,7 +618,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       })}`
     ).toBe(true);
 
-    // Polling stream() (RunEvent path) self-terminates on the parked session
+    // Polling stream() (TurnEvent path) self-terminates on the parked session
     // (unlike streamEnvelopes) and agrees on the presence of assistant text.
     expect(r.pollErr).toBeNull();
     expect(r.pollTypes["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
@@ -626,7 +626,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
   it("case C — replay-from-seq: streamEnvelopes({from:midSeq}) yields EXACTLY the tail of the full stream (no gap/dupe)", async () => {
     const r = await spawnScript<{
-      readonly runId: string;
+      readonly sessionId: string;
       readonly fullCount: number;
       readonly fullSeqs: readonly number[];
       readonly fullTypes: Record<string, number>;
@@ -645,8 +645,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-fromseq.mjs",
       `
-      __childRunId = RUN_ID;
-      const session = await client.sessions.open(RUN_ID);
+      __childSessionId = SESSION_ID;
+      const session = await client.sessions.open(SESSION_ID);
       async function drain(opts, guardMs, stopOnTerminal) {
         const events = [];
         const seqs = [];
@@ -663,8 +663,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
             events.push(ev);
             seqs.push(ev.sequence);
             const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
-            // Session runs have no RUN_FINISHED; the true terminal is aex.session.*.
-            if (stopOnTerminal && (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || isSessionTerminalName(nm))) break;
+            // Session sessions have no TURN_FINISHED; the true terminal is aex.session.*.
+            if (stopOnTerminal && (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR" || isSessionTerminalName(nm))) break;
           }
         } finally {
           clearTimeout(g);
@@ -682,7 +682,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const mid = (await drain({ from: midSeq }, 40000, true)).seqs;
       const midMatchesTail = JSON.stringify(mid) === JSON.stringify(expectedTail);
 
-      // Edge: subscribe from a cursor BEYOND the finished run's durable tail. The
+      // Edge: subscribe from a cursor BEYOND the finished session's durable tail. The
       // projected sequence space is sparse (raw row seq * 1024 + subslot), and
       // settle may append a barrier after the render terminal, so compute the real
       // max from the snapshot instead of guessing terminal+1000.
@@ -695,7 +695,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const beyondMs = Date.now() - start;
 
       await emit({
-        runId: RUN_ID,
+        sessionId: SESSION_ID,
         fullCount: full.length,
         fullSeqs: full,
         fullTypes: typeCounts(fullReplay.events),
@@ -712,7 +712,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         beyondMs
       });
       `,
-      { extraEnv: { RUN_ID: base.runId }, timeoutMs: 4 * 60 * 1000 }
+      { extraEnv: { SESSION_ID: base.sessionId }, timeoutMs: 4 * 60 * 1000 }
     );
 
     expect(r.unhandled).toBeNull();
@@ -720,7 +720,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(
       r.fullTypes["TEXT_MESSAGE_CONTENT"] ?? 0,
       `full replay did not include assistant text: ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         fullTypes: r.fullTypes,
         fullCustomNames: r.fullCustomNames,
         fullSeqs: r.fullSeqs
@@ -729,7 +729,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(
       r.fullCustomNames.some((name) => name.startsWith("aex.session.")),
       `full replay did not include a session terminal: ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         fullTypes: r.fullTypes,
         fullCustomNames: r.fullCustomNames,
         fullSeqs: r.fullSeqs
@@ -747,7 +747,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(
       r.beyondCount,
       `from>tail replay delivered events: ${JSON.stringify({
-        runId: r.runId,
+        sessionId: r.sessionId,
         fullSeqs: r.fullSeqs,
         snapshotMaxSeq: r.snapshotMaxSeq,
         beyondFrom: r.beyondFrom,
@@ -767,8 +767,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     }>(
       "edge-evtstream-abort-replay.mjs",
       `
-      __childRunId = RUN_ID;
-      const session = await client.sessions.open(RUN_ID);
+      __childSessionId = SESSION_ID;
+      const session = await client.sessions.open(SESSION_ID);
       const ac = new AbortController();
       const collected = [];
       let threw = null;
@@ -782,7 +782,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       }
       await emit({ collected: collected.length, threw, aborted: ac.signal.aborted });
       `,
-      { extraEnv: { RUN_ID: base.runId }, timeoutMs: 2 * 60 * 1000 }
+      { extraEnv: { SESSION_ID: base.sessionId }, timeoutMs: 2 * 60 * 1000 }
     );
 
     expect(r.unhandled).toBeNull();
@@ -793,7 +793,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
 
   it("case E — reconnect/replay: forced mid-turn socket drops resume exactly-once (no dupes, no lost events)", async () => {
     const r = await spawnScript<{
-      readonly runId: string;
+      readonly sessionId: string;
       readonly ok: boolean;
       readonly status: string;
       readonly analyze: Analyze;
@@ -811,7 +811,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // The SDK must re-mint a ticket and resume from cursor+1 with no gap/dupe.
       // dropAfterFrames:1 keeps it robust even for sparse, few-event turns.
       const factory = makeFactory({ dropAfterFrames: 1, maxDrops: 2 });
-      const result = trackRun(await client.run({
+      const result = trackRun(await client.start({
         provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
@@ -828,28 +828,28 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // MUST also be in the chaotic stream (proves the reconnects lost nothing).
       let replaySeqs = [];
       try {
-        const session = await client.sessions.open(result.runId);
+        const session = await client.sessions.open(result.sessionId);
         const ac = new AbortController();
         const g = setTimeout(() => ac.abort(), 40000);
         for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
           replaySeqs.push(ev.sequence);
           const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
-          // A session run has no RUN_FINISHED; stop on the aex.session.* terminal.
-          if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || isSessionTerminalName(nm)) break;
+          // A session run has no TURN_FINISHED; stop on the aex.session.* terminal.
+          if (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR" || isSessionTerminalName(nm)) break;
         }
         clearTimeout(g);
       } catch (e) {}
 
       // The chaos stream comes from send(), which starts at the TURN cursor, while
       // the clean replay starts at 0 (it includes pre-turn events like
-      // RUN_STARTED@0). Compare only within the chaos-covered range: every clean
+      // TURN_STARTED@0). Compare only within the chaos-covered range: every clean
       // seq >= the chaos stream's min must be present in the chaos set (no loss).
       const chaosSet = new Set(seqs);
       const chaosMin = seqs.length ? Math.min(...seqs) : 0;
       const missing = replaySeqs.filter((s) => s >= chaosMin && !chaosSet.has(s));
 
       await emit({
-        runId: result.runId,
+        sessionId: result.sessionId,
         ok: result.ok,
         status: result.status,
         analyze: analyze(seqs),
@@ -897,7 +897,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // coordinator keeps a legitimately-quiet moment alive; if pings work, connects
       // stays 1 (no false disconnect). Either way the exactly-once contract holds.
       const factory = makeFactory({});
-      const result = trackRun(await client.run({
+      const result = trackRun(await client.start({
         provider: PROVIDER,
         model: MODEL,
         outputMode: "stream",
@@ -950,7 +950,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         apiKeys: { [PROVIDER]: PROVIDER_KEY }
       }));
       // Kick the turn live in the background (its own WS); we abort a SEPARATE
-      // streamEnvelopes subscription with a signal while the run is producing.
+      // streamEnvelopes subscription with a signal while the session is producing.
       const bg = session
         .send("Write six short sentences about deserts. Keep each under 14 words.")
         .done()

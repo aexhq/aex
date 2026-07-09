@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AEX_EVENT_SPECVERSION,
-  AEX_RUN_SETTLED_NAME,
+  AEX_SESSION_SETTLED_NAME,
   asAexEventView,
   asAexEventViews,
   runnerEventToAexEvent,
@@ -9,7 +9,7 @@ import {
   type RunnerEvent
 } from "../src/index.js";
 
-const ctx = { runId: "run_view", baseMs: 2_000_000 };
+const ctx = { sessionId: "ses_view", baseMs: 2_000_000 };
 const map = (evt: RunnerEvent) => runnerEventToAexEvent(evt, ctx);
 const ev = (seq: number, kind: RunnerEvent["kind"], data: RunnerEvent["data"] = {}): RunnerEvent => ({
   seq,
@@ -21,9 +21,9 @@ const ev = (seq: number, kind: RunnerEvent["kind"], data: RunnerEvent["data"] = 
 /** A hand-built envelope (for the shapes `runnerEventToAexEvent` never emits). */
 const envelope = (over: Partial<AexEvent> & Pick<AexEvent, "type">): AexEvent => ({
   specversion: AEX_EVENT_SPECVERSION,
-  id: "run_view:0",
+  id: "ses_view:0",
   source: "runtime",
-  subject: "run_view",
+  subject: "ses_view",
   time: new Date(ctx.baseMs).toISOString(),
   sequence: 0,
   data: {},
@@ -31,20 +31,20 @@ const envelope = (over: Partial<AexEvent> & Pick<AexEvent, "type">): AexEvent =>
 });
 
 describe("asAexEventView — one type-predicate method per standardized event type", () => {
-  it("isRunStarted / isRunFinished / isRunError / isRunTerminal fire on the lifecycle types", () => {
+  it("isTurnStarted / isTurnFinished / isTurnError / isTurnTerminal fire on the lifecycle types", () => {
     const started = asAexEventView(map(ev(0, "runtime_started")));
-    expect(started.isRunStarted()).toBe(true);
-    expect(started.isRunTerminal()).toBe(false);
+    expect(started.isTurnStarted()).toBe(true);
+    expect(started.isTurnTerminal()).toBe(false);
 
     const finished = asAexEventView(map(ev(1, "runtime_terminal", { reason: "complete" })));
-    expect(finished.isRunFinished()).toBe(true);
-    expect(finished.isRunError()).toBe(false);
-    expect(finished.isRunTerminal()).toBe(true);
+    expect(finished.isTurnFinished()).toBe(true);
+    expect(finished.isTurnError()).toBe(false);
+    expect(finished.isTurnTerminal()).toBe(true);
 
     const errored = asAexEventView(map(ev(2, "runtime_terminal", { reason: "error", failureMessage: "boom" })));
-    expect(errored.isRunError()).toBe(true);
-    expect(errored.isRunFinished()).toBe(false);
-    expect(errored.isRunTerminal()).toBe(true);
+    expect(errored.isTurnError()).toBe(true);
+    expect(errored.isTurnFinished()).toBe(false);
+    expect(errored.isTurnTerminal()).toBe(true);
   });
 
   it("isCustom is true only for CUSTOM events", () => {
@@ -68,9 +68,9 @@ describe("asAexEventView — one type-predicate method per standardized event ty
     expect(mcp.isFromSource("agent")).toBe(false);
   });
 
-  it("isRunSettled is true for the settle barrier and for a managed session-park terminal", () => {
-    const barrier = asAexEventView(envelope({ type: "CUSTOM", data: { name: AEX_RUN_SETTLED_NAME, value: {} } }));
-    expect(barrier.isRunSettled()).toBe(true);
+  it("isSessionSettled is true for the settle barrier and for a managed session-park terminal", () => {
+    const barrier = asAexEventView(envelope({ type: "CUSTOM", data: { name: AEX_SESSION_SETTLED_NAME, value: {} } }));
+    expect(barrier.isSessionSettled()).toBe(true);
 
     // WS1: resumable parks + terminal outcomes are all settled parks; bare `error` retired.
     for (const name of [
@@ -82,9 +82,9 @@ describe("asAexEventView — one type-predicate method per standardized event ty
       "aex.session.cancelled"
     ]) {
       const parked = asAexEventView(envelope({ type: "CUSTOM", data: { name, value: {} } }));
-      expect(parked.isRunSettled()).toBe(true);
+      expect(parked.isSessionSettled()).toBe(true);
     }
-    expect(asAexEventView(map(ev(7, "assistant_text", { text: "hi" }))).isRunSettled()).toBe(false);
+    expect(asAexEventView(map(ev(7, "assistant_text", { text: "hi" }))).isSessionSettled()).toBe(false);
   });
 });
 

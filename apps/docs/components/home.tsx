@@ -22,7 +22,7 @@ export function HomePage() {
         </div>
       </section>
 
-      <section className="ant-sample" aria-label="aex run example">
+      <section className="ant-sample" aria-label="aex start example">
         <header>
           <h2>First run</h2>
           <a href="/docs/guides/quickstart/">Quickstart</a>

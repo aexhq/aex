@@ -1,7 +1,7 @@
 /**
- * Live edge-case sweep: run deletion must actually retire the run's data.
+ * Live edge-case sweep: session deletion must actually retire the session's data.
  *
- * DEFECT PROBE — on the dev plane, DELETE /api/runs/:id (SDK
+ * DEFECT PROBE — on the dev plane, DELETE /api/sessions/:id (SDK
  * `session.delete()`, CLI `aex delete`) only flips the record's status
  * attribute to "deleted" (api.ts deleteRun): it deletes nothing from the
  * output store, no purge job consumes `runDeletedAt`, and none of the read
@@ -10,13 +10,13 @@
  *   1. Every output of a "deleted" run stays listable AND downloadable
  *      byte-for-byte, indefinitely.
  *   2. The hourly retained-storage accrual bills the deleted run forever —
- *      its basis (run_cost storedBytes) is never cleared by deletion.
+ *      its basis (session_cost storedBytes) is never cleared by deletion.
  *
  * This probe covers (1), the public surface: delete a settled run, then
  * assert its output content is no longer retrievable. It FAILS until the
- * platform purges (or at least fences reads of) deleted runs' outputs.
+ * platform purges (or at least fences reads of) deleted sessions' outputs.
  *
- * ONE billable run total (tiny prompt, one small output file).
+ * ONE billable session turn total (tiny prompt, one small output file).
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
@@ -121,7 +121,7 @@ afterAll(() => {
 });
 
 interface DeleteRetentionResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly ok: boolean;
   readonly status: string;
   readonly preDeleteBytes: number | null;
@@ -132,13 +132,13 @@ interface DeleteRetentionResult {
   readonly postDeleteReadError: { name: string; message: string; status: number | null; code: string | null } | null;
 }
 
-describe("edge: deleting a run retires its outputs", () => {
+describe("edge: deleting a session retires its outputs", () => {
   it(
     "outputs of a deleted run are no longer listable or downloadable",
     async () => {
       const body = `
         const marker = "DELETE-RETENTION-" + Date.now();
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: "Write a file /workspace/keep.txt containing exactly this line: " + marker + " . Then reply done.",
@@ -147,13 +147,13 @@ describe("edge: deleting a run retires its outputs", () => {
           idempotencyKey: "edge-delete-retention-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
 
-        const session = await client.sessions.open(runResult.runId);
+        const session = await client.sessions.open(sessionResult.sessionId);
         const outs = session.outputs();
         const listed = await outs.list();
         const pre = listed.find((o) => (o.filename || "").endsWith("keep.txt")) || null;
 
         await session.delete();
-        const deletedStatus = (await client.sessions.open(runResult.runId).then((h) => h.record.status).catch(() => null));
+        const deletedStatus = (await client.sessions.open(sessionResult.sessionId).then((h) => h.record.status).catch(() => null));
 
         let postDeleteListCount = null, postDeleteListError = null;
         try {
@@ -167,9 +167,9 @@ describe("edge: deleting a run retires its outputs", () => {
         } catch (e) { postDeleteReadError = errShape(e); }
 
         process.stdout.write(JSON.stringify({
-          runId: runResult.runId,
-          ok: runResult.ok,
-          status: runResult.status,
+          sessionId: sessionResult.sessionId,
+          ok: sessionResult.ok,
+          status: sessionResult.status,
           preDeleteBytes: pre ? pre.sizeBytes ?? null : null,
           deletedStatus,
           postDeleteListCount,
@@ -181,12 +181,12 @@ describe("edge: deleting a run retires its outputs", () => {
       `;
       const out = (await runChild(install, "edge-delete-retention-A.mjs", body)) as unknown as DeleteRetentionResult;
 
-      // The run itself must have completed and captured the output.
-      expect(out.ok, `run ${out.runId} did not complete ok (status=${out.status})`).toBe(true);
-      expect((out.preDeleteBytes ?? 0) > 0, `keep.txt was not captured pre-delete (${out.runId})`).toBe(true);
+      // The session itself must have completed and captured the output.
+      expect(out.ok, `run ${out.sessionId} did not complete ok (status=${out.status})`).toBe(true);
+      expect((out.preDeleteBytes ?? 0) > 0, `keep.txt was not captured pre-delete (${out.sessionId})`).toBe(true);
 
       // The delete must have been accepted.
-      expect(out.deletedStatus, `run ${out.runId}: status after delete`).toBe("deleted");
+      expect(out.deletedStatus, `run ${out.sessionId}: status after delete`).toBe("deleted");
 
       // DEFECT PROBE: after a successful delete the output CONTENT must be
       // unreachable — either the list is empty or the read fails with a typed
@@ -196,7 +196,7 @@ describe("edge: deleting a run retires its outputs", () => {
       const contentStillServed = out.postDeleteReadText !== null && out.postDeleteReadError === null;
       expect(
         contentStillServed,
-        `run ${out.runId}: output content is still downloadable after delete ` +
+        `run ${out.sessionId}: output content is still downloadable after delete ` +
           `(list count=${out.postDeleteListCount}, read="${out.postDeleteReadText}")`
       ).toBe(false);
     },

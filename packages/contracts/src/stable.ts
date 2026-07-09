@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
  *
  * Pinned to `api.aex.dev` on purpose: the dashboard at
  * `aex.dev` is the human UX surface, while `api.aex.dev`
- * owns the runtime/API plane (run submission, provider proxy, MCP
+ * owns the runtime/API plane (session submission, provider proxy, MCP
  * proxy, runner callbacks). Both the apex `aex.dev` and `www.` host
  * may issue redirects, and HTTP clients strip the `Authorization`
  * header on cross-origin redirects (WHATWG Fetch §5.5) — hitting them

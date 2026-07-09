@@ -157,7 +157,7 @@ function makeHarness() {
     if (parsed.pathname === "/api/sessions/sess_user_1/events/ticket" && method === "POST") {
       return json({
         ok: true,
-        wsUrl: "wss://events.example.test/api/runs/sess_user_1/subscribe",
+        wsUrl: "wss://events.example.test/api/sessions/sess_user_1/subscribe",
         ticket: "ticket-" + turnSeq,
         expiresAtMs: Date.now() + 60000
       });
@@ -165,7 +165,7 @@ function makeHarness() {
     if (parsed.pathname === "/api/sessions/sess_user_1/events" && method === "GET") {
       return json({
         events: [
-          event(0, "RUN_STARTED", { source: "session" }),
+          event(0, "TURN_STARTED", { source: "session" }),
           event(10, "TEXT_MESSAGE_CONTENT", { text: "snapshot text" }),
           sessionEvent(11, "aex.session.idle")
         ]
@@ -421,7 +421,7 @@ strictEqual(result.text, "hello from chat");
 deepStrictEqual(result.outputs, [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }]);
 deepStrictEqual(result.events.map((event) => event.type), ["TEXT_MESSAGE_CONTENT", "CUSTOM"]);
 strictEqual(h.sockets.length, 1);
-strictEqual(h.sockets[0].url, "wss://events.example.test/api/runs/sess_user_1/subscribe?ticket=ticket-1&from=10");
+strictEqual(h.sockets[0].url, "wss://events.example.test/api/sessions/sess_user_1/subscribe?ticket=ticket-1&from=10");
 
 const message = onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/messages");
 strictEqual(message.headers["idempotency-key"], "idem-message");

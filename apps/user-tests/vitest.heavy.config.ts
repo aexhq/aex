@@ -6,7 +6,7 @@ loadLocalEnv();
 /**
  * Dedicated config for the "heavy" full-feature long-session gate
  * (`bun run test:user:heavy`). Kept separate from vitest.config.ts so the
- * heavy suite runs ONLY when invoked explicitly — after the rest of the
+ * heavy suite sessions ONLY when invoked explicitly — after the rest of the
  * live user-tests pass — never as part of the default `test:user` sweep
  * (which excludes this file). See test/live/live-sdk-heavy-session.test.ts.
  *

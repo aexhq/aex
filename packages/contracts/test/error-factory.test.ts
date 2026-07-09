@@ -109,7 +109,7 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "workspace_submit_rate_exceeded":
           return "rate_limit";
         case "session_busy":
-        case "run_not_terminal":
+        case "session_not_terminal":
         case "unknown_workspace":
         case "workspace_spend_cap_exceeded":
         case "insufficient_balance":

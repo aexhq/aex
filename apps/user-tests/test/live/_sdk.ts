@@ -2,9 +2,9 @@
  * Shared scaffolding for the config-fix USER tests (SDK-driven, customer
  * perspective). These differ from raw API probes; THESE drive the
  * installed `aex` SDK end-to-end
- * (SDK → /runs → runtime → events), the real customer surface.
+ * (SDK → /sessions → runtime → events), the real customer surface.
  *
- * Each test installs the SDK (install fixture), then runs a small Bun script
+ * Each test installs the SDK (install fixture), then sessions a small Bun script
  * IN the install dir that builds a submission via the SDK's classes
  * (Aex/AgentsMd/…), submits, polls to terminal, and
  * prints a standard result JSON which the test asserts on.
@@ -53,13 +53,13 @@ export function dense(s: string): string {
   return s.replace(/\s+/g, "");
 }
 
-export function observedRunText(result: SdkRunResult): string {
+export function observedSessionText(result: SdkSessionResult): string {
   return dense([result.assistantText, result.toolResultText].join(" "));
 }
 
-export function runDiagnostics(result: SdkRunResult): string {
+export function runDiagnostics(result: SdkSessionResult): string {
   return [
-    `runId=${result.runId}`,
+    `sessionId=${result.sessionId}`,
     `status=${result.status}`,
     `runtime=${result.runtime ?? "(none)"}`,
     `provider=${result.provider ?? "(none)"}`,
@@ -72,8 +72,8 @@ export function runDiagnostics(result: SdkRunResult): string {
   ].join("\n");
 }
 
-export interface SdkRunResult {
-  readonly runId: string;
+export interface SdkSessionResult {
+  readonly sessionId: string;
   readonly status: string;
   readonly runtime: string | null;
   readonly provider: string | null;
@@ -98,7 +98,7 @@ const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
 
 /**
- * Read the settle-consistent RunResult that `client.run(...)` returns
+ * Read the settle-consistent SessionResult that `client.start(...)` returns
  * (events/outputs/text are already collected — no poll loop) + print the
  * standard result JSON.
  */
@@ -107,8 +107,8 @@ const fallbackEvents = Array.isArray(result.events) ? result.events : [];
 let events = fallbackEvents;
 let listedSession = null;
 try {
-  listedSession = typeof result.runId === "string" && result.runId
-    ? await client.sessions.open(result.runId)
+  listedSession = typeof result.sessionId === "string" && result.sessionId
+    ? await client.sessions.open(result.sessionId)
     : null;
   if (listedSession) {
     const listedEvents = await listedSession.events().list();
@@ -149,7 +149,7 @@ function isSessionIdle(e) {
 }
 function terminalKindOf(e) {
   if (!e) return null;
-  return isSessionIdle(e) ? "RUN_FINISHED" : e.type;
+  return isSessionIdle(e) ? "TURN_FINISHED" : e.type;
 }
 function terminalDataOf(e) {
   if (!e) return null;
@@ -159,10 +159,10 @@ function terminalDataOf(e) {
   }
   return e.data;
 }
-const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
 const eventKinds = events.map((e) => e.type);
-if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) {
-  eventKinds.push("RUN_FINISHED");
+if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) {
+  eventKinds.push("TURN_FINISHED");
 }
 const streamErrors = events
   .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
@@ -172,16 +172,16 @@ const streamErrors = events
     }
     return e.data && typeof e.data === "object" ? e.data : { unknown: true };
   });
-// A one-shot run() parks the session cleanly on success (idle/suspended);
-// surface that as "succeeded" so callers keep the run-oriented contract.
+// A one-shot start() parks the session cleanly on success (idle/suspended);
+// surface that as "succeeded" so callers keep the session-oriented contract.
 const status = result.ok
   ? "succeeded"
   : (typeof result.status === "string" && result.status ? result.status : "failed");
 process.stdout.write(JSON.stringify({
-  runId: result.runId,
+  sessionId: result.sessionId,
   status,
   runtime: "managed",
-  provider: (result.run && typeof result.run.provider === "string") ? result.run.provider : null,
+  provider: (result.session && typeof result.session.provider === "string") ? result.session.provider : null,
   terminalKind: terminalKindOf(terminal),
   terminalData: terminalDataOf(terminal),
   assistantText: text,
@@ -193,15 +193,15 @@ process.stdout.write(JSON.stringify({
 `;
 
 /**
- * Assemble a full runner script. `setup` (optional) runs first and may
+ * Assemble a full runner script. `setup` (optional) sessions first and may
  * `await` (e.g. AgentsMd.fromContent); `run` is the object literal /
- * expression passed to `client.run(...)` and must assign nothing — the helper
- * wraps it as `const result = await client.run(<run>, { timeoutMs });`. The
+ * expression passed to `client.start(...)` and must assign nothing — the helper
+ * wraps it as `const result = await client.start(<run>, { timeoutMs });`. The
  * `run` object is the session/run surface: `message` (the first turn), `apiKeys`
  * (BYOK provider keys), plus the usual composition inputs.
  */
-export function sdkRunnerScript(parts: { readonly setup?: string; readonly run: string }): string {
-  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst result = await client.run(${parts.run}, { timeoutMs: Number(process.env.WAIT_MS || "240000") });\n${TAIL}`;
+export function sdkRunnerScript(parts: { readonly setup?: string; readonly session: string }): string {
+  return `${PREAMBLE}\n${parts.setup ?? ""}\nconst result = await client.start(${parts.session}, { timeoutMs: Number(process.env.WAIT_MS || "240000") });\n${TAIL}`;
 }
 
 /** Write + run a runner script in the install dir; parse the result JSON. */
@@ -210,7 +210,7 @@ export async function runSdkScript(
   env: UserEnv,
   script: string,
   opts: { readonly scriptName: string; readonly waitMs?: number; readonly timeoutMs?: number } = { scriptName: "sdk-run.mjs" }
-): Promise<SdkRunResult> {
+): Promise<SdkSessionResult> {
   const scriptPath = join(install.installDir, opts.scriptName);
   writeFileSync(scriptPath, script);
 
@@ -239,5 +239,5 @@ export async function runSdkScript(
       `SDK runner exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
     );
   }
-  return JSON.parse(child.stdout.trim()) as SdkRunResult;
+  return JSON.parse(child.stdout.trim()) as SdkSessionResult;
 }

@@ -1,12 +1,12 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { parseMcpServerRef, parseRunWebhook } from "../src/index.js";
+import { parseMcpServerRef, parseSessionWebhook } from "../src/index.js";
 
 /**
  * Property fuzz for the shared SSRF host deny-list, exercised through the REAL
  * public parsers that wrap it — `parseMcpServerRef` (the MCP URL gate, which
  * delegates to the internal `denyReasonForHostIp`/`denyReasonForMcpHost`) and
- * `parseRunWebhook` (the per-run callback gate). The deny logic itself is not
+ * `parseSessionWebhook` (the per-session callback gate). The deny logic itself is not
  * exported, so we drive it the only honest way: through the parsers a caller
  * actually hits. No mocks — the assertions hold against the production code.
  *
@@ -109,7 +109,7 @@ describe("SSRF host deny-list (property)", () => {
     );
   });
 
-  it("parseRunWebhook rejects non-https, userinfo, and unparseable URLs; accepts clean https", () => {
+  it("parseSessionWebhook rejects non-https, userinfo, and unparseable URLs; accepts clean https", () => {
     fc.assert(
       fc.property(
         fc.oneof(
@@ -120,7 +120,7 @@ describe("SSRF host deny-list (property)", () => {
           fc.record({ url: fc.constant("https://example.com/hook"), extra: fc.string() }) // unknown field
         ),
         (input) => {
-          expect(() => parseRunWebhook(input)).toThrow();
+          expect(() => parseSessionWebhook(input)).toThrow();
         }
       ),
       { numRuns: 100 }
@@ -128,7 +128,7 @@ describe("SSRF host deny-list (property)", () => {
     // A clean https webhook with only `url` always parses.
     fc.assert(
       fc.property(publicHost, (host) => {
-        expect(parseRunWebhook({ url: `https://${host}/hook` })).toEqual({ url: `https://${host}/hook` });
+        expect(parseSessionWebhook({ url: `https://${host}/hook` })).toEqual({ url: `https://${host}/hook` });
       }),
       { numRuns: 100 }
     );

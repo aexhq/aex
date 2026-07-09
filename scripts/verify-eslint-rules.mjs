@@ -1,6 +1,6 @@
 // Verify the aex ESLint rules still catch what they're meant to.
 //
-// Runs ESLint programmatically against `tools/eslint-plugin-aex/__verify_rules.test.ts`
+// Sessions ESLint programmatically against `tools/eslint-plugin-aex/__verify_rules.test.ts`
 // (which intentionally trips every rule) and checks that the exact expected
 // violation set fires. A drift -- a rule stops catching its pattern, or starts
 // catching something else -- fails this script.

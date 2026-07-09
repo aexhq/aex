@@ -90,7 +90,7 @@ describe("Skill — name derivation", () => {
     const d = makeNamedSkillDir("Rép0rt__Writer!!", { "SKILL.md": skillMd(undefined, "desc") });
     try {
       const skill = await Skill.fromDir(d.dir);
-      // Non-[a-z0-9] runs collapse to single '-', so the reserved '__' can't survive.
+      // Non-[a-z0-9] sessions collapse to single '-', so the reserved '__' can't survive.
       expect(skill.name).toMatch(/^[a-z0-9][a-z0-9_-]{0,127}$/);
       expect(skill.name.includes("__")).toBe(false);
       expect(skill.name).toBe("r-p0rt-writer");

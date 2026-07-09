@@ -21,12 +21,12 @@ export interface SecretUploader {
 
 /**
  * A secret with the SAME lifecycle semantic as `File` / `AgentsMd`:
- * EPHEMERAL per-run by default, PROMOTABLE to a persisted, name-searchable
+ * EPHEMERAL per-session by default, PROMOTABLE to a persisted, name-searchable
  * workspace secret you can reference and reuse.
  *
- *   - `Secret.value(v)` — EPHEMERAL per-run: the value is vaulted when the session is created and
+ *   - `Secret.value(v)` — EPHEMERAL per-session: the value is vaulted when the session is created and
  *     excluded from the idempotency hash; only a `{ ephemeral: true }`
- *     placeholder rides the (hashed) submission. Deleted when the run finishes.
+ *     placeholder rides the (hashed) submission. Deleted when the session finishes.
  *     Clean, no workspace dependency. ≙ `File.fromBytes(...)` (a draft).
  *   - `secret.upload(client, { name })` — PROMOTE that value into the workspace
  *     secret store under `name`; resolves to a `Secret.ref`.
@@ -66,7 +66,7 @@ export class Secret {
     this.#value = args.value;
   }
 
-  /** Ephemeral per-run value. Vaulted when the session is created; never in the spec/hash; gone at terminal. */
+  /** Ephemeral per-session value. Vaulted when the session is created; never in the spec/hash; gone at terminal. */
   static value(value: string | SecretString): Secret {
     const wrapped = value instanceof SecretString ? value : new SecretString(value, "secret");
     if (!wrapped.unwrap()) {
@@ -87,7 +87,7 @@ export class Secret {
 
   /**
    * Promote this EPHEMERAL secret into the workspace secret store under `name`
-   * and return a `Secret.ref(name)` for reuse across runs. Blocking: the store
+   * and return a `Secret.ref(name)` for reuse across sessions. Blocking: the store
    * write completes before this resolves. Consumes this instance (an ephemeral
    * value is promoted exactly once).
    *
@@ -145,7 +145,7 @@ export class Secret {
 
 /**
  * Split `secretEnv: Record<envName, Secret>` into the value-free declarations
- * (`submission.secretEnv`) and the per-run vaulted values
+ * (`submission.secretEnv`) and the per-session vaulted values
  * (`secrets.envSecrets`). Secret declarations ride
  * the hashed submission, ephemeral values ride the secrets channel
  * (hash-excluded). Refs contribute only a declaration.

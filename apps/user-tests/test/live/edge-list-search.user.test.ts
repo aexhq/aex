@@ -5,16 +5,16 @@
  * Acts as a real customer hammering these four verbs of the installed
  * `@aexhq/sdk` against the DEV plane, hunting for edge-case defects before a
  * prod launch. Nothing in the existing live suite exercises the workspace
- * LISTING / cross-session SEARCH / RunUnit / debug-trace surface, so this file
+ * LISTING / cross-session SEARCH / SessionUnit / debug-trace surface, so this file
  * closes that gap.
  *
  * Surface under test (packages/sdk/src/client.ts):
  *   - SessionClient.list(query)            pagination / filter / order / bogus cursor
  *   - Aex.outputs.search(query)            cross-session output search + cursor-dedup termination
- *   - SessionHandle.unit()                 the self-contained RunUnit read shape
+ *   - SessionHandle.unit()                 the self-contained SessionUnit read shape
  *   - AexOptions.debug (true | function)   redacted per-request stderr trace, no secret leak
  *
- * Cost: ONE billable run total (case A creates a single marker deliverable;
+ * Cost: ONE billable session turn total (case A creates a single marker deliverable;
  * cases B and C are pure read/introspection against the existing workspace and
  * spend nothing). Model deepseek-v4-flash, tiny prompt.
  *
@@ -164,7 +164,7 @@ afterAll(() => {
 
 describe("edge: sessions.list / outputs.search / unit / debug", () => {
   it(
-    "A search+unit: a marker deliverable is found by outputs.search (scoped + cross-session), and unit() returns a coherent RunUnit",
+    "A search+unit: a marker deliverable is found by outputs.search (scoped + cross-session), and unit() returns a coherent SessionUnit",
     async () => {
       const marker = "EDGES" + Math.random().toString(36).slice(2, 10).toUpperCase();
       const filename = "edgesearch_" + marker + ".txt";
@@ -173,7 +173,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
         `/workspace/outputs/${filename} whose ENTIRE contents are exactly these characters: ${marker} ` +
         `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
       const body = `
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
@@ -182,16 +182,16 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-ls-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
-        const runId = runResult.runId;
-        const status = runResult.ok ? "succeeded" : (runResult.status || "failed");
+        const sessionId = sessionResult.sessionId;
+        const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const MARKER = ${JSON.stringify(marker)};
-        const session = await client.sessions.open(runId);
+        const session = await client.sessions.open(sessionId);
 
         const probes = [];
 
-        // ---- unit() : RunUnit shape --------------------------------------
-        // The run RECORD (GET /api/runs/:id, which backs unit()) settles a beat
-        // after run() parks the session, so poll to a terminal status before
+        // ---- unit() : SessionUnit shape --------------------------------------
+        // The session RECORD (GET /api/sessions/:id, which backs unit()) settles a beat
+        // after start() parks the session, so poll to a terminal status before
         // judging the shape — otherwise a lean "still-running" projection would
         // be mistaken for a permanent contract gap.
         probes.push(await probe("unit", async () => {
@@ -241,31 +241,31 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           };
         }, 120000));
 
-        // ---- outputs.search : SCOPED (runIds) — fast + deterministic -----
+        // ---- outputs.search : SCOPED (sessionIds) — fast + deterministic -----
         probes.push(await probe("search_scoped_marker", async () => {
-          const page = await client.outputs.search({ runIds: [runId], filename: MARKER });
+          const page = await client.outputs.search({ sessionIds: [sessionId], filename: MARKER });
           return {
             hits: page.hits.length,
-            runIds: [...new Set(page.hits.map((h) => h.runId))],
+            sessionIds: [...new Set(page.hits.map((h) => h.sessionId))],
             names: page.hits.map((h) => h.filename ?? null),
-            allThisRun: page.hits.every((h) => h.runId === runId)
+            allThisRun: page.hits.every((h) => h.sessionId === sessionId)
           };
         }, 30000));
         probes.push(await probe("search_scoped_ext", async () => {
-          const page = await client.outputs.search({ runIds: [runId], extension: "txt" });
+          const page = await client.outputs.search({ sessionIds: [sessionId], extension: "txt" });
           return { hits: page.hits.length };
         }, 30000));
         probes.push(await probe("search_scoped_nomatch", async () => {
-          const page = await client.outputs.search({ runIds: [runId], filename: "zzz-no-such-marker-" + Date.now() });
+          const page = await client.outputs.search({ sessionIds: [sessionId], filename: "zzz-no-such-marker-" + Date.now() });
           return { hits: page.hits.length, isArray: Array.isArray(page.hits) };
         }, 30000));
         probes.push(await probe("search_scoped_empty_query", async () => {
-          const page = await client.outputs.search({ runIds: [runId] });
+          const page = await client.outputs.search({ sessionIds: [sessionId] });
           return { hits: page.hits.length };
         }, 30000));
-        // Duplicate runId in the allow-list must NOT double-count past the limit.
+        // Duplicate sessionId in the allow-list must NOT double-count past the limit.
         probes.push(await probe("search_dup_runids", async () => {
-          const page = await client.outputs.search({ runIds: [runId, runId, runId], filename: MARKER });
+          const page = await client.outputs.search({ sessionIds: [sessionId, sessionId, sessionId], filename: MARKER });
           return { hits: page.hits.length };
         }, 30000));
 
@@ -285,12 +285,12 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           const page = await client.outputs.search({ filename: MARKER });
           return {
             hits: page.hits.length,
-            foundThisRun: page.hits.some((h) => h.runId === runId),
+            foundThisRun: page.hits.some((h) => h.sessionId === sessionId),
             ms: Date.now() - t0
           };
         }, ${Number(process.env.AEX_UNSCOPED_RACE_MS ?? "180000")}));
 
-        process.stdout.write(JSON.stringify({ runId, status, marker: MARKER, filename: ${JSON.stringify(filename)}, probes }));
+        process.stdout.write(JSON.stringify({ sessionId, status, marker: MARKER, filename: ${JSON.stringify(filename)}, probes }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-ls-A.mjs", body, 12 * 60_000);
@@ -304,7 +304,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
       expect(sm.ok, `scoped marker search threw: ${JSON.stringify(sm.error)}${ctx}`).toBe(true);
       const smv = sm.value as { hits: number; allThisRun: boolean; names: (string | null)[] };
       expect(smv.hits, `scoped search did not find the marker deliverable${ctx}`).toBe(1);
-      expect(smv.allThisRun, `scoped search leaked hits from other runs${ctx}`).toBe(true);
+      expect(smv.allThisRun, `scoped search leaked hits from other sessions${ctx}`).toBe(true);
       expect(smv.names.some((n) => (n || "").includes(marker)), `hit filename missing the marker${ctx}`).toBe(true);
 
       expect((byLabel(probes, "search_scoped_ext").value as { hits: number }).hits, `extension search 0 hits${ctx}`).toBeGreaterThanOrEqual(1);
@@ -344,19 +344,19 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           : `[edge-list-search] NOTE: unscoped outputs.search did not terminate cleanly: ${JSON.stringify(us.error)}`
       );
 
-      // ---- outputs.search dup-runIds (LOW finding, reported not gated) ----
-      // A single deliverable, but its runId repeated 3x in the allow-list. The
-      // SDK iterates runIds verbatim (no dedup), so the same (runId,outputId)
+      // ---- outputs.search dup-sessionIds (LOW finding, reported not gated) ----
+      // A single deliverable, but its sessionId repeated 3x in the allow-list. The
+      // SDK iterates sessionIds verbatim (no dedup), so the same (sessionId,outputId)
       // hit is emitted once per repeat → duplicated hits. Low severity, but a
       // real user concatenating corpus allow-lists can hit it.
       const dup = byLabel(probes, "search_dup_runids");
       if (dup.ok) {
         const dupHits = (dup.value as { hits: number }).hits;
         // eslint-disable-next-line no-console
-        console.log(`[edge-list-search] FINDING(low): outputs.search does NOT dedup runIds — [runId,runId,runId] gave ${dupHits} hits for a single output (expected ${smv.hits}).`);
+        console.log(`[edge-list-search] FINDING(low): outputs.search does NOT dedup sessionIds — [sessionId,sessionId,sessionId] gave ${dupHits} hits for a single output (expected ${smv.hits}).`);
       }
 
-      // ================= unit() — RunUnit contract check =================
+      // ================= unit() — SessionUnit contract check =================
       const unit = byLabel(probes, "unit");
       expect(unit.ok, `unit() threw: ${JSON.stringify(unit.error)}${ctx}`).toBe(true);
       const u = unit.value as Record<string, unknown>;
@@ -374,19 +374,19 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           `hasRuntimeManifest=${u.hasRuntimeManifest} manifestKeys=${JSON.stringify(u.manifestKeys)} manifestRuntimeSize=${JSON.stringify(u.manifestRuntimeSize)} ` +
           `topRuntimeSize=${JSON.stringify(u.topRuntimeSize)} hasCostTelemetry=${u.hasCostTelemetry}`
       );
-      // CONTRACT: the SDK types getRunUnit()/SessionHandle.unit() as `RunUnit`,
+      // CONTRACT: the SDK types getSessionUnit()/SessionHandle.unit() as `SessionUnit`,
       // whose `submission` / `attempts` / `events` / `outputs` are NON-optional.
       // A typed consumer WILL read `unit.outputs`, `unit.submission.submission`,
       // `unit.events.totalCount` — so these should be present on a settled run.
       // (Polled to terminal above to rule out settle-lag.) On dev unit() returns
-      // a lean run-summary record instead — surfaced as a NON-GATING finding so
+      // a lean session-summary record instead — surfaced as a NON-GATING finding so
       // the green suite still guards the id / no-secret-leak invariants above.
       if (!(u.hasSubmission && u.hasAttempts && u.hasEvents && u.hasOutputs)) {
         // eslint-disable-next-line no-console
         console.log(
-          `[edge-list-search] FINDING(med,PRODUCT_BUG): unit() (GET /api/runs/:id) returns a LEAN record after ` +
+          `[edge-list-search] FINDING(med,PRODUCT_BUG): unit() (GET /api/sessions/:id) returns a LEAN record after ` +
             `settling (finalStatus=${JSON.stringify(u.finalStatus)}, polledToTerminal=${u.polledToTerminal}). The SDK ` +
-            `types getRunUnit()/SessionHandle.unit() as RunUnit with REQUIRED submission/attempts/events/outputs ` +
+            `types getSessionUnit()/SessionHandle.unit() as SessionUnit with REQUIRED submission/attempts/events/outputs ` +
             `(+ capsSnapshot/runtimeManifest), but dev returns only ${JSON.stringify(u.topKeys)}. A typed consumer ` +
             `reading unit.outputs / unit.submission.submission.model / unit.events.totalCount gets undefined at runtime.`
         );

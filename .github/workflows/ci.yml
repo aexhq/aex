@@ -6,7 +6,7 @@ on:
       - main
   workflow_dispatch:
 
-# Main-push and manual runs each get a run_id-scoped concurrency group, so they
+# Main-push and manual sessions each get a session_id-scoped concurrency group, so they
 # run to completion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # This gate must never be silently disarmed. CI runs only on push to
+      # This gate must never be silently disarmed. CI sessions only on push to
       # main by maintainers, so a missing/expired PLATFORM_REPO_TOKEN or a
       # failed platform checkout fails this job loudly instead of letting the
       # parity script skip.

@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_RUN_TIMEOUT_MS,
+  DEFAULT_SESSION_TIMEOUT_MS,
   DEFAULT_RUNTIME_SIZE,
-  MAX_RUN_TIMEOUT_MS,
-  MIN_RUN_TIMEOUT_MS,
+  MAX_SESSION_TIMEOUT_MS,
+  MIN_SESSION_TIMEOUT_MS,
   RUNTIME_SIZE_PRESETS,
   RUNTIME_SIZES,
-  RUN_PROCESS_KILL_GRACE_MS,
-  RUN_TERMINAL_GRACE_MS,
+  SESSION_PROCESS_KILL_GRACE_MS,
+  SESSION_TERMINAL_GRACE_MS,
   RuntimeSizes,
   Models,
   orchestrationTimeoutString,
   parseDurationToMs,
-  parseRunTimeout,
+  parseSessionTimeout,
   parseRuntimeSize,
-  parseRunSubmissionRequest,
-  resolveRunTimeoutMs,
+  parseSessionSubmissionRequest,
+  resolveSessionTimeoutMs,
   runtimeResources
 } from "../src/index.js";
 
@@ -65,8 +65,8 @@ describe("RuntimeSizes symbol const stays in lockstep with presets", () => {
   });
 });
 
-describe("default runtime size", () => {
-  it("resolves to the current default runtime resource preset", () => {
+describe("default sessiontime size", () => {
+  it("resolves to the current default sessiontime resource preset", () => {
     expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.SHARED_0_25X_1GB);
     expect(runtimeResources(DEFAULT_RUNTIME_SIZE)).toEqual({ cpus: 0.25, memoryMb: 1024 });
   });
@@ -105,36 +105,36 @@ describe("parseDurationToMs", () => {
   });
 });
 
-describe("parseRunTimeout", () => {
+describe("parseSessionTimeout", () => {
   it("accepts an omitted field", () => {
-    expect(parseRunTimeout(undefined)).toBeUndefined();
+    expect(parseSessionTimeout(undefined)).toBeUndefined();
   });
 
   it("parses an in-range duration string", () => {
-    expect(parseRunTimeout("1h")).toBe(3_600_000);
-    expect(parseRunTimeout("90m")).toBe(5_400_000);
+    expect(parseSessionTimeout("1h")).toBe(3_600_000);
+    expect(parseSessionTimeout("90m")).toBe(5_400_000);
   });
 
   it("rejects below the floor and above the ceiling", () => {
-    expect(() => parseRunTimeout("30s")).toThrow(/at least/);
-    expect(() => parseRunTimeout("9h")).toThrow(/at most/);
+    expect(() => parseSessionTimeout("30s")).toThrow(/at least/);
+    expect(() => parseSessionTimeout("9h")).toThrow(/at most/);
   });
 
   it("accepts the exact bounds", () => {
-    expect(parseRunTimeout(`${MIN_RUN_TIMEOUT_MS}`)).toBe(MIN_RUN_TIMEOUT_MS);
-    expect(parseRunTimeout(`${MAX_RUN_TIMEOUT_MS}`)).toBe(MAX_RUN_TIMEOUT_MS);
+    expect(parseSessionTimeout(`${MIN_SESSION_TIMEOUT_MS}`)).toBe(MIN_SESSION_TIMEOUT_MS);
+    expect(parseSessionTimeout(`${MAX_SESSION_TIMEOUT_MS}`)).toBe(MAX_SESSION_TIMEOUT_MS);
   });
 
   it("rejects a non-string", () => {
-    expect(() => parseRunTimeout(3600)).toThrow(/duration string/);
+    expect(() => parseSessionTimeout(3600)).toThrow(/duration string/);
   });
 });
 
-describe("resolveRunTimeoutMs + orchestrationTimeoutString", () => {
+describe("resolveSessionTimeoutMs + orchestrationTimeoutString", () => {
   it("applies the 8h default only when absent", () => {
-    expect(resolveRunTimeoutMs(undefined)).toBe(DEFAULT_RUN_TIMEOUT_MS);
-    expect(DEFAULT_RUN_TIMEOUT_MS).toBe(8 * 60 * 60 * 1000);
-    expect(resolveRunTimeoutMs(123_000)).toBe(123_000);
+    expect(resolveSessionTimeoutMs(undefined)).toBe(DEFAULT_SESSION_TIMEOUT_MS);
+    expect(DEFAULT_SESSION_TIMEOUT_MS).toBe(8 * 60 * 60 * 1000);
+    expect(resolveSessionTimeoutMs(123_000)).toBe(123_000);
   });
 
   it("formats ms as a second-granularity duration", () => {
@@ -146,15 +146,15 @@ describe("resolveRunTimeoutMs + orchestrationTimeoutString", () => {
 
 describe("graceful termination constants", () => {
   it("orchestrator grace outlasts runtime process kill grace", () => {
-    expect(RUN_TERMINAL_GRACE_MS).toBeGreaterThan(RUN_PROCESS_KILL_GRACE_MS);
-    expect(RUN_PROCESS_KILL_GRACE_MS).toBe(60 * 1000);
-    expect(RUN_TERMINAL_GRACE_MS).toBe(90 * 1000);
+    expect(SESSION_TERMINAL_GRACE_MS).toBeGreaterThan(SESSION_PROCESS_KILL_GRACE_MS);
+    expect(SESSION_PROCESS_KILL_GRACE_MS).toBe(60 * 1000);
+    expect(SESSION_TERMINAL_GRACE_MS).toBe(90 * 1000);
   });
 });
 
 describe("submission contract — runtimeSize + timeout round-trip", () => {
   it("normalises timeout string to timeoutMs and keeps runtime size token", () => {
-    const parsed = parseRunSubmissionRequest(
+    const parsed = parseSessionSubmissionRequest(
       baseRequest({ runtimeSize: RuntimeSizes.SHARED_2X_8GB, timeout: "2h" })
     );
     expect(parsed.runtimeSize).toBe("shared-2x-8gb");
@@ -162,24 +162,24 @@ describe("submission contract — runtimeSize + timeout round-trip", () => {
   });
 
   it("omits both when absent", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest());
+    const parsed = parseSessionSubmissionRequest(baseRequest());
     expect(parsed.runtimeSize).toBeUndefined();
     expect(parsed.timeoutMs).toBeUndefined();
   });
 
   it("rejects the old machine field spelling (a runtimeSize string) — machine is now a {spot} object", () => {
-    expect(() => parseRunSubmissionRequest(baseRequest({ machine: "shared-2x-8gb" }))).toThrow(
+    expect(() => parseSessionSubmissionRequest(baseRequest({ machine: "shared-2x-8gb" }))).toThrow(
       /machine must be an object/
     );
   });
 
   it("rejects an invalid runtimeSize token at submit time", () => {
-    expect(() => parseRunSubmissionRequest(baseRequest({ runtimeSize: "shared-9x-1tb" }))).toThrow(
+    expect(() => parseSessionSubmissionRequest(baseRequest({ runtimeSize: "shared-9x-1tb" }))).toThrow(
       /runtimeSize must be one of/
     );
   });
 
   it("rejects an out-of-range timeout at submit time", () => {
-    expect(() => parseRunSubmissionRequest(baseRequest({ timeout: "12h" }))).toThrow(/at most/);
+    expect(() => parseSessionSubmissionRequest(baseRequest({ timeout: "12h" }))).toThrow(/at most/);
   });
 });

@@ -4,11 +4,11 @@
  * Each scenario calls {@link installAex} which:
  *   1. Reads AEX_USER_TEST_TARBALL or AEX_USER_TEST_VERSION
  *      (explicit overrides stay mutually exclusive). When neither is
- *      set, local/offline runs pack the current workspace SDK once and
+ *      set, local/offline sessions pack the current workspace SDK once and
  *      install that tarball.
  *   2. Creates a fresh tempdir.
  *   3. Materializes a minimal package.json there.
- *   4. Runs `bun install <tarball|@aexhq/sdk@version>` against it.
+ *   4. Sessions `bun install <tarball|@aexhq/sdk@version>` against it.
  *   5. Returns paths for the install so scenarios can spawn child
  *      processes with cwd = installDir.
  *
@@ -44,7 +44,7 @@ export interface InstallResult {
   readonly installSpec: string;
   /** Source kind for diagnostics. */
   readonly source: "tarball" | "registry" | "local-pack";
-  /** Run cleanup: removes installDir recursively. Safe to call twice. */
+  /** SessionRecord cleanup: removes installDir recursively. Safe to call twice. */
   readonly cleanup: () => void;
 }
 
@@ -327,11 +327,11 @@ async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Run a shell command. Returns { stdout, stderr, exitCode }.
+ * SessionRecord a shell command. Returns { stdout, stderr, exitCode }.
  * Rejects on timeout or spawn error; never rejects on non-zero exit
  * — the caller decides whether non-zero is a failure.
  */
-export interface RunResult {
+export interface SessionResult {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
@@ -378,13 +378,13 @@ export async function runCommand(
   command: string,
   args: readonly string[],
   options: SpawnOptions & { readonly timeoutMs?: number } = {}
-): Promise<RunResult> {
+): Promise<SessionResult> {
   const timeoutMs = options.timeoutMs ?? 60_000;
   const { timeoutMs: _omit, ...spawnOptions } = options;
   void _omit;
   const env = withBunOnPath(spawnOptions.env);
   const prepared = prepareSpawn(command, args, env);
-  return await new Promise<RunResult>((resolve, reject) => {
+  return await new Promise<SessionResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     const child = spawn(prepared.command, prepared.args, {

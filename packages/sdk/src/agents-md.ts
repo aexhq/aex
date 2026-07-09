@@ -9,10 +9,10 @@ import { strToU8, zipSync } from "fflate";
  * behaviour).
  *
  *   const rules = await AgentsMd.fromContent("# Be helpful", { name: "rules" });
- *   await client.run({ agentsMd: [rules], message: "..." });
+ *   await client.start({ agentsMd: [rules], message: "..." });
  *
- * `client.run` / `openSession` materializes the bytes to the hosted asset store
- * before the run lands. Asset deduplication handles repeated uploads automatically.
+ * `client.start` / `openSession` materializes the bytes to the hosted asset store
+ * before the session lands. Asset deduplication handles repeated uploads automatically.
  */
 export class AgentsMd {
   readonly #ref: AgentsMdRef | DraftAgentsMdRef;
@@ -69,7 +69,7 @@ export class AgentsMd {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.run` / `openSession` can upload it as an asset.
+   * `client.start` / `openSession` can upload it as an asset.
    */
   _takeDraftBundle(): { name: string; contentHash: string; bytes: Uint8Array } | undefined {
     if (this.#ref.kind !== "draft" || !this.#zipBytes) {
@@ -86,7 +86,7 @@ export class AgentsMd {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "AgentsMd: draft AgentsMd cannot be JSON-serialised — it only becomes a wire " +
-          "ref when aex.run / openSession uploads the bytes as an asset."
+          "ref when aex.start / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;

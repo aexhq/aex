@@ -15,7 +15,7 @@ const CHUNKS = ["The ", "quick ", "brown ", "fox"] as const;
 describe("blackbox: streaming per-token progress", () => {
   it("assembles ordered per-token deltas into the final text", async () => {
     const platform = new FakePlatform();
-    const result = await platform.run(
+    const result = await platform.start(
       { model: "claude-haiku-4-5", message: "stream it", apiKeys: { anthropic: "sk-ant" } },
       { chunks: CHUNKS, costUsd: 0.01 }
     );

@@ -1,7 +1,7 @@
 /**
  * Live installed-CLI coverage.
  *
- * This is the user-facing blackbox path for the README's `aex run --follow`
+ * This is the user-facing blackbox path for the README's `aex start --follow`
  * example. It installs the packed/published SDK artifact into a clean tempdir,
  * drives the installed `aex` binary against the live public API, then exercises
  * read/download host verbs against the same run.
@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getAexBinPath, installAex, runCommand, type InstallResult, type RunResult } from "../_fixtures/install.js";
+import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
 import { isPreCreateTransportMessage, withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 interface LiveCliEnv {
@@ -49,8 +49,8 @@ function requireLiveCliEnv(): LiveCliEnv {
 
 const env = requireLiveCliEnv();
 
-// `aex run` opens a session; a completed one-shot turn parks the session
-// cleanly (idle/suspended), or surfaces a terminal run status when the
+// `aex start` opens a session; a completed one-shot turn parks the session
+// cleanly (idle/suspended), or surfaces a terminal session status when the
 // deployment projects one. Any of these is a clean, exit-0 outcome.
 const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
 
@@ -58,7 +58,7 @@ function redactSecrets(text: string): string {
   return text.split(env.apiKey).join("[REDACTED_AEX_API_KEY]").split(env.deepseekKey).join("[REDACTED_DEEPSEEK_API_KEY]");
 }
 
-function commandDiagnostic(command: string, result: RunResult): string {
+function commandDiagnostic(command: string, result: SessionResult): string {
   return redactSecrets(
     `${command} exited ${result.exitCode}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`
   );
@@ -110,7 +110,7 @@ function customNames(events: readonly Record<string, unknown>[]): string[] {
 
 function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
   const kinds = events.map((event) => event["type"]);
-  return kinds.includes("RUN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
+  return kinds.includes("TURN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
 }
 
 function looksTransientProvider(text: string): boolean {
@@ -130,7 +130,7 @@ describe("live hosted API via installed CLI", () => {
     install?.cleanup();
   });
 
-  async function runCli(args: readonly string[], timeoutMs = 60_000): Promise<RunResult> {
+  async function executeCli(args: readonly string[], timeoutMs = 60_000): Promise<SessionResult> {
     return await runCommand(binPath, args, {
       cwd: install.installDir,
       timeoutMs
@@ -141,10 +141,10 @@ describe("live hosted API via installed CLI", () => {
     return ["--api-key", env.apiKey, "--aex-url", env.apiBase];
   }
 
-  async function runCliCreateWithPreCreateRetry(args: readonly string[], timeoutMs: number): Promise<RunResult> {
+  async function runCliCreateWithPreCreateRetry(args: readonly string[], timeoutMs: number): Promise<SessionResult> {
     return await withPreCreateTransportRetry("live-cli-installed run --follow", async () => {
-      const result = await runCli(args, timeoutMs);
-      const diag = commandDiagnostic("aex run --follow", result);
+      const result = await executeCli(args, timeoutMs);
+      const diag = commandDiagnostic("aex start --follow", result);
       if (result.exitCode !== 0 && firstSessionId(result.stdout) === null && isPreCreateTransportMessage(diag)) {
         throw new Error(diag);
       }
@@ -177,7 +177,7 @@ describe("live hosted API via installed CLI", () => {
         ],
         10 * 60_000
       );
-      const runDiag = commandDiagnostic("aex run --follow", run);
+      const runDiag = commandDiagnostic("aex start --follow", run);
       if (run.exitCode !== 0) {
         diagnostics.push(`attempt ${attempt}: ${runDiag}`);
         if (attempt < maxAttempts && looksTransientProvider(runDiag)) continue;
@@ -191,23 +191,23 @@ describe("live hosted API via installed CLI", () => {
       const finalFromFollow = [...runLines].reverse().find((line) => line["id"] === sessionId && typeof line["status"] === "string");
       expect(SESSION_PARKED_OK, runDiag).toContain(finalFromFollow?.["status"]);
 
-      const status = await runCli(["status", sessionId as string, ...commonArgs()]);
+      const status = await executeCli(["status", sessionId as string, ...commonArgs()]);
       expect(status.exitCode, commandDiagnostic("aex status", status)).toBe(0);
       const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
       expect(statusDoc["id"], commandDiagnostic("aex status", status)).toBe(sessionId);
       expect(SESSION_PARKED_OK, commandDiagnostic("aex status", status)).toContain(statusDoc["status"]);
 
-      const wait = await runCli(["wait", sessionId as string, "--timeout", "1m", "--interval", "1s", ...commonArgs()], 90_000);
+      const wait = await executeCli(["wait", sessionId as string, "--timeout", "1m", "--interval", "1s", ...commonArgs()], 90_000);
       expect(wait.exitCode, commandDiagnostic("aex wait", wait)).toBe(0);
       const waitDoc = JSON.parse(wait.stdout.trim()) as Record<string, unknown>;
       expect(waitDoc["id"], commandDiagnostic("aex wait", wait)).toBe(sessionId);
       expect(SESSION_PARKED_OK, commandDiagnostic("aex wait", wait)).toContain(waitDoc["status"]);
 
-      const events = await runCli(["events", sessionId as string, ...commonArgs()]);
+      const events = await executeCli(["events", sessionId as string, ...commonArgs()]);
       expect(events.exitCode, commandDiagnostic("aex events", events)).toBe(0);
       const eventRows = parseJsonLines(events.stdout);
       const eventKinds = eventRows.map((event) => event["type"]);
-      expect(eventKinds, commandDiagnostic("aex events", events)).toContain("RUN_STARTED");
+      expect(eventKinds, commandDiagnostic("aex events", events)).toContain("TURN_STARTED");
       expect(hasCleanTerminal(eventRows), commandDiagnostic("aex events", events)).toBe(true);
       const visibleText = eventText(eventRows).replace(/\s+/g, "");
       if (!visibleText.includes(marker) && attempt < maxAttempts) {
@@ -219,7 +219,7 @@ describe("live hosted API via installed CLI", () => {
       }
       expect(visibleText, `${commandDiagnostic("aex events", events)}\n\nprior attempts:\n${diagnostics.join("\n\n")}`).toContain(marker);
 
-      const outputs = await runCli(["outputs", sessionId as string, ...commonArgs()]);
+      const outputs = await executeCli(["outputs", sessionId as string, ...commonArgs()]);
       expect(outputs.exitCode, commandDiagnostic("aex outputs", outputs)).toBe(0);
       const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
       for (const output of outputRows) {
@@ -227,7 +227,7 @@ describe("live hosted API via installed CLI", () => {
       }
 
       const archivePath = join(install.installDir, `live-cli-events-${sessionId}.zip`);
-      const download = await runCli(["download", sessionId as string, "--only", "events", "--out", archivePath, ...commonArgs()]);
+      const download = await executeCli(["download", sessionId as string, "--only", "events", "--out", archivePath, ...commonArgs()]);
       expect(download.exitCode, commandDiagnostic("aex download --only events", download)).toBe(0);
       expect(JSON.parse(download.stdout.trim())).toMatchObject({
         sessionId,

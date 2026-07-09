@@ -39,17 +39,17 @@ describe("withRetry network-error exhaustion", () => {
       { maxAttempts: 3, initialDelayMs: 10 },
       { sleep: noSleep, random: () => 0.5, now: () => (t += 100) }
     );
-    const err = await rejectionOf(wrapped("https://api.example.test/api/runs", { method: "POST" }));
+    const err = await rejectionOf(wrapped("https://api.example.test/api/sessions", { method: "POST" }));
     expect(calls).toBe(3);
     expect(err).toBeInstanceOf(AexNetworkError);
     expect(err.attempts).toBe(3);
     expect(err.method).toBe("POST");
     expect(err.host).toBe("api.example.test");
-    expect(err.path).toBe("/api/runs");
+    expect(err.path).toBe("/api/sessions");
     expect(err.causeCode).toBe("ECONNREFUSED");
     expect(err.cause).toBe(raw);
     expect(err.message).toMatch(/after 3 attempts over \d+ms/);
-    expect(err.message).toContain("POST api.example.test/api/runs failed");
+    expect(err.message).toContain("POST api.example.test/api/sessions failed");
   });
 
   it("annotates an AexNetworkError from the transport instead of double-wrapping", async () => {
@@ -89,7 +89,7 @@ describe("withRetry network-error exhaustion", () => {
       { maxAttempts: 4, initialDelayMs: 10, maxElapsedMs: 0 },
       { sleep: noSleep, random: () => 1, now: Date.now }
     );
-    const err = await rejectionOf(wrapped("https://api.example.test/api/runs"));
+    const err = await rejectionOf(wrapped("https://api.example.test/api/sessions"));
     expect(err).toBeInstanceOf(AexNetworkError);
     expect(err.attempts).toBe(1);
     expect(err.cause).toBe(raw);
@@ -105,6 +105,6 @@ describe("withRetry network-error exhaustion", () => {
       { maxAttempts: 3 },
       { sleep: noSleep, random: () => 0, now: Date.now }
     );
-    await expect(wrapped("https://api.example.test/api/runs")).rejects.toBe(abort);
+    await expect(wrapped("https://api.example.test/api/sessions")).rejects.toBe(abort);
   });
 });

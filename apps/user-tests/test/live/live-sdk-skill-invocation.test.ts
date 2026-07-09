@@ -5,7 +5,7 @@
  * Proves the agent ACTUALLY FOLLOWS skill content end-to-end, not just
  * that the skill bundle was materialized:
  *
- *   SDK → POST /runs (with inline skills wired)
+ *   SDK → POST /sessions (with inline skills wired)
  *      → preflight uploads skill to object storage
  *      → manifest mounts the skill so the model sees its SKILL.md
  *      → user prompt contains the skill's trigger token (SHIBBOLETH)
@@ -16,7 +16,7 @@
  * but skill *content* is dropped, and the failure mode where ALL skills
  * collapse into one (model would echo distractor text too).
  *
- * The assertion body runs on a single managed cell:
+ * The assertion body sessions on a single managed cell:
  *   - (deepseek, managed)  — managed runtime (object storage download)
  *
  * Required env:
@@ -58,8 +58,8 @@ const CELLS: readonly Cell[] = [
 ];
 
 interface CaseResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly uniqueToken: string;
@@ -109,7 +109,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
   //
   // YAML frontmatter is accepted by managed runtime and keeps the skill bundle
   // self-describing. Use the per-case uniqueToken suffix as the disambiguator;
-  // it is already random per-run.
+  // it is already random per-session.
   const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
   const alphaName = `ack-alpha-${nameSuffix}`;
   const betaName = "weather-beta-control";
@@ -145,7 +145,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     `Copy its \`skill-ack\` line verbatim and reply with that single line only. ` +
     `Do not use the weather skill.`;
   const system =
-    `This run verifies mounted skill behavior. If the user asks for the ` +
+    `This session verifies mounted skill behavior. If the user asks for the ` +
     `acknowledgement protocol, rely on the mounted skill named ${alphaName} and ` +
     `copy its canonical reply line exactly. Do not answer from general memory.`;
 
@@ -164,7 +164,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       name: ${JSON.stringify(betaName)}
     });
 
-    const runResult = await client.run({
+    const sessionResult = await client.start({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
@@ -173,17 +173,17 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = runResult.runId;
+    const sessionId = sessionResult.sessionId;
     const run = {
-      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
+      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
     let events = fallbackEvents;
     try {
-      const session = await client.sessions.open(runId);
+      const session = await client.sessions.open(sessionId);
       const listedEvents = await session.events().list();
       if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
     } catch {
@@ -233,9 +233,9 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 
     const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
     const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
     const terminalData = terminal && isSessionIdle(terminal)
       ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
       : terminal ? terminal.data : null;
@@ -246,8 +246,8 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     const serialized = JSON.stringify({ run, events });
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
-      runId: runId,
-      runStatus: run.status,
+      sessionId: sessionId,
+      sessionStatus: session.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       uniqueToken: ${JSON.stringify(uniqueToken)},
@@ -257,7 +257,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
       terminalData,
       streamErrors,
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
@@ -269,8 +269,8 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 
 function dumpResult(cell: Cell, result: CaseResult): string {
   const lines: string[] = [];
-  lines.push(`cell=${cell.id} runId=${result.runId}`);
-  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`cell=${cell.id} sessionId=${result.sessionId}`);
+  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`uniqueToken=${result.uniqueToken}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
@@ -328,21 +328,21 @@ describe("live skill invocation — agent actually follows skill content", () =>
     "$id: SKILL.md drives reply (canonical alpha, distractor beta)",
     async (cell) => {
       // XKCD-927-<random> per case so model recall of the well-known
-      // joke is not enough — the model must read this run's skill.
+      // joke is not enough — the model must read this session's skill.
       const uniqueToken = "XKCD-927-" + Math.random().toString(36).slice(2, 10).toUpperCase();
       const result = await runCell(cell, install.installDir, uniqueToken);
       const dump = (): string => dumpResult(cell, result);
       const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
       const expectedSkillPrefixes = [`ack-alpha-${nameSuffix}`, "weather-beta-control"];
 
-      expect(result.runStatus, dump()).toBe("succeeded");
+      expect(result.sessionStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
 
       // Event frame: runtime_started present + last event is
       // runtime_terminal. (Some runtimes emit preflight notifications
       // before runtime_started; we only require its presence.)
-      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalKind).toBe("TURN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // always populate reason on the success path. Tolerating `undefined`
       // (pre-Phase-1) was masking field-loss regressions.

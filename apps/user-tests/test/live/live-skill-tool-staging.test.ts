@@ -4,15 +4,15 @@
  * Exercises the first-class skill filesystem-staging contract end-to-end
  * against the deployed hosted API, from the perspective of a real SDK user. A
  * skill bundle (built with `Skill.fromDir`) is uploaded/upserted by workspace
- * name; at run time the managed runtime EAGERLY stages every file in the bundle
+ * name; at execution time the managed runtime EAGERLY stages every file in the bundle
  * under `/workspace/skills/<name>/`, and the model calls the `skills` meta-tool
  * to pull the `SKILL.md` body into context. The platform-side load handler:
  *   - reads `<skillDir>/SKILL.md`,
  *   - byte-caps the returned body at `HANDS_SKILL_MD_MAX_BYTES = 400_000`
  *     (appending `\n[skill SKILL.md truncated at 400000 bytes]` when it cut),
- *   - runs it through the shape-based secret redactor before returning it.
+ *   - sessions it through the shape-based secret redactor before returning it.
  *
- * Four independent live runs, each asserting only via OBSERVABLE run output
+ * Four independent live sessions, each asserting only via OBSERVABLE session output
  * (assistant text + the event stream, including TOOL_CALL_RESULT `data.content`
  * — the verbatim tool result). All assertions key off PLANTED DETERMINISTIC
  * TOKENS (never free-form model phrasing), so they survive LLM nondeterminism.
@@ -25,7 +25,7 @@
  *      SKILL.md prose reaches the model when it loads the skill.
  *   3. Byte-cap — a SKILL.md whose body is ~460 KB (a near-start marker plus a
  *      marker placed PAST the 400_000-byte boundary). The near-start marker
- *      loads; the beyond-cap marker never appears anywhere in the run.
+ *      loads; the beyond-cap marker never appears anywhere in the session.
  *   4. Secret redaction — a secret-SHAPED value (`sk-ant-…`) in the SKILL.md
  *      body is returned as `[REDACTED]`, never verbatim.
  *
@@ -71,7 +71,7 @@ interface ScriptConfig {
   readonly message: string;
   /**
    * A JS object-literal expression (source text) computing case-specific boolean
-   * checks. Evaluated inside the child runner, where these vars are in scope:
+   * checks. Evaluated inside the child sessionner, where these vars are in scope:
    *   assistantTextJoined / assistantTextNorm  — joined TEXT_MESSAGE_CONTENT
    *   toolResultsJoined    / toolResultsNorm   — JSON of every TOOL_CALL_RESULT
    *   haystack             / haystackNorm      — JSON of all events + outputs
@@ -83,8 +83,8 @@ interface ScriptConfig {
 }
 
 interface CaseResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly ok: boolean;
   readonly terminalKind: string | null;
   readonly terminalReason: unknown;
@@ -157,7 +157,7 @@ function buildScript(cfg: ScriptConfig): string {
     }
     const skill = await Skill.fromDir(skillDir, { name: ${JSON.stringify(cfg.skillName)} });
 
-    const runResult = await client.run({
+    const sessionResult = await client.start({
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       system: ${JSON.stringify(cfg.system)},
@@ -167,12 +167,12 @@ function buildScript(cfg: ScriptConfig): string {
       idempotencyKey: ${JSON.stringify(cfg.idempotencyPrefix)} + "-" + Date.now()
     }, { timeoutMs: 8 * 60_000 });
 
-    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
-    const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
+    const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
     let events = fallbackEvents;
     let outputs = fallbackOutputs;
     try {
-      const session = await client.sessions.open(runResult.runId);
+      const session = await client.sessions.open(sessionResult.sessionId);
       const listedEvents = await session.events().list();
       if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
       const listedOutputs = await session.outputs().list();
@@ -196,7 +196,7 @@ function buildScript(cfg: ScriptConfig): string {
     }
     function terminalKindOf(e) {
       if (!e) return null;
-      return isSessionIdle(e) ? "RUN_FINISHED" : e.type;
+      return isSessionIdle(e) ? "TURN_FINISHED" : e.type;
     }
     function terminalReasonOf(e) {
       if (!e) return null;
@@ -235,9 +235,9 @@ function buildScript(cfg: ScriptConfig): string {
     const haystack = eventsJson + " " + outputsJson;
     const haystackNorm = haystack.replace(/\\s+/g, "");
 
-    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data.value === "object" && e.data.value ? e.data.value : { unknown: true }));
@@ -245,9 +245,9 @@ function buildScript(cfg: ScriptConfig): string {
     const checks = (${cfg.checksExpr});
 
     process.stdout.write(JSON.stringify({
-      runId: runResult.runId,
-      runStatus: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
-      ok: !!runResult.ok,
+      sessionId: sessionResult.sessionId,
+      sessionStatus: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      ok: !!sessionResult.ok,
       terminalKind: terminalKindOf(terminal),
       terminalReason: terminalReasonOf(terminal),
       eventKinds,
@@ -284,7 +284,7 @@ async function runScenario(installDir: string, scriptName: string, cfg: ScriptCo
 
 function dump(result: CaseResult): string {
   return [
-    `runId=${result.runId} runStatus=${result.runStatus} ok=${result.ok}`,
+    `sessionId=${result.sessionId} sessionStatus=${result.sessionStatus} ok=${result.ok}`,
     `terminalKind=${result.terminalKind} terminalReason=${JSON.stringify(result.terminalReason)}`,
     `eventKinds=[${result.eventKinds.join(", ")}]`,
     `skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`,
@@ -297,9 +297,9 @@ function dump(result: CaseResult): string {
   ].join("\n");
 }
 
-function assertRunOk(result: CaseResult): void {
-  expect(result.runStatus, dump(result)).toBe("succeeded");
-  expect(result.terminalKind, dump(result)).toBe("RUN_FINISHED");
+function assertSessionOk(result: CaseResult): void {
+  expect(result.sessionStatus, dump(result)).toBe("succeeded");
+  expect(result.terminalKind, dump(result)).toBe("TURN_FINISHED");
   // Both adapters populate reason="complete" on the clean success path.
   if (result.terminalReason !== "complete") {
     throw new Error(`terminal reason=${JSON.stringify(result.terminalReason)} (expected "complete")\n\n${dump(result)}`);
@@ -346,7 +346,7 @@ describe("live skill — filesystem staging + byte-cap + secret redaction", () =
         idempotencyPrefix: "skilltool-staging"
       };
       const result = await runScenario(install.installDir, "skilltool-staging.mjs", cfg);
-      assertRunOk(result);
+      assertSessionOk(result);
       expect(result.checks["stagedTokenPresent"], dump(result)).toBe(true);
     },
     11 * 60_000
@@ -378,7 +378,7 @@ describe("live skill — filesystem staging + byte-cap + secret redaction", () =
         idempotencyPrefix: "skilltool-body"
       };
       const result = await runScenario(install.installDir, "skilltool-body.mjs", cfg);
-      assertRunOk(result);
+      assertSessionOk(result);
       expect(result.checks["bodyTokenPresent"], dump(result)).toBe(true);
     },
     11 * 60_000
@@ -391,7 +391,7 @@ describe("live skill — filesystem staging + byte-cap + secret redaction", () =
       const startMarker = tok("CAPSTART");
       const beyondMarker = tok("CAPBEYOND");
       // Highly-repetitive filler: many BYTES (well past the 400_000-byte cap) but
-      // few TOKENS (BPE collapses the runs), so the capped body the model ingests
+      // few TOKENS (BPE collapses the sessions), so the capped body the model ingests
       // never blows the provider context window. ~120*3800 + newlines ≈ 459_800 B.
       const filler = ("x".repeat(120) + "\n").repeat(3800);
       const cfg: ScriptConfig = {
@@ -423,7 +423,7 @@ describe("live skill — filesystem staging + byte-cap + secret redaction", () =
         idempotencyPrefix: "skilltool-bytecap"
       };
       const result = await runScenario(install.installDir, "skilltool-bytecap.mjs", cfg);
-      assertRunOk(result);
+      assertSessionOk(result);
       // Early marker loaded (proves the skills load ran and the sub-cap prefix survived).
       expect(result.checks["startMarkerPresent"], dump(result)).toBe(true);
       // Core cap proof: the beyond-cap marker never reached the model or the stream.
@@ -457,7 +457,7 @@ describe("live skill — filesystem staging + byte-cap + secret redaction", () =
           `Call the skills tool for the skill named ${name} with action "load" to load its instructions. Near the top is a guard token ` +
           `beginning with "GUARD-". Reply with that guard token exactly.`,
         // guardTokenPresent proves the skills load ran and delivered the body;
-        // secretLeaked scans the ENTIRE serialized run (every channel) for the raw
+        // secretLeaked scans the ENTIRE serialized session (every channel) for the raw
         // value; redactedMarkerPresent corroborates that redaction actually fired.
         checksExpr:
           `{ guardTokenPresent: (haystackNorm.includes(${JSON.stringify(guard)}) || assistantTextNorm.includes(${JSON.stringify(guard)})),` +
@@ -466,7 +466,7 @@ describe("live skill — filesystem staging + byte-cap + secret redaction", () =
         idempotencyPrefix: "skilltool-redact"
       };
       const result = await runScenario(install.installDir, "skilltool-redact.mjs", cfg);
-      assertRunOk(result);
+      assertSessionOk(result);
       // The body reached the model (skills load ran).
       expect(result.checks["guardTokenPresent"], dump(result)).toBe(true);
       // Core redaction proof: the secret NEVER appears verbatim in any channel.

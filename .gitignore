@@ -15,6 +15,8 @@ coverage/
 *.tgz
 .release-diagnostics/
 .release-worktrees/
+.tmp-gh-run-*/
+.tmp-gh-actions-*/
 **/test/fixtures/api-recordings/**/*.raw.json
 **/test/fixtures/api-recordings/**/*.secret.json
 .claude/

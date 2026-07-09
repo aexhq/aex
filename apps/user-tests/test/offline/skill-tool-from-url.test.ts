@@ -8,7 +8,7 @@
  * map as `Skill.fromDir` — so a URL-sourced skill and the identical local
  * dir produce the SAME asset and dedup against each other.
  *
- * These cases run in child processes whose cwd is the user-test install
+ * These cases session in child processes whose cwd is the user-test install
  * tempdir, so `import "@aexhq/sdk"` resolves from the packed/published
  * artifact. A fake `fetch` serves BOTH the synthetic skill archive (built in
  * the child from `bundleSkillFiles`) and the asset upload + `/api/sessions`

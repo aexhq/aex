@@ -1,12 +1,12 @@
 ---
 title: Subagents
-description: Delegate bounded sub-tasks to child agent runs with the subagent tool.
+description: Delegate bounded sub-tasks to child agent sessions with the subagent tool.
 icon: GitFork
 ---
 
-A run can delegate bounded sub-tasks to **child agent runs** with the built-in
+A session can delegate bounded sub-tasks to **child agent sessions** with the built-in
 `subagent` tool. Delegation is agent-driven: the model decides to fan work out,
-each child is a real run with its own record, and the parent collects results
+each child is a real session with its own record, and the parent collects results
 as the children finish. There is no client-side parent/child API — lineage is
 session-internal.
 
@@ -16,8 +16,8 @@ The agent calls `subagent` with a `prompt` and a `model` (both required), plus
 optional `system`, `provider`, `runtimeSize`, `timeout`,
 `includeBuiltinTools`, `tools` (builtin-tool names for the child), `skills`,
 and `files`. The call is **always async**: on a successful spawn it returns
-immediately with the child run id, and the parent keeps working while the child
-runs. When a child settles, the parent is notified in its loop, and it reads
+immediately with the child session id, and the parent keeps working while the child
+sessions. When a child settles, the parent is notified in its loop, and it reads
 the child's status and captured outputs on demand with the companion
 `subagent_result` tool.
 
@@ -46,7 +46,7 @@ dials today.
 
 ## Where children run: `in-process` vs `container`
 
-By default a child runs **in-process**: it executes as a sibling agent process
+By default a child sessions **in-process**: it executes as a sibling agent process
 inside the parent's own machine, sharing the parent's CPU, memory, and
 lifetime. This is the platform default shipped today.
 
@@ -60,7 +60,7 @@ lifetime. This is the platform default shipped today.
 - **Joined lifecycle.** The parent's terminal waits for its in-process children,
   and their results are folded into the parent's per-child accounting. Platform
   recovery re-spawns in-process children exactly once if the parent's machine
-  is replaced mid-run — settled children are never re-run.
+  is replaced mid-session — settled children are never retry.
 
 The escape valve is `host: "container"`: the child is dispatched to its **own
 isolated machine** with its own runtime size and its own runtime billing, and
@@ -70,13 +70,13 @@ the parent can share.
 
 ## Lineage and observability
 
-Every child — in-process or container — is a first-class run record:
+Every child — in-process or container — is a first-class session record:
 
-- The parent's transcript logs each spawn with the child's run id.
+- The parent's transcript logs each spawn with the child's session id.
 - Each child has its own status, typed event timeline, and captured outputs.
   The child's events and outputs are readable by id
   (`aex.sessions.outputs(id)` in the SDK, or the CLI's `aex events` /
-  `aex outputs`). Child runs are not served by the session read surface
+  `aex outputs`). Child sessions are not served by the session read surface
   today — `aex.sessions.get(id)` / `aex sessions` / the CLI's `aex status`
   answer `not_found` for a child id.
 - The child's outputs are handed back to the parent via `subagent_result`, and
@@ -84,7 +84,7 @@ Every child — in-process or container — is a first-class run record:
 
 ## Bounding delegation
 
-- Turn delegation off for a run by cherry-picking builtins without `subagent`
+- Turn delegation off for a session by cherry-picking builtins without `subagent`
   (see [Agent tools](/docs/concepts/agent-tools/)) or setting `includeBuiltinTools: false`.
 - A per-session spend cap (`overrides.maxSpendUsd`) bounds the parent's spend.
 - The depth/breadth budgets above are platform-managed and are not settable

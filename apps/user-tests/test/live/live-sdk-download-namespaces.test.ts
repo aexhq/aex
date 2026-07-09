@@ -1,10 +1,10 @@
 /**
  * Live scenario: live-sdk-download-namespaces.test.ts
  *
- * Exercises the run-artifact namespace split end-to-end against a real
+ * Exercises the session-artifact namespace split end-to-end against a real
  * run on the live API:
  *
- *   - A run's deliverables live in the `outputs` namespace.
+ *   - A session's deliverables live in the `outputs` namespace.
  *   - `listOutputs` returns ONLY deliverables (no diagnostic-prefixed
  *     entries leak in).
  *   - Public download verbs (`download`, `downloadOutputs`) each
@@ -78,8 +78,8 @@ interface ZipProbe {
 }
 
 interface CaseResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly outputs: ReadonlyArray<{ id: string; filename: string | null }>;
   readonly download: ZipProbe;
   readonly downloadOutputs: ZipProbe;
@@ -100,7 +100,7 @@ function buildScript(cell: Cell, marker: string): string {
       apiKey: process.env.AEX_API_KEY
     });
 
-    const result = await client.run({
+    const result = await client.start({
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       message: ${JSON.stringify(prompt)},
@@ -109,13 +109,13 @@ function buildScript(cell: Cell, marker: string): string {
       apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = result.runId;
+    const sessionId = result.sessionId;
     const run = {
       status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
       runtime: "managed",
       provider: "deepseek"
     };
-    const session = await client.sessions.open(runId);
+    const session = await client.sessions.open(sessionId);
 
     const probe = (bytes) => ({
       byteLength: bytes.byteLength,
@@ -127,8 +127,8 @@ function buildScript(cell: Cell, marker: string): string {
     const downloadOut = await session.outputs().download(undefined);
 
     const payload = {
-      runId: runId,
-      runStatus: run.status,
+      sessionId: sessionId,
+      sessionStatus: session.status,
       outputs: outputs.map((o) => ({ id: o.id, filename: o.filename ?? null })),
       download: probe(downloadAll),
       downloadOutputs: probe(downloadOut),
@@ -141,13 +141,13 @@ function buildScript(cell: Cell, marker: string): string {
 
 function dump(cell: Cell, r: CaseResult): string {
   return [
-    `cell=${cell.id} runId=${r.runId} status=${r.runStatus} marker=${r.marker}`,
+    `cell=${cell.id} sessionId=${r.sessionId} status=${r.sessionStatus} marker=${r.marker}`,
     `outputs=${JSON.stringify(r.outputs)}`,
     `zips: download=${JSON.stringify(r.download)} outputs=${JSON.stringify(r.downloadOutputs)}`
   ].join("\n");
 }
 
-describe("live: run-artifact public outputs + download verbs", () => {
+describe("live: session-artifact public outputs + download verbs", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -200,11 +200,11 @@ describe("live: run-artifact public outputs + download verbs", () => {
           expect(z.magicOk, `${verb} zip not a zip (bad magic)${ctx}`).toBe(true);
         }
 
-        // 4. The run reaches a successful terminal state and the deliverable
+        // 4. The session reaches a successful terminal state and the deliverable
         //    is captured in the outputs namespace. (Asserted unconditionally:
         //    this is the happy path, and checks 1-5 above already assume a
         //    completed run.)
-        expect(r.runStatus, `run did not succeed${ctx}`).toBe("succeeded");
+        expect(r.sessionStatus, `run did not succeed${ctx}`).toBe("succeeded");
         expect(
           r.outputs.some((o) => (o.filename ?? "").endsWith("report.txt")),
           `report.txt missing from outputs on a succeeded run${ctx}`

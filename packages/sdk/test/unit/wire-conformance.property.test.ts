@@ -1,11 +1,11 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-  RUN_MODELS,
+  SUPPORTED_MODELS,
   RUNTIME_SIZES,
-  parseRunSubmissionRequest,
+  parseSessionSubmissionRequest,
   providersForModel,
-  type RunModel
+  type ModelName
 } from "@aexhq/contracts";
 import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
 
@@ -16,7 +16,7 @@ import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
  * `Aex.openSession` either
  *   (a) rejects synchronously with a typed error (AexError / Error), OR
  *   (b) builds a POST /api/sessions body whose non-message wire pieces the REAL
- *       contracts validator (`parseRunSubmissionRequest`) accepts.
+ *       contracts validator (`parseSessionSubmissionRequest`) accepts.
  * It must NEVER silently produce a wire request the server would reject/500 on.
  *
  * No mocks of the code under test: the SDK request-builder AND the contracts
@@ -35,7 +35,7 @@ function captureClient(): { client: Aex; bodies: unknown[] } {
     if (url.endsWith("/api/sessions") && (init?.method ?? "GET") === "POST") {
       const raw = init?.body;
       bodies.push(typeof raw === "string" ? JSON.parse(raw) : raw);
-      return new Response(JSON.stringify({ id: "run_test", status: "queued" }), {
+      return new Response(JSON.stringify({ id: "ses_test", status: "queued" }), {
         status: 202,
         headers: { "content-type": "application/json" }
       });
@@ -49,18 +49,18 @@ function captureClient(): { client: Aex; bodies: unknown[] } {
 }
 
 /**
- * Validate a captured session-create body against the shared run-submission
- * validator. The session create body is the run-submission input MINUS the
+ * Validate a captured session-create body against the shared session-submission
+ * validator. The session create body is the session-submission input MINUS the
  * `idempotencyKey` (a header on this route) and the message `prompt` (which
  * rides /messages), PLUS a `retention` policy. We adapt those framing
- * differences back to a run-submission shape and let the REAL parser vet every
+ * differences back to a session-submission shape and let the REAL parser vet every
  * wire piece the SDK actually assembled (secrets, MCP,
  * runtimeSize, timeout, limits, metadata, outputs, secretEnv, environment).
  */
 function validateWire(body: unknown): void {
   const { retention: _retention, submission, ...rest } = body as Record<string, unknown>;
   void _retention;
-  parseRunSubmissionRequest({
+  parseSessionSubmissionRequest({
     ...rest,
     workspaceId: "ws_fuzz",
     idempotencyKey: "idem_fuzz",
@@ -68,7 +68,7 @@ function validateWire(body: unknown): void {
   });
 }
 
-const validModel = fc.constantFrom<RunModel>(...(RUN_MODELS as readonly RunModel[]));
+const validModel = fc.constantFrom<ModelName>(...(SUPPORTED_MODELS as readonly ModelName[]));
 const jsonScalar = fc.oneof(fc.string({ maxLength: 24 }), fc.integer(), fc.boolean(), fc.constant(null));
 const metadata = fc.dictionary(
   fc.string({ minLength: 1, maxLength: 12 }).filter((k) => !/key|token|secret|password|credential|auth/i.test(k)),

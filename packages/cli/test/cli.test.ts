@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/run.js";
+import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 
 interface IoCapture {
@@ -57,23 +57,23 @@ function makeIo(opts: {
 describe("aex --help", () => {
   it("prints host-mode usage and exits 0", async () => {
     const cap = makeIo({ argv: ["--help"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("aex run");
+    expect(cap.stdout).toContain("aex start");
     expect(cap.stdout).toContain("aex whoami");
     expect(cap.stdout).toContain("aex tail");
     expect(cap.stdout).toContain("aex inspect");
     expect(cap.stdout).toContain("Usage:");
   });
 
-  it("advertises the workspace read verbs (billing, webhooks secret, runs, sessions)", async () => {
+  it("advertises the workspace read verbs (billing, webhooks secret, sessions, sessions)", async () => {
     const cap = makeIo({ argv: ["--help"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("aex billing [--json]");
     expect(cap.stdout).toContain("aex billing ledger [--limit N]");
     expect(cap.stdout).toContain("aex webhooks secret");
-    expect(cap.stdout).toContain("aex runs [--limit N] [--since ISO]");
+    expect(cap.stdout).toContain("aex sessions [--limit N] [--since ISO]");
     expect(cap.stdout).toContain("aex sessions [--limit N]");
     // The signing-secret verb is reveal-only; help must not advertise rotation.
     expect(cap.stdout).not.toContain("--rotate");
@@ -81,7 +81,7 @@ describe("aex --help", () => {
 
   it("does not advertise removed launch flags or commands", async () => {
     const cap = makeIo({ argv: ["--help"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).not.toContain("--workspace");
     expect(cap.stdout).not.toContain("proxy");
@@ -91,17 +91,17 @@ describe("aex --help", () => {
 
   it("advertises --aex-url as optional with the api.aex.dev default", async () => {
     const cap = makeIo({ argv: ["--help"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("https://api.aex.dev");
   });
 });
 
-describe("aex run provider inference (SDK parity)", () => {
+describe("aex start provider inference (SDK parity)", () => {
   it("infers the provider from a single-provider model instead of demanding the anthropic key", async () => {
     // Aex.openSession resolves `provider ?? providersForModel(model)[0] ?? default`;
     // the CLI (which advertises 1:1 SDK parity) jumped straight to the anthropic
-    // default, so `aex run --model deepseek-v4-flash --deepseek-api-key K` failed
+    // default, so `aex start --model deepseek-v4-flash --deepseek-api-key K` failed
     // with "--anthropic-api-key is required". Live-observed on dev.
     const cap = makeIo({
       argv: [
@@ -115,7 +115,7 @@ describe("aex run provider inference (SDK parity)", () => {
       fetchHandler: async () =>
         new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.stderr).not.toContain("--anthropic-api-key is required");
     expect(cap.fetchCalls.length).toBeGreaterThan(0);
     const body = JSON.parse(String(cap.fetchCalls[0]!.init?.body ?? "{}")) as Record<string, unknown>;
@@ -134,7 +134,7 @@ describe("aex run provider inference (SDK parity)", () => {
         "--aex-url", "https://api.test"
       ]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--deepseek-api-key is required");
   });
@@ -143,21 +143,21 @@ describe("aex run provider inference (SDK parity)", () => {
 describe("removed commands", () => {
   it("treats the old proxy verb as an unknown subcommand", async () => {
     const cap = makeIo({ argv: ["proxy", "--help"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown subcommand: proxy");
   });
 
   it("treats the private debug verb as an unknown subcommand", async () => {
-    const cap = makeIo({ argv: ["debug", "run-1"] });
-    await runCli(cap.io);
+    const cap = makeIo({ argv: ["debug", "session-1"] });
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown subcommand: debug");
   });
 
   it("exits 2 on unknown subcommand", async () => {
     const cap = makeIo({ argv: ["snorlax"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown subcommand");
   });

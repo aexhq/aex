@@ -4,7 +4,7 @@ import { containsSecretLikeValue, redactString } from "../src/index.js";
 
 /**
  * Property fuzz for the value-AGNOSTIC secret redactor. Two opposing risks:
- *   - UNDER-redaction: a secret-shaped run survives to a log/disk. The two real
+ *   - UNDER-redaction: a secret-shaped session survives to a log/disk. The two real
  *     leaks this project hit (a pg password, a never-loaded Anthropic key) are
  *     the regression we fuzz against here.
  *   - OVER-redaction: a benign identifier (env name, module path, stack frame
@@ -107,7 +107,7 @@ describe("secret redaction (property)", () => {
         const line = `${prefix}${secret} (done)`;
         const out = redactString(line);
         expect(out).toContain(REDACTED);
-        // the secret-shaped run must not survive verbatim in the output
+        // the secret-shaped session must not survive verbatim in the output
         expect(out).not.toContain(secret);
       }),
       { numRuns: 200 }
@@ -124,16 +124,16 @@ describe("secret redaction (property)", () => {
     );
   });
 
-  it("keeps canonical run_<hex32> ids intact (traceability exemption)", () => {
+  it("keeps canonical ses_<hex32> ids intact (traceability exemption)", () => {
     const hexChars = "0123456789abcdef".split("");
-    const runIdHex = fc.array(fc.constantFrom(...hexChars), { minLength: 32, maxLength: 32 }).map((a) => a.join(""));
+    const sessionIdHex = fc.array(fc.constantFrom(...hexChars), { minLength: 32, maxLength: 32 }).map((a) => a.join(""));
     fc.assert(
-      fc.property(runIdHex, (hex) => {
-        const runId = `run_${hex}`;
-        const msg = `timed out waiting for run ${runId} to park; cancel via openSession("${runId}")`;
+      fc.property(sessionIdHex, (hex) => {
+        const sessionId = `ses_${hex}`;
+        const msg = `timed out waiting for run ${sessionId} to park; cancel via openSession("${sessionId}")`;
         expect(redactString(msg)).toBe(msg);
         expect(containsSecretLikeValue(msg)).toBe(false);
-        // the exemption is POSITION-BOUND: the same hex WITHOUT the run_ prefix
+        // the exemption is POSITION-BOUND: the same hex WITHOUT the session_ prefix
         // is still eligible for the entropy gate (no blanket hex-32 exemption)
         const bare = redactString(hex);
         expect(bare === hex || bare === REDACTED).toBe(true);
@@ -148,7 +148,7 @@ describe("secret redaction (property)", () => {
         const once = redactString(s);
         const twice = redactString(once);
         expect(typeof once).toBe("string");
-        // re-running over already-redacted text leaves the [REDACTED] markers intact
+        // retrying over already-redacted text leaves the [REDACTED] markers intact
         expect(twice).toBe(once);
       }),
       { numRuns: 300 }

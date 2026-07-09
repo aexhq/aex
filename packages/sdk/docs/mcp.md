@@ -8,7 +8,7 @@ MCP support is remote HTTPS/SSE only. Stdio MCP servers are rejected because aex
 
 Rules:
 
-- MCP servers are declared in the run request config (`mcpServers`).
+- MCP servers are declared in the session request config (`mcpServers`).
 - Runtime HITL is disabled.
 - Tool policy must be configured before session start.
 - Enabled MCP tools use `always_allow` provider permissions.

@@ -1,8 +1,8 @@
 /**
- * USER TEST (SDK-driven) — environment.packages pre-installs on managed runs.
+ * USER TEST (SDK-driven) — environment.packages pre-installs on managed sessions.
  *
  * Validates the FIX end-to-end through the installed SDK: a customer-supplied
- * `environment.packages` entries are PRE-INSTALLED before the agent runs, so
+ * `environment.packages` entries are PRE-INSTALLED before the agent sessions, so
  * the agent finds them WITHOUT installing anything itself. The managed runner
  * validates BOTH apt and pip — an unprefixed "jq" (→ apt) AND a "pip:cowsay"
  * (→ pip).
@@ -13,11 +13,11 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installAex, type InstallResult } from "../_fixtures/install.js";
-import { observedRunText, requireUserEnv, runDiagnostics, runSdkScript, sdkRunnerScript } from "./_sdk.js";
+import { observedSessionText, requireUserEnv, runDiagnostics, runSdkScript, sdkRunnerScript } from "./_sdk.js";
 
 const env = requireUserEnv({ deepseek: true });
 
-describe("user/SDK: environment.packages is pre-installed on managed runs", () => {
+describe("user/SDK: environment.packages is pre-installed on managed sessions", () => {
   let install: InstallResult;
   beforeAll(async () => {
     install = await installAex();
@@ -25,10 +25,10 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
   afterAll(() => install?.cleanup());
 
   it(
-    "managed deepseek pre-installs an apt package (jq) before the agent runs",
+    "managed deepseek pre-installs an apt package (jq) before the agent sessions",
     async () => {
       const script = sdkRunnerScript({
-        run: `{
+        session: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: [
@@ -49,7 +49,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
 
       expect(result.runtime).toBe("managed");
       expect(result.status).toBe("succeeded");
-      const text = observedRunText(result);
+      const text = observedSessionText(result);
       // Pre-installed: the shell result found the binary without installing it.
       expect(text, runDiagnostics(result)).toContain("/usr/bin/jq");
     },
@@ -57,13 +57,13 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
   );
 
   it(
-    "managed runtime pre-installs apt (jq) AND pip (cowsay) before the agent runs",
+    "managed runtime pre-installs apt (jq) AND pip (cowsay) before the agent sessions",
     async () => {
       // apt jq (unprefixed → apt) exercises the ROOT-entrypoint apt path.
       // pip:cowsay exercises the system-wide pip path. Both must be present
       // without the agent installing.
       const script = sdkRunnerScript({
-        run: `{
+        session: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: [
@@ -84,7 +84,7 @@ describe("user/SDK: environment.packages is pre-installed on managed runs", () =
 
       expect(result.runtime).toBe("managed");
       expect(result.status).toBe("succeeded");
-      const text = observedRunText(result);
+      const text = observedSessionText(result);
       // apt: jq pre-installed system-wide by the runtime setup path.
       expect(text, runDiagnostics(result)).toContain("/usr/bin/jq");
       // pip: the python module imports without the agent installing it.

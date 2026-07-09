@@ -6,7 +6,7 @@ loadLocalEnv();
 /**
  * Dedicated config for the cap-saturating admission-gate suite
  * (`bun run test:user:admission-gates`). The default `test:user` sweep excludes
- * this file so it cannot starve unrelated live tests; CI runs it only with an
+ * this file so it cannot starve unrelated live tests; CI sessions it only with an
  * isolated low-cap workspace.
  */
 export default defineConfig({

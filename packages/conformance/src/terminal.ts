@@ -3,7 +3,7 @@
 // across the live tests.
 //
 // Contract:
-//   - The events array MUST contain exactly one runtime_terminal.
+//   - The events array MUST contain exactly one sessiontime_terminal.
 //   - The terminal MUST carry `reason` of the expected value (no
 //     undefined-skip — if the field can be absent, that's a different
 //     test, not a tolerance of THIS matcher).
@@ -39,9 +39,9 @@ export function expectTerminalEvent(
   const ctx = options.context ? ` [${options.context}]` : "";
   const dump = (): string => `\n  events=${events.map((e) => e.type).join(",")}`;
 
-  const terminals = events.filter((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+  const terminals = events.filter((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR");
   if (terminals.length === 0) {
-    throw new Error(`expectTerminalEvent${ctx}: no terminal (RUN_FINISHED|RUN_ERROR) in events${dump()}`);
+    throw new Error(`expectTerminalEvent${ctx}: no terminal (TURN_FINISHED|TURN_ERROR) in events${dump()}`);
   }
   if (terminals.length > 1) {
     throw new Error(

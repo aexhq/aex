@@ -4,7 +4,7 @@ title: Limits
 
 # Limits
 
-aex runs autonomous agents on the hosted managed runtime. The SDK opens durable
+aex sessions autonomous agents on the hosted managed runtime. The SDK opens durable
 sessions, sends turns, streams events, captures outputs, and exposes auth-gated
 reads and downloads.
 
@@ -26,9 +26,9 @@ For the current provider/model set, see the generated
 | Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
 | Secrets | Provider keys, MCP credentials, and env secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
 | MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |
-| Outputs | Captured outputs, events, and metadata are stored under the run record and downloaded through auth-gated routes. Output content is customer content. |
-| Human review | Runs execute after submission. Cancellation is available, but aex does not pause a run for platform-mediated approval or interactive clarification. |
-| Sessions | The durable product primitive is the session/run record. Sessions can be resumed by id and auto-suspend after the configured idle window; persistent named agent profiles and saved agent definitions are out of scope. |
+| Outputs | Captured outputs, events, and metadata are stored under the session record and downloaded through auth-gated routes. Output content is customer content. |
+| Human review | Sessions execute after submission. Cancellation is available, but aex does not pause a session for platform-mediated approval or interactive clarification. |
+| Sessions | The durable product primitive is the session/session record. Sessions can be resumed by id and auto-suspend after the configured idle window; persistent named agent profiles and saved agent definitions are out of scope. |
 | Deployment | The supported product is the hosted aex service plus the SDK and CLI. Alternate `baseUrl` values are for local, staging, or hosted aex API planes, not a self-host product promise. |
 | Cost | BYOK provider-token charges accrue to the customer's provider account. aex records report-only telemetry for runtime and storage usage; free trials, billing-grade invoices, and public pricing documents are not shipped unless documented later. |
 

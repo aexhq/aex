@@ -3,22 +3,22 @@ import { describe, expect, it } from "vitest";
 import {
   BUILTIN_TOOL_NAMES,
   OUTPUT_MODES,
-  RUN_MODELS,
-  RUN_PROVIDERS,
+  SUPPORTED_MODELS,
+  PROVIDERS,
   RUNTIME_SIZES,
-  parseRunSubmissionRequest,
+  parseSessionSubmissionRequest,
   providersForModel,
   type BuiltinToolName,
   type JsonValue,
   type OutputMode,
-  type RunModel,
-  type RunProvider,
+  type ModelName,
+  type ProviderName,
   type RuntimeSize
 } from "@aexhq/contracts";
 import {
   Aex,
   Models,
-  RunConfigValidationError,
+  SessionConfigValidationError,
   Secret,
   type SessionCreateOptions
 } from "../../src/index.js";
@@ -39,19 +39,19 @@ interface CaptureHarness {
 }
 
 interface ProviderChoice {
-  readonly model: RunModel;
-  readonly provider?: RunProvider;
-  readonly resolvedProvider: RunProvider;
+  readonly model: ModelName;
+  readonly provider?: ProviderName;
+  readonly resolvedProvider: ProviderName;
 }
 
 interface ValidCase {
   readonly surface: CreateSurface;
   readonly options: SessionCreateOptions;
-  readonly resolvedProvider: RunProvider;
+  readonly resolvedProvider: ProviderName;
 }
 
 const createSurface = fc.constantFrom<CreateSurface>("openSession", "sessions.create");
-const runModel = fc.constantFrom<RunModel>(...(RUN_MODELS as readonly RunModel[]));
+const modelName = fc.constantFrom<ModelName>(...(SUPPORTED_MODELS as readonly ModelName[]));
 const runtimeSize = fc.constantFrom<RuntimeSize>(...(RUNTIME_SIZES as readonly RuntimeSize[]));
 const outputMode = fc.constantFrom<OutputMode>(...(OUTPUT_MODES as readonly OutputMode[]));
 const safeToken = fc.stringMatching(/^[A-Za-z0-9_-]{1,24}$/);
@@ -76,7 +76,7 @@ const nonEmptyBuiltinTools = fc.subarray(builtinToolNames, {
   maxLength: 5
 });
 
-const providerChoice: fc.Arbitrary<ProviderChoice> = runModel.chain((model) => {
+const providerChoice: fc.Arbitrary<ProviderChoice> = modelName.chain((model) => {
   const providers = providersForModel(model);
   const defaultProvider = providers[0];
   if (defaultProvider === undefined) {
@@ -296,7 +296,7 @@ const legacyFields = [
   "idleSuspendAfter",
   "idleTtl",
   "retention",
-  "parentRunId",
+  "parentSessionId",
   "signal"
 ] as const;
 const legacyValue = fc.oneof(
@@ -309,9 +309,9 @@ const legacyValue = fc.oneof(
   fc.dictionary(fc.stringMatching(/^[a-z][a-z0-9_]{0,8}$/), shortText, { maxKeys: 3 })
 );
 
-const providerMismatch = runModel.chain((model) => {
+const providerMismatch = modelName.chain((model) => {
   const supported = providersForModel(model);
-  const unsupported = RUN_PROVIDERS.filter((provider) => !supported.includes(provider));
+  const unsupported = PROVIDERS.filter((provider) => !supported.includes(provider));
   return fc.constantFrom(...unsupported).map((provider) =>
     buildSessionOptions(
       { model, provider, resolvedProvider: provider },
@@ -321,7 +321,7 @@ const providerMismatch = runModel.chain((model) => {
 });
 
 const missingProviderKey = providerChoice.chain((choice) => {
-  const otherProviders = RUN_PROVIDERS.filter((provider) => provider !== choice.resolvedProvider);
+  const otherProviders = PROVIDERS.filter((provider) => provider !== choice.resolvedProvider);
   return fc
     .oneof(
       fc.constant(undefined),
@@ -414,7 +414,7 @@ function validateAcceptedCreate({ calls }: CaptureHarness, testCase: ValidCase):
   const { retention: _retention, ...runSubmissionFrame } = body;
   void _retention;
 
-  const parsed = parseRunSubmissionRequest({
+  const parsed = parseSessionSubmissionRequest({
     ...runSubmissionFrame,
     workspaceId: "ws_property",
     idempotencyKey: idempotencyHeader,
@@ -441,7 +441,7 @@ function requireRecord(input: unknown, label: string): Record<string, unknown> {
 function buildSessionOptions(
   choice: ProviderChoice,
   parts: {
-    readonly apiKeys?: Partial<Record<RunProvider, string>> | undefined;
+    readonly apiKeys?: Partial<Record<ProviderName, string>> | undefined;
     readonly system?: string | undefined;
     readonly metadata?: Record<string, JsonValue> | undefined;
     readonly environment?: SessionCreateOptions["environment"] | undefined;
@@ -512,12 +512,12 @@ function buildOverrides(parts: {
   return overrides;
 }
 
-function apiKeysFor(provider: RunProvider): fc.Arbitrary<Partial<Record<RunProvider, string>>> {
-  const otherProviders = RUN_PROVIDERS.filter((entry) => entry !== provider);
+function apiKeysFor(provider: ProviderName): fc.Arbitrary<Partial<Record<ProviderName, string>>> {
+  const otherProviders = PROVIDERS.filter((entry) => entry !== provider);
   return fc
     .tuple(safeToken, fc.uniqueArray(fc.constantFrom(...otherProviders), { maxLength: 3 }))
     .map(([token, extras]) => {
-      const apiKeys: Partial<Record<RunProvider, string>> = {
+      const apiKeys: Partial<Record<ProviderName, string>> = {
         [provider]: `fake-${provider}-${token}`
       };
       for (const extra of extras) {
@@ -535,7 +535,7 @@ function minimalValidOptions(): SessionCreateOptions {
 }
 
 describe("session create inputs (property)", () => {
-  it("posts rich valid openSession/sessions.create options as parseable run submissions", async () => {
+  it("posts rich valid openSession/sessions.create options as parseable session submissions", async () => {
     await fc.assert(
       fc.asyncProperty(richValidCase, async (testCase) => {
         const harness = captureClient();
@@ -581,7 +581,7 @@ describe("session create inputs (property)", () => {
         const harness = captureClient();
         await expect(
           createWithSurface(harness.client, surface, options)
-        ).rejects.toBeInstanceOf(RunConfigValidationError);
+        ).rejects.toBeInstanceOf(SessionConfigValidationError);
         expect(harness.calls).toHaveLength(0);
       }),
       { numRuns: 120 }
@@ -592,7 +592,7 @@ describe("session create inputs (property)", () => {
         const harness = captureClient();
         await expect(
           createWithSurface(harness.client, surface, options)
-        ).rejects.toBeInstanceOf(RunConfigValidationError);
+        ).rejects.toBeInstanceOf(SessionConfigValidationError);
         expect(harness.calls).toHaveLength(0);
       }),
       { numRuns: 120 }

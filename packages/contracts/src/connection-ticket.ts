@@ -4,8 +4,8 @@
  * A browser/runtime WebSocket handshake cannot carry an Authorization header,
  * so a subscriber first obtains a short-lived ticket from an authenticated
  * HTTP endpoint, then presents it as a `?ticket=` query parameter on the WS
- * upgrade. The ticket is an HMAC over `${runId}.${channel}.${exp}` keyed by
- * the coordinator secret — it binds the grant to one run, one stream channel,
+ * upgrade. The ticket is an HMAC over `${sessionId}.${channel}.${exp}` keyed by
+ * the coordinator secret — it binds the grant to one session, one stream channel,
  * and one expiry and is verified without any per-ticket storage.
  *
  * This lives in shared so the coordinator (which verifies) and the API
@@ -36,7 +36,7 @@ async function hmacHex(secret: string, message: string): Promise<string> {
 
 /** Mint a `${channel}.${exp}.${mac}` ticket valid for `ttlMs` from `nowMs`. */
 export async function mintConnectionTicket(
-  runId: string,
+  sessionId: string,
   secret: string,
   nowMs: number,
   ttlMs: number = DEFAULT_TICKET_TTL_MS,
@@ -44,14 +44,14 @@ export async function mintConnectionTicket(
 ): Promise<{ ticket: string; expiresAtMs: number }> {
   const boundChannel = normalizeTicketChannel(channel);
   const exp = nowMs + ttlMs;
-  const mac = await hmacHex(secret, `${runId}.${boundChannel}.${exp}`);
+  const mac = await hmacHex(secret, `${sessionId}.${boundChannel}.${exp}`);
   return { ticket: `${boundChannel}.${exp}.${mac}`, expiresAtMs: exp };
 }
 
-/** Verify a ticket against `runId`, channel, and current time. Constant-time MAC compare. */
+/** Verify a ticket against `sessionId`, channel, and current time. Constant-time MAC compare. */
 export async function verifyConnectionTicket(
   ticket: string,
-  runId: string,
+  sessionId: string,
   secret: string,
   nowMs: number,
   channel: ConnectionTicketChannel = "event"
@@ -62,7 +62,7 @@ export async function verifyConnectionTicket(
   if (ticketChannel !== boundChannel) return false;
   const exp = Number(expRaw);
   if (!Number.isFinite(exp) || exp < nowMs) return false;
-  const expected = await hmacHex(secret, `${runId}.${boundChannel}.${exp}`);
+  const expected = await hmacHex(secret, `${sessionId}.${boundChannel}.${exp}`);
   return timingSafeEqual(mac, expected);
 }
 

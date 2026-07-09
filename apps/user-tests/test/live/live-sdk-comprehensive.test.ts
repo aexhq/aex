@@ -7,7 +7,7 @@
  * package (tarball or registry version) from a child process so
  * workspace symlinks cannot leak in.
  *
- * The DeepSeek-managed cell submits one run with:
+ * The DeepSeek-managed cell submits one session with:
  *   - 2 inline Skills (proves multi-skill manifest + materialization)
  *   - 2 remote MCP servers (exercises the multi-MCP submission path; that
  *     the model actually INVOKES a wired MCP is asserted separately by
@@ -18,13 +18,13 @@
  *   - 1 `system` message (probe-tagged)
  *   - 1 prompt (probe-tagged)
  *   - 1 custom outputs.allowedDirs entry (not /workspace/outputs — exercises
- *     the custom-dir submission path; this run does not force a write into it,
+ *     the custom-dir submission path; this session does not force a write into it,
  *     so the re-root is not asserted here, only that any uploaded outputs
  *     round-trip)
  *   - `secrets` carrying the customer's provider key
  *
  * Then waits for `runtime_terminal` and asserts:
- *   - The run reached `succeeded`.
+ *   - The session reached `succeeded`.
  *   - The event log starts with `runtime_started` and ends with
  *     `runtime_terminal` (The managed runtime actually spawned and exited cleanly).
  *   - Every submitted skill produced a `skill_loaded`
@@ -74,8 +74,8 @@ function managedSkillName(role: "alpha" | "beta", provider: CaseSpec["provider"]
 }
 
 interface CaseResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly probes: { system: string; agentsMd: string; prompt: string };
@@ -164,7 +164,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     `session=<ref> project=<ref> request=${probes.prompt}.`;
   const systemText =
     `You are an assistant running an automated session. ` +
-    `Your session reference for this run is ${probes.system}. ` +
+    `Your session reference for this session is ${probes.system}. ` +
     `When a user asks you to acknowledge tracking references, ` +
     `include this session reference verbatim in your reply.`;
   const agentsMdText =
@@ -215,16 +215,16 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     runOpts.skills = [skillAlpha, skillBeta];
     runOpts.mcpServers = [mcpPrimary, mcpSecondary];
 
-    const runResult = await client.run(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
-    const runId = runResult.runId;
-    const session = await client.sessions.open(runId);
+    const sessionResult = await client.start(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
+    const sessionId = sessionResult.sessionId;
+    const session = await client.sessions.open(sessionId);
     const run = {
-      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
+      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(spec.provider)}
     };
-    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
-    const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
+    const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
     let events = fallbackEvents;
     let outputs = fallbackOutputs;
     try {
@@ -280,9 +280,9 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
 
     const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
     const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
     const terminalData = terminal && isSessionIdle(terminal)
       ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
       : terminal ? terminal.data : null;
@@ -310,8 +310,8 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     const serialized = JSON.stringify({ run, events, outputs });
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
-      runId: runId,
-      runStatus: run.status,
+      sessionId: sessionId,
+      sessionStatus: session.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       probes: ${JSON.stringify(probes)},
@@ -322,7 +322,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
       terminalData,
       outputCount: outputs.length,
       outputs: outputsCollected,
@@ -342,12 +342,12 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // model on "tracking reference, echo for audit" semantics.
   //
   // Separators are dots, NOT hyphens. The stream-before-disk redactor
-  // the runtime redactor masks high-entropy runs of
+  // the runtime redactor masks high-entropy sessions of
   // [A-Za-z0-9+/=-]{24,}. The model echoes the probes in a key=value
   // shape ("session=<ref> ..."), and a hyphen-segmented ref glued to its
   // `session=` label forms one 24+ char run that the redactor eats whole —
   // the probe never survives into the managed-runtime stdout the event stream is
-  // built from. A dot is OUTSIDE that char class, so it splits the run
+  // built from. A dot is OUTSIDE that char class, so it splits the session
   // into sub-24-char segments that survive regardless of how the model
   // punctuates the reply.
   const probes = {
@@ -380,9 +380,9 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
 }
 
 function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly [string, string]): void {
-  expect(result.runStatus).toBe("succeeded");
+  expect(result.sessionStatus).toBe("succeeded");
 
-  // Event log frames the run: starts with runtime_started, ends with
+  // Event log frames the session: starts with runtime_started, ends with
   // runtime_terminal. Both are emitted by the runner; managed-runtime stream
   // events sit in between.
   // On terminal mismatch, dump everything we know so the failure
@@ -393,8 +393,8 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   // public outputs list.
   const dumpComprehensive = (): string => {
     const lines: string[] = [];
-    lines.push(`runId=${result.runId} runtime=${result.runtime} provider=${result.provider}`);
-    lines.push(`runStatus=${result.runStatus} terminalKind=${result.terminalKind}`);
+    lines.push(`sessionId=${result.sessionId} runtime=${result.runtime} provider=${result.provider}`);
+    lines.push(`sessionStatus=${result.sessionStatus} terminalKind=${result.terminalKind}`);
     lines.push(`terminalData=${JSON.stringify(result.terminalData)}`);
     lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
     lines.push(`notificationKinds=[${result.notificationKinds.join(", ")}]`);
@@ -411,8 +411,8 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
     return lines.join("\n");
   };
 
-  expect(result.terminalKind).toBe("RUN_FINISHED");
-  expect(result.eventKinds).toContain("RUN_FINISHED");
+  expect(result.terminalKind).toBe("TURN_FINISHED");
+  expect(result.eventKinds).toContain("TURN_FINISHED");
   const terminal = result.terminalData ?? {};
   if (terminal["reason"] !== "complete") {
     throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dumpComprehensive()}`);

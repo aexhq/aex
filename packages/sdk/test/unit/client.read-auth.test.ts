@@ -1,5 +1,5 @@
 /**
- * H-1 coherence: the run read + output-download surface on the hosted API
+ * H-1 coherence: the session read + output-download surface on the hosted API
  * plane is workspace-token gated. Our own clients must keep working against
  * it, which means EVERY read path has to send `Authorization: Bearer <apiKey>`.
  *
@@ -90,10 +90,10 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
   });
 
   it("outputLink by id sends Authorization: Bearer (POST /link)", async () => {
-    const { client, calls } = recordingClient({ url: `${BASE}/api/runs/${SID}/outputs/abc/download` });
+    const { client, calls } = recordingClient({ url: `${BASE}/api/sessions/${SID}/outputs/abc/download` });
     const session = await openHandle(client, calls);
     await session.outputs().link("abc");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/outputs/abc/link`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs/abc/link`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -115,7 +115,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/runs/${SID}/outputs`)) {
+      if (url.endsWith(`/api/sessions/${SID}/outputs`)) {
         return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -138,8 +138,8 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
       output: { id: "abc", filename: "reports/result.txt" }
     });
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/${SID}/outputs`,
-      `${BASE}/api/runs/${SID}/outputs/abc/link`
+      `${BASE}/api/sessions/${SID}/outputs`,
+      `${BASE}/api/sessions/${SID}/outputs/abc/link`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
     expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 900 });
@@ -160,13 +160,13 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/runs/${SID}/outputs`)) {
+      if (url.endsWith(`/api/sessions/${SID}/outputs`)) {
         return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/runs/${SID}/outputs/abc/link`)) {
+      if (url.endsWith(`/api/sessions/${SID}/outputs/abc/link`)) {
         return new Response(JSON.stringify({ url: directUrl }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -182,8 +182,8 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
 
     expect(await response.text()).toBe("direct-bytes");
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/${SID}/outputs`,
-      `${BASE}/api/runs/${SID}/outputs/abc/link`,
+      `${BASE}/api/sessions/${SID}/outputs`,
+      `${BASE}/api/sessions/${SID}/outputs/abc/link`,
       directUrl
     ]);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
@@ -195,7 +195,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const { client, calls } = recordingClient({ url: "https://objects.example/events.jsonl" });
     const session = await openHandle(client, calls);
     await session.events().archiveLink();
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/events/link`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/events/link`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -204,7 +204,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const session = await openHandle(client, calls);
     const bytes = await session.outputs().download({ id: "abc" });
     expect(new TextDecoder().decode(bytes)).toBe("hello");
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/outputs/abc/download`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs/abc/download`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -222,7 +222,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/runs/${SID}/outputs`)) {
+      if (url.endsWith(`/api/sessions/${SID}/outputs`)) {
         return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -238,8 +238,8 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
 
     expect(new TextDecoder().decode(bytes)).toBe("hello");
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/${SID}/outputs`,
-      `${BASE}/api/runs/${SID}/outputs/abc/download`
+      `${BASE}/api/sessions/${SID}/outputs`,
+      `${BASE}/api/sessions/${SID}/outputs/abc/download`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
@@ -249,22 +249,22 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const session = await openHandle(client, calls);
     const bytes = await session.outputs().download();
     expect(bytes.byteLength).toBeGreaterThan(0);
-    expect(calls[0]!.url).toBe(`${BASE}/api/runs/${SID}/outputs`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("download assembles the run zip and every read carries Authorization: Bearer", async () => {
-    // `download` is the SDK's whole-run verb: it fans out to getRun +
-    // listRunEvents + listOutputs (and per-output /download) and zips the result
+  it("download assembles the session zip and every read carries Authorization: Bearer", async () => {
+    // `download` is the SDK's whole-run verb: it fans out to getSessionRecord +
+    // listSessionRecordEvents + listOutputs (and per-output /download) and zips the result
     // client-side. EVERY one of those reads must carry the token because the
     // public read/download surface is gated.
     const { client, calls } = recordingClient({ events: [], outputs: [] });
     const session = await openHandle(client, calls);
     await session.download();
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/runs/${SID}`,
-      `${BASE}/api/runs/${SID}/events`,
-      `${BASE}/api/runs/${SID}/outputs`
+      `${BASE}/api/sessions/${SID}`,
+      `${BASE}/api/sessions/${SID}/events`,
+      `${BASE}/api/sessions/${SID}/outputs`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });

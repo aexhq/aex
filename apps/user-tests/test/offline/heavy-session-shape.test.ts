@@ -9,9 +9,9 @@ const SKILL_PREFIXES = [
 
 function baseResult(overrides: Partial<CaseResult> = {}): CaseResult {
   return {
-    runId: "run-heavy-managed",
+    sessionId: "session-heavy-managed",
     attempts: 1,
-    runStatus: "succeeded",
+    sessionStatus: "succeeded",
     runtime: "managed",
     provider: "deepseek",
     probes: {
@@ -69,31 +69,31 @@ function captureError(fn: () => void): Error {
 }
 
 describe("heavy-session live assertion shape", () => {
-  it("accepts managed session terminals without legacy RUN_STARTED", () => {
+  it("accepts managed session terminals without legacy TURN_STARTED", () => {
     expect(() => assertManagedShape(baseResult(), SKILL_PREFIXES)).not.toThrow();
   });
 
-  it("still requires RUN_STARTED before legacy RUN_FINISHED terminals", () => {
+  it("still requires TURN_STARTED before legacy TURN_FINISHED terminals", () => {
     const error = captureError(() =>
       assertManagedShape(
         baseResult({
-          runId: "run-legacy-missing-start",
-          terminalKind: "RUN_FINISHED",
-          eventKinds: ["CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]
+          sessionId: "session-legacy-missing-start",
+          terminalKind: "TURN_FINISHED",
+          eventKinds: ["CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "TURN_FINISHED"]
         }),
         SKILL_PREFIXES
       )
     );
 
-    expect(error.message).toContain("legacy RUN_FINISHED stream did not include RUN_STARTED");
-    expect(error.message).toContain("runId=run-legacy-missing-start");
+    expect(error.message).toContain("legacy TURN_FINISHED stream did not include TURN_STARTED");
+    expect(error.message).toContain("sessionId=session-legacy-missing-start");
   });
 
-  it("includes the run id in managed-session vocabulary failures", () => {
+  it("includes the session id in managed-session vocabulary failures", () => {
     const error = captureError(() =>
       assertManagedShape(
         baseResult({
-          runId: "run-missing-tool-result",
+          sessionId: "session-missing-tool-result",
           eventTypeSet: ["CUSTOM", "TOOL_CALL_START", "TEXT_MESSAGE_CONTENT"]
         }),
         SKILL_PREFIXES
@@ -101,6 +101,6 @@ describe("heavy-session live assertion shape", () => {
     );
 
     expect(error.message).toContain('expected event type "TOOL_CALL_RESULT" was not observed');
-    expect(error.message).toContain("runId=run-missing-tool-result");
+    expect(error.message).toContain("sessionId=session-missing-tool-result");
   });
 });

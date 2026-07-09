@@ -6,11 +6,11 @@ import type { SkillFiles } from "./bundle.js";
  * Fetch a zip-archived skill from a URL and reduce it to the same in-memory
  * `SkillFiles` map that `Skill.fromDir` consumes.
  *
- * This runs in the SDK process (the caller's own app), so the URL is
+ * This sessions in the SDK process (the caller's own app), so the URL is
  * caller-controlled — there is no SSRF surface here. Host the skill yourself
  * and hand the SDK a temporary signed URL (e.g. an S3 presigned URL); it only
- * needs to be valid for this fetch, because `client.run` / `openSession`
- * snapshots the bytes into the run afterwards.
+ * needs to be valid for this fetch, because `client.start` / `openSession`
+ * snapshots the bytes into the session afterwards.
  *
  * Signed URLs carry secrets in their query string, so the query is never echoed
  * in error messages.

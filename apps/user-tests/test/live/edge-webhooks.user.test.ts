@@ -1,17 +1,17 @@
 /**
- * Live edge-case sweep: RUN WEBHOOKS surface.
+ * Live edge-case sweep: SESSION WEBHOOKS surface.
  *
  * Surface under test (public @aexhq/sdk against the dev plane):
- *   - Run `webhook: { url }` registration on submission (SessionCreateOptions.webhook).
- *   - `session.webhooks().list()` / `.redeliver(id)` (the per-run delivery ledger).
+ *   - SessionRecord `webhook: { url }` registration on submission (SessionCreateOptions.webhook).
+ *   - `session.webhooks().list()` / `.redeliver(id)` (the per-session delivery ledger).
  *   - Standard-Webhooks HMAC verification helper `verifyAexWebhook(...)`.
  *   - Webhook-URL SSRF protection (submit-time shape gate + delivery-time IP deny).
  *
  * Design notes (cost/safety):
  *   - URL-validation cases use `sessions.create(...)` WITHOUT a turn, so a rejected
- *     (or even accepted-but-unrun) webhook costs NO billable LLM run.
- *   - Only the delivery-observation + SSRF-delivery cases spend billable runs
- *     (tiny `deepseek-v4-flash` prompts). Total billable runs in this file: 3.
+ *     (or even accepted-but-unstarted) webhook costs NO billable LLM turn.
+ *   - Only the delivery-observation + SSRF-delivery cases spend billable session turns
+ *     (tiny `deepseek-v4-flash` prompts). Total billable session turns in this file: 3.
  *   - Secrets are read from env passed to the child; never printed. Leak checks
  *     emit booleans only.
  *
@@ -27,7 +27,7 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The webhook edge sweep must run against a real dev api URL with a real gate-provider key.`
+      `user-tests live: required env ${name} is missing. The webhook edge sweep must execute against a real dev api URL with a real gate-provider key.`
     );
   }
   return value;
@@ -38,7 +38,7 @@ const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-webhooks");
 const model = gateModel();
 
-/** Spawn a bun child that runs `body` in the install dir; parse its stdout JSON. */
+/** Spawn a bun child that executes `body` in the install dir; parse its stdout JSON. */
 async function runScript<T>(
   install: InstallResult,
   name: string,
@@ -100,7 +100,7 @@ interface ValidationScriptResult {
   readonly emptyLedger: { readonly ok: boolean; readonly count?: number; readonly message?: string };
 }
 
-describe("live hosted — run webhooks edge cases", () => {
+describe("live hosted - session webhooks edge cases", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -162,7 +162,7 @@ describe("live hosted — run webhooks edge cases", () => {
       const out = await runScript<ValidationScriptResult>(install, "wh-validation.mjs", body, 4 * 60 * 1000);
       const byName = new Map(out.cases.map((c) => [c.name, c] as const));
 
-      // Dump the FULL picture first so a single run reveals every case outcome.
+      // Dump the FULL picture first so a single session reveals every case outcome.
       // eslint-disable-next-line no-console
       console.log("sessions.create webhook-URL validation outcomes:", JSON.stringify(out.cases, null, 2));
 
@@ -196,7 +196,7 @@ describe("live hosted — run webhooks edge cases", () => {
     async () => {
       const body = `${CLIENT_PREAMBLE}
         const probe = "wh-" + Math.random().toString(36).slice(2, 8);
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model,
           message: "Output verbatim: " + probe,
@@ -204,8 +204,8 @@ describe("live hosted — run webhooks edge cases", () => {
           webhook: { url: "https://example.com/aex-webhook-probe" },
           idempotencyKey: "user-test-wh-valid-" + Date.now()
         }, { timeoutMs: 6 * 60 * 1000 });
-        const runId = runResult.runId;
-        const session = await client.sessions.open(runId);
+        const sessionId = sessionResult.sessionId;
+        const session = await client.sessions.open(sessionId);
 
         // Poll the ledger for a delivery row to appear + settle (delivery is an
         // async post-terminal sweep).
@@ -242,9 +242,9 @@ describe("live hosted — run webhooks edge cases", () => {
         const leakedProviderKey = providerKey.length > 0 && serialized.includes(providerKey);
 
         process.stdout.write(JSON.stringify({
-          runId,
-          ok: runResult.ok,
-          status: runResult.status,
+          sessionId,
+          ok: sessionResult.ok,
+          status: sessionResult.status,
           sawRow,
           deliveryCount: deliveries.length,
           firstDelivery: deliveries[0] || null,
@@ -256,7 +256,7 @@ describe("live hosted — run webhooks edge cases", () => {
         process.exit(0);
       `;
       const out = await runScript<{
-        runId: string;
+        sessionId: string;
         ok: boolean;
         status: string;
         sawRow: boolean;
@@ -278,7 +278,7 @@ describe("live hosted — run webhooks edge cases", () => {
       // eslint-disable-next-line no-console
       console.log("valid-webhook outcome:", JSON.stringify(out));
 
-      expect(out.ok, `run did not complete ok: status=${out.status}`).toBe(true);
+      expect(out.ok, `session did not complete ok: status=${out.status}`).toBe(true);
 
       // Secret hygiene: neither the workspace signing secret nor the provider key
       // may appear in the ledger or event log.
@@ -296,16 +296,16 @@ describe("live hosted — run webhooks edge cases", () => {
         `redeliver(bogus) should be a clean 4xx: ${JSON.stringify(out.redeliverBogus)}`
       ).toBe(true);
 
-      // DEFECT PROBE (F23): a run that completes ok WITH a registered webhook must
+      // DEFECT PROBE (F23): a session that completes ok WITH a registered webhook must
       // produce a delivery ledger row (the advertised "notify on finish"). On the
       // dev plane no row EVER appears — verified across idle/suspended/deleted for
       // 10+ min, endpoint healthy (HTTP 200 {deliveries:[]}). This assertion fails
       // today (isolating the defect) and goes green once delivery is wired.
       expect(
         out.sawRow,
-        `run ${out.runId} completed ok=${out.ok} (status=${out.status}) with webhook registered, ` +
+        `session ${out.sessionId} completed ok=${out.ok} (status=${out.status}) with webhook registered, ` +
           `but NO webhook delivery row was ever enqueued (ledger stayed empty) — advertised terminal ` +
-          `webhook delivery does not fire for the SDK one-shot run flow on the dev plane`
+          `webhook delivery does not fire for the SDK one-shot session flow on the dev plane`
       ).toBe(true);
 
       // Reached only after the sawRow assertion passes (vitest aborts on the first
@@ -338,7 +338,7 @@ describe("live hosted — run webhooks edge cases", () => {
         for (const t of targets) {
           const rec = { name: t.name, url: t.url };
           try {
-            const runResult = await client.run({
+            const sessionResult = await client.start({
               provider: PROVIDER,
               model,
               message: "Output verbatim: ssrf-probe",
@@ -347,8 +347,8 @@ describe("live hosted — run webhooks edge cases", () => {
               idempotencyKey: "user-test-wh-ssrf-" + t.name + "-" + Date.now()
             }, { timeoutMs: 5 * 60 * 1000 });
             rec.submitRejected = false;
-            rec.runOk = runResult.ok;
-            const session = await client.sessions.open(runResult.runId);
+            rec.runOk = sessionResult.ok;
+            const session = await client.sessions.open(sessionResult.sessionId);
             let deliveries = [];
             const deadline = Date.now() + 130000;
             while (Date.now() < deadline) {
@@ -405,13 +405,13 @@ describe("live hosted — run webhooks edge cases", () => {
       for (const rec of out) {
         // If rejected by the API, the rejection must be a clean 4xx. The SDK also
         // rejects malformed webhook URLs client-side before HTTP; that is clean
-        // when it carries the typed run-config validation code and a webhook.url
+        // when it carries the typed session-config validation code and a webhook.url
         // message. N/A (true) for accepted records.
         const clientSideValidation =
           rec.submitRejected === true &&
           rec.status === undefined &&
-          rec.errorName === "RunConfigValidationError" &&
-          rec.code === "RUN_CONFIG_INVALID" &&
+          rec.errorName === "SessionConfigValidationError" &&
+          rec.code === "SESSION_CONFIG_INVALID" &&
           typeof rec.message === "string" &&
           rec.message.includes("webhook.url");
         const rejectionIsClean =
@@ -456,7 +456,7 @@ describe("live hosted — run webhooks edge cases", () => {
         const secret = "whsec_" + secretB64;
         const id = "msg_" + Math.random().toString(36).slice(2, 10);
         const ts = Math.floor(Date.now() / 1000).toString();
-        const rawBody = JSON.stringify({ type: "run.finished", runId: "r_test", ok: true });
+        const rawBody = JSON.stringify({ type: "session.finished", sessionId: "r_test", ok: true });
         const key = await crypto.subtle.importKey("raw", rawKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
         const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id + "." + ts + "." + rawBody));
         const sigB64 = Buffer.from(new Uint8Array(sigBuf)).toString("base64");

@@ -20,7 +20,7 @@ import {
   emitJsonError,
   makeHttpClient,
   resolveCommonHostFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
 
@@ -43,8 +43,8 @@ function parseLimit(io: CliIO, raw: string | undefined): { ok: true; limit: numb
   return { ok: true, limit };
 }
 
-export async function runBillingCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "billing")) return USAGE_ERR;
+export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "billing")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

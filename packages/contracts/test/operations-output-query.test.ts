@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HttpClient, RunStateError, operations, type Output } from "../src/index.js";
+import { HttpClient, SessionStateError, operations, type Output } from "../src/index.js";
 
 const BASE = "https://api.test";
 
@@ -44,24 +44,24 @@ function clientFor(routes: Record<string, (init: RequestInit | undefined) => Res
 describe("operations output discovery", () => {
   it("filters by normalized path, basename, directory, extension, content type, and high-level type", async () => {
     const { http } = clientFor({
-      "/api/runs/run-1/outputs": () => json({ outputs })
+      "/api/sessions/session-1/outputs": () => json({ outputs })
     });
 
-    await expect(operations.listOutputs(http, "run-1", { path: "/outputs/reports/summary.json" }))
+    await expect(operations.listOutputs(http, "session-1", { path: "/outputs/reports/summary.json" }))
       .resolves.toEqual([outputs[0]]);
-    await expect(operations.listOutputs(http, "run-1", { filename: /^notes\.txt$/ }))
+    await expect(operations.listOutputs(http, "session-1", { filename: /^notes\.txt$/ }))
       .resolves.toEqual([outputs[1]]);
-    await expect(operations.listOutputs(http, "run-1", { dir: "reports", recursive: false }))
+    await expect(operations.listOutputs(http, "session-1", { dir: "reports", recursive: false }))
       .resolves.toEqual([outputs[0], outputs[1]]);
-    await expect(operations.listOutputs(http, "run-1", { dir: "reports" }))
+    await expect(operations.listOutputs(http, "session-1", { dir: "reports" }))
       .resolves.toEqual([outputs[0], outputs[1], outputs[2]]);
-    await expect(operations.listOutputs(http, "run-1", { extension: ".json" }))
+    await expect(operations.listOutputs(http, "session-1", { extension: ".json" }))
       .resolves.toEqual([outputs[0]]);
-    await expect(operations.listOutputs(http, "run-1", { contentType: "image/*" }))
+    await expect(operations.listOutputs(http, "session-1", { contentType: "image/*" }))
       .resolves.toEqual([outputs[2]]);
-    await expect(operations.listOutputs(http, "run-1", { type: "video" }))
+    await expect(operations.listOutputs(http, "session-1", { type: "video" }))
       .resolves.toEqual([outputs[5]]);
-    await expect(operations.listOutputs(http, "run-1", { type: "pdf" }))
+    await expect(operations.listOutputs(http, "session-1", { type: "pdf" }))
       .resolves.toEqual([]);
   });
 
@@ -72,30 +72,30 @@ describe("operations output discovery", () => {
     expect(operations.classifyOutput({ filename: "bundle.tar.gz" })).toBe("archive");
   });
 
-  it("returns null for no match and throws RunStateError for ambiguous single-output lookup", async () => {
+  it("returns null for no match and throws SessionStateError for ambiguous single-output lookup", async () => {
     const { http } = clientFor({
-      "/api/runs/run-1/outputs": () =>
+      "/api/sessions/session-1/outputs": () =>
         json({ outputs: [{ id: "a", filename: "a/report.txt" }, { id: "b", filename: "b/report.txt" }] })
     });
 
-    await expect(operations.findOutput(http, "run-1", { filename: "missing.txt" })).resolves.toBeNull();
-    await expect(operations.findOutput(http, "run-1", { extension: "txt" })).rejects.toBeInstanceOf(RunStateError);
+    await expect(operations.findOutput(http, "session-1", { filename: "missing.txt" })).resolves.toBeNull();
+    await expect(operations.findOutput(http, "session-1", { extension: "txt" })).rejects.toBeInstanceOf(SessionStateError);
   });
 });
 
 describe("operations output links", () => {
   it("resolves a query, posts normalized TTL seconds, and returns resolved output metadata", async () => {
     const { http, calls } = clientFor({
-      "/api/runs/run-1/outputs": () => json({ outputs }),
-      "/api/runs/run-1/outputs/txt/link": () =>
+      "/api/sessions/session-1/outputs": () => json({ outputs }),
+      "/api/sessions/session-1/outputs/txt/link": () =>
         json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
     });
 
-    const link = await operations.outputLink(http, "run-1", { filename: "notes.txt" }, { expiresIn: "15m" });
+    const link = await operations.outputLink(http, "session-1", { filename: "notes.txt" }, { expiresIn: "15m" });
 
     expect(calls.map((call) => [call.method, call.path])).toEqual([
-      ["GET", "/api/runs/run-1/outputs"],
-      ["POST", "/api/runs/run-1/outputs/txt/link"]
+      ["GET", "/api/sessions/session-1/outputs"],
+      ["POST", "/api/sessions/session-1/outputs/txt/link"]
     ]);
     expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 900 });
     expect(link).toMatchObject({
@@ -107,12 +107,12 @@ describe("operations output links", () => {
 
   it("keeps createOutputLink as an id-only compatibility path without listing outputs first", async () => {
     const { http, calls } = clientFor({
-      "/api/runs/run-1/outputs/txt/link": () => json({ url: "https://storage.example/direct.txt" })
+      "/api/sessions/session-1/outputs/txt/link": () => json({ url: "https://storage.example/direct.txt" })
     });
 
-    const link = await operations.createOutputLink(http, "run-1", "txt");
+    const link = await operations.createOutputLink(http, "session-1", "txt");
 
-    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/runs/run-1/outputs/txt/link"]]);
+    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/sessions/session-1/outputs/txt/link"]]);
     expect(JSON.parse(calls[0]!.body!)).toEqual({ expiresInSeconds: 3600 });
     expect(link.expiresInSeconds).toBe(3600);
     expect(link.output).toEqual({ id: "txt" });
@@ -120,24 +120,24 @@ describe("operations output links", () => {
 
   it("posts event archive link requests with the same TTL body", async () => {
     const { http, calls } = clientFor({
-      "/api/runs/run-1/events/link": () => json({ url: "https://storage.example/events.jsonl" })
+      "/api/sessions/session-1/events/link": () => json({ url: "https://storage.example/events.jsonl" })
     });
 
-    const link = await operations.eventArchiveLink(http, "run-1", { expiresIn: "1d" });
+    const link = await operations.eventArchiveLink(http, "session-1", { expiresIn: "1d" });
 
-    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/runs/run-1/events/link"]]);
+    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/sessions/session-1/events/link"]]);
     expect(JSON.parse(calls[0]!.body!)).toEqual({ expiresInSeconds: 86400 });
     expect(link.expiresInSeconds).toBe(86400);
   });
 
   it("synthesizes the documented expiresAt when the server omits it", async () => {
     const { http } = clientFor({
-      "/api/runs/run-1/outputs/txt/link": () =>
+      "/api/sessions/session-1/outputs/txt/link": () =>
         json({ url: "https://storage.example/direct.txt", expiresInSeconds: 900 })
     });
 
     const before = Date.now();
-    const link = await operations.createOutputLink(http, "run-1", "txt", { expiresIn: "15m" });
+    const link = await operations.createOutputLink(http, "session-1", "txt", { expiresIn: "15m" });
     const after = Date.now();
 
     expect(typeof link.expiresAt).toBe("string");
@@ -148,11 +148,11 @@ describe("operations output links", () => {
 
   it("keeps a server-provided expiresAt untouched", async () => {
     const { http } = clientFor({
-      "/api/runs/run-1/outputs/txt/link": () =>
+      "/api/sessions/session-1/outputs/txt/link": () =>
         json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
     });
 
-    const link = await operations.createOutputLink(http, "run-1", "txt");
+    const link = await operations.createOutputLink(http, "session-1", "txt");
     expect(link.expiresAt).toBe("2026-06-18T12:00:00.000Z");
   });
 });

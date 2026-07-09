@@ -87,13 +87,13 @@ describe("HttpClient network failures", () => {
       fetch: async () => {
         calls += 1;
         if (calls === 1) throw raw;
-        return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
+        return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
     });
-    await expect(client.request("/api/runs/run-1")).resolves.toMatchObject({ id: "run-1" });
+    await expect(client.request("/api/sessions/session-1")).resolves.toMatchObject({ id: "session-1" });
     expect(calls).toBe(2);
     expect(debug.join("\n")).toContain("transient UND_ERR_CONNECT_TIMEOUT");
   });
@@ -169,7 +169,7 @@ describe("HttpClient network failures", () => {
         throw raw;
       }
     });
-    const err = await rejectionOf(client.request("/api/runs/run-1"));
+    const err = await rejectionOf(client.request("/api/sessions/session-1"));
     expect(calls).toBe(2);
     expect(err).toBeInstanceOf(AexNetworkError);
     expect(err.method).toBe("GET");
@@ -187,14 +187,14 @@ describe("HttpClient network failures", () => {
         throw raw;
       }
     });
-    const err = await rejectionOf(client.download("/api/runs/run_1/archive"));
+    const err = await rejectionOf(client.download("/api/sessions/ses_1/archive"));
     expect(err).toBeInstanceOf(AexNetworkError);
     expect(err.method).toBe("GET");
     expect(err.host).toBe("api.example.test");
-    expect(err.path).toBe("/api/runs/run_1/archive");
+    expect(err.path).toBe("/api/sessions/ses_1/archive");
     expect(err.causeCode).toBe("ENOTFOUND");
     expect(err.cause).toBe(raw);
-    expect(err.message).toContain("GET api.example.test/api/runs/run_1/archive failed");
+    expect(err.message).toContain("GET api.example.test/api/sessions/ses_1/archive failed");
     expect(err.message).toContain("ENOTFOUND");
   });
 

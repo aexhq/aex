@@ -29,7 +29,7 @@ describe("cli bin", () => {
     install?.cleanup();
   });
 
-  it("creates a runnable bin link in node_modules/.bin", () => {
+  it("creates a sessionnable bin link in node_modules/.bin", () => {
     expect(existsSync(binPath)).toBe(true);
   });
 
@@ -37,7 +37,7 @@ describe("cli bin", () => {
     const result = await runCommand(binPath, ["--help"], { cwd: install.installDir, timeoutMs: 30_000 });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/Usage:/);
-    expect(result.stdout).toMatch(/aex run/);
+    expect(result.stdout).toMatch(/aex start/);
     expect(result.stdout).toMatch(/aex whoami/);
     expect(result.stdout).toMatch(/aex --help/);
     expect(result.stdout).not.toMatch(/proxy/);

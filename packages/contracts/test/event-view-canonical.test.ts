@@ -1,21 +1,21 @@
 /**
  * WS2/WS9/WS10 class-killer: ONE canonical event surface — AexEvent with a
- * non-optional `sequence`, the loose `RunEvent` retired (import fails),
+ * non-optional `sequence`, the loose `TurnEvent` retired (import fails),
  * `toolCallId()` returns `data.id`, and the new guard methods exist.
  */
 import { describe, expect, it } from "vitest";
 import { asAexEventView, type AexEvent, type AexEventView } from "../src/index.js";
 
-// @ts-expect-error — the loose `RunEvent` type is RETIRED; importing it must fail.
-import type { RunEvent } from "../src/runtime-types.js";
+// @ts-expect-error — the loose `TurnEvent` type is RETIRED; importing it must fail.
+import type { TurnEvent } from "../src/runtime-types.js";
 
 function toolStart(id: string): AexEvent {
   return {
     specversion: "1.0",
-    id: "run_1:2048",
+    id: "ses_1:2048",
     source: "agent",
     type: "TOOL_CALL_START",
-    subject: "run_1",
+    subject: "ses_1",
     time: "2026-07-05T00:00:00.000Z",
     sequence: 2048,
     data: { id, name: "write_file" }
@@ -41,10 +41,10 @@ describe("one canonical, guard-bearing event surface (WS2)", () => {
   it("exposes the new WS9/WS10 guard methods and a delta discriminator", () => {
     const view: AexEventView = asAexEventView({
       specversion: "1.0",
-      id: "run_1:5",
+      id: "ses_1:5",
       source: "agent",
       type: "TEXT_MESSAGE_CONTENT",
-      subject: "run_1",
+      subject: "ses_1",
       time: "2026-07-05T00:00:00.000Z",
       sequence: 5,
       data: { text: "hi", delta: true }

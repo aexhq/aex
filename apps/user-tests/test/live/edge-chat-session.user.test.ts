@@ -287,7 +287,7 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
   );
 
   it(
-    "two concurrent sends on one session serialize — one runs, the other is a clean busy rejection",
+    "two concurrent sends on one session serialize — one sessions, the other is a clean busy rejection",
     async () => {
       const result = await runChild(
         "edge-concurrent.mjs",
@@ -428,7 +428,7 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       afterCancelStatus: afterCancelRec ? afterCancelRec.status : null,
       sendAfterCancel,
       // A clean outcome: either the platform rejects the send OR it accepts and
-      // re-runs (resume semantics). A 5xx / crash is not clean.
+      // re-sessions (resume semantics). A 5xx / crash is not clean.
       sendClean: sendAfterCancel.ran === true || (typeof sendAfterCancel.status === "number" && sendAfterCancel.status >= 400 && sendAfterCancel.status < 500)
     };
     out.leaked = leaks(out);

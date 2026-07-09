@@ -4,7 +4,7 @@ title: Outputs
 
 # Outputs
 
-Every session produces durable metadata (status, events, cleanup state) and an outputs namespace. By default, managed runs capture the regular files present in the container when the agent exits, EXCLUDING the inputs the platform itself materialized for you (your mounted `files`/`skills`) — those are excluded by IDENTITY (their exact destination paths and skill-dir prefixes), not by any before/after timing comparison. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `session.download()` returns the public session record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`session.outputs().download()` / `session.events().download()` / `session.downloadMetadata()`) return one slice each.
+Every session produces durable metadata (status, events, cleanup state) and an outputs namespace. By default, managed sessions capture the regular files present in the container when the agent exits, EXCLUDING the inputs the platform itself materialized for you (your mounted `files`/`skills`) — those are excluded by IDENTITY (their exact destination paths and skill-dir prefixes), not by any before/after timing comparison. There is no default or official output directory. Use `outputs.allowedDirs` only when you want to narrow capture to specific roots, and `outputs.deniedDirs` to subtract noise. `session.download()` returns the public session record — metadata, typed events, and captured output bytes — as a zip; the per-namespace verbs (`session.outputs().download()` / `session.events().download()` / `session.downloadMetadata()`) return one slice each.
 
 The output verbs below hang off the session's `outputs()` accessor
 (`session.outputs().list()`, `.read()`, `.download()`, …). Reach a handle from a
@@ -39,34 +39,34 @@ A session's downloadable content is organised into three logical namespaces, eac
 | --- | --- | --- | --- |
 | `outputs` | The session's real deliverables. | `session.outputs().download()` | `download <id> --only outputs` |
 | `events` | Typed event-channel records (`events.jsonl`) plus a namespace manifest. | `session.events().download()` | `download <id> --only events` |
-| `metadata` | The session record (`run.json`) plus a namespace manifest. | `session.downloadMetadata()` | `download <id> --only metadata` |
+| `metadata` | The session record (`session.json`) plus a namespace manifest. | `session.downloadMetadata()` | `download <id> --only metadata` |
 
-Platform diagnostics are stored outside the public archive under `runs/<runId>/internal/logs/` for internal/admin access only. They are not exposed by the SDK download helpers or the public CLI.
+Platform diagnostics are stored outside the public archive under `sessions/<sessionId>/internal/logs/` for internal/admin access only. They are not exposed by the SDK download helpers or the public CLI.
 
 ## What `session.download()` returns
 
 `session.download()` is the **whole-session** verb — it bundles the public namespaces as top-level folders. It is distinct from `session.outputs().download(selector)`, which fetches a single file. Layout:
 
 ```
-metadata/run.json     # run record (status, runId, timestamps, snapshot)
+metadata/session.json     # session record (status, sessionId, timestamps, snapshot)
 metadata/submission.json # public-safe submission snapshot, when available
 metadata/cost.json    # public cost telemetry, when available
 events/events.jsonl   # typed event-channel records, ordered
 outputs/<name>        # one file per deliverable
-manifest.json         # RunRecordManifestV1
+manifest.json         # SessionRecordManifestV1
 ```
 
-`manifest.json` is the versioned `RunRecordManifestV1` described in [Run record](run-record.md). It carries:
+`manifest.json` is the versioned `SessionRecordManifestV1` described in [Session record](session-record.md). It carries:
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` / `runRecordSchemaVersion` | Manifest and run-record contract versions. |
-| `runId` | The run the zip was assembled for. |
+| `schemaVersion` / `sessionRecordSchemaVersion` | Manifest and session-record contract versions. |
+| `sessionId` | The session the zip was assembled for. |
 | `namespaces[]` / `files[]` | Namespace inventory and per-file presence state. Optional submission/cost files are marked `present` only when the client assembled actual entries; custody remains `pending` until its writer/read path exists. |
 | `outputs[]` | `{ id, filename, sizeBytes?, contentType? }` — one row per file successfully written under `outputs/`. |
 | `errors[]` | `{ namespace, id, filename, message }` — per-artifact byte fetches that failed during assembly. Best-effort: a failure records an entry here and is skipped from the tree rather than aborting the whole zip. |
 
-The single-namespace verbs return the same per-file bytes at the zip root (e.g. `session.outputs().download()` -> `report.txt` + `manifest.json`; `session.events().download()` -> `events.jsonl` + `manifest.json`; `session.downloadMetadata()` -> `run.json` + `manifest.json`).
+The single-namespace verbs return the same per-file bytes at the zip root (e.g. `session.outputs().download()` -> `report.txt` + `manifest.json`; `session.events().download()` -> `events.jsonl` + `manifest.json`; `session.downloadMetadata()` -> `session.json` + `manifest.json`).
 
 ## Downloading one output
 
@@ -131,7 +131,7 @@ Query fields compose with AND semantics:
 | `contentType` | Exact content type or a prefix wildcard such as `image/*`. |
 | `type` | High-level type: `text`, `json`, `image`, `audio`, `video`, `pdf`, `archive`, `binary`, or `unknown`. |
 
-`session.outputs().findOne(query)` returns `null` when nothing matches and throws `RunStateError` when the query matches more than one output.
+`session.outputs().findOne(query)` returns `null` when nothing matches and throws `SessionStateError` when the query matches more than one output.
 
 ## Searching outputs
 
@@ -141,11 +141,11 @@ Search is metadata-only (reference hits — filename / extension / content type 
 // One session's outputs:
 const hits = await session.outputs().search({ filename: /report/i });
 
-// Across every run in the workspace (or scope with runIds):
-const all = await aex.outputs.search({ extension: "md", runIds: ["run-a", "run-b"] });
+// Across every session in the workspace (or scope with sessionIds):
+const all = await aex.outputs.search({ extension: "md", sessionIds: ["session-a", "session-b"] });
 ```
 
-Each hit is `{ runId, outputId, filename?, sizeBytes?, contentType? }`; read the bytes with `session.outputs().read(...)` / `.download(...)`.
+Each hit is `{ sessionId, outputId, filename?, sizeBytes?, contentType? }`; read the bytes with `session.outputs().read(...)` / `.download(...)`.
 
 ## CLI
 
@@ -157,10 +157,10 @@ npx aex outputs read <session-id> <path>              # read one file as capped 
 npx aex outputs download <session-id> <path> --out f  # download one file's raw bytes
 npx aex outputs link <session-id> <path>              # mint a temporary download URL (JSON)
 npx aex outputs find <session-id> --name S --ext E --type T
-npx aex outputs search --query S --ext E --run-id ID  # cross-run metadata search
+npx aex outputs search --query S --ext E --session-id ID  # cross-session metadata search
 ```
 
-`aex outputs search` (no session id) is the cross-run search (`aex.outputs.search`); the whole-namespace zip stays `aex download <session-id>`.
+`aex outputs search` (no session id) is the cross-session search (`aex.outputs.search`); the whole-namespace zip stays `aex download <session-id>`.
 
 ## Temporary output links
 
@@ -190,9 +190,9 @@ const stream = response.body;
 
 `session.download()` works at any session state — it reads whatever the public endpoints currently expose, so the zip reflects the session as of the call:
 
-| Run state | Behaviour |
+| SessionRecord state | Behaviour |
 | --- | --- |
-| `queued` / `claiming` / `provisioning` | `metadata/run.json` reflects the early state; `events/` and `outputs/` are typically empty. |
+| `queued` / `claiming` / `provisioning` | `metadata/session.json` reflects the early state; `events/` and `outputs/` are typically empty. |
 | `provider_running`, mid-session / `capturing_outputs` / `cleaning_up` | Whatever events + outputs have been captured so far. Call again after the session parks for the complete set. |
 | `idle` / `suspended` (parked between turns) | The complete archive for every turn sent so far; a later turn appends to it. |
 | `succeeded` / `failed` / `timed_out` / `cancelled` | The complete typed event archive + all captured outputs. |
@@ -238,11 +238,11 @@ aex.openSession({
 Mechanism (no platform-magical paths — this is honest):
 
 1. The hosted platform materializes the workspace (your mounted `files`/`skills`) and records the exact destination paths + skill-dir prefixes it wrote.
-2. The agent runs normally. There is no extra model turn and no synthetic sync instruction.
+2. The agent sessions normally. There is no extra model turn and no synthetic sync instruction.
 3. When the agent exits, the runner scans the capture roots and drops any file whose path is a materialized INPUT (exact path or under a materialized skill dir) — inputs are excluded by WHO PUT THEM THERE (the platform), not by timing.
-4. The runner uploads the remaining regular files to durable run artifact storage. Diagnostic log paths are routed to internal diagnostics under `runs/<runId>/internal/logs/`; other paths are routed to `outputs`.
+4. The runner uploads the remaining regular files to durable session artifact storage. Diagnostic log paths are routed to internal diagnostics under `sessions/<sessionId>/internal/logs/`; other paths are routed to `outputs`.
 
-Cost: output capture does not add a model turn. The runner pays a filesystem scan and upload cost near the end of the run.
+Cost: output capture does not add a model turn. The runner pays a filesystem scan and upload cost near the end of the session.
 
 Capture notes:
 
@@ -251,9 +251,9 @@ Capture notes:
 - Files that vanish between scan and upload are skipped.
 - Upload failures are recorded in runner diagnostics. The zip's `manifest.errors[]` only records byte fetches that failed while assembling the download archive.
 
-## Runs without explicit `outputs.allowedDirs`
+## Sessions without explicit `outputs.allowedDirs`
 
-Metadata still gets the full treatment. aex captures every regular file the run created or modified outside mandatory platform excludes. A run that produces no files still returns a whole-session zip with `metadata/run.json`, `events/events.jsonl`, and `manifest.json` (manifest `outputs: []`).
+Metadata still gets the full treatment. aex captures every regular file the session created or modified outside mandatory platform excludes. A session that produces no files still returns a whole-session zip with `metadata/session.json`, `events/events.jsonl`, and `manifest.json` (manifest `outputs: []`).
 
 ## Mid-session download semantics
 
@@ -263,5 +263,5 @@ Mid-session calls are **best-effort and side-effect-free**: they expose whatever
 
 - Filenames are sanitized for cross-platform safety; collisions are disambiguated with a short id suffix before the extension.
 - Downloads stay within the requested local directory.
-- The archive endpoint is workspace-scoped (`outputs:read` scope) and rate-limited (`AEX_RATE_LIMIT_RUN_ARCHIVE_PER_MINUTE`, default 30/min/workspace).
+- The archive endpoint is workspace-scoped (`outputs:read` scope) and rate-limited (`AEX_RATE_LIMIT_SESSION_ARCHIVE_PER_MINUTE`, default 30/min/workspace).
 - `manifest.json` never contains file bytes — only ids, paths, sizes, content types.

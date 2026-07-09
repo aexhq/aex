@@ -28,8 +28,8 @@ describe("managed-only provider surface (published package)", () => {
     const script = `
       const mod = await import("@aexhq/sdk");
       console.log(JSON.stringify({
-        providers: mod.RUN_PROVIDERS,
-        defaultProvider: mod.DEFAULT_RUN_PROVIDER,
+        providers: mod.PROVIDERS,
+        defaultProvider: mod.DEFAULT_PROVIDER,
         hasRuntimeKinds: "RUNTIME_KINDS" in mod,
         hasRegions: "REGIONS" in mod || "Regions" in mod,
         hasSelectRuntime: "selectRuntime" in mod,
@@ -57,7 +57,7 @@ describe("managed-only provider surface (published package)", () => {
       // The one-shot/submit surface folded into sessions: these fields are the
       // legacy submit inputs that no longer exist on the session API. Each must
       // be rejected at the SDK boundary before any HTTP call.
-      const fields = ["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentRunId"];
+      const fields = ["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentSessionId"];
       const results = [];
       for (const field of fields) {
         try {
@@ -68,7 +68,7 @@ describe("managed-only provider surface (published package)", () => {
             [field]: field === "secrets"
               ? { apiKeys: { anthropic: "sk-ant-test" } }
               : field === "limits"
-                ? { maxConcurrentChildRuns: 2 }
+                ? { maxConcurrentChildSessions: 2 }
                 : field === "runtimeSize"
                   ? "shared-2x-8gb"
                   : "unsupported"
@@ -84,7 +84,7 @@ describe("managed-only provider surface (published package)", () => {
     expect(exitCode, stderr).toBe(0);
     const out = JSON.parse(stdout.trim()) as { results: Array<{ field: string; caught: boolean; message: string }>; fetchCalls: number };
     expect(out.fetchCalls).toBe(0);
-    expect(out.results.map((result) => result.field)).toEqual(["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentRunId"]);
+    expect(out.results.map((result) => result.field)).toEqual(["prompt", "secrets", "secretEnv", "runtimeSize", "timeout", "limits", "parentSessionId"]);
     expect(out.results.every((result) => result.caught && result.message.includes("not a supported option"))).toBe(true);
   });
 

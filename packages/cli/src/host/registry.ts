@@ -1,20 +1,20 @@
 /**
  * The single source of truth for the CLI's verb surface: every subcommand, the
- * `run` flags, and the `outputs` sub-verbs. Two consumers read it:
+ * `start` flags, and the `outputs` sub-verbs. Two consumers read it:
  *
  *   1. Per-verb `--help` (`aex <verb> --help`) renders a static usage table
- *      from here BEFORE any auth-requiring handler runs, so discovering a
+ *      from here BEFORE any auth-requiring handler sessions, so discovering a
  *      verb's flags never needs an API key.
  *   2. The conformance CLI↔SDK parity manifest test asserts every SDK public
- *      capability (Aex method / run-option / outputs accessor) maps to a verb
+ *      capability (Aex method / session option / outputs accessor) maps to a verb
  *      or flag REGISTERED here — turning "mirrors the SDK" from a comment into
  *      a CI-enforced invariant.
  *
- * Keep this list in lockstep with the `dispatch()` switch in `run.ts`.
+ * Keep this list in lockstep with the `dispatch()` switch in `main.ts`.
  */
 
 export interface CliVerbSpec {
-  /** The subcommand token, e.g. `run`, `outputs`, `delete-asset`. */
+  /** The subcommand token, e.g. `start`, `outputs`, `delete-asset`. */
   readonly name: string;
   /** One-line description shown in per-verb help. */
   readonly summary: string;
@@ -22,7 +22,7 @@ export interface CliVerbSpec {
   readonly usage: readonly string[];
   /**
    * Long-form flags this verb recognizes (`--model`, `--skill`, …). Drives the
-   * per-verb help flag list AND the parity manifest's run-option coverage.
+   * per-verb help flag list AND the parity manifest's session-option coverage.
    */
   readonly flags?: readonly string[];
   /** Sub-verbs (e.g. `outputs read|download|link|find|search`). */
@@ -33,11 +33,11 @@ export interface CliVerbSpec {
 export const COMMON_HOST_FLAGS: readonly string[] = ["--api-key", "--aex-url", "--json", "--debug"];
 
 /**
- * The `aex run` flag surface. Also the SSoT the parity manifest maps
- * `SessionRunOptions` keys onto — a new run-option the CLI should forward
+ * The `aex start` flag surface. Also the SSoT the parity manifest maps
+ * `SessionStartOptions` keys onto — a new session option the CLI should forward
  * gets a flag here, and the parity test proves the mapping is complete.
  */
-export const RUN_FLAGS: readonly string[] = [
+export const START_FLAGS: readonly string[] = [
   "--provider",
   "--model",
   "--system",
@@ -51,7 +51,7 @@ export const RUN_FLAGS: readonly string[] = [
   "--mcp-auth",
   "--metadata",
   "--runtime-size",
-  "--run-timeout",
+  "--session-timeout",
   "--idempotency-key",
   "--webhook",
   "--follow",
@@ -63,11 +63,11 @@ export const OUTPUTS_SUBVERBS: readonly string[] = ["read", "download", "link", 
 
 export const CLI_VERBS: readonly CliVerbSpec[] = [
   {
-    name: "run",
+    name: "start",
     summary: "One-shot: open a session, send the prompt as the first turn (delegates to the SDK).",
     usage: [
-      "aex run --model M --prompt P [--system S] [--provider name] --<provider>-api-key K",
-      "aex run --config <run.json> --<provider>-api-key K",
+      "aex start --model M --prompt P [--system S] [--provider name] --<provider>-api-key K",
+      "aex start --config <session.json> --<provider>-api-key K",
       "  --skill @file        Attach a workspace skill bundle (repeatable)",
       "  --tool @file.js      Attach a custom tool module (repeatable)",
       "  --agents-md @file    Attach an AGENTS.md brief (repeatable)",
@@ -75,20 +75,20 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
       "  --mcp name=url       MCP server (repeatable); --mcp-auth name=Hdr:Val for headers",
       "  --metadata key=value Submission metadata (repeatable)",
       "  --runtime-size <s>   Managed runtime preset",
-      "  --run-timeout <dur>  Server-side run deadline (validated client-side by the SDK)",
-      "  --webhook <url>      Per-run terminal callback (https)",
+      "  --session-timeout <dur>  Server-side session deadline (validated client-side by the SDK)",
+      "  --webhook <url>      Per-session terminal callback (https)",
       "  --follow             Stream the turn's events until the session parks"
     ],
-    flags: RUN_FLAGS
+    flags: START_FLAGS
   },
   {
     name: "status",
-    summary: "Print a session/run record (GET /api/sessions/:id).",
+    summary: "Print a session/session record (GET /api/sessions/:id).",
     usage: ["aex status <session-id>"]
   },
   {
     name: "deliveries",
-    summary: "List a run's webhook delivery attempts.",
+    summary: "List a session's webhook delivery attempts.",
     usage: ["aex deliveries <session-id>"]
   },
   {
@@ -124,9 +124,9 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
       "aex outputs download <session-id> <path> [--out] Download one file's raw bytes",
       "aex outputs link <session-id> <path>             Mint a temporary download URL",
       "aex outputs find <session-id> [--name S] [--ext E] [--type T]",
-      "aex outputs search [--query S] [--name S] [--ext E] [--run-id ID]   Cross-run"
+      "aex outputs search [--query S] [--name S] [--ext E] [--session-id ID]   Cross-session"
     ],
-    flags: ["--out", "--name", "--ext", "--type", "--content-type", "--query", "--run-id", "--limit", "--max-bytes"],
+    flags: ["--out", "--name", "--ext", "--type", "--content-type", "--query", "--session-id", "--limit", "--max-bytes"],
     subverbs: OUTPUTS_SUBVERBS
   },
   {
@@ -137,7 +137,7 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   },
   {
     name: "cancel",
-    summary: "Cancel a running session.",
+    summary: "Cancel a sessionning session.",
     usage: ["aex cancel <session-id>"]
   },
   {
@@ -151,9 +151,9 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     usage: ["aex delete-asset <assetId|hash>"]
   },
   {
-    name: "runs",
-    summary: "List the workspace's runs (newest first).",
-    usage: ["aex runs [--limit N] [--since ISO]"],
+    name: "sessions",
+    summary: "List the workspace's sessions (newest first).",
+    usage: ["aex sessions [--limit N] [--since ISO]"],
     flags: ["--limit", "--since"]
   },
   {
@@ -218,7 +218,7 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   {
     name: "runtime-sizes",
     summary: "List managed runtime presets (no token needed).",
-    usage: ["aex runtime-sizes list [--json]"]
+    usage: ["aex starttime-sizes list [--json]"]
   }
 ];
 

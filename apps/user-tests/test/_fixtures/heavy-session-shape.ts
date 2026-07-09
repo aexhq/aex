@@ -6,9 +6,9 @@ export interface Probes {
 }
 
 export interface CaseResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly attempts: number;
-  readonly runStatus: string;
+  readonly sessionStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly probes: Probes;
@@ -38,16 +38,16 @@ export interface CaseResult {
   readonly channelProbeMisses: readonly string[];
   readonly retryReasons: readonly string[];
   readonly leakedDeepseekKey: boolean;
-  // Full payload of every runner-sourced stream_error. This captures the
+  // Full payload of every sessionner-sourced stream_error. This captures the
   // exception message and phase when materialize / manifest fetch fails,
   // right before a runner_error terminal.
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
 }
 
 // Required event vocabulary for a successful managed session. Legacy
-// RUN_STARTED/RUN_FINISHED frames are still accepted when present, but the
+// TURN_STARTED/TURN_FINISHED frames are still accepted when present, but the
 // session event log can validly expose CUSTOM aex.session.* terminals without
-// a RUN_STARTED event.
+// a TURN_STARTED event.
 const EXPECTED_SUCCESS_EVENT_TYPES = [
   "TEXT_MESSAGE_CONTENT",
   "TOOL_CALL_START",
@@ -55,12 +55,12 @@ const EXPECTED_SUCCESS_EVENT_TYPES = [
   "CUSTOM"
 ] as const;
 
-const SUCCESS_TERMINAL_KINDS = ["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"] as const;
+const SUCCESS_TERMINAL_KINDS = ["TURN_FINISHED", "aex.session.idle", "aex.session.succeeded"] as const;
 
 export function dumpCase(result: CaseResult): string {
   const lines: string[] = [];
-  lines.push(`runId=${result.runId} runtime=${result.runtime} provider=${result.provider}`);
-  lines.push(`runStatus=${result.runStatus} terminalKind=${result.terminalKind} attempts=${result.attempts}`);
+  lines.push(`sessionId=${result.sessionId} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`sessionStatus=${result.sessionStatus} terminalKind=${result.terminalKind} attempts=${result.attempts}`);
   lines.push(`terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventTypeSet=[${result.eventTypeSet.join(", ")}]`);
   lines.push(
@@ -103,22 +103,22 @@ function fail(result: CaseResult, message: string): never {
 }
 
 export function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly [string, string, string]): void {
-  if (result.runStatus !== "succeeded") {
-    fail(result, `expected runStatus "succeeded" but got "${result.runStatus}"`);
+  if (result.sessionStatus !== "succeeded") {
+    fail(result, `expected sessionStatus "succeeded" but got "${result.sessionStatus}"`);
   }
   if (!SUCCESS_TERMINAL_KINDS.some((kind) => kind === result.terminalKind)) {
     fail(result, `expected success terminal kind but got "${result.terminalKind}"`);
   }
 
-  if (result.terminalKind === "RUN_FINISHED") {
-    if (!result.eventKinds.includes("RUN_STARTED")) {
-      fail(result, `legacy RUN_FINISHED stream did not include RUN_STARTED`);
+  if (result.terminalKind === "TURN_FINISHED") {
+    if (!result.eventKinds.includes("TURN_STARTED")) {
+      fail(result, `legacy TURN_FINISHED stream did not include TURN_STARTED`);
     }
-    if (!result.eventKinds.includes("RUN_FINISHED")) {
-      fail(result, `legacy RUN_FINISHED stream did not include RUN_FINISHED`);
+    if (!result.eventKinds.includes("TURN_FINISHED")) {
+      fail(result, `legacy TURN_FINISHED stream did not include TURN_FINISHED`);
     }
-    if (result.eventKinds.indexOf("RUN_STARTED") >= result.eventKinds.lastIndexOf("RUN_FINISHED")) {
-      fail(result, `legacy RUN_FINISHED stream had RUN_STARTED after RUN_FINISHED`);
+    if (result.eventKinds.indexOf("TURN_STARTED") >= result.eventKinds.lastIndexOf("TURN_FINISHED")) {
+      fail(result, `legacy TURN_FINISHED stream had TURN_STARTED after TURN_FINISHED`);
     }
   } else if (!result.eventKinds.includes("CUSTOM")) {
     fail(result, `managed session terminal did not include a CUSTOM lifecycle event`);

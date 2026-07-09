@@ -1,7 +1,7 @@
 /**
  * Scenario 1: install.test.ts
  *
- * Lock the published package's *shape*. A real user / AI agent who runs
+ * Lock the published package's *shape*. A real user / AI agent who sessions
  * `npm i @aexhq/sdk` should land in a tree that:
  *   - Has a sensible package.json (name, version, type, main, types,
  *     exports, bin).
@@ -203,7 +203,7 @@ describe("install shape", () => {
     const modulePath = pathToFileURL(join(install.aexDir, "dist", "_contracts", "event-stream-client.js")).href;
     const { streamCoordinatorEvents } = (await import(modulePath)) as InstalledStreamModule;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://coordinator.example/runs/r/subscribe?region=lhr",
+      wsUrl: "wss://coordinator.example/sessions/r/subscribe?region=lhr",
       from: 0,
       fetchTicket: async () => "ticket+with?chars",
       webSocketFactory: (url) => (ws = new InstalledFakeWebSocket(url))
@@ -217,9 +217,9 @@ describe("install shape", () => {
 
     await flushTasks();
     expect(ws?.url).toBe(
-      "wss://coordinator.example/runs/r/subscribe?region=lhr&ticket=ticket%2Bwith%3Fchars&from=0"
+      "wss://coordinator.example/sessions/r/subscribe?region=lhr&ticket=ticket%2Bwith%3Fchars&from=0"
     );
-    ws?.message(streamEvent(0, "RUN_FINISHED"));
+    ws?.message(streamEvent(0, "TURN_FINISHED"));
     await consume;
   });
 

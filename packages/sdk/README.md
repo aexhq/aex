@@ -8,7 +8,7 @@ aex is an agent execution platform for launching autonomous agents from a simple
 
 The package ships:
 
-- `Aex` for sessions, one-shot runs, inspect, download, cancel, and delete.
+- `Aex` for sessions, one-shot sessions, inspect, download, cancel, and delete.
 - `sessions` / `openSession()` for durable, resumable agent sessions.
 - Typed run primitives: `Models`, `Providers`, `Sizes`, `Skill`, `Tool` / `Tools`, `AgentsMd`, `File`, `McpServer`, and `Secret`.
 - A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, and whoami operations.
@@ -55,24 +55,24 @@ const resumed = await aex.openSession(session.id);
 await resumed.send("Continue with the follow-up validation.").done();
 ```
 
-Need a one-shot convenience? `run()` opens a session, sends `message` as one
-turn, and returns the collected result. The returned `runId` is the session id,
-so it can be resumed later with `openSession(runId)`.
+Need a one-shot convenience? `start()` opens a session, sends `message` as one
+turn, and returns the collected result. The returned `sessionId` is the session id,
+so it can be resumed later with `openSession(sessionId)`.
 
 ```ts
-const result = await aex.run({
+const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
   message: "Write the report and save outputs."
 });
 
-console.log(result.runId, result.status, result.text);
+console.log(result.sessionId, result.status, result.text);
 ```
 
 For multiple providers, include each BYOK key in `apiKeys`:
 
 ```ts
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   apiKeys: {
     anthropic: process.env.ANTHROPIC_API_KEY!,
@@ -85,7 +85,7 @@ await aex.run({
 The same request can run from the bundled CLI (`npx aex` on a local install):
 
 ```bash
-npx aex run \
+npx aex start \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
@@ -115,24 +115,24 @@ by default, machine JSON under `--json`). Per-verb `--help` is also key-free:
 npx aex models list           # canonical models + their default provider
 npx aex providers list        # providers + the models each serves
 npx aex tools list            # complete builtin tool set
-npx aex runtime-sizes list    # managed runtime presets (cpus / memory / default)
-npx aex run --help            # flags for one verb (no API key required)
+npx aex starttime-sizes list    # managed runtime presets (cpus / memory / default)
+npx aex start --help            # flags for one verb (no API key required)
 ```
 
-Errors are typed and actionable. Every `openSession()` / `run()` config-validation
-failure throws a `RunConfigValidationError` (`err.code === "RUN_CONFIG_INVALID"`)
+Errors are typed and actionable. Every `openSession()` / `start()` config-validation
+failure throws a `SessionConfigValidationError` (`err.code === "SESSION_CONFIG_INVALID"`)
 you can `catch` by code; CLI failures print a JSON envelope carrying the HTTP
-`status`, a one-line `remedy`, and the `runId` where known, and a wrong `--model`,
+`status`, a one-line `remedy`, and the `sessionId` where known, and a wrong `--model`,
 `--provider`, or `--runtime-size` gets a "did you mean?" suggestion.
 
 ## Continue with sessions
 
-Use sessions for conversational flows. `run()` is the one-shot convenience; a
+Use sessions for conversational flows. `start()` is the one-shot convenience; a
 `SessionHandle` is the lower-level surface when you want multiple turns,
 streaming, messages, events, outputs, or downloads.
 
 ```ts
-const session = await aex.openSession(result.runId);
+const session = await aex.openSession(result.sessionId);
 const next = await session.send("Turn this into a checklist.").done();
 console.log(next.text);
 
@@ -142,17 +142,17 @@ const outputs = await aex.sessions.outputs(session.id).list();
 
 ## Feature Areas
 
-- **Agent runtime:** managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
-- **Durable infrastructure:** run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+- **Agent runtime:** managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
+- **Durable infrastructure:** session records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition:** skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
-- **Subagents:** typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
+- **Subagents:** typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation.
 - **Models and providers:** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
 - **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 
 ## Docs
 
 - [Quickstart](docs/quickstart.md)
-- [Run configuration](docs/run-config.md)
+- [SessionRecord configuration](docs/session-config.md)
 - [Composition](docs/concepts/composition.md)
 - [Secrets](docs/secrets.md)
 - [Limits](docs/limits.md)

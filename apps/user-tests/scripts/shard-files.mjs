@@ -1,7 +1,7 @@
 // Duration-balanced CI test sharding for the live user-test suite.
 //
 // Vitest's built-in `--shard=i/N` splits by FILE COUNT, but per-file wall
-// times here span ~1s to ~6.5min (live tests wait on remote runs), so
+// times here span ~1s to ~6.5min (live tests wait on remote sessions), so
 // count-based shards were observed at 1m42s..12m7s. This script instead
 // LPT bin-packs the files vitest would collect using recorded durations
 // (shard-durations.json; unknown files get the median) and prints the file
@@ -27,7 +27,7 @@ const appRoot = resolve(here, "..");
 // MUST mirror the `exclude` list in vitest.config.ts (the default `test:user`
 // sweep). Heavy/fuzz/provider suites are separate explicit gates.
 const EXCLUDED = new Set([
-  // Cap-saturating by design. It runs in a dedicated workflow lane with an
+  // Cap-saturating by design. It sessions in a dedicated workflow lane with an
   // isolated low-cap workspace so it cannot starve unrelated live assertions.
   "test/live/edge-admission-gates.user.test.ts",
   "test/live/live-sdk-heavy-session.test.ts",

@@ -7,7 +7,7 @@ export {
   BuiltinTools,
   DEFAULT_BUILTIN_TOOLS,
   DEFAULT_OUTPUT_MODE,
-  DEFAULT_RUN_PROVIDER,
+  DEFAULT_PROVIDER,
   ENV_VARS_MAX_ENTRIES,
   ENV_VARS_MAX_TOTAL_BYTES,
   ENV_VARS_MAX_VALUE_BYTES,
@@ -15,7 +15,7 @@ export {
   PLATFORM_PACKAGE_ECOSYSTEMS,
   Providers,
   RESPONSE_FORMAT_KINDS,
-  RUN_PROVIDERS,
+  PROVIDERS,
   SECRETS_KEY,
   SECRET_ENV_NAME_PATTERN,
   SECRET_HANDLE_PATTERN,
@@ -30,10 +30,10 @@ export {
   parseApprovalGate,
   parseInlineSecrets,
   parseResponseFormat,
-  parseRunLimits,
-  parseRunProvider,
-  parseRunSubmissionRequest,
-  parseRunWebhook,
+  parseSessionLimits,
+  parseProviderName,
+  parseSessionSubmissionRequest,
+  parseSessionWebhook,
   parseSkills,
   parseSubmission,
   resolveBuiltinToolNames
@@ -44,7 +44,7 @@ export type {
   JsonPrimitive,
   JsonValue,
   OutputMode,
-  ParseRunSubmissionOptions,
+  ParseSessionSubmissionOptions,
   PlatformEnvironment,
   PlatformEnvironmentInput,
   PlatformInlineSecrets,
@@ -55,16 +55,16 @@ export type {
   PlatformPackage,
   PlatformPackageEcosystem,
   PlatformPackageInput,
-  PlatformRunSubmissionInput,
-  PlatformRunSubmissionRequest,
+  PlatformSessionSubmissionInput,
+  PlatformSessionSubmissionRequest,
   PlatformSecretEnvEntry,
   PlatformSubmission,
   ResponseFormat,
   ResponseFormatKind,
-  RunLimits,
-  RunMachine,
-  RunProvider,
-  RunWebhookSpec,
+  SessionLimits,
+  SessionMachine,
+  ProviderName,
+  SessionWebhookSpec,
   StreamableShape
 } from "./submission.js";
 export * from "./runtime-sizes.js";
@@ -73,34 +73,34 @@ export * from "./event-envelope.js";
 export * from "./event-view.js";
 export * from "./connection-ticket.js";
 export * from "./event-stream-client.js";
-export * from "./run-unit.js";
+export * from "./session-unit.js";
 export type {
   AssistantTextEntry,
-  RunTrace,
+  TurnTrace,
   ToolCallResult,
   ToolCallTrace
-} from "./run-trace.js";
+} from "./turn-trace.js";
 export * from "./runtime-manifest.js";
 export * from "./runtime-security-profile.js";
-export * from "./run-record.js";
-export * from "./run-cost.js";
-export * from "./run-custody.js";
-export * from "./run-retention.js";
+export * from "./session-record.js";
+export * from "./session-cost.js";
+export * from "./session-custody.js";
+export * from "./session-retention.js";
 export * from "./side-effect-audit.js";
 export * from "./stable.js";
 export * from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
-export * from "./run-config.js";
+export * from "./session-config.js";
 export * from "./bundle-manifest.js";
 export * from "./runtime-types.js";
 export * from "./webhook-verify.js";
 export * from "./http.js";
-export * from "./run-artifacts.js";
+export * from "./session-artifacts.js";
 export * as operations from "./operations.js";
 export * from "./sse.js";
 // The single canonical event surface: the `is*` guards live on `AexEvent`
 // (`event-envelope.js`) and as METHODS on `AexEventView` (`event-view.js`).
-// The loose `RunEvent` type and its free-function guard mirror (`event-guards.js`)
+// The loose `TurnEvent` type and its free-function guard mirror (`event-guards.js`)
 // are RETIRED — there is exactly one event shape.
 export * from "./error-codes.js";
 export * from "./error-factory.js";

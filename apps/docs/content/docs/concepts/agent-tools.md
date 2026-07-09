@@ -1,10 +1,10 @@
 ---
 title: Agent tools
-description: The default builtin tools available inside managed runs.
+description: The default builtin tools available inside managed sessions.
 icon: TerminalSquare
 ---
 
-Managed runs inject the complete builtin tool set into the agent by default:
+Managed sessions inject the complete builtin tool set into the agent by default:
 
 - `bash`, `code_execution` — run shell commands / model-written snippets
 - `read_file`, `write_file`, `edit_file` — file read/create/patch
@@ -13,7 +13,7 @@ Managed runs inject the complete builtin tool set into the agent by default:
 - `ls`, `stat`, `wc` — list a directory, inspect path metadata, count lines/words/bytes
 - `web_fetch`, `web_search` — fetch a URL / managed web search
 - `todo_write` — maintain a todo list
-- `subagent`, `subagent_result` — delegate to and read back from child runs (see [Subagents](/docs/concepts/subagents/))
+- `subagent`, `subagent_result` — delegate to and read back from child sessions (see [Subagents](/docs/concepts/subagents/))
 - `bash_output`, `bash_kill` — manage background bash jobs
 - `wait`, `git` — bounded idle-yield and first-class git
 
@@ -41,7 +41,7 @@ explicit `{ entry, files }`) or `Tool.fromPath(dir)` (a directory with a
 `.js`/`.mjs`/`.cjs` file present in the bundle that **default-exports a function
 or an object with an `execute` method**. This is validated at authoring time, so
 a non-JS entry (e.g. a `run.sh`) is rejected right where you build the tool, not
-opaquely mid-run when the runtime's module loader would fail to import it.
+opaquely mid-session when the runtime's module loader would fail to import it.
 
 Networking is open by default within the platform's managed egress ceiling and
 a fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a
@@ -56,7 +56,7 @@ See [Networking](/docs/guides/networking/) for the full two-layer model.
 ```ts
 import { Models } from "@aexhq/sdk";
 
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Use only the declared MCP tools.",
   mcpServers,

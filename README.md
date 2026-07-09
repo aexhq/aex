@@ -4,10 +4,10 @@
 
 ## Features
 
-- **Agent runtime.** Managed autonomous runs with shell, filesystem, editing, web fetch/search, background commands, code execution, git, and subagents.
-- **Durable infrastructure.** Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+- **Agent runtime.** Managed autonomous sessions with shell, filesystem, editing, web fetch/search, background commands, code execution, git, and subagents.
+- **Durable infrastructure.** SessionRecord records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 - **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
-- **Subagents.** Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
+- **Subagents.** Typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation.
 - **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
 - **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 
@@ -21,7 +21,7 @@ The package includes the TypeScript SDK and the bundled `aex` CLI used below.
 
 aex is currently in **invite-only beta** — workspaces and API keys are issued
 by the aex team (contact <support@aex.dev> for beta access). Once you have
-access, create a quickstart SDK token with `runs:read`, `runs:write`,
+access, create a quickstart SDK token with `sessions:read`, `sessions:write`,
 `outputs:read`, and `billing:read` in the dashboard at <https://aex.dev>, then
 set both credentials before running the examples: `AEX_API_KEY` authenticates
 to aex, and `ANTHROPIC_API_KEY` is your BYOK provider key for Claude.
@@ -60,17 +60,17 @@ const resumed = await aex.openSession(session.id);
 await resumed.send("Now run the validation command and summarize the result.").done();
 ```
 
-For one-shot convenience, `run()` opens a resumable session, sends one message,
+For one-shot convenience, `start()` opens a resumable session, sends one message,
 and returns the collected turn:
 
 ```ts
-const result = await aex.run({
+const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Summarize this repo.",
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-console.log(result.runId); // session id; pass to openSession(...) to continue
+console.log(result.sessionId); // session id; pass to openSession(...) to continue
 console.log(result.text);
 ```
 
@@ -79,7 +79,7 @@ inside the package, so invoke it with `npx aex …` after a local install (or
 `npm i -g @aexhq/sdk` to put a bare `aex` on your PATH):
 
 ```bash
-npx aex run \
+npx aex start \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \

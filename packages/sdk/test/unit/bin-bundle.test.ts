@@ -17,7 +17,7 @@ const cliBundlePath = resolve(sdkRoot, "..", "cli", "dist", "cli.mjs");
  * The published `@aexhq/sdk` package must expose exactly one binary
  * — `aex` — pointing at a real ESM bundle inside its own dist
  * directory. If `bin` ever goes missing, the hosted runtime mounts no CLI in
- * the run container and the entire agent-first surface decision
+ * the session container and the entire agent-first surface decision
  * collapses; the user-test suite catches this from the outside, but
  * this unit test catches it before publish.
  */

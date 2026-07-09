@@ -123,7 +123,7 @@ describe("aex.billingLedger", () => {
           entryType: "top_up",
           amountUsd: 10,
           currency: "USD",
-          runId: null,
+          sessionId: null,
           description: "admin top-up",
           createdBy: "admin:ops@example.test",
           createdAt: "2026-07-01T00:00:00Z"

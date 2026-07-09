@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { parseRunSubmissionRequest } from "../src/submission.js";
+import { parseSessionSubmissionRequest } from "../src/submission.js";
 
 const WS_ID = "11111111-1111-4111-8111-111111111111";
 const HASH_HEX = "a".repeat(64);
@@ -30,60 +30,60 @@ function baseRequest(overrides: { agentsMd?: unknown[]; files?: unknown[] } = {}
   };
 }
 
-describe("parseRunSubmissionRequest — agentsMd[] (asset refs)", () => {
+describe("parseSessionSubmissionRequest — agentsMd[] (asset refs)", () => {
   it("accepts a kind:'asset' ref", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest({ agentsMd: [VALID_ASSET] }));
+    const parsed = parseSessionSubmissionRequest(baseRequest({ agentsMd: [VALID_ASSET] }));
     expect(parsed.submission.agentsMd).toEqual([VALID_ASSET]);
   });
 
   it("rejects non-asset agentsMd refs", () => {
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ agentsMd: [{ kind: "not_asset", id: "amd_x" }] }))
+      parseSessionSubmissionRequest(baseRequest({ agentsMd: [{ kind: "not_asset", id: "amd_x" }] }))
     ).toThrow(/kind must be 'asset'/);
   });
 
   it("rejects duplicate asset ids", () => {
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ agentsMd: [VALID_ASSET, VALID_ASSET] }))
+      parseSessionSubmissionRequest(baseRequest({ agentsMd: [VALID_ASSET, VALID_ASSET] }))
     ).toThrow(/duplicate assetId/);
   });
 });
 
-describe("parseRunSubmissionRequest — files[] (asset refs)", () => {
+describe("parseSessionSubmissionRequest — files[] (asset refs)", () => {
   it("accepts a kind:'asset' ref without mountPath", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest({ files: [VALID_ASSET] }));
+    const parsed = parseSessionSubmissionRequest(baseRequest({ files: [VALID_ASSET] }));
     expect(parsed.submission.files).toEqual([VALID_ASSET]);
   });
 
   it("accepts a kind:'asset' ref with absolute mountPath", () => {
     const withMount = { ...VALID_ASSET, mountPath: "/aex/files/x/data.csv" };
-    const parsed = parseRunSubmissionRequest(baseRequest({ files: [withMount] }));
+    const parsed = parseSessionSubmissionRequest(baseRequest({ files: [withMount] }));
     expect(parsed.submission.files).toEqual([withMount]);
   });
 
   it("rejects relative mountPath", () => {
     const bad = { ...VALID_ASSET, mountPath: "relative/path" };
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ files: [bad] }))
+      parseSessionSubmissionRequest(baseRequest({ files: [bad] }))
     ).toThrow(/mountPath must be an absolute path starting with '\/'/);
   });
 
   it("rejects mountPath with '..' traversal", () => {
     const bad = { ...VALID_ASSET, mountPath: "/workspace/../etc" };
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ files: [bad] }))
+      parseSessionSubmissionRequest(baseRequest({ files: [bad] }))
     ).toThrow(/mountPath must not contain '\.\.' traversal/);
   });
 
   it("rejects any kind other than 'asset'", () => {
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ files: [{ kind: "not_asset", id: "f_x" }] }))
+      parseSessionSubmissionRequest(baseRequest({ files: [{ kind: "not_asset", id: "f_x" }] }))
     ).toThrow(/kind must be 'asset'/);
   });
 
   it("rejects duplicate asset ids", () => {
     expect(() =>
-      parseRunSubmissionRequest(baseRequest({ files: [VALID_ASSET, VALID_ASSET] }))
+      parseSessionSubmissionRequest(baseRequest({ files: [VALID_ASSET, VALID_ASSET] }))
     ).toThrow(/duplicate assetId/);
   });
 });

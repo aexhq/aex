@@ -1,7 +1,7 @@
 /**
  * Streaming multipart upload — part-boundary math, dedup short-circuit, per-part
  * retry/refresh, and abort-on-failure. Driven by mock `http` + mock `fetch` so it
- * runs fully offline; exercises the real two-pass hash → presign → parts →
+ * sessions fully offline; exercises the real two-pass hash → presign → parts →
  * finalize flow in `uploadAssetMultipart`.
  */
 import { describe, expect, it } from "vitest";

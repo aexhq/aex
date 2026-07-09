@@ -1,6 +1,6 @@
 ---
 title: Composition
-description: The primitives used to assemble each run.
+description: The primitives used to assemble each session.
 icon: Blocks
 ---
 
@@ -20,7 +20,7 @@ runtime before the first agent turn.
 ```ts
 import { AgentsMd, File, McpServer, Models, Secret, Skill } from "@aexhq/sdk";
 
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Use the attached docs and tools to produce a report.",
   agentsMd: [await AgentsMd.fromContent("Follow the repo conventions.", { name: "repo-rules" })],
@@ -36,5 +36,5 @@ await aex.run({
 ```
 
 Secrets stay out of reusable configs. Provider keys go in the top-level `apiKeys`
-map; reusable or per-run values for your own code go in `environment.secrets`.
+map; reusable or per-session values for your own code go in `environment.secrets`.
 Your code then makes normal HTTP calls with the standard client for that service.

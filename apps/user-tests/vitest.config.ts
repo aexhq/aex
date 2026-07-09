@@ -35,7 +35,7 @@ export default defineConfig({
     // Each scenario spawns its own child processes (bun install, tsc,
     // bun) with cwd in an install tempdir and drives a live run.
     // Unbounded parallelism multiplies disk usage and piles concurrent
-    // live-run spend + managed runtime pressure, so default local runs cap at
+    // live-run spend + managed runtime pressure, so default local sessions cap at
     // 2 files at once. CI can raise AEX_USER_TEST_MAX_WORKERS after selecting
     // one artifact tarball/version for all parallel file slots.
     fileParallelism: true,
@@ -46,7 +46,7 @@ export default defineConfig({
     // UNIQUELY-named runner script (e.g. `outputs-<cell>.mjs`,
     // `user-envvars-managed.mjs`, `comprehensive-managed-anthropic.mjs`) with a
     // unique idempotencyKey — so concurrent tests in one file never collide on
-    // disk or run identity. `maxConcurrency: 1` serializes live cells inside a
+    // disk or session identity. `maxConcurrency: 1` serializes live cells inside a
     // file; combined with maxWorkers, that is the deliberate bound on live-run
     // spend, provider rate limits, and managed runtime pressure. Raise it to go
     // faster at higher spend/limit risk. (The heavy suite stays fully serial —

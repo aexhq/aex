@@ -10,7 +10,7 @@ const baseEnv = {
   AEX_API_URL: "https://dev-api.aex.dev",
   AEX_API_KEY: "aex_secret_token",
   DEEPSEEK_API_KEY: "deepseek_secret",
-  LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: "50",
+  LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "50",
   LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS: "1"
 };
 
@@ -19,7 +19,7 @@ interface ChildResult {
   readonly message?: string;
   readonly result?: {
     readonly status: number;
-    readonly maxConcurrentRuns: number;
+    readonly maxConcurrentSessions: number;
     readonly attempt: number;
   };
   readonly calls: number;
@@ -43,11 +43,11 @@ function runScenario(scenario: string): ChildResult {
       if (scenario === "retry503") {
         return calls === 1
           ? response(503, { error: "db_resuming" }, { "apigw-requestid": "req-1", "retry-after": "3" })
-          : response(200, { limits: { maxConcurrentRuns: 50 } }, { "x-amzn-requestid": "req-2" });
+          : response(200, { limits: { maxConcurrentSessions: 50 } }, { "x-amzn-requestid": "req-2" });
       }
       if (scenario === "auth401") return response(401, { error: "unauthorized" });
-      if (scenario === "lowLimit") return response(200, { limits: { maxConcurrentRuns: 49 } });
-      return response(200, { limits: { maxConcurrentRuns: 50 } });
+      if (scenario === "lowLimit") return response(200, { limits: { maxConcurrentSessions: 49 } });
+      return response(200, { limits: { maxConcurrentSessions: 50 } });
     };
     try {
       const env = {
@@ -58,7 +58,7 @@ function runScenario(scenario: string): ChildResult {
         ...(scenario === "allowPrivateUrl" ? { AEX_API_URL: "https://127.0.0.1:8787", LIVE_USER_TEST_ALLOW_PRIVATE_API_URL: "true" } : {}),
         ...(scenario === "nonHttps" ? { AEX_API_URL: "http://dev-api.aex.dev" } : {}),
         ...(scenario === "wrongHost" ? { AEX_EXPECTED_API_HOST: "api.aex.dev" } : {}),
-        ...(scenario === "capCeiling" ? { LIVE_USER_TEST_MAX_MAX_CONCURRENT_RUNS: "20" } : {})
+        ...(scenario === "capCeiling" ? { LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS: "20" } : {})
       };
       const result = await mod.checkLiveUserTestsPreflight({
         env,
@@ -92,7 +92,7 @@ describe("live user-test preflight", () => {
     const result = runScenario("retry503");
 
     expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ status: 200, maxConcurrentRuns: 50, attempt: 2 });
+    expect(result.result).toMatchObject({ status: 200, maxConcurrentSessions: 50, attempt: 2 });
     expect(result.calls).toBe(2);
     expect(result.sleeps).toEqual([3000]);
     expect(result.logs).toContain("transient HTTP 503");
@@ -129,7 +129,7 @@ describe("live user-test preflight", () => {
     const result = runScenario("lowLimit");
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain("maxConcurrentRuns=49");
+    expect(result.message).toContain("maxConcurrentSessions=49");
   });
 
   it("rejects private live endpoints unless explicitly allowed", () => {
@@ -144,7 +144,7 @@ describe("live user-test preflight", () => {
     const result = runScenario("allowPrivateUrl");
 
     expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ status: 200, maxConcurrentRuns: 50 });
+    expect(result.result).toMatchObject({ status: 200, maxConcurrentSessions: 50 });
     expect(result.calls).toBe(1);
   });
 

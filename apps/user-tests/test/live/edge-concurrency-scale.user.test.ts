@@ -3,24 +3,24 @@
  * against the DEV plane, driven with the cheap DeepSeek provider.
  *
  * Acts as a real customer / AI-agent workload firing many operations at once,
- * hunting for lost/duplicated runs, idempotency races, session-busy handling,
+ * hunting for lost/duplicated sessions, idempotency races, session-busy handling,
  * and event-stream fanout defects before a prod launch. Nothing in the existing
  * live suite exercises the SDK under a concurrent FAN of operations, so this
  * file closes that gap.
  *
  * Surface under test (packages/sdk/src/client.ts):
- *   - Aex.run(...)                       many concurrent one-shot runs
+ *   - Aex.start(...)                       many concurrent one-shot sessions
  *   - SessionClient.create(...)          idempotency-key races (dedup / distinct)
  *   - SessionHandle.send(...)            back-to-back turns on ONE session
- *   - SessionEvents.streamEnvelopes()    concurrent fanout consumers on one run
+ *   - SessionEvents.streamEnvelopes()    concurrent fanout consumers on one session
  *
- * Cost (DeepSeek, tiny "Output verbatim" prompts): case A ~10 billable runs,
+ * Cost (DeepSeek, tiny "Output verbatim" prompts): case A ~10 billable session turns,
  * case C ~1 (the rest dedup), case D <=4 turns on one session, case E ~1 run;
  * cases B create sessions only (no LLM turn). Waves are run selectively with
- * `-t`. Total kept well under the ~15-live-runs-per-wave budget.
+ * `-t`. Total kept well under the ~15-live-sessions-per-wave budget.
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
- * AEX_USER_TEST_TARBALL/VERSION (wired by run-live-deepseek.sh).
+ * AEX_USER_TEST_TARBALL/VERSION (wired by session-live-deepseek.sh).
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -130,10 +130,10 @@ async function runChild(
   }
 }
 
-interface RunOutcome {
+interface TurnOutcome {
   i: number;
   marker: string;
-  runId?: string;
+  sessionId?: string;
   ok?: boolean;
   status?: string;
   text?: string;
@@ -178,7 +178,7 @@ afterAll(() => {
 
 describe("edge: larger-scale concurrency (DeepSeek)", () => {
   it(
-    "A many concurrent one-shot runs all reach terminal with distinct runIds, correct routing, and no cross-run event leakage",
+    "A many concurrent one-shot sessions all reach terminal with distinct sessionIds, correct routing, and no cross-session event leakage",
     async () => {
       const body = `
         const N = 10;
@@ -188,7 +188,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           const marker = "MK" + i + "Q" + STAMP;
           markers.push(marker);
           tasks.push(
-            client.run({
+            client.start({
               provider: "deepseek",
               model: MODEL,
               message: "Output verbatim: " + marker,
@@ -197,7 +197,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
             }, { timeoutMs: 8 * 60_000 })
               .then((r) => ({
                 i, marker,
-                runId: r.runId,
+                sessionId: r.sessionId,
                 ok: r.ok === true,
                 status: String(r.status),
                 text: dense(r.text),
@@ -214,11 +214,11 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 6000)}`;
       const N = r.N as number;
       const markers = r.markers as string[];
-      const results = r.results as RunOutcome[];
+      const results = r.results as TurnOutcome[];
 
       const errored = results.filter((x) => x.error);
-      const withId = results.filter((x) => typeof x.runId === "string" && x.runId.length > 0);
-      const distinct = new Set(withId.map((x) => x.runId));
+      const withId = results.filter((x) => typeof x.sessionId === "string" && x.sessionId.length > 0);
+      const distinct = new Set(withId.map((x) => x.sessionId));
       const notOk = withId.filter((x) => x.ok !== true);
       const markerMiss = withId.filter((x) => !(x.text ?? "").includes(x.marker));
       const foreign = withId.filter((x) => {
@@ -228,20 +228,20 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
       const costPresent = withId.filter((x) => typeof x.costUsd === "number").length;
 
       expect(results.length, `expected ${N} outcomes${ctx}`).toBe(N);
-      // Every concurrent run must land (no dropped/errored run).
-      expect(errored, `some concurrent runs errored${ctx}`).toEqual([]);
-      // Distinct runIds — no two concurrent runs collapsed onto one id.
-      expect(distinct.size, `distinct runIds != ${N} (lost or duplicated run ids)${ctx}`).toBe(N);
-      // Every run parked cleanly.
-      expect(notOk, `some concurrent runs did not reach a clean terminal${ctx}`).toEqual([]);
-      // Each run got ITS OWN marker back (correct routing).
-      expect(markerMiss, `some runs did not echo their own marker (routing/delivery loss)${ctx}`).toEqual([]);
-      // No run's event log carried ANOTHER run's marker (no cross-run leakage).
-      expect(foreign, `cross-run marker leakage detected${ctx}`).toEqual([]);
+      // Every concurrent session must land (no dropped/errored run).
+      expect(errored, `some concurrent sessions errored${ctx}`).toEqual([]);
+      // Distinct sessionIds — no two concurrent sessions collapsed onto one id.
+      expect(distinct.size, `distinct sessionIds != ${N} (lost or duplicated session ids)${ctx}`).toBe(N);
+      // Every session parked cleanly.
+      expect(notOk, `some concurrent sessions did not reach a clean terminal${ctx}`).toEqual([]);
+      // Each session got ITS OWN marker back (correct routing).
+      expect(markerMiss, `some sessions did not echo their own marker (routing/delivery loss)${ctx}`).toEqual([]);
+      // No session's event log carried ANOTHER session's marker (no cross-session leakage).
+      expect(foreign, `cross-session marker leakage detected${ctx}`).toEqual([]);
 
       // eslint-disable-next-line no-console
       console.log(
-        `[edge-concurrency] A: ${withId.length}/${N} runs terminal, ${distinct.size} distinct ids, ` +
+        `[edge-concurrency] A: ${withId.length}/${N} sessions terminal, ${distinct.size} distinct ids, ` +
           `costUsd present on ${costPresent}/${N}.`
       );
     },
@@ -316,23 +316,23 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
   );
 
   it(
-    "C idempotency run-race: many concurrent client.run with the SAME idempotencyKey resolve to exactly ONE billable runId",
+    "C idempotency session-race: many concurrent client.start with the SAME idempotencyKey resolve to exactly ONE billable sessionId",
     async () => {
       const body = `
         const N = 8;
-        const key = "crun-" + STAMP;
+        const key = "csession-" + STAMP;
         const marker = "RUNIDEM" + STAMP;
         const tasks = [];
         for (let i = 0; i < N; i++) {
           tasks.push(
-            client.run({
+            client.start({
               provider: "deepseek",
               model: MODEL,
               message: "Output verbatim: " + marker,
               idempotencyKey: key,
               apiKeys: { deepseek: DEEPSEEK_KEY }
             }, { timeoutMs: 8 * 60_000 })
-              .then((r) => ({ i, marker, runId: r.runId, ok: r.ok === true, status: String(r.status), text: dense(r.text) }))
+              .then((r) => ({ i, marker, sessionId: r.sessionId, ok: r.ok === true, status: String(r.status), text: dense(r.text) }))
               .catch((e) => ({ i, marker, error: errShape(e) }))
           );
         }
@@ -343,19 +343,19 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
       const r = await runChild(install, "edge-conc-C.mjs", body, 12 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 6000)}`;
       const N = r.N as number;
-      const results = r.results as RunOutcome[];
+      const results = r.results as TurnOutcome[];
 
       const errored = results.filter((x) => x.error);
-      const withId = results.filter((x) => typeof x.runId === "string" && x.runId.length > 0);
-      const distinct = new Set(withId.map((x) => x.runId));
+      const withId = results.filter((x) => typeof x.sessionId === "string" && x.sessionId.length > 0);
+      const distinct = new Set(withId.map((x) => x.sessionId));
       const notOk = withId.filter((x) => x.ok !== true);
 
       expect(results.length, `expected ${N} outcomes${ctx}`).toBe(N);
-      expect(errored, `same-key concurrent runs errored (expected clean dedup)${ctx}`).toEqual([]);
-      // The headline invariant: one idempotencyKey => one billable run, even
-      // when N run() calls race the create AND the message send.
-      expect(distinct.size, `same idempotencyKey produced ${distinct.size} distinct runIds (expected exactly 1 — DUPLICATE BILLABLE RUN)${ctx}`).toBe(1);
-      expect(notOk, `some deduped runs did not observe a clean terminal${ctx}`).toEqual([]);
+      expect(errored, `same-key concurrent sessions errored (expected clean dedup)${ctx}`).toEqual([]);
+      // The headline invariant: one idempotencyKey => one billable session turn, even
+      // when N start() calls race the create AND the message send.
+      expect(distinct.size, `same idempotencyKey produced ${distinct.size} distinct sessionIds (expected exactly 1 — DUPLICATE BILLABLE RUN)${ctx}`).toBe(1);
+      expect(notOk, `some deduped sessions did not observe a clean terminal${ctx}`).toEqual([]);
     },
     13 * 60_000
   );
@@ -465,18 +465,18 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
   );
 
   it(
-    "E fanout: concurrent streamEnvelopes consumers on one run see a consistent event set, no cross-run leakage, no duplicate seq",
+    "E fanout: concurrent streamEnvelopes consumers on one session see a consistent event set, no cross-session leakage, no duplicate seq",
     async () => {
       const body = `
         const marker = "FAN" + STAMP;
-        const runRes = await client.run({
+        const runRes = await client.start({
           provider: "deepseek",
           model: MODEL,
           message: "Output verbatim: " + marker,
           idempotencyKey: "cfan-" + STAMP,
           apiKeys: { deepseek: DEEPSEEK_KEY }
         }, { timeoutMs: 8 * 60_000 });
-        const runId = runRes.runId;
+        const sessionId = runRes.sessionId;
         const runOk = runRes.ok === true;
 
         async function collect(label) {
@@ -488,7 +488,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           let err = null;
           const t0 = Date.now();
           try {
-            const s = await client.sessions.open(runId);
+            const s = await client.sessions.open(sessionId);
             for await (const ev of s.events().streamEnvelopes({ from: 0, settleConsistent: true, signal: ac.signal })) {
               if (typeof ev.sequence === "number") seqs.push(ev.sequence);
               if (typeof ev.subject === "string" && ev.subject) subjects.add(ev.subject);
@@ -516,17 +516,17 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
 
         const M = 3;
         const consumers = await Promise.all([collect("c0"), collect("c1"), collect("c2")]);
-        process.stdout.write(JSON.stringify({ runId, runOk, M, consumers }));
+        process.stdout.write(JSON.stringify({ sessionId, runOk, M, consumers }));
         process.exit(0);
       `;
       const r = await runChild(install, "edge-conc-E.mjs", body, 12 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 8000)}`;
-      const runId = r.runId as string;
+      const sessionId = r.sessionId as string;
       const consumers = r.consumers as ConsumerSummary[];
 
       const errored = consumers.filter((c) => c.err);
       const empty = consumers.filter((c) => c.count === 0);
-      const leaked = consumers.filter((c) => c.subjects.some((s) => s !== runId));
+      const leaked = consumers.filter((c) => c.subjects.some((s) => s !== sessionId));
       const duped = consumers.filter((c) => c.dupSeq !== 0);
       const seqSignatures = new Set(consumers.map((c) => JSON.stringify(c.seqs)));
 
@@ -535,8 +535,8 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
       // Every concurrent consumer connected and replayed events.
       expect(errored, `some stream consumers errored${ctx}`).toEqual([]);
       expect(empty, `some stream consumers saw zero events${ctx}`).toEqual([]);
-      // No consumer saw an event belonging to a DIFFERENT run (subject != runId).
-      expect(leaked, `cross-run event leakage: a consumer saw a foreign subject${ctx}`).toEqual([]);
+      // No consumer saw an event belonging to a DIFFERENT run (subject != sessionId).
+      expect(leaked, `cross-session event leakage: a consumer saw a foreign subject${ctx}`).toEqual([]);
       // Within one consumer, the coordinator's global seq must be unique.
       expect(duped, `duplicate sequence numbers within a consumer's stream${ctx}`).toEqual([]);
       // All three consumers replaying from seq 0 must agree on the exact event set.
@@ -549,20 +549,20 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
     "F concurrency-limit knobs fail CLOSED at the SDK boundary (no silent concurrency override)",
     async () => {
       // The public SDK exposes NO top-level concurrency knob: `overrides` only
-      // carries { idleTtl, timeout, maxSpendUsd }. The removed run-limit /
+      // carries { idleTtl, timeout, maxSpendUsd }. The removed session-limit /
       // subagent-fanout knobs must be REJECTED synchronously (before any
       // network) — never silently accepted and dropped. Pure validation: no
       // live run, no cost.
       const body = `
         function probeReject(label, opts) {
-          return client.run(opts, { timeoutMs: 30_000 })
-            .then((r) => ({ label, threw: false, runId: r.runId }))
+          return client.start(opts, { timeoutMs: 30_000 })
+            .then((r) => ({ label, threw: false, sessionId: r.sessionId }))
             .catch((e) => ({ label, threw: true, error: errShape(e) }));
         }
         const base = { provider: "deepseek", model: MODEL, message: "Output verbatim: X", apiKeys: { deepseek: DEEPSEEK_KEY } };
         const results = await Promise.all([
-          probeReject("top_level_limits", { ...base, limits: { concurrency: 5000, maxConcurrentChildRuns: 9999 } }),
-          probeReject("parent_run_id", { ...base, parentRunId: "run_fake_parent" }),
+          probeReject("top_level_limits", { ...base, limits: { concurrency: 5000, maxConcurrentChildSessions: 9999 } }),
+          probeReject("parent_session_id", { ...base, parentSessionId: "ses_fake_parent" }),
           probeReject("top_level_runtimeSize", { ...base, runtimeSize: "standard-4" })
         ]);
         process.stdout.write(JSON.stringify({ results }));
@@ -573,21 +573,21 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
       const results = r.results as Array<{
         label: string;
         threw: boolean;
-        runId?: string;
+        sessionId?: string;
         error?: { name: string; message: string; status: number | null; code: string | null };
       }>;
 
       const accepted = results.filter((x) => !x.threw);
       const notConfigError = results.filter(
-        (x) => x.threw && x.error?.name !== "RunConfigValidationError"
+        (x) => x.threw && x.error?.name !== "SessionConfigValidationError"
       );
 
       expect(results.length, `expected 3 knob-rejection probes${ctx}`).toBe(3);
       // None of the removed knobs may be silently accepted (which would submit a
-      // billable run with the knob dropped).
-      expect(accepted, `a removed concurrency/limit knob was silently accepted (submitted a run)${ctx}`).toEqual([]);
+      // billable session turn with the knob dropped).
+      expect(accepted, `a removed concurrency/limit knob was silently accepted (submitted a session)${ctx}`).toEqual([]);
       // Each rejection is the typed config error, before any network I/O.
-      expect(notConfigError, `a knob rejection was not a clean RunConfigValidationError${ctx}`).toEqual([]);
+      expect(notConfigError, `a knob rejection was not a clean SessionConfigValidationError${ctx}`).toEqual([]);
     },
     3 * 60_000
   );

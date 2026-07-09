@@ -8,7 +8,7 @@
 //      used by release/package integrity checks.
 //
 // The published SDK copies ONLY dist/cli.mjs as the user-facing `aex`
-// bin. Managed run internals use the separate runtime bridge artifact, so
+// bin. Managed session internals use the separate runtime bridge artifact, so
 // this host-install bundle stays independent of platform injection.
 import { build } from "esbuild";
 import { readFile, writeFile, chmod } from "node:fs/promises";
@@ -26,7 +26,7 @@ const digestPath = resolve(distDir, "cli.mjs.sha256");
 const result = await build({
   entryPoints: [inputPath],
   bundle: true,
-  // Bun runs the ESM output and built-ins, so esbuild's node platform remains
+  // Bun sessions the ESM output and built-ins, so esbuild's node platform remains
   // the most compatible resolver for package dependencies.
   platform: "node",
   format: "esm",

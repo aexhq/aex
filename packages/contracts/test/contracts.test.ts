@@ -1,42 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
-  getRunStatusKind,
-  parseRunSubmissionRequest,
-  isTerminalRunStatus,
+  getSessionControlStatusKind,
+  parseSessionSubmissionRequest,
+  isTerminalSessionControlStatus,
   packageInstallString,
-  RUN_TERMINAL_OUTCOMES,
-  TERMINAL_RUN_STATUSES
+  SESSION_TURN_TERMINAL_OUTCOMES,
+  TERMINAL_SESSION_CONTROL_STATUSES
 } from "../src/index.js";
 
 describe("platform status contracts", () => {
-  it("classifies terminal and active run statuses", () => {
-    expect(isTerminalRunStatus("succeeded")).toBe(true);
-    expect(isTerminalRunStatus("cleanup_failed")).toBe(true);
-    expect(isTerminalRunStatus("provider_running")).toBe(false);
-    expect(getRunStatusKind("queued")).toBe("active");
-    expect(getRunStatusKind("cleanup_failed")).toBe("terminal");
+  it("classifies terminal and active session statuses", () => {
+    expect(isTerminalSessionControlStatus("succeeded")).toBe(true);
+    expect(isTerminalSessionControlStatus("cleanup_failed")).toBe(true);
+    expect(isTerminalSessionControlStatus("provider_running")).toBe(false);
+    expect(getSessionControlStatusKind("queued")).toBe("active");
+    expect(getSessionControlStatusKind("cleanup_failed")).toBe("terminal");
   });
 
-  it("RUN_TERMINAL_OUTCOMES is exactly the four funnel write-outcomes", () => {
-    expect(new Set(RUN_TERMINAL_OUTCOMES)).toEqual(
+  it("SESSION_TURN_TERMINAL_OUTCOMES is exactly the four funnel write-outcomes", () => {
+    expect(new Set(SESSION_TURN_TERMINAL_OUTCOMES)).toEqual(
       new Set(["succeeded", "failed", "timed_out", "cancelled"])
     );
   });
 
-  it("RUN_TERMINAL_OUTCOMES is a STRICT subset of the read-terminal set", () => {
-    const readTerminal = new Set<string>(TERMINAL_RUN_STATUSES);
-    for (const o of RUN_TERMINAL_OUTCOMES) {
+  it("SESSION_TURN_TERMINAL_OUTCOMES is a STRICT subset of the read-terminal set", () => {
+    const readTerminal = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
+    for (const o of SESSION_TURN_TERMINAL_OUTCOMES) {
       expect(readTerminal.has(o)).toBe(true);
     }
     // The read-terminal set additionally carries the post-terminal
     // housekeeping states the funnel never writes as an outcome.
-    expect(TERMINAL_RUN_STATUSES.length).toBeGreaterThan(RUN_TERMINAL_OUTCOMES.length);
+    expect(TERMINAL_SESSION_CONTROL_STATUSES.length).toBeGreaterThan(SESSION_TURN_TERMINAL_OUTCOMES.length);
     expect(readTerminal.has("cleanup_failed")).toBe(true);
-    expect(new Set<string>(RUN_TERMINAL_OUTCOMES).has("cleanup_failed")).toBe(false);
+    expect(new Set<string>(SESSION_TURN_TERMINAL_OUTCOMES).has("cleanup_failed")).toBe(false);
   });
 });
 
-describe("platform run submission schema", () => {
+describe("platform session submission schema", () => {
   const baseSecrets = { apiKeys: { anthropic: "sk-ant-test" } } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
@@ -45,8 +45,8 @@ describe("platform run submission schema", () => {
     mcpServers: []
   } as const;
 
-  it("parses the minimal run submission contract", () => {
-    const parsed = parseRunSubmissionRequest({
+  it("parses the minimal session submission contract", () => {
+    const parsed = parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: { ...baseSubmission, metadata: { topic: "platform" } },
@@ -60,7 +60,7 @@ describe("platform run submission schema", () => {
   });
 
   it("accepts DeepSeek as an explicit provider with per-provider apiKeys", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       provider: "deepseek",
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
@@ -80,8 +80,8 @@ describe("platform run submission schema", () => {
       secrets: baseSecrets
     };
 
-    expect(parseRunSubmissionRequest(base).submission.prompt).toEqual(["say hello"]);
-    expect(() => parseRunSubmissionRequest({ ...base, cleanup: { session: "delete" } })).toThrow(/cleanup/);
+    expect(parseSessionSubmissionRequest(base).submission.prompt).toEqual(["say hello"]);
+    expect(() => parseSessionSubmissionRequest({ ...base, cleanup: { session: "delete" } })).toThrow(/cleanup/);
   });
 
   it("parses the platform.systemPrompt opt-out and rejects bad shapes", () => {
@@ -92,11 +92,11 @@ describe("platform run submission schema", () => {
     };
 
     // Omitted → field absent (default injection stays on downstream).
-    expect(parseRunSubmissionRequest({ ...base, submission: baseSubmission }).submission.platform).toBeUndefined();
+    expect(parseSessionSubmissionRequest({ ...base, submission: baseSubmission }).submission.platform).toBeUndefined();
 
     // Explicit "off" survives parsing.
     expect(
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...baseSubmission, platform: { systemPrompt: "off" } }
       }).submission.platform
@@ -104,7 +104,7 @@ describe("platform run submission schema", () => {
 
     // Invalid enum value rejected.
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...baseSubmission, platform: { systemPrompt: "yes" } }
       })
@@ -112,7 +112,7 @@ describe("platform run submission schema", () => {
 
     // Unknown nested key rejected.
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...baseSubmission, platform: { outputDir: "/x" } }
       })
@@ -120,7 +120,7 @@ describe("platform run submission schema", () => {
   });
 
   it("rejects invalid submission shapes", () => {
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       submission: baseSubmission,
       secrets: baseSecrets
@@ -128,7 +128,7 @@ describe("platform run submission schema", () => {
   });
 
   it("requires a secrets block", () => {
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission
@@ -136,7 +136,7 @@ describe("platform run submission schema", () => {
   });
 
   it("requires a non-empty secrets.apiKeys value", () => {
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
@@ -145,7 +145,7 @@ describe("platform run submission schema", () => {
   });
 
   it("accepts mcpServers inside the secrets block", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: {
@@ -161,7 +161,7 @@ describe("platform run submission schema", () => {
   });
 
   it("accepts user tools as value-free asset refs", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       workspaceId: "ws_123",
       idempotencyKey: "idem-tool",
       submission: {
@@ -206,7 +206,7 @@ describe("platform run submission schema", () => {
 
   it("rejects user tool names that collide with MCP namespace routing", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         workspaceId: "ws_123",
         idempotencyKey: "idem-tool",
         submission: {
@@ -235,7 +235,7 @@ describe("platform run submission schema", () => {
     const expected =
       "stdio MCP servers are not supported by Aex. Aex supports remote MCP servers over HTTP/SSE only.";
 
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: {
@@ -245,7 +245,7 @@ describe("platform run submission schema", () => {
       secrets: baseSecrets
     })).toThrow(expected);
 
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: {
@@ -257,7 +257,7 @@ describe("platform run submission schema", () => {
   });
 
   it("rejects unknown keys inside secrets", () => {
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       submission: baseSubmission,
@@ -268,7 +268,7 @@ describe("platform run submission schema", () => {
   });
 
   it("rejects secret-bearing fields outside the secrets allowlist", () => {
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       workspaceId: "workspace-1",
       idempotencyKey: "idem-1",
       providerApiKey: "sk-ant-test",
@@ -279,7 +279,7 @@ describe("platform run submission schema", () => {
 
   it("rejects a whitespace-only prompt that would trim to empty downstream", () => {
     const submit = (prompt: unknown) =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         workspaceId: "workspace-1",
         idempotencyKey: "idem-1",
         submission: { ...baseSubmission, prompt },
@@ -308,7 +308,7 @@ describe("environment.packages ecosystem parsing", () => {
   } as const;
 
   const parsePackages = (packages: unknown) =>
-    parseRunSubmissionRequest({
+    parseSessionSubmissionRequest({
       ...base,
       submission: { ...baseSubmission, environment: { packages } }
     }).submission.environment?.packages;

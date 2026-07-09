@@ -1,8 +1,8 @@
 // Self-test fixture for the aex ESLint rules. Lives next to the plugin
-// so it ships with the rules. NOT a Vitest test — runs as a fixture-style
+// so it ships with the rules. NOT a Vitest test — sessions as a fixture-style
 // lint smoke (`bun run lint:tests` will fail with EXACTLY the five
 // expected aex/* violations on this file). The verification script
-// at the bottom of this comment block runs it programmatically; manual
+// at the bottom of this comment block sessions it programmatically; manual
 // re-introduction here serves the same purpose for ad-hoc verification.
 //
 // To use: `bun run lint:tests:verify` — see package.json.

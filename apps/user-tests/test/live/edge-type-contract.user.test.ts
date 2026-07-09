@@ -4,17 +4,17 @@
  *
  * REGRESSION PROBES — fixed by the platform after the 2026-07-04 dev sweep:
  *
- *   1. Token usage is unavailable on EVERY public surface. `RunResult.usage`
- *      / `Run.usage` / `Session.usage` document aggregate token counts "when
+ *   1. Token usage is unavailable on EVERY public surface. `SessionResult.usage`
+ *      / `SessionRecord.usage` / `Session.usage` document aggregate token counts "when
  *      the deployment exposes it", but the managed plane emits no `aex.usage`
  *      events, never populates record `usage`, and the served
- *      `costTelemetry` (GET /api/runs/:id) carries no `providerUsage` block —
+ *      `costTelemetry` (GET /api/sessions/:id) carries no `providerUsage` block —
  *      a customer cannot see input/output token counts for any run.
  *   2. Prompt size is unbounded at session create: a multi-MiB prompt is
  *      admitted (201) with no server-side cap (same family as the unbounded
  *      agentsMd finding — the only ceiling is the API gateway body limit).
  *
- * Billing: probe 1 runs ONE tiny billable turn (~$0.0004); probe 2 creates a
+ * Billing: probe 1 sessions ONE tiny billable turn (~$0.0004); probe 2 creates a
  * born-empty idle session and deletes it (zero billable).
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
@@ -155,8 +155,8 @@ describe("edge: public type-contract gaps", () => {
     "token usage is exposed on at least one public surface for a settled run",
     async () => {
       const body = `
-        const out = { runId: null, resultUsage: null, sessionUsage: null, providerUsage: null, usageEvents: 0 };
-        const result = await client.run(
+        const out = { sessionId: null, resultUsage: null, sessionUsage: null, providerUsage: null, usageEvents: 0 };
+        const result = await client.start(
           {
             provider: PROVIDER,
             model: MODEL,
@@ -166,18 +166,18 @@ describe("edge: public type-contract gaps", () => {
           },
           { timeoutMs: 240000, settleConsistent: true }
         );
-        out.runId = result.runId;
+        out.sessionId = result.sessionId;
         out.resultUsage = result.usage ?? null;
         out.usageEvents = result.events.filter(
           (e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.usage"
         ).length;
-        const record = await client.sessions.get(result.runId);
+        const record = await client.sessions.get(result.sessionId);
         out.sessionUsage = record.usage ?? null;
-        const unit = await raw("GET", "/api/runs/" + result.runId);
+        const unit = await raw("GET", "/api/sessions/" + result.sessionId);
         out.providerUsage = unit.body && unit.body.costTelemetry && unit.body.costTelemetry.providerUsage
           ? unit.body.costTelemetry.providerUsage
           : null;
-        await raw("DELETE", "/api/sessions/" + result.runId);
+        await raw("DELETE", "/api/sessions/" + result.sessionId);
         console.log(JSON.stringify(out));
       `;
       const result = await runChild(install, "type-contract-usage.mjs", body, 6 * 60_000);
@@ -204,7 +204,7 @@ describe("edge: public type-contract gaps", () => {
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.runId);
+        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);

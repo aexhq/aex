@@ -4,7 +4,7 @@
  * `--json`.
  */
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/run.js";
+import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 
 function makeIo(argv: readonly string[]): {
@@ -44,7 +44,7 @@ function makeIo(argv: readonly string[]): {
 describe("aex models list", () => {
   it("prints a human table with a known model + its default provider", async () => {
     const cap = makeIo(["models", "list"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.out()).toContain("MODEL");
     expect(cap.out()).toContain("claude-sonnet-4-6");
@@ -54,7 +54,7 @@ describe("aex models list", () => {
 
   it("emits a JSON array under --json with the expected shape", async () => {
     const cap = makeIo(["models", "list", "--json"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     const arr = JSON.parse(cap.out().trim()) as Array<{ model: string; defaultProvider: string | null; providers: string[] }>;
     const haiku = arr.find((e) => e.model === "claude-haiku-4-5");
@@ -65,7 +65,7 @@ describe("aex models list", () => {
 
   it("works without the explicit `list` subcommand", async () => {
     const cap = makeIo(["models"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.out()).toContain("claude-haiku-4-5");
   });
@@ -74,7 +74,7 @@ describe("aex models list", () => {
 describe("aex providers list", () => {
   it("lists providers with their display name + models", async () => {
     const cap = makeIo(["providers", "list", "--json"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     const arr = JSON.parse(cap.out().trim()) as Array<{ provider: string; displayName: string; models: string[] }>;
     const anthropic = arr.find((e) => e.provider === "anthropic");
@@ -86,7 +86,7 @@ describe("aex providers list", () => {
 describe("aex tools list", () => {
   it("lists the complete closed builtin set in order and marks every tool default", async () => {
     const cap = makeIo(["tools", "list", "--json"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     const arr = JSON.parse(cap.out().trim()) as Array<{ tool: string; default: boolean }>;
     expect(arr).toEqual([
@@ -118,7 +118,7 @@ describe("aex tools list", () => {
 
   it("renders every builtin as default in the human table", async () => {
     const cap = makeIo(["tools", "list"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.out()).toContain("bash");
     expect(cap.out()).toContain("git");
     expect(cap.out()).not.toContain("notebook_edit");
@@ -126,10 +126,10 @@ describe("aex tools list", () => {
   });
 });
 
-describe("aex runtime-sizes list", () => {
+describe("aex starttime-sizes list", () => {
   it("lists presets and marks the default tier", async () => {
     const cap = makeIo(["runtime-sizes", "list", "--json"]);
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     const arr = JSON.parse(cap.out().trim()) as Array<{ size: string; cpus: number; memoryMb: number; default: boolean }>;
     const def = arr.find((e) => e.default);

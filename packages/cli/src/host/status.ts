@@ -13,11 +13,11 @@ import {
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";
 
-export async function runStatusCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "status")) return USAGE_ERR;
+export async function executeStatusCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "status")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

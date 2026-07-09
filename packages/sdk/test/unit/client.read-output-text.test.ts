@@ -48,7 +48,7 @@ describe("aex.sessions.outputs(id).read", () => {
       if (url.endsWith("/outputs/out-1/download")) return fileResponse("hello world");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.outputs("run-1").read({ id: "out-1" });
+    const result = await client.sessions.outputs("session-1").read({ id: "out-1" });
     expect(result.text).toBe("hello world");
     expect(result.truncated).toBe(false);
     expect(result.totalBytes).toBe(11);
@@ -60,7 +60,7 @@ describe("aex.sessions.outputs(id).read", () => {
       if (url.endsWith("/outputs/out-1/download")) return fileResponse(big);
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.outputs("run-1").read({ id: "out-1" }, { maxBytes: 10 });
+    const result = await client.sessions.outputs("session-1").read({ id: "out-1" }, { maxBytes: 10 });
     expect(result.text).toBe("x".repeat(10));
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(1000);
@@ -71,7 +71,7 @@ describe("aex.sessions.outputs(id).read", () => {
       if (url.endsWith("/outputs/out-1/download")) return streamedFileResponse(new TextEncoder().encode("x".repeat(25)));
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.outputs("run-1").read({ id: "out-1" }, { maxBytes: 10 });
+    const result = await client.sessions.outputs("session-1").read({ id: "out-1" }, { maxBytes: 10 });
     expect(result.text).toBe("x".repeat(10));
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(25);
@@ -79,13 +79,13 @@ describe("aex.sessions.outputs(id).read", () => {
 
   it("resolves a path selector via listOutputs, then downloads by id", async () => {
     const client = clientFor((url) => {
-      if (url.endsWith("/api/runs/run-1/outputs")) {
+      if (url.endsWith("/api/sessions/session-1/outputs")) {
         return json({ outputs: [{ id: "out-9", filename: "report.md" }] });
       }
       if (url.endsWith("/outputs/out-9/download")) return fileResponse("# Report\nbody\n");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.outputs("run-1").read({ path: "report.md" });
+    const result = await client.sessions.outputs("session-1").read({ path: "report.md" });
     expect(result.output.id).toBe("out-9");
     expect(result.text).toContain("# Report");
   });
@@ -100,7 +100,7 @@ describe("aex.sessions.outputs(id).read", () => {
       throw new Error(`unexpected ${url}`);
     });
 
-    const result = await client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 });
+    const result = await client.sessions.outputs("session-1").read({ id: "out-1" }, { timeoutMs: 1 });
 
     expect(result.text).toBe("after retry");
     expect(downloadCalls).toBe(2);
@@ -116,7 +116,7 @@ describe("aex.sessions.outputs(id).read", () => {
       throw new Error(`unexpected ${url}`);
     });
 
-    const error = await rejectionOf(client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 }));
+    const error = await rejectionOf(client.sessions.outputs("session-1").read({ id: "out-1" }, { timeoutMs: 1 }));
     expect(error).toMatchObject({
       code: "NETWORK_ERROR",
       attempts: 2,
@@ -136,7 +136,7 @@ describe("aex.sessions.outputs(id).read", () => {
       throw new Error(`unexpected ${url}`);
     });
 
-    const error = await rejectionOf(client.sessions.outputs("run-1").read({ id: "out-1" }, { timeoutMs: 1 }));
+    const error = await rejectionOf(client.sessions.outputs("session-1").read({ id: "out-1" }, { timeoutMs: 1 }));
     expect(error).toMatchObject({
       code: "NETWORK_ERROR",
       attempts: 2,
@@ -151,7 +151,7 @@ describe("aex.sessions.outputs(id).read", () => {
       if (url.endsWith("/outputs/out-1/download")) return fileResponse("alpha\nBETA\ngamma beta\n");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.outputs("run-1").read({ id: "out-1" }, { grep: "beta" });
+    const result = await client.sessions.outputs("session-1").read({ id: "out-1" }, { grep: "beta" });
     expect(result.text).toBe("BETA\ngamma beta");
   });
 });

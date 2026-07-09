@@ -9,7 +9,7 @@
  *
  *  1. Cross-SESSION reuse cache — one instance across three sessions uploads
  *     exactly once; sessions 2 and 3 skip presign entirely (instance asset-id
- *     cache short-circuits before the uploader runs).
+ *     cache short-circuits before the uploader sessions).
  *  2. Full mixed ordering + dedup semantics — builtins (deduped) + custom
  *     `Tool`s + skill-tools INTERLEAVED at the call site collapse into the
  *     documented wire order builtins → tools → skills, proving the regrouping.
@@ -31,7 +31,7 @@
  * `[...builtinNames, ...refs, ...skillToolRefs]`, so the wire order is ALWAYS
  * builtins → custom tools → skill-tools regardless of call-site interleaving.
  *
- * Each scenario runs in a child process whose cwd is the install tempdir, so
+ * Each scenario sessions in a child process whose cwd is the install tempdir, so
  * `import "@aexhq/sdk"` resolves the packed/published artifact and a fake fetch
  * captures the exact wire request without dispatching a live run. The fake fetch
  * models the content-addressed asset store: `/assets/presign` returns

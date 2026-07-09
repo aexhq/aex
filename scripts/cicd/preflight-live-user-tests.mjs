@@ -7,7 +7,7 @@ const DEFAULT_ATTEMPTS = 4;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 8_000;
-const DEFAULT_MIN_MAX_CONCURRENT_RUNS = 50;
+const DEFAULT_MIN_MAX_CONCURRENT_SESSIONS = 50;
 
 class PreflightFatalError extends Error {}
 
@@ -76,13 +76,13 @@ export async function checkLiveUserTestsPreflight(options = {}) {
   const timeoutMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 120_000);
   const baseDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS", DEFAULT_BASE_DELAY_MS, 60_000);
   const maxDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_MAX_MS", DEFAULT_MAX_DELAY_MS, 120_000);
-  const minMaxConcurrentRuns = envInt(
+  const minMaxConcurrentSessions = envInt(
     env,
-    "LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS",
-    DEFAULT_MIN_MAX_CONCURRENT_RUNS,
+    "LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS",
+    DEFAULT_MIN_MAX_CONCURRENT_SESSIONS,
     10_000
   );
-  const maxMaxConcurrentRuns = optionalPositiveInt(env.LIVE_USER_TEST_MAX_MAX_CONCURRENT_RUNS, 10_000);
+  const maxMaxConcurrentSessions = optionalPositiveInt(env.LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS, 10_000);
   const expectedApiHost = String(env.AEX_EXPECTED_API_HOST ?? "").trim();
   if (expectedApiHost && apiUrl.hostname !== expectedApiHost) {
     throw new PreflightFatalError(
@@ -112,26 +112,26 @@ export async function checkLiveUserTestsPreflight(options = {}) {
         );
       }
 
-      const maxConcurrentRuns = body?.limits?.maxConcurrentRuns;
-      if (!Number.isInteger(maxConcurrentRuns)) {
+      const maxConcurrentSessions = body?.limits?.maxConcurrentSessions;
+      if (!Number.isInteger(maxConcurrentSessions)) {
         throw new PreflightFatalError(
-          `live-user-tests /api/whoami response did not include integer limits.maxConcurrentRuns (requestId=${requestId}).`
+          `live-user-tests /api/whoami response did not include integer limits.maxConcurrentSessions (requestId=${requestId}).`
         );
       }
-      if (maxConcurrentRuns < minMaxConcurrentRuns) {
+      if (maxConcurrentSessions < minMaxConcurrentSessions) {
         throw new PreflightFatalError(
-          `live-user-tests workspace maxConcurrentRuns=${maxConcurrentRuns} is below required minimum ${minMaxConcurrentRuns} (requestId=${requestId}).`
+          `live-user-tests workspace maxConcurrentSessions=${maxConcurrentSessions} is below required minimum ${minMaxConcurrentSessions} (requestId=${requestId}).`
         );
       }
-      if (maxMaxConcurrentRuns !== null && maxConcurrentRuns > maxMaxConcurrentRuns) {
+      if (maxMaxConcurrentSessions !== null && maxConcurrentSessions > maxMaxConcurrentSessions) {
         throw new PreflightFatalError(
-          `live-user-tests workspace maxConcurrentRuns=${maxConcurrentRuns} is above allowed maximum ${maxMaxConcurrentRuns} (requestId=${requestId}).`
+          `live-user-tests workspace maxConcurrentSessions=${maxConcurrentSessions} is above allowed maximum ${maxMaxConcurrentSessions} (requestId=${requestId}).`
         );
       }
       out.write(
-        `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentRuns=${maxConcurrentRuns}, attempt=${attempt}/${attempts}).\n`
+        `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentSessions=${maxConcurrentSessions}, attempt=${attempt}/${attempts}).\n`
       );
-      return { status: res.status, requestId, maxConcurrentRuns, attempt, attempts };
+      return { status: res.status, requestId, maxConcurrentSessions, attempt, attempts };
     } catch (error) {
       if (error instanceof PreflightFatalError) throw error;
       if (attempt < attempts && isRetryableFetchFailure(error)) {

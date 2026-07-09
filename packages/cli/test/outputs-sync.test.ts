@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runOutputsSyncCmd } from "../src/outputs-sync.js";
+import { executeOutputsSyncCmd } from "../src/outputs-sync.js";
 import type { CliIO, OutputsSyncFileEntry } from "../src/internal.js";
 
 /** Build a minimal `CliIO` for `outputs sync` test cases. */
@@ -47,7 +47,7 @@ function makeIo(opts: {
 describe("aex outputs sync (internal)", () => {
   it("refuses to run on the host (no /aex/index.json)", async () => {
     const cap = makeIo({ inContainer: false, walk: async () => [] });
-    const exit = await runOutputsSyncCmd(cap.io, ["/workspace/outputs"]);
+    const exit = await executeOutputsSyncCmd(cap.io, ["/workspace/outputs"]);
     expect(exit.code).not.toBe(0);
     expect(cap.stderr).toMatch(/in-container/i);
     expect(cap.stdout).toBe("");
@@ -55,7 +55,7 @@ describe("aex outputs sync (internal)", () => {
 
   it("rejects empty dir list", async () => {
     const cap = makeIo({ inContainer: true });
-    const exit = await runOutputsSyncCmd(cap.io, []);
+    const exit = await executeOutputsSyncCmd(cap.io, []);
     expect(exit.code).not.toBe(0);
     expect(cap.stderr).toMatch(/usage/i);
   });
@@ -73,7 +73,7 @@ describe("aex outputs sync (internal)", () => {
         return [];
       }
     });
-    const exit = await runOutputsSyncCmd(cap.io, ["/workspace/outputs", "/workspace/state"]);
+    const exit = await executeOutputsSyncCmd(cap.io, ["/workspace/outputs", "/workspace/state"]);
     expect(exit.code).toBe(0);
     const lines = cap.stdout.trim().split("\n");
     expect(lines).toHaveLength(3);
@@ -88,7 +88,7 @@ describe("aex outputs sync (internal)", () => {
       inContainer: true,
       walk: async (root) => (root === "/workspace/state" ? null : [])
     });
-    const exit = await runOutputsSyncCmd(cap.io, ["/workspace/outputs", "/workspace/state"]);
+    const exit = await executeOutputsSyncCmd(cap.io, ["/workspace/outputs", "/workspace/state"]);
     expect(exit.code).toBe(0);
     expect(cap.stderr).toContain(`"missing_or_unreadable"`);
     expect(cap.stderr).toContain(`"/workspace/state"`);
@@ -98,7 +98,7 @@ describe("aex outputs sync (internal)", () => {
 
   it("rejects non-absolute output dirs as a defence against platform mis-instruction", async () => {
     const cap = makeIo({ inContainer: true, walk: async () => [] });
-    const exit = await runOutputsSyncCmd(cap.io, ["workspace/outputs"]);
+    const exit = await executeOutputsSyncCmd(cap.io, ["workspace/outputs"]);
     expect(exit.code).toBe(0);
     expect(cap.stderr).toContain(`"non_absolute_path"`);
     const summary = cap.stdout.trim().split("\n").pop()!;

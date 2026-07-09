@@ -26,13 +26,13 @@ import { zipSync } from "fflate";
  *
  *   const settings = await File.fromPath("./settings.json");
  *   const dataset = await File.fromPath("./data/");
- *   await client.run({ files: [settings, dataset], message: "..." });
+ *   await client.start({ files: [settings, dataset], message: "..." });
  *
  * `mountPath` is the absolute container directory the file unzips into; it
  * defaults to `/workspace` (the agent's default working directory), so a file
  * handed with no `mountPath` lands directly in the agent's cwd — a single file
  * `subtitles.srt` becomes `/workspace/subtitles.srt`, a folder lands its entries
- * under `/workspace/`. The resolved path is surfaced back on the Run record.
+ * under `/workspace/`. The resolved path is surfaced back on the Session record.
  *
  * FIDELITY: a directory walk captures executable bits and symlinks into a
  * `.aexmeta.json` sidecar (emitted only when such metadata exists, so a
@@ -43,14 +43,14 @@ import { zipSync } from "fflate";
  * multipart flow that holds only one entry + one part in memory, lifting the
  * old ~2 GiB in-memory ceiling.
  *
- * `client.run` / `openSession` materializes the bytes to the hosted asset store
- * before the run lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
+ * `client.start` / `openSession` materializes the bytes to the hosted asset store
+ * before the session lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
  * same bytes are deduped.
  */
 export class File {
   readonly #ref: FileRef | DraftFileRef;
   readonly #bytes: Uint8Array | undefined;
-  /** Large-input streaming driver — re-runs the deterministic canonical-zip framer per pass. */
+  /** Large-input streaming driver — re-sessions the deterministic canonical-zip framer per pass. */
   readonly #drive: ZipStreamDriver | undefined;
   /** Asset id cached after the first use, so reuse skips a re-upload. */
   #assetId: string | undefined;
@@ -212,7 +212,7 @@ export class File {
 
   /**
    * Internal: yield the draft's zipped bytes + metadata so
-   * `client.run` / `openSession` can upload it as an asset (single PUT).
+   * `client.start` / `openSession` can upload it as an asset (single PUT).
    * Returns undefined for a streaming (large) draft — use {@link _takeDraftStream}.
    */
   _takeDraftBundle(): {
@@ -233,7 +233,7 @@ export class File {
   }
 
   /**
-   * Internal: yield the draft's canonical-zip stream driver so `client.run` can
+   * Internal: yield the draft's canonical-zip stream driver so `client.start` can
    * upload it via the streaming multipart flow. Returns undefined for the small
    * (in-memory) draft — use {@link _takeDraftBundle}.
    */
@@ -246,7 +246,7 @@ export class File {
     if (this.#ref.kind === "draft") {
       throw new Error(
         "File: draft Files cannot be JSON-serialised — they only become wire refs when " +
-        "aex.run / openSession uploads the bytes as an asset."
+        "aex.start / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;
@@ -262,7 +262,7 @@ export interface DraftFileRef {
   readonly mountPath: string;
 }
 
-/** A re-runnable driver that frames the canonical zip into `sink` (one call per upload pass). */
+/** A retryable driver that frames the canonical zip into `sink` (one call per upload pass). */
 export type ZipStreamDriver = (sink: ByteSink) => Promise<void>;
 
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));

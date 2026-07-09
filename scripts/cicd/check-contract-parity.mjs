@@ -6,7 +6,7 @@
  * platform consumes `@aexhq/contracts` directly via a filesystem `link:` to
  * this repo, so there is no platform/contracts mirror to diff. The gate's sole
  * remaining axis is the SSRF host deny-list, which is duplicated by necessity:
- *   - the public copy lives inline in run-config.ts (public has no blueprint.ts);
+ *   - the public copy lives inline in session-config.ts (public has no blueprint.ts);
  *   - the platform copy lives in platform/packages/shared/src/blueprint.ts.
  * The two are kept byte-identical so the Wave-1 SSRF hardening can't regress on
  * one side only — the three deny functions are compared directly here.
@@ -22,7 +22,7 @@
  * out, so public-only CI and forks without the platform PAT still pass; it
  * only enforces when both trees are present.
  *
- * Run `bun scripts/cicd/check-contract-parity.mjs --update` after an
+ * SessionRecord `bun scripts/cicd/check-contract-parity.mjs --update` after an
  * intentional, reviewed divergence to refresh the baseline.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -62,7 +62,7 @@ if (!platformRoot) {
 
 const publicContractsSrc = join(publicRoot, "packages", "contracts", "src");
 const blueprintPath = join(platformRoot, "packages", "shared", "src", "blueprint.ts");
-const publicRunConfigPath = join(publicContractsSrc, "run-config.ts");
+const publicSessionConfigPath = join(publicContractsSrc, "session-config.ts");
 
 function norm(text) {
   return text.replace(/\r/g, "");
@@ -109,7 +109,7 @@ function foundEntry(scope, side, line) {
 // Collect every current divergence on the deny-list axis.
 const found = new Map(); // fp -> { scope, side, line }
 
-// ---- SSRF deny-list parity (blueprint.ts <-> run-config.ts) ----------------
+// ---- SSRF deny-list parity (blueprint.ts <-> session-config.ts) ----------------
 function extractDenyBlock(text) {
   const start = text.indexOf("denyReasonForHostIp");
   const end = text.indexOf("parseRemoteMcpTransport", start);
@@ -122,7 +122,7 @@ function extractDenyBlock(text) {
     .trim();
 }
 const platformDeny = extractDenyBlock(readNorm(blueprintPath));
-const publicDeny = extractDenyBlock(readNorm(publicRunConfigPath));
+const publicDeny = extractDenyBlock(readNorm(publicSessionConfigPath));
 if (platformDeny === null || publicDeny === null) {
   const entry = foundEntry("deny-list", "n/a", "could not locate deny functions in one tree");
   found.set(entryKey(entry), entry);

@@ -16,9 +16,9 @@ describe("SseParser", () => {
 
   it("preserves event id across frames (last-event-id semantics)", () => {
     const parser = new SseParser();
-    const frames = parser.pushText("id: cursor-a\nevent: run_event\ndata: {}\n\nevent: ping\ndata: {}\n\n");
+    const frames = parser.pushText("id: cursor-a\nevent: ses_event\ndata: {}\n\nevent: ping\ndata: {}\n\n");
     expect(frames).toEqual([
-      { id: "cursor-a", event: "run_event", data: "{}" },
+      { id: "cursor-a", event: "ses_event", data: "{}" },
       // The spec: lastEventId PERSISTS across frames, so the second
       // ping frame still carries cursor-a as its id.
       { id: "cursor-a", event: "ping", data: "{}" }
@@ -53,13 +53,13 @@ describe("SseParser", () => {
 
   it("handles a frame split across many small chunks", () => {
     const parser = new SseParser();
-    const chunks = "event: run_event\nid: cur-1\ndata: {\"id\":\"x\"}\n\n".split("");
+    const chunks = "event: ses_event\nid: cur-1\ndata: {\"id\":\"x\"}\n\n".split("");
     const collected: ReturnType<SseParser["pushText"]>[number][] = [];
     for (const ch of chunks) {
       collected.push(...parser.pushText(ch));
     }
     expect(collected).toEqual([
-      { id: "cur-1", event: "run_event", data: '{"id":"x"}' }
+      { id: "cur-1", event: "ses_event", data: '{"id":"x"}' }
     ]);
   });
 

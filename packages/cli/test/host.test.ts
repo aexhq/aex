@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, unzipSync } from "fflate";
 import { resolve as resolvePath } from "node:path";
-import { runCli } from "../src/run.js";
+import { executeCli } from "../src/main.js";
 import { parseDuration } from "../src/host/common.js";
 import type { CliIO } from "../src/internal.js";
 
 const CWD = "/tmp/cli-test";
 
-/** Compute the absolute path the run-config loader will produce for a
+/** Compute the absolute path the session-config loader will produce for a
  * given input — keeps tests cross-platform between Windows and POSIX. */
 function resolvedFromCwd(p: string): string {
   return resolvePath(CWD, p);
@@ -99,12 +99,12 @@ describe("aex whoami", () => {
     const cap = makeHostIo({
       argv: ["whoami", "--api-key", "tok-1", "--aex-url", "https://dash.example/"],
       fetchHandler: () =>
-        new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-7", scopes: ["runs.write"] }), {
+        new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-7", scopes: ["sessions.write"] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/whoami");
@@ -116,7 +116,7 @@ describe("aex whoami", () => {
 
   it("rejects when --api-key is missing", async () => {
     const cap = makeHostIo({ argv: ["whoami", "--aex-url", "https://dash.example/"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--api-key");
   });
@@ -130,7 +130,7 @@ describe("aex whoami", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.url).toBe("https://api.aex.dev/api/whoami");
   });
@@ -139,37 +139,37 @@ describe("aex whoami", () => {
 describe("aex status", () => {
   it("does not send a workspaceId query parameter (derived from token server-side)", async () => {
     const cap = makeHostIo({
-      argv: ["status", "run-42", ...COMMON],
+      argv: ["status", "session-42", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-42", status: "idle" }), {
+        new Response(JSON.stringify({ id: "session-42", status: "idle" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toContain("/api/sessions/run-42");
+    expect(cap.calls[0]!.url).toContain("/api/sessions/session-42");
     expect(cap.calls[0]!.url).not.toContain("workspaceId=");
-    expect(JSON.parse(cap.stdout)).toEqual({ id: "run-42", status: "idle" });
+    expect(JSON.parse(cap.stdout)).toEqual({ id: "session-42", status: "idle" });
   });
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
     const cap = makeHostIo({
-      argv: ["status", "run-1", "--workspace", "ws-1", "--api-key", "tok", "--aex-url", "https://x"]
+      argv: ["status", "session-1", "--workspace", "ws-1", "--api-key", "tok", "--aex-url", "https://x"]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("unknown");
   });
 
   it("rejects unknown flags before making a network call", async () => {
     const cap = makeHostIo({
-      argv: ["status", "run-1", "--typo-flag", ...COMMON],
+      argv: ["status", "session-1", "--typo-flag", ...COMMON],
       fetchHandler: () => {
         throw new Error("status should not fetch after an unknown flag");
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.calls).toHaveLength(0);
     expect(cap.stderr).toContain("unknown flag: --typo-flag");
@@ -182,7 +182,7 @@ describe("aex deliveries", () => {
     const rows = [
       {
         id: "wd-1",
-        eventType: "run.finished",
+        eventType: "session.finished",
         status: "delivered",
         attemptCount: 1,
         lastStatusCode: 200,
@@ -190,23 +190,23 @@ describe("aex deliveries", () => {
       }
     ];
     const cap = makeHostIo({
-      argv: ["deliveries", "run-42", ...COMMON],
+      argv: ["deliveries", "session-42", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify({ deliveries: rows }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/runs/run-42/webhook-deliveries");
+    expect(cap.calls[0]!.url).toBe("https://dash.example/api/sessions/session-42/webhook-deliveries");
     expect(cap.calls[0]!.init.method ?? "GET").toBe("GET");
     expect(JSON.parse(cap.stdout)).toEqual(rows);
   });
 
-  it("requires exactly one run-id positional", async () => {
+  it("requires exactly one session-id positional", async () => {
     const cap = makeHostIo({ argv: ["deliveries", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex deliveries");
   });
@@ -215,7 +215,7 @@ describe("aex deliveries", () => {
 describe("aex events", () => {
   it("lists events as NDJSON", async () => {
     const cap = makeHostIo({
-      argv: ["events", "run-9", ...COMMON],
+      argv: ["events", "session-9", ...COMMON],
       fetchHandler: () =>
         new Response(
           JSON.stringify({
@@ -227,7 +227,7 @@ describe("aex events", () => {
           { status: 200, headers: { "content-type": "application/json" } }
         )
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const lines = cap.stdout.trim().split("\n");
     expect(lines).toHaveLength(2);
@@ -237,7 +237,7 @@ describe("aex events", () => {
 
   it("--follow polls /events and emits NDJSON until terminal (never opens an SSE stream)", async () => {
     const cap = makeHostIo({
-      argv: ["events", "run-poll", "--follow", ...COMMON],
+      argv: ["events", "session-poll", "--follow", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events/stream")) {
           throw new Error("SSE endpoint must not be touched");
@@ -248,24 +248,24 @@ describe("aex events", () => {
             { status: 200, headers: { "content-type": "application/json" } }
           );
         }
-        // GET run record — return terminal so the loop exits.
-        return new Response(JSON.stringify({ id: "run-poll", status: "succeeded" }), {
+        // GET session record — return terminal so the loop exits.
+        return new Response(JSON.stringify({ id: "session-poll", status: "succeeded" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout.trim()).toContain("p1");
     expect(cap.calls.some((c) => c.url.endsWith("/events/stream"))).toBe(false);
   });
 
-  it("--follow stops on a timed_out run instead of hanging", async () => {
+  it("--follow stops on a timed_out session instead of hanging", async () => {
     // Regression: `timed_out` is a terminal status. A prior hardcoded set
     // omitted it, so the polling loop would never exit for a timed-out run.
     const cap = makeHostIo({
-      argv: ["events", "run-timeout", "--follow", ...COMMON],
+      argv: ["events", "session-timeout", "--follow", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events")) {
           return new Response(
@@ -273,14 +273,14 @@ describe("aex events", () => {
             { status: 200, headers: { "content-type": "application/json" } }
           );
         }
-        // GET run record — terminal `timed_out` must exit the loop.
-        return new Response(JSON.stringify({ id: "run-timeout", status: "timed_out" }), {
+        // GET session record — terminal `timed_out` must exit the loop.
+        return new Response(JSON.stringify({ id: "session-timeout", status: "timed_out" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout.trim()).toContain("t1");
   });
@@ -309,65 +309,65 @@ describe("aex wait", () => {
   it("polls GET /sessions/{id} until parked, prints the final session, exits 0 on idle", async () => {
     let polls = 0;
     const cap = makeHostIo({
-      argv: ["wait", "run-w", "--interval", "1ms", ...COMMON],
+      argv: ["wait", "session-w", "--interval", "1ms", ...COMMON],
       fetchHandler: () => {
         polls++;
         const status = polls < 3 ? "running" : "idle";
-        return new Response(JSON.stringify({ id: "run-w", status }), {
+        return new Response(JSON.stringify({ id: "session-w", status }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(polls).toBe(3);
-    expect(cap.calls[0]!.url).toContain("/api/sessions/run-w");
+    expect(cap.calls[0]!.url).toContain("/api/sessions/session-w");
     const printed = JSON.parse(cap.stdout.trim()) as { id: string; status: string };
-    expect(printed).toMatchObject({ id: "run-w", status: "idle" });
+    expect(printed).toMatchObject({ id: "session-w", status: "idle" });
   });
 
   it("exits 1 (RUNTIME_ERR) when the session parks with error", async () => {
     const cap = makeHostIo({
-      argv: ["wait", "run-f", ...COMMON],
+      argv: ["wait", "session-f", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-f", status: "error" }), {
+        new Response(JSON.stringify({ id: "session-f", status: "error" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(1);
     expect(JSON.parse(cap.stdout.trim())).toMatchObject({ status: "error" });
   });
 
   it("exits 3 (TIMEOUT_ERR) with a JSON error when --timeout elapses before parked", async () => {
     const cap = makeHostIo({
-      argv: ["wait", "run-slow", "--timeout", "0ms", ...COMMON],
+      argv: ["wait", "session-slow", "--timeout", "0ms", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "run-slow", status: "running" }), {
+        new Response(JSON.stringify({ id: "session-slow", status: "running" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(3);
     const err = JSON.parse(cap.stderr.trim()) as { error: string; sessionId: string; lastStatus: string };
     expect(err.error).toBe("wait_timeout");
-    expect(err.sessionId).toBe("run-slow");
+    expect(err.sessionId).toBe("session-slow");
     expect(err.lastStatus).toBe("running");
   });
 
   it("rejects a malformed --timeout with USAGE_ERR", async () => {
-    const cap = makeHostIo({ argv: ["wait", "run-x", "--timeout", "soon", ...COMMON] });
-    await runCli(cap.io);
+    const cap = makeHostIo({ argv: ["wait", "session-x", "--timeout", "soon", ...COMMON] });
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--timeout");
   });
 
-  it("requires exactly one run-id positional", async () => {
+  it("requires exactly one session-id positional", async () => {
     const cap = makeHostIo({ argv: ["wait", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex wait");
   });
@@ -376,7 +376,7 @@ describe("aex wait", () => {
 describe("aex events --follow --timeout", () => {
   it("exits 3 with a JSON error when the follow deadline elapses before terminal", async () => {
     const cap = makeHostIo({
-      argv: ["events", "run-ev", "--follow", "--timeout", "0ms", ...COMMON],
+      argv: ["events", "session-ev", "--follow", "--timeout", "0ms", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events")) {
           return new Response(JSON.stringify({ events: [] }), {
@@ -384,29 +384,29 @@ describe("aex events --follow --timeout", () => {
             headers: { "content-type": "application/json" }
           });
         }
-        return new Response(JSON.stringify({ id: "run-ev", status: "running" }), {
+        return new Response(JSON.stringify({ id: "session-ev", status: "running" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(3);
-    expect(JSON.parse(cap.stderr.trim())).toMatchObject({ error: "events_follow_timeout", sessionId: "run-ev" });
+    expect(JSON.parse(cap.stderr.trim())).toMatchObject({ error: "events_follow_timeout", sessionId: "session-ev" });
   });
 });
 
 describe("aex outputs", () => {
   it("lists outputs as NDJSON", async () => {
     const cap = makeHostIo({
-      argv: ["outputs", "run-9", ...COMMON],
+      argv: ["outputs", "session-9", ...COMMON],
       fetchHandler: () =>
         new Response(
           JSON.stringify({ outputs: [{ id: "o1", filename: "report.md" }] }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(JSON.parse(cap.stdout.trim())).toMatchObject({ id: "o1", filename: "report.md" });
   });
@@ -415,30 +415,30 @@ describe("aex outputs", () => {
 describe("aex cancel + delete", () => {
   it("cancel POSTs and prints the result", async () => {
     const cap = makeHostIo({
-      argv: ["cancel", "run-x", ...COMMON],
+      argv: ["cancel", "session-x", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ session: { id: "run-x", status: "cancelling" } }), {
+        new Response(JSON.stringify({ session: { id: "session-x", status: "cancelling" } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.init.method).toBe("POST");
-    expect(cap.calls[0]!.url).toContain("/api/sessions/run-x/cancel");
-    expect(JSON.parse(cap.stdout)).toEqual({ sessionId: "run-x", status: "cancelling" });
+    expect(cap.calls[0]!.url).toContain("/api/sessions/session-x/cancel");
+    expect(JSON.parse(cap.stdout)).toEqual({ sessionId: "session-x", status: "cancelling" });
   });
 
   it("delete DELETEs and prints the result", async () => {
     const cap = makeHostIo({
-      argv: ["delete", "run-x", ...COMMON],
+      argv: ["delete", "session-x", ...COMMON],
       fetchHandler: () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.init.method).toBe("DELETE");
-    expect(cap.calls[0]!.url).toContain("/api/sessions/run-x");
-    expect(JSON.parse(cap.stdout)).toEqual({ sessionId: "run-x", deleted: true });
+    expect(cap.calls[0]!.url).toContain("/api/sessions/session-x");
+    expect(JSON.parse(cap.stdout)).toEqual({ sessionId: "session-x", deleted: true });
   });
 
   it("delete-asset DELETEs a normalized workspace asset id and prints the result", async () => {
@@ -447,7 +447,7 @@ describe("aex cancel + delete", () => {
       argv: ["delete-asset", `sha256:${hex}`, ...COMMON],
       fetchHandler: () => new Response(null, { status: 204 })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
     expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
@@ -459,7 +459,7 @@ describe("aex cancel + delete", () => {
     const cap = makeHostIo({
       argv: ["delete-asset", ...COMMON]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex delete-asset");
     expect(cap.calls).toHaveLength(0);
@@ -475,7 +475,7 @@ describe("aex cancel + delete", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(1);
     expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
     const err = JSON.parse(cap.stderr.trim()) as {
@@ -498,49 +498,49 @@ describe("aex cancel + delete", () => {
 });
 
 describe("aex download", () => {
-  // Route the reads the download verbs fan out to: getRun + listEvents +
+  // Route the reads the download verbs fan out to: getSessionRecord + listEvents +
   // listOutputs + per-output /download.
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-  const wholeRunHandler =
-    (runId: string) =>
+  const wholeSessionHandler =
+    (sessionId: string) =>
     ({ url }: { url: string }): Response => {
-      if (url.endsWith(`/api/runs/${runId}/events`)) return json({ events: [{ seq: 0, kind: "runtime_start" }] });
-      if (url.endsWith(`/api/runs/${runId}/outputs`)) {
+      if (url.endsWith(`/api/sessions/${sessionId}/events`)) return json({ events: [{ seq: 0, kind: "runtime_start" }] });
+      if (url.endsWith(`/api/sessions/${sessionId}/outputs`)) {
         return json({ outputs: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] });
       }
-      if (url.endsWith(`/api/runs/${runId}/outputs/o1/download`)) {
+      if (url.endsWith(`/api/sessions/${sessionId}/outputs/o1/download`)) {
         return new Response(strToU8("hello").buffer, { status: 200, headers: { "content-type": "text/plain" } });
       }
-      return json({ id: runId, status: "succeeded" });
+      return json({ id: sessionId, status: "succeeded" });
     };
 
   it("assembles the public whole-run zip client-side and writes it to --out", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
-      argv: ["download", "run-1", "--out", "run-1.zip", ...COMMON],
+      argv: ["download", "session-1", "--out", "session-1.zip", ...COMMON],
       writes,
-      fetchHandler: wholeRunHandler("run-1")
+      fetchHandler: wholeSessionHandler("session-1")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // getRun + events + outputs + one per-output download.
+    // getSessionRecord + events + outputs + one per-output download.
     expect(cap.calls).toHaveLength(4);
 
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/run-1\.zip$/);
+    expect(writtenKey).toMatch(/session-1\.zip$/);
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
       "manifest.json",
-      "metadata/run.json",
+      "metadata/session.json",
       "outputs/report.txt"
     ]);
     expect(new TextDecoder().decode(entries["outputs/report.txt"]!)).toBe("hello");
-    expect(JSON.parse(new TextDecoder().decode(entries["metadata/run.json"]!)).id).toBe("run-1");
+    expect(JSON.parse(new TextDecoder().decode(entries["metadata/session.json"]!)).id).toBe("session-1");
 
     const printed = JSON.parse(cap.stdout.trim()) as { sessionId: string; namespace: string; bytes: number };
-    expect(printed.sessionId).toBe("run-1");
+    expect(printed.sessionId).toBe("session-1");
     expect(printed.namespace).toBe("all");
     expect(printed.bytes).toBe(writes.get(writtenKey)!.byteLength);
   });
@@ -548,27 +548,27 @@ describe("aex download", () => {
   it("defaults the output path to aex-session-<session-id>.zip when --out is omitted", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
-      argv: ["download", "run-2", ...COMMON],
+      argv: ["download", "session-2", ...COMMON],
       writes,
-      fetchHandler: wholeRunHandler("run-2")
+      fetchHandler: wholeSessionHandler("session-2")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/aex-session-run-2\.zip$/);
+    expect(writtenKey).toMatch(/aex-session-session-2\.zip$/);
   });
 
   it("--only outputs zips just the deliverables (no logs, no metadata/events)", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
-      argv: ["download", "run-1", "--only", "outputs", ...COMMON],
+      argv: ["download", "session-1", "--only", "outputs", ...COMMON],
       writes,
-      fetchHandler: wholeRunHandler("run-1")
+      fetchHandler: wholeSessionHandler("session-1")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/aex-session-run-1-outputs\.zip$/);
+    expect(writtenKey).toMatch(/aex-session-session-1-outputs\.zip$/);
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual(["manifest.json", "report.txt"]);
     expect(new TextDecoder().decode(entries["report.txt"]!)).toBe("hello");
@@ -577,32 +577,32 @@ describe("aex download", () => {
 
   it("rejects --only logs with a usage error", async () => {
     const cap = makeHostIo({
-      argv: ["download", "run-1", "--only", "logs", ...COMMON],
-      fetchHandler: wholeRunHandler("run-1")
+      argv: ["download", "session-1", "--only", "logs", ...COMMON],
+      fetchHandler: wholeSessionHandler("session-1")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--only must be one of");
     expect(cap.calls).toHaveLength(0);
   });
 
-  it("--only metadata reads the run record and manifest", async () => {
+  it("--only metadata reads the session record and manifest", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
-      argv: ["download", "run-1", "--only", "metadata", ...COMMON],
+      argv: ["download", "session-1", "--only", "metadata", ...COMMON],
       writes,
-      fetchHandler: wholeRunHandler("run-1")
+      fetchHandler: wholeSessionHandler("session-1")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
-    expect(cap.calls[0]!.url).toBe("https://dash.example/api/runs/run-1");
+    expect(cap.calls[0]!.url).toBe("https://dash.example/api/sessions/session-1");
     const entries = unzipSync(writes.get([...writes.keys()][0]!)!);
-    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "run.json"]);
+    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "session.json"]);
     expect(JSON.parse(new TextDecoder().decode(entries["manifest.json"]!))).toMatchObject({
-      runId: "run-1",
+      sessionId: "session-1",
       namespace: "metadata",
-      files: [{ path: "run.json", role: "run_metadata", status: "present" }],
+      files: [{ path: "session.json", role: "session_metadata", status: "present" }],
       errors: []
     });
   });
@@ -611,18 +611,18 @@ describe("aex download", () => {
     const writes = new Map<string, Uint8Array>();
     let eventReads = 0;
     const cap = makeHostIo({
-      argv: ["download", "run-retry", "--only", "events", "--out", "retry.zip", ...COMMON],
+      argv: ["download", "session-retry", "--only", "events", "--out", "retry.zip", ...COMMON],
       writes,
       fetchHandler: (call) => {
-        if (call.url.endsWith("/api/runs/run-retry/events")) {
+        if (call.url.endsWith("/api/sessions/session-retry/events")) {
           eventReads += 1;
           if (eventReads === 1) throw undiciFetchFailed();
-          return json({ events: [{ id: "e1", type: "RUN_STARTED" }] });
+          return json({ events: [{ id: "e1", type: "TURN_STARTED" }] });
         }
         throw new Error(`unexpected URL ${call.url}`);
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(eventReads).toBe(2);
     const entries = unzipSync(writes.get([...writes.keys()][0]!)!);
@@ -631,20 +631,20 @@ describe("aex download", () => {
 
   it("rejects an unknown --only namespace with a usage error", async () => {
     const cap = makeHostIo({
-      argv: ["download", "run-1", "--only", "bogus", ...COMMON],
-      fetchHandler: wholeRunHandler("run-1")
+      argv: ["download", "session-1", "--only", "bogus", ...COMMON],
+      fetchHandler: wholeSessionHandler("session-1")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--only must be one of");
     expect(cap.calls).toHaveLength(0);
   });
 });
 
-// `aex run` uses the shared submit transport: create a session, then post the
+// `aex start` uses the shared submit transport: create a session, then post the
 // first turn to the session messages endpoint. The CLI prints the accepted
 // session record from the message response.
-function sessionRunHandler(sessionId: string, status = "running"): (call: FetchCall) => Response {
+function sessionStartHandler(sessionId: string, status = "running"): (call: FetchCall) => Response {
   const ok = (body: unknown): Response =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   return (call) => {
@@ -662,7 +662,7 @@ function sessionRunHandler(sessionId: string, status = "running"): (call: FetchC
   };
 }
 
-describe("aex run", () => {
+describe("aex start", () => {
   it("opens a session from --config, sends the prompt as the first turn, prints the session record", async () => {
     const runConfig = {
       model: "claude-haiku-4-5",
@@ -680,17 +680,17 @@ describe("aex run", () => {
       argv: [
         "run",
         "--config",
-        "/abs/run.json",
+        "/abs/session.json",
         "--anthropic-api-key",
         "sk-ant-1",
         "--idempotency-key",
         "idem-deterministic",
         ...COMMON
       ],
-      files: { [resolvedFromCwd("/abs/run.json")]: JSON.stringify(runConfig) },
-      fetchHandler: sessionRunHandler("sess-1")
+      files: { [resolvedFromCwd("/abs/session.json")]: JSON.stringify(runConfig) },
+      fetchHandler: sessionStartHandler("sess-1")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(2);
     const create = cap.calls[0]!;
@@ -749,9 +749,9 @@ describe("aex run", () => {
         "idem-flat",
         ...COMMON
       ],
-      fetchHandler: sessionRunHandler("sess-flat")
+      fetchHandler: sessionStartHandler("sess-flat")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
@@ -809,7 +809,7 @@ describe("aex run", () => {
         throw new Error(`unexpected URL ${call.url}`);
       }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(creates).toBe(2);
     expect(cap.calls).toHaveLength(3);
@@ -839,9 +839,9 @@ describe("aex run", () => {
         "idem-ds",
         ...COMMON
       ],
-      fetchHandler: sessionRunHandler("sess-ds")
+      fetchHandler: sessionStartHandler("sess-ds")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     expect(body.provider).toBe("deepseek");
@@ -864,9 +864,9 @@ describe("aex run", () => {
         "idem-webhook",
         ...COMMON
       ],
-      fetchHandler: sessionRunHandler("sess-webhook")
+      fetchHandler: sessionStartHandler("sess-webhook")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     expect(body.webhook).toEqual({ url: "https://hooks.example.com/aex" });
@@ -874,9 +874,9 @@ describe("aex run", () => {
 
   it("rejects when --anthropic-api-key is missing", async () => {
     const cap = makeHostIo({
-      argv: ["run", "--model", "claude-haiku-4-5", "--prompt", "p", ...COMMON]
+      argv: ["start", "--model", "claude-haiku-4-5", "--prompt", "p", ...COMMON]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--anthropic-api-key");
   });
@@ -904,9 +904,9 @@ describe("aex run", () => {
         "stripe=bearer:sk_test",
         ...COMMON
       ],
-      fetchHandler: sessionRunHandler("sess-proxy")
+      fetchHandler: sessionStartHandler("sess-proxy")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--proxy-endpoint and --proxy-auth are no longer supported");
     expect(cap.calls).toHaveLength(0);
@@ -927,7 +927,7 @@ describe("aex run", () => {
         ...COMMON
       ]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--proxy-endpoint and --proxy-auth are no longer supported");
   });
@@ -949,7 +949,7 @@ describe("aex run", () => {
         ...COMMON
       ]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--mcp-auth gitlab");
   });
@@ -972,9 +972,9 @@ describe("aex run", () => {
         "sk-ant-1",
         ...COMMON
       ],
-      fetchHandler: sessionRunHandler("sess-merge")
+      fetchHandler: sessionStartHandler("sess-merge")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     const secrets = body.secrets as Record<string, unknown>;
@@ -1006,16 +1006,16 @@ describe("aex run", () => {
         ...COMMON
       ]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("duplicate header");
   });
 
-  it("rejects positional arguments (no run-config positional)", async () => {
+  it("rejects positional arguments (no session-config positional)", async () => {
     const cap = makeHostIo({
-      argv: ["run", "/some/run.json", "--anthropic-api-key", "x", ...COMMON]
+      argv: ["start", "/some/session.json", "--anthropic-api-key", "x", ...COMMON]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("no positional arguments");
   });
@@ -1032,9 +1032,9 @@ describe("aex run", () => {
         "sk-ant-1",
         ...COMMON
       ],
-      fetchHandler: sessionRunHandler("sess-esc")
+      fetchHandler: sessionStartHandler("sess-esc")
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     // the escaped literal rides the first-turn message call's `input`.
     const body = cap.calls[0]!.body as Record<string, unknown>;

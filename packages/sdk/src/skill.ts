@@ -14,7 +14,7 @@ import { unzipSync } from "fflate";
  * A Skill is a FIRST-CLASS, workspace-scoped, by-name bundle of instructional /
  * executable content (`SKILL.md` at the bundle root plus any supporting files).
  * It is DISTINCT from a {@link Tool}: skills are passed on the session's separate
- * `skills:` input, not `tools:`, and a run gets a single `skills` meta-tool
+ * `skills:` input, not `tools:`, and a session gets a single `skills` meta-tool
  * (list/load) rather than one load-tool per skill.
  *
  * Lifecycle mirrors `Secret` promotion, but keyed to a workspace name:
@@ -212,7 +212,7 @@ export class Skill {
   }
 
   /**
-   * Internal: yield the draft's bytes + metadata so `client.run` / `openSession`
+   * Internal: yield the draft's bytes + metadata so `client.start` / `openSession`
    * can auto-upsert it. Non-consuming: a Skill is reusable across sessions — the
    * first use caches the resolved name so later uses skip the round-trip. Returns
    * undefined for an already-uploaded skill.
@@ -334,7 +334,7 @@ function deriveSkillName(
   return name;
 }
 
-/** Lowercase, collapse non-`[a-z0-9]` runs to `-`, trim leading/trailing `-`. */
+/** Lowercase, collapse non-`[a-z0-9]` sessions to `-`, trim leading/trailing `-`. */
 function slugifyName(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }

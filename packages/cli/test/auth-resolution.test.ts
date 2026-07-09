@@ -6,7 +6,7 @@
  * fails with the actionable "run `aex login`" message.
  */
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/run.js";
+import { executeCli } from "../src/main.js";
 import { AEX_INDEX_PATH, type CliIO, type StoredCliConfig } from "../src/internal.js";
 
 function makeIo(opts: {
@@ -86,7 +86,7 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
       argv: ["whoami"],
       stored: { schemaVersion: 1, apiKey: "stored-tok", aexUrl: "https://stored.example" }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.calls).toHaveLength(1);
     expect(cap.calls[0]!.url).toBe("https://stored.example/api/whoami");
@@ -97,7 +97,7 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
       argv: ["whoami", "--api-key", "flag-tok", "--aex-url", "https://flag.example"],
       stored: { schemaVersion: 1, apiKey: "stored-tok", aexUrl: "https://stored.example" }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.calls[0]!.url).toBe("https://flag.example/api/whoami");
   });
@@ -108,18 +108,18 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
       argv: ["whoami", "--aex-url", "https://flag.example"],
       stored: { apiKey: "stored-tok", aexUrl: "https://stored.example" }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.calls[0]!.url).toBe("https://flag.example/api/whoami");
 
     // no flag url, stored url absent → default base url
     const cap2 = makeIo({ argv: ["whoami"], stored: { apiKey: "stored-tok" } });
-    await runCli(cap2.io);
+    await executeCli(cap2.io);
     expect(cap2.calls[0]!.url).toBe("https://api.aex.dev/api/whoami");
   });
 
   it("fails with the actionable login hint when neither flag nor stored token exist", async () => {
     const cap = makeIo({ argv: ["whoami"], stored: null });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(2);
     expect(cap.err()).toContain("run `aex login`");
     expect(cap.calls).toHaveLength(0);
@@ -130,20 +130,20 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
       argv: ["whoami", "--debug"],
       stored: { apiKey: "super-secret-token", aexUrl: "https://stored.example" }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.err()).toContain("[aex] auth: stored token (/home/u/.config/aex/config.json)");
     expect(cap.err()).not.toContain("super-secret-token");
   });
 
-  it("still refuses host verbs inside a managed run container", async () => {
+  it("still refuses host verbs inside a managed session container", async () => {
     const cap = makeIo({
       argv: ["whoami"],
       stored: { apiKey: "stored-tok" },
       files: { [AEX_INDEX_PATH]: "{}" }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(2);
-    expect(cap.err()).toContain("cannot run inside a managed run container");
+    expect(cap.err()).toContain("cannot session inside a managed session container");
     expect(cap.calls).toHaveLength(0);
   });
 });

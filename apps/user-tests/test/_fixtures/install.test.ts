@@ -66,7 +66,7 @@ describe("user-test install artifact resolution", () => {
   });
 
   it("includes partial stdout and stderr when a child command times out", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "aex-run-command-timeout-"));
+    const dir = mkdtempSync(join(tmpdir(), "aex-session-command-timeout-"));
     try {
       const script = join(dir, "timeout-diagnostics.mjs");
       writeFileSync(

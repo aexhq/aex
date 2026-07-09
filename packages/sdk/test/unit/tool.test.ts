@@ -65,7 +65,7 @@ describe("Tool.fromFiles", () => {
   });
 
   it("rejects a non-JS entry at authoring time (WS6 JS-module guard)", async () => {
-    // A shell entry is rejected AT BUILD time, not mid-run by the tool executor.
+    // A shell entry is rejected AT BUILD time, not mid-session by the tool executor.
     await expect(
       Tool.fromFiles({
         name: "calendar_lookup",

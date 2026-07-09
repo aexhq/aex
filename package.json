@@ -15,6 +15,7 @@
     "lint:tests": "eslint --max-warnings=0 && bun scripts/verify-eslint-rules.mjs",
     "lint:tests:verify": "bun scripts/verify-eslint-rules.mjs",
     "brand:check": "bun scripts/cicd/check-old-brand.mjs",
+    "terminology:check": "bun scripts/validate/check-session-terminology.mjs",
     "contracts:parity:check": "bun scripts/cicd/check-contract-parity.mjs",
     "test": "bun run test:unit",
     "test:unit": "bun run build && bun run --workspaces --if-present --parallel test:unit && bun run --filter @aexhq/sdk test:security && bun run vitest run --root scripts/validate",

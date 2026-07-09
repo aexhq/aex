@@ -14,7 +14,7 @@ import {
   AEX_EVENT_SOURCES,
   AEX_EVENT_TYPES,
   channelOf,
-  isRunSettled,
+  isSessionSettled,
   operations,
   streamCoordinatorEvents,
   toAGUI,
@@ -28,7 +28,7 @@ export interface OpenEnvelopeStreamOptions {
   /** Replay cursor (events with sequence >= from). Default 0 = from start. */
   readonly from?: number;
   /**
-   * End on the post-mirror `aex.run.settled` barrier instead of RUN_FINISHED,
+   * End on the post-mirror `aex.session.settled` barrier instead of TURN_FINISHED,
    * so when the stream ends a subsequent `getSession` is guaranteed parked.
    */
   readonly settleConsistent?: boolean;
@@ -65,7 +65,7 @@ export async function* openEnvelopeStream(
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, sessionId)).ticket,
     ...(io.webSocketFactory ? { webSocketFactory: io.webSocketFactory } : {}),
-    ...(options.settleConsistent ? { isTerminal: isRunSettled } : {}),
+    ...(options.settleConsistent ? { isTerminal: isSessionSettled } : {}),
     ...(options.signal ? { signal: options.signal } : {})
   });
 }
@@ -101,8 +101,8 @@ function argsPreview(e: AexEvent): string {
 export function renderEnvelope(e: AexEvent, options: RenderOptions = {}): string | null {
   if (channelOf(e) === "log" && !options.logs) return null;
   switch (e.type) {
-    case "RUN_STARTED":
-      return "▶ run started";
+    case "TURN_STARTED":
+      return "▶ turn started";
     case "TEXT_MESSAGE_CONTENT": {
       const delta = toAGUI(e).type === "TEXT_MESSAGE_CONTENT" ? (toAGUI(e) as { delta: string }).delta : "";
       return delta ? delta : null;
@@ -135,12 +135,12 @@ export function renderEnvelope(e: AexEvent, options: RenderOptions = {}): string
       const level = e.level ?? "info";
       return `[${level}] ${e.message ?? str(e.data.message)}`;
     }
-    case "RUN_FINISHED":
-      return "✓ run finished";
-    case "RUN_ERROR": {
+    case "TURN_FINISHED":
+      return "✓ session finished";
+    case "TURN_ERROR": {
       const agui = toAGUI(e);
-      const message = agui.type === "RUN_ERROR" ? agui.message : (e.message ?? "run error");
-      return `✗ run error: ${message}`;
+      const message = agui.type === "TURN_ERROR" ? agui.message : (e.message ?? "turn error");
+      return `✗ turn error: ${message}`;
     }
     default:
       return null;

@@ -1,11 +1,11 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-  MAX_RUN_TIMEOUT_MS,
-  MIN_RUN_TIMEOUT_MS,
+  MAX_SESSION_TIMEOUT_MS,
+  MIN_SESSION_TIMEOUT_MS,
   RUNTIME_SIZES,
   parseDurationToMs,
-  parseRunTimeout,
+  parseSessionTimeout,
   parseRuntimeSize
 } from "../src/index.js";
 
@@ -13,7 +13,7 @@ import {
  * Property fuzz for the duration + runtime-size parsers. Invariants:
  *   - a well-formed duration NEVER yields NaN / negative / Infinity;
  *   - a malformed duration ALWAYS throws (never silently returns a bad number);
- *   - parseRunTimeout enforces the [MIN, MAX] window exactly (in-range accepts,
+ *   - parseSessionTimeout enforces the [MIN, MAX] window exactly (in-range accepts,
  *     out-of-range throws) and is total (never NaN, never a non-Error throw);
  *   - parseRuntimeSize accepts exactly the known presets, rejects everything else.
  */
@@ -68,12 +68,12 @@ describe("parseDurationToMs (property)", () => {
   });
 });
 
-describe("parseRunTimeout (property)", () => {
+describe("parseSessionTimeout (property)", () => {
   it("undefined passes through; in-range durations are accepted exactly", () => {
-    expect(parseRunTimeout(undefined)).toBeUndefined();
+    expect(parseSessionTimeout(undefined)).toBeUndefined();
     fc.assert(
-      fc.property(fc.integer({ min: MIN_RUN_TIMEOUT_MS, max: MAX_RUN_TIMEOUT_MS }), (ms) => {
-        const got = parseRunTimeout(`${ms}ms`);
+      fc.property(fc.integer({ min: MIN_SESSION_TIMEOUT_MS, max: MAX_SESSION_TIMEOUT_MS }), (ms) => {
+        const got = parseSessionTimeout(`${ms}ms`);
         expect(got).toBe(ms);
       }),
       { numRuns: 200 }
@@ -82,14 +82,14 @@ describe("parseRunTimeout (property)", () => {
 
   it("out-of-window durations throw at both the floor and the ceiling", () => {
     fc.assert(
-      fc.property(fc.integer({ min: 0, max: MIN_RUN_TIMEOUT_MS - 1 }), (ms) => {
-        expect(() => parseRunTimeout(`${ms}ms`)).toThrow(/at least/);
+      fc.property(fc.integer({ min: 0, max: MIN_SESSION_TIMEOUT_MS - 1 }), (ms) => {
+        expect(() => parseSessionTimeout(`${ms}ms`)).toThrow(/at least/);
       }),
       { numRuns: 100 }
     );
     fc.assert(
-      fc.property(fc.integer({ min: MAX_RUN_TIMEOUT_MS + 1, max: MAX_RUN_TIMEOUT_MS * 4 }), (ms) => {
-        expect(() => parseRunTimeout(`${ms}ms`)).toThrow(/at most/);
+      fc.property(fc.integer({ min: MAX_SESSION_TIMEOUT_MS + 1, max: MAX_SESSION_TIMEOUT_MS * 4 }), (ms) => {
+        expect(() => parseSessionTimeout(`${ms}ms`)).toThrow(/at most/);
       }),
       { numRuns: 100 }
     );
@@ -99,7 +99,7 @@ describe("parseRunTimeout (property)", () => {
     fc.assert(
       fc.property(fc.anything(), (input) => {
         try {
-          const r = parseRunTimeout(input);
+          const r = parseSessionTimeout(input);
           expect(r === undefined || (typeof r === "number" && Number.isFinite(r))).toBe(true);
         } catch (err) {
           expect(err).toBeInstanceOf(Error);

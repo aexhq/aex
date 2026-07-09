@@ -6,7 +6,7 @@
  *   WS11  self-describing keys route to their canonical plane host with
  *         ZERO-network constructor behavior and no late wrong-plane 401.
  *   T15   a tool authored with a non-JS entry is rejected at AUTHORING time — the
- *         validation happens where the developer is, not mid-run in the container.
+ *         validation happens where the developer is, not mid-session in the container.
  */
 import { describe, expect, it } from "vitest";
 import { Aex, Tool } from "../../../src/index.js";
@@ -41,11 +41,11 @@ describe("blackbox: plane routing guard (constructor, zero-network)", () => {
 });
 
 describe("blackbox: tool entry validated at authoring", () => {
-  it("rejects a non-JS tool entry at authoring time (not mid-run)", async () => {
+  it("rejects a non-JS tool entry at authoring time (not mid-session)", async () => {
     await expect(
       Tool.fromFiles({
         name: "shell-tool",
-        description: "runs a shell script",
+        description: "sessions a shell script",
         inputSchema: { type: "object" },
         entry: "run.sh",
         files: { "run.sh": "#!/bin/sh\necho hi" }

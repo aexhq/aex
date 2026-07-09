@@ -5,7 +5,7 @@
  * boundary: `import "@aexhq/sdk"` resolves from the packed artifact, and we prove
  *
  *   - a throttled submit is retried with bounded backoff,
- *   - every retry re-issues the SAME Idempotency-Key (no duplicate billable run),
+ *   - every retry re-issues the SAME Idempotency-Key (no duplicate billable session turn),
  *   - a persistent throttle surfaces a structured `AexRateLimitError`,
  *   - non-retryable 4xx fail fast, and `retry:false` disables the layer,
  *   - `session.replayLast(...)` exists for replaying a throttled turn.
@@ -101,7 +101,7 @@ function client(fetch) {
 }
 
 // 1) A 429 then a 500 then success — retried, and EVERY attempt reuses the one
-//    Idempotency-Key, so a retry never creates a duplicate billable run.
+//    Idempotency-Key, so a retry never creates a duplicate billable session turn.
 const a = makeFetch([429, 500, 201]);
 const session = await client(a.fetch).sessions.create({
   model: "claude-haiku-4-5",

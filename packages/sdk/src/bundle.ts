@@ -13,7 +13,7 @@ import {
  * In-memory skill bundle: a flat path -> bytes map and the
  * deterministically-zipped representation.
  *
- * The SDK runs only the cheap, safety-critical checks here
+ * The SDK sessions only the cheap, safety-critical checks here
  * (`validateSkillBundleEntry`: no `..`, no absolute paths, no Windows
  * backslashes, depth/length limits). The BFF re-canonicalises and
  * recomputes the canonical hash on receipt — SDK-side hashing is NOT
@@ -121,7 +121,7 @@ export function bundleSkillFiles(files: SkillFiles, meta?: BundleMeta): BundledS
   }
 
   // Sort entries and pin every mtime to the epoch so the byte output is
-  // identical across machines and re-runs (the BFF re-canonicalises and
+  // identical across machines and re-sessions (the BFF re-canonicalises and
   // recomputes the canonical hash, so this is for retry-safety / debug
   // reproducibility rather than a wire-shape contract). The fidelity sidecar,
   // when present, is appended LAST so a metadata-free bundle is byte-identical.

@@ -3,7 +3,7 @@
  * OUTPUT_MODES/parseOutputMode; the schema field survives the full parser.
  */
 import { describe, expect, it } from "vitest";
-import { parseResponseFormat, parseRunSubmissionRequest, RESPONSE_FORMAT_KINDS } from "../src/internal.js";
+import { parseResponseFormat, parseSessionSubmissionRequest, RESPONSE_FORMAT_KINDS } from "../src/internal.js";
 
 describe("parseResponseFormat (WS10)", () => {
   it("kinds are the closed SSoT set", () => {
@@ -46,7 +46,7 @@ describe("parseResponseFormat (WS10)", () => {
 
 describe("responseFormat through the full submission parser (WS10)", () => {
   it("surfaces responseFormat on the parsed submission", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       workspaceId: "w1",
       idempotencyKey: "i1",
       provider: "deepseek",

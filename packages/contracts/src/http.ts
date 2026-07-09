@@ -281,7 +281,7 @@ function toNetworkError(
   elapsedMs?: number
 ): unknown {
   if (err instanceof AexError) return err;
-  // `DOMException` is not an `Error` subclass on every runtime, so match aborts by name.
+  // `DOMException` is not an `Error` subclass on every sessiontime, so match aborts by name.
   if ((err as { readonly name?: unknown } | null | undefined)?.name === "AbortError") return err;
   return new AexNetworkError({
     method: (method ?? "GET").toUpperCase(),

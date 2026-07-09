@@ -5,7 +5,7 @@
  * `session.download()`.
  *
  * Without `--only`, downloads everything public — organised into
- * `metadata/run.json`, typed `events/events.jsonl`, `outputs/<rel>`
+ * `metadata/session.json`, typed `events/events.jsonl`, `outputs/<rel>`
  * (deliverables), plus `manifest.json`.
  *
  * `--only outputs|events|metadata` downloads just that one
@@ -27,7 +27,7 @@ import {
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   takeFlagValue
 } from "./common.js";
 
@@ -39,8 +39,8 @@ const NAMESPACE_DOWNLOADERS = {
   metadata: operations.downloadMetadata
 } satisfies Record<Namespace, typeof operations.download>;
 
-export async function runDownloadCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "download")) return USAGE_ERR;
+export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "download")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

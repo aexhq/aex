@@ -5,32 +5,32 @@
  * `skills` meta-tool and that its `SKILL.md` body drives the answer — not merely
  * that the bundle was staged.
  *
- *   SDK → client.run({ skills: [skill, ...] })
+ *   SDK → client.start({ skills: [skill, ...] })
  *      → preflight uploads/upserts the skill bundle by workspace name
  *      → the skill rides in the session `skills` array
  *      → the model calls `skills({ action:"load", name })` to pull SKILL.md into context
- *      → the body carries a per-run token the model could not otherwise know
+ *      → the body carries a per-session token the model could not otherwise know
  *      → the model emits that token verbatim in its reply
  *
  * Cases (each a single managed DeepSeek run, builtins disarmed so the ONLY
  * tools present are the ones under test):
  *
  *   1. Single skill loaded — one skill whose SKILL.md body defines a
- *      per-run passphrase token. The prompt asks for the passphrase; the run
+ *      per-session passphrase token. The prompt asks for the passphrase; the session
  *      must succeed AND the planted token must appear in the assistant reply
  *      (proving the `skills` meta-tool loaded it and its content was consumed).
  *      We also assert the loaded skill name shows up in the tool-call trace and that the
  *      skill produced a `skill_loaded` event.
  *      This case also covers "behavior actually changes": the token is a fresh
- *      random value per run, so the model can only produce it by loading THIS
- *      run's skill — a control run without the skill would be redundant spend.
+ *      random value per session, so the model can only produce it by loading THIS
+ *      session's skill — a control session without the skill would be redundant spend.
  *
  *   2. Two skills, correct one chosen — a RED skill and a BLUE skill
  *      each with a distinct token. The prompt asks for the RED passphrase only.
  *      The RED token must appear in the reply and the BLUE token must NOT
  *      (catches "all skills collapsed into one" / wrong-skill selection).
  *
- *   3. Skill + custom Tool together — one run wiring a skill AND a
+ *   3. Skill + custom Tool together — one session wiring a skill AND a
  *      custom `Tool.fromFiles` tool. The prompt drives BOTH: the custom tool
  *      stamps a marker (deterministic echo) and the skill supplies the vault
  *      passphrase. Both must be invoked and produce their deterministic values.
@@ -39,7 +39,7 @@
  * phrasing) so they are robust to LLM nondeterminism.
  *
  * Gating mirrors the sibling live suites exactly: `requireEnv` throws at module
- * load when a credential is missing, so the file is only collected/run with
+ * load when a credential is missing, so the file is only collected/session with
  * live creds (the offline config excludes `test/live/**`). Required env:
  *   AEX_API_URL              live hosted API URL
  *   AEX_API_KEY            workspace API key
@@ -66,7 +66,7 @@ const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
-const RUN_TIMEOUT_MS = 6 * 60_000;
+const SESSION_TIMEOUT_MS = 6 * 60_000;
 const CHILD_TIMEOUT_MS = 8 * 60_000;
 const IT_TIMEOUT_MS = 10 * 60_000;
 
@@ -84,7 +84,7 @@ interface ObservedToolResult {
 }
 
 interface Observation {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly status: string;
   readonly eventKinds: readonly string[];
   readonly terminalKind: string | null;
@@ -125,7 +125,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 // Shared child-runner preamble. The child imports the freshly-installed SDK
-// from the install tempdir (so workspace symlinks cannot leak), runs one live
+// from the install tempdir (so workspace symlinks cannot leak), sessions one live
 // managed DeepSeek run, then reduces the raw event stream to a JSON
 // `Observation` on stdout. Raw-event iteration mirrors the proven sibling
 // harnesses (live-sdk-skill-invocation / live-sdk-tool-capability-fuzz):
@@ -161,7 +161,7 @@ function isSessionIdle(e) {
 }
 function terminalKindOf(e) {
   if (!e) return null;
-  return isSessionIdle(e) ? "RUN_FINISHED" : e.type;
+  return isSessionIdle(e) ? "TURN_FINISHED" : e.type;
 }
 function terminalDataOf(e) {
   if (!e) return null;
@@ -195,7 +195,7 @@ async function observe(result) {
   const fallbackEvents = Array.isArray(result.events) ? result.events : [];
   let events = fallbackEvents;
   try {
-    const session = await client.sessions.open(result.runId);
+    const session = await client.sessions.open(result.sessionId);
     const listedEvents = await session.events().list();
     if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
   } catch {
@@ -232,16 +232,16 @@ async function observe(result) {
     .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
     .join(" ");
   const finalText = typeof result.text === "string" && result.text ? result.text + " " : "";
-  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+  const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
   const eventKinds = events.map((e) => e.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) {
-    eventKinds.push("RUN_FINISHED");
+  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) {
+    eventKinds.push("TURN_FINISHED");
   }
   const streamErrors = customEvents
     .filter((e) => customName(e) === "aex.stream_error")
     .map((e) => (customValue(e) ? customValue(e) : { unknown: true }));
   return {
-    runId: result.runId,
+    sessionId: result.sessionId,
     status: result.ok
       ? "succeeded"
       : typeof result.status === "string" && result.status
@@ -299,7 +299,7 @@ function nameSuffix(): string {
   return (Math.random().toString(36) + "000000").slice(2, 10);
 }
 
-/** Fresh per-run token. Hyphen-segmented and < 24 chars so the runtime's
+/** Fresh per-session token. Hyphen-segmented and < 24 chars so the runtime's
  * high-entropy `[A-Za-z0-9+/=-]{24,}` stream redactor never eats it, and free
  * of the `token`/`key`/`secret` keywords its key<sep>value rule keys off. */
 function plantedToken(prefix: string): string {
@@ -357,7 +357,7 @@ function normalize(s: string): string {
 
 function diagnostics(o: Observation): string {
   return [
-    `runId=${o.runId} status=${o.status}`,
+    `sessionId=${o.sessionId} status=${o.status}`,
     `terminalKind=${o.terminalKind} terminalData=${JSON.stringify(o.terminalData)}`,
     `eventKinds=[${o.eventKinds.join(", ")}]`,
     `skillLoadedNames=[${o.skillLoadedNames.join(", ")}]`,
@@ -373,7 +373,7 @@ function diagnostics(o: Observation): string {
 function assertCleanTerminal(o: Observation): void {
   const dump = diagnostics(o);
   expect(o.status, dump).toBe("succeeded");
-  expect(o.terminalKind, dump).toBe("RUN_FINISHED");
+  expect(o.terminalKind, dump).toBe("TURN_FINISHED");
   expect(o.terminalData?.["reason"], dump).toBe("complete");
   expect(o.assistantTextEventCount, dump).toBeGreaterThan(0);
 }
@@ -410,7 +410,7 @@ describe("live skill invocation — model loads first-class skills and follows S
 
       const body = `
 const skill = await Skill.fromContent(${JSON.stringify(md)}, { name: ${JSON.stringify(skillName)} });
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
@@ -419,7 +419,7 @@ const result = await client.run({
   skills: [skill],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-single-" + Date.now()
-}, { timeoutMs: ${RUN_TIMEOUT_MS} });
+}, { timeoutMs: ${SESSION_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
 `;
       const { observation, stdout } = await runScenario(install, "skill-single.mjs", body);
@@ -434,7 +434,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
       expect(toolCallNames(observation), dump).toContain("skills");
       expect(skillLoadNames(observation), dump).toContain(skillName);
 
-      // The per-run token — unknowable without loading THIS run's skill — is in
+      // The per-session token — unknowable without loading THIS session's skill — is in
       // the answer, proving the SKILL.md body drove the reply (also covers the
       // "behavior actually changes" requirement without a costly control run).
       expect(normalize(observation.assistantText), dump).toContain(normalize(token));
@@ -476,7 +476,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const body = `
 const red = await Skill.fromContent(${JSON.stringify(redMd)}, { name: ${JSON.stringify(redName)} });
 const blue = await Skill.fromContent(${JSON.stringify(blueMd)}, { name: ${JSON.stringify(blueName)} });
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
@@ -485,7 +485,7 @@ const result = await client.run({
   skills: [red, blue],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-two-" + Date.now()
-}, { timeoutMs: ${RUN_TIMEOUT_MS} });
+}, { timeoutMs: ${SESSION_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
 `;
       const { observation, stdout } = await runScenario(install, "skill-two.mjs", body);
@@ -550,7 +550,7 @@ const stampTool = await Tool.fromFiles({
     "index.mjs": "export default async function ({ input }) { return 'stamped:' + String(input.marker); }"
   }
 });
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
@@ -560,7 +560,7 @@ const result = await client.run({
   skills: [skill],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-plus-custom-" + Date.now()
-}, { timeoutMs: ${RUN_TIMEOUT_MS} });
+}, { timeoutMs: ${SESSION_TIMEOUT_MS} });
 process.stdout.write(JSON.stringify(await observe(result)));
 `;
       const { observation, stdout } = await runScenario(install, "skill-plus-custom.mjs", body);

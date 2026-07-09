@@ -5,24 +5,24 @@
  * `aex` bin against the real API. Focuses on the CLI's real-world day-one
  * surface that the happy-path `live-cli-installed.test.ts` does not
  * cover:
- *   - a real one-shot `aex run --follow` reaches a clean terminal + prints the
+ *   - a real one-shot `aex start --follow` reaches a clean terminal + prints the
  *     assistant text and session id (with a UNICODE prompt round-trip),
  *   - the read verbs (status/events/outputs/download) work on that session,
  *   - the auth/error paths (bad token -> 401, missing run -> 404) return a clean
  *     JSON error envelope + non-zero exit, NOT a stack trace or a hang,
  *   - no secret (api key or provider key) is ever echoed to stdout/stderr.
  *
- * Billable runs: exactly ONE (`aex run --follow`); every other case is a
+ * Billable sessions: exactly ONE (`aex start --follow`); every other case is a
  * read-only or auth call.
  *
- * Required env (wired by run-live.sh): AEX_API_URL, AEX_API_KEY,
+ * Required env (wired by session-live.sh): AEX_API_URL, AEX_API_KEY,
  * DEEPSEEK_API_KEY, AEX_USER_TEST_TARBALL.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getAexBinPath, installAex, runCommand, type InstallResult, type RunResult } from "../_fixtures/install.js";
+import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -37,7 +37,7 @@ const providerKey = requireGateKey("edge-cli");
 const model = gateModel();
 
 // A completed one-shot turn parks the session cleanly (idle/suspended) or, when
-// the deployment projects a terminal run status, `succeeded`. Any of these is a
+// the deployment projects a terminal session status, `succeeded`. Any of these is a
 // clean exit-0 outcome. Mirrors live-cli-installed.test.ts.
 const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
 
@@ -45,11 +45,11 @@ function redact(text: string): string {
   return text.split(apiKey).join("[REDACTED_TOKEN]").split(providerKey).join("[REDACTED_KEY]");
 }
 
-function diag(label: string, r: RunResult): string {
+function diag(label: string, r: SessionResult): string {
   return redact(`${label} exited ${r.exitCode}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`);
 }
 
-function assertNoSecretLeak(label: string, r: RunResult): void {
+function assertNoSecretLeak(label: string, r: SessionResult): void {
   const combined = r.stdout + r.stderr;
   expect(combined.includes(apiKey), `${label}: api key leaked to output`).toBe(false);
   expect(combined.includes(providerKey), `${label}: provider key leaked to output`).toBe(false);
@@ -89,7 +89,7 @@ function customNames(events: readonly Record<string, unknown>[]): string[] {
 
 function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
   const kinds = events.map((e) => e["type"]);
-  return kinds.includes("RUN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
+  return kinds.includes("TURN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
 }
 
 function looksTransientProvider(text: string): boolean {
@@ -109,7 +109,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     install?.cleanup();
   });
 
-  async function runCli(args: readonly string[], timeoutMs = 60_000): Promise<RunResult> {
+  async function executeCli(args: readonly string[], timeoutMs = 60_000): Promise<SessionResult> {
     return await runCommand(binPath, args, { cwd: install.installDir, timeoutMs });
   }
 
@@ -118,7 +118,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
   // ---------------------------------------------------------------- auth (non-billable)
 
   it("whoami with a valid token exits 0 and returns a JSON principal without leaking the token", async () => {
-    const r = await runCli(["whoami", ...common()]);
+    const r = await executeCli(["whoami", ...common()]);
     expect(r.exitCode, diag("aex whoami", r)).toBe(0);
     const me = JSON.parse(r.stdout.trim()) as Record<string, unknown>;
     expect(me, diag("aex whoami", r)).toBeTypeOf("object");
@@ -132,7 +132,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     // (not 401). The robust contract: non-zero exit + a clean JSON envelope that
     // surfaces the server's reason, never a stack trace or a hang.
     const badToken = "aex_not_a_real_token_deadbeef";
-    const r = await runCli(["whoami", "--api-key", badToken, "--aex-url", apiBase]);
+    const r = await executeCli(["whoami", "--api-key", badToken, "--aex-url", apiBase]);
     expect(r.exitCode, diag("aex whoami (garbage token)", r)).toBe(1);
     const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
     expect(err["error"], diag("aex whoami (garbage token)", r)).toBe("whoami_failed");
@@ -163,7 +163,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     const mutated = apiKey.slice(0, -6) + mutatedTail;
     // Guard: ensure we actually changed the token.
     expect(mutated).not.toBe(apiKey);
-    const r = await runCli(["whoami", "--api-key", mutated, "--aex-url", apiBase]);
+    const r = await executeCli(["whoami", "--api-key", mutated, "--aex-url", apiBase]);
     expect(r.exitCode, diag("aex whoami (mutated token)", r)).toBe(1);
     const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
     expect(err["error"], diag("aex whoami (mutated token)", r)).toBe("whoami_failed");
@@ -180,8 +180,8 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     expect(r.stderr).not.toMatch(/\bat .+\(.+:\d+:\d+\)/);
   });
 
-  it("status on a nonexistent run id exits 1 with a clean not-found JSON envelope", async () => {
-    const r = await runCli(["status", "run-does-not-exist-000000", ...common()]);
+  it("status on a nonexistent session id exits 1 with a clean not-found JSON envelope", async () => {
+    const r = await executeCli(["status", "session-does-not-exist-000000", ...common()]);
     expect(r.exitCode, diag("aex status (missing id)", r)).toBe(1);
     const err = JSON.parse(r.stderr.trim()) as Record<string, unknown>;
     expect(err["error"], diag("aex status (missing id)", r)).toBe("status_failed");
@@ -194,7 +194,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
     expect(r.stderr).not.toMatch(/\bat .+\(.+:\d+:\d+\)/);
   });
 
-  // ---------------------------------------------------------------- the one billable run + reads
+  // ---------------------------------------------------------------- the one billable session turn + reads
 
   it(
     "run --follow with a UNICODE prompt reaches a clean terminal, prints the id + assistant text, and the read verbs work",
@@ -211,7 +211,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const promptPath = join(install.installDir, `edge-cli-prompt-${asciiId}.txt`);
         writeFileSync(promptPath, `Output verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
 
-        const run = await runCli(
+        const run = await executeCli(
           [
             "run",
             "--provider", GATE_PROVIDER,
@@ -225,7 +225,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
           ],
           10 * 60_000
         );
-        const runDiag = diag("aex run --follow", run);
+        const runDiag = diag("aex start --follow", run);
         if (run.exitCode !== 0) {
           diagnostics.push(`attempt ${attempt}: ${runDiag}`);
           if (attempt < maxAttempts && looksTransientProvider(runDiag)) continue;
@@ -245,18 +245,18 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const id = sessionId as string;
 
         // status: id + clean status
-        const status = await runCli(["status", id, ...common()]);
+        const status = await executeCli(["status", id, ...common()]);
         expect(status.exitCode, diag("aex status", status)).toBe(0);
         const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
         expect(statusDoc["id"], diag("aex status", status)).toBe(id);
         expect(SESSION_PARKED_OK, diag("aex status", status)).toContain(statusDoc["status"]);
         assertNoSecretLeak("status", status);
 
-        // events: RUN_STARTED + clean terminal + the assistant echoed the markers
-        const events = await runCli(["events", id, ...common()]);
+        // events: TURN_STARTED + clean terminal + the assistant echoed the markers
+        const events = await executeCli(["events", id, ...common()]);
         expect(events.exitCode, diag("aex events", events)).toBe(0);
         const eventRows = parseJsonLines(events.stdout);
-        expect(eventRows.map((e) => e["type"]), diag("aex events", events)).toContain("RUN_STARTED");
+        expect(eventRows.map((e) => e["type"]), diag("aex events", events)).toContain("TURN_STARTED");
         expect(hasCleanTerminal(eventRows), diag("aex events", events)).toBe(true);
         const joined = eventText(eventRows).replace(/\s+/g, "");
         expect(joined, diag("aex events", events)).toContain(asciiId);
@@ -267,7 +267,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         assertNoSecretLeak("events", events);
 
         // outputs: exit 0 (list may be empty for a pure text turn)
-        const outputs = await runCli(["outputs", id, ...common()]);
+        const outputs = await executeCli(["outputs", id, ...common()]);
         expect(outputs.exitCode, diag("aex outputs", outputs)).toBe(0);
         const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
         for (const o of outputRows) expect(typeof o["id"], diag("aex outputs", outputs)).toBe("string");
@@ -275,7 +275,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
 
         // download --only events -> a real zip with events.jsonl
         const zipPath = join(install.installDir, `edge-cli-events-${id}.zip`);
-        const download = await runCli(["download", id, "--only", "events", "--out", zipPath, ...common()]);
+        const download = await executeCli(["download", id, "--only", "events", "--out", zipPath, ...common()]);
         expect(download.exitCode, diag("aex download --only events", download)).toBe(0);
         expect(JSON.parse(download.stdout.trim())).toMatchObject({ sessionId: id, namespace: "events", path: zipPath });
         expect(existsSync(zipPath), diag("aex download --only events", download)).toBe(true);

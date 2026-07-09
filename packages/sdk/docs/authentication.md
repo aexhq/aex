@@ -41,7 +41,7 @@ documented once in [Credentials](credentials.md).)
 
 The token travels as a standard `Authorization: Bearer` header. Treat it like
 any other secret: keep it in environment variables or a secret manager, never
-in run config, prompts, or committed files.
+in session config, prompts, or committed files.
 
 ## Plane routing and the `baseUrl` guard
 
@@ -73,12 +73,12 @@ missing scope. The customer-grantable scopes:
 
 | Scope | Grants |
 | --- | --- |
-| `runs:read` | Read sessions/runs, their events and event archives, and webhook delivery ledgers. |
-| `runs:write` | Open sessions, send turns, submit runs, suspend/resume, redeliver webhooks, reveal the webhook signing secret. |
-| `runs:cancel` | Cancel a session/run. |
-| `runs:delete` | Delete a session/run record. |
+| `sessions:read` | Read sessions/sessions, their events and event archives, and webhook delivery ledgers. |
+| `sessions:write` | Open sessions, send turns, submit sessions, suspend/resume, redeliver webhooks, reveal the webhook signing secret. |
+| `sessions:cancel` | Cancel a session/run. |
+| `sessions:delete` | Delete a session/session record. |
 | `outputs:read` | List, read, download, and mint links for captured outputs. |
-| `files:write` | Upload asset bytes (files, skills, AGENTS.md) staged for a run. |
+| `files:write` | Upload asset bytes (files, skills, AGENTS.md) staged for a session. |
 | `files:delete` | Delete workspace asset-store entries. |
 | `secrets:read` | List workspace secrets and read their metadata (never values). |
 | `secrets:write` | Create, rotate, and delete workspace secrets. |
@@ -94,16 +94,16 @@ Tokens may additionally carry the reserved scopes `skills:read` /
 and AGENTS.md asset uploads are covered by `files:write` — so treat them as
 inert placeholders for future per-asset-type routes.
 
-A typical automation token carries `runs:read`, `runs:write`, and
+A typical automation token carries `sessions:read`, `sessions:write`, and
 `outputs:read`. Grant the rest only where the workload needs them — a read-only
-reporting token, for example, needs no `runs:write`.
+reporting token, for example, needs no `sessions:write`.
 
 ## Introspection: `whoami`
 
 `aex.whoami()` (CLI: `aex whoami`) validates the token and returns the
 workspace id, the token's scopes, and — on current platform deployments — a
 `limits` object with the workspace's effective admission caps
-(`maxConcurrentRuns`, `submitRatePerMinute`, `spendCapUsd`, `monthSpendUsd`,
+(`maxConcurrentSessions`, `submitRatePerMinute`, `spendCapUsd`, `monthSpendUsd`,
 `balanceUsd`, `balanceGraceFloorUsd`, `paymentMethodStatus`), resolved by the
 same code the submit gates enforce. Use it as a cheap credential check and to
 anticipate `429`/`402` rejections before submitting — see

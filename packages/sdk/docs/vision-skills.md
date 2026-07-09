@@ -5,22 +5,22 @@ title: Call a vision API from a skill
 # Call a vision API from a skill
 
 aex has no built-in vision tool. The agent's `provider` / `model` selects the
-reasoning model for the run; if a skill needs image understanding mid-run, ship a
+reasoning model for the session; if a skill needs image understanding mid-session, ship a
 skill that calls the vision provider with normal HTTP and pass that provider key
 as a runtime secret.
 
-The runnable example lives at [`examples/vision-skill/`](../../../examples/vision-skill).
+The sessionnable example lives at [`examples/vision-skill/`](../../../examples/vision-skill).
 It captions a frame with ByteDance Doubao Seed Vision (Ark) and returns a
 per-noun "does the frame depict X?" verdict.
 
-## Submit the run
+## Submit the session
 
 ```ts
 import { Aex, Models, Secret, Skill } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
-const result = await aex.run({
+const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Read skills/frame-vision-gate/SKILL.md, then caption and verify the frame.",
   skills: [await Skill.fromDir("./vision-skill", { name: "frame-vision-gate" })],
@@ -36,16 +36,16 @@ const result = await aex.run({
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-console.log(result.runId, result.text);
+console.log(result.sessionId, result.text);
 ```
 
 `Skill.fromDir("./vision-skill", ...)` is resolved relative to the process
-CWD. Run the script from the directory that contains `vision-skill/` (in this
+CWD. SessionRecord the script from the directory that contains `vision-skill/` (in this
 repo, `examples/`).
 
 ## Call the provider from the skill
 
-Inside the run, the skill reads `DOUBAO_API_KEY` and makes an
+Inside the session, the skill reads `DOUBAO_API_KEY` and makes an
 OpenAI-compatible chat-completions request with Python's standard HTTP client.
 The image is base64-inlined as a data URL in the request body:
 

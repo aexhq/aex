@@ -3,20 +3,20 @@
  *
  * Customer POV, blackbox against the installed public `@aexhq/sdk` on DEV.
  * A parent DeepSeek run is prompted to delegate a tiny task to the builtin
- * `subagent` tool (spawns a CHILD run). We then probe — using ONLY the public
+ * `subagent` tool (spawns a CHILD session). We then probe — using ONLY the public
  * SDK read surface a customer actually has (`Aex` + `client.sessions.*`) —
  * whether the child is observable, and whether its work / cost flows back into
  * the parent.
  *
- * The public 0.36.0 SDK is session-based: there is NO `getRun` / `AgentExecutor`.
+ * The public 0.36.0 SDK is session-based: there is NO `getSessionRecord` / `AgentExecutor`.
  * The only child-observation paths a customer has are:
- *   - the parent's `subagent` TOOL_CALL_RESULT text (carries the child runId),
+ *   - the parent's `subagent` TOOL_CALL_RESULT text (carries the child sessionId),
  *   - `client.sessions.get(childId)` / `client.sessions.open(childId)`,
  *   - `client.sessions.list()`.
  *
  * Hard invariants asserted here (the rest is characterized to a scratchpad JSON
  * for the human sweep): parent succeeds, subagent was actually called, a child
- * runId was returned, and the DeepSeek key never leaks into ANY SDK-visible
+ * sessionId was returned, and the DeepSeek key never leaks into ANY SDK-visible
  * surface (parent OR child events).
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
@@ -49,7 +49,7 @@ const deepseekKey = requireAnyEnv("DEEPSEEK_API_KEY", "DEEPSEEK_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 interface Wave1Result {
-  readonly parentRunId: string;
+  readonly parentSessionId: string;
   readonly parentStatus: string;
   readonly parentOk: boolean;
   readonly parentCostUsd: number | null;
@@ -110,7 +110,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
           "BEGIN " + childInstruction + " END\\n" +
           "After the tool returns, reply with exactly one line: " + PARENT_MARKER;
 
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: "deepseek",
           model,
           message: prompt,
@@ -119,15 +119,15 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
           idempotencyKey: "edge-lineage-w1-" + Date.now()
         }, { timeoutMs: 8 * 60 * 1000 });
 
-        const parentRunId = runResult.runId;
-        const parentOk = runResult.ok === true;
-        const parentStatus = parentOk ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed");
-        const parentCostUsd = typeof runResult.costUsd === "number" ? runResult.costUsd : null;
+        const parentSessionId = sessionResult.sessionId;
+        const parentOk = sessionResult.ok === true;
+        const parentStatus = parentOk ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
+        const parentCostUsd = typeof sessionResult.costUsd === "number" ? sessionResult.costUsd : null;
 
         // Prefer freshly-listed events (journal forwards async).
-        let events = Array.isArray(runResult.events) ? runResult.events : [];
+        let events = Array.isArray(sessionResult.events) ? sessionResult.events : [];
         try {
-          const s = await client.sessions.open(parentRunId);
+          const s = await client.sessions.open(parentSessionId);
           const listed = await s.events().list();
           if (Array.isArray(listed) && listed.length > 0) events = listed;
         } catch {}
@@ -152,7 +152,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
 
         let childId = null;
         for (const r of subagentResults) {
-          const m = r.text.match(/\\brun_[0-9a-f]{32}\\b/i);
+          const m = r.text.match(/\\bses_[0-9a-f]{32}\\b/i);
           if (m) { childId = m[0]; break; }
         }
 
@@ -161,7 +161,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
 
         let parentOutputCount = 0;
         try {
-          const s = await client.sessions.open(parentRunId);
+          const s = await client.sessions.open(parentSessionId);
           const outs = await s.outputs().list();
           parentOutputCount = Array.isArray(outs) ? outs.length : 0;
         } catch {}
@@ -196,14 +196,14 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
           const page = await client.sessions.list();
           const ids = Array.isArray(page.sessions) ? page.sessions.map((s) => s.sessionId ?? s.id) : [];
           sessionsListCount = ids.length;
-          parentInSessionsList = ids.includes(parentRunId);
+          parentInSessionsList = ids.includes(parentSessionId);
           if (childId) childInSessionsList = ids.includes(childId);
         } catch {}
 
         const leakedKeyAnywhere = parentEventsStr.includes(deepseekKey) || childEventsStr.includes(deepseekKey);
 
         const result = {
-          parentRunId, parentStatus, parentOk, parentCostUsd,
+          parentSessionId, parentStatus, parentOk, parentCostUsd,
           parentEventKinds, subagentStartCount, subagentResults, childId,
           parentMarker: PARENT_MARKER, childMarker: CHILD_MARKER,
           childMarkerInParentEvents, parentOutputCount,
@@ -257,7 +257,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
       expect(result.parentStatus, dump).toBe("succeeded");
       // The agent actually reached for the subagent tool.
       expect(result.subagentStartCount, dump).toBeGreaterThan(0);
-      // The subagent tool returned a child runId (async "started" path).
+      // The subagent tool returned a child sessionId (async "started" path).
       expect(result.childId, dump).not.toBeNull();
       // The customer's DeepSeek key MUST NOT appear in ANY SDK-visible surface
       // (parent OR child events).

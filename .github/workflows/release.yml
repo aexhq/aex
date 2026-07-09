@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       npm_dist_tag:
-        description: npm dist-tag for the initial publish (latest is forbidden — assign it via promote.yml after this run is green).
+        description: npm dist-tag for the initial publish (latest is forbidden — assign it via promote.yml after this session is green).
         required: true
         default: canary
         type: choice
@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${NPM_DIST_TAG}" = "latest" ]; then
-            echo "::error::Publishing directly to the 'latest' dist-tag is forbidden: release.yml publishes before the live user tests run. Publish to 'canary' and assign 'latest' via promote.yml once this release run is green."
+            echo "::error::Publishing directly to the 'latest' dist-tag is forbidden: release.yml publishes before the live user tests run. Publish to 'canary' and assign 'latest' via promote.yml once this release workflow attempt is green."
             exit 1
           fi
 
@@ -175,7 +175,7 @@ jobs:
           AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50
+          LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 50
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
   publish:
@@ -258,12 +258,12 @@ jobs:
   live-user-tests:
     # Published-artifact SMOKE (not the full behavioral matrix). release.yml
     # publishes to a pre-release dist-tag, then this proves the PUBLISHED
-    # @aexhq/sdk + CLI installs from npm and runs end-to-end — a DeepSeek SDK
+    # @aexhq/sdk + CLI installs from npm and sessions end-to-end — a DeepSeek SDK
     # round-trip on the managed runtime and the installed CLI
     # (apps/user-tests/vitest.smoke.config.ts). The full test/live/** matrix
-    # runs against this same published sdk_version across dev + prd in platform
-    # deploy.yml (aws-suite.yml sdk_user_tests), which the release runbook (§4.7)
-    # requires green before promoting to `latest` — so re-running the whole
+    # sessions against this same published sdk_version across dev + prd in platform
+    # deploy.yml (aws-suite.yml sdk_user_tests), which the release workflow attemptbook (§4.7)
+    # requires green before promoting to `latest` — so retrying the whole
     # suite here was redundant with that deploy gate.
     name: Published-artifact smoke
     needs: publish
@@ -293,8 +293,8 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_VERSION: ${{ needs.publish.outputs.version }}
-          # Two smoke files; run both at once (2 live runs is trivially within
-          # the workspace's maxConcurrentRuns >= 50 the preflight asserts).
+          # Two smoke files; run both at once (2 live sessions is trivially within
+          # the workspace's maxConcurrentSessions >= 50 the preflight asserts).
           AEX_USER_TEST_MAX_WORKERS: 2
           RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/release-smoke.log
           REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/release-smoke.report.json

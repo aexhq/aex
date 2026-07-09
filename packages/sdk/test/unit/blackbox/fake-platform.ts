@@ -4,7 +4,7 @@
  *
  * WHY THIS EXISTS. The 155-finding friction hunt showed that the defects the
  * user hits live are OBSERVABLE at the public seam: a cancelled run reading as a
- * clean idle, cost/usage absent at `run()`, list vs stream events non-joinable,
+ * clean idle, cost/usage absent at `start()`, list vs stream events non-joinable,
  * a control intent silently steamrolled. The existing unit tests each hand-roll a
  * bespoke `fetch` for one assertion; there was no realistic platform to drive the
  * whole lifecycle against. This harness is that platform: a scenario scripts a
@@ -14,26 +14,26 @@
  *
  * The one invariant it models is the fix's spine: a turn streams to a PARK event,
  * then SETTLES (costUsd + usage + lastTurnOutcome + settledAt written atomically),
- * so a default await-settle `run()`/`done()` always reads cost, usage, and the
+ * so a default await-settle `start()`/`done()` always reads cost, usage, and the
  * real terminal OUTCOME — never a lossy `idle`. The record's lifecycle `status`
  * stays `idle`/`suspended` for a resumable session; a terminal turn writes the
  * outcome (`succeeded`/`cancelled`/`timed_out`/`failed`).
  *
- * Routes modeled (the session + run facade the SDK actually calls):
+ * Routes modeled (the session + session record facade the SDK actually calls):
  *   POST /api/sessions                         create
  *   POST /api/sessions/:id/messages            send a turn
  *   POST /api/sessions/:id/events/ticket       WS ticket
  *   GET  /api/sessions/:id                     settle poll (settled record)
  *   GET  /api/sessions/:id/outputs             captured outputs
  *   POST /api/sessions/:id/{suspend,cancel,resume,approve,deny,request-approval}
- *   GET  /api/runs/:id/children                subagent lineage
- *   GET  /api/runs/:id                          run-facade resolve (child)
+ *   GET  /api/sessions/:id/children                subagent lineage
+ *   GET  /api/sessions/:id                          session facade resolve (child)
  */
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 import { Aex, SessionHandle } from "../../../src/index.js";
-import type { BatchResult, RunResult, SessionInput, SessionRunOptions } from "../../../src/index.js";
+import type { BatchResult, SessionResult, SessionInput, SessionStartOptions } from "../../../src/index.js";
 
-/** A run's terminal condition, as the FIXED platform surfaces it. */
+/** A session's terminal condition, as the FIXED platform surfaces it. */
 export type ScriptOutcome = "succeeded" | "cancelled" | "timed_out" | "failed" | "suspended";
 
 /** One turn's scripted brain behavior. Everything is optional; defaults = a clean $0 succeeded turn. */
@@ -48,7 +48,7 @@ export interface TurnScript {
   readonly custom?: readonly { readonly type: AexEvent["type"]; readonly data: Record<string, JsonValue> }[];
   /** Terminal outcome. Default `succeeded`. */
   readonly outcome?: ScriptOutcome;
-  /** Failure text for a `failed` turn (surfaced via the terminal RUN_ERROR event). */
+  /** Failure text for a `failed` turn (surfaced via the terminal TURN_ERROR event). */
   readonly errorMessage?: string;
   /** Settle-stamped billable cost. Default 0 (a $0 turn still settles, never hangs). */
   readonly costUsd?: number;
@@ -59,7 +59,7 @@ export interface TurnScript {
   /**
    * Model the real park→settle LAG: the park event fires with the record still
    * UNSETTLED; GET /api/sessions/:id only returns the settled record after a poll.
-   * Use to prove run()/done() actually AWAIT the settle commit (default: settle
+   * Use to prove start()/done() actually AWAIT the settle commit (default: settle
    * synchronously, for fast common-case tests).
    */
   readonly settleLag?: boolean;
@@ -97,14 +97,14 @@ function recordStatus(outcome: ScriptOutcome): string {
   return outcome; // cancelled | timed_out | failed | suspended
 }
 
-/** Build a canonical AexEvent whose id is `${runId}:${sequence}` (the one identity scheme). */
-function evt(runId: string, sequence: number, type: AexEvent["type"], data: Record<string, JsonValue> = {}): AexEvent {
+/** Build a canonical AexEvent whose id is `${sessionId}:${sequence}` (the one identity scheme). */
+function evt(sessionId: string, sequence: number, type: AexEvent["type"], data: Record<string, JsonValue> = {}): AexEvent {
   return {
     specversion: "1.0",
-    id: `${runId}:${sequence}`,
+    id: `${sessionId}:${sequence}`,
     source: type === "CUSTOM" ? "runtime" : "agent",
     type,
-    subject: runId,
+    subject: sessionId,
     time: new Date(sequence).toISOString(),
     sequence,
     data
@@ -181,9 +181,9 @@ export class FakePlatform {
     });
   }
 
-  /** Seed subagent children for a run, resolvable via `session.children()`. */
-  setChildren(runId: string, children: readonly Row[]): void {
-    this.#children.set(runId, children);
+  /** Seed subagent children for a session, resolvable via `session.children()`. */
+  setChildren(sessionId: string, children: readonly Row[]): void {
+    this.#children.set(sessionId, children);
   }
 
   /** The WS factory to hand a per-call `{ webSocketFactory }` option. */
@@ -196,12 +196,12 @@ export class FakePlatform {
     return ws;
   };
 
-  /** Drive a one-shot `aex.run(options)` with `script`, resolving the settled result. */
-  async run<T = unknown>(options: SessionRunOptions, script: TurnScript = {}): Promise<RunResult<T>> {
+  /** Drive a one-shot `aex.start(options)` with `script`, resolving the settled result. */
+  async start<T = unknown>(options: SessionStartOptions, script: TurnScript = {}): Promise<SessionResult<T>> {
     this.#pendingScript = script;
-    // The factory-created socket self-drives, so awaiting the run resolves the
+    // The factory-created socket self-drives, so awaiting the session resolves the
     // settled result; a pre-flight/wire rejection surfaces with no socket opened.
-    return this.aex.run<T>(options, { webSocketFactory: this.webSocketFactory });
+    return this.aex.start<T>(options, { webSocketFactory: this.webSocketFactory });
   }
 
   /** Drive one `session.send(input).done()` turn on an existing handle with `script`. */
@@ -220,13 +220,13 @@ export class FakePlatform {
   }
 
   /**
-   * Drive `aex.batch(items)` where every item runs `script` (or a per-index
-   * script). `batch()` calls its internal `run()` with the DEFAULT WebSocket
+   * Drive `aex.batch(items)` where every item sessions `script` (or a per-index
+   * script). `batch()` calls its internal `start()` with the DEFAULT WebSocket
    * (no per-call factory), so install the fake globally for the duration; the
    * per-session script is keyed by creation order.
    */
   async batch<T = unknown>(
-    items: readonly SessionRunOptions[],
+    items: readonly SessionStartOptions[],
     scripts: readonly TurnScript[] | TurnScript = {}
   ): Promise<BatchResult<T>> {
     const scriptFor = (i: number): TurnScript => (Array.isArray(scripts) ? (scripts[i] ?? {}) : (scripts as TurnScript));
@@ -299,7 +299,7 @@ export class FakePlatform {
       this.#settle(session, script, outcome);
     }
     if (outcome === "failed") {
-      emit("RUN_ERROR", { failureMessage: script.errorMessage ?? "run failed" });
+      emit("TURN_ERROR", { failureMessage: script.errorMessage ?? "session failed" });
     } else {
       emit("CUSTOM", { name: `aex.session.${parkName(outcome)}`, value: { turnSeq: Number(session.turnSeq ?? 1) } });
     }
@@ -322,7 +322,7 @@ export class FakePlatform {
         ]
       };
     }
-    if (outcome === "failed") session.errorMessage = script.errorMessage ?? "run failed";
+    if (outcome === "failed") session.errorMessage = script.errorMessage ?? "session failed";
     session.__outputs = script.outputs ?? [];
   }
 
@@ -359,7 +359,7 @@ export class FakePlatform {
   #route(method: string, path: string, init?: RequestInit): Response {
     // POST /api/sessions — create
     if (method === "POST" && /\/api\/sessions$/.test(path)) {
-      const id = `run-${++this.#idSeq}`;
+      const id = `session-${++this.#idSeq}`;
       const script = this.#onCreate ? this.#onCreate() : this.#pendingScript;
       this.#pendingScript = undefined;
       const session: Row = { id, sessionId: id, status: "idle", turnSeq: 0, __script: script };
@@ -427,7 +427,7 @@ export class FakePlatform {
       }
       if (method === "GET" && sub === "") {
         // Deferred settle: the first post-park read sees the UNSETTLED record; a
-        // later poll flips it to settled — so run()/done() must await the commit.
+        // later poll flips it to settled — so start()/done() must await the commit.
         const pending = session.__pendingSettle as { script: TurnScript; outcome: ScriptOutcome; reads: number } | undefined;
         if (pending) {
           pending.reads += 1;
@@ -439,19 +439,19 @@ export class FakePlatform {
         return json({ session: publicSession(session) });
       }
     }
-    // GET /api/runs/:id/children — subagent lineage
-    const c = path.match(/\/api\/runs\/([^/?]+)\/children$/);
+    // GET /api/sessions/:id/children — subagent lineage
+    const c = path.match(/\/api\/sessions\/([^/?]+)\/children$/);
     if (method === "GET" && c) {
       return json({ children: this.#children.get(decodeURIComponent(c[1]!)) ?? [] });
     }
-    // GET /api/runs/:id — run-facade resolve (a child)
-    const r = path.match(/\/api\/runs\/([^/?]+)$/);
+    // GET /api/sessions/:id — session facade resolve (a child)
+    const r = path.match(/\/api\/sessions\/([^/?]+)$/);
     if (method === "GET" && r) {
       const id = decodeURIComponent(r[1]!);
       const session = this.#sessions.get(id);
-      return json({ run: session ? publicSession(session) : { id, status: "idle" } });
+      return json({ session: session ? publicSession(session) : { id, status: "idle" } });
     }
-    const re = path.match(/\/api\/runs\/([^/?]+)\/(events|outputs)/);
+    const re = path.match(/\/api\/sessions\/([^/?]+)\/(events|outputs)/);
     if (method === "GET" && re) {
       const session = this.#sessions.get(decodeURIComponent(re[1]!));
       if (re[2] === "outputs") return json({ outputs: (session?.__outputs as Row[]) ?? [] });

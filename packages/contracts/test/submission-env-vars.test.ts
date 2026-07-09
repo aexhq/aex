@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRunSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/index.js";
 
 // Minimal valid submission envelope. Tests below only override the
 // `submission.environment` slice to exercise the new envVars parser.
@@ -15,8 +15,8 @@ const baseSubmission = {
   secrets: { apiKeys: { anthropic: "sk-ant-test" } }
 } as const;
 
-function submit(environment: Record<string, unknown>): ReturnType<typeof parseRunSubmissionRequest> {
-  return parseRunSubmissionRequest({
+function submit(environment: Record<string, unknown>): ReturnType<typeof parseSessionSubmissionRequest> {
+  return parseSessionSubmissionRequest({
     ...baseSubmission,
     submission: { ...baseSubmission.submission, environment }
   });

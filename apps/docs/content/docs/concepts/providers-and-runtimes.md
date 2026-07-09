@@ -29,7 +29,7 @@ the default size; there is no alternative runtime backend to select.
 ```ts
 import { Models, Providers } from "@aexhq/sdk";
 
-await aex.run({
+await aex.start({
   provider: Providers.OPENAI,
   model: Models.GPT_4_1,
   message: "Summarise the attached files.",
@@ -40,7 +40,7 @@ await aex.run({
 ### CLI
 
 ```bash
-aex run \
+aex start \
   --api-key "$AEX_API_KEY" \
   --provider openai \
   --openai-api-key "$OPENAI_API_KEY" \

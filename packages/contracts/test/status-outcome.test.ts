@@ -1,28 +1,28 @@
 /**
- * WS1 class-killer: the session terminal vocabulary is DERIVED from the run
+ * WS1 class-killer: the session terminal vocabulary is DERIVED from the session
  * outcome SSoT, so a new run outcome cannot be added without the session surface
  * gaining it. Runtime subset assert + a compile-time `satisfies` guard.
  */
 import { describe, expect, it } from "vitest";
 import {
-  RUN_TERMINAL_OUTCOMES,
+  SESSION_TURN_TERMINAL_OUTCOMES,
   SESSION_STATUSES,
   SESSION_LIFECYCLE_STATUSES,
   SESSION_TERMINAL_OUTCOMES,
   isTerminalSessionStatus,
-  type RunTerminalOutcome,
+  type SessionTurnTerminalOutcome,
   type SessionStatus
 } from "../src/index.js";
 
-describe("session/run terminal-outcome SSoT (WS1)", () => {
-  it("RUN_TERMINAL_OUTCOMES is a runtime subset of SESSION_STATUSES", () => {
-    for (const outcome of RUN_TERMINAL_OUTCOMES) {
+describe("session/session terminal-outcome SSoT (WS1)", () => {
+  it("SESSION_TURN_TERMINAL_OUTCOMES is a runtime subset of SESSION_STATUSES", () => {
+    for (const outcome of SESSION_TURN_TERMINAL_OUTCOMES) {
       expect(SESSION_STATUSES as readonly string[]).toContain(outcome);
     }
   });
 
-  it("SESSION_TERMINAL_OUTCOMES equals RUN_TERMINAL_OUTCOMES element-for-element", () => {
-    expect([...SESSION_TERMINAL_OUTCOMES]).toEqual([...RUN_TERMINAL_OUTCOMES]);
+  it("SESSION_TERMINAL_OUTCOMES equals SESSION_TURN_TERMINAL_OUTCOMES element-for-element", () => {
+    expect([...SESSION_TERMINAL_OUTCOMES]).toEqual([...SESSION_TURN_TERMINAL_OUTCOMES]);
   });
 
   it("recomposes SESSION_STATUSES = lifecycle ∪ terminal-outcomes ∪ awaiting_approval", () => {
@@ -48,10 +48,10 @@ describe("session/run terminal-outcome SSoT (WS1)", () => {
     }
   });
 
-  it("[compile-time] a non-RunTerminalOutcome member fails the satisfies constraint", () => {
-    // @ts-expect-error — "not_a_run_outcome" is not a RunTerminalOutcome, so the
-    // `satisfies readonly RunTerminalOutcome[]` derivation fails to compile.
-    const bad = ["succeeded", "not_a_run_outcome"] as const satisfies readonly RunTerminalOutcome[];
+  it("[compile-time] a non-SessionTurnTerminalOutcome member fails the satisfies constraint", () => {
+    // @ts-expect-error — "not_a_ses_outcome" is not a SessionTurnTerminalOutcome, so the
+    // `satisfies readonly SessionTurnTerminalOutcome[]` derivation fails to compile.
+    const bad = ["succeeded", "not_a_ses_outcome"] as const satisfies readonly SessionTurnTerminalOutcome[];
     expect(bad.length).toBe(2);
   });
 });

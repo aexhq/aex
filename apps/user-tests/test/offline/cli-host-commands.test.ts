@@ -75,43 +75,43 @@ async function startFakeApi(): Promise<FakeApi> {
 
     // --- session endpoints (run/status/events/wait/cancel speak these) ---
     if (req.method === "POST" && url.pathname === "/api/sessions") {
-      json(res, 200, { id: "run-cli-1", status: "idle", provider: "deepseek", runtime: "managed" });
+      json(res, 200, { id: "session-cli-1", status: "idle", provider: "deepseek", runtime: "managed" });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/api/sessions/run-cli-1/messages") {
+    if (req.method === "POST" && url.pathname === "/api/sessions/session-cli-1/messages") {
       json(res, 200, {
-        session: { id: "run-cli-1", status: "running", provider: "deepseek", runtime: "managed" },
-        turn: { sessionId: "run-cli-1", turnSeq: 1 },
+        session: { id: "session-cli-1", status: "running", provider: "deepseek", runtime: "managed" },
+        turn: { sessionId: "session-cli-1", turnSeq: 1 },
         eventCursor: 1
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/sessions/run-cli-1") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1") {
       statusPolls += 1;
       json(res, 200, {
-        id: "run-cli-1",
+        id: "session-cli-1",
         status: statusPolls > 1 ? "idle" : "running",
         provider: "deepseek",
         runtime: "managed"
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/sessions/run-cli-1/events") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/events") {
       json(res, 200, {
         events: [
-          { id: "evt-1", type: "RUN_STARTED", data: { phase: "start" } },
-          { id: "evt-2", type: "RUN_FINISHED", data: { reason: "complete" } }
+          { id: "evt-1", type: "TURN_STARTED", data: { phase: "start" } },
+          { id: "evt-2", type: "TURN_FINISHED", data: { reason: "complete" } }
         ]
       });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/api/sessions/run-cli-1/cancel") {
-      json(res, 200, { session: { id: "run-cli-1", status: "cancelling" } });
+    if (req.method === "POST" && url.pathname === "/api/sessions/session-cli-1/cancel") {
+      json(res, 200, { session: { id: "session-cli-1", status: "cancelling" } });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/sessions") {
       json(res, 200, {
-        sessions: [{ id: "run-cli-1", status: "idle", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z" }]
+        sessions: [{ id: "session-cli-1", status: "idle", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z" }]
       });
       return;
     }
@@ -135,7 +135,7 @@ async function startFakeApi(): Promise<FakeApi> {
             entryType: "top_up",
             amountUsd: 25,
             currency: "USD",
-            runId: null,
+            sessionId: null,
             description: "ci top-up",
             createdBy: "admin:ops@example.test",
             createdAt: "2026-07-01T00:00:00Z"
@@ -150,36 +150,36 @@ async function startFakeApi(): Promise<FakeApi> {
     }
 
     // --- run endpoints (download assembles the public zip client-side from
-    // these; the session id doubles as the run id) ---
-    if (req.method === "GET" && url.pathname === "/api/runs") {
+    // these; the session id doubles as the session id) ---
+    if (req.method === "GET" && url.pathname === "/api/sessions") {
       json(res, 200, {
-        runs: [
-          { id: "run-cli-1", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.02 },
-          { id: "run-cli-0", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
+        sessions: [
+          { id: "session-cli-1", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.02 },
+          { id: "session-cli-0", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
         ]
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1") {
-      json(res, 200, { id: "run-cli-1", status: "succeeded", provider: "deepseek", runtime: "managed" });
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1") {
+      json(res, 200, { id: "session-cli-1", status: "succeeded", provider: "deepseek", runtime: "managed" });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1/events") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/events") {
       json(res, 200, {
         events: [
-          { id: "evt-1", type: "RUN_STARTED", data: { phase: "start" } },
-          { id: "evt-2", type: "RUN_FINISHED", data: { reason: "complete" } }
+          { id: "evt-1", type: "TURN_STARTED", data: { phase: "start" } },
+          { id: "evt-2", type: "TURN_FINISHED", data: { reason: "complete" } }
         ]
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1/outputs") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/outputs") {
       json(res, 200, {
         outputs: [{ id: "out-1", filename: "report.txt", sizeBytes: 11, contentType: "text/plain" }]
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/runs/run-cli-1/outputs/out-1/download") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/outputs/out-1/download") {
       bytes(res, 200, strToU8("hello world"), "text/plain");
       return;
     }
@@ -216,7 +216,7 @@ describe("installed CLI host commands", () => {
     install?.cleanup();
   });
 
-  it("runs run/status/events/wait/download/cancel through the installed binary", async () => {
+  it("sessions run/status/events/wait/download/cancel through the installed binary", async () => {
     const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
 
     const run = await runCommand(
@@ -238,27 +238,27 @@ describe("installed CLI host commands", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(run.exitCode, `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
-    // `aex run` prints the session record from the accepted first turn.
+    // `aex start` prints the session record from the accepted first turn.
     expect(JSON.parse(run.stdout.trim())).toEqual({
-      id: "run-cli-1",
+      id: "session-cli-1",
       status: "running",
       provider: "deepseek",
       runtime: "managed"
     });
 
-    const status = await runCommand(binPath, ["status", "run-cli-1", ...common], {
+    const status = await runCommand(binPath, ["status", "session-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
     expect(JSON.parse(status.stdout.trim())).toMatchObject({
-      id: "run-cli-1",
+      id: "session-cli-1",
       status: "running",
       provider: "deepseek",
       runtime: "managed"
     });
 
-    const events = await runCommand(binPath, ["events", "run-cli-1", ...common], {
+    const events = await runCommand(binPath, ["events", "session-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
@@ -268,25 +268,25 @@ describe("installed CLI host commands", () => {
 
     const wait = await runCommand(
       binPath,
-      ["wait", "run-cli-1", "--interval", "1ms", "--timeout", "2s", ...common],
+      ["wait", "session-cli-1", "--interval", "1ms", "--timeout", "2s", ...common],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(wait.exitCode, `stdout:\n${wait.stdout}\nstderr:\n${wait.stderr}`).toBe(0);
     expect(JSON.parse(wait.stdout.trim())).toEqual({
-      id: "run-cli-1",
+      id: "session-cli-1",
       status: "idle",
       provider: "deepseek",
       runtime: "managed"
     });
 
     const outPath = join(install.installDir, "installed-cli-run.zip");
-    const download = await runCommand(binPath, ["download", "run-cli-1", "--out", outPath, ...common], {
+    const download = await runCommand(binPath, ["download", "session-cli-1", "--out", outPath, ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(download.exitCode, `stdout:\n${download.stdout}\nstderr:\n${download.stderr}`).toBe(0);
     expect(JSON.parse(download.stdout.trim())).toMatchObject({
-      sessionId: "run-cli-1",
+      sessionId: "session-cli-1",
       namespace: "all",
       path: outPath
     });
@@ -295,34 +295,34 @@ describe("installed CLI host commands", () => {
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
       "manifest.json",
-      "metadata/run.json",
+      "metadata/session.json",
       "outputs/report.txt"
     ]);
     expect(new TextDecoder().decode(entries["outputs/report.txt"]!)).toBe("hello world");
 
-    const cancel = await runCommand(binPath, ["cancel", "run-cli-1", ...common], {
+    const cancel = await runCommand(binPath, ["cancel", "session-cli-1", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(cancel.exitCode, `stdout:\n${cancel.stdout}\nstderr:\n${cancel.stderr}`).toBe(0);
-    expect(JSON.parse(cancel.stdout.trim())).toEqual({ sessionId: "run-cli-1", status: "cancelling" });
+    expect(JSON.parse(cancel.stdout.trim())).toEqual({ sessionId: "session-cli-1", status: "cancelling" });
 
     expect(api.requests.every((request) => request.authorization === "Bearer tok-installed-cli")).toBe(true);
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
-    // `aex run` creates the session, then posts the first turn as a message.
-    expect(methodPaths.slice(0, 2)).toEqual(["POST /api/sessions", "POST /api/sessions/run-cli-1/messages"]);
+    // `aex start` creates the session, then posts the first turn as a message.
+    expect(methodPaths.slice(0, 2)).toEqual(["POST /api/sessions", "POST /api/sessions/session-cli-1/messages"]);
     expect(methodPaths).toEqual(
       expect.arrayContaining([
         "POST /api/sessions",
-        "POST /api/sessions/run-cli-1/messages",
-        "GET /api/sessions/run-cli-1",
-        "GET /api/sessions/run-cli-1/events",
-        "POST /api/sessions/run-cli-1/cancel",
-        // download assembles the public zip from the run-namespaced read endpoints
-        "GET /api/runs/run-cli-1",
-        "GET /api/runs/run-cli-1/events",
-        "GET /api/runs/run-cli-1/outputs",
-        "GET /api/runs/run-cli-1/outputs/out-1/download"
+        "POST /api/sessions/session-cli-1/messages",
+        "GET /api/sessions/session-cli-1",
+        "GET /api/sessions/session-cli-1/events",
+        "POST /api/sessions/session-cli-1/cancel",
+        // download assembles the public zip from the session-namespaced read endpoints
+        "GET /api/sessions/session-cli-1",
+        "GET /api/sessions/session-cli-1/events",
+        "GET /api/sessions/session-cli-1/outputs",
+        "GET /api/sessions/session-cli-1/outputs/out-1/download"
       ])
     );
 
@@ -396,23 +396,23 @@ describe("installed CLI host commands", () => {
     expect(rotate.exitCode).toBe(2);
     expect(rotate.stderr).toContain("not supported");
 
-    const runs = await runCommand(binPath, ["runs", "--since", "2026-07-01T00:00:00Z", ...common], {
-      cwd: install.installDir,
-      timeoutMs: 30_000
-    });
-    expect(runs.exitCode, `stdout:\n${runs.stdout}\nstderr:\n${runs.stderr}`).toBe(0);
-    const runsPage = JSON.parse(runs.stdout.trim()) as { runs: Array<{ id: string }> };
-    // The CLI enforces --since client-side (the deployed API ignores the param),
-    // so only the July run survives.
-    expect(runsPage.runs.map((run) => run.id)).toEqual(["run-cli-1"]);
-
-    const sessions = await runCommand(binPath, ["sessions", "--limit", "5", ...common], {
+    const sessions = await runCommand(binPath, ["sessions", "--since", "2026-07-01T00:00:00Z", ...common], {
       cwd: install.installDir,
       timeoutMs: 30_000
     });
     expect(sessions.exitCode, `stdout:\n${sessions.stdout}\nstderr:\n${sessions.stderr}`).toBe(0);
     const sessionsPage = JSON.parse(sessions.stdout.trim()) as { sessions: Array<{ id: string }> };
-    expect(sessionsPage.sessions.map((session) => session.id)).toEqual(["run-cli-1"]);
+    // The CLI enforces --since client-side (the deployed API ignores the param),
+    // so only the July session survives.
+    expect(sessionsPage.sessions.map((session) => session.id)).toEqual(["session-cli-1"]);
+
+    const limitedSessions = await runCommand(binPath, ["sessions", "--limit", "5", ...common], {
+      cwd: install.installDir,
+      timeoutMs: 30_000
+    });
+    expect(limitedSessions.exitCode, `stdout:\n${limitedSessions.stdout}\nstderr:\n${limitedSessions.stderr}`).toBe(0);
+    const limitedSessionsPage = JSON.parse(limitedSessions.stdout.trim()) as { sessions: Array<{ id: string }> };
+    expect(limitedSessionsPage.sessions.map((session) => session.id)).toEqual(["session-cli-1"]);
 
     const methodPaths = api.requests.map((request) => `${request.method} ${request.path}`);
     expect(methodPaths).toEqual(
@@ -420,7 +420,7 @@ describe("installed CLI host commands", () => {
         "GET /api/billing",
         "GET /api/billing/ledger?limit=10",
         "POST /api/webhook/signing-secret",
-        "GET /api/runs?since=2026-07-01T00%3A00%3A00Z",
+        "GET /api/sessions?since=2026-07-01T00%3A00%3A00Z",
         "GET /api/sessions?limit=5"
       ])
     );

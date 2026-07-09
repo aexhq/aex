@@ -2,7 +2,7 @@
  * `aex.secrets` — the workspace secret MANAGEMENT client, mirroring
  * `aex.files` / `aex.agentsMd`.
  *
- * Lifecycle parity with assets: a `Secret.value(...)` is per-run and
+ * Lifecycle parity with assets: a `Secret.value(...)` is per-session and
  * gone at terminal; promoting it (or `aex.secrets.set`) persists a named,
  * searchable workspace secret you can `get` (metadata), `rotate`, `list`, and
  * `delete`.

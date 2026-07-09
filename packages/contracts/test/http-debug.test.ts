@@ -25,11 +25,11 @@ describe("HttpClient debug sink", () => {
       fetch: async () => jsonResponse({ ok: true }),
       debug: (line) => lines.push(line)
     });
-    await client.request("/api/runs/abc", { method: "GET" }, { from: "5" });
+    await client.request("/api/sessions/abc", { method: "GET" }, { from: "5" });
     expect(lines).toHaveLength(1);
     const line = lines[0]!;
     expect(line).toContain("GET");
-    expect(line).toContain("/api/runs/abc");
+    expect(line).toContain("/api/sessions/abc");
     expect(line).toContain("-> 200");
     expect(line).toMatch(/\d+ms/);
     // Nothing sensitive: no token, no query string.
@@ -56,7 +56,7 @@ describe("HttpClient debug sink", () => {
       fetch: async () => jsonResponse({ ok: false, message: "nope" }, 404),
       debug: (line) => lines.push(line)
     });
-    await expect(client.request("/api/runs/missing")).rejects.toBeInstanceOf(AexApiError);
+    await expect(client.request("/api/sessions/missing")).rejects.toBeInstanceOf(AexApiError);
     expect(lines).toHaveLength(1);
     expect(lines[0]!).toContain("-> 404");
   });

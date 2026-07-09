@@ -12,12 +12,12 @@ The billing reads — `aex.billing()`, `aex.billingLedger()`, and the CLI
 `aex billing` (and its `ledger` sub-verb) — require the **`billing:read`**
 scope; a token without it fails with `403 insufficient_scope` (see
 [Errors](errors.md)). This is why the [Quickstart](quickstart.md) mints
-`billing:read` alongside `runs:read` / `runs:write` / `outputs:read`.
+`billing:read` alongside `sessions:read` / `sessions:write` / `outputs:read`.
 
 ## Read the billing summary
 
 `aex.billing()` returns the workspace's prepaid balance, current-month spend,
-and the spend cap enforced on new runs, plus plan fields:
+and the spend cap enforced on new sessions, plus plan fields:
 
 ```ts
 import { Aex } from "@aexhq/sdk";
@@ -88,7 +88,7 @@ aex billing ledger --limit 50   # JSON rows, newest first
 
 ## Reveal the webhook signing secret
 
-Run webhooks are signed Standard-Webhooks style with a per-workspace secret.
+SessionRecord webhooks are signed Standard-Webhooks style with a per-workspace secret.
 `aex.webhookSigningSecret()` reveals it (creating one on first use) as the
 `whsec_<base64>` string that `verifyAexWebhook` takes as `secret`:
 

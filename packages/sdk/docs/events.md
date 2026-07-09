@@ -4,7 +4,7 @@ title: Events
 
 # Events
 
-aex runs agent sessions on the managed runtime. Sessions are **non-blocking**:
+aex sessions agent sessions on the managed runtime. Sessions are **non-blocking**:
 the managed runtime advances the agent while aex observes lifecycle state, maps
 runtime output into one event shape, and persists every captured event. The SDK
 and CLI observe the durable event timeline from aex — there is no in-process
@@ -74,7 +74,7 @@ stream as `session.events().streamEnvelopes()` (replay-from-cursor + tail +
 exactly-once resume), so they are the low-latency equivalents of
 `events --follow`'s polling. `--json` is the raw-NDJSON escape hatch; `--filter`
 keeps only the named AG-UI types (`TEXT_MESSAGE_CONTENT`, `TOOL_CALL_START`, …)
-or sources (`agent`/`runtime`/…); a `RUN_ERROR` is surfaced as a jump-to-failure
+or sources (`agent`/`runtime`/…); a `TURN_ERROR` is surfaced as a jump-to-failure
 line. `aex inspect` adds a header, a settle-consistent full timeline, and a
 cost/usage footer. Both exit `0` parked cleanly / `1` error park / `3` timeout.
 They need a global `WebSocket` (Bun or Node ≥ 22).
@@ -93,7 +93,7 @@ message is accepted replays the events it missed, then continues live.
 ## Session turn events
 
 The canonical SDK session surface stops a turn on session lifecycle events, not
-terminal run events:
+terminal session events:
 
 ```ts
 const session = await aex.openSession(config);
@@ -111,9 +111,9 @@ The turn stream ends on the turn's park terminal: a resumable
 `aex.session.succeeded` / `.failed` / `.timed_out` / `.cancelled`, or the held
 `aex.session.awaiting_approval`. (The bare `aex.session.error` park is retired —
 a failed turn is `failed`, a wall-clock kill `timed_out`, a cancel `cancelled`.)
-`aex.run(config)` is a convenience wrapper over the same flow: it opens a
+`aex.start(config)` is a convenience wrapper over the same flow: it opens a
 session, sends `message` once, and returns the collected session turn. The
-returned `runId` is the session id.
+returned `sessionId` is the session id.
 
 ## Per-token streaming (`outputMode: 'stream'`)
 
@@ -132,16 +132,16 @@ on a provider that has no streaming producer (currently `gemini`) is a typed
 rejection at submission parse — **not** a silent downgrade to buffered. Choose a
 streamable provider or drop back to `buffered` explicitly.
 
-## Terminal events vs. the run record
+## Terminal events vs. the session record
 
 Two families of events can end a turn's stream, and which one you see depends
 on how the turn ends:
 
-- **AG-UI terminals** — `RUN_FINISHED` / `RUN_ERROR`. These are *render-complete*
+- **AG-UI terminals** — `TURN_FINISHED` / `TURN_ERROR`. These are *render-complete*
   signals emitted by the agent stream itself. On the managed plane a normal
-  session turn usually does **not** emit `RUN_FINISHED`: the session *parks*
-  instead (see below). Expect `RUN_ERROR` on stream-level failures, and treat
-  `RUN_FINISHED` — when it does appear — as a low-latency "stop the spinner"
+  session turn usually does **not** emit `TURN_FINISHED`: the session *parks*
+  instead (see below). Expect `TURN_ERROR` on stream-level failures, and treat
+  `TURN_FINISHED` — when it does appear — as a low-latency "stop the spinner"
   hint, not a read-consistency barrier.
 - **`aex.session.*` park terminals** — `CUSTOM` events carrying the turn's
   OUTCOME: `aex.session.succeeded` / `aex.session.failed` / `aex.session.timed_out`
@@ -149,11 +149,11 @@ on how the turn ends:
   `aex.session.suspended` / `aex.session.awaiting_approval`. On the managed plane
   these are what actually end a turn. The park event ends the RENDER; the settle
   commit (cost + usage + the authoritative outcome) lands shortly after — which
-  is why `run()`/`done()` await settle by DEFAULT and return the outcome as
+  is why `start()`/`done()` await settle by DEFAULT and return the outcome as
   `result.status` with `result.costUsd`/`result.usage` always populated (never a
   bare `idle`). Pass `await: 'park'` (on `run(...)` or `session.send(msg, {...})`)
   to return early at the park event when you don't need cost/usage. `result.costUsd`
-  is aex runtime/storage spend and **excludes** your BYOK provider charges — price
+  is aex starttime/storage spend and **excludes** your BYOK provider charges — price
   those from `result.usage` token counts. Ending a raw stream on the park event is
   fine for live UI; read the settled record (or the default await-settle result)
   when you need cost/usage/outcome.
@@ -161,11 +161,11 @@ on how the turn ends:
 Each event the stream yields carries method guards that cover both families so
 you never have to switch on the plane:
 
-- `event.isRunTerminal()` — true for the AG-UI `RUN_FINISHED` / `RUN_ERROR` pair.
-- `event.isRunSettled()` — true for the `aex.run.settled` settle barrier **and**
+- `event.isTurnTerminal()` — true for the AG-UI `TURN_FINISHED` / `TURN_ERROR` pair.
+- `event.isSessionSettled()` — true for the `aex.session.settled` settle barrier **and**
   for any `aex.session.*` park terminal. The managed plane emits the barrier after
   settle when it is delivered to the stream; the park event remains a terminal
-  fallback for streams that do not receive a later barrier. `event.isRunSettled()`
+  fallback for streams that do not receive a later barrier. `event.isSessionSettled()`
   is the one check that reliably means "this stream is done and the record is
   authoritative".
 
@@ -188,8 +188,8 @@ for await (const event of session.events().streamEnvelopes({ settleConsistent: t
 const settled = await aex.sessions.get(session.id); // parked/terminal here
 ```
 
-`settleConsistent: true` makes the iterator end exactly when `event.isRunSettled()`
-first fires; on a raw stream, call `event.isRunSettled()` yourself. What it
+`settleConsistent: true` makes the iterator end exactly when `event.isSessionSettled()`
+first fires; on a raw stream, call `event.isSessionSettled()` yourself. What it
 guarantees: when the stream ends, a subsequent `aex.sessions.get(id)` reads a
 parked/terminal status and `session.outputs().list()` is complete. Outputs are
 uploaded before the terminal is broadcast, so they are readable the moment the
@@ -197,7 +197,7 @@ stream ends.
 
 ## Temporary event archive links
 
-For terminal runs, `session.events().archiveLink(options?)` returns a temporary direct URL to `events.jsonl`, the same redacted customer-visible event export used by `session.events().download()`.
+For terminal sessions, `session.events().archiveLink(options?)` returns a temporary direct URL to `events.jsonl`, the same redacted customer-visible event export used by `session.events().download()`.
 
 ```ts
 const link = await session.events().archiveLink({ expiresIn: "1h" });
@@ -215,7 +215,7 @@ Every read and stream surface yields one canonical shape — the versioned coord
 
 Every event the SDK yields — the turn stream (`session.send()`),
 `session.events().list()`, `session.events().streamEnvelopes()`, and
-`RunResult.events` — carries a type-guard **method** for each standardized event
+`SessionResult.events` — carries a type-guard **method** for each standardized event
 type, so you branch on the event without importing a free function or writing a
 raw `event.type === "…"` compare:
 
@@ -225,15 +225,15 @@ for await (const event of session.send("Continue the task.")) {
     process.stdout.write(event.data.text); // `data.text` is typed `string` here
   } else if (event.isToolCallStart()) {
     console.log("tool:", event.data.name); // `data.name` is typed `string` here
-  } else if (event.isRunError()) {
-    console.error("run error");
+  } else if (event.isTurnError()) {
+    console.error("turn error");
   }
 }
 ```
 
-The full method set: `isRunStarted()`, `isRunFinished()`, `isRunError()`,
-`isRunTerminal()`, `isTextMessage()`, `isToolCallStart()`, `isToolCallResult()`,
-`isCustom()`, `isLog()`, `isEventChannel()`, `isRunSettled()`, and
+The full method set: `isTurnStarted()`, `isTurnFinished()`, `isTurnError()`,
+`isTurnTerminal()`, `isTextMessage()`, `isToolCallStart()`, `isToolCallResult()`,
+`isCustom()`, `isLog()`, `isEventChannel()`, `isSessionSettled()`, and
 `isFromSource(source)`. All test the `type` (or `channel`/`source`) discriminant
 at runtime. `isTextMessage()`, `isToolCallStart()`, and `isToolCallResult()` are
 TS type predicates: inside the guarded branch `event.data` NARROWS to that event

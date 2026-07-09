@@ -1,12 +1,12 @@
 import type { SessionStatus, SessionTerminalOutcome } from "./status.js";
-import type { RunCostProviderUsage } from "./run-cost.js";
+import type { SessionCostProviderUsage } from "./session-cost.js";
 import type {
-  PlatformRunSubmissionInput,
+  PlatformSessionSubmissionInput,
   PlatformSubmission
 } from "./submission.js";
 
 /**
- * Loose record describing a run as the dashboard BFF returns it. Concrete
+ * Loose record describing a session as the dashboard BFF returns it. Concrete
  * dashboard-managed fields appear in the index signature; the SDK and CLI
  * may surface them without strong typing per-field.
  *
@@ -16,7 +16,7 @@ import type {
  * rollout; SDK consumers MUST treat it as best-effort and not panic on
  * its absence.
  */
-export interface Run {
+export interface SessionRecord {
   readonly id: string;
   readonly status: string;
   readonly workspaceId?: string;
@@ -24,10 +24,10 @@ export interface Run {
   readonly updatedAt?: string;
   readonly terminalAt?: string | null;
   /**
-   * The run's EXECUTION start (ISO-8601) — when the agent actually began
+   * The session's EXECUTION start (ISO-8601) — when the agent actually began
    * running, distinct from {@link createdAt} (submission/accept time). Present
-   * from the moment the run starts executing and throughout its live duration;
-   * absent before it starts and after the run's live object is torn down (a
+   * from the moment the session starts executing and throughout its live duration;
+   * absent before it starts and after the session's live object is torn down (a
    * terminal run also carries {@link terminalAt} and {@link costTelemetry}
    * durations).
    */
@@ -40,18 +40,18 @@ export interface Run {
    */
   readonly failureClass?: string | null;
   /**
-   * Aggregate token usage when a deployment chooses to expose it on the run
+   * Aggregate token usage when a deployment chooses to expose it on the session
    * record. Mid-run this is not populated. Settled provider/runtime usage is
    * exposed through {@link costTelemetry}; per-turn usage breadcrumbs, when a
    * deployment records them internally, are not part of the normal public event
    * stream.
    */
   readonly usage?: UsageSummary;
-  readonly costTelemetry?: import("./run-cost.js").RunCostTelemetry;
+  readonly costTelemetry?: import("./session-cost.js").SessionCostTelemetry;
   /**
-   * The authoritative terminal OUTCOME of the run's last turn — the settle-
+   * The authoritative terminal OUTCOME of the session's last turn — the settle-
    * written outcome (`succeeded`/`failed`/`timed_out`/`cancelled`), distinct
-   * from the resumable lifecycle {@link status}. Absent until the run settles.
+   * from the resumable lifecycle {@link status}. Absent until the session settles.
    */
   readonly lastTurnOutcome?: SessionTerminalOutcome;
   readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;
@@ -152,7 +152,7 @@ export type SessionSubmission = Omit<PlatformSubmission, "prompt"> & {
 };
 
 export type SessionCreateRequest = Omit<
-  PlatformRunSubmissionInput,
+  PlatformSessionSubmissionInput,
   "idempotencyKey" | "submission"
 > & {
   readonly submission: SessionSubmission;
@@ -214,15 +214,15 @@ export interface UsageSummary {
 
 /**
  * Project a {@link UsageSummary} from the settle-written
- * {@link RunCostProviderUsage} entries — the SINGLE server source of token
- * usage ({@link Run.costTelemetry}`.providerUsage`). Sums each field across all
+ * {@link SessionCostProviderUsage} entries — the SINGLE server source of token
+ * usage ({@link SessionRecord.costTelemetry}`.providerUsage`). Sums each field across all
  * provider entries; a field is present only when at least one entry carried it.
  * This retires the dead `session.usage` / `aex.usage`-event usage path: the SDK
  * derives usage from cost telemetry, never re-reads a dual-written top-level
  * `usage`. Pure.
  */
 export function usageFromProviderUsage(
-  providerUsage: readonly RunCostProviderUsage[] | undefined
+  providerUsage: readonly SessionCostProviderUsage[] | undefined
 ): UsageSummary {
   if (!providerUsage || providerUsage.length === 0) return {};
   let inputTokens: number | undefined;
@@ -249,11 +249,11 @@ export function usageFromProviderUsage(
 }
 
 /**
- * The unified SETTLED-RESULT contract shared by `run()` and `done()`. Because
+ * The unified SETTLED-RESULT contract shared by `start()` and `done()`. Because
  * both await the settle commit by default, these fields are ALWAYS present at a
  * terminal read — they are NON-optional, so a code path that forgets to
  * populate `costUsd`/`usage`/the terminal `status` fails to typecheck. The SDK
- * `RunResult`/`SessionTurnResult` extend this one shape so `done()` == `run()`.
+ * `SessionResult`/`SessionTurnResult` extend this one shape so `done()` == `start()`.
  *
  * `costUsd` is the AEX showback estimate in USD (>= 0) and EXCLUDES the
  * customer's BYOK provider spend — price BYOK from `usage` tokens.
@@ -267,7 +267,7 @@ export interface SettledResult {
   readonly costUsd: number;
   /** Aggregate token usage, derived from `costTelemetry.providerUsage`. */
   readonly usage: UsageSummary;
-  /** Terminal failure message (from the terminal `RUN_ERROR` event) when `!ok`. */
+  /** Terminal failure message (from the terminal `TURN_ERROR` event) when `!ok`. */
   readonly error?: string;
 }
 
@@ -277,27 +277,27 @@ export interface SettledResult {
  *   - `uncertain` — the model signalled low confidence / declined to commit.
  *   - `refused` — the model refused the request.
  */
-export type RunRefusalReason = "schema_violation" | "uncertain" | "refused";
+export type TurnRefusalReason = "schema_violation" | "uncertain" | "refused";
 
 /**
- * The typed outcome of a `run<T>({ responseFormat })`: EITHER a schema-valid
+ * The typed outcome of a `start<T>({ responseFormat })`: EITHER a schema-valid
  * decoded value OR a typed refusal — there is no untyped path that silently
  * yields a hallucinated object. `T` is the decoded value type.
  */
-export type RunOutcome<T = unknown> =
+export type TurnOutcome<T = unknown> =
   | { readonly kind: "decoded"; readonly value: T }
-  | { readonly kind: "refused"; readonly reason: RunRefusalReason; readonly detail?: string };
+  | { readonly kind: "refused"; readonly reason: TurnRefusalReason; readonly detail?: string };
 
 /** One item's settled result inside a {@link BatchResult}. */
 export interface BatchItemResult<T = unknown> extends SettledResult {
-  readonly runId: string;
+  readonly sessionId: string;
   /** Present only for a `responseFormat`-decoded item. */
-  readonly outcome?: RunOutcome<T>;
+  readonly outcome?: TurnOutcome<T>;
 }
 
 /**
  * The result of `aex.batch(items, …)`: every item's settled result PLUS a real
- * rollup. The rollup is honest because `run()` awaits settle, so every item's
+ * rollup. The rollup is honest because `start()` awaits settle, so every item's
  * `costUsd`/`usage` is populated — a missing cost is a typed absent, not a
  * silent `$0`.
  */
@@ -310,13 +310,13 @@ export interface BatchResult<T = unknown> {
 }
 
 /**
- * Filters for {@link import("./operations.js").listRuns} / the CLI's `aex runs`.
- * Every field is optional; omitting all of them lists the most recent runs in the
+ * Filters for {@link import("./operations.js").listSessionRecords} / the CLI's `aex sessions`.
+ * Every field is optional; omitting all of them lists the most recent sessions in the
  * token's workspace. Workspace identity is derived server-side from the API key,
- * so there is no `workspaceId` here — a token can only ever enumerate its own runs.
+ * so there is no `workspaceId` here — a token can only ever enumerate its own sessions.
  */
-export interface RunListQuery {
-  /** Restrict to a single run status, e.g. `"succeeded"`. */
+export interface SessionRecordListQuery {
+  /** Restrict to a single session status, e.g. `"succeeded"`. */
   readonly status?: string;
   /** ISO-8601 lower bound on `createdAt` (inclusive). */
   readonly since?: string;
@@ -327,49 +327,49 @@ export interface RunListQuery {
 }
 
 /**
- * A public-safe run summary as returned by `GET /api/runs` (the workspace run
+ * A public-safe run summary as returned by `GET /api/sessions` (the workspace run
  * list). DELIBERATELY omits the submission snapshot (model/prompt/env) — the full,
- * redaction-scanned submission is only reachable through `getRunUnit(runId)`.
+ * redaction-scanned submission is only reachable through `getSessionUnit(sessionId)`.
  */
-export interface RunSummary {
+export interface SessionRecordSummary {
   readonly id: string;
   readonly status: string;
   readonly createdAt: string;
   readonly updatedAt: string;
-  /** Settled showback estimate (USD), present once the run has cost telemetry. */
+  /** Settled showback estimate (USD), present once the session has cost telemetry. */
   readonly costUsd?: number;
 }
 
-/** One page of the workspace run list. `nextCursor` absent ⇒ last page. */
-export interface RunListPage {
-  readonly runs: readonly RunSummary[];
+/** One page of the workspace session list. `nextCursor` absent ⇒ last page. */
+export interface SessionRecordListPage {
+  readonly sessions: readonly SessionRecordSummary[];
   readonly nextCursor?: string;
 }
 
 /**
- * The minimal capability a value must carry to be RESOLVABLE through the run
- * facade — `getRun` / `listRunEvents` / `listOutputs` all key on this `id`.
+ * The minimal capability a value must carry to be RESOLVABLE through the session
+ * facade — `getSessionRecord` / `listSessionRecordEvents` / `listOutputs` all key on this `id`.
  * Encodes the "handed ⇒ resolvable" invariant at the type level: anything the
- * platform hands you as a run reference exposes a resolvable `id`, so a run can
+ * platform hands you as a session reference exposes a resolvable `id`, so a session can
  * never be surfaced as a bare unresolvable string.
  */
-export interface ResolvableRunRef {
+export interface ResolvableSessionRef {
   readonly id: string;
 }
 
 /**
- * A subagent CHILD run, enumerated under its parent via `GET /runs/:id/children`.
- * A first-class, lineage-discoverable run reference: it {@link ResolvableRunRef}
- * (its `id` resolves through the run facade — events/outputs/getRun), carries the
- * lineage (`parentRunId`/`depth`) and the terminal outcome/cost, so a child is
- * observable exactly like a top-level run.
+ * A subagent child session, enumerated under its parent via `GET /sessions/:id/children`.
+ * A first-class, lineage-discoverable run reference: it {@link ResolvableSessionRef}
+ * (its `id` resolves through the session record facade — events/outputs/getSessionRecord), carries the
+ * lineage (`parentSessionId`/`depth`) and the terminal outcome/cost, so a child is
+ * observable exactly like a top-level session.
  */
-export interface ChildRunRef extends ResolvableRunRef {
-  /** The parent run this child was spawned by. */
-  readonly parentRunId: string;
-  /** The child's run status. */
+export interface ChildSessionRef extends ResolvableSessionRef {
+  /** The parent session this child was spawned by. */
+  readonly parentSessionId: string;
+  /** The child's session status. */
   readonly status: string;
-  /** Subagent nesting depth (1 = direct child of the top-level run). */
+  /** Subagent nesting depth (1 = direct child of the top-level session). */
   readonly depth?: number;
   /** Settled AEX showback estimate (USD) for the child, when present. */
   readonly costUsd?: number;
@@ -380,15 +380,15 @@ export interface ChildRunRef extends ResolvableRunRef {
 }
 
 /**
- * Cross-run output search query (`Aex.sessions.searchOutputs`). Restrict to a
- * corpus with `runIds`; filter by filename substring / extension / content type.
- * The MVP composes this client-side (per-run `listOutputs` + filter) — a future
+ * Cross-session output search query (`Aex.sessions.searchOutputs`). Restrict to a
+ * corpus with `sessionIds`; filter by filename substring / extension / content type.
+ * The MVP composes this client-side (per-session `listOutputs` + filter) — a future
  * server-side `GET /api/outputs/search` can back the same contract with a real
- * cross-run index, body-only swap.
+ * cross-session index, body-only swap.
  */
 export interface OutputSearchQuery {
-  /** Restrict the search to these runs (the chat corpus allow-list). */
-  readonly runIds?: readonly string[];
+  /** Restrict the search to these sessions (the chat corpus allow-list). */
+  readonly sessionIds?: readonly string[];
   /**
    * Filename match. A string is a case-insensitive SUBSTRING match; a RegExp is
    * tested as given. Unified with {@link OutputQuery.filename} (`string | RegExp`)
@@ -406,7 +406,7 @@ export interface OutputSearchQuery {
 
 /** One output-search hit — a reference only (no bytes); read with `readOutputText`. */
 export interface OutputSearchHit {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly outputId: string;
   readonly filename?: string;
   readonly sizeBytes?: number;
@@ -418,15 +418,15 @@ export interface OutputSearchPage {
   readonly hits: readonly OutputSearchHit[];
 }
 
-// The loose `RunEvent` snapshot shape has been RETIRED. Every event read
-// surface — `listSessionEvents`/`listRunEvents`, `list()`/`stream()`/
+// The loose `TurnEvent` snapshot shape has been RETIRED. Every event read
+// surface — `listSessionEvents`/`listSessionRecordEvents`, `list()`/`stream()`/
 // `streamEnvelopes()` — now yields the one canonical
 // {@link import("./event-envelope.js").AexEvent} (guard-bearing via
 // {@link import("./event-view.js").AexEventView}) with a non-optional,
 // populated `sequence`. There is no second event identity/shape.
 
-/** Status of a per-run webhook delivery. Terminal: delivered/exhausted/invalid. */
-export type RunWebhookDeliveryStatus =
+/** Status of a per-session webhook delivery. Terminal: delivered/exhausted/invalid. */
+export type SessionWebhookDeliveryStatus =
   | "pending"
   | "delivering"
   | "retrying"
@@ -435,15 +435,15 @@ export type RunWebhookDeliveryStatus =
   | "invalid";
 
 /**
- * One row of a run's webhook delivery ledger, as returned by
- * `GET /api/runs/:id/webhook-deliveries`. `id` is the stable `webhook-id`
+ * One row of a session's webhook delivery ledger, as returned by
+ * `GET /api/sessions/:id/webhook-deliveries`. `id` is the stable `webhook-id`
  * header the consumer dedupes on across retries; the optional fields are
  * populated only once a delivery attempt has been made.
  */
-export interface RunWebhookDelivery {
+export interface SessionWebhookDelivery {
   readonly id: string;
   readonly eventType: string;
-  readonly status: RunWebhookDeliveryStatus;
+  readonly status: SessionWebhookDeliveryStatus;
   readonly attemptCount: number;
   readonly lastStatusCode?: number;
   readonly lastError?: string;
@@ -547,7 +547,7 @@ export interface ReadOutputTextOptions {
 
 /**
  * A byte-capped, decoded text read of one output file, as returned by
- * `Aex.sessions.outputs(id).read`. Built for feeding run deliverables to an LLM
+ * `Aex.sessions.outputs(id).read`. Built for feeding session deliverables to an LLM
  * without loading the whole (possibly very large) file into memory or context:
  * the read streams and stops at `maxBytes`, so `text` is at most that many bytes
  * decoded as UTF-8. Check {@link truncated} before treating `text` as complete.
@@ -601,10 +601,10 @@ export interface WhoAmI {
    * `null` means no app-visible cap is applied for that field.
    */
   readonly caps?: {
-    /** Token-bucket cap on POST /api/runs per minute, per workspace. */
-    readonly runSubmitPerMinute?: number;
-    /** Hard cap on concurrent non-terminal runs the workspace may hold. */
-    readonly maxConcurrentRuns?: number;
+    /** Token-bucket cap on POST /api/sessions per minute, per workspace. */
+    readonly sessionSubmitPerMinute?: number;
+    /** Hard cap on concurrent non-terminal sessions the workspace may hold. */
+    readonly maxConcurrentSessions?: number;
     /** Storage cap (bytes) on captured output objects, workspace-wide. `null` means unlimited. */
     readonly storageCapBytes?: number | null;
     /** Current captured-output usage in bytes. */
@@ -613,9 +613,9 @@ export interface WhoAmI {
      * Wall-clock ceiling on a single run before forced termination.
      * `null` means no aex-imposed cap, but this is **not unlimited
      * overall**: the managed runner, infrastructure, or upstream provider may
-     * still impose a ceiling, and a run that exceeds it terminates regardless.
+     * still impose a ceiling, and a session that exceeds it terminates regardless.
      */
-    readonly maxRunDurationMs?: number | null;
+    readonly maxSessionDurationMs?: number | null;
   };
   /**
    * ADDITIVE effective per-workspace limits returned by `GET /whoami` on
@@ -626,7 +626,7 @@ export interface WhoAmI {
    */
   readonly limits?: {
     /** Effective live-run concurrency cap. One more live run past it fails with `429 workspace_concurrency_exceeded`. */
-    readonly maxConcurrentRuns: number;
+    readonly maxConcurrentSessions: number;
     /** Effective submit-velocity cap per minute; `0` = unlimited (disabled). Past it: `429 workspace_submit_rate_exceeded`. */
     readonly submitRatePerMinute: number;
     /** Effective monthly spend cap in USD; `0` = unlimited. Once `monthSpendUsd` reaches it: `402 workspace_spend_cap_exceeded`. */
@@ -647,7 +647,7 @@ export interface WhoAmI {
  * Workspace skill bundle as the dashboard BFF returns it. Mirrors a row
  * of `skill_bundles` joined with its computed manifest. `state` is the
  * upload lifecycle (`pending` -> `ready`); only `ready` rows are
- * referenceable from a run. Delete is hard; historical runs keep their
+ * referenceable from a session. Delete is hard; historical sessions keep their
  * submit-time snapshots rather than depending on this row.
  *
  * See the public architecture notes and server-side persistence schema for
@@ -723,7 +723,7 @@ export interface FileRecord {
  * Wire-level metadata record for a workspace skill as returned by the BFF.
  *
  * Workspace skills are named, mutable, by-name-bound bundles: `skill.upload()`
- * upserts one under a stable `name`; a run references it by that name and the
+ * upserts one under a stable `name`; a session references it by that name and the
  * platform resolves it to the CURRENT bytes at submit time. This record is
  * METADATA ONLY — the bytes live in the content-addressed asset store keyed by
  * `contentHash`. `version` bumps each time the bytes change under the name.
@@ -746,7 +746,7 @@ export interface SkillRecord {
  * Wire-level record for a workspace secret as returned by the BFF.
  *
  * Workspace secrets share the lifecycle SEMANTIC of skills/files: a
- * `Secret.value(...)` is per-run and gone at terminal; PROMOTING it (or
+ * `Secret.value(...)` is per-session and gone at terminal; PROMOTING it (or
  * `aex.secrets.set`) persists a named, searchable workspace secret. The
  * identity is the `name` (the handle a `Secret.ref` points at); the value
  * rotates under that stable name, bumping `version`.
@@ -787,7 +787,7 @@ export interface BillingSummary {
   readonly balanceUsd: number;
   /** Accrued spend for the current calendar month. */
   readonly monthSpendUsd: number;
-  /** Monthly spend cap enforced on new runs. */
+  /** Monthly spend cap enforced on new sessions. */
   readonly spendCapUsd: number;
   readonly planKey: string;
   readonly subscriptionStatus: string;
@@ -827,12 +827,12 @@ export interface BillingHostedSession {
  */
 export interface BillingLedgerEntry {
   readonly id: string;
-  /** e.g. `top_up`, `run_charge`. Open server vocabulary. */
+  /** e.g. `top_up`, `session_charge`. Open server vocabulary. */
   readonly entryType: string;
   readonly amountUsd: number;
   readonly currency: string;
-  /** The run this entry charges, `null` for non-run entries. */
-  readonly runId?: string | null;
+  /** The session this entry charges, `null` for non-run entries. */
+  readonly sessionId?: string | null;
   readonly description?: string | null;
   readonly createdBy?: string;
   readonly createdAt: string;

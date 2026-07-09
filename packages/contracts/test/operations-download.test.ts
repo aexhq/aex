@@ -1,12 +1,12 @@
 /**
- * The `download*` verbs assemble per-run zips client-side from the public read
+ * The `download*` verbs assemble per-session zips client-side from the public read
  * endpoints. The public archive contains metadata, typed events, and outputs.
  * Internal diagnostics are not downloaded through this surface.
  */
 import { describe, expect, it } from "vitest";
 import { unzipSync } from "fflate";
 import { HttpClient } from "../src/http.js";
-import { RunStateError, operations } from "../src/index.js";
+import { SessionStateError, operations } from "../src/index.js";
 
 const BASE = "https://api.test";
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -27,25 +27,25 @@ const json = (body: unknown) =>
 
 function runWithOutput() {
   return clientFor({
-    "/api/runs/run-1": () => json({ id: "run-1", status: "succeeded" }),
-    "/api/runs/run-1/events": () => json({ events: [{ seq: 0, kind: "a" }, { seq: 1, kind: "b" }] }),
-    "/api/runs/run-1/outputs": () =>
+    "/api/sessions/session-1": () => json({ id: "session-1", status: "succeeded" }),
+    "/api/sessions/session-1/events": () => json({ events: [{ seq: 0, kind: "a" }, { seq: 1, kind: "b" }] }),
+    "/api/sessions/session-1/outputs": () =>
       json({ outputs: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] }),
-    "/api/runs/run-1/outputs/o1/download": () => new Response("hello", { status: 200 })
+    "/api/sessions/session-1/outputs/o1/download": () => new Response("hello", { status: 200 })
   });
 }
 
 describe("operations.download", () => {
   it("bundles public metadata, typed events, outputs, and manifest", async () => {
-    const entries = unzipSync(await operations.download(runWithOutput(), "run-1"));
+    const entries = unzipSync(await operations.download(runWithOutput(), "session-1"));
 
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
       "manifest.json",
-      "metadata/run.json",
+      "metadata/session.json",
       "outputs/report.txt"
     ]);
-    expect(JSON.parse(decode(entries["metadata/run.json"]!)).id).toBe("run-1");
+    expect(JSON.parse(decode(entries["metadata/session.json"]!)).id).toBe("session-1");
     expect(decode(entries["events/events.jsonl"]!).split("\n").map((l) => JSON.parse(l))).toEqual([
       { seq: 0, kind: "a" },
       { seq: 1, kind: "b" }
@@ -53,12 +53,12 @@ describe("operations.download", () => {
     expect(decode(entries["outputs/report.txt"]!)).toBe("hello");
 
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
-    expect(manifest.schemaVersion).toBe("aex.run-record.manifest.v1");
-    expect(manifest.runRecordSchemaVersion).toBe("aex.run-record.v1");
+    expect(manifest.schemaVersion).toBe("aex.session-record.manifest.v1");
+    expect(manifest.sessionRecordSchemaVersion).toBe("aex.session-record.v1");
     expect(manifest.namespaces.map((entry: { name: string }) => entry.name)).toEqual(["metadata", "events", "outputs"]);
     expect(manifest.files).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: "metadata/run.json", status: "present" }),
+        expect.objectContaining({ path: "metadata/session.json", status: "present" }),
         expect.objectContaining({ path: "metadata/cost.json", status: "pending" }),
         expect.objectContaining({ path: "metadata/custody.json", status: "pending" }),
         expect.objectContaining({ path: "events/events.jsonl", role: "typed_events", recordCount: 2 }),
@@ -72,15 +72,15 @@ describe("operations.download", () => {
 
   it("records a failed per-output fetch in manifest.errors without aborting the rest", async () => {
     const http = clientFor({
-      "/api/runs/run-1": () => json({ id: "run-1", status: "failed" }),
-      "/api/runs/run-1/events": () => json({ events: [] }),
-      "/api/runs/run-1/outputs": () =>
+      "/api/sessions/session-1": () => json({ id: "session-1", status: "failed" }),
+      "/api/sessions/session-1/events": () => json({ events: [] }),
+      "/api/sessions/session-1/outputs": () =>
         json({ outputs: [{ id: "ok", filename: "good.txt" }, { id: "bad", filename: "missing.txt" }] }),
-      "/api/runs/run-1/outputs/ok/download": () => new Response("present", { status: 200 }),
-      "/api/runs/run-1/outputs/bad/download": () => new Response("gone", { status: 404 })
+      "/api/sessions/session-1/outputs/ok/download": () => new Response("present", { status: 200 }),
+      "/api/sessions/session-1/outputs/bad/download": () => new Response("gone", { status: 404 })
     });
 
-    const entries = unzipSync(await operations.download(http, "run-1"));
+    const entries = unzipSync(await operations.download(http, "session-1"));
 
     expect(decode(entries["outputs/good.txt"]!)).toBe("present");
     expect(entries["outputs/missing.txt"]).toBeUndefined();
@@ -92,24 +92,24 @@ describe("operations.download", () => {
 
   it("rejects secret-shaped JSON/text archive entries before writing the zip", async () => {
     const http = clientFor({
-      "/api/runs/run-1": () => json({ id: "run-1", status: "failed", errorMessage: "Authorization: Bearer abcdefgh" }),
-      "/api/runs/run-1/events": () => json({ events: [] }),
-      "/api/runs/run-1/outputs": () => json({ outputs: [] })
+      "/api/sessions/session-1": () => json({ id: "session-1", status: "failed", errorMessage: "Authorization: Bearer abcdefgh" }),
+      "/api/sessions/session-1/events": () => json({ events: [] }),
+      "/api/sessions/session-1/outputs": () => json({ outputs: [] })
     });
 
-    await expect(operations.download(http, "run-1")).rejects.toThrow(/run record archive contains non-public data/);
+    await expect(operations.download(http, "session-1")).rejects.toThrow(/session record archive contains non-public data/);
   });
 
   it("does not scan customer output bytes for secret-shaped content", async () => {
     const http = clientFor({
-      "/api/runs/run-1": () => json({ id: "run-1", status: "succeeded" }),
-      "/api/runs/run-1/events": () => json({ events: [] }),
-      "/api/runs/run-1/outputs": () =>
+      "/api/sessions/session-1": () => json({ id: "session-1", status: "succeeded" }),
+      "/api/sessions/session-1/events": () => json({ events: [] }),
+      "/api/sessions/session-1/outputs": () =>
         json({ outputs: [{ id: "o1", filename: "report.txt", sizeBytes: 27, contentType: "text/plain" }] }),
-      "/api/runs/run-1/outputs/o1/download": () => new Response("Authorization: Bearer abcdefgh", { status: 200 })
+      "/api/sessions/session-1/outputs/o1/download": () => new Response("Authorization: Bearer abcdefgh", { status: 200 })
     });
 
-    const entries = unzipSync(await operations.download(http, "run-1"));
+    const entries = unzipSync(await operations.download(http, "session-1"));
 
     expect(decode(entries["outputs/report.txt"]!)).toBe("Authorization: Bearer abcdefgh");
   });
@@ -117,14 +117,14 @@ describe("operations.download", () => {
   it("allows public opaque artifact ids in manifest rows", async () => {
     const opaqueId = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
     const http = clientFor({
-      "/api/runs/run-1": () => json({ id: "run-1", status: "succeeded" }),
-      "/api/runs/run-1/events": () => json({ events: [] }),
-      "/api/runs/run-1/outputs": () =>
+      "/api/sessions/session-1": () => json({ id: "session-1", status: "succeeded" }),
+      "/api/sessions/session-1/events": () => json({ events: [] }),
+      "/api/sessions/session-1/outputs": () =>
         json({ outputs: [{ id: opaqueId, filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] }),
-      [`/api/runs/run-1/outputs/${opaqueId}/download`]: () => new Response("hello", { status: 200 })
+      [`/api/sessions/session-1/outputs/${opaqueId}/download`]: () => new Response("hello", { status: 200 })
     });
 
-    const entries = unzipSync(await operations.download(http, "run-1"));
+    const entries = unzipSync(await operations.download(http, "session-1"));
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
 
     expect(manifest.outputs[0].id).toBe(opaqueId);
@@ -133,7 +133,7 @@ describe("operations.download", () => {
 
 describe("operations.downloadOutputs", () => {
   it("zips deliverables at the root", async () => {
-    const entries = unzipSync(await operations.downloadOutputs(runWithOutput(), "run-1"));
+    const entries = unzipSync(await operations.downloadOutputs(runWithOutput(), "session-1"));
 
     expect(Object.keys(entries).sort()).toEqual(["manifest.json", "report.txt"]);
     expect(decode(entries["report.txt"]!)).toBe("hello");
@@ -149,7 +149,7 @@ describe("operations.downloadOutput", () => {
   });
 
   it("downloads an output by exact listed filename", async () => {
-    const result = await operations.downloadOutput(runWithOutput(), "run-1", { path: "/report.txt" });
+    const result = await operations.downloadOutput(runWithOutput(), "session-1", { path: "/report.txt" });
 
     expect(result.output).toMatchObject({ id: "o1", filename: "report.txt" });
     expect(decode(result.bytes)).toBe("hello");
@@ -157,12 +157,12 @@ describe("operations.downloadOutput", () => {
 
   it("downloads an output by suffix when requested", async () => {
     const http = clientFor({
-      "/api/runs/run-2/outputs": () =>
+      "/api/sessions/session-2/outputs": () =>
         json({ outputs: [{ id: "report", filename: "outputs/report-folder/report.txt", contentType: "text/plain" }] }),
-      "/api/runs/run-2/outputs/report/download": () => new Response("marker", { status: 200 })
+      "/api/sessions/session-2/outputs/report/download": () => new Response("marker", { status: 200 })
     });
 
-    const result = await operations.downloadOutput(http, "run-2", { path: "report.txt", match: "suffix" });
+    const result = await operations.downloadOutput(http, "session-2", { path: "report.txt", match: "suffix" });
 
     expect(result.output.filename).toBe("outputs/report-folder/report.txt");
     expect(decode(result.bytes)).toBe("marker");
@@ -170,27 +170,27 @@ describe("operations.downloadOutput", () => {
 
   it("rejects a missing path selector", async () => {
     await expect(
-      operations.downloadOutput(runWithOutput(), "run-1", { path: "missing.txt" })
-    ).rejects.toBeInstanceOf(RunStateError);
+      operations.downloadOutput(runWithOutput(), "session-1", { path: "missing.txt" })
+    ).rejects.toBeInstanceOf(SessionStateError);
   });
 
   it("rejects an ambiguous suffix selector", async () => {
     const http = clientFor({
-      "/api/runs/run-3/outputs": () =>
+      "/api/sessions/session-3/outputs": () =>
         json({ outputs: [{ id: "a", filename: "a/report.txt" }, { id: "b", filename: "b/report.txt" }] })
     });
 
     await expect(
-      operations.downloadOutput(http, "run-3", { path: "report.txt", match: "suffix" })
+      operations.downloadOutput(http, "session-3", { path: "report.txt", match: "suffix" })
     ).rejects.toThrow(/matched multiple files/);
   });
 
   it("downloads by output id without listing outputs first", async () => {
     const http = clientFor({
-      "/api/runs/run-4/outputs/o1/download": () => new Response("direct", { status: 200 })
+      "/api/sessions/session-4/outputs/o1/download": () => new Response("direct", { status: 200 })
     });
 
-    const result = await operations.downloadOutput(http, "run-4", { id: "o1" });
+    const result = await operations.downloadOutput(http, "session-4", { id: "o1" });
 
     expect(result.output).toEqual({ id: "o1" });
     expect(decode(result.bytes)).toBe("direct");
@@ -198,10 +198,10 @@ describe("operations.downloadOutput", () => {
 
   it("preserves output metadata when the selector is an Output object", async () => {
     const http = clientFor({
-      "/api/runs/run-5/outputs/o1/download": () => new Response("bytes", { status: 200 })
+      "/api/sessions/session-5/outputs/o1/download": () => new Response("bytes", { status: 200 })
     });
 
-    const result = await operations.downloadOutput(http, "run-5", {
+    const result = await operations.downloadOutput(http, "session-5", {
       id: "o1",
       filename: "report.txt",
       contentType: "text/plain"
@@ -214,7 +214,7 @@ describe("operations.downloadOutput", () => {
 
 describe("operations.downloadEvents", () => {
   it("zips the indexed event archive with an events namespace manifest", async () => {
-    const entries = unzipSync(await operations.downloadEvents(runWithOutput(), "run-1"));
+    const entries = unzipSync(await operations.downloadEvents(runWithOutput(), "session-1"));
     expect(Object.keys(entries).sort()).toEqual(["events.jsonl", "manifest.json"]);
     expect(decode(entries["events.jsonl"]!).split("\n").map((l) => JSON.parse(l))).toEqual([
       { seq: 0, kind: "a" },
@@ -222,7 +222,7 @@ describe("operations.downloadEvents", () => {
     ]);
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
     expect(manifest).toMatchObject({
-      runId: "run-1",
+      sessionId: "session-1",
       namespace: "events",
       files: [{ path: "events.jsonl", role: "typed_events", status: "present", recordCount: 2 }],
       errors: []
@@ -231,15 +231,15 @@ describe("operations.downloadEvents", () => {
 });
 
 describe("operations.downloadMetadata", () => {
-  it("zips the run record with a metadata namespace manifest", async () => {
-    const entries = unzipSync(await operations.downloadMetadata(runWithOutput(), "run-1"));
-    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "run.json"]);
-    expect(JSON.parse(decode(entries["run.json"]!)).id).toBe("run-1");
+  it("zips the session record with a metadata namespace manifest", async () => {
+    const entries = unzipSync(await operations.downloadMetadata(runWithOutput(), "session-1"));
+    expect(Object.keys(entries).sort()).toEqual(["manifest.json", "session.json"]);
+    expect(JSON.parse(decode(entries["session.json"]!)).id).toBe("session-1");
     const manifest = JSON.parse(decode(entries["manifest.json"]!));
     expect(manifest).toMatchObject({
-      runId: "run-1",
+      sessionId: "session-1",
       namespace: "metadata",
-      files: [{ path: "run.json", role: "run_metadata", status: "present" }],
+      files: [{ path: "session.json", role: "session_metadata", status: "present" }],
       errors: []
     });
   });

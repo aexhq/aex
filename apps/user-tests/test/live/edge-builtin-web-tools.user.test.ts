@@ -8,7 +8,7 @@
  *      boundary, and this probe asserts the tool RESULT succeeds.
  *
  *   2. `web_fetch` to an SSRF-blocked target (link-local metadata IP) must be a
- *      tool-level denial, not a run crash, and the denial must name the egress
+ *      tool-level denial, not a session crash, and the denial must name the egress
  *      policy instead of surfacing a bare proxy status.
  *
  * Cost: two tiny billable turns.
@@ -119,16 +119,16 @@ describe("edge: built-in web tools work and fail honestly", () => {
     "web_search returns a successful tool result",
     async () => {
       const body = `
-        const out = { runId: null, status: null, text: null, searchResult: null, error: null };
-        let runId = null;
+        const out = { sessionId: null, status: null, text: null, searchResult: null, error: null };
+        let sessionId = null;
         try {
-          const r = await client.run({
+          const r = await client.start({
             model: MODEL,
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             message: "Use the web_search tool to search for: Eiffel Tower height meters. If the tool errors, reply 'SEARCH-ERR: ' plus the error text; otherwise reply 'SEARCH-OK'.",
           }, { timeoutMs: 240000 });
-          runId = r.runId;
-          out.runId = runId;
+          sessionId = r.sessionId;
+          out.sessionId = sessionId;
           out.status = r.status;
           out.text = (r.text ?? "").slice(0, 200);
           const results = r.events.filter((e) => e.type === "TOOL_CALL_RESULT");
@@ -136,13 +136,13 @@ describe("edge: built-in web tools work and fail honestly", () => {
         } catch (e) {
           out.error = String(e).slice(0, 400);
         } finally {
-          if (runId) { try { await client.sessions.delete(runId); } catch {} }
+          if (sessionId) { try { await client.sessions.delete(sessionId); } catch {} }
         }
         console.log(JSON.stringify(out));
       `;
       const out = await runChild(install, "web-search-probe.mjs", body);
       const dump = JSON.stringify(out).slice(0, 1200);
-      expect(out.error, `web_search run threw before returning diagnostics: ${dump}`).toBeNull();
+      expect(out.error, `web_search session threw before returning diagnostics: ${dump}`).toBeNull();
       const searchResult = out.searchResult as { isError: boolean; text: string } | null;
       expect(searchResult, `web_search did not emit a tool result: ${dump}`).not.toBeNull();
       expect(searchResult!.isError, `web_search returned a tool error: ${dump}`).toBe(false);
@@ -151,19 +151,19 @@ describe("edge: built-in web tools work and fail honestly", () => {
   );
 
   it(
-    "web_fetch to an SSRF-blocked host is a tool-level denial that names the egress policy (run must survive)",
+    "web_fetch to an SSRF-blocked host is a tool-level denial that names the egress policy (session must survive)",
     async () => {
       const body = `
-        const out = { runId: null, status: null, text: null, fetchResult: null, error: null };
-        let runId = null;
+        const out = { sessionId: null, status: null, text: null, fetchResult: null, error: null };
+        let sessionId = null;
         try {
-          const r = await client.run({
+          const r = await client.start({
             model: MODEL,
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             message: "Use the web_fetch tool to fetch http://169.254.169.254/latest/meta-data/ exactly once. Reply 'FETCH-ERR: ' plus the tool's error text, or 'FETCH-OK' if it worked. Do not retry.",
           }, { timeoutMs: 240000 });
-          runId = r.runId;
-          out.runId = runId;
+          sessionId = r.sessionId;
+          out.sessionId = sessionId;
           out.status = r.status;
           out.text = (r.text ?? "").slice(0, 200);
           const results = r.events.filter((e) => e.type === "TOOL_CALL_RESULT");
@@ -171,13 +171,13 @@ describe("edge: built-in web tools work and fail honestly", () => {
         } catch (e) {
           out.error = String(e).slice(0, 400);
         } finally {
-          if (runId) { try { await client.sessions.delete(runId); } catch {} }
+          if (sessionId) { try { await client.sessions.delete(sessionId); } catch {} }
         }
         console.log(JSON.stringify(out));
       `;
       const out = await runChild(install, "web-fetch-ssrf-probe.mjs", body);
       const dump = JSON.stringify(out).slice(0, 1200);
-      expect(out.error, `web_fetch run threw before returning diagnostics: ${dump}`).toBeNull();
+      expect(out.error, `web_fetch session threw before returning diagnostics: ${dump}`).toBeNull();
       expect(["idle", "succeeded"], `web_fetch run did not survive cleanly: ${dump}`).toContain(out.status);
       const fetchResult = out.fetchResult as { isError: boolean; text: string } | null;
       expect(fetchResult, `web_fetch did not emit a tool result: ${dump}`).not.toBeNull();

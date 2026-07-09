@@ -1,6 +1,6 @@
 /**
  * aex CLI entrypoint. Wires the real IO surface and calls
- * {@link runCli}. The shipped bundle has a `#!/usr/bin/env bun` line
+ * {@link executeCli}. The shipped bundle has a `#!/usr/bin/env bun` line
  * prepended by `scripts/finalize-bundle.mjs`.
  *
  * NO `process.env.AEX_*` reads here — paths to the manifest and
@@ -11,14 +11,14 @@
  * the persistent config store (`aex login`) resolves its path from
  * `XDG_CONFIG_HOME` / `APPDATA` / `os.homedir()` here, and the live WS
  * factory + SIGINT handler (for `aex tail`/`aex inspect`) are wired here
- * too — so the command layer (`run.ts` / `host/*`) stays pure and the
+ * too — so the command layer (`main.ts` / `host/*`) stays pure and the
  * `no-env-vars` bundle grep (which only forbids `process.env.AEX_*`)
  * stays green.
  */
 import { readFile, writeFile, readdir, stat, mkdir, chmod, rm } from "node:fs/promises";
 import { resolve as resolvePath, join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { runCli } from "./run.js";
+import { executeCli } from "./main.js";
 import type { CliIO, CliConfigStore, StoredCliConfig, OutputsSyncFileEntry } from "./internal.js";
 import type { WebSocketLike } from "@aexhq/contracts";
 
@@ -132,4 +132,4 @@ const io: CliIO = {
   }
 };
 
-await runCli(io);
+await executeCli(io);

@@ -2,17 +2,17 @@ import { strToU8, zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
-import type { RunUnit } from "./run-unit.js";
-import { normalizeRunUnit } from "./run-unit.js";
-import { AexNetworkError, RunConfigValidationError, RunStateError } from "./sdk-errors.js";
+import type { SessionUnit } from "./session-unit.js";
+import { normalizeSessionUnit } from "./session-unit.js";
+import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
 import {
-  assertRunRecordArchivePublicSafeV1,
-  buildRunRecordDownloadManifestV1,
-  type RunRecordArchiveEntryForRedactionV1,
-  type RunRecordArtifactSummaryV1,
-  type RunRecordDownloadErrorV1
-} from "./run-record.js";
-import type { RunCostTelemetry } from "./run-cost.js";
+  assertSessionRecordArchivePublicSafeV1,
+  buildSessionRecordDownloadManifestV1,
+  type SessionRecordArchiveEntryForRedactionV1,
+  type SessionRecordArtifactSummaryV1,
+  type SessionRecordDownloadErrorV1
+} from "./session-record.js";
+import type { SessionCostTelemetry } from "./session-cost.js";
 import type {
   AgentsMdRecord,
   BillingCheckoutRequest,
@@ -21,7 +21,7 @@ import type {
   BillingLedgerQuery,
   BillingPortalRequest,
   BillingSummary,
-  ChildRunRef,
+  ChildSessionRef,
   FileRecord,
   Output,
   OutputLink,
@@ -33,10 +33,10 @@ import type {
   OutputQuery,
   OutputText,
   ReadOutputTextOptions,
-  Run,
-  RunListPage,
-  RunListQuery,
-  RunSummary,
+  SessionRecord,
+  SessionRecordListPage,
+  SessionRecordListQuery,
+  SessionRecordSummary,
   Session,
   SessionCreateRequest,
   SessionEvent,
@@ -47,14 +47,14 @@ import type {
   SessionMessagesPage,
   SessionMessagesQuery,
   SessionStateChangeAccepted,
-  RunWebhookDelivery,
+  SessionWebhookDelivery,
   SecretRecord,
   SecretReveal,
   SkillRecord,
   WebhookSigningSecret,
   WhoAmI
 } from "./runtime-types.js";
-import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submission.js";
+import type { PlatformSessionSubmissionInput, PlatformSubmission } from "./submission.js";
 
 /**
  * The single source of truth for SDK<->BFF transport. The SDK class
@@ -68,77 +68,77 @@ import type { PlatformRunSubmissionInput, PlatformSubmission } from "./submissio
  * every request; callers do not pass `workspaceId`.
  */
 
-export async function getRun(http: HttpClient, runId: string): Promise<Run> {
-  const result = await http.request<Run | { readonly run: Run }>(
-    `/api/runs/${encodeURIComponent(runId)}`
+export async function getSessionRecord(http: HttpClient, sessionId: string): Promise<SessionRecord> {
+  const result = await http.request<SessionRecord | { readonly session: SessionRecord }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`
   );
-  return hasRun(result) ? result.run : result;
+  return hasSessionRecord(result) ? result.session : result;
 }
 
 /**
- * Strongly-typed accessor for the full self-contained run unit:
+ * Strongly-typed accessor for the full self-contained session unit:
  * parsed submission inputs, attempts, indexed events (with
- * pagination cursor for large runs), raw-event Storage manifest,
+ * pagination cursor for large sessions), raw-event Storage manifest,
  * outputs, capture failures, and the proxy-call audit.
  *
- * Backed by the same `GET /api/runs/:runId` endpoint that
- * `getRun` calls; this variant just narrows the return type to
- * the documented wire shape. Prefer this for new code; `getRun`
+ * Backed by the same `GET /api/sessions/:sessionId` endpoint that
+ * `getSessionRecord` calls; this variant just narrows the return type to
+ * the documented wire shape. Prefer this for new code; `getSessionRecord`
  * stays for callers that only need the loose record.
  */
-export async function getRunUnit(http: HttpClient, runId: string): Promise<RunUnit> {
-  // Normalize so the RunUnit type contract holds at runtime: the managed plane
+export async function getSessionUnit(http: HttpClient, sessionId: string): Promise<SessionUnit> {
+  // Normalize so the SessionUnit type contract holds at runtime: the managed plane
   // returns a lean record and omits the aggregate collections (F25). The
   // aggregates default to empty (safe array/page access) — read outputs()/events()
-  // for the authoritative per-run data on that plane.
-  return normalizeRunUnit(await http.request<unknown>(`/api/runs/${encodeURIComponent(runId)}`));
+  // for the authoritative per-session data on that plane.
+  return normalizeSessionUnit(await http.request<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`));
 }
 
 /**
- * List the runs in the token's workspace, most-recent first, one page at a time.
- * Backed by `GET /api/runs` (workspace-token gated; the bare collection path, NOT
- * the run-keyed `GET /api/runs/:runId`). The server clamps `limit` to [1, 100] and
+ * List the sessions in the token's workspace, most-recent first, one page at a time.
+ * Backed by `GET /api/sessions` (workspace-token gated; the bare collection path, NOT
+ * the session-keyed `GET /api/sessions/:sessionId`). The server clamps `limit` to [1, 100] and
  * returns an opaque `nextCursor` for the next page (absent on the last page).
  *
- * Returns public-safe {@link RunSummary} rows only — never the submission snapshot.
- * For a single page; callers wanting every run loop on `nextCursor` themselves.
+ * Returns public-safe {@link SessionRecordSummary} rows only — never the submission snapshot.
+ * For a single page; callers wanting every session loop on `nextCursor` themselves.
  */
-export async function listRuns(http: HttpClient, query?: RunListQuery): Promise<RunListPage> {
+export async function listSessionRecords(http: HttpClient, query?: SessionRecordListQuery): Promise<SessionRecordListPage> {
   const params: Record<string, string> = {};
   if (query?.status !== undefined) params.status = query.status;
   if (query?.since !== undefined) params.since = query.since;
   if (query?.limit !== undefined) params.limit = String(query.limit);
   if (query?.cursor !== undefined) params.cursor = query.cursor;
-  const page = await http.request<RunListPage>("/api/runs", {}, params);
-  // Defensive contract enforcement: some deployed planes leak non-run marker
-  // rows (settle-time ledger/spendmark items) into the run-list index. Those
+  const page = await http.request<SessionRecordListPage>("/api/sessions", {}, params);
+  // Defensive contract enforcement: some deployed planes leak non-session marker
+  // rows (settle-time ledger/spendmark items) into the session-list index. Those
   // phantoms carry only { id, createdAt } and would surface as duplicate,
-  // status-less RunSummary entries. Drop anything missing the fields
-  // RunSummary declares required, so callers can trust the published type.
+  // status-less SessionRecordSummary entries. Drop anything missing the fields
+  // SessionRecordSummary declares required, so callers can trust the published type.
   // The same enforcement covers `costUsd`: deployed planes serve `null` for
-  // runs with no settled telemetry, but RunSummary declares `costUsd?: number`
+  // sessions with no settled telemetry, but SessionRecordSummary declares `costUsd?: number`
   // — normalize `null` to absent so typed callers never see it.
   let changed = false;
-  const runs: RunSummary[] = [];
-  for (const run of page.runs) {
+  const sessions: SessionRecordSummary[] = [];
+  for (const session of page.sessions) {
     if (
-      typeof run.id !== "string" ||
-      typeof run.status !== "string" ||
-      typeof run.createdAt !== "string" ||
-      typeof run.updatedAt !== "string"
+      typeof session.id !== "string" ||
+      typeof session.status !== "string" ||
+      typeof session.createdAt !== "string" ||
+      typeof session.updatedAt !== "string"
     ) {
       changed = true;
       continue;
     }
-    if (typeof run.costUsd !== "number" && run.costUsd !== undefined) {
-      const { costUsd: _dropped, ...rest } = run;
-      runs.push(rest);
+    if (typeof session.costUsd !== "number" && session.costUsd !== undefined) {
+      const { costUsd: _dropped, ...rest } = session;
+      sessions.push(rest);
       changed = true;
       continue;
     }
-    runs.push(run);
+    sessions.push(session);
   }
-  return changed ? { ...page, runs } : page;
+  return changed ? { ...page, sessions } : page;
 }
 
 export interface IdempotencyOptions {
@@ -152,7 +152,7 @@ export interface SubmitOptions extends IdempotencyOptions {
 /**
  * Resolve a caller-supplied idempotency key to the value that ships on the
  * request. FAIL-FAST: an empty or whitespace-only key THROWS
- * {@link RunConfigValidationError} — a footgun that silently disabled dedup
+ * {@link SessionConfigValidationError} — a footgun that silently disabled dedup
  * (`?? generate()` kept `''`, then a downstream truthy header-drop shipped no
  * `Idempotency-Key`). An absent key generates a fresh one; a real key is
  * returned verbatim. The single choke point every send/create/run entry uses.
@@ -162,7 +162,7 @@ export function resolveIdempotencyKey(key?: string): string {
     return `aex-idem-${randomUUID()}`;
   }
   if (typeof key !== "string" || key.trim().length === 0) {
-    throw new RunConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
+    throw new SessionConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
       field: "idempotencyKey",
       value: key
     });
@@ -178,7 +178,7 @@ export function resolveIdempotencyKey(key?: string): string {
 function idempotencyHeaders(options?: IdempotencyOptions): HeadersInit | undefined {
   if (options?.idempotencyKey === undefined) return undefined;
   if (typeof options.idempotencyKey !== "string" || options.idempotencyKey.trim().length === 0) {
-    throw new RunConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
+    throw new SessionConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
       field: "idempotencyKey",
       value: options.idempotencyKey
     });
@@ -200,16 +200,16 @@ export async function createSession(
   return unwrapSession(result);
 }
 
-/** The result of a non-blocking {@link submit}: the run id + the created session. */
+/** The result of a non-blocking {@link submit}: the session id + the created session. */
 export interface SubmitResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly session: Session;
 }
 
 /**
  * Fire-and-forget submit — create the session and post its first turn WITHOUT
- * awaiting the turn to settle (the honest counterpart to await-settle `run()`).
- * Returns the `runId` immediately; observe the run via a `webhook`, the event
+ * awaiting the turn to settle (the honest counterpart to await-settle `start()`).
+ * Returns the `sessionId` immediately; observe the session via a `webhook`, the event
  * stream, or by re-opening the session. Mirrors {@link createSession}'s
  * idempotency handling.
  */
@@ -230,7 +230,7 @@ export async function submit(
   const sessionId = created.sessionId ?? created.id;
   const accepted = await sendSessionMessage(http, sessionId, { input }, { idempotencyKey: messageKey });
   const session = accepted.session;
-  return { runId: session.sessionId ?? session.id, session };
+  return { sessionId: session.sessionId ?? session.id, session };
 }
 
 function assertSubmitInput(input: SessionCreateRequest["input"]): asserts input is string | readonly string[] {
@@ -238,7 +238,7 @@ function assertSubmitInput(input: SessionCreateRequest["input"]): asserts input 
     (typeof input === "string" && input.length > 0) ||
     (Array.isArray(input) && input.length > 0 && input.every((segment) => typeof segment === "string" && segment.length > 0));
   if (!ok) {
-    throw new RunConfigValidationError("submit: request.input must be a non-empty string or string array", {
+    throw new SessionConfigValidationError("submit: request.input must be a non-empty string or string array", {
       field: "input",
       value: input
     });
@@ -431,21 +431,21 @@ export async function getSessionCoordinatorTicket(
 }
 
 // Bound the transparent pager: the read route caps each page at 1000, so this
-// admits up to ~1e6 events before bailing — past any real run, but bounded so a
+// admits up to ~1e6 events before bailing — past any real session, but bounded so a
 // server that never clears `nextCursor` can't loop forever.
 const LIST_EVENTS_PAGE_BUDGET = 1000;
 
 /**
- * List a run's events. The read endpoint is PAGED (bounded per response so a
+ * List a session's events. The read endpoint is PAGED (bounded per response so a
  * long run can't return an unbounded body); this follows `nextCursor` across
  * pages and returns the FULL accumulated list, preserving the prior single-call
  * contract for callers (download/*, CLI, streamEvents polling).
  */
-export async function listRunEvents(
+export async function listSessionRecordEvents(
   http: HttpClient,
-  runId: string
+  sessionId: string
 ): Promise<readonly AexEvent[]> {
-  const path = `/api/runs/${encodeURIComponent(runId)}/events`;
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
   const all: AexEvent[] = [];
   let cursor: number | undefined;
   for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
@@ -471,46 +471,46 @@ export interface CoordinatorTicket {
 
 /**
  * Mint a short-lived coordinator WS ticket via the workspace-token-gated
- * broker (`/api/runs/:id/events/ticket`). The returned `wsUrl` + `ticket`
+ * broker (`/api/sessions/:id/events/ticket`). The returned `wsUrl` + `ticket`
  * open the live event stream directly against the coordinator. Throws if no
  * coordinator is configured for the deployment (HTTP 503).
  */
-export async function getCoordinatorTicket(http: HttpClient, runId: string): Promise<CoordinatorTicket> {
+export async function getCoordinatorTicket(http: HttpClient, sessionId: string): Promise<CoordinatorTicket> {
   return http.request<CoordinatorTicket>(
-    `/api/runs/${encodeURIComponent(runId)}/events/ticket`,
+    `/api/sessions/${encodeURIComponent(sessionId)}/events/ticket`,
     { method: "POST" }
   );
 }
 
 export async function listOutputs(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   query?: OutputQuery
 ): Promise<readonly Output[]> {
   const result = await http.request<{ readonly outputs: readonly Output[] }>(
-    `/api/runs/${encodeURIComponent(runId)}/outputs`
+    `/api/sessions/${encodeURIComponent(sessionId)}/outputs`
   );
   return query === undefined ? result.outputs : filterOutputs(result.outputs, query);
 }
 
 export async function findOutputs(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   query: OutputQuery
 ): Promise<readonly Output[]> {
-  return listOutputs(http, runId, query);
+  return listOutputs(http, sessionId, query);
 }
 
 export async function findOutput(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   query: OutputQuery
 ): Promise<Output | null> {
-  const matches = await findOutputs(http, runId, query);
+  const matches = await findOutputs(http, sessionId, query);
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0]!;
-  throw new RunStateError("outputs.findOne: output query matched multiple files", {
-    runId,
+  throw new SessionStateError("outputs.findOne: output query matched multiple files", {
+    sessionId,
     matches: matches.map((output) => output.filename ?? output.id)
   });
 }
@@ -519,14 +519,14 @@ export type OutputLinkSelector = string | OutputFileSelector | OutputQuery;
 
 export async function outputLink(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   selectorOrQuery: OutputLinkSelector,
   options?: OutputLinkOptions
 ): Promise<OutputLink> {
-  const output = await resolveOutputLinkTarget(http, runId, selectorOrQuery);
+  const output = await resolveOutputLinkTarget(http, sessionId, selectorOrQuery);
   const expiresInSeconds = normalizeOutputLinkExpiresIn(options?.expiresIn);
   const result = await http.request<OutputLink>(
-    `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/link`,
+    `/api/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(output.id)}/link`,
     {
       method: "POST",
       body: JSON.stringify({ expiresInSeconds })
@@ -552,21 +552,21 @@ function syntheticExpiresAt(expiresInSeconds: number): string {
 
 export async function createOutputLink(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   selectorOrQuery: OutputLinkSelector,
   options?: OutputLinkOptions
 ): Promise<OutputLink> {
-  return outputLink(http, runId, selectorOrQuery, options);
+  return outputLink(http, sessionId, selectorOrQuery, options);
 }
 
 export async function eventArchiveLink(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   options?: OutputLinkOptions
 ): Promise<OutputLink> {
   const expiresInSeconds = normalizeOutputLinkExpiresIn(options?.expiresIn);
   const result = await http.request<OutputLink>(
-    `/api/runs/${encodeURIComponent(runId)}/events/link`,
+    `/api/sessions/${encodeURIComponent(sessionId)}/events/link`,
     {
       method: "POST",
       body: JSON.stringify({ expiresInSeconds })
@@ -583,12 +583,12 @@ export async function eventArchiveLink(
 export function resolveOutputFileSelector(
   outputs: readonly Output[],
   selector: OutputFileSelector,
-  runId?: string
+  sessionId?: string
 ): Output {
   if (isPathSelector(selector)) {
     const target = normalizeOutputLookupPath(selector.path);
     if (!target) {
-      throw new RunStateError("outputs.download: output path must be non-empty", { runId, path: selector.path });
+      throw new SessionStateError("outputs.download: output path must be non-empty", { sessionId, path: selector.path });
     }
     const matches = outputs.filter((output) => {
       if (typeof output.filename !== "string") return false;
@@ -600,33 +600,33 @@ export function resolveOutputFileSelector(
     });
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
-      throw new RunStateError(
+      throw new SessionStateError(
         `outputs.download: output path "${selector.path}" matched multiple files`,
-        { runId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
+        { sessionId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
       );
     }
-    throw new RunStateError(`outputs.download: output path "${selector.path}" was not found`, {
-      runId,
+    throw new SessionStateError(`outputs.download: output path "${selector.path}" was not found`, {
+      sessionId,
       path: selector.path
     });
   }
   if (typeof selector?.id !== "string" || selector.id.length === 0) {
-    throw new RunStateError("outputs.download: selector must include an output id or path", { runId });
+    throw new SessionStateError("outputs.download: selector must include an output id or path", { sessionId });
   }
   return { ...selector, id: selector.id };
 }
 
 export async function downloadOutput(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   selector: OutputFileSelector,
   options?: OutputTransferOptions
 ): Promise<OutputFileDownload> {
   const output = isPathSelector(selector)
-    ? resolveOutputFileSelector(await listOutputs(http, runId), selector, runId)
-    : resolveOutputFileSelector([], selector, runId);
+    ? resolveOutputFileSelector(await listOutputs(http, sessionId), selector, sessionId)
+    : resolveOutputFileSelector([], selector, sessionId);
   const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
-  const path = `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`;
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(output.id)}/download`;
   return { output, bytes: await downloadOutputBytesWithRetry(http, path, timeoutMs) };
 }
 
@@ -644,26 +644,26 @@ export interface OutputTransferOptions {
 }
 
 /**
- * Read ONE output file as byte-capped, decoded UTF-8 text. Built for handing a run
+ * Read ONE output file as byte-capped, decoded UTF-8 text. Built for handing a session
  * deliverable to an LLM tool: it streams the file body and STOPS at `maxBytes`, so
  * a 200 MB artifact never fully buffers in memory or context. `truncated` is true
  * when the file is larger than the cap. Optionally `grep` keeps only matching lines.
  *
  * Selector is the same `{ path }` / `{ id }` shape as `downloadOutput`. A path
- * selector lists the run's outputs to resolve the id; an id selector skips that.
+ * selector lists the session's outputs to resolve the id; an id selector skips that.
  */
 export async function readOutputText(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   selector: OutputFileSelector,
   options?: ReadOutputTextOptions
 ): Promise<OutputText> {
   const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_OUTPUT_TEXT_DEFAULT_BYTES, READ_OUTPUT_TEXT_MAX_BYTES));
   const output = isPathSelector(selector)
-    ? resolveOutputFileSelector(await listOutputs(http, runId), selector, runId)
-    : resolveOutputFileSelector([], selector, runId);
+    ? resolveOutputFileSelector(await listOutputs(http, sessionId), selector, sessionId)
+    : resolveOutputFileSelector([], selector, sessionId);
   const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
-  const path = `/api/runs/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(output.id)}/download`;
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(output.id)}/download`;
   const capped = await readOutputTextWithRetry(http, path, maxBytes, timeoutMs);
   const text = options?.grep === undefined ? capped.text : grepLines(capped.text, options.grep);
   return { output, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
@@ -731,7 +731,7 @@ async function outputTransferWithRetry<T>(
 function normalizeOutputTransferTimeoutMs(value: number | undefined): number {
   if (value === undefined) return OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(value) || value <= 0) {
-    throw new RunConfigValidationError("outputs.download: timeoutMs must be a positive finite number", {
+    throw new SessionConfigValidationError("outputs.download: timeoutMs must be a positive finite number", {
       timeoutMs: value
     });
   }
@@ -912,66 +912,52 @@ function grepLines(text: string, pattern: string | RegExp): string {
 }
 
 /**
- * List a run's subagent CHILD runs (`GET /runs/:id/children`). Each row is a
- * {@link ChildRunRef} whose `id` resolves through the run facade (getRun /
+ * List a session's subagent child sessions (`GET /sessions/:id/children`). Each row is a
+ * {@link ChildSessionRef} whose `id` resolves through the session record facade (getSessionRecord /
  * events / outputs) — so every child the platform hands you is resolvable. An
- * empty array means the run spawned no children.
+ * empty array means the session spawned no children.
  */
-export async function listRunChildren(
+export async function listSessionChildren(
   http: HttpClient,
-  runId: string
-): Promise<readonly ChildRunRef[]> {
+  sessionId: string
+): Promise<readonly ChildSessionRef[]> {
   const result = await http.request<
-    { readonly children: readonly ChildRunRef[] } | readonly ChildRunRef[]
-  >(`/api/runs/${encodeURIComponent(runId)}/children`);
+    { readonly children: readonly ChildSessionRef[] } | readonly ChildSessionRef[]
+  >(`/api/sessions/${encodeURIComponent(sessionId)}/children`);
   return Array.isArray(result)
     ? result
-    : (result as { readonly children: readonly ChildRunRef[] }).children;
-}
-
-export async function cancelRun(http: HttpClient, runId: string): Promise<void> {
-  await http.request<unknown>(
-    `/api/runs/${encodeURIComponent(runId)}/cancel`,
-    { method: "POST" }
-  );
-}
-
-export async function deleteRun(http: HttpClient, runId: string): Promise<void> {
-  await http.request<unknown>(
-    `/api/runs/${encodeURIComponent(runId)}`,
-    { method: "DELETE" }
-  );
+    : (result as { readonly children: readonly ChildSessionRef[] }).children;
 }
 
 /**
- * List a run's webhook delivery attempts (the per-run delivery ledger). Returns
- * the rows surfaced by `GET /api/runs/:id/webhook-deliveries`; an empty array
- * means the run carried no `webhook` or has not reached a terminal state yet.
+ * List a session's webhook delivery attempts (the per-session delivery ledger). Returns
+ * the rows surfaced by `GET /api/sessions/:id/webhook-deliveries`; an empty array
+ * means the session carried no `webhook` or has not reached a terminal state yet.
  */
-export async function getRunWebhookDeliveries(
+export async function getSessionWebhookDeliveries(
   http: HttpClient,
-  runId: string
-): Promise<readonly RunWebhookDelivery[]> {
+  sessionId: string
+): Promise<readonly SessionWebhookDelivery[]> {
   const result = await http.request<
-    { readonly deliveries: readonly RunWebhookDelivery[] } | readonly RunWebhookDelivery[]
-  >(`/api/runs/${encodeURIComponent(runId)}/webhook-deliveries`);
+    { readonly deliveries: readonly SessionWebhookDelivery[] } | readonly SessionWebhookDelivery[]
+  >(`/api/sessions/${encodeURIComponent(sessionId)}/webhook-deliveries`);
   return Array.isArray(result)
     ? result
-    : (result as { readonly deliveries: readonly RunWebhookDelivery[] }).deliveries;
+    : (result as { readonly deliveries: readonly SessionWebhookDelivery[] }).deliveries;
 }
 
 /**
- * Manually re-trigger a run's webhook delivery: resets the row to `pending` and
+ * Manually re-trigger a session's webhook delivery: resets the row to `pending` and
  * re-sends the frozen payload with the SAME `webhook-id` so the consumer
  * dedupes. Idempotent from the caller's view.
  */
-export async function redeliverRunWebhook(
+export async function redeliverSessionWebhook(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   deliveryId: string
 ): Promise<void> {
   await http.request<unknown>(
-    `/api/runs/${encodeURIComponent(runId)}/webhook-deliveries/${encodeURIComponent(deliveryId)}/redeliver`,
+    `/api/sessions/${encodeURIComponent(sessionId)}/webhook-deliveries/${encodeURIComponent(deliveryId)}/redeliver`,
     { method: "POST" }
   );
 }
@@ -980,7 +966,7 @@ export async function redeliverRunWebhook(
  * Delete a workspace asset cache entry. Accepts an `asset_<id>` value,
  * `sha256:<hex>`, or a bare 64-hex digest. Workspace is derived server-side
  * from the token; idempotent.
- * Does NOT affect runs that already snapshotted the asset.
+ * Does NOT affect sessions that already snapshotted the asset.
  */
 export async function deleteWorkspaceAsset(http: HttpClient, hash: string): Promise<void> {
   const assetId = hash.startsWith("asset_")
@@ -1055,12 +1041,12 @@ export async function getWebhookSigningSecret(http: HttpClient): Promise<Webhook
 }
 
 /**
- * A run's downloadable content is organised into three public namespaces, each
+ * A session's downloadable content is organised into three public namespaces, each
  * with a matching `download*` verb:
  *
- *   - `outputs`  — the run's real deliverables (`runs/<id>/outputs/`).
+ *   - `outputs`  — the session's real deliverables (`sessions/<id>/outputs/`).
  *   - `events`   — typed event-channel records (`events.jsonl`) plus its namespace manifest.
- *   - `metadata` — the run record (`run.json`) plus its namespace manifest.
+ *   - `metadata` — the session record (`session.json`) plus its namespace manifest.
  *
  * `download` bundles all three as top-level folders; `downloadOutputs` /
  * `downloadEvents` / `downloadMetadata` each bundle one.
@@ -1071,11 +1057,11 @@ type ArtifactNamespace = "outputs";
 
 interface CollectedArtifacts {
   readonly entries: readonly ZipEntry[];
-  readonly captured: RunRecordArtifactSummaryV1[];
-  readonly errors: RunRecordDownloadErrorV1[];
+  readonly captured: SessionRecordArtifactSummaryV1[];
+  readonly errors: SessionRecordDownloadErrorV1[];
 }
 
-interface ZipEntry extends RunRecordArchiveEntryForRedactionV1 {
+interface ZipEntry extends SessionRecordArchiveEntryForRedactionV1 {
   readonly path: string;
   readonly bytes: Uint8Array;
 }
@@ -1090,20 +1076,20 @@ interface ZipEntry extends RunRecordArchiveEntryForRedactionV1 {
  */
 async function collectArtifactBytes(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   items: readonly Output[],
   zipPrefix: string,
   namespace: ArtifactNamespace,
   timeoutMs = OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS
 ): Promise<CollectedArtifacts> {
   const entries: ZipEntry[] = [];
-  const captured: RunRecordArtifactSummaryV1[] = [];
-  const errors: RunRecordDownloadErrorV1[] = [];
+  const captured: SessionRecordArtifactSummaryV1[] = [];
+  const errors: SessionRecordDownloadErrorV1[] = [];
 
   for (const item of items) {
     const rel = item.filename ?? item.id;
     try {
-      const path = `/api/runs/${encodeURIComponent(runId)}/${namespace}/${encodeURIComponent(item.id)}/download`;
+      const path = `/api/sessions/${encodeURIComponent(sessionId)}/${namespace}/${encodeURIComponent(item.id)}/download`;
       entries.push({
         path: `${zipPrefix}${rel}`,
         bytes: await downloadOutputBytesWithRetry(http, path, timeoutMs),
@@ -1141,7 +1127,7 @@ export function filterOutputs(outputs: readonly Output[], query: OutputQuery): r
 }
 
 /**
- * The single filename-matcher for cross-run / per-session output SEARCH. A
+ * The single filename-matcher for cross-session / per-session output SEARCH. A
  * string is a case-insensitive SUBSTRING match; a RegExp is tested as given (and
  * reset to `lastIndex = 0` so a reused `/g` regex is safe). Sharing this SSoT is
  * what closes the T16 crash class: `searchOutputs` no longer assumes `filename`
@@ -1204,7 +1190,7 @@ export function classifyOutput(output: Pick<Output, "filename" | "contentType">)
 export function normalizeOutputLinkExpiresIn(input: OutputLinkOptions["expiresIn"] = "1h"): number {
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input <= 0) {
-      throw new RunStateError("outputLink: expiresIn must be a positive number of seconds", {
+      throw new SessionStateError("outputLink: expiresIn must be a positive number of seconds", {
         expiresIn: input
       });
     }
@@ -1213,34 +1199,34 @@ export function normalizeOutputLinkExpiresIn(input: OutputLinkOptions["expiresIn
   if (input === "15m") return 15 * 60;
   if (input === "1h") return 60 * 60;
   if (input === "1d") return 24 * 60 * 60;
-  throw new RunStateError("outputLink: expiresIn must be seconds, \"15m\", \"1h\", or \"1d\"", {
+  throw new SessionStateError("outputLink: expiresIn must be seconds, \"15m\", \"1h\", or \"1d\"", {
     expiresIn: input
   });
 }
 
 async function resolveOutputLinkTarget(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   selectorOrQuery: OutputLinkSelector
 ): Promise<Output> {
   if (typeof selectorOrQuery === "string") {
     if (selectorOrQuery.length === 0) {
-      throw new RunStateError("outputLink: selector must include an output id or query", { runId });
+      throw new SessionStateError("outputLink: selector must include an output id or query", { sessionId });
     }
     return { id: selectorOrQuery };
   }
   if (hasOutputId(selectorOrQuery)) {
     if (selectorOrQuery.id.length === 0) {
-      throw new RunStateError("outputLink: selector must include an output id or query", { runId });
+      throw new SessionStateError("outputLink: selector must include an output id or query", { sessionId });
     }
     return selectorOrQuery;
   }
   if (isPathSelector(selectorOrQuery as OutputFileSelector) && (selectorOrQuery as OutputFilePathSelector).match === "suffix") {
-    return resolveOutputFileSelector(await listOutputs(http, runId), selectorOrQuery as OutputFilePathSelector, runId);
+    return resolveOutputFileSelector(await listOutputs(http, sessionId), selectorOrQuery as OutputFilePathSelector, sessionId);
   }
-  const match = await findOutput(http, runId, selectorOrQuery as OutputQuery);
+  const match = await findOutput(http, sessionId, selectorOrQuery as OutputQuery);
   if (match) return match;
-  throw new RunStateError("outputLink: output query matched no files", { runId });
+  throw new SessionStateError("outputLink: output query matched no files", { sessionId });
 }
 
 function outputMatchesQuery(output: Output, query: OutputQuery): boolean {
@@ -1323,26 +1309,26 @@ function contentTypeMatches(actual: string | undefined, expected: string): boole
 }
 
 /**
- * Download EVERYTHING public about a run as one zip, organised into the three
+ * Download EVERYTHING public about a session as one zip, organised into the three
  * namespace folders:
  *
- *   metadata/run.json     — the run record.
+ *   metadata/session.json     — the session record.
  *   events/events.jsonl   — typed event-channel records.
- *   outputs/<rel>         — the run's deliverables.
- *   manifest.json         — `RunRecordManifestV1`.
+ *   outputs/<rel>         — the session's deliverables.
+ *   manifest.json         — `SessionRecordManifestV1`.
  */
-export async function download(http: HttpClient, runId: string): Promise<Uint8Array> {
-  const [run, events, outputs] = await Promise.all([
-    getRun(http, runId),
-    listRunEvents(http, runId),
-    listOutputs(http, runId)
+export async function download(http: HttpClient, sessionId: string): Promise<Uint8Array> {
+  const [sessionRecord, events, outputs] = await Promise.all([
+    getSessionRecord(http, sessionId),
+    listSessionRecordEvents(http, sessionId),
+    listOutputs(http, sessionId)
   ]);
 
-  const out = await collectArtifactBytes(http, runId, outputs, "outputs/", "outputs");
-  const submissionSnapshot = extractSubmissionSnapshot(run);
-  const costTelemetry = extractCostTelemetry(run);
-  const manifest = buildRunRecordDownloadManifestV1({
-    runId,
+  const out = await collectArtifactBytes(http, sessionId, outputs, "outputs/", "outputs");
+  const submissionSnapshot = extractSubmissionSnapshot(sessionRecord);
+  const costTelemetry = extractCostTelemetry(sessionRecord);
+  const manifest = buildSessionRecordDownloadManifestV1({
+    sessionId,
     outputs: out.captured,
     errors: out.errors,
     typedEventCount: events.length,
@@ -1351,7 +1337,7 @@ export async function download(http: HttpClient, runId: string): Promise<Uint8Ar
   });
 
   return zipEntries([
-    jsonEntry("metadata/run.json", run),
+    jsonEntry("metadata/session.json", sessionRecord),
     ...(submissionSnapshot ? [jsonEntry("metadata/submission.json", submissionSnapshot)] : []),
     ...(costTelemetry ? [jsonEntry("metadata/cost.json", costTelemetry)] : []),
     jsonlEntry("events/events.jsonl", events),
@@ -1361,21 +1347,21 @@ export async function download(http: HttpClient, runId: string): Promise<Uint8Ar
 }
 
 /**
- * Download only the run's deliverables (the `outputs` namespace). Zip
+ * Download only the session's deliverables (the `outputs` namespace). Zip
  * layout: `<rel>` per file plus a `manifest.json`
- * (`{ runId, namespace: "outputs", outputs[], errors[] }`).
+ * (`{ sessionId, namespace: "outputs", outputs[], errors[] }`).
  */
 export async function downloadOutputs(
   http: HttpClient,
-  runId: string,
+  sessionId: string,
   options?: OutputTransferOptions
 ): Promise<Uint8Array> {
-  const outputs = await listOutputs(http, runId);
+  const outputs = await listOutputs(http, sessionId);
   const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
-  const { entries, captured, errors } = await collectArtifactBytes(http, runId, outputs, "", "outputs", timeoutMs);
+  const { entries, captured, errors } = await collectArtifactBytes(http, sessionId, outputs, "", "outputs", timeoutMs);
   return zipEntries([
     ...entries,
-    jsonEntry("manifest.json", { runId, namespace: "outputs", outputs: captured, errors })
+    jsonEntry("manifest.json", { sessionId, namespace: "outputs", outputs: captured, errors })
   ]);
 }
 
@@ -1383,12 +1369,12 @@ export async function downloadOutputs(
  * Download only the event archive (the `events` namespace). Always includes
  * typed `events.jsonl` plus `manifest.json`.
  */
-export async function downloadEvents(http: HttpClient, runId: string): Promise<Uint8Array> {
-  const events = await listRunEvents(http, runId);
+export async function downloadEvents(http: HttpClient, sessionId: string): Promise<Uint8Array> {
+  const events = await listSessionRecordEvents(http, sessionId);
   return zipEntries([
     jsonlEntry("events.jsonl", events),
     jsonEntry("manifest.json", {
-      runId,
+      sessionId,
       namespace: "events",
       files: [{ path: "events.jsonl", role: "typed_events", status: "present", recordCount: events.length }],
       errors: []
@@ -1397,24 +1383,24 @@ export async function downloadEvents(http: HttpClient, runId: string): Promise<U
 }
 
 /**
- * Download only the run record (the `metadata` namespace) as a zip
- * containing `run.json` plus `manifest.json`.
+ * Download only the session record (the `metadata` namespace) as a zip
+ * containing `session.json` plus `manifest.json`.
  */
-export async function downloadMetadata(http: HttpClient, runId: string): Promise<Uint8Array> {
-  const run = await getRun(http, runId);
+export async function downloadMetadata(http: HttpClient, sessionId: string): Promise<Uint8Array> {
+  const sessionRecord = await getSessionRecord(http, sessionId);
   return zipEntries([
-    jsonEntry("run.json", run),
+    jsonEntry("session.json", sessionRecord),
     jsonEntry("manifest.json", {
-      runId,
+      sessionId,
       namespace: "metadata",
-      files: [{ path: "run.json", role: "run_metadata", status: "present" }],
+      files: [{ path: "session.json", role: "session_metadata", status: "present" }],
       errors: []
     })
   ]);
 }
 
 function zipEntries(entries: readonly ZipEntry[]): Uint8Array {
-  assertRunRecordArchivePublicSafeV1(entries);
+  assertSessionRecordArchivePublicSafeV1(entries);
   const files: Record<string, Uint8Array> = {};
   for (const entry of entries) {
     files[entry.path] = entry.bytes;
@@ -1438,8 +1424,8 @@ function jsonlEntry(path: string, events: readonly AexEvent[]): ZipEntry {
   };
 }
 
-function extractSubmissionSnapshot(run: Run): { readonly submission: PlatformSubmission } | undefined {
-  const raw = (run as { readonly submission?: unknown }).submission;
+function extractSubmissionSnapshot(sessionRecord: SessionRecord): { readonly submission: PlatformSubmission } | undefined {
+  const raw = (sessionRecord as { readonly submission?: unknown }).submission;
   if (!isRecord(raw) || raw.kind !== "submission" || !isRecord(raw.submission)) {
     return undefined;
   }
@@ -1448,9 +1434,9 @@ function extractSubmissionSnapshot(run: Run): { readonly submission: PlatformSub
   };
 }
 
-function extractCostTelemetry(run: Run): RunCostTelemetry | undefined {
-  const raw = run.costTelemetry;
-  return isRecord(raw) ? raw as RunCostTelemetry : undefined;
+function extractCostTelemetry(sessionRecord: SessionRecord): SessionCostTelemetry | undefined {
+  const raw = sessionRecord.costTelemetry;
+  return isRecord(raw) ? raw as SessionCostTelemetry : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1458,14 +1444,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 // ===========================================================================
-// Run submission operations (McpServer / run config composition)
+// SessionRecord submission operations (McpServer / session config composition)
 // ===========================================================================
 
-export async function submitRun(
+export async function startSessionRecord(
   http: HttpClient,
-  request: PlatformRunSubmissionInput
-): Promise<Run> {
-  return http.request<Run>("/api/runs", {
+  request: PlatformSessionSubmissionInput
+): Promise<SessionRecord> {
+  return http.request<SessionRecord>("/api/sessions", {
     method: "POST",
     body: JSON.stringify(request)
   });
@@ -1686,8 +1672,8 @@ function unwrapSkill(result: { readonly skill: SkillRecord } | SkillRecord): Ski
   return result as SkillRecord;
 }
 
-function hasRun(value: Run | { readonly run: Run }): value is { readonly run: Run } {
-  return Boolean(value && typeof value === "object" && "run" in value);
+function hasSessionRecord(value: SessionRecord | { readonly session: SessionRecord }): value is { readonly session: SessionRecord } {
+  return Boolean(value && typeof value === "object" && "session" in value);
 }
 
 function unwrapSession(result: { readonly session: Session } | Session): Session {
@@ -1711,7 +1697,7 @@ export interface AssetUploadResult {
 /**
  * Upload bytes to the hosted API's content-addressable asset endpoint.
  * Returns a storage-neutral asset id suitable for `kind:"asset"` refs in a
- * later run submission.
+ * later session submission.
  */
 export async function uploadWorkspaceAsset(
   http: HttpClient,

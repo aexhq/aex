@@ -3,12 +3,12 @@
  *
  * This is NOT a user-facing verb. It is a legacy/internal directory walker:
  * callers pass explicit absolute directories, and the command emits a
- * structured JSON line per file to stdout. Managed runs now capture output by
+ * structured JSON line per file to stdout. Managed sessions now capture output by
  * filesystem baseline/delta; there is no default output directory and no
  * synthetic terminal agent turn.
  *
  * The subcommand:
- *  - REFUSES to run outside a managed run (no AEX_INDEX_PATH file).
+ *  - REFUSES to run outside a managed session (no AEX_INDEX_PATH file).
  *  - Walks each provided directory recursively.
  *  - Emits one JSON line per file to stdout:
  *      {"dir":"/workspace/reports","path":"/workspace/reports/x.txt","sizeBytes":42}
@@ -22,7 +22,7 @@
 import { AEX_INDEX_PATH, type CliIO } from "./internal.js";
 import { RUNTIME_ERR, SUCCESS, USAGE_ERR, type CliExitCode } from "./host/common.js";
 
-export async function runOutputsSyncCmd(io: CliIO, dirs: readonly string[]): Promise<CliExitCode> {
+export async function executeOutputsSyncCmd(io: CliIO, dirs: readonly string[]): Promise<CliExitCode> {
   if (dirs.length === 0) {
     io.stderr("usage: aex outputs sync <dir> [<dir> ...]\n");
     return USAGE_ERR;

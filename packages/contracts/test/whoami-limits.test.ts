@@ -25,7 +25,7 @@ function clientReturning(body: unknown): HttpClient {
 }
 
 const LIMITS: NonNullable<WhoAmI["limits"]> = {
-  maxConcurrentRuns: 50,
+  maxConcurrentSessions: 50,
   submitRatePerMinute: 120,
   spendCapUsd: 250,
   monthSpendUsd: 12.5,
@@ -37,12 +37,12 @@ const LIMITS: NonNullable<WhoAmI["limits"]> = {
 describe("whoami limits typing", () => {
   it("parses a whoami response that carries the limits object", async () => {
     const result = await whoami(
-      clientReturning({ ok: true, workspaceId: "ws_1", scopes: ["runs:read"], limits: LIMITS })
+      clientReturning({ ok: true, workspaceId: "ws_1", scopes: ["sessions:read"], limits: LIMITS })
     );
     expect(result.workspaceId).toBe("ws_1");
     expect(result.limits).toEqual(LIMITS);
     // The typed field narrows without casts.
-    expect(result.limits?.maxConcurrentRuns).toBe(50);
+    expect(result.limits?.maxConcurrentSessions).toBe(50);
     expect(result.limits?.submitRatePerMinute).toBe(120);
     expect(result.limits?.spendCapUsd).toBe(250);
     expect(result.limits?.balanceGraceFloorUsd).toBe(0);

@@ -7,7 +7,7 @@
  * Workspace refs do NOT carry auth from the SDK — the user supplies
  * auth inline in `secrets.mcpServers[<resolved-name>].headers` keyed
  * by the workspace MCP's persisted name. The BFF resolves the ref to
- * `{name, url}` BEFORE the shared parser runs, so the parser only
+ * `{name, url}` BEFORE the shared parser sessions, so the parser only
  * ever sees inline shapes.
  */
 import { describe, expect, it } from "vitest";

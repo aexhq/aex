@@ -1,16 +1,16 @@
 import {
   AexApiError,
   CredentialValidationError,
-  DEFAULT_RUN_PROVIDER,
+  DEFAULT_PROVIDER,
   HttpClient,
   PLANE_BASE_URLS,
-  RunConfigValidationError,
-  RunStateError,
+  SessionConfigValidationError,
+  SessionStateError,
   SecretString,
   asAexEventView,
   customName,
   isSessionParked as isSessionParkedEvent,
-  isRunSettled,
+  isSessionSettled,
   assertStreamableOutputMode,
   operations,
   parseApiKey,
@@ -30,7 +30,7 @@ import {
   type BillingLedgerQuery,
   type BillingPortalRequest,
   type BillingSummary,
-  type ChildRunRef,
+  type ChildSessionRef,
   type DebugSink,
   type FetchLike,
   type FileRecord,
@@ -48,8 +48,8 @@ import {
   type OutputSearchQuery,
   type OutputSearchHit,
   type OutputSearchPage,
-  type RunCostProviderUsage,
-  type RunOutcome,
+  type SessionCostProviderUsage,
+  type TurnOutcome,
   type Session,
   type SessionCreateRequest,
   type SessionEvent,
@@ -66,19 +66,19 @@ import {
   type PlatformSubmission,
   type PlatformInlineSecrets,
   type PlatformMcpServerSecret,
-  type Run,
-  type RunModel,
-  type RunTrace,
+  type SessionRecord,
+  type ModelName,
+  type TurnTrace,
   type UsageSummary,
-  type RunLimits,
-  parseRunLimits,
+  type SessionLimits,
+  parseSessionLimits,
   parseRuntimeSize,
-  parseRunTimeout,
-  parseRunWebhook,
-  type RunWebhookDelivery,
-  type RunProvider,
+  parseSessionTimeout,
+  parseSessionWebhook,
+  type SessionWebhookDelivery,
+  type ProviderName,
   type SecretRecord,
-  type RunUnit,
+  type SessionUnit,
   BUILTIN_TOOL_NAMES,
   type BuiltinToolName,
   type RuntimeSize,
@@ -89,7 +89,7 @@ import {
   type WebhookSigningSecret,
   type WebSocketFactory,
   type WhoAmI,
-  TERMINAL_RUN_STATUSES
+  TERMINAL_SESSION_CONTROL_STATUSES
 } from "@aexhq/contracts";
 import { AgentsMd } from "./agents-md.js";
 import { uploadAsset, uploadAssetMultipart, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
@@ -128,7 +128,7 @@ export interface AexOptions {
    * Built-in transport retry policy. Every BFF request is retried on transient
    * failures (HTTP 429/500/502/503/504/529 and network errors) with bounded
    * exponential backoff + jitter, honoring `Retry-After`. Billable submits carry
-   * a stable idempotency key, so a retry never creates a duplicate billable run.
+   * a stable idempotency key, so a retry never creates a duplicate billable session turn.
    *
    * Omit for sensible defaults (4 attempts, ~2 min budget); pass an object to
    * tune `maxAttempts` / delays / `maxElapsedMs`; pass `false` to disable.
@@ -137,26 +137,24 @@ export interface AexOptions {
 }
 
 /**
- * The unified SETTLED result of {@link Aex.run}. Extends the contracts
- * {@link SettledResult} (the ONE settled shape `run()` and `done()` share), so
+ * The unified SETTLED result of {@link Aex.start}. Extends the contracts
+ * {@link SettledResult} (the ONE settled shape `start()` and `done()` share), so
  * the terminal `status` (a {@link SessionTerminalOutcome}), `ok`, `costUsd`
- * (`number`, `>= 0`), and `usage` are ALWAYS present — `run()` awaits the settle
- * commit by default. Adds the one-shot conveniences: the run-compatible record,
+ * (`number`, `>= 0`), and `usage` are ALWAYS present — `start()` awaits the settle
+ * commit by default. Adds the one-shot conveniences: the session-record-compatible record,
  * events, decoded trace, assistant text, and captured outputs.
  *
- * `T` is the `responseFormat` decode type: when the run was submitted with a
+ * `T` is the `responseFormat` decode type: when the session was submitted with a
  * `json_schema` `responseFormat`, {@link outcome} carries the typed decoded
  * value or a typed refusal.
  */
-export interface RunResult<T = unknown> extends SettledResult {
-  readonly runId: string;
-  /** The session id used as the run-compatible handle. */
-  readonly sessionId?: string;
-  /** Run-compatible view of the underlying session record. */
-  readonly run: Run;
+export interface SessionResult<T = unknown> extends SettledResult {
+  readonly sessionId: string;
+  /** Session-record view of the underlying session. */
+  readonly record: SessionRecord;
   /** The underlying resumable session record (its lifecycle `status` is idle/suspended when resumable). */
   readonly session?: Session;
-  /** The turn accepted for this one-shot run. */
+  /** The turn accepted for this one-shot session. */
   readonly turn?: SessionTurn;
   /** The assistant's final text. */
   readonly text: string;
@@ -165,29 +163,29 @@ export interface RunResult<T = unknown> extends SettledResult {
   /** The session turn event stream — each event carries the `is*()` type-guard methods. */
   readonly events: readonly AexEventView[];
   /** Decoded view of the events: tool calls + usage + assistant text. */
-  readonly trace: RunTrace;
-  /** The run's captured output files. */
+  readonly trace: TurnTrace;
+  /** The session's captured output files. */
   readonly outputs: readonly Output[];
   /**
-   * The typed schema-decode outcome — present only when the run was submitted
+   * The typed schema-decode outcome — present only when the session was submitted
    * with a `json_schema` `responseFormat`: `{ kind:'decoded', value }` or
    * `{ kind:'refused', reason }`. There is no untyped path that yields a
    * hallucinated object.
    */
-  readonly outcome?: RunOutcome<T>;
+  readonly outcome?: TurnOutcome<T>;
 }
 
 /** How a one-shot / turn resolves: at the render-complete park, or (default) at the settle commit. */
 export type SettleAwait = "park" | "settle";
 
-/** Options for {@link Aex.run}. */
-export interface RunCollectOptions {
+/** Options for {@link Aex.start}. */
+export interface StartSessionOptions {
   /** Overall wait budget (ms) for the one-shot session turn to park. */
   readonly timeoutMs?: number;
   readonly webSocketFactory?: WebSocketFactory;
   readonly idleTimeoutMs?: number;
   readonly pingIntervalMs?: number;
-  /** Throw a {@link RunStateError} when the run does not succeed. Default false. */
+  /** Throw a {@link SessionStateError} when the session does not succeed. Default false. */
   readonly throwOnFailure?: boolean;
   /**
    * When the result resolves. `'settle'` (DEFAULT) waits (bounded) for the
@@ -199,9 +197,9 @@ export interface RunCollectOptions {
   readonly await?: SettleAwait;
 }
 
-/** The result of {@link Aex.submit}: the run id + a resumable session handle. */
+/** The result of {@link Aex.submit}: the session id + a resumable session handle. */
 export interface SubmitResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly session: SessionHandle;
 }
 
@@ -225,7 +223,7 @@ export interface SessionOverrides {
   readonly timeout?: string;
   readonly maxSpendUsd?: number;
   /**
-   * Per-run iteration cap (agent loop turns). Defaults + ceiling are enforced
+   * Per-session iteration cap (agent loop turns). Defaults + ceiling are enforced
    * server-side; omit to accept the platform default. A positive integer.
    */
   readonly maxTurns?: number;
@@ -257,12 +255,12 @@ export interface SessionCreateOptions {
    * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. When
    * omitted it is derived from `model`; if supplied it MUST serve the model.
    */
-  readonly provider?: RunProvider;
+  readonly provider?: ProviderName;
   /**
    * Closed public model id. Prefer the {@link Models} symbol const, e.g.
    * `Models.CLAUDE_HAIKU_4_5`.
    */
-  readonly model: RunModel;
+  readonly model: ModelName;
   readonly system?: string;
   /**
    * Tools available to the agent. Each entry is a custom {@link Tool} bundle or
@@ -314,7 +312,7 @@ export interface SessionCreateOptions {
    * Structured-output policy. `{ kind:'text' }` (default) is free-form;
    * `{ kind:'json_schema', schema, strict?, name? }` requests provider-native
    * constrained decode against `schema`. The typed outcome is read from
-   * `run<T>()`'s `result.outcome` (`{ kind:'decoded', value }` or
+   * `start<T>()`'s `result.outcome` (`{ kind:'decoded', value }` or
    * `{ kind:'refused', reason }`) — never an untyped hallucinated object.
    */
   readonly responseFormat?: ResponseFormat;
@@ -328,7 +326,7 @@ export interface SessionCreateOptions {
   readonly metadata?: PlatformSubmission["metadata"];
   readonly idempotencyKey?: string;
   /** BYOK provider key(s), keyed by provider. */
-  readonly apiKeys?: Partial<Record<RunProvider, string>>;
+  readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly environment?: SessionEnvironmentOptions;
   /**
    * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
@@ -363,7 +361,7 @@ interface InternalSessionSendOptions extends SessionSendOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface SessionRunOptions extends SessionCreateOptions {
+export interface SessionStartOptions extends SessionCreateOptions {
   readonly message: SessionInput;
   readonly deleteAfter?: boolean;
   readonly messageIdempotencyKey?: string;
@@ -373,7 +371,7 @@ export interface SessionRunOptions extends SessionCreateOptions {
 /**
  * The unified SETTLED result of one turn (`session.send(...).done()`). Extends
  * the contracts {@link SettledResult}, so `done()` returns the SAME shape as
- * `run()`: the terminal `status` (a {@link SessionTerminalOutcome}), `ok`,
+ * `start()`: the terminal `status` (a {@link SessionTerminalOutcome}), `ok`,
  * `costUsd`, and `usage` are always present (the turn awaits settle by default).
  */
 export interface SessionTurnResult<T = unknown> extends SettledResult {
@@ -385,13 +383,13 @@ export interface SessionTurnResult<T = unknown> extends SettledResult {
   readonly outputs: readonly Output[];
   readonly messages: readonly Message[];
   /** The typed schema-decode outcome when a `json_schema` `responseFormat` was set. */
-  readonly outcome?: RunOutcome<T>;
+  readonly outcome?: TurnOutcome<T>;
 }
 
-export interface SessionRunResult extends SessionTurnResult {}
+export interface SessionStartResult extends SessionTurnResult {}
 
 export class SessionTurnStream implements AsyncIterable<AexEventView> {
-  readonly #run: () => AsyncGenerator<AexEventView, SessionTurnResult, void>;
+  readonly #stream: () => AsyncGenerator<AexEventView, SessionTurnResult, void>;
   #generator: AsyncGenerator<AexEventView, SessionTurnResult, void> | undefined;
   #outcome:
     | { readonly ok: true; readonly value: SessionTurnResult }
@@ -399,8 +397,8 @@ export class SessionTurnStream implements AsyncIterable<AexEventView> {
     | undefined;
   #done: Promise<SessionTurnResult> | undefined;
 
-  constructor(run: () => AsyncGenerator<AexEventView, SessionTurnResult, void>) {
-    this.#run = run;
+  constructor(stream: () => AsyncGenerator<AexEventView, SessionTurnResult, void>) {
+    this.#stream = stream;
   }
 
   /**
@@ -410,7 +408,7 @@ export class SessionTurnStream implements AsyncIterable<AexEventView> {
    * message as a second billable turn (or 409 `session_busy` mid-turn).
    */
   #shared(): AsyncGenerator<AexEventView, SessionTurnResult, void> {
-    this.#generator ??= this.#capture(this.#run());
+    this.#generator ??= this.#capture(this.#stream());
     return this.#generator;
   }
 
@@ -538,14 +536,14 @@ export interface SessionOutputs {
   download(selector?: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
 }
 
-/** A per-session output search — {@link OutputSearchQuery} without the cross-run `runIds` corpus. */
-export type PerSessionOutputSearchQuery = Omit<OutputSearchQuery, "runIds">;
+/** A per-session output search — {@link OutputSearchQuery} without the cross-session `sessionIds` corpus. */
+export type PerSessionOutputSearchQuery = Omit<OutputSearchQuery, "sessionIds">;
 
 /**
  * Accessor over the session's webhook delivery ledger (`session.webhooks()`).
  */
 export interface SessionWebhooks {
-  list(): Promise<readonly RunWebhookDelivery[]>;
+  list(): Promise<readonly SessionWebhookDelivery[]>;
   redeliver(deliveryId: string): Promise<void>;
 }
 
@@ -587,7 +585,7 @@ export class SessionHandle {
     assertNoSessionSendSignal(options, "SessionHandle.replayLast");
     const last = this.#lastSend;
     if (last === undefined) {
-      throw new RunStateError("SessionHandle.replayLast: no message has been sent on this session yet");
+      throw new SessionStateError("SessionHandle.replayLast: no message has been sent on this session yet");
     }
     return sendSessionInternal(this, last.input, {
       ...options,
@@ -633,7 +631,7 @@ export class SessionHandle {
    * `running`, then retry the SAME idempotent POST (a replay de-duplicates, so
    * this never creates a second billable turn). A session that stays busy past
    * {@link SESSION_BUSY_RECONCILE_DEADLINE_MS} is a genuinely in-flight turn: we
-   * surface a clear, bounded {@link RunStateError} rather than masking it or
+   * surface a clear, bounded {@link SessionStateError} rather than masking it or
    * waiting forever. Any non-`running` busy status (suspended / cancelling /
    * deleted) is a real rejection and passes straight through.
    */
@@ -650,7 +648,7 @@ export class SessionHandle {
         if (!isSettlingSessionBusy(err) || signal?.aborted) throw err;
         if (Date.now() >= deadline) {
           const apiErr = err instanceof AexApiError ? err : undefined;
-          throw new RunStateError(
+          throw new SessionStateError(
             `SessionHandle.send: session ${this.id} was still running ${SESSION_BUSY_RECONCILE_DEADLINE_MS}ms after the previous turn parked — a turn is still in flight`,
             {
               sessionId: this.id,
@@ -739,14 +737,14 @@ export class SessionHandle {
   }
 
   /**
-   * Enumerate this run's subagent CHILD runs (`GET /runs/:id/children`). Each is
-   * a {@link ChildRunHandle} backed by the RUN facade (getRun/events/outputs) —
+   * Enumerate this session's subagent CHILD sessions (`GET /sessions/:id/children`). Each is
+   * a {@link ChildSessionHandle} backed by the RUN facade (getSessionRecord/events/outputs) —
    * NOT `openSession` — so every child the platform hands you is resolvable, with
-   * its lineage (`parentRunId`/`depth`) and terminal outcome exposed.
+   * its lineage (`parentSessionId`/`depth`) and terminal outcome exposed.
    */
-  async children(): Promise<readonly ChildRunHandle[]> {
-    const refs = await operations.listRunChildren(this.#http, this.id);
-    return refs.map((ref) => new ChildRunHandle(this.#http, ref, this.#fetch));
+  async children(): Promise<readonly ChildSessionHandle[]> {
+    const refs = await operations.listSessionChildren(this.#http, this.id);
+    return refs.map((ref) => new ChildSessionHandle(this.#http, ref, this.#fetch));
   }
 
   /**
@@ -827,8 +825,8 @@ export class SessionHandle {
     const http = this.#http;
     const id = this.id;
     return {
-      list: () => operations.getRunWebhookDeliveries(http, id),
-      redeliver: (deliveryId) => operations.redeliverRunWebhook(http, id, deliveryId)
+      list: () => operations.getSessionWebhookDeliveries(http, id),
+      redeliver: (deliveryId) => operations.redeliverSessionWebhook(http, id, deliveryId)
     };
   }
 
@@ -840,10 +838,10 @@ export class SessionHandle {
 
   /**
    * Poll the session record until it reaches a parked/terminal status (idle,
-   * suspended, error, or any terminal run status). Throws if `timeoutMs`
+   * suspended, error, or any terminal session status). Throws if `timeoutMs`
    * elapses first. Updates the stored record.
    */
-  async wait(options: WaitForRunOptions = {}): Promise<Session> {
+  async wait(options: WaitForSessionOptions = {}): Promise<Session> {
     const intervalMs = options.intervalMs ?? 1_500;
     const timeoutMs = options.timeoutMs;
     const signal = options.signal;
@@ -861,18 +859,18 @@ export class SessionHandle {
   }
 
   /**
-   * Fetch the self-contained `RunUnit` for this session: parsed submission,
+   * Fetch the self-contained `SessionUnit` for this session: parsed submission,
    * attempts, indexed events, outputs, capture failures, proxy-call audit, and
    * resolved skills. Use this when you need fields beyond the session record.
    *
    * On the managed plane this is a LEAN summary — the aggregate collections
    * (`attempts` / `events.entries` / `outputs` / `rawEventPages`) default to
-   * empty. For authoritative per-run data use `outputs()` / `events()` /
+   * empty. For authoritative per-session data use `outputs()` / `events()` /
    * `messages()`. The returned shape is always type-valid (never `undefined`
    * where the type promises an array/page), so array/page access is safe.
    */
-  unit(): Promise<RunUnit> {
-    return operations.getRunUnit(this.#http, this.id);
+  unit(): Promise<SessionUnit> {
+    return operations.getSessionUnit(this.#http, this.id);
   }
 
   /**
@@ -943,13 +941,13 @@ export class SessionClient {
     return sessionOutputs(this.#http, sessionId, this.#fetch);
   }
 
-  async run(options: SessionRunOptions): Promise<SessionRunResult> {
+  async start(options: SessionStartOptions): Promise<SessionStartResult> {
     const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
-    assertNoLegacySessionFields(options, "Aex.sessions.run");
-    const input = normaliseSessionInput(message, "Aex.sessions.run", "message");
-    // Derive the message key from the create key (like the CLI) so a retried run
+    assertNoLegacySessionFields(options, "Aex.sessions.start");
+    const input = normaliseSessionInput(message, "Aex.sessions.start", "message");
+    // Derive the message key from the create key (like the CLI) so a retried session
     // with the same `idempotencyKey` de-duplicates BOTH the create and the
-    // billable turn — never a duplicate billable run.
+    // billable turn — never a duplicate billable session turn.
     const createKey = operations.resolveIdempotencyKey(createOptions.idempotencyKey);
     const messageKey =
       messageIdempotencyKey !== undefined ? operations.resolveIdempotencyKey(messageIdempotencyKey) : deriveMessageKey(createKey);
@@ -966,9 +964,9 @@ export class SessionClient {
 }
 
 /**
- * Cross-run output search (`aex.outputs`). Composed client-side (per-run
+ * Cross-session output search (`aex.outputs`). Composed client-side (per-session
  * `listSessionOutputs` + the contracts output filter): scope a corpus with
- * `query.runIds`, or omit it to scan every run in the workspace. Metadata-only
+ * `query.sessionIds`, or omit it to scan every session in the workspace. Metadata-only
  * (reference hits, no bytes); a content-shaped query throws a typed
  * "content search unsupported".
  */
@@ -981,22 +979,22 @@ export class OutputsClient {
 
   async search(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
     assertMetadataOnlyOutputSearch(query, "aex.outputs.search");
-    // Dedup the caller-supplied allow-list so a run repeated in `runIds` (from
+    // Dedup the caller-supplied allow-list so a session repeated in `sessionIds` (from
     // concatenating corpora) isn't scanned twice and doesn't inflate hit count.
-    const unscoped = query.runIds === undefined;
+    const unscoped = query.sessionIds === undefined;
     const limit = query.limit ?? 100;
     if (unscoped) return this.#searchWorkspace(query, limit);
-    const runIds = [...new Set(query.runIds)];
+    const sessionIds = [...new Set(query.sessionIds)];
     const hits: OutputSearchHit[] = [];
-    for (const runId of runIds) {
+    for (const sessionId of sessionIds) {
       let outputs: readonly Output[];
       try {
-        outputs = await searchRunOutputs(this.#http, runId, query);
+        outputs = await searchSessionOutputs(this.#http, sessionId, query);
       } catch (err) {
         if (unscoped && isMissingOutputsSession(err)) continue;
         throw err;
       }
-      for (const hit of outputHits(runId, outputs, limit - hits.length)) {
+      for (const hit of outputHits(sessionId, outputs, limit - hits.length)) {
         hits.push(hit);
         if (hits.length >= limit) return { hits };
       }
@@ -1005,7 +1003,7 @@ export class OutputsClient {
   }
 
   /** Scan the workspace lazily by paging sessions and stopping once the hit limit is satisfied. */
-  async #searchWorkspace(query: Omit<OutputSearchQuery, "runIds">, limit: number): Promise<OutputSearchPage> {
+  async #searchWorkspace(query: Omit<OutputSearchQuery, "sessionIds">, limit: number): Promise<OutputSearchPage> {
     const hits: OutputSearchHit[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
@@ -1023,7 +1021,7 @@ export class OutputsClient {
       for (const session of page.sessions) {
         let outputs: readonly Output[];
         try {
-          outputs = await searchRunOutputs(this.#http, session.id, query);
+          outputs = await searchSessionOutputs(this.#http, session.id, query);
         } catch (err) {
           if (isMissingOutputsSession(err)) continue;
           throw err;
@@ -1039,14 +1037,14 @@ export class OutputsClient {
   }
 }
 
-/** A run-facade events accessor (list + polling stream) keyed on a run id. */
-export interface RunEvents {
+/** Child-session events accessor (list + polling stream) keyed on a session id. */
+export interface ChildSessionEvents {
   list(): Promise<readonly AexEventView[]>;
   stream(options?: StreamEventsOptions): AsyncIterable<AexEventView>;
 }
 
-/** A run-facade outputs accessor (a subset of {@link SessionOutputs}) keyed on a run id. */
-export interface RunOutputs {
+/** A session facade outputs accessor (a subset of {@link SessionOutputs}) keyed on a session id. */
+export interface SessionOutputs {
   list(query?: OutputQuery): Promise<readonly Output[]>;
   find(query: OutputQuery): Promise<readonly Output[]>;
   findOne(query: OutputQuery): Promise<Output | null>;
@@ -1056,18 +1054,18 @@ export interface RunOutputs {
 }
 
 /**
- * A first-class, lineage-discoverable SUBAGENT CHILD run — handed out by
- * `session.children()` / `run.children()`, backed by the RUN facade
- * (getRun/events/outputs), NOT `openSession`. Every child the platform hands you
- * is resolvable through this handle; its lineage (`parentRunId`/`depth`) and
+ * A first-class, lineage-discoverable SUBAGENT child session — handed out by
+ * `session.children()`, backed by the session-record facade
+ * (getSessionRecord/events/outputs), NOT `openSession`. Every child the platform hands you
+ * is resolvable through this handle; its lineage (`parentSessionId`/`depth`) and
  * terminal outcome (`status`) are first-class.
  */
-export class ChildRunHandle {
+export class ChildSessionHandle {
   readonly #http: HttpClient;
   readonly #fetch: FetchLike | undefined;
-  readonly #ref: ChildRunRef;
+  readonly #ref: ChildSessionRef;
 
-  constructor(http: HttpClient, ref: ChildRunRef, fetch?: FetchLike) {
+  constructor(http: HttpClient, ref: ChildSessionRef, fetch?: FetchLike) {
     this.#http = http;
     this.#ref = ref;
     this.#fetch = fetch;
@@ -1077,77 +1075,65 @@ export class ChildRunHandle {
     return this.#ref.id;
   }
 
-  get parentRunId(): string {
-    return this.#ref.parentRunId;
+  get parentSessionId(): string {
+    return this.#ref.parentSessionId;
   }
 
   get depth(): number | undefined {
     return this.#ref.depth;
   }
 
-  /** The child's run status (a real run terminal outcome once settled). */
+  /** The child's session status (a real session terminal outcome once settled). */
   get status(): string {
     return this.#ref.status;
   }
 
-  get ref(): ChildRunRef {
+  get ref(): ChildSessionRef {
     return this.#ref;
   }
 
-  /** Re-read the child run record (status, lineage, costTelemetry). */
-  get(): Promise<Run> {
-    return operations.getRun(this.#http, this.id);
+  /** Re-read the child session record (status, lineage, costTelemetry). */
+  get(): Promise<SessionRecord> {
+    return operations.getSessionRecord(this.#http, this.id);
   }
 
-  /** The child's events over the RUN facade (`/runs/:id/events`). */
-  events(): RunEvents {
-    return runEventsAccessor(this.#http, this.id);
+  /** The child's events over the session-record facade (`/sessions/:id/events`). */
+  events(): ChildSessionEvents {
+    return childSessionEventsAccessor(this.#http, this.id);
   }
 
-  /** The child's captured outputs over the RUN facade (`/runs/:id/outputs`). */
-  outputs(): RunOutputs {
-    return runOutputsAccessor(this.#http, this.id, this.#fetch);
+  /** The child's captured outputs over the RUN facade (`/sessions/:id/outputs`). */
+  outputs(): SessionOutputs {
+    return sessionOutputs(this.#http, this.id, this.#fetch);
   }
 
   /** This child's own subagent children (recursive lineage). */
-  async children(): Promise<readonly ChildRunHandle[]> {
-    const refs = await operations.listRunChildren(this.#http, this.id);
-    return refs.map((ref) => new ChildRunHandle(this.#http, ref, this.#fetch));
+  async children(): Promise<readonly ChildSessionHandle[]> {
+    const refs = await operations.listSessionChildren(this.#http, this.id);
+    return refs.map((ref) => new ChildSessionHandle(this.#http, ref, this.#fetch));
   }
 
-  /** Cancel the child run (run facade `POST /runs/:id/cancel`). */
+  /** Cancel the child session (session record facade `POST /sessions/:id/cancel`). */
   cancel(): Promise<void> {
-    return operations.cancelRun(this.#http, this.id);
+    return operations.cancelSession(this.#http, this.id).then(() => undefined);
   }
 }
 
-/** Run-facade events accessor (list + polling stream) — used by {@link ChildRunHandle}. */
-function runEventsAccessor(http: HttpClient, id: string): RunEvents {
+/** SessionRecord-facade events accessor (list + polling stream) — used by {@link ChildSessionHandle}. */
+function childSessionEventsAccessor(http: HttpClient, id: string): ChildSessionEvents {
   return {
-    list: async () => (await operations.listRunEvents(http, id)).map(asAexEventView),
-    stream: (options?: StreamEventsOptions) => streamRunEventsPolling(http, id, options ?? {})
+    list: async () => (await operations.listSessionRecordEvents(http, id)).map(asAexEventView),
+    stream: (options?: StreamEventsOptions) => streamChildSessionEventsPolling(http, id, options ?? {})
   };
 }
 
-/** Run-facade outputs accessor — used by {@link ChildRunHandle}. */
-function runOutputsAccessor(http: HttpClient, id: string, fetchLike: FetchLike | undefined): RunOutputs {
-  void fetchLike;
-  return {
-    list: (query?: OutputQuery) => operations.listOutputs(http, id, query),
-    find: (query) => operations.findOutputs(http, id, query),
-    findOne: (query) => operations.findOutput(http, id, query),
-    read: (selector, options) => operations.readOutputText(http, id, selector, options),
-    link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
-    download: (selector, options) => downloadSessionOutput(http, id, selector, options)
-  };
-}
-
+/** SessionRecord-facade outputs accessor — used by {@link ChildSessionHandle}. */
 /**
- * Poll a RUN's events (via the run facade) until it reaches a terminal status,
- * the signal aborts, or the caller breaks the iterator. Uses `getRun` (not
- * `getSession`) so it resolves for a child run that has no session facade.
+ * Poll a child session's events (via the session record facade) until it reaches a terminal status,
+ * the signal aborts, or the caller breaks the iterator. Uses `getSessionRecord` (not
+ * `getSession`) so it resolves for a child session that has no session facade.
  */
-async function* streamRunEventsPolling(
+async function* streamChildSessionEventsPolling(
   http: HttpClient,
   id: string,
   options: StreamEventsOptions
@@ -1157,15 +1143,15 @@ async function* streamRunEventsPolling(
   const intervalMs = options.intervalMs ?? 1_000;
   const signal = options.signal;
   while (!signal?.aborted) {
-    const events = await operations.listRunEvents(http, id);
+    const events = await operations.listSessionRecordEvents(http, id);
     for (const event of events) {
       if (!seenIds.has(event.id)) {
         seenIds.add(event.id);
         yield asAexEventView(event);
       }
     }
-    const run = await operations.getRun(http, id);
-    if (isSessionParked(run.status)) return;
+    const session = await operations.getSessionRecord(http, id);
+    if (isSessionParked(session.status)) return;
     try {
       await sleep(intervalMs, signal);
     } catch {
@@ -1250,7 +1236,7 @@ async function* streamSessionEventsPolling(
   const intervalMs = options.intervalMs ?? 1_000;
   const signal = options.signal;
   while (!signal?.aborted) {
-    const events = await operations.listRunEvents(http, id);
+    const events = await operations.listSessionRecordEvents(http, id);
     for (const event of events) {
       if (!seenIds.has(event.id)) {
         seenIds.add(event.id);
@@ -1285,8 +1271,8 @@ async function* streamSessionEnvelopes(
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, id)).ticket,
     // settleConsistent ends the stream on the post-mirror barrier instead of
-    // the earlier RUN_FINISHED UX signal.
-    isTerminal: options.settleConsistent ? isRunSettled : isSessionEnvelopeTerminal,
+    // the earlier TURN_FINISHED UX signal.
+    isTerminal: options.settleConsistent ? isSessionSettled : isSessionEnvelopeTerminal,
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {}),
@@ -1298,7 +1284,7 @@ async function* streamSessionEnvelopes(
 }
 
 function isSessionEnvelopeTerminal(event: AexEvent): boolean {
-  return event.type === "RUN_FINISHED" || event.type === "RUN_ERROR" || isSessionParkedEvent(event);
+  return event.type === "TURN_FINISHED" || event.type === "TURN_ERROR" || isSessionParkedEvent(event);
 }
 
 /**
@@ -1341,7 +1327,7 @@ function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | und
     findOne: (query) => operations.findOutput(http, id, query),
     search: async (query: PerSessionOutputSearchQuery = {}) => {
       assertMetadataOnlyOutputSearch(query, "outputs().search");
-      const outputs = await searchRunOutputs(http, id, query);
+      const outputs = await searchSessionOutputs(http, id, query);
       return { hits: outputHits(id, outputs, query.limit ?? 100) };
     },
     link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
@@ -1354,15 +1340,15 @@ function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | und
 }
 
 /**
- * List one run's outputs matching a metadata search: `extension`/`contentType`
+ * List one session's outputs matching a metadata search: `extension`/`contentType`
  * via the contracts filter, and `filename` via {@link operations.toFilenameMatcher}
  * — a case-insensitive SUBSTRING for a string, `.test` for a RegExp (RegExp-safe;
  * no `escapeRegExp` footgun on a reused pattern).
  */
-async function searchRunOutputs(
+async function searchSessionOutputs(
   http: HttpClient,
-  runId: string,
-  query: Omit<OutputSearchQuery, "runIds">
+  sessionId: string,
+  query: Omit<OutputSearchQuery, "sessionIds">
 ): Promise<readonly Output[]> {
   const listQuery: OutputQuery = {
     ...(query.extension !== undefined ? { extension: query.extension } : {}),
@@ -1370,7 +1356,7 @@ async function searchRunOutputs(
   };
   const outputs = await operations.listSessionOutputs(
     http,
-    runId,
+    sessionId,
     Object.keys(listQuery).length > 0 ? listQuery : undefined
   );
   if (query.filename === undefined) return outputs;
@@ -1381,12 +1367,12 @@ async function searchRunOutputs(
 /**
  * Fail-fast on a CONTENT-shaped search: the search surface is metadata-only, so
  * a `content`/`text`/`query` needle throws a typed error rather than silently
- * returning 0 hits (which reads as "no matches" for a query that was never run).
+ * returning 0 hits (which reads as "no matches" for a query that was never executed).
  */
 function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
   for (const key of ["content", "text", "query", "grep", "body"]) {
     if (Object.prototype.hasOwnProperty.call(query, key)) {
-      throw new RunConfigValidationError(
+      throw new SessionConfigValidationError(
         `${surface}: content search is not supported — search matches on filename/extension/contentType metadata only`,
         { field: key }
       );
@@ -1394,14 +1380,14 @@ function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
   }
 }
 
-/** Project a run's output files to reference-only {@link OutputSearchHit}s, capped. */
-function outputHits(runId: string, outputs: readonly Output[], limit: number): OutputSearchHit[] {
+/** Project a session's output files to reference-only {@link OutputSearchHit}s, capped. */
+function outputHits(sessionId: string, outputs: readonly Output[], limit: number): OutputSearchHit[] {
   const cap = Math.max(0, Math.floor(limit));
   if (cap === 0) return [];
   const hits: OutputSearchHit[] = [];
   for (const o of outputs) {
     hits.push({
-      runId,
+      sessionId,
       outputId: o.id,
       ...(o.filename !== undefined ? { filename: o.filename } : {}),
       ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
@@ -1475,7 +1461,7 @@ function assistantTextFromEvents(events: readonly AexEvent[]): string {
   return assistantTextEntriesFromEvents(events).map((entry) => entry.text).join("");
 }
 
-function runTraceFromEvents(events: readonly AexEvent[]): RunTrace {
+function turnTraceFromEvents(events: readonly AexEvent[]): TurnTrace {
   return {
     toolCalls: toolCallsFromEvents(events),
     usage: usageFromEvents(events),
@@ -1485,14 +1471,14 @@ function runTraceFromEvents(events: readonly AexEvent[]): RunTrace {
 
 function assistantTextEntriesFromEvents(
   events: readonly AexEvent[]
-): RunTrace["text"] {
-  const out: Array<Mutable<RunTrace["text"][number]>> = [];
+): TurnTrace["text"] {
+  const out: Array<Mutable<TurnTrace["text"][number]>> = [];
   for (const event of events) {
     if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
     const data = asRecord(event.data);
     const text = typeof data.text === "string" ? data.text : undefined;
     if (text === undefined) continue;
-    const entry: Mutable<RunTrace["text"][number]> = { text };
+    const entry: Mutable<TurnTrace["text"][number]> = { text };
     const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
     if (messageId !== undefined) entry.messageId = messageId;
     if (typeof event.sequence === "number") entry.seq = event.sequence;
@@ -1502,15 +1488,15 @@ function assistantTextEntriesFromEvents(
   return out;
 }
 
-function toolCallsFromEvents(events: readonly AexEvent[]): RunTrace["toolCalls"] {
+function toolCallsFromEvents(events: readonly AexEvent[]): TurnTrace["toolCalls"] {
   const order: string[] = [];
-  const byId = new Map<string, Mutable<RunTrace["toolCalls"][number]>>();
+  const byId = new Map<string, Mutable<TurnTrace["toolCalls"][number]>>();
   for (const event of events) {
     const data = asRecord(event.data);
     if (event.type === "TOOL_CALL_START") {
       const id = typeof data.id === "string" ? data.id : undefined;
       if (id === undefined) continue;
-      const trace: Mutable<RunTrace["toolCalls"][number]> = {
+      const trace: Mutable<TurnTrace["toolCalls"][number]> = {
         id,
         name: typeof data.name === "string" ? data.name : "",
         args: asRecord(data.arguments)
@@ -1526,7 +1512,7 @@ function toolCallsFromEvents(events: readonly AexEvent[]): RunTrace["toolCalls"]
     if (event.type === "TOOL_CALL_RESULT") {
       const id = typeof data.id === "string" ? data.id : undefined;
       if (id === undefined) continue;
-      const result: Mutable<NonNullable<RunTrace["toolCalls"][number]["result"]>> = {
+      const result: Mutable<NonNullable<TurnTrace["toolCalls"][number]["result"]>> = {
         isError: data.isError === true,
         content: data.content ?? null
       };
@@ -1654,7 +1640,7 @@ function carriedOutcome(event: AexEvent): SessionTerminalRead | undefined {
 }
 
 function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boolean {
-  if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+  if (event.type === "TURN_FINISHED" || event.type === "TURN_ERROR") {
     return true;
   }
   const name = customName(event);
@@ -1672,7 +1658,7 @@ function isSessionTurnTerminalEvent(event: SessionEvent, turnSeq: number): boole
 /**
  * Read the CARRIED terminal outcome/park from the turn's terminal event — never
  * a lossy re-derivation. Prefers an explicit `data.value.outcome`, then the
- * `aex.session.<name>` name, then RUN_ERROR→failed / RUN_FINISHED→succeeded.
+ * `aex.session.<name>` name, then TURN_ERROR→failed / TURN_FINISHED→succeeded.
  */
 function terminalSessionStatusFromEvents(events: readonly SessionEvent[], turnSeq: number): SessionTerminalRead | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -1680,8 +1666,8 @@ function terminalSessionStatusFromEvents(events: readonly SessionEvent[], turnSe
     if (!isSessionTurnTerminalEvent(event, turnSeq)) continue;
     const carried = carriedOutcome(event);
     if (carried !== undefined) return carried;
-    if (event.type === "RUN_ERROR") return "failed";
-    if (event.type === "RUN_FINISHED") return "succeeded";
+    if (event.type === "TURN_ERROR") return "failed";
+    if (event.type === "TURN_FINISHED") return "succeeded";
     const name = customName(event);
     if (name !== null && name in SESSION_TERMINAL_EVENT_READS) return SESSION_TERMINAL_EVENT_READS[name]!;
   }
@@ -1723,23 +1709,23 @@ function sessionRecordRead(session: Session): SessionTerminalRead {
 }
 
 /** The settle-written provider usage entries (the SINGLE token-usage source). */
-function providerUsageOf(record: Session | Run): readonly RunCostProviderUsage[] | undefined {
+function providerUsageOf(record: Session | SessionRecord): readonly SessionCostProviderUsage[] | undefined {
   const telemetry = (record as {
-    readonly costTelemetry?: { readonly providerUsage?: readonly RunCostProviderUsage[] };
+    readonly costTelemetry?: { readonly providerUsage?: readonly SessionCostProviderUsage[] };
   }).costTelemetry;
   return telemetry?.providerUsage;
 }
 
 /**
- * The IMMEDIATE authoritative failure text — the terminal `RUN_ERROR` event's
+ * The IMMEDIATE authoritative failure text — the terminal `TURN_ERROR` event's
  * `data.failureMessage`. `result.error` reads this FIRST so a failed (e.g.
- * bad-BYOK) run's error is never empty even before the settle-lagged
+ * bad-BYOK) session's error is never empty even before the settle-lagged
  * `sessionRecord.errorMessage` lands.
  */
 function failureFromEvents(events: readonly AexEvent[]): string | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]!;
-    if (event.type !== "RUN_ERROR") continue;
+    if (event.type !== "TURN_ERROR") continue;
     const data = asRecord(event.data);
     for (const key of ["failureMessage", "message", "error"]) {
       const value = data[key];
@@ -1750,7 +1736,7 @@ function failureFromEvents(events: readonly AexEvent[]): string | undefined {
 }
 
 /** The typed schema-decode outcome from the terminal `aex.result.*` event, if any. */
-function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): RunOutcome<T> | undefined {
+function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): TurnOutcome<T> | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]!;
     if (event.isResultDecoded()) {
@@ -1777,7 +1763,7 @@ function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): RunOut
 
 /**
  * Build the ONE unified settled turn result (shared by `session.send().done()`
- * and `Aex.run`): the terminal outcome `status`, `ok`, `costUsd` (>= 0),
+ * and `Aex.start`): the terminal outcome `status`, `ok`, `costUsd` (>= 0),
  * `usage` (from `costTelemetry.providerUsage`), and event-first `error`.
  */
 function settledTurnResult(
@@ -1849,22 +1835,22 @@ export interface StreamEnvelopesOptions {
   readonly terminalDrainGraceMs?: number;
   /**
    * End the stream settle-consistently. By default the iterator ends on the
-   * AG-UI terminal event (RUN_FINISHED / RUN_ERROR) or the managed-session
+   * AG-UI terminal event (TURN_FINISHED / TURN_ERROR) or the managed-session
    * terminal park (`aex.session.succeeded` / failed / timed_out / cancelled /
    * idle / suspended). These are render-complete UX signals, emitted before the
-   * platform commit is necessarily read-consistent, so a `getRun` immediately
+   * platform commit is necessarily read-consistent, so a `getSessionRecord` immediately
    * after can still read `running`. With `settleConsistent: true` the iterator
    * keeps reading PAST the render terminal until the post-mirror
-   * `aex.run.settled` barrier when the plane emits it, or a session park
-   * fallback otherwise. When it ends a subsequent `getRun` is guaranteed
+   * `aex.session.settled` barrier when the plane emits it, or a session park
+   * fallback otherwise. When it ends a subsequent `getSessionRecord` is guaranteed
    * terminal and `listOutputs` is complete.
-   * Note: outputs are durable at the RUN_FINISHED event already; this only adds
-   * the run-RECORD consistency barrier.
+   * Note: outputs are durable at the TURN_FINISHED event already; this only adds
+   * the session-record consistency barrier.
    */
   readonly settleConsistent?: boolean;
 }
 
-export interface WaitForRunOptions {
+export interface WaitForSessionOptions {
   readonly intervalMs?: number;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
@@ -1981,7 +1967,7 @@ export class SkillsClient {
  * Workspace secret management exposed under `client.secrets`, mirroring
  * `client.agentsMd` / `client.files`.
  *
- * Lifecycle parity with assets: a `Secret.value(...)` is per-run and
+ * Lifecycle parity with assets: a `Secret.value(...)` is per-session and
  * gone at terminal; `set` (or promoting an ephemeral via `secret.upload`)
  * persists a named, searchable workspace secret you can `get` (metadata),
  * `rotate`, `list`, and `delete`. The identity is the `name`; the value rotates
@@ -2045,7 +2031,7 @@ function unwrapSecretValue(value: string | SecretString): string {
  * Unified user-facing client for the aex platform. The same class
  * powers the published `@aexhq/sdk` SDK and (under the hood) every host-side
  * subcommand of the in-container `aex` CLI. All operations talk to
- * the dashboard BFF and operate on durable run records.
+ * the dashboard BFF and operate on durable session records.
  *
  * The SDK never asks the caller for a workspace id — workspace identity
  * is derived server-side from the API key on every request. Use
@@ -2061,7 +2047,7 @@ export class Aex {
   readonly skills: SkillsClient;
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
-  /** Cross-run output search (`aex.outputs.search(...)`). */
+  /** Cross-session output search (`aex.outputs.search(...)`). */
   readonly outputs: OutputsClient;
 
   constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
@@ -2160,7 +2146,7 @@ export class Aex {
   /**
    * Internal: upsert already-uploaded skill metadata into the workspace registry.
    * The bytes are staged through `_uploadAsset`; this call binds the content hash
-   * to a mutable workspace skill name before the run references that name.
+   * to a mutable workspace skill name before the session references that name.
    */
   async _upsertSkill(args: {
     readonly name: string;
@@ -2175,35 +2161,35 @@ export class Aex {
    * Convenience one-shot on top of the canonical session API:
    * open a session, send `message` as the first turn, stream until the session
    * parks (`idle` / `suspended` / `error`), then return the collected text,
-   * events, outputs, and session record. The returned `runId` is the session id,
-   * so callers can resume later with `openSession(runId)`.
+   * events, outputs, and session record. The returned `sessionId` is the session id,
+   * so callers can resume later with `openSession(sessionId)`.
    */
-  async run<T = unknown>(options: SessionRunOptions, opts: RunCollectOptions = {}): Promise<RunResult<T>> {
+  async start<T = unknown>(options: SessionStartOptions, opts: StartSessionOptions = {}): Promise<SessionResult<T>> {
     const scopedSignal = scopedAbortSignal(opts.timeoutMs);
     try {
       const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
-      assertNoLegacySessionFields(options, "Aex.run");
-      const input = normaliseSessionInput(message, "Aex.run", "message");
-      assertNoSessionSendSignal(stream, "Aex.run stream");
+      assertNoLegacySessionFields(options, "Aex.start");
+      const input = normaliseSessionInput(message, "Aex.start", "message");
+      assertNoSessionSendSignal(stream, "Aex.start stream");
       const sendOptions: InternalSessionSendOptions = {
         ...(stream ?? {}),
         ...(scopedSignal?.signal ? { signal: scopedSignal.signal } : {}),
         ...(opts.webSocketFactory ? { webSocketFactory: opts.webSocketFactory } : {}),
         ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
         ...(opts.pingIntervalMs !== undefined ? { pingIntervalMs: opts.pingIntervalMs } : {}),
-        // run()/done() await settle by DEFAULT; opt out with `await: 'park'`.
+        // start()/done() await settle by DEFAULT; opt out with `await: 'park'`.
         ...(opts.await !== undefined ? { await: opts.await } : {})
       };
       // Derive the message key from the create key (like the CLI) so a retried
-      // run with the same `idempotencyKey` de-duplicates BOTH the create and the
-      // billable turn server-side — never a duplicate billable run (sdk-dx-3).
+      // session with the same `idempotencyKey` de-duplicates BOTH the create and the
+      // billable turn server-side — never a duplicate billable session turn (sdk-dx-3).
       const createKey = operations.resolveIdempotencyKey(createOptions.idempotencyKey);
       const messageKey =
         messageIdempotencyKey !== undefined ? operations.resolveIdempotencyKey(messageIdempotencyKey) : deriveMessageKey(createKey);
       const session = await this.sessions.create({ ...createOptions, idempotencyKey: createKey });
       // ONE terminal boundary: `done()` awaits settle by default, so the turn
-      // result already carries the terminal outcome + cost + usage. `run()` just
-      // reshapes it — `done()` == `run()` (WS3).
+      // result already carries the terminal outcome + cost + usage. `start()` just
+      // reshapes it — `done()` == `start()` (WS3).
       let turnResult: SessionTurnResult;
       try {
         turnResult = await sendSessionInternal(session, input, { ...sendOptions, idempotencyKey: messageKey }).done();
@@ -2211,26 +2197,25 @@ export class Aex {
         if (scopedSignal?.signal.aborted) {
           // The client-side wait budget (opts.timeoutMs) expired. Parity with
           // SessionHandle.wait(): THROW rather than a misleading silent result;
-          // the run continues server-side.
-          throw new RunStateError(
-            `Aex.run: timed out after ${opts.timeoutMs}ms waiting for run ${session.id} to park; the run ` +
+          // the session continues server-side.
+          throw new SessionStateError(
+            `Aex.start: timed out after ${opts.timeoutMs}ms waiting for session ${session.id} to park; the session ` +
               `continues server-side — cancel via session.cancel() or resume with openSession(${JSON.stringify(session.id)})`
           );
         }
         throw err;
       }
-      const runId = turnResult.sessionId;
+      const sessionId = turnResult.sessionId;
       if (deleteAfter) {
         await session.delete();
       }
       const sessionRecord = turnResult.session;
-      const run = sessionToRun(sessionRecord);
-      const trace = runTraceFromEvents(turnResult.events);
-      const outcome = turnResult.outcome as RunOutcome<T> | undefined;
-      const result: RunResult<T> = {
-        runId,
-        run,
-        sessionId: runId,
+      const record = sessionToSessionRecord(sessionRecord);
+      const trace = turnTraceFromEvents(turnResult.events);
+      const outcome = turnResult.outcome as TurnOutcome<T> | undefined;
+      const result: SessionResult<T> = {
+        sessionId,
+        record,
         session: sessionRecord,
         turn: turnResult.turn,
         status: turnResult.status,
@@ -2259,9 +2244,9 @@ export class Aex {
             ...(throttle.retryAfterMs !== undefined ? { retryAfterMs: throttle.retryAfterMs } : {})
           });
         }
-        throw new RunStateError(
-          `Aex.run: session ${runId} ended ${turnResult.status}${turnResult.error ? `: ${turnResult.error}` : ""}`,
-          { runId, status: turnResult.status }
+        throw new SessionStateError(
+          `Aex.start: session ${sessionId} ended ${turnResult.status}${turnResult.error ? `: ${turnResult.error}` : ""}`,
+          { sessionId, status: turnResult.status }
         );
       }
       return result;
@@ -2272,16 +2257,16 @@ export class Aex {
 
   /**
    * Fire-and-forget: create the session and POST its first turn WITHOUT awaiting
-   * settle (the honest counterpart to await-settle `run()`). Resolves with the
-   * `runId` + a resumable {@link SessionHandle} immediately; observe the run via
-   * a `webhook`, the event stream, or `openSession(runId)`.
+   * settle (the honest counterpart to await-settle `start()`). Resolves with the
+   * `sessionId` + a resumable {@link SessionHandle} immediately; observe the session via
+   * a `webhook`, the event stream, or `openSession(sessionId)`.
    */
-  async submit(options: SessionRunOptions): Promise<SubmitResult> {
+  async submit(options: SessionStartOptions): Promise<SubmitResult> {
     const { message, deleteAfter: _deleteAfter, messageIdempotencyKey, stream: _stream, ...createOptions } = options;
     assertNoLegacySessionFields(options, "Aex.submit");
     const input = normaliseSessionInput(message, "Aex.submit", "message");
     const request = await this.#buildSessionCreateRequest(createOptions);
-    const { runId, session } = await operations.submit(
+    const { sessionId, session } = await operations.submit(
       this.#http,
       { ...request, input },
       {
@@ -2289,28 +2274,28 @@ export class Aex {
         ...(messageIdempotencyKey !== undefined ? { messageIdempotencyKey } : {})
       }
     );
-    return { runId, session: new SessionHandle(this.#http, session, this.#fetch) };
+    return { sessionId, session: new SessionHandle(this.#http, session, this.#fetch) };
   }
 
   /**
-   * Run a batch of one-shot items with a bounded worker pool, returning every
+   * SessionRecord a batch of one-shot items with a bounded worker pool, returning every
    * item's settled result PLUS a REAL cost/usage rollup. The rollup is honest
-   * because each `run()` awaits settle, so each item's `costUsd`/`usage` is
+   * because each `start()` awaits settle, so each item's `costUsd`/`usage` is
    * populated — a failed item lands in `failed[]`, never a silent `$0` success.
    * Concurrency is clamped below the workspace tier cap.
    */
   async batch<T = unknown>(
-    items: readonly SessionRunOptions[],
+    items: readonly SessionStartOptions[],
     options: BatchOptions = {}
   ): Promise<BatchResult<T>> {
     if (!Array.isArray(items)) {
-      throw new RunConfigValidationError("Aex.batch: items must be an array of run options");
+      throw new SessionConfigValidationError("Aex.batch: items must be an array of session options");
     }
     const concurrency = Math.min(Math.max(1, Math.floor(options.concurrency ?? DEFAULT_BATCH_CONCURRENCY)), BATCH_MAX_CONCURRENCY);
     const results = (await mapWithConcurrency(items, concurrency, async (item): Promise<BatchItemResult<T>> => {
-      const result = await this.run<T>(item);
+      const result = await this.start<T>(item);
       return {
-        runId: result.runId,
+        sessionId: result.sessionId,
         status: result.status,
         ok: result.ok,
         costUsd: result.costUsd,
@@ -2332,15 +2317,15 @@ export class Aex {
 
   async #buildSessionCreateRequest(options: SessionCreateOptions): Promise<SessionCreateRequest> {
     if (!options || typeof options !== "object") {
-      throw new RunConfigValidationError("Aex.openSession: options is required");
+      throw new SessionConfigValidationError("Aex.openSession: options is required");
     }
     assertNoLegacySessionFields(options, "Aex.openSession");
-    // `message` belongs to the one-shot surfaces (`run` / `sessions.run`), which
+    // `message` belongs to the one-shot surfaces (`run` / `sessions.start`), which
     // strip it before creating the session. Passing it here used to be SILENTLY
     // dropped — the session was created empty, idled from birth, and auto-
     // suspended at the idle TTL without ever running a turn.
     if (Object.prototype.hasOwnProperty.call(options as unknown as Record<string, unknown>, "message")) {
-      throw new RunConfigValidationError(
+      throw new SessionConfigValidationError(
         "Aex.openSession: message is not a supported option; sessions are created without a first " +
           "message — send it with session.send(...), or use run({ message }) for a one-shot."
       );
@@ -2355,7 +2340,7 @@ export class Aex {
     // slightly-old SDK can still run a newly-launched model), infers the default
     // provider for a known model, and — for an UNKNOWN model with no provider —
     // throws a shared `did you mean?` suggestion.
-    let provider: RunProvider;
+    let provider: ProviderName;
     try {
       provider = resolveModelProvider(options.model, options.provider);
     } catch (err) {
@@ -2386,25 +2371,25 @@ export class Aex {
     // server).
     try {
       parseRuntimeSize(options.runtime);
-      parseRunTimeout(options.overrides?.timeout);
-      if (options.webhook !== undefined) parseRunWebhook(options.webhook);
+      parseSessionTimeout(options.overrides?.timeout);
+      if (options.webhook !== undefined) parseSessionWebhook(options.webhook);
     } catch (err) {
-      throw new RunConfigValidationError(
+      throw new SessionConfigValidationError(
         `Aex.openSession: ${err instanceof Error ? err.message : String(err)}`
       );
     }
     const { declarations: secretEnvDeclarations, values: envSecretValues } =
       splitSecretEnv(options.environment?.secrets);
 
-    let limits: RunLimits | undefined;
+    let limits: SessionLimits | undefined;
     const limitsInput: { maxSpendUsd?: number; maxTurns?: number } = {};
     if (options.overrides?.maxSpendUsd !== undefined) limitsInput.maxSpendUsd = options.overrides.maxSpendUsd;
     if (options.overrides?.maxTurns !== undefined) limitsInput.maxTurns = options.overrides.maxTurns;
     try {
-      limits = parseRunLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
+      limits = parseSessionLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
     } catch (err) {
       // One `configError` factory for every client-side validation throw, so
-      // maxSpendUsd/maxTurns are `RunConfigValidationError` (not a base AexError).
+      // maxSpendUsd/maxTurns are `SessionConfigValidationError` (not a base AexError).
       throw configError("Aex.openSession", "limits", err instanceof Error ? err.message : String(err));
     }
 
@@ -2475,7 +2460,7 @@ export class Aex {
   /**
    * Delete a workspace asset blob from the shared content-addressed store
    * (`assets/<workspaceId>/<hash>`). Accepts `sha256:<hex>` or a bare
-   * 64-hex digest. Runs that already snapshotted the asset are unaffected.
+   * 64-hex digest. Sessions that already snapshotted the asset are unaffected.
    */
   deleteWorkspaceAsset(hash: string): Promise<void> {
     return operations.deleteWorkspaceAsset(this.#http, hash);
@@ -2561,16 +2546,16 @@ function resolveBaseUrlForKey(apiKey: string, baseUrl: string | undefined): stri
   return baseUrl;
 }
 
-// `Run.status` is a loose `string` on the wire shape, so we membership-test
+// `SessionRecord.status` is a loose `string` on the wire shape, so we membership-test
 // against the canonical terminal set rather than re-deriving one (which is how
 // `timed_out` got dropped from the old hardcoded list).
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_RUN_STATUSES);
+const TERMINAL_STATUSES = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
 
 function isTerminal(status: string | undefined): boolean {
   return typeof status === "string" && TERMINAL_STATUSES.has(status);
 }
 
-/** How long `Aex.run` waits for the settle write after the park event (ms). */
+/** How long `Aex.start` waits for the settle write after the park event (ms). */
 const SETTLE_POLL_DEADLINE_MS = 60_000;
 /** Interval between settle-poll reads (ms). */
 const SETTLE_POLL_INTERVAL_MS = 750;
@@ -2658,7 +2643,7 @@ function isSessionParked(status: string | undefined): boolean {
   );
 }
 
-function sessionToRun(session: Session): Run {
+function sessionToSessionRecord(session: Session): SessionRecord {
   const id = session.sessionId ?? session.id;
   return {
     id,
@@ -2714,11 +2699,11 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 
 /**
  * ONE factory for every client-side validation throw: a
- * {@link RunConfigValidationError} carrying structured `details: { field, value? }`
+ * {@link SessionConfigValidationError} carrying structured `details: { field, value? }`
  * so callers branch on `err.details.field` instead of string-parsing the message.
  */
-function configError(surface: string, field: string, message: string, value?: unknown): RunConfigValidationError {
-  return new RunConfigValidationError(
+function configError(surface: string, field: string, message: string, value?: unknown): SessionConfigValidationError {
+  return new SessionConfigValidationError(
     `${surface}: ${message}`,
     value === undefined ? { field } : { field, value }
   );
@@ -2726,7 +2711,7 @@ function configError(surface: string, field: string, message: string, value?: un
 
 /**
  * Derive the message idempotency key from the session-create key. Mirrors the
- * CLI (`<createKey>:message`) so a retried `run` / `sessions.run` that reuses
+ * CLI (`<createKey>:message`) so a retried `run` / `sessions.start` that reuses
  * one `idempotencyKey` de-duplicates BOTH the create and the billable turn.
  */
 function deriveMessageKey(createKey: string): string {
@@ -2748,7 +2733,7 @@ function throttleFromSession(session: Session): ProviderFault | undefined {
   return fault && isThrottleFault(fault) ? fault : undefined;
 }
 
-/** Last-resort throttle detection from a free-text run error message. */
+/** Last-resort throttle detection from a free-text turn error message. */
 function faultFromErrorMessage(message: string | undefined): ProviderFault | undefined {
   if (message === undefined || message.length === 0) return undefined;
   const lower = message.toLowerCase();
@@ -2768,16 +2753,16 @@ function normaliseSessionInput(
 ): string | readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string`);
+      throw new SessionConfigValidationError(`${surface}: ${field} must be a non-empty string`);
     }
     return input;
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new RunConfigValidationError(`${surface}: ${field} must be a non-empty string or string array`);
+    throw new SessionConfigValidationError(`${surface}: ${field} must be a non-empty string or string array`);
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new RunConfigValidationError(`${surface}: ${field} segments must be non-empty strings`);
+      throw new SessionConfigValidationError(`${surface}: ${field} segments must be non-empty strings`);
     }
   }
   return [...input];
@@ -2788,31 +2773,31 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
   const removedProxyField = ["proxy", "Endpoints"].join("");
   const messages: Record<string, string> = {
     input: "send user messages with session.send(...) or use run({ message }).",
-    prompt: "use message for one-shot run input or session.send(...) for follow-up messages.",
+    prompt: "use message for one-shot session input or session.send(...) for follow-up messages.",
     instructions: "use system.",
     idleSuspendAfter: "use overrides.idleTtl.",
     idleTtl: "use overrides.idleTtl.",
     retention: "use overrides.idleTtl.",
     secretEnv: "use environment.secrets.",
-    secrets: "use top-level apiKeys for provider keys and environment.secrets for run secrets.",
+    secrets: "use top-level apiKeys for provider keys and environment.secrets for session secrets.",
     runtimeSize: "use runtime.",
     limits: "use overrides.",
     timeout: "use overrides.timeout.",
-    parentRunId: "subagent lineage is assigned by the platform.",
+    parentSessionId: "subagent lineage is assigned by the platform.",
     signal: "use session.cancel() / session.suspend() for remote control.",
     postHook: "send a follow-up validation message when the session returns idle.",
     [removedProxyField]: "proxy endpoints are not part of the public SDK session API."
   };
   for (const [field, message] of Object.entries(messages)) {
     if (Object.prototype.hasOwnProperty.call(record, field)) {
-      throw new RunConfigValidationError(`${surface}: ${field} is not a supported option; ${message}`);
+      throw new SessionConfigValidationError(`${surface}: ${field} is not a supported option; ${message}`);
     }
   }
   const overrides = record.overrides;
   if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
     const overrideRecord = overrides as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(overrideRecord, "idleSuspendAfter")) {
-      throw new RunConfigValidationError(
+      throw new SessionConfigValidationError(
         `${surface}: overrides.idleSuspendAfter is not a supported option; use overrides.idleTtl.`
       );
     }
@@ -2822,18 +2807,18 @@ function assertNoLegacySessionFields(options: SessionCreateOptions, surface: str
 function assertNoSessionSendSignal(options: unknown, surface: string): void {
   const record = options as Record<string, unknown> | undefined;
   if (record && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, "signal")) {
-    throw new RunConfigValidationError(`${surface}: signal is not a supported option; use session.cancel() / session.suspend() for remote control.`);
+    throw new SessionConfigValidationError(`${surface}: signal is not a supported option; use session.cancel() / session.suspend() for remote control.`);
   }
 }
 
 function validateApiKeys(
-  apiKeys: Partial<Record<RunProvider, string>> | undefined,
-  provider: RunProvider,
+  apiKeys: Partial<Record<ProviderName, string>> | undefined,
+  provider: ProviderName,
   surface: string
 ): void {
   const key = apiKeys?.[provider];
   if (typeof key !== "string" || key.length === 0) {
-    throw new RunConfigValidationError(
+    throw new SessionConfigValidationError(
       `${surface}: a provider API key is required — pass apiKeys[${JSON.stringify(provider)}].`
     );
   }
@@ -2988,7 +2973,7 @@ async function prepareTools(
     // A bare string is a builtin tool reference.
     if (typeof entry === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
-        throw new RunConfigValidationError(
+        throw new SessionConfigValidationError(
           `aex: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name; ` +
             `expected a Tool or one of: ${BUILTIN_TOOL_NAMES.join(", ")}`
         );
@@ -2998,15 +2983,15 @@ async function prepareTools(
     if (!(entry instanceof Tool)) {
       const maybeEntry: unknown = entry;
       if (maybeEntry instanceof Skill) {
-        throw new RunConfigValidationError(`aex: tools[${i}] is a Skill; pass skills via the top-level skills option`);
+        throw new SessionConfigValidationError(`aex: tools[${i}] is a Skill; pass skills via the top-level skills option`);
       }
-      throw new RunConfigValidationError(`aex: tools[${i}] must be a Tool or a builtin tool name`);
+      throw new SessionConfigValidationError(`aex: tools[${i}] must be a Tool or a builtin tool name`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`aex: tools[${i}] is draft but has no bytes`);
+        throw new SessionConfigValidationError(`aex: tools[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       return { kind: "ref", ref: { ...bundle.ref, assetId } };
@@ -3032,26 +3017,26 @@ async function prepareTools(
 /**
  * Upload/upsert workspace skills and return public name-only refs. Draft skills
  * auto-upsert (bytes → asset store, then registry PUT) by name; already-uploaded
- * skills pass through. Duplicate names are pre-checked (uploads run in parallel,
- * so the dedup cannot be a running set inside the map).
+ * skills pass through. Duplicate names are pre-checked (uploads session in parallel,
+ * so the dedup cannot be a sessionning set inside the map).
  */
 async function prepareSkills(
   skills: readonly Skill[],
   uploader: SkillUploader
 ): Promise<readonly SkillRef[]> {
   if (skills.length > SKILLS_MAX) {
-    throw new RunConfigValidationError(`aex: skills exceeds the ${SKILLS_MAX}-skill limit (got ${skills.length})`);
+    throw new SessionConfigValidationError(`aex: skills exceeds the ${SKILLS_MAX}-skill limit (got ${skills.length})`);
   }
   const seen = new Set<string>();
   for (let i = 0; i < skills.length; i++) {
     const entry = skills[i];
     if (!(entry instanceof Skill)) {
-      throw new RunConfigValidationError(
+      throw new SessionConfigValidationError(
         `aex: skills[${i}] must be a Skill (Skill.fromDir / fromUrl / fromFiles / fromContent / fromBytes)`
       );
     }
     if (seen.has(entry.name)) {
-      throw new RunConfigValidationError(`aex: skills duplicate name: ${entry.name}`);
+      throw new SessionConfigValidationError(`aex: skills duplicate name: ${entry.name}`);
     }
     seen.add(entry.name);
   }
@@ -3059,7 +3044,7 @@ async function prepareSkills(
     const uploaded = entry.isDraft ? await entry.upload(uploader) : entry;
     const ref = uploaded.ref;
     if (ref.kind !== "skill") {
-      throw new RunConfigValidationError(`aex: skills[${i}] did not resolve to a workspace skill ref`);
+      throw new SessionConfigValidationError(`aex: skills[${i}] did not resolve to a workspace skill ref`);
     }
     return ref;
   });
@@ -3072,13 +3057,13 @@ async function prepareAgentsMd(
 ): Promise<readonly AgentsMdRef[]> {
   return mapWithConcurrency(agentsMds, UPLOAD_CONCURRENCY, async (entry, i): Promise<AgentsMdRef> => {
     if (!(entry instanceof AgentsMd)) {
-      throw new RunConfigValidationError(`aex: agentsMd[${i}] must be an AgentsMd instance`);
+      throw new SessionConfigValidationError(`aex: agentsMd[${i}] must be an AgentsMd instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`aex: agentsMd[${i}] is draft but has no bytes`);
+        throw new SessionConfigValidationError(`aex: agentsMd[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       return { kind: "asset", assetId, name: bundle.name };
@@ -3095,7 +3080,7 @@ async function prepareFiles(
 ): Promise<readonly FileRef[]> {
   return mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (entry, i): Promise<FileRef> => {
     if (!(entry instanceof File)) {
-      throw new RunConfigValidationError(`aex: files[${i}] must be a File instance`);
+      throw new SessionConfigValidationError(`aex: files[${i}] must be a File instance`);
     }
     const ref = entry.ref;
     if (ref.kind === "draft") {
@@ -3112,7 +3097,7 @@ async function prepareFiles(
       }
       const bundle = entry._takeDraftBundle();
       if (!bundle) {
-        throw new RunConfigValidationError(`aex: files[${i}] is draft but has no bytes`);
+        throw new SessionConfigValidationError(`aex: files[${i}] is draft but has no bytes`);
       }
       const assetId = await resolveAssetId(entry, bundle, uploader);
       return { kind: "asset", assetId, name: bundle.name, mountPath: bundle.mountPath };
@@ -3136,14 +3121,14 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new RunConfigValidationError(`aex: mcpServers[${i}] must be an McpServer instance`);
+      throw new SessionConfigValidationError(`aex: mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
     if (secret) {
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
-        throw new RunConfigValidationError(
+        throw new SessionConfigValidationError(
           `aex: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
         );
       }

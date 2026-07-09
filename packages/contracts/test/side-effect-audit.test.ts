@@ -5,10 +5,10 @@ import {
   SIDE_EFFECT_AUDIT_SCHEMA_VERSION,
   SideEffectAuditRedactionError,
   buildCustodyManifestWrittenAuditEvent,
-  buildRunDeletionCompletedAuditEvent,
-  buildRunDeletionFailedAuditEvent,
-  buildRunDeletionRequestedAuditEvent,
-  buildRunDownloadRequestedAuditEvent,
+  buildSessionDeletionCompletedAuditEvent,
+  buildSessionDeletionFailedAuditEvent,
+  buildSessionDeletionRequestedAuditEvent,
+  buildSessionDownloadRequestedAuditEvent,
   buildSideEffectAuditEvent,
   redactSideEffectAuditMetadata,
   scanSideEffectAuditPayloadForSensitiveValues
@@ -21,11 +21,11 @@ const actor = {
 } as const;
 
 describe("side-effect audit contract", () => {
-  it("builds a public-safe side-effect audit event with actor, target, run, correlation, counts, status, and timestamps", () => {
+  it("builds a public-safe side-effect audit event with actor, target, session, correlation, counts, status, and timestamps", () => {
     const event = buildSideEffectAuditEvent({
       auditId: "audit-11111111",
       workspaceId: "workspace-11111111",
-      runId: "run-11111111",
+      sessionId: "session-11111111",
       action: "proxy.endpoint.called",
       outcome: "succeeded",
       observedAt: "2026-06-02T12:00:00.000Z",
@@ -88,49 +88,49 @@ describe("side-effect audit contract", () => {
         outcome: "succeeded",
         observedAt: "2026-06-02T12:00:00.000Z",
         actor,
-        target: { type: "run" }
+        target: { type: "session" }
       })
     ).toThrow(/action agent\.session\.started is not supported/);
 
     expect(() =>
       buildSideEffectAuditEvent({
         workspaceId: "workspace-11111111",
-        action: "run.cancel.requested",
+        action: "session.cancel.requested",
         outcome: "accepted",
         observedAt: "2026-06-02T12:00:00.000Z",
         actor: {
           principal: { type: "agent" as never, ref: "agent-11111111" },
           sourcePlane: "runtime"
         },
-        target: { type: "run" }
+        target: { type: "session" }
       })
     ).toThrow(/principal type agent is not supported/);
 
     expect(() =>
       buildSideEffectAuditEvent({
         workspaceId: "workspace-11111111",
-        action: "run.cancel.requested",
+        action: "session.cancel.requested",
         outcome: "accepted",
         observedAt: "2026-06-02T12:00:00.000Z",
         actor: {
           principal: { type: "runtime", ref: "session-11111111" },
           sourcePlane: "runtime"
         },
-        target: { type: "run" }
+        target: { type: "session" }
       })
     ).toThrow(/must not introduce agent, session, or customer identity/);
 
     expect(() =>
       buildSideEffectAuditEvent({
         workspaceId: "workspace-11111111",
-        runId: "runs/run-11111111",
-        action: "run.cancel.requested",
+        sessionId: "sessions/session-11111111",
+        action: "session.cancel.requested",
         outcome: "accepted",
         observedAt: "2026-06-02T12:00:00.000Z",
         actor,
-        target: { type: "run" }
+        target: { type: "session" }
       })
-    ).toThrow(/runId must be an opaque identifier/);
+    ).toThrow(/sessionId must be an opaque identifier/);
   });
 
   it("builds API-token deletion audit events", () => {
@@ -163,11 +163,11 @@ describe("side-effect audit contract", () => {
       ["headers", { headers: { authorization: "Bearer runner-token-1234567890" } }, "forbidden_field_name"],
       ["provider key", "sk-ant-test-1234567890", "provider_key"],
       ["signed URL", "https://object-storage.example.test/file?X-Amz-Signature=abc", "signed_url"],
-      ["object-store key", "runs/run-11111111/outputs/result.txt", "object_store_key"],
+      ["object-store key", "sessions/session-11111111/outputs/result.txt", "object_store_key"],
       ["Vault id", "vault_secret_1234567890", "vault_id"],
       ["resource handle", "machine_1234567890", "private_resource_handle"],
       ["raw URL", "https://service.example.test/path", "raw_url"],
-      ["raw path", "/api/runs/run-11111111/proxy/httpbin?token=secret", "raw_path"],
+      ["raw path", "/api/sessions/session-11111111/proxy/httpbin?token=secret", "raw_path"],
       ["provider account", { providerAccountId: "acct_private" }, "forbidden_field_name"],
       ["customer identity", { customerId: "customer-11111111" }, "forbidden_field_name"]
     ];
@@ -181,7 +181,7 @@ describe("side-effect audit contract", () => {
     expect(() =>
       buildSideEffectAuditEvent({
         workspaceId: "workspace-11111111",
-        runId: "run-11111111",
+        sessionId: "session-11111111",
         action: "mcp.proxy.called",
         outcome: "failed",
         observedAt: "2026-06-02T12:00:00.000Z",
@@ -209,7 +209,7 @@ describe("side-effect audit contract", () => {
           deletedAt: "2026-06-02T12:00:00.000Z"
         }
       },
-      "run.delete.completed"
+      "session.delete.completed"
     );
 
     expect(metadata).toMatchObject({
@@ -233,15 +233,15 @@ describe("side-effect audit contract", () => {
             provider: "anthropic"
           }
         },
-        "run.delete.completed"
+        "session.delete.completed"
       )
     ).toThrow(/metadata\.dimensions is not supported/);
   });
 
   it("builds deletion lifecycle audit events with counts, statuses, and timestamps only", () => {
-    const requested = buildRunDeletionRequestedAuditEvent({
+    const requested = buildSessionDeletionRequestedAuditEvent({
       workspaceId: "workspace-11111111",
-      runId: "run-11111111",
+      sessionId: "session-11111111",
       observedAt: "2026-06-02T12:00:00.000Z",
       actor,
       metadata: {
@@ -249,9 +249,9 @@ describe("side-effect audit contract", () => {
         timestamps: { observedAt: "2026-06-02T12:00:00.000Z" }
       }
     });
-    const completed = buildRunDeletionCompletedAuditEvent({
+    const completed = buildSessionDeletionCompletedAuditEvent({
       workspaceId: "workspace-11111111",
-      runId: "run-11111111",
+      sessionId: "session-11111111",
       observedAt: "2026-06-02T12:00:05.000Z",
       actor,
       metadata: {
@@ -266,9 +266,9 @@ describe("side-effect audit contract", () => {
         }
       }
     });
-    const failed = buildRunDeletionFailedAuditEvent({
+    const failed = buildSessionDeletionFailedAuditEvent({
       workspaceId: "workspace-11111111",
-      runId: "run-11111111",
+      sessionId: "session-11111111",
       observedAt: "2026-06-02T12:00:03.000Z",
       actor,
       metadata: {
@@ -279,19 +279,19 @@ describe("side-effect audit contract", () => {
     });
 
     expect(requested).toMatchObject({
-      action: "run.delete.requested",
+      action: "session.delete.requested",
       outcome: "accepted",
-      target: { type: "deletion", id: "run-11111111" }
+      target: { type: "deletion", id: "session-11111111" }
     });
     expect(completed).toMatchObject({
-      action: "run.delete.completed",
+      action: "session.delete.completed",
       outcome: "succeeded",
       metadata: {
         counts: { deletedObjectCount: 8, retainedObjectCount: 1, failedObjectCount: 0 }
       }
     });
     expect(failed).toMatchObject({
-      action: "run.delete.failed",
+      action: "session.delete.failed",
       outcome: "failed",
       metadata: { status: { errorClass: "deletion_purge_failed" } }
     });
@@ -301,9 +301,9 @@ describe("side-effect audit contract", () => {
     }
 
     expect(() =>
-      buildRunDeletionCompletedAuditEvent({
+      buildSessionDeletionCompletedAuditEvent({
         workspaceId: "workspace-11111111",
-        runId: "run-11111111",
+        sessionId: "session-11111111",
         observedAt: "2026-06-02T12:00:05.000Z",
         actor,
         metadata: {
@@ -315,9 +315,9 @@ describe("side-effect audit contract", () => {
   });
 
   it("builds download and custody audit events without raw locations or secret custody values", () => {
-    const download = buildRunDownloadRequestedAuditEvent({
+    const download = buildSessionDownloadRequestedAuditEvent({
       workspaceId: "workspace-11111111",
-      runId: "run-11111111",
+      sessionId: "session-11111111",
       observedAt: "2026-06-02T12:00:00.000Z",
       actor,
       metadata: {
@@ -327,7 +327,7 @@ describe("side-effect audit contract", () => {
     });
     const custody = buildCustodyManifestWrittenAuditEvent({
       workspaceId: "workspace-11111111",
-      runId: "run-11111111",
+      sessionId: "session-11111111",
       observedAt: "2026-06-02T12:00:01.000Z",
       actor,
       metadata: {
@@ -341,24 +341,24 @@ describe("side-effect audit contract", () => {
     });
 
     expect(download).toMatchObject({
-      action: "run.download.requested",
+      action: "session.download.requested",
       outcome: "accepted",
-      target: { type: "output_archive", id: "run-11111111" },
+      target: { type: "output_archive", id: "session-11111111" },
       metadata: { dimensions: { namespace: "archive", method: "GET" } }
     });
     expect(custody).toMatchObject({
       action: "custody.manifest.written",
       outcome: "succeeded",
-      target: { type: "custody_manifest", id: "run-11111111" }
+      target: { type: "custody_manifest", id: "session-11111111" }
     });
     expect(custody.metadata.redaction.excludes).toContain("vault_ids");
     expect(scanSideEffectAuditPayloadForSensitiveValues(download)).toEqual([]);
     expect(scanSideEffectAuditPayloadForSensitiveValues(custody)).toEqual([]);
 
     expect(() =>
-      buildRunDownloadRequestedAuditEvent({
+      buildSessionDownloadRequestedAuditEvent({
         workspaceId: "workspace-11111111",
-        runId: "run-11111111",
+        sessionId: "session-11111111",
         observedAt: "2026-06-02T12:00:00.000Z",
         actor,
         metadata: {
@@ -370,7 +370,7 @@ describe("side-effect audit contract", () => {
     expect(() =>
       buildCustodyManifestWrittenAuditEvent({
         workspaceId: "workspace-11111111",
-        runId: "run-11111111",
+        sessionId: "session-11111111",
         observedAt: "2026-06-02T12:00:01.000Z",
         actor,
         metadata: {

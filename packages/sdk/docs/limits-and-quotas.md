@@ -4,7 +4,7 @@ title: Limits & quotas
 
 # Limits & quotas
 
-These are the hard ceilings and caps that bound a run, a workspace, and a single
+These are the hard ceilings and caps that bound a session, a workspace, and a single
 request. Every value is mirrored from a single source-of-truth constant in the
 platform's limits module; this page is hand-maintained against those constants.
 If a value here ever disagrees with the constant, the constant wins.
@@ -19,21 +19,21 @@ Each row is tagged with its **source**:
 - **aex policy** — an aex platform ceiling, the same for every workspace.
 - **Workspace default** — a per-workspace value with a configurable override.
 
-And whether you can **raise** it: per-run option, per-plan, or no.
+And whether you can **raise** it: per-session option, per-plan, or no.
 
-## Run scope
+## SessionRecord scope
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Maximum run timeout | 8 hours (also the default when `timeout` is omitted) | aex policy | Per plan (billing-driven) | `RUN_MAX_TIMEOUT_MS` |
-| Minimum run timeout | 1 minute | aex policy | No (floor) | `RUN_MIN_TIMEOUT_MS` |
-| Per-call exec timeout (default) | 30 minutes | aex policy | Per-call via the tool call's `timeoutMs` | `RUN_DEFAULT_EXEC_TIMEOUT_MS` |
-| MCP connect timeout (default) | 30 seconds | aex policy | Per-port via `connectTimeoutMs` | `RUN_DEFAULT_MCP_CONNECT_TIMEOUT_MS` |
-| MCP call timeout (default) | 30 minutes | aex policy | Per-port via `callTimeoutMs` | `RUN_DEFAULT_MCP_CALL_TIMEOUT_MS` |
+| Maximum session timeout | 8 hours (also the default when `timeout` is omitted) | aex policy | Per plan (billing-driven) | `SESSION_MAX_TIMEOUT_MS` |
+| Minimum session timeout | 1 minute | aex policy | No (floor) | `SESSION_MIN_TIMEOUT_MS` |
+| Per-call exec timeout (default) | 30 minutes | aex policy | Per-call via the tool call's `timeoutMs` | `SESSION_DEFAULT_EXEC_TIMEOUT_MS` |
+| MCP connect timeout (default) | 30 seconds | aex policy | Per-port via `connectTimeoutMs` | `SESSION_DEFAULT_MCP_CONNECT_TIMEOUT_MS` |
+| MCP call timeout (default) | 30 minutes | aex policy | Per-port via `callTimeoutMs` | `SESSION_DEFAULT_MCP_CALL_TIMEOUT_MS` |
 | Per-session spend cap | None by default; when set, the session is stopped once its spend would exceed the cap | aex policy | Per-session via `overrides.maxSpendUsd` (a positive USD amount) | — |
-| Max agent iterations (turns) per run | 20 by default; hard ceiling 200 | aex policy | Per-session via `overrides.maxTurns` (a positive integer, clamped to the ceiling) | `RUN_DEFAULT_MAX_TURNS` / `RUN_MAX_TURNS_CEILING` |
+| Max agent iterations (turns) per session | 20 by default; hard ceiling 200 | aex policy | Per-session via `overrides.maxTurns` (a positive integer, clamped to the ceiling) | `SESSION_DEFAULT_MAX_TURNS` / `SESSION_MAX_TURNS_CEILING` |
 
-### Output capture (per run)
+### Output capture (per session)
 
 Files stream from the container to object storage one at a time. When a cap is
 reached, remaining files are **dropped and counted in the summary**, never
@@ -41,22 +41,22 @@ silently lost.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Capture wall-clock budget | 1 hour | aex policy | No (hard ceiling) | `RUN_CAPTURE_DEFAULT_TIMEOUT_MS` |
-| Max files captured | 50,000 | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_FILES` |
-| Max bytes per captured file | 500 GB (decimal) | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_FILE_BYTES` |
-| Max total captured bytes | 500 GB (decimal) | aex policy | No (hard ceiling) | `RUN_CAPTURE_MAX_TOTAL_BYTES` |
+| Capture wall-clock budget | 1 hour | aex policy | No (hard ceiling) | `SESSION_CAPTURE_DEFAULT_TIMEOUT_MS` |
+| Max files captured | 50,000 | aex policy | No (hard ceiling) | `SESSION_CAPTURE_MAX_FILES` |
+| Max bytes per captured file | 500 GB (decimal) | aex policy | No (hard ceiling) | `SESSION_CAPTURE_MAX_FILE_BYTES` |
+| Max total captured bytes | 500 GB (decimal) | aex policy | No (hard ceiling) | `SESSION_CAPTURE_MAX_TOTAL_BYTES` |
 
-### Tool output caps (per run)
+### Tool output caps (per session)
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
 | `web_fetch` returned body | 500 KB (UTF-8) | aex policy | Per-call via `max_bytes` | `REQUEST_WEB_FETCH_DEFAULT_MAX_BYTES` |
-| `bash_output` per-read body | 1 MB (UTF-8) | aex policy | No (hard ceiling) | `RUN_BASH_BG_OUTPUT_MAX_BYTES` |
-| `grep` max file size (larger files skipped — use `bash grep`) | 25 MB | aex policy | No (hard ceiling) | `RUN_TOOL_GREP_MAX_FILE_BYTES` |
-| `head`/`tail` max file size (larger files rejected — use `bash head`/`tail`) | 100 MB | aex policy | No (hard ceiling) | `RUN_TOOL_HEAD_TAIL_MAX_FILE_BYTES` |
-| `grep`/`glob` files visited per recursive walk (then truncates with a notice) | 100,000 | aex policy | No (hard ceiling) | `RUN_TOOL_WALK_MAX_FILES` |
+| `bash_output` per-read body | 1 MB (UTF-8) | aex policy | No (hard ceiling) | `SESSION_BASH_BG_OUTPUT_MAX_BYTES` |
+| `grep` max file size (larger files skipped — use `bash grep`) | 25 MB | aex policy | No (hard ceiling) | `SESSION_TOOL_GREP_MAX_FILE_BYTES` |
+| `head`/`tail` max file size (larger files rejected — use `bash head`/`tail`) | 100 MB | aex policy | No (hard ceiling) | `SESSION_TOOL_HEAD_TAIL_MAX_FILE_BYTES` |
+| `grep`/`glob` files visited per recursive walk (then truncates with a notice) | 100,000 | aex policy | No (hard ceiling) | `SESSION_TOOL_WALK_MAX_FILES` |
 
-### Subagents (per run lineage)
+### Subagents (per session lineage)
 
 Subagent lineage bounds are enforced server-side but are intentionally not
 advertised as fixed public ceilings because capacity can change. The runtime
@@ -65,19 +65,19 @@ by the platform at spawn time.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Max subagent depth (`subagent` tool) | High recursive subagent depth, bounded server-side. | aex policy | No public per-run override (subagents run in-process) | `RUN_MAX_PUBLIC_SUBAGENT_DEPTH` |
-| Concurrent child runs per lineage root | Designed to scale across hundreds, even thousands, of live child agents, bounded server-side. | aex policy | No public per-run override (subagents run in-process) | `RUN_DEFAULT_MAX_CONCURRENT_CHILD_RUNS` |
+| Max subagent depth (`subagent` tool) | High recursive subagent depth, bounded server-side. | aex policy | No public per-session override (subagents session in-process) | `SESSION_MAX_PUBLIC_SUBAGENT_DEPTH` |
+| Concurrent child sessions per lineage root | Designed to scale across hundreds, even thousands, of live child agents, bounded server-side. | aex policy | No public per-session override (subagents session in-process) | `SESSION_DEFAULT_MAX_CONCURRENT_CHILD_SESSIONS` |
 
-### Retention (per run)
+### Retention (per session)
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Per-run metadata record TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_RECORD_TTL_SECONDS` |
-| Per-run secret-envelope TTL | 24 hours | aex policy | No (hard ceiling) | `RUN_KV_SECRET_TTL_SECONDS` |
+| Per-session metadata record TTL | 24 hours | aex policy | No (hard ceiling) | `SESSION_KV_RECORD_TTL_SECONDS` |
+| Per-session secret-envelope TTL | 24 hours | aex policy | No (hard ceiling) | `SESSION_KV_SECRET_TTL_SECONDS` |
 
 ## Sandbox (managed runtime)
 
-Each run executes in an ephemeral Linux container sized by the `runtime` preset.
+Each session executes in an ephemeral Linux container sized by the `runtime` preset.
 A few behaviours are worth knowing before you rely on the filesystem or RAM:
 
 - **Only `/workspace` persists across turns** of the same session. Everything
@@ -95,7 +95,7 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
   [`packages/contracts/src/runtime-sizes.ts`](https://github.com/aexhq/aex/blob/main/packages/contracts/src/runtime-sizes.ts);
   see [Defaults](defaults.md).
 - **The agent loop is bounded** by `maxTurns` (default 20, ceiling 200) — a
-  documented, per-run-overridable limit (see the Run scope table above and
+  documented, per-session-overridable limit (see the SessionRecord scope table above and
   `overrides.maxTurns`), not a silent cutoff.
 
 ## Workspace scope
@@ -103,7 +103,7 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
 | Workspace storage cap | 500 GB (decimal; admins uncapped — not a customer entitlement) | Workspace default | Per-plane via env `AEX_WORKSPACE_STORAGE_CAP_BYTES` | `WORKSPACE_DEFAULT_STORAGE_CAP_BYTES` |
-| Max concurrent runs per workspace | Plan-based: **5** live (non-terminal) root runs on the free plan, **50** on Pro, **200** on Team; hard platform ceiling **200**. One more submit past the cap fails with `429 workspace_concurrency_exceeded` (see [Errors](errors.md)). Subagent children are governed separately by the platform-managed per-lineage budgets above. Read your effective cap from `aex.whoami().limits.maxConcurrentRuns`. | Workspace default (per plan) | Per-plan (upgrade) or per-workspace override (contact support), clamped to the 200 ceiling | `PLANS[planKey].maxConcurrentRuns` / `WORKSPACE_MAX_CONCURRENT_RUNS_CEILING` |
+| Max concurrent sessions per workspace | Plan-based: **5** live (non-terminal) root sessions on the free plan, **50** on Pro, **200** on Team; hard platform ceiling **200**. One more submit past the cap fails with `429 workspace_concurrency_exceeded` (see [Errors](errors.md)). Subagent children are governed separately by the platform-managed per-lineage budgets above. Read your effective cap from `aex.whoami().limits.maxConcurrentSessions`. | Workspace default (per plan) | Per-plan (upgrade) or per-workspace override (contact support), clamped to the 200 ceiling | `PLANS[planKey].maxConcurrentSessions` / `WORKSPACE_MAX_CONCURRENT_SESSIONS_CEILING` |
 | Monthly workspace spend cap | **$250** per rolling UTC calendar month by default; `0` = unlimited. A submit past the cap fails with `402 workspace_spend_cap_exceeded` (see [Errors](errors.md)). | Workspace default | Per-workspace override (contact support) | `WORKSPACE_DEFAULT_SPEND_CAP_USD` |
 | Skill bundle max compressed size (`.zip`) | 10 GiB (enforced at upload by the SDK and re-enforced server-side) | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxCompressedBytes` |
 | Skill bundle max decompressed size (sum of uncompressed file sizes) | 50 MB | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxDecompressedBytes` |
@@ -114,8 +114,8 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
 
 ### Rate limits (per workspace, per minute)
 
-Run submission has its own platform-enforced velocity cap: **120 submits per
-minute** per workspace by default (`0` = disabled). Past it, `POST /runs` fails
+SessionRecord submission has its own platform-enforced velocity cap: **120 submits per
+minute** per workspace by default (`0` = disabled). Past it, `POST /sessions` fails
 with `429 workspace_submit_rate_exceeded` (see [Errors](errors.md)). It is
 overridable per-plane via `AEX_WORKSPACE_SUBMIT_RATE_PER_MIN` or per-workspace
 via support.
@@ -125,8 +125,8 @@ per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
 
 | Action | Default per minute | Source | Constant |
 | --- | --- | --- | --- |
-| Run cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
-| Run delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| SessionRecord cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| SessionRecord delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Signed output link | 120 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API key create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API key delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
@@ -134,7 +134,7 @@ per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
 ### Introspecting your effective caps
 
 `aex.whoami()` (CLI: `aex whoami`) returns a `limits` object carrying the
-workspace's *effective* values for the caps above — `maxConcurrentRuns`,
+workspace's *effective* values for the caps above — `maxConcurrentSessions`,
 `submitRatePerMinute`, `spendCapUsd`, plus the live `monthSpendUsd`,
 `balanceUsd`, `balanceGraceFloorUsd`, and `paymentMethodStatus` — resolved by
 the same code the admission gates use, so you can anticipate a `429`/`402`

@@ -7,7 +7,7 @@ title: Skills
 A skill is a bundle of instructional or executable content (`SKILL.md` plus any
 supporting files) that the agent can pull into context on demand. Skills are a
 **first-class concept, separate from tools**: you pass them on the session's own
-`skills` input (not `tools`), and the run gets a single `skills` meta-tool the
+`skills` input (not `tools`), and the session gets a single `skills` meta-tool the
 model uses to list and load them.
 
 Build a skill with the `Skill.from*` factories. Each reads a bundle, lifts the
@@ -34,7 +34,7 @@ import { Aex, Models, Skill } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey });
 
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message,
   skills: [await Skill.fromDir("./skills/rules", { name: "rules" })],
@@ -48,17 +48,17 @@ A skill is bound to the workspace **by name**. `skill.upload(client)` UPSERTS th
 workspace skill under its name; a re-upload under the same name changes what
 every future run referencing that name sees. The wire ref is name-only —
 `{ kind:"skill", name }` — with no `assetId` and no hash, so the idempotency hash
-of two runs that reference the same skill name is identical even if the skill's
+of two sessions that reference the same skill name is identical even if the skill's
 bytes changed between them.
 
 Passing a **draft** `Skill` in `skills:` auto-upserts it on submit (the same
 ergonomic as a draft `Tool` / `File`). To upsert explicitly and reuse the name
-across many runs:
+across many sessions:
 
 ```ts
 const rules = await Skill.fromDir("./skills/rules", { name: "rules" });
 await rules.upload(aex);              // stage bytes + PUT /skills/rules
-await aex.run({ model, message, skills: [rules], apiKeys });
+await aex.start({ model, message, skills: [rules], apiKeys });
 ```
 
 `upload()` is idempotent on an instance (it caches the resolved name, so reuse
@@ -82,7 +82,7 @@ concurrency and run concurrently with each other.
 
 ## The `skills` meta-tool
 
-When a run references at least one skill, the platform injects a single `skills`
+When a session references at least one skill, the platform injects a single `skills`
 meta-tool:
 
 - `skills({ action: "list" })` returns each skill's `name` + `description`
@@ -92,9 +92,9 @@ meta-tool:
 
 A skill's supporting files are staged to disk under `/workspace/skills/<name>/`
 from the first turn, so `load` pulls the instructions while `read_file` / `bash`
-read the rest. The run resolves each referenced name to the workspace skill's
-current bytes at submit time and snapshots them into durable run asset storage
-(`runs/<runId>/assets/<hash>`); run-scoped copies are removed by run deletion or
+read the rest. The session resolves each referenced name to the workspace skill's
+current bytes at submit time and snapshots them into durable session asset storage
+(`sessions/<sessionId>/assets/<hash>`); session-scoped copies are removed by session deletion or
 retention cleanup.
 
 ## Workspace skill admin

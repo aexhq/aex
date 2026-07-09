@@ -4,19 +4,19 @@ import {
   BuiltinTools,
   DEFAULT_BUILTIN_TOOLS,
   resolveBuiltinToolNames,
-  DEFAULT_RUN_PROVIDER,
+  DEFAULT_PROVIDER,
   Models,
-  RUN_MODELS,
-  RUN_MODELS_BY_PROVIDER,
+  SUPPORTED_MODELS,
+  SUPPORTED_MODELS_BY_PROVIDER,
   Providers,
-  RUN_PROVIDERS,
-  parseRunSubmissionRequest,
+  PROVIDERS,
+  parseSessionSubmissionRequest,
   providerForModel,
   providersForModel,
   resolveProviderModelId,
-  assertRunModelMatchesProvider,
+  assertModelNameMatchesProvider,
   MODEL_PROVIDER_IDS,
-  type RunProvider
+  type ProviderName
 } from "../src/index.js";
 
 function assetRef(name: string, seed = 1) {
@@ -25,7 +25,7 @@ function assetRef(name: string, seed = 1) {
 }
 
 function baseRequest(
-  overrides: Partial<{ provider: RunProvider }> = {}
+  overrides: Partial<{ provider: ProviderName }> = {}
 ) {
   const provider = overrides.provider ?? "anthropic";
   const model = {
@@ -54,22 +54,22 @@ function baseRequest(
 }
 
 describe("submission parser - providers and secrets", () => {
-  it("accepts every provider in RUN_PROVIDERS", () => {
-    for (const provider of RUN_PROVIDERS) {
-      const parsed = parseRunSubmissionRequest(baseRequest({ provider }));
+  it("accepts every provider in PROVIDERS", () => {
+    for (const provider of PROVIDERS) {
+      const parsed = parseSessionSubmissionRequest(baseRequest({ provider }));
       expect(parsed.provider).toBe(provider);
     }
   });
 
   it("rejects unknown providers with a helpful enumeration", () => {
     expect(() =>
-      parseRunSubmissionRequest({ ...baseRequest(), provider: "bogus" })
+      parseSessionSubmissionRequest({ ...baseRequest(), provider: "bogus" })
     ).toThrow(/provider must be one of: anthropic, deepseek, openai, gemini, mistral/);
   });
 
   it("rejects unknown model ids with a helpful enumeration", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...baseRequest(),
         submission: { ...baseRequest().submission, model: "model-x" }
       })
@@ -78,7 +78,7 @@ describe("submission parser - providers and secrets", () => {
 
   it("rejects provider/model mismatches", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...baseRequest({ provider: "deepseek" }),
         submission: {
           ...baseRequest({ provider: "deepseek" }).submission,
@@ -90,16 +90,16 @@ describe("submission parser - providers and secrets", () => {
 
   it("defaults to anthropic when provider is omitted", () => {
     const { provider: _drop, ...rest } = baseRequest();
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...rest,
       secrets: { apiKeys: { anthropic: "sk-ant-default" } }
     });
-    expect(DEFAULT_RUN_PROVIDER).toBe("anthropic");
+    expect(DEFAULT_PROVIDER).toBe("anthropic");
     expect(parsed.provider).toBe("anthropic");
   });
 
   it("rejects explicit credentialMode as a removed choice field", () => {
-    expect(() => parseRunSubmissionRequest({
+    expect(() => parseSessionSubmissionRequest({
       ...baseRequest(),
       credentialMode: "byok"
     })).toThrow(/submission\.credentialMode is not an allowed field/);
@@ -110,7 +110,7 @@ describe("submission parser - providers and secrets", () => {
     (provider) => {
       const req = baseRequest({ provider });
       expect(() =>
-        parseRunSubmissionRequest({ ...req, secrets: {} })
+        parseSessionSubmissionRequest({ ...req, secrets: {} })
       ).toThrow(new RegExp(`secrets\\.apiKeys\\["${provider}"\\] is required`));
     }
   );
@@ -118,7 +118,7 @@ describe("submission parser - providers and secrets", () => {
   it("rejects unknown sibling keys inside the secrets bundle", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...req,
         secrets: { ...req.secrets, openai: { apiKey: "sk-openai-x" } }
       })
@@ -130,20 +130,20 @@ describe("submission parser - providers and secrets", () => {
   it("rejects an unknown provider key inside apiKeys", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
-      parseRunSubmissionRequest({ ...req, secrets: { apiKeys: { bogus: "sk-x" } } })
+      parseSessionSubmissionRequest({ ...req, secrets: { apiKeys: { bogus: "sk-x" } } })
     ).toThrow(/secrets\.apiKeys\["bogus"\] is not a known provider/);
   });
 
   it("rejects a non-string apiKeys value", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
-      parseRunSubmissionRequest({ ...req, secrets: { apiKeys: { anthropic: 123 } } })
+      parseSessionSubmissionRequest({ ...req, secrets: { apiKeys: { anthropic: 123 } } })
     ).toThrow(/secrets\.apiKeys\["anthropic"\] must be a non-empty string/);
   });
 
   it("accepts and preserves multiple provider keys for cross-provider subagents", () => {
     const req = baseRequest({ provider: "deepseek" });
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...req,
       secrets: { apiKeys: { deepseek: "sk-ds", anthropic: "sk-ant" } }
     });
@@ -152,14 +152,14 @@ describe("submission parser - providers and secrets", () => {
 });
 
 describe("submission parser - removed choice fields", () => {
-  // `parentRunId` was the legacy lineage field for API-submitted child runs.
-  // Child runs are now in-brain threads, so the top-level submit contract no
+  // `parentSessionId` was the legacy lineage field for API-submitted child sessions.
+  // Child sessions are now in-brain threads, so the top-level submit contract no
   // longer accepts it — the strict allow-list rejects it like any unknown field.
-  it.each(["runtime", "region", "credentialMode", "parentRunId"] as const)(
+  it.each(["runtime", "region", "credentialMode", "parentSessionId"] as const)(
     "rejects top-level %s",
     (field) => {
       expect(() =>
-        parseRunSubmissionRequest({ ...baseRequest(), [field]: "managed" })
+        parseSessionSubmissionRequest({ ...baseRequest(), [field]: "managed" })
       ).toThrow(new RegExp(`submission\\.${field} is not an allowed field`));
     }
   );
@@ -168,7 +168,7 @@ describe("submission parser - removed choice fields", () => {
 describe("submission parser - skills (by name)", () => {
   it("parses submission.skills into name-only refs", () => {
     const req = baseRequest({ provider: "anthropic" });
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...req,
       submission: { ...req.submission, skills: [{ kind: "skill", name: "report-writer" }] }
     });
@@ -178,7 +178,7 @@ describe("submission parser - skills (by name)", () => {
   it("rejects a skill ref that rides in submission.tools with a redirect message", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...req,
         submission: {
           ...req.submission,
@@ -191,7 +191,7 @@ describe("submission parser - skills (by name)", () => {
   it("rejects resolvedSkills on the public ingress path", () => {
     const req = baseRequest({ provider: "anthropic" });
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...req,
         submission: {
           ...req.submission,
@@ -204,9 +204,9 @@ describe("submission parser - skills (by name)", () => {
   });
 });
 
-describe("RUN_PROVIDERS exports", () => {
-  it("RUN_MODELS is the public model allowlist", () => {
-    expect([...RUN_MODELS]).toEqual([
+describe("PROVIDERS exports", () => {
+  it("SUPPORTED_MODELS is the public model allowlist", () => {
+    expect([...SUPPORTED_MODELS]).toEqual([
       "claude-haiku-4-5",
       "claude-3-5-haiku-latest",
       "claude-3-5-sonnet-latest",
@@ -225,8 +225,8 @@ describe("RUN_PROVIDERS exports", () => {
     ]);
   });
 
-  it("RUN_PROVIDERS is the v1 set", () => {
-    expect([...RUN_PROVIDERS]).toEqual([
+  it("PROVIDERS is the v1 set", () => {
+    expect([...PROVIDERS]).toEqual([
       "anthropic",
       "deepseek",
       "openai",
@@ -238,8 +238,8 @@ describe("RUN_PROVIDERS exports", () => {
     ]);
   });
 
-  it("Providers mirrors RUN_PROVIDERS exactly (no drift)", () => {
-    expect(Object.values(Providers)).toEqual([...RUN_PROVIDERS]);
+  it("Providers mirrors PROVIDERS exactly (no drift)", () => {
+    expect(Object.values(Providers)).toEqual([...PROVIDERS]);
   });
 
   it("BUILTIN_TOOL_NAMES is the closed builtin tool-name set (HANDS_TOOLS order)", () => {
@@ -300,8 +300,8 @@ describe("RUN_PROVIDERS exports", () => {
 });
 
 describe("providerForModel / providersForModel", () => {
-  it("RUN_MODELS_BY_PROVIDER and MODEL_PROVIDER_IDS agree", () => {
-    for (const [provider, models] of Object.entries(RUN_MODELS_BY_PROVIDER)) {
+  it("SUPPORTED_MODELS_BY_PROVIDER and MODEL_PROVIDER_IDS agree", () => {
+    for (const [provider, models] of Object.entries(SUPPORTED_MODELS_BY_PROVIDER)) {
       for (const model of models) {
         expect(providersForModel(model), model).toContain(provider);
       }
@@ -309,7 +309,7 @@ describe("providerForModel / providersForModel", () => {
   });
 
   it("providerForModel returns the first declared (default) provider", () => {
-    for (const model of RUN_MODELS) {
+    for (const model of SUPPORTED_MODELS) {
       const declared = Object.keys(MODEL_PROVIDER_IDS[model]);
       expect(providerForModel(model), model).toBe(declared[0]);
     }
@@ -355,28 +355,28 @@ describe("resolveProviderModelId", () => {
   });
 });
 
-describe("assertRunModelMatchesProvider", () => {
+describe("assertModelNameMatchesProvider", () => {
   it("accepts any provider that serves the model", () => {
-    expect(() => assertRunModelMatchesProvider("openai", Models.GPT_4O_MINI)).not.toThrow();
-    expect(() => assertRunModelMatchesProvider("openrouter", Models.GPT_4O_MINI)).not.toThrow();
+    expect(() => assertModelNameMatchesProvider("openai", Models.GPT_4O_MINI)).not.toThrow();
+    expect(() => assertModelNameMatchesProvider("openrouter", Models.GPT_4O_MINI)).not.toThrow();
   });
 
   it("rejects a provider that does not serve the model", () => {
-    expect(() => assertRunModelMatchesProvider("anthropic", Models.GPT_4O_MINI)).toThrow(/not supported for provider/);
+    expect(() => assertModelNameMatchesProvider("anthropic", Models.GPT_4O_MINI)).toThrow(/not supported for provider/);
   });
 });
 
 describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
   it("defaults includeBuiltinTools to absent (⇒ standard set ON downstream)", () => {
     const base = baseRequest();
-    const parsed = parseRunSubmissionRequest(base);
+    const parsed = parseSessionSubmissionRequest(base);
     expect(parsed.submission.includeBuiltinTools).toBeUndefined();
     expect(parsed.submission.builtinTools).toBeUndefined();
   });
 
   it("accepts includeBuiltinTools: false (disable all builtins)", () => {
     const base = baseRequest();
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: { ...base.submission, includeBuiltinTools: false }
     });
@@ -386,7 +386,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
   it("rejects a non-boolean includeBuiltinTools", () => {
     const base = baseRequest();
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, includeBuiltinTools: [] as unknown }
       })
@@ -395,7 +395,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
 
   it("extracts bare-string builtin refs from the tools union into builtinTools", () => {
     const base = baseRequest();
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: {
         ...base.submission,
@@ -411,7 +411,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
     "accepts %s as an individual builtin reference",
     (name) => {
       const base = baseRequest();
-      const parsed = parseRunSubmissionRequest({
+      const parsed = parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, includeBuiltinTools: false, tools: [name] }
       });
@@ -423,7 +423,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
 
   it("dedupes repeated builtin refs in tools (BUILTIN_TOOL_NAMES order)", () => {
     const base = baseRequest();
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: {
         ...base.submission,
@@ -436,7 +436,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
   it("rejects a tools string outside the closed builtin-tool set", () => {
     const base = baseRequest();
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, tools: ["not_a_tool"] }
       })
@@ -446,7 +446,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
   it("rejects the removed notebook_edit builtin", () => {
     const base = baseRequest();
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, tools: ["notebook_edit"] }
       })
@@ -463,7 +463,7 @@ describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
       input_schema: { type: "object", properties: {}, required: [] },
       entry: "index.js"
     };
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: {
         ...base.submission,
@@ -479,7 +479,7 @@ describe("submission parser - outputMode", () => {
   it("accepts 'buffered' and 'stream'", () => {
     for (const mode of ["buffered", "stream"] as const) {
       const req = baseRequest();
-      const parsed = parseRunSubmissionRequest({
+      const parsed = parseSessionSubmissionRequest({
         ...req,
         submission: { ...req.submission, outputMode: mode }
       });
@@ -488,14 +488,14 @@ describe("submission parser - outputMode", () => {
   });
 
   it("omits outputMode when not provided", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest());
+    const parsed = parseSessionSubmissionRequest(baseRequest());
     expect("outputMode" in parsed.submission).toBe(false);
   });
 
   it("rejects an unknown outputMode", () => {
     const req = baseRequest();
     expect(() =>
-      parseRunSubmissionRequest({ ...req, submission: { ...req.submission, outputMode: "fast" } })
+      parseSessionSubmissionRequest({ ...req, submission: { ...req.submission, outputMode: "fast" } })
     ).toThrow(/outputMode/);
   });
 });
@@ -503,7 +503,7 @@ describe("submission parser - outputMode", () => {
 describe("submission parser - removed postHook", () => {
   it("rejects postHook on the public submission surface", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...baseRequest(),
         postHook: { command: "bun test" }
       })

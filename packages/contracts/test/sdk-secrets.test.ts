@@ -63,13 +63,13 @@ describe("redactString — value-agnostic shapes", () => {
       "the quick brown fox jumps over the lazy dog",
       "rejects dotted event-name segments",
       "compatibility_date = 2026-05-20",
-      "https://api.aex.dev/v1/runs",
-      "run-1234-terminal",
+      "https://api.aex.dev/v1/sessions",
+      "session-1234-terminal",
       "local database status shows API URL http://127.0.0.1:56321",
       // Long digit-free mixed-case identifiers (stack-trace frames / API symbol
       // names the diagnostic bundle captures) must survive — eating them guts
       // debuggability. These are 24-39 chars, mixed-case, no digit.
-      "at async asyncRunEntryPointWithESMLoader (node:internal/main)",
+      "at async asyncEntryPointWithESMLoader (node:internal/main)",
       "createDurableObjectNamespace and getReadableStreamController"
     ];
     for (const text of benign) {
@@ -122,7 +122,7 @@ describe("value-shape precision: low-entropy NAMES survive, opaque secrets still
   const opaque: ReadonlyArray<readonly [name: string, secret: string]> = [
     ["32-char base64 key (no dash) — entropy path", "Zx9Kq2Lp7Vn4Rt6Wy8Ub3Mc5Ad1Ef0Gh"],
     ["base64url secret CONTAINING a dash — entropy path", "Zx9Kq2Lp7Vn4Rt6-Wy8Ub3Mc5Ad1Ef0Gh"],
-    ["32-char hex key (bare, not run_ prefixed) — entropy path", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"],
+    ["32-char hex key (bare, not ses_ prefixed) — entropy path", "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"],
     ["sk- sentinel with dashes — shape path", "sk-SENTINEL-9f3a1b2c3d4e5f6a7b8c9d0e1f2"]
   ];
   for (const [name, secret] of opaque) {
@@ -167,7 +167,7 @@ describe("containsSecretLikeValue", () => {
   });
   it("does not flag benign text", () => {
     expect(containsSecretLikeValue("the quick brown fox")).toBe(false);
-    expect(containsSecretLikeValue("run-1234-terminal")).toBe(false);
+    expect(containsSecretLikeValue("session-1234-terminal")).toBe(false);
   });
 });
 
@@ -207,7 +207,7 @@ describe("createRedactingStream — stream-before-disk", () => {
   });
 
   it("preserves benign multi-line output unchanged", async () => {
-    const text = "line one\nline two\nrun-1234-terminal\n";
+    const text = "line one\nline two\nsession-1234-terminal\n";
     expect(await runThrough([text])).toBe(text);
   });
 });

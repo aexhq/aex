@@ -1,5 +1,5 @@
 export interface PreCreateTransportObservation {
-  readonly runId: string | null;
+  readonly sessionId: string | null;
   readonly threw: string | null;
 }
 
@@ -7,7 +7,7 @@ const PRE_CREATE_TRANSPORT_RE =
   /\b(ConnectionRefused|FailedToOpenSocket|ECONNABORTED|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENETDOWN|ENETRESET|ENETUNREACH|ETIMEDOUT|UND_ERR_[A-Z0-9_]+)\b|socket connection was closed unexpectedly|fetch failed|terminated|unable to connect/i;
 
 export function isPreCreateTransportFailure(observation: PreCreateTransportObservation): boolean {
-  return observation.runId === null && observation.threw !== null && isPreCreateTransportMessage(observation.threw);
+  return observation.sessionId === null && observation.threw !== null && isPreCreateTransportMessage(observation.threw);
 }
 
 export function isPreCreateTransportMessage(message: string): boolean {
@@ -32,8 +32,8 @@ export async function withPreCreateTransportRetry<T>(
         throw err;
       }
 
-      // Child-script live tests cannot emit a runId when the SDK fails before
-      // POST /runs completes, so there is no aex-ops bundle to collect. Retry
+      // Child-script live tests cannot emit a sessionId when the SDK fails before
+      // POST /sessions completes, so there is no aex-ops bundle to collect. Retry
       // only the known transport shape and keep all post-create failures single-shot.
       // eslint-disable-next-line no-console
       console.warn(`[${label}] pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${errorText(err)}`);

@@ -2,7 +2,7 @@
  * `aex tail <session-id>` (DX3) — live, human-readable follow over the
  * coordinator WebSocket envelope stream (replay-from-cursor + tail +
  * exactly-once resume), NOT polling. `--json` is the raw-NDJSON escape hatch;
- * `--filter` narrows by AG-UI type/source; `RUN_ERROR` is surfaced as a
+ * `--filter` narrows by AG-UI type/source; `TURN_ERROR` is surfaced as a
  * jump-to-failure line.
  *
  * stdout carries the event/JSON stream (clean for piping); all diagnostics go to
@@ -24,15 +24,15 @@ import {
   makeHttpClient,
   parseDuration,
   rejectUnknownFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   resolveCommonHostFlags,
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
 import { openEnvelopeStream, parseFilters, renderEnvelope } from "./stream-render.js";
 
-export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "tail")) return USAGE_ERR;
+export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "tail")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
@@ -85,7 +85,7 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
     io.stderr(
       JSON.stringify({
         error: "websocket_unavailable",
-        message: "`aex tail` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
+        message: "`aex tail` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or session with bun.",
         sessionId
       }) + "\n"
     );
@@ -144,7 +144,7 @@ export async function runTailCmd(io: CliIO, argv: readonly string[]): Promise<Cl
           eventCount++;
         }
       }
-      if (e.type === "RUN_ERROR") runErrorLine = renderEnvelope(e, { logs: true });
+      if (e.type === "TURN_ERROR") runErrorLine = renderEnvelope(e, { logs: true });
     }
   } catch (err) {
     if (timer) clearTimeout(timer);

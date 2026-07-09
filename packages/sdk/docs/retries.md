@@ -50,7 +50,7 @@ Turn it off entirely with `retry: false`, or make a single attempt with
 ## Idempotent by construction
 
 Retries — whether the built-in transport retry or your own re-invocation of
-`run(...)` — never double-bill. The one-shot `run(...)` and `sessions.run(...)`
+`run(...)` — never double-bill. The one-shot `run(...)` and `sessions.start(...)`
 derive the turn's idempotency key from the session-create key, so re-invoking
 either with the same `idempotencyKey` de-duplicates **both** the session create
 and the billable turn server-side:
@@ -58,7 +58,7 @@ and the billable turn server-side:
 ```ts
 // A retried call with the same idempotencyKey resolves to the same run,
 // not a second billable one.
-const result = await aex.run({
+const result = await aex.start({
   model: "claude-haiku-4-5",
   message: "Write a short report and save it as a file.",
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
@@ -106,7 +106,7 @@ working, and it carries structured, non-leaky detail:
 import { isRateLimited } from "@aexhq/sdk";
 
 try {
-  await aex.run({ /* … */ });
+  await aex.start({ /* … */ });
 } catch (err) {
   if (isRateLimited(err)) {
     err.status;         // 429 | 503 | 529

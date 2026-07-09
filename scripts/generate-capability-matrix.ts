@@ -3,10 +3,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  RUN_PROVIDERS,
-  type RunProvider
+  PROVIDERS,
+  type ProviderName
 } from "../packages/contracts/src/submission.js";
-import { RUN_MODELS_BY_PROVIDER } from "../packages/contracts/src/models.js";
+import { SUPPORTED_MODELS_BY_PROVIDER } from "../packages/contracts/src/models.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
   type ProviderPublicSupport,
@@ -22,7 +22,7 @@ export interface ManagedCapabilityCell {
 }
 
 export interface CapabilityMatrixRow {
-  readonly provider: RunProvider;
+  readonly provider: ProviderName;
   readonly displayName: string;
   readonly docsAnchor: string;
   readonly docs: readonly SupportPointer[];
@@ -38,12 +38,12 @@ function managedCell(support: ProviderPublicSupport): ManagedCapabilityCell {
   };
 }
 
-function supportFor(provider: RunProvider): ProviderPublicSupport {
+function supportFor(provider: ProviderName): ProviderPublicSupport {
   return PROVIDER_PUBLIC_SUPPORT[provider];
 }
 
 export function buildCapabilityMatrixRows(): CapabilityMatrixRow[] {
-  return RUN_PROVIDERS.map((provider) => {
+  return PROVIDERS.map((provider) => {
     const publicSupport = supportFor(provider);
     return {
       provider,
@@ -64,8 +64,8 @@ function renderProviderLink(row: CapabilityMatrixRow): string {
   return `[${row.displayName}](#${row.docsAnchor})`;
 }
 
-function renderSupportedModels(provider: RunProvider): string {
-  return RUN_MODELS_BY_PROVIDER[provider].map((model) => `\`${model}\``).join(", ");
+function renderSupportedModels(provider: ProviderName): string {
+  return SUPPORTED_MODELS_BY_PROVIDER[provider].map((model) => `\`${model}\``).join(", ");
 }
 
 export function renderProviderRuntimeCapabilityMarkdown(
@@ -130,7 +130,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "",
     "## Skills",
     "",
-    "Skills are supplied through the top-level `skills` option. Build one with `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles`, `Skill.fromContent`, or `Skill.fromBytes`; each normalizes to a named workspace skill that the platform snapshots into durable run asset storage.",
+    "Skills are supplied through the top-level `skills` option. Build one with `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles`, `Skill.fromContent`, or `Skill.fromBytes`; each normalizes to a named workspace skill that the platform snapshots into durable session asset storage.",
     "",
     "Notes:",
     "",

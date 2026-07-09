@@ -345,7 +345,7 @@ function requestUrl(input: string | URL | Request): URL | undefined {
   }
 }
 
-/** Hooks the retry loop needs, injectable so tests run without real timers. */
+/** Hooks the retry loop needs, injectable so tests session without real timers. */
 export interface RetryDeps {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly random?: () => number;

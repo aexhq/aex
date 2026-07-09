@@ -1,4 +1,4 @@
-import type { RunProvider } from "./submission.js";
+import type { ProviderName } from "./submission.js";
 import { suggest } from "./suggest.js";
 
 /**
@@ -6,10 +6,10 @@ import { suggest } from "./suggest.js";
  * upstream providers that can serve it and the **provider-native** model string
  * each one expects.
  *
- * `Models.*` / `RUN_MODELS` are aex's own **canonical, provider-neutral**
+ * `Models.*` / `SUPPORTED_MODELS` are aex's own **canonical, provider-neutral**
  * identifiers — they are NOT the strings sent to a provider. The platform
  * translates a `(canonical model, provider)` pair to the native id via
- * {@link resolveProviderModelId} when it builds the run's session manifest. The
+ * {@link resolveProviderModelId} when it builds the session's session manifest. The
  * same canonical model can therefore be served by more than one provider (e.g.
  * `gpt-4o-mini` via `openai` *or* `openrouter`), with a different native string
  * per provider.
@@ -46,15 +46,15 @@ export const MODEL_PROVIDER_IDS = {
     doubao: "doubao-seed-1-6-flash-250828",
     "doubao-cn": "doubao-seed-1-6-flash-250828"
   }
-} as const satisfies Readonly<Record<string, Partial<Record<RunProvider, string>>>>;
+} as const satisfies Readonly<Record<string, Partial<Record<ProviderName, string>>>>;
 
 /**
- * Closed set of canonical model ids accepted by the public run-submission
+ * Closed set of canonical model ids accepted by the public session-submission
  * schema. Derived from {@link MODEL_PROVIDER_IDS} so the two never drift.
  */
-export type RunModel = keyof typeof MODEL_PROVIDER_IDS;
+export type ModelName = keyof typeof MODEL_PROVIDER_IDS;
 
-export const RUN_MODELS = Object.keys(MODEL_PROVIDER_IDS) as readonly RunModel[];
+export const SUPPORTED_MODELS = Object.keys(MODEL_PROVIDER_IDS) as readonly ModelName[];
 
 /**
  * Symbol-style accessors for the closed model set. Prefer these over raw
@@ -104,19 +104,19 @@ export const Models = {
    * for China.
    */
   DOUBAO_SEED_FLASH: "doubao-seed-flash"
-} as const satisfies Readonly<Record<string, RunModel>>;
+} as const satisfies Readonly<Record<string, ModelName>>;
 
 /**
  * Per-model provider lists, in declaration order. Derived from
  * {@link MODEL_PROVIDER_IDS} so the two never drift.
  */
-const PROVIDERS_BY_MODEL: Readonly<Record<RunModel, readonly RunProvider[]>> = (() => {
-  const map = {} as Record<RunModel, readonly RunProvider[]>;
+const PROVIDERS_BY_MODEL: Readonly<Record<ModelName, readonly ProviderName[]>> = (() => {
+  const map = {} as Record<ModelName, readonly ProviderName[]>;
   for (const [model, providers] of Object.entries(MODEL_PROVIDER_IDS) as readonly [
-    RunModel,
-    Partial<Record<RunProvider, string>>
+    ModelName,
+    Partial<Record<ProviderName, string>>
   ][]) {
-    map[model] = Object.keys(providers) as RunProvider[];
+    map[model] = Object.keys(providers) as ProviderName[];
   }
   return map;
 })();
@@ -124,15 +124,15 @@ const PROVIDERS_BY_MODEL: Readonly<Record<RunModel, readonly RunProvider[]>> = (
 /**
  * Provider → canonical models that provider can serve. Derived from
  * {@link MODEL_PROVIDER_IDS}; every provider currently serves at least one
- * model, so all {@link RunProvider} keys are present.
+ * model, so all {@link ProviderName} keys are present.
  */
-export const RUN_MODELS_BY_PROVIDER: Readonly<Record<RunProvider, readonly RunModel[]>> = (() => {
-  const map = {} as Record<RunProvider, RunModel[]>;
+export const SUPPORTED_MODELS_BY_PROVIDER: Readonly<Record<ProviderName, readonly ModelName[]>> = (() => {
+  const map = {} as Record<ProviderName, ModelName[]>;
   for (const [model, providers] of Object.entries(MODEL_PROVIDER_IDS) as readonly [
-    RunModel,
-    Partial<Record<RunProvider, string>>
+    ModelName,
+    Partial<Record<ProviderName, string>>
   ][]) {
-    for (const provider of Object.keys(providers) as RunProvider[]) {
+    for (const provider of Object.keys(providers) as ProviderName[]) {
       (map[provider] ??= []).push(model);
     }
   }
@@ -143,17 +143,17 @@ export const RUN_MODELS_BY_PROVIDER: Readonly<Record<RunProvider, readonly RunMo
  * All upstream providers that can serve a model id, in declaration order.
  * Returns `[]` for an unknown model.
  */
-export function providersForModel(model: string): readonly RunProvider[] {
-  return PROVIDERS_BY_MODEL[model as RunModel] ?? [];
+export function providersForModel(model: string): readonly ProviderName[] {
+  return PROVIDERS_BY_MODEL[model as ModelName] ?? [];
 }
 
 /**
  * The default upstream provider for a model id — the first provider declared
  * for it in {@link MODEL_PROVIDER_IDS}. Returns `undefined` when the input is
- * not a known {@link RunModel} (so the SDK can fall back to the default and let
+ * not a known {@link ModelName} (so the SDK can fall back to the default and let
  * the server reject the model).
  */
-export function providerForModel(model: string): RunProvider | undefined {
+export function providerForModel(model: string): ProviderName | undefined {
   return providersForModel(model)[0];
 }
 
@@ -162,8 +162,8 @@ export function providerForModel(model: string): RunProvider | undefined {
  * string the upstream API expects (e.g. `("gpt-4o-mini", "openrouter")` →
  * `"openai/gpt-4o-mini"`). Throws when the provider does not serve the model.
  */
-export function resolveProviderModelId(model: string, provider: RunProvider): string {
-  const entry = MODEL_PROVIDER_IDS[model as RunModel] as Partial<Record<RunProvider, string>> | undefined;
+export function resolveProviderModelId(model: string, provider: ProviderName): string {
+  const entry = MODEL_PROVIDER_IDS[model as ModelName] as Partial<Record<ProviderName, string>> | undefined;
   const native = entry?.[provider];
   if (native === undefined) {
     throw new Error(
@@ -186,9 +186,9 @@ export function resolveProviderModelId(model: string, provider: RunProvider): st
  *     declared). An UNKNOWN model with no provider throws a `did you mean?`
  *     hint — you must name a provider to run a model this client doesn't know.
  *
- * Returns the resolved {@link RunProvider}.
+ * Returns the resolved {@link ProviderName}.
  */
-export function resolveModelProvider(model: string, provider?: RunProvider): RunProvider {
+export function resolveModelProvider(model: string, provider?: ProviderName): ProviderName {
   const providers = providersForModel(model);
   if (provider !== undefined) {
     if (providers.length > 0 && !providers.includes(provider)) {
@@ -201,7 +201,7 @@ export function resolveModelProvider(model: string, provider?: RunProvider): Run
   }
   const inferred = providers[0];
   if (inferred === undefined) {
-    const hint = suggest(model, RUN_MODELS);
+    const hint = suggest(model, SUPPORTED_MODELS);
     throw new Error(
       `${JSON.stringify(model)} is not a known model id` +
         (hint ? ` (did you mean ${JSON.stringify(hint)}?)` : "") +
@@ -211,20 +211,20 @@ export function resolveModelProvider(model: string, provider?: RunProvider): Run
   return inferred;
 }
 
-export function isRunModel(input: unknown): input is RunModel {
-  return typeof input === "string" && (RUN_MODELS as readonly string[]).includes(input);
+export function isModelName(input: unknown): input is ModelName {
+  return typeof input === "string" && (SUPPORTED_MODELS as readonly string[]).includes(input);
 }
 
-export function parseRunModel(input: unknown, field = "submission.model"): RunModel {
-  if (!isRunModel(input)) {
-    throw new Error(`${field} must be one of: ${RUN_MODELS.join(", ")}`);
+export function parseModelName(input: unknown, field = "submission.model"): ModelName {
+  if (!isModelName(input)) {
+    throw new Error(`${field} must be one of: ${SUPPORTED_MODELS.join(", ")}`);
   }
   return input;
 }
 
-export function assertRunModelMatchesProvider(
-  provider: RunProvider,
-  model: RunModel,
+export function assertModelNameMatchesProvider(
+  provider: ProviderName,
+  model: ModelName,
   field = "submission.model"
 ): void {
   const providers = providersForModel(model);

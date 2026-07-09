@@ -2,10 +2,10 @@ import { redactSecrets } from "./sdk-secrets.js";
 import { isAexApiErrorCode, type AexApiErrorCode } from "./error-codes.js";
 
 export type AexErrorCode =
-  | "RUN_CONFIG_INVALID"
+  | "SESSION_CONFIG_INVALID"
   | "CREDENTIAL_INVALID"
   | "PROVIDER_ERROR"
-  | "RUN_STATE_ERROR"
+  | "SESSION_STATE_ERROR"
   | "CLEANUP_ERROR"
   | "RUNTIME_UNSUPPORTED"
   | "API_ERROR"
@@ -23,9 +23,9 @@ export class AexError extends Error {
   }
 }
 
-export class RunConfigValidationError extends AexError {
+export class SessionConfigValidationError extends AexError {
   constructor(message: string, details?: unknown) {
-    super("RUN_CONFIG_INVALID", message, details);
+    super("SESSION_CONFIG_INVALID", message, details);
   }
 }
 
@@ -44,7 +44,7 @@ export class ProviderError extends AexError {
   }
 }
 
-export class RunStateError extends AexError {
+export class SessionStateError extends AexError {
   /**
    * HTTP status from a wrapped API rejection, when this state error is a
    * bounded client-side interpretation of that rejection.
@@ -60,7 +60,7 @@ export class RunStateError extends AexError {
       ? (details as Record<string, unknown>)
       : undefined;
     const cause = options?.cause ?? detailRecord?.cause;
-    super("RUN_STATE_ERROR", message, details, cause === undefined ? undefined : { cause });
+    super("SESSION_STATE_ERROR", message, details, cause === undefined ? undefined : { cause });
     const status = detailRecord?.httpStatus ?? detailRecord?.status;
     const apiCode = detailRecord?.apiCode;
     this.status = typeof status === "number" ? status : undefined;

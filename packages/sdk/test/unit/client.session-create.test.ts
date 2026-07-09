@@ -113,7 +113,7 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
     }
     // Session create (POST /api/sessions) and any other read.
     return new Response(
-      JSON.stringify({ id: "run_test", status: "queued" }),
+      JSON.stringify({ id: "ses_test", status: "queued" }),
       { status: 200, headers: { "content-type": "application/json" } }
     );
   });
@@ -149,7 +149,7 @@ describe("Aex.openSession — session-create wire shape", () => {
       idempotencyKey: "idem_unit"
     });
 
-    expect(session.id).toBe("run_test");
+    expect(session.id).toBe("ses_test");
     expect(calls).toHaveLength(1);
     const call = calls[0]!;
     expect(call.method).toBe("POST");
@@ -403,7 +403,7 @@ describe("Aex.openSession — session-create wire shape", () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.run({
+      client.start({
         model: "claude-haiku-4-5",
         message: "",
         apiKeys: { anthropic: "k" }

@@ -12,11 +12,11 @@ import {
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";
 
-export async function runCancelCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "cancel")) return USAGE_ERR;
+export async function executeCancelCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "cancel")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

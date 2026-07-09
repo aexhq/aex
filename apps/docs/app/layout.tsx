@@ -33,7 +33,7 @@ export const metadata: Metadata = {
     default: "aex",
     template: "%s | aex"
   },
-  description: "SDK and CLI docs for durable agent runs across providers."
+  description: "SDK and CLI docs for durable agent sessions across providers."
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

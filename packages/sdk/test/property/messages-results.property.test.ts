@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import type {
   AexEvent,
   JsonValue,
-  RunTrace,
+  TurnTrace,
   SessionMessage,
   SessionMessageSender,
   WebSocketLike
 } from "@aexhq/contracts";
-import { Aex, type Message, type RunResult, type SessionRunResult } from "../../src/index.js";
+import { Aex, type Message, type SessionResult, type SessionStartResult } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly method: string;
@@ -147,7 +147,7 @@ function captureMissingMessagesClient(args: {
   };
 }
 
-function captureRunClient(firstSeq: number): {
+function captureSessionClient(firstSeq: number): {
   readonly client: Aex;
   readonly calls: CapturedRequest[];
   readonly sockets: FakeWebSocket[];
@@ -401,8 +401,8 @@ function durationMs(start: string | undefined, end: string | undefined): number 
   return Number.isFinite(delta) && delta >= 0 ? delta : undefined;
 }
 
-function expectedTrace(events: readonly FuzzEvent[]): RunTrace {
-  const text: RunTrace["text"] = events
+function expectedTrace(events: readonly FuzzEvent[]): TurnTrace {
+  const text: TurnTrace["text"] = events
     .filter((event) => event.type === "TEXT_MESSAGE_CONTENT")
     .map((event) => {
       const data = textData(event);
@@ -415,15 +415,15 @@ function expectedTrace(events: readonly FuzzEvent[]): RunTrace {
         ...(typeof event.recordedAt === "string" ? { recordedAt: event.recordedAt } : {})
       };
     })
-    .filter((entry): entry is RunTrace["text"][number] => entry !== undefined);
+    .filter((entry): entry is TurnTrace["text"][number] => entry !== undefined);
   const order: string[] = [];
-  const byId = new Map<string, RunTrace["toolCalls"][number]>();
+  const byId = new Map<string, TurnTrace["toolCalls"][number]>();
   for (const event of events) {
     const data = textData(event);
     if (event.type === "TOOL_CALL_START") {
       const id = typeof data.id === "string" ? data.id : undefined;
       if (id === undefined) continue;
-      const trace: RunTrace["toolCalls"][number] = {
+      const trace: TurnTrace["toolCalls"][number] = {
         id,
         name: typeof data.name === "string" ? data.name : "",
         args: asRecord(data.arguments),
@@ -438,7 +438,7 @@ function expectedTrace(events: readonly FuzzEvent[]): RunTrace {
     if (event.type === "TOOL_CALL_RESULT") {
       const id = typeof data.id === "string" ? data.id : undefined;
       if (id === undefined) continue;
-      const result: NonNullable<RunTrace["toolCalls"][number]["result"]> = {
+      const result: NonNullable<TurnTrace["toolCalls"][number]["result"]> = {
         isError: data.isError === true,
         content: data.content ?? null,
         ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
@@ -446,7 +446,7 @@ function expectedTrace(events: readonly FuzzEvent[]): RunTrace {
       };
       const previous = byId.get(id);
       const duration = durationMs(previous?.startedAt, result.recordedAt);
-      const next: RunTrace["toolCalls"][number] = previous === undefined
+      const next: TurnTrace["toolCalls"][number] = previous === undefined
         ? { id, name: "", args: {}, result }
         : {
           ...previous,
@@ -466,8 +466,8 @@ function expectedTrace(events: readonly FuzzEvent[]): RunTrace {
   };
 }
 
-async function collectSessionSend(events: readonly FuzzEvent[], firstSeq: number): Promise<SessionRunResult> {
-  const harness = captureRunClient(firstSeq);
+async function collectSessionSend(events: readonly FuzzEvent[], firstSeq: number): Promise<SessionStartResult> {
+  const harness = captureSessionClient(firstSeq);
   const session = await harness.client.openSession("sess_1");
   const promise = session.send("continue", {
     webSocketFactory: harness.webSocketFactory,
@@ -479,9 +479,9 @@ async function collectSessionSend(events: readonly FuzzEvent[], firstSeq: number
   return promise;
 }
 
-async function collectRun(events: readonly FuzzEvent[], firstSeq: number): Promise<RunResult> {
-  const harness = captureRunClient(firstSeq);
-  const promise = harness.client.run(
+async function collectRun(events: readonly FuzzEvent[], firstSeq: number): Promise<SessionResult> {
+  const harness = captureSessionClient(firstSeq);
+  const promise = harness.client.start(
     {
       model: "claude-haiku-4-5",
       message: "start",
@@ -705,18 +705,18 @@ describe("slim session messages/results properties", () => {
     await fc.assert(
       fc.asyncProperty(resultStreamCase, async (generated) => {
         const sessionResult = await collectSessionSend(generated.events, generated.firstSeq);
-        const runResult = await collectRun(generated.events, generated.firstSeq);
+        const sessionResult = await collectRun(generated.events, generated.firstSeq);
         const expectedEvents = generated.events;
         const expectedText = assistantText(expectedEvents);
         const expectedMessages = projectedMessages(expectedEvents);
 
         expect(sessionResult.text).toBe(expectedText);
-        expect(runResult.text).toBe(expectedText);
+        expect(sessionResult.text).toBe(expectedText);
         expect(sessionResult.messages).toEqual(expectedMessages);
-        expect(runResult.messages).toEqual(expectedMessages);
+        expect(sessionResult.messages).toEqual(expectedMessages);
         expect(sessionResult.events).toEqual(expectedEvents);
-        expect(runResult.events).toEqual(expectedEvents);
-        expect(runResult.trace).toEqual(expectedTrace(expectedEvents));
+        expect(sessionResult.events).toEqual(expectedEvents);
+        expect(sessionResult.trace).toEqual(expectedTrace(expectedEvents));
       }),
       { numRuns: 120 }
     );

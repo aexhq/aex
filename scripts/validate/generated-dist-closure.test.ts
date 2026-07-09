@@ -44,10 +44,10 @@ describe("generated dist closure", () => {
   it("accepts a coherent generated ESM dist tree", () => {
     withDist(
       {
-        "index.js": 'export * from "./run-retention.js";\n',
-        "index.d.ts": 'export * from "./run-retention.js";\n',
-        "run-retention.js": "export const retention = true;\n",
-        "run-retention.d.ts": "export declare const retention: boolean;\n"
+        "index.js": 'export * from "./session-retention.js";\n',
+        "index.d.ts": 'export * from "./session-retention.js";\n',
+        "session-retention.js": "export const retention = true;\n",
+        "session-retention.d.ts": "export declare const retention: boolean;\n"
       },
       (dist) => {
         expect(runChecker(dist).stdout).toContain("generated-dist closure OK");
@@ -58,11 +58,11 @@ describe("generated dist closure", () => {
   it("fails clearly when a generated module target is missing", () => {
     withDist(
       {
-        "index.js": 'export * from "./run-retention.js";\n',
-        "index.d.ts": 'export * from "./run-retention.js";\n'
+        "index.js": 'export * from "./session-retention.js";\n',
+        "index.d.ts": 'export * from "./session-retention.js";\n'
       },
       (dist) => {
-        expect(runChecker(dist).stderr).toContain("references missing module ./run-retention.js");
+        expect(runChecker(dist).stderr).toContain("references missing module ./session-retention.js");
       }
     );
   });
@@ -70,14 +70,14 @@ describe("generated dist closure", () => {
   it("fails clearly when a generated declaration target is missing", () => {
     withDist(
       {
-        "index.js": 'export * from "./run-retention.js";\n',
-        "index.d.ts": 'export * from "./run-retention.js";\n',
-        "run-retention.js": "export const retention = true;\n"
+        "index.js": 'export * from "./session-retention.js";\n',
+        "index.d.ts": 'export * from "./session-retention.js";\n',
+        "session-retention.js": "export const retention = true;\n"
       },
       (dist) => {
         const stderr = runChecker(dist).stderr;
-        expect(stderr).toContain("run-retention.js is missing declaration run-retention.d.ts");
-        expect(stderr).toContain("references ./run-retention.js but run-retention.d.ts is missing");
+        expect(stderr).toContain("session-retention.js is missing declaration session-retention.d.ts");
+        expect(stderr).toContain("references ./session-retention.js but session-retention.d.ts is missing");
       }
     );
   });

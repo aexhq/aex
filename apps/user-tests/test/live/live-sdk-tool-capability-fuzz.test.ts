@@ -2,12 +2,12 @@
  * Explicit live USER fuzz gate for the complete agent-tool surface.
  *
  * This suite drives a clean install of the packed/published SDK, uploads real
- * files and custom tool bundles, submits real DeepSeek runs, and asserts the
+ * files and custom tool bundles, submits real DeepSeek sessions, and asserts the
  * hosted runner invoked every requested tool with deterministic results.
  *
  * The generated cases are seeded so a failure is reproducible. The suite is
  * intentionally excluded from the default live sweep because it creates
- * multiple paid runs; invoke it through `test:user:tool-fuzz`.
+ * multiple paid sessions; invoke it through `test:user:tool-fuzz`.
  */
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -165,7 +165,7 @@ interface OutputSample {
 }
 
 interface Observation {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly status: string;
   readonly eventKinds: readonly string[];
   readonly terminalKind: string | null;
@@ -210,7 +210,7 @@ function isSessionIdle(event) {
 
 function terminalKindOf(event) {
   if (!event) return null;
-  return isSessionIdle(event) ? "RUN_FINISHED" : event.type;
+  return isSessionIdle(event) ? "TURN_FINISHED" : event.type;
 }
 
 function terminalDataOf(event) {
@@ -236,7 +236,7 @@ function blockText(content) {
 async function observe(result) {
   const fallbackEvents = Array.isArray(result.events) ? result.events : [];
   const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
-  const session = await client.sessions.open(result.runId);
+  const session = await client.sessions.open(result.sessionId);
   let events = fallbackEvents;
   let outputs = fallbackOutputs;
   try {
@@ -274,11 +274,11 @@ async function observe(result) {
       };
     });
   const terminal = events.find(
-    (event) => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"
+    (event) => event.type === "TURN_FINISHED" || event.type === "TURN_ERROR"
   ) ?? events.find(isSessionIdle);
   const eventKinds = events.map((event) => event.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) {
-    eventKinds.push("RUN_FINISHED");
+  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) {
+    eventKinds.push("TURN_FINISHED");
   }
   const outputSamples = [];
   for (const output of outputs.slice(0, 24)) {
@@ -296,7 +296,7 @@ async function observe(result) {
     });
   }
   return {
-    runId: result.runId,
+    sessionId: result.sessionId,
     status: result.ok
       ? "succeeded"
       : (typeof result.status === "string" && result.status ? result.status : "failed"),
@@ -384,7 +384,7 @@ function allObservedText(observation: Observation): string {
 
 function diagnostics(observation: Observation): string {
   return [
-    `runId=${observation.runId}`,
+    `sessionId=${observation.sessionId}`,
     `status=${observation.status}`,
     `terminal=${observation.terminalKind} ${JSON.stringify(observation.terminalData)}`,
     `events=[${observation.eventKinds.join(",")}]`,
@@ -407,7 +407,7 @@ function assertToolSurface(
 ): void {
   const dump = diagnostics(observation);
   expect(observation.status, dump).toBe("succeeded");
-  expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+  expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
   expect(observation.terminalData?.["reason"], dump).toBe("complete");
   const called = names(observation);
   for (const expected of expectedNames) {
@@ -471,7 +471,7 @@ const other = await File.fromBytes({
   bytes: new TextEncoder().encode("distractor only\\n"),
   mountPath: "/fuzz"
 });
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
@@ -538,7 +538,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
         `Reply with PROCESS_FUZZ_OK ${bashMarker} py=${pyValue} js=${jsValue} ${commitSubject}.`
       ].join("\n");
       const body = `
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
@@ -589,14 +589,14 @@ process.stdout.write(JSON.stringify(await observe(result)));
     async (testCase) => {
       const prompt = [
         "Use only the named tools.",
-        "1. Call bash with run_in_background=true for this exact command:",
+        "1. Call bash with ses_in_background=true for this exact command:",
         `   for i in $(seq 1 120); do echo ${testCase.marker}_tick_$i; sleep 1; done`,
         "2. Call bash_output with the returned job id and report a tick you observed.",
         "3. Call bash_kill with the same job id.",
         `Reply with BG_FUZZ_OK ${testCase.marker}.`
       ].join("\n");
       const body = `
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
@@ -617,7 +617,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const backgroundStart = observation.toolCalls.find(
         (call) =>
           call.name === "bash" &&
-          call.arguments["run_in_background"] === true
+          call.arguments["ses_in_background"] === true
       );
       expect(backgroundStart, dump).toBeDefined();
       expect(allObservedText(observation), dump).toContain(`${testCase.marker}_tick_`);
@@ -635,7 +635,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
         `Reply with WEB_FUZZ_OK, the fetched heading, and a short search summary.`
       ].join("\n");
       const body = `
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
@@ -679,13 +679,13 @@ process.stdout.write(JSON.stringify(await observe(result)));
         "Use only the named tools.",
         `1. Call subagent exactly once with model=${deepseekModel}, includeBuiltinTools=false,`,
         `   tools=["write_file"], and prompt=${JSON.stringify(childPrompt)}.`,
-        "2. Take the returned child run id and call subagent_result.",
+        "2. Take the returned child session id and call subagent_result.",
         "3. If terminal is false, call subagent_result again with the same id until terminal is true.",
         `4. Confirm the output list contains ${childFile}.`,
         `Reply with SUBAGENT_FUZZ_OK ${testCase.marker}.`
       ].join("\n");
       const body = `
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
@@ -804,7 +804,7 @@ const failure = await Tool.fromFiles({
     ].join("\\n")
   }
 });
-const result = await client.run({
+const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},

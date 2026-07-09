@@ -11,7 +11,7 @@
  *
  * Block B — failure surfacing (single cell)
  *   Three sub-cases exercise the SDK's error contract:
- *     b1: corrupted skill zip → submit 4xx OR run "failed" with structured
+ *     b1: corrupted skill zip -> submit 4xx OR session "failed" with structured
  *         AexError/errorMessage
  *     b2: invalid model     → same accept-both shape
  *     b3: stdio MCP         → 4xx with REMOTE_MCP_STDIO_REJECTED_MESSAGE
@@ -81,8 +81,8 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 /* -------------------- Block A: outputs round-trip -------------------- */
 
 interface OutputCaseResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly marker: string;
@@ -111,7 +111,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       apiKey: process.env.AEX_API_KEY
     });
 
-    const runResult = await client.run({
+    const sessionResult = await client.start({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
@@ -120,15 +120,15 @@ function buildOutputScript(cell: Cell, marker: string): string {
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "outputs-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = runResult.runId;
-    const session = await client.sessions.open(runId);
-    const run = {
-      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
+    const sessionId = sessionResult.sessionId;
+    const session = await client.sessions.open(sessionId);
+    const sessionInfo = {
+      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
-    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
-    const fallbackOutputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
+    const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
     let events = fallbackEvents;
     let outputs = fallbackOutputs;
     try {
@@ -167,9 +167,9 @@ function buildOutputScript(cell: Cell, marker: string): string {
       .join(" ");
     const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
     const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
     const terminalData = terminal && isSessionIdle(terminal)
       ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
       : terminal ? terminal.data : null;
@@ -178,16 +178,16 @@ function buildOutputScript(cell: Cell, marker: string): string {
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const result = {
-      runId: runId,
-      runStatus: run.status,
-      runtime: run.runtime ?? "(missing)",
-      provider: run.provider ?? "(missing)",
+      sessionId: sessionId,
+      sessionStatus: session.status,
+      runtime: sessionInfo.runtime ?? "(missing)",
+      provider: sessionInfo.provider ?? "(missing)",
       marker: ${JSON.stringify(marker)},
       eventCount: events.length,
       eventKinds,
       outputs: downloaded,
       assistantTextJoined,
-      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
       terminalData,
       streamErrors
     };
@@ -198,8 +198,8 @@ function buildOutputScript(cell: Cell, marker: string): string {
 
 function dumpOutputResult(cell: Cell, result: OutputCaseResult): string {
   const lines: string[] = [];
-  lines.push(`cell=${cell.id} runId=${result.runId} marker=${result.marker}`);
-  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`cell=${cell.id} sessionId=${result.sessionId} marker=${result.marker}`);
+  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
   if (result.streamErrors.length > 0) {
@@ -221,7 +221,7 @@ function dumpOutputResult(cell: Cell, result: OutputCaseResult): string {
 function assertCleanOutputLifecycle(cell: Cell, result: OutputCaseResult): void {
   const dump = (): string => dumpOutputResult(cell, result);
   if (result.streamErrors.length > 0) {
-    throw new Error(`clean output run emitted stream errors\n\n${dump()}`);
+    throw new Error(`clean output session emitted stream errors\n\n${dump()}`);
   }
   const outputs = result.terminalData ? result.terminalData["outputs"] : undefined;
   if (outputs !== undefined) {
@@ -236,12 +236,12 @@ function assertCleanOutputLifecycle(cell: Cell, result: OutputCaseResult): void 
       }
     }
     if ((summary["uploaded"] as number) < 1 || summary["failures"] !== 0 || summary["droppedByCap"] !== 0) {
-      throw new Error(`unexpected terminal outputs summary on clean run: ${JSON.stringify(summary)}\n\n${dump()}`);
+      throw new Error(`unexpected terminal outputs summary on clean session: ${JSON.stringify(summary)}\n\n${dump()}`);
     }
   }
 }
 
-async function runOutputCell(cell: Cell, installDir: string): Promise<OutputCaseResult> {
+async function startOutputCell(cell: Cell, installDir: string): Promise<OutputCaseResult> {
   const marker = `REPORT-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
   const script = buildOutputScript(cell, marker);
   const scriptPath = join(installDir, `outputs-${cell.id}.mjs`);
@@ -274,11 +274,11 @@ interface FailureCaseResult {
   readonly errorClass: string | null;
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
-  readonly runId: string | null;
-  readonly runStatus: string | null;
-  readonly runPollStatus: number | null;
-  readonly runPollAttempts: number;
-  readonly runErrorMessage: string | null;
+  readonly sessionId: string | null;
+  readonly sessionStatus: string | null;
+  readonly sessionPollStatus: number | null;
+  readonly sessionPollAttempts: number;
+  readonly sessionErrorMessage: string | null;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly eventKinds: readonly string[];
@@ -299,11 +299,11 @@ function buildCorruptedSkillScript(): string {
     let errorClass = null;
     let errorCode = null;
     let errorMessage = null;
-    let runId = null;
-    let runStatus = null;
-    let runPollStatus = null;
-    let runPollAttempts = 0;
-    let runErrorMessage = null;
+    let sessionId = null;
+    let sessionStatus = null;
+    let sessionPollStatus = null;
+    let sessionPollAttempts = 0;
+    let sessionErrorMessage = null;
     let terminalKind = null;
     let terminalData = null;
     let eventKinds = [];
@@ -402,8 +402,8 @@ function buildCorruptedSkillScript(): string {
       try {
         // First-class skills ride submission.skills by name. The BFF resolves the
         // registry entry to boot-record-only asset metadata, then materialization
-        // rejects the malformed bundle at submit or run time.
-        const res = await fetch(process.env.AEX_API_URL + "/api/runs", {
+        // rejects the malformed bundle at submit or session time.
+        const res = await fetch(process.env.AEX_API_URL + "/api/sessions", {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -429,22 +429,22 @@ function buildCorruptedSkillScript(): string {
         submitBody = (await res.text()).slice(0, 800);
         submitOk = res.status >= 200 && res.status < 300;
         if (!submitOk) {
-          errorClass = "run-submit-rejected";
+          errorClass = "session-submit-rejected";
           errorMessage = "corrupted skill bundle rejected at status " + res.status + ": " + submitBody.slice(0, 200);
         } else {
           try {
             const accepted = JSON.parse(submitBody);
-            runId = typeof accepted.runId === "string"
-              ? accepted.runId
+            sessionId = typeof accepted.sessionId === "string"
+              ? accepted.sessionId
               : typeof accepted.id === "string"
                 ? accepted.id
                 : null;
           } catch {
-            runId = null;
+            sessionId = null;
           }
-          if (!runId) {
-            errorClass = "run-submit-missing-id";
-            errorMessage = "corrupted skill bundle submit was accepted but returned no run id: " + submitBody.slice(0, 200);
+          if (!sessionId) {
+            errorClass = "session-submit-missing-id";
+            errorMessage = "corrupted skill bundle submit was accepted but returned no session id: " + submitBody.slice(0, 200);
           }
         }
       } catch (e) {
@@ -454,23 +454,23 @@ function buildCorruptedSkillScript(): string {
       }
     }
 
-    if (submitOk && runId) {
+    if (submitOk && sessionId) {
       const terminalStatuses = new Set(["succeeded", "failed", "cancelled", "canceled", "timed_out", "expired", "deleted"]);
       const authHeaders = { authorization: "Bearer " + process.env.AEX_API_KEY };
       const deadline = Date.now() + Number(process.env.FAILURE_WAIT_MS || "120000");
       while (Date.now() < deadline) {
         try {
-          runPollAttempts += 1;
-          const runRes = await fetch(process.env.AEX_API_URL + "/api/runs/" + encodeURIComponent(runId), {
+          sessionPollAttempts += 1;
+          const sessionRes = await fetch(process.env.AEX_API_URL + "/api/sessions/" + encodeURIComponent(sessionId), {
             headers: authHeaders
           });
-          runPollStatus = runRes.status;
-          if (runRes.ok) {
-            const runBody = await runRes.json();
-            const run = runBody && runBody.run && typeof runBody.run === "object" ? runBody.run : runBody;
-            if (run && typeof run.status === "string") runStatus = run.status;
-            if (run && typeof run.errorMessage === "string") runErrorMessage = run.errorMessage;
-            if (runStatus && terminalStatuses.has(runStatus)) break;
+          sessionPollStatus = sessionRes.status;
+          if (sessionRes.ok) {
+            const sessionBody = await sessionRes.json();
+            const sessionRecord = sessionBody && sessionBody.session && typeof sessionBody.session === "object" ? sessionBody.session : sessionBody;
+            if (sessionRecord && typeof sessionRecord.status === "string") sessionStatus = sessionRecord.status;
+            if (sessionRecord && typeof sessionRecord.errorMessage === "string") sessionErrorMessage = sessionRecord.errorMessage;
+            if (sessionStatus && terminalStatuses.has(sessionStatus)) break;
           }
         } catch {
           // Keep polling until the failure contract either appears or times out.
@@ -479,13 +479,13 @@ function buildCorruptedSkillScript(): string {
       }
 
       try {
-        const eventsRes = await fetch(process.env.AEX_API_URL + "/api/runs/" + encodeURIComponent(runId) + "/events?limit=1000", {
+        const eventsRes = await fetch(process.env.AEX_API_URL + "/api/sessions/" + encodeURIComponent(sessionId) + "/events?limit=1000", {
           headers: authHeaders
         });
         if (eventsRes.ok) {
           const eventsBody = await eventsRes.json();
           const events = Array.isArray(eventsBody.events) ? eventsBody.events : [];
-          const terminal = events.find((event) => event && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"));
+          const terminal = events.find((event) => event && (event.type === "TURN_FINISHED" || event.type === "TURN_ERROR"));
           eventKinds = events.map((event) => event && typeof event.type === "string" ? event.type : "UNKNOWN");
           terminalKind = terminal && typeof terminal.type === "string" ? terminal.type : null;
           terminalData = terminal && terminal.data && typeof terminal.data === "object" ? terminal.data : null;
@@ -494,7 +494,7 @@ function buildCorruptedSkillScript(): string {
             .map((event) => event.data && typeof event.data.value === "object" ? event.data.value : event.data);
         }
       } catch {
-        // The run record is authoritative for this assertion; events enrich the
+        // The session record is authoritative for this assertion; events enrich the
         // failure contract when the stream endpoint is available.
       }
     }
@@ -507,11 +507,11 @@ function buildCorruptedSkillScript(): string {
       errorClass,
       errorCode,
       errorMessage,
-      runId,
-      runStatus,
-      runPollStatus,
-      runPollAttempts,
-      runErrorMessage,
+      sessionId,
+      sessionStatus,
+      sessionPollStatus,
+      sessionPollAttempts,
+      sessionErrorMessage,
       terminalKind,
       terminalData,
       eventKinds,
@@ -543,7 +543,7 @@ function buildIncompatibleRuntimeScript(): string {
     let errorMessage = null;
 
     try {
-      const result = await client.run({
+      const result = await client.start({
         provider: "deepseek",
         runtimeSize: "native",
         model: "deepseek-v4-flash",
@@ -571,11 +571,11 @@ function buildIncompatibleRuntimeScript(): string {
       errorClass,
       errorCode,
       errorMessage,
-      runId: null,
-      runStatus: null,
-      runPollStatus: null,
-      runPollAttempts: 0,
-      runErrorMessage: null,
+      sessionId: null,
+      sessionStatus: null,
+      sessionPollStatus: null,
+      sessionPollAttempts: 0,
+      sessionErrorMessage: null,
       terminalKind: null,
       terminalData: null,
       eventKinds: [],
@@ -600,7 +600,7 @@ function buildStdioMcpScript(): string {
     let errorMessage = null;
 
     try {
-      const res = await fetch(process.env.AEX_API_URL + "/api/runs", {
+      const res = await fetch(process.env.AEX_API_URL + "/api/sessions", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -637,11 +637,11 @@ function buildStdioMcpScript(): string {
       errorClass,
       errorCode,
       errorMessage,
-      runId: null,
-      runStatus: null,
-      runPollStatus: null,
-      runPollAttempts: 0,
-      runErrorMessage: null,
+      sessionId: null,
+      sessionStatus: null,
+      sessionPollStatus: null,
+      sessionPollAttempts: 0,
+      sessionErrorMessage: null,
       terminalKind: null,
       terminalData: null,
       eventKinds: [],
@@ -685,8 +685,8 @@ function dumpFailureResult(result: FailureCaseResult): string {
     `submitBody=${(result.submitBody ?? "").slice(0, 400)}`,
     `errorClass=${result.errorClass} errorCode=${result.errorCode}`,
     `errorMessage=${(result.errorMessage ?? "").slice(0, 400)}`,
-    `runId=${result.runId} runStatus=${result.runStatus} runPollStatus=${result.runPollStatus} runPollAttempts=${result.runPollAttempts}`,
-    `runErrorMessage=${(result.runErrorMessage ?? "").slice(0, 400)}`,
+    `sessionId=${result.sessionId} sessionStatus=${result.sessionStatus} sessionPollStatus=${result.sessionPollStatus} sessionPollAttempts=${result.sessionPollAttempts}`,
+    `sessionErrorMessage=${(result.sessionErrorMessage ?? "").slice(0, 400)}`,
     `terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`,
     `eventKinds=[${result.eventKinds.join(", ")}]`,
     `streamErrors=${JSON.stringify(result.streamErrors).slice(0, 600)}`
@@ -709,13 +709,13 @@ describe("live outputs — agent writes a known file, bytes round-trip", () => {
   it.each(CELLS)(
     "$id: agent writes report.txt with marker, listOutputs + download recovers it",
     async (cell) => {
-      const result = await runOutputCell(cell, install.installDir);
+      const result = await startOutputCell(cell, install.installDir);
       const dump = (): string => dumpOutputResult(cell, result);
 
-      expect(result.runStatus, dump()).toBe("succeeded");
+      expect(result.sessionStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
-      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalKind).toBe("TURN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // always populate reason on the success path. Tolerating `undefined`
       // (pre-Phase-1) was masking field-loss regressions.
@@ -756,7 +756,7 @@ describe("live outputs — agent writes a known file, bytes round-trip", () => {
 
 describe("live failure surfacing — SDK error contract", () => {
   it(
-    "b1 corrupted skill zip: 4xx at submit OR run status:failed with structured error",
+    "b1 corrupted skill zip: 4xx at submit OR session status:failed with structured error",
     async () => {
       const result = await runFailureCase(
         buildCorruptedSkillScript,
@@ -767,7 +767,7 @@ describe("live failure surfacing — SDK error contract", () => {
 
       // Accept either branch:
       //  - submit threw with a structured AexError (errorClass non-null)
-      //  - submit succeeded but the run reached terminal "failed" with
+      //  - submit succeeded but the session reached terminal "failed" with
       //    a populated errorMessage (or runtime_terminal carrying reason!=
       //    "complete" + a stream_error event)
       if (!result.submitOk) {
@@ -780,14 +780,14 @@ describe("live failure surfacing — SDK error contract", () => {
           throw new Error(`submit rejected but errorClass is not structured\n\n${dump()}`);
         }
       } else {
-        // submit accepted; the run must have failed terminally with a
+        // submit accepted; the session must have failed terminally with a
         // reported error. The structured failure can surface as
-        // Run.errorMessage OR terminalData.failureMessage — both are
+        // SessionRecord.errorMessage OR terminalData.failureMessage — both are
         // legitimate places the API plumbs the cause; require at least
         // one to be populated so a silent failure is caught.
-        if (result.runStatus !== "failed") {
+        if (result.sessionStatus !== "failed") {
           throw new Error(
-            `submit accepted but run did not fail (status=${result.runStatus})\n\n${dump()}`
+            `submit accepted but session did not fail (status=${result.sessionStatus})\n\n${dump()}`
           );
         }
         const terminalFailureMsg =
@@ -795,15 +795,15 @@ describe("live failure surfacing — SDK error contract", () => {
             ? (result.terminalData["failureMessage"] as string)
             : "";
         const haveStructuredCause =
-          (result.runErrorMessage && result.runErrorMessage.length > 0) ||
+          (result.sessionErrorMessage && result.sessionErrorMessage.length > 0) ||
           terminalFailureMsg.length > 0;
         if (!haveStructuredCause) {
           throw new Error(
-            `run failed but no errorMessage on Run AND no terminalData.failureMessage\n\n${dump()}`
+            `session failed but no errorMessage on SessionRecord AND no terminalData.failureMessage\n\n${dump()}`
           );
         }
         // A runtime_terminal with reason!="complete" is the on-stream
-        // signal that the run did not finish cleanly. Either reason ===
+        // signal that the session did not finish cleanly. Either reason ===
         // "error" OR a stream_error event must be present.
         const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
         const sawSignal =
@@ -811,7 +811,7 @@ describe("live failure surfacing — SDK error contract", () => {
           result.streamErrors.length > 0;
         if (!sawSignal) {
           throw new Error(
-            `run failed but no terminal reason!=complete and no stream_error events\n\n${dump()}`
+            `session failed but no terminal reason!=complete and no stream_error events\n\n${dump()}`
           );
         }
       }
@@ -848,7 +848,7 @@ describe("live failure surfacing — SDK error contract", () => {
             errorMessage: result.errorMessage
           },
           {
-            classes: ["AexError", "RunConfigValidationError"],
+            classes: ["AexError", "SessionConfigValidationError"],
             messageIncludes: "runtime",
             context: "b2 incompatible-runtime"
           }
@@ -862,7 +862,7 @@ describe("live failure surfacing — SDK error contract", () => {
             errorMessage: result.errorMessage
           },
           {
-            classes: ["AexError", "RunConfigValidationError"],
+            classes: ["AexError", "SessionConfigValidationError"],
             messageIncludes: "native",
             context: "b2 incompatible-runtime (alt hint)"
           }
@@ -891,7 +891,7 @@ describe("live failure surfacing — SDK error contract", () => {
 
       // The error body MUST identify this as stdio-rejection so a user
       // who hits this gets an actionable message. The canonical
-      // message lives in shared run-submission validation — full
+      // message lives in shared session-submission validation — full
       // text or unique fragment ("stdio") must appear.
       const body = result.submitBody ?? "";
       if (!body.toLowerCase().includes("stdio")) {

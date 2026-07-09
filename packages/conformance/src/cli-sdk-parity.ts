@@ -2,7 +2,7 @@
 //
 // The CLI is implemented against the public contracts layer, but it must still
 // expose the same user-facing capability surface as the SDK: every public SDK
-// capability (an `Aex` client method, a `run` option, an outputs-accessor
+// capability (an `Aex` client method, a session-start option, an outputs-accessor
 // method) must surface as a registered CLI verb / flag / sub-verb. This
 // manifest enumerates that surface and maps each capability onto its CLI
 // counterpart; the conformance `cli-sdk-parity` test then asserts, against the
@@ -15,7 +15,7 @@
 // {@link CLI_PARITY_NOT_SURFACED} so adding a NEW capability still forces a
 // conscious, reviewed manifest entry rather than silently drifting.
 
-/** A run-option / accessor method the CLI deliberately does not expose. */
+/** A session-option / accessor method the CLI deliberately does not expose. */
 export const CLI_PARITY_NOT_SURFACED = "(not surfaced in CLI)";
 
 /** The bare `aex outputs <id>` list form (no sub-verb token). */
@@ -27,18 +27,18 @@ export const CLI_PARITY_PROVIDER_KEY_FLAG = "--<provider>-api-key";
 export interface CliSdkParityManifest {
   /** Public `Aex` client method → the CLI verb that surfaces it. */
   readonly aexMethods: Readonly<Record<string, string>>;
-  /** `SessionRunOptions` key → the CLI `run` flag that supplies it. */
-  readonly runOptionFlags: Readonly<Record<string, string>>;
+  /** `SessionStartOptions` key → the CLI `start` flag that supplies it. */
+  readonly sessionOptionFlags: Readonly<Record<string, string>>;
   /** `SessionOutputs` accessor method → the CLI `outputs` sub-verb that surfaces it. */
   readonly outputsSubverbs: Readonly<Record<string, string>>;
 }
 
 export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
   aexMethods: {
-    run: "run",
-    submit: "run",
-    batch: "run",
-    openSession: "run",
+    start: "start",
+    submit: "start",
+    batch: "start",
+    openSession: "start",
     deleteWorkspaceAsset: "delete-asset",
     whoami: "whoami",
     billing: "billing",
@@ -47,7 +47,7 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     billingLedger: "billing",
     webhookSigningSecret: "webhooks"
   },
-  runOptionFlags: {
+  sessionOptionFlags: {
     provider: "--provider",
     model: "--model",
     system: "--system",
@@ -61,7 +61,7 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     apiKeys: CLI_PARITY_PROVIDER_KEY_FLAG,
     environment: "--config",
     runtime: "--runtime-size",
-    overrides: "--run-timeout",
+    overrides: "--session-timeout",
     webhook: "--webhook",
     message: "--prompt",
     messageIdempotencyKey: "--idempotency-key",

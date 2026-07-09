@@ -1,9 +1,9 @@
 /**
  * Blackbox SDK session-input coverage through a clean installed package.
  *
- * The one-shot `submit` surface folded into sessions: a run is now
- * `sessions.create(...)` (config only) + `session.send(...)` / `sessions.run(...)`
- * (the message). These cases intentionally run in child processes whose cwd is
+ * The one-shot `submit` surface folded into sessions: a session is now
+ * `sessions.create(...)` (config only) + `session.send(...)` / `sessions.start(...)`
+ * (the message). These cases intentionally session in child processes whose cwd is
  * the user-test install tempdir. That keeps the assertions at the user boundary:
  * `import "@aexhq/sdk"` resolves from the packed or published artifact, while a
  * fake fetch captures the exact SDK wire request (POST /api/sessions) without
@@ -361,7 +361,7 @@ strictEqual(body.timeout, "90m");
 deepStrictEqual(body.retention, { idleTtl: "5m" });
 deepStrictEqual(body.limits, { maxSpendUsd: 3.5 });
 deepStrictEqual(body.webhook, { url: "https://hooks.example.test/aex" });
-ok(!("parentRunId" in body));
+ok(!("parentSessionId" in body));
 ok(!("postHook" in body));
 
 const submission = body.submission;
@@ -611,8 +611,8 @@ const createCases = [
   ["removed secretEnv", () => client.openSession({ ...validCreate, secretEnv: { X: Secret.value("v") } }), /secretEnv is not a supported option/],
   ["removed runtimeSize", () => client.openSession({ ...validCreate, runtimeSize: "shared-2x-8gb" }), /runtimeSize is not a supported option/],
   ["removed timeout", () => client.openSession({ ...validCreate, timeout: "15m" }), /timeout is not a supported option/],
-  ["removed limits", () => client.openSession({ ...validCreate, limits: { maxConcurrentChildRuns: 4 } }), /limits is not a supported option/],
-  ["removed parentRunId", () => client.openSession({ ...validCreate, parentRunId: "run_parent" }), /parentRunId is not a supported option/],
+  ["removed limits", () => client.openSession({ ...validCreate, limits: { maxConcurrentChildSessions: 4 } }), /limits is not a supported option/],
+  ["removed parentSessionId", () => client.openSession({ ...validCreate, parentSessionId: "ses_parent" }), /parentSessionId is not a supported option/],
   ["removed postHook", () => client.openSession({ ...validCreate, postHook: { command: "bun test" } }), /postHook is not a supported option/],
   ["removed instructions", () => client.openSession({ ...validCreate, instructions: "be brief" }), /instructions is not a supported option/],
   ["bad skill entry", () => client.openSession({ ...validCreate, skills: [{}] }), /skills\[0\] must be a Skill/],
@@ -635,9 +635,9 @@ for (const [label, fn, pattern] of createCases) {
 // the session is created.
 const validRun = { model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } };
 const runCases = [
-  ["empty message string", () => client.sessions.run({ ...validRun, message: "" }), /message must be a non-empty string/],
-  ["empty message array", () => client.sessions.run({ ...validRun, message: [] }), /message must be a non-empty string or string array/],
-  ["empty message segment", () => client.sessions.run({ ...validRun, message: ["ok", ""] }), /message segments must be non-empty strings/]
+  ["empty message string", () => client.sessions.start({ ...validRun, message: "" }), /message must be a non-empty string/],
+  ["empty message array", () => client.sessions.start({ ...validRun, message: [] }), /message must be a non-empty string or string array/],
+  ["empty message segment", () => client.sessions.start({ ...validRun, message: ["ok", ""] }), /message segments must be non-empty strings/]
 ];
 for (const [label, fn, pattern] of runCases) {
   messages.push(await expectReject(label, fn, pattern));
@@ -708,7 +708,7 @@ for (const name of invalidNames) {
 
 const invalidMessageValues = [null, 0, {}, ["ok", 1], ["ok", null]];
 for (const message of invalidMessageValues) {
-  await expectReject("message fuzz " + JSON.stringify(message), () => client.sessions.run({
+  await expectReject("message fuzz " + JSON.stringify(message), () => client.sessions.start({
     model: "claude-haiku-4-5",
     apiKeys: { anthropic: "sk-ant" },
     message

@@ -3,7 +3,7 @@
  *
  * Matrix test — same assertion body across managed provider cells.
  * Proves the agent ACTUALLY CALLS a remote MCP tool end-to-end:
- *   SDK → POST /runs (with mcpServers wired)
+ *   SDK → POST /sessions (with mcpServers wired)
  *      → dispatcher routes to the managed runtime
  *      → runtime materializes the MCP into the agent manifest
  *      → model picks the MCP tool and the runtime emits a tool_request
@@ -16,7 +16,7 @@
  * model can't reach the MCP, when the proxy mishandles auth, or when the
  * adapter drops the tool_request translation.
  *
- * This file runs the assertion body on a single managed cell:
+ * This file sessions the assertion body on a single managed cell:
  *   - (deepseek, managed)  — managed runtime + DeepSeek via provider-proxy
  *
  * Required env:
@@ -69,8 +69,8 @@ const CELLS: readonly Cell[] = [
 ];
 
 interface CaseResult {
-  readonly runId: string;
-  readonly runStatus: string;
+  readonly sessionId: string;
+  readonly sessionStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly eventCount: number;
@@ -135,7 +135,7 @@ function buildScript(cell: Cell): string {
       url: ${JSON.stringify(MCP_URL)}
     });
 
-    const runResult = await client.run({
+    const sessionResult = await client.start({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
@@ -149,17 +149,17 @@ function buildScript(cell: Cell): string {
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
-    const runId = runResult.runId;
+    const sessionId = sessionResult.sessionId;
     const run = {
-      status: runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed"),
+      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
     let events = fallbackEvents;
     try {
-      const session = await client.sessions.open(runId);
+      const session = await client.sessions.open(sessionId);
       const listedEvents = await session.events().list();
       if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
     } catch {
@@ -184,9 +184,9 @@ function buildScript(cell: Cell): string {
 
     const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
     const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
     const terminalData = terminal && isSessionIdle(terminal)
       ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
       : terminal ? terminal.data : null;
@@ -197,8 +197,8 @@ function buildScript(cell: Cell): string {
     const serialized = JSON.stringify({ run, events });
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
-      runId: runId,
-      runStatus: run.status,
+      sessionId: sessionId,
+      sessionStatus: session.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       eventCount: events.length,
@@ -207,7 +207,7 @@ function buildScript(cell: Cell): string {
       toolResponses,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "RUN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
       terminalData,
       streamErrors,
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
@@ -219,8 +219,8 @@ function buildScript(cell: Cell): string {
 
 function dumpResult(cell: Cell, result: CaseResult): string {
   const lines: string[] = [];
-  lines.push(`cell=${cell.id} runId=${result.runId}`);
-  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`cell=${cell.id} sessionId=${result.sessionId}`);
+  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
   lines.push(
@@ -281,7 +281,7 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       const result = await runCell(cell, install.installDir);
       const dump = (): string => dumpResult(cell, result);
 
-      expect(result.runStatus, dump()).toBe("succeeded");
+      expect(result.sessionStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
 
@@ -289,7 +289,7 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       // (Some runtimes emit preflight notifications before runtime_started,
       // so we don't pin position 0 — the existence of the started event is
       // what matters.)
-      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalKind).toBe("TURN_FINISHED");
       // Every clean terminal MUST carry reason="complete" — both adapters
       // always populate reason on the success path. Tolerating `undefined`
       // (pre-Phase-1) was masking field-loss regressions.

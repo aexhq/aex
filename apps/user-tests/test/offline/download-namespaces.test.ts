@@ -1,13 +1,13 @@
 /**
  * Offline scenario: download-namespaces.test.ts
  *
- * Verifies the run-artifact download surface ships in the *installed*
+ * Verifies the session-artifact download surface ships in the *installed*
  * package — no live API required:
  *
  *   - `SessionHandle` exposes the whole-run verb `download` and the metadata
  *     verb `downloadMetadata` flat, plus the per-namespace download verbs via
  *     its `outputs().download()` / `events().download()` accessors.
- *   - The installed SDK assembles a public run archive from metadata, events,
+ *   - The installed SDK assembles a public session archive from metadata, events,
  *     and outputs only; it must not call the removed logs namespace or event
  *     channel opt-in routes.
  *   - The CLI `download` command validates `--only <namespace>` BEFORE any
@@ -15,7 +15,7 @@
  *     documented "must be one of" usage error, and the bare-usage banner
  *     advertises the flag.
  *
- * Every assertion runs against `node_modules/@aexhq/sdk` in a fresh install
+ * Every assertion sessions against `node_modules/@aexhq/sdk` in a fresh install
  * tempdir, so it exercises the published shape, not the monorepo symlink.
  */
 import { existsSync, writeFileSync } from "node:fs";
@@ -67,7 +67,7 @@ describe("download namespaces surface (offline)", () => {
       };
       // The old flat per-namespace verbs folded into the outputs()/events()
       // accessors; the removed logs verbs stay gone everywhere.
-      for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getRunDebugLogs", "debugLogs"]) {
+      for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
         result.session[removed] = typeof session[removed];
         result.client[removed] = typeof c[removed];
       }
@@ -84,7 +84,7 @@ describe("download namespaces surface (offline)", () => {
     for (const v of ["download", "downloadMetadata"]) {
       expect(result.client[v], `Aex.${v} should not be exposed`).toBe("undefined");
     }
-    for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getRunDebugLogs", "debugLogs"]) {
+    for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
       expect(result.session[removed], `SessionHandle.${removed} should not be exposed`).toBe("undefined");
       expect(result.client[removed], `Aex.${removed} should not be exposed`).toBe("undefined");
     }
@@ -104,26 +104,26 @@ describe("download namespaces surface (offline)", () => {
         }
         // Opening the session handle reads the session record; keep it out of
         // the asserted archive-assembly call set.
-        if (key === "/api/sessions/run-1") {
-          return new Response(JSON.stringify({ session: { id: "run-1", status: "succeeded" } }), {
+        if (key === "/api/sessions/session-1") {
+          return new Response(JSON.stringify({ session: { id: "session-1", status: "succeeded" } }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
         calls.push(key);
-        if (key === "/api/runs/run-1") {
-          return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), {
+        if (key === "/api/sessions/session-1") {
+          return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
-        if (key === "/api/runs/run-1/events") {
+        if (key === "/api/sessions/session-1/events") {
           return new Response(JSON.stringify({ events: [{ id: "evt-1", type: "TEXT_MESSAGE_CONTENT" }] }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
-        if (key === "/api/runs/run-1/outputs") {
+        if (key === "/api/sessions/session-1/outputs") {
           return new Response(JSON.stringify({
             outputs: [{ id: "out-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
           }), {
@@ -131,14 +131,14 @@ describe("download namespaces surface (offline)", () => {
             headers: { "content-type": "application/json" }
           });
         }
-        if (key === "/api/runs/run-1/outputs/out-1/download") {
+        if (key === "/api/sessions/session-1/outputs/out-1/download") {
           return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
         }
         throw new Error("unexpected route: " + key);
       };
 
       const client = new Aex({ apiKey: "t", baseUrl: "https://example.test", fetch });
-      const session = await client.sessions.open("run-1");
+      const session = await client.sessions.open("session-1");
       const entries = unzipSync(await session.download());
       const manifest = JSON.parse(strFromU8(entries["manifest.json"]));
       process.stdout.write(JSON.stringify({
@@ -161,15 +161,15 @@ describe("download namespaces surface (offline)", () => {
       readonly outputText: string;
     };
     expect([...result.calls].sort()).toEqual([
-      "/api/runs/run-1",
-      "/api/runs/run-1/events",
-      "/api/runs/run-1/outputs",
-      "/api/runs/run-1/outputs/out-1/download"
+      "/api/sessions/session-1",
+      "/api/sessions/session-1/events",
+      "/api/sessions/session-1/outputs",
+      "/api/sessions/session-1/outputs/out-1/download"
     ].sort());
     expect(result.entries).toEqual([
       "events/events.jsonl",
       "manifest.json",
-      "metadata/run.json",
+      "metadata/session.json",
       "outputs/report.txt"
     ]);
     expect(result.manifestNamespaces).toEqual(["metadata", "events", "outputs"]);
@@ -179,7 +179,7 @@ describe("download namespaces surface (offline)", () => {
 
   it("`aex download` usage advertises --only and its namespaces", async () => {
     expect(existsSync(binPath)).toBe(true);
-    // No run id → usage error (exit 2) that lists the --only namespaces.
+    // No session id → usage error (exit 2) that lists the --only namespaces.
     const result = await runCommand(
       binPath,
       ["download", "--api-key", "t", "--aex-url", "https://example.test"],
@@ -192,7 +192,7 @@ describe("download namespaces surface (offline)", () => {
   it("`aex download --only logs` rejects as a removed public namespace", async () => {
     const result = await runCommand(
       binPath,
-      ["download", "run-x", "--only", "logs", "--api-key", "t", "--aex-url", "https://example.test"],
+      ["download", "session-x", "--only", "logs", "--api-key", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
@@ -202,7 +202,7 @@ describe("download namespaces surface (offline)", () => {
   it("`aex download --only <bogus>` rejects before any network call", async () => {
     const result = await runCommand(
       binPath,
-      ["download", "run-x", "--only", "bogus", "--api-key", "t", "--aex-url", "https://example.test"],
+      ["download", "session-x", "--only", "bogus", "--api-key", "t", "--aex-url", "https://example.test"],
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);

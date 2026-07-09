@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  RUN_PROVIDERS,
-  type RunProvider
+  PROVIDERS,
+  type ProviderName
 } from "../../packages/contracts/src/submission.js";
 import {
   PROVIDER_PUBLIC_SUPPORT,
@@ -19,7 +19,7 @@ import {
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
-function liveEvidencePointers(provider: RunProvider): readonly SupportPointer[] {
+function liveEvidencePointers(provider: ProviderName): readonly SupportPointer[] {
   return PROVIDER_PUBLIC_SUPPORT[provider].evidence.filter((pointer) =>
     pointer.href.includes("apps/user-tests/test/live/")
   );
@@ -57,7 +57,7 @@ describe("provider/runtime capability matrix generation", () => {
 
   it("keeps public support facts complete and anchor-safe", () => {
     const anchors = new Set<string>();
-    for (const provider of RUN_PROVIDERS) {
+    for (const provider of PROVIDERS) {
       const support = PROVIDER_PUBLIC_SUPPORT[provider];
       expect(support.docsAnchor).toMatch(/^[a-z0-9-]+$/);
       expect(anchors.has(support.docsAnchor)).toBe(false);
@@ -68,7 +68,7 @@ describe("provider/runtime capability matrix generation", () => {
   });
 
   it("keeps the public registry and generated rows supported-only", () => {
-    for (const provider of RUN_PROVIDERS) {
+    for (const provider of PROVIDERS) {
       expect(PROVIDER_PUBLIC_SUPPORT[provider]).not.toHaveProperty("status");
     }
 
@@ -89,7 +89,7 @@ describe("provider/runtime capability matrix generation", () => {
   });
 
   it("lists every public provider as a supported managed-runtime row", () => {
-    for (const provider of RUN_PROVIDERS) {
+    for (const provider of PROVIDERS) {
       const row = buildCapabilityMatrixRows().find((candidate) => candidate.provider === provider);
       expect(row).toBeDefined();
       expect(row?.managedExecution.enforcement).toBe("submission parser + managed execution");
@@ -97,7 +97,7 @@ describe("provider/runtime capability matrix generation", () => {
   });
 
   it("keeps live evidence pointers provider-specific when present", () => {
-    const providers = RUN_PROVIDERS.map((provider) => ({
+    const providers = PROVIDERS.map((provider) => ({
       provider,
       support: PROVIDER_PUBLIC_SUPPORT[provider],
       pointers: liveEvidencePointers(provider)

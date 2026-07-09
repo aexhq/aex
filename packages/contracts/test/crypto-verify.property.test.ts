@@ -72,7 +72,7 @@ describe("verifyAexWebhook (property)", () => {
     const material = Buffer.from("0123456789abcdef0123456789abcdef", "utf8").toString("base64");
     const id = "msg_2KWPBgLlAfxdpx2AI54pPJ85s7";
     const ts = 1700000000;
-    const body = '{"specversion":"1.0","type":"run.finished","subject":"run_42"}';
+    const body = '{"specversion":"1.0","type":"session.finished","subject":"ses_42"}';
     const sig = signWebhook(id, ts, body, material);
     const ok = await verifyAexWebhook({
       rawBody: body,
@@ -101,14 +101,14 @@ describe("verifyAexWebhook (property)", () => {
 
 // --- connection ticket (WS handshake grant) ---------------------------------
 
-const runId = fc.string({ minLength: 1, maxLength: 40 });
+const sessionId = fc.string({ minLength: 1, maxLength: 40 });
 const ticketSecret = fc.string({ minLength: 8, maxLength: 48 });
 const channel = fc.constantFrom<ConnectionTicketChannel>("event", "log", "all");
 
 describe("connection ticket mint/verify (property)", () => {
   it("a freshly minted ticket verifies for its run + channel", async () => {
     await fc.assert(
-      fc.asyncProperty(runId, ticketSecret, channel, async (id, secret, ch) => {
+      fc.asyncProperty(sessionId, ticketSecret, channel, async (id, secret, ch) => {
         const now = Date.now();
         const { ticket } = await mintConnectionTicket(id, secret, now, 60_000, ch);
         expect(await verifyConnectionTicket(ticket, id, secret, now, ch)).toBe(true);
@@ -117,9 +117,9 @@ describe("connection ticket mint/verify (property)", () => {
     );
   });
 
-  it("rejects a wrong runId, wrong secret, wrong channel, or expiry", async () => {
+  it("rejects a wrong sessionId, wrong secret, wrong channel, or expiry", async () => {
     await fc.assert(
-      fc.asyncProperty(runId, ticketSecret, channel, async (id, secret, ch) => {
+      fc.asyncProperty(sessionId, ticketSecret, channel, async (id, secret, ch) => {
         const now = Date.now();
         const { ticket, expiresAtMs } = await mintConnectionTicket(id, secret, now, 60_000, ch);
         expect(await verifyConnectionTicket(ticket, `${id}X`, secret, now, ch)).toBe(false);
@@ -134,7 +134,7 @@ describe("connection ticket mint/verify (property)", () => {
 
   it("rejects a tampered MAC and never throws on a junk ticket string", async () => {
     await fc.assert(
-      fc.asyncProperty(runId, ticketSecret, fc.string({ maxLength: 80 }), async (id, secret, junk) => {
+      fc.asyncProperty(sessionId, ticketSecret, fc.string({ maxLength: 80 }), async (id, secret, junk) => {
         const now = Date.now();
         const { ticket } = await mintConnectionTicket(id, secret, now);
         // flip the last hex char of the MAC

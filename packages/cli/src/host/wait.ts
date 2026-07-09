@@ -2,7 +2,7 @@
  * `aex wait <session-id> [--timeout <dur>] [--interval <dur>]`
  *
  * Block until the session parks — reaches `idle`/`suspended`/`error` or a
- * terminal run status (the host-side mirror of the SDK's `session.wait()`),
+ * terminal session status (the host-side mirror of the SDK's `session.wait()`),
  * then print the final `Session` record as JSON. Exits 0 when the session
  * parked cleanly (`idle`/`suspended`), RUNTIME_ERR on a non-clean park
  * (`error`/`failed`/…), and TIMEOUT_ERR when the `--timeout` deadline elapsed
@@ -27,14 +27,14 @@ import {
   resolveCommonHostFlags,
   parseDuration,
   rejectUnknownFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
 
 const DEFAULT_INTERVAL_MS = 2_000;
 
-export async function runWaitCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "wait")) return USAGE_ERR;
+export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "wait")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

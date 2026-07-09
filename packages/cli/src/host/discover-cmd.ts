@@ -2,7 +2,7 @@
  * Discoverability list commands (DX2): `aex models|providers|tools|runtime-sizes list`.
  *
  * Pure reads of the closed `@aexhq/contracts` SSoT sets — zero drift, no token,
- * no network — so they work on a host AND inside a managed run container (like
+ * no network — so they work on a host AND inside a managed session container (like
  * `--help`). Default output is a fixed-width human table; `--json` emits the raw
  * array for scripting.
  */
@@ -11,14 +11,14 @@ import {
   DEFAULT_BUILTIN_TOOLS,
   DEFAULT_RUNTIME_SIZE,
   PROVIDER_PUBLIC_SUPPORT,
-  RUN_MODELS,
-  RUN_MODELS_BY_PROVIDER,
-  RUN_PROVIDERS,
+  SUPPORTED_MODELS,
+  SUPPORTED_MODELS_BY_PROVIDER,
+  PROVIDERS,
   RUNTIME_SIZES,
   RUNTIME_SIZE_PRESETS,
   providerForModel,
   providersForModel,
-  type RunProvider
+  type ProviderName
 } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
 import { type CliExitCode, SUCCESS, USAGE_ERR, rejectUnknownFlags, takeBooleanFlag } from "./common.js";
@@ -42,10 +42,10 @@ function wantsJson(argv: readonly string[]): { json: boolean; rest: readonly str
   return { json: present, rest: remaining };
 }
 
-export function runModelsCmd(io: CliIO, argv: readonly string[]): CliExitCode {
+export function modelNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
   const { json, rest } = wantsJson(stripListSubcommand(argv));
   if (hasUnknown(io, rest, "models")) return USAGE_ERR;
-  const entries = RUN_MODELS.map((model) => ({
+  const entries = SUPPORTED_MODELS.map((model) => ({
     model,
     defaultProvider: providerForModel(model) ?? null,
     providers: providersForModel(model)
@@ -62,13 +62,13 @@ export function runModelsCmd(io: CliIO, argv: readonly string[]): CliExitCode {
   return SUCCESS;
 }
 
-export function runProvidersCmd(io: CliIO, argv: readonly string[]): CliExitCode {
+export function providerNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
   const { json, rest } = wantsJson(stripListSubcommand(argv));
   if (hasUnknown(io, rest, "providers")) return USAGE_ERR;
-  const entries = RUN_PROVIDERS.map((provider) => ({
+  const entries = PROVIDERS.map((provider) => ({
     provider,
-    displayName: PROVIDER_PUBLIC_SUPPORT[provider as RunProvider].displayName,
-    models: RUN_MODELS_BY_PROVIDER[provider as RunProvider] ?? []
+    displayName: PROVIDER_PUBLIC_SUPPORT[provider as ProviderName].displayName,
+    models: SUPPORTED_MODELS_BY_PROVIDER[provider as ProviderName] ?? []
   }));
   if (json) {
     io.stdout(JSON.stringify(entries) + "\n");
@@ -82,7 +82,7 @@ export function runProvidersCmd(io: CliIO, argv: readonly string[]): CliExitCode
   return SUCCESS;
 }
 
-export function runToolsCmd(io: CliIO, argv: readonly string[]): CliExitCode {
+export function executeToolsCmd(io: CliIO, argv: readonly string[]): CliExitCode {
   const { json, rest } = wantsJson(stripListSubcommand(argv));
   if (hasUnknown(io, rest, "tools")) return USAGE_ERR;
   const entries = BUILTIN_TOOL_NAMES.map((name) => ({
@@ -101,7 +101,7 @@ export function runToolsCmd(io: CliIO, argv: readonly string[]): CliExitCode {
   return SUCCESS;
 }
 
-export function runRuntimeSizesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
+export function executeRuntimeSizesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
   const { json, rest } = wantsJson(stripListSubcommand(argv));
   if (hasUnknown(io, rest, "runtime-sizes")) return USAGE_ERR;
   const entries = RUNTIME_SIZES.map((size) => ({

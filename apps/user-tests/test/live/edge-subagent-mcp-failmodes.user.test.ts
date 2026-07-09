@@ -8,7 +8,7 @@
  * -- Finding 1 (FIXED): invalid-model subagent must never zombie -------------
  * The in-process child admit path now validates model/provider before writing a
  * child row. The parent should see a subagent tool error (400 invalid_model) and
- * no queued child run should remain. If a child run id is ever returned, it must
+ * no queued child session should remain. If a child session id is ever returned, it must
  * reach a terminal status within the poll window.
  *
  * -- Finding 2 (FIXED): documented inline MCP host must not hit egress deny ----
@@ -16,9 +16,9 @@
  * Context7 endpoint (`https://mcp.context7.com/mcp`) used to be absent from the
  * managed egress ceiling, so discovery failed at the boundary with HTTP 407 and
  * the whole run crashed `boot_failed` before any agent work. The regression now
- * asserts that Context7 discovery reaches the server and the run survives.
+ * asserts that Context7 discovery reaches the server and the session survives.
  *
- * Cost: two tiny deepseek runs. The Finding-1 parent is cancelled after the
+ * Cost: two tiny deepseek sessions. The Finding-1 parent is cancelled after the
  * probe to release its container promptly.
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
@@ -110,7 +110,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
           'You have a tool named "subagent" that delegates a task to a child agent run. ' +
           'Call the subagent tool EXACTLY ONCE with: model set to "totally-invalid-model-zzz9", and ' +
           'prompt set to "say hi". Report the tool result you got, then STOP. Do not retry.';
-        // Create first so diagnostics always include the parent run id, even if
+        // Create first so diagnostics always include the parent session id, even if
         // the turn throws or times out.
         const parent = await client.sessions.create({
           provider: PROVIDER,
@@ -119,7 +119,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           overrides: { maxSpendUsd: 0.10, idleTtl: "3m" }
         });
-        const parentRunId = parent.id;
+        const parentSessionId = parent.id;
 
         let sendResult = null, sendThrown = null;
         try {
@@ -130,8 +130,8 @@ describe("live DEV — subagent + MCP failure modes", () => {
         }
 
         let childId = null, subResults = [], subStarts = 0;
-        if (parentRunId) {
-          const h = await client.sessions.open(parentRunId);
+        if (parentSessionId) {
+          const h = await client.sessions.open(parentSessionId);
           const evs = await h.events().list();
           const subStartIds = new Set(
             evs
@@ -147,7 +147,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
               const t = Array.isArray(c) ? c.map((b) => (b && b.text) || "").join(" ") : typeof c === "string" ? c : "";
               return { isError: e.data && e.data.isError === true, text: t };
             });
-          const m = JSON.stringify(subResults).match(/\\brun_[0-9a-f]{32}\\b/i);
+          const m = JSON.stringify(subResults).match(/\\bses_[0-9a-f]{32}\\b/i);
           childId = m ? m[0] : null;
         }
 
@@ -168,10 +168,10 @@ describe("live DEV — subagent + MCP failure modes", () => {
           // Clean up: cancel the zombie child + the parent to release compute.
           await client.sessions.open(childId).then((h) => h.cancel()).catch(() => {});
         }
-        if (parentRunId) await client.sessions.open(parentRunId).then((h) => h.cancel()).catch(() => {});
+        if (parentSessionId) await client.sessions.open(parentSessionId).then((h) => h.cancel()).catch(() => {});
 
         console.log(JSON.stringify({
-          parentRunId,
+          parentSessionId,
           childId,
           childStatus,
           childTerminal,
@@ -185,12 +185,12 @@ describe("live DEV — subagent + MCP failure modes", () => {
       );
 
       const dump = JSON.stringify(out).slice(0, 1200);
-      expect(out.parentRunId, `parent run id was not captured: ${dump}`).toBeTruthy();
+      expect(out.parentSessionId, `parent session id was not captured: ${dump}`).toBeTruthy();
       expect(out.subStarts, `model did not call the subagent tool; diagnostics: ${dump}`).toBeGreaterThan(0);
       const subResults = Array.isArray(out.subResults) ? out.subResults as Array<{ isError?: boolean; text?: string }> : [];
       const joined = JSON.stringify(subResults);
       expect(joined, `subagent tool result did not surface invalid-model admission error: ${dump}`).toMatch(/invalid_model|POST|400|model/i);
-      expect(!out.childId || out.childTerminal, `child run was created but did not terminalize: ${dump}`).toBe(true);
+      expect(!out.childId || out.childTerminal, `child session was created but did not terminalize: ${dump}`).toBe(true);
     },
     12 * 60_000
   );
@@ -205,7 +205,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
         // mcp.context7.com is a documented public MCP baseline. Discovery must not
         // fail at the managed egress ceiling with a proxy/allowlist denial.
         const out = {
-          runId: null,
+          sessionId: null,
           createThrown: null,
           sendThrown: null,
           sendResult: null,
@@ -219,7 +219,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
             mcpServers: [McpServer.remote({ name: "probe", url: "https://mcp.context7.com/mcp" })],
             apiKeys: { [PROVIDER]: PROVIDER_KEY }, overrides: { maxSpendUsd: 0.05, idleTtl: "3m" } }
           );
-          out.runId = session.id;
+          out.sessionId = session.id;
           try {
             const r = await session.send("List your MCP tools and stop.", { idleTimeoutMs: 6 * 60_000 }).done();
             out.sendResult = { status: r.status, text: String(r.text || "").slice(0, 300) };
@@ -257,8 +257,8 @@ describe("live DEV — subagent + MCP failure modes", () => {
       );
 
       const dump = JSON.stringify(out).slice(0, 1200);
-      expect(out.createThrown, `MCP session create failed before a run id was captured: ${dump}`).toBeNull();
-      expect(out.runId, `MCP session id was not captured: ${dump}`).toBeTruthy();
+      expect(out.createThrown, `MCP session create failed before a session id was captured: ${dump}`).toBeNull();
+      expect(out.sessionId, `MCP session id was not captured: ${dump}`).toBeTruthy();
       const record = out.record as { status?: string; failureClass?: string; errorMessage?: string } | null;
       expect(record?.failureClass, `MCP discovery still failed at boot: ${dump}`).not.toBe("boot_failed");
       expect(record?.errorMessage ?? "", `MCP discovery still hit egress policy: ${dump}`).not.toMatch(

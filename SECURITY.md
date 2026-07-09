@@ -33,8 +33,8 @@ Out of scope:
 ## BYOK and secret handling
 
 `aex` is bring-your-own-key. Provider keys and MCP credentials
-travel inline with each run and are held in run-scoped custody for the
-run lifecycle. aex attempts terminal cleanup/revocation for
+travel inline with each session and are held in session-scoped custody for the
+session lifecycle. aex attempts terminal cleanup/revocation for
 aex-controlled references; provider-side credentials, sessions, and data
 remain subject to the selected provider account's policies. Reports related to
 secret leakage, persistence beyond a run, or cross-tenant secret exposure are

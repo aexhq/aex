@@ -54,8 +54,8 @@ async function close(server: ReturnType<typeof createServer>): Promise<void> {
 }
 
 describe("corrupted skill failure live runner", () => {
-  it("polls an accepted run to terminal failure before reporting the failure contract", async () => {
-    const runId = "run_fake_corrupted_skill";
+  it("polls an accepted session to terminal failure before reporting the failure contract", async () => {
+    const sessionId = "ses_fake_corrupted_skill";
     const requests: string[] = [];
     let origin = "";
     let runPolls = 0;
@@ -86,19 +86,19 @@ describe("corrupted skill failure live runner", () => {
           json(res, 200, { ok: true });
           return;
         }
-        if (method === "POST" && url.pathname === "/api/runs") {
+        if (method === "POST" && url.pathname === "/api/sessions") {
           await drain(req);
-          json(res, 202, { id: runId, runId });
+          json(res, 202, { id: sessionId, sessionId });
           return;
         }
-        if (method === "GET" && url.pathname === `/api/runs/${runId}`) {
+        if (method === "GET" && url.pathname === `/api/sessions/${sessionId}`) {
           runPolls += 1;
           if (runPolls === 1) {
-            json(res, 200, { id: runId, status: "running" });
+            json(res, 200, { id: sessionId, status: "running" });
             return;
           }
           json(res, 200, {
-            id: runId,
+            id: sessionId,
             status: "failed",
             errorMessage:
               "BootMaterializeError: boot materialize failed: materialize failed: skill bundle 'corrupt-skill' is unmaterializable (missing_SKILL.md)",
@@ -106,13 +106,13 @@ describe("corrupted skill failure live runner", () => {
           });
           return;
         }
-        if (method === "GET" && url.pathname === `/api/runs/${runId}/events`) {
+        if (method === "GET" && url.pathname === `/api/sessions/${sessionId}/events`) {
           json(res, 200, {
             events: [
-              { type: "RUN_STARTED", runId },
+              { type: "TURN_STARTED", sessionId },
               {
-                type: "RUN_ERROR",
-                runId,
+                type: "TURN_ERROR",
+                sessionId,
                 data: {
                   reason: "failed",
                   failureClass: "setup_failed",
@@ -154,11 +154,11 @@ describe("corrupted skill failure live runner", () => {
       const result = JSON.parse(child.stdout) as {
         readonly submitOk: boolean;
         readonly submitStatus: number;
-        readonly runId: string | null;
-        readonly runStatus: string | null;
-        readonly runPollStatus: number | null;
-        readonly runPollAttempts: number;
-        readonly runErrorMessage: string | null;
+        readonly sessionId: string | null;
+        readonly sessionStatus: string | null;
+        readonly sessionPollStatus: number | null;
+        readonly sessionPollAttempts: number;
+        readonly sessionErrorMessage: string | null;
         readonly terminalKind: string | null;
         readonly terminalData: Record<string, unknown> | null;
         readonly eventKinds: readonly string[];
@@ -166,16 +166,16 @@ describe("corrupted skill failure live runner", () => {
 
       expect(result.submitOk).toBe(true);
       expect(result.submitStatus).toBe(202);
-      expect(result.runId).toBe(runId);
-      expect(result.runStatus).toBe("failed");
-      expect(result.runPollStatus).toBe(200);
-      expect(result.runPollAttempts).toBeGreaterThanOrEqual(2);
-      expect(result.runErrorMessage).toContain("BootMaterializeError");
-      expect(result.terminalKind).toBe("RUN_ERROR");
+      expect(result.sessionId).toBe(sessionId);
+      expect(result.sessionStatus).toBe("failed");
+      expect(result.sessionPollStatus).toBe(200);
+      expect(result.sessionPollAttempts).toBeGreaterThanOrEqual(2);
+      expect(result.sessionErrorMessage).toContain("BootMaterializeError");
+      expect(result.terminalKind).toBe("TURN_ERROR");
       expect(result.terminalData?.["failureClass"]).toBe("setup_failed");
-      expect(result.eventKinds).toContain("RUN_ERROR");
-      expect(requests).toContain(`GET /api/runs/${runId}`);
-      expect(requests).toContain(`GET /api/runs/${runId}/events?limit=1000`);
+      expect(result.eventKinds).toContain("TURN_ERROR");
+      expect(requests).toContain(`GET /api/sessions/${sessionId}`);
+      expect(requests).toContain(`GET /api/sessions/${sessionId}/events?limit=1000`);
     } finally {
       await close(server).catch(() => undefined);
       rmSync(dir, { recursive: true, force: true });

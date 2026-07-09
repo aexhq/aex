@@ -15,7 +15,7 @@ import {
   SKILLS_MAX,
   SKILLS_TOOL_DEFINITION,
   SKILLS_TOOL_NAME,
-  parseRunSubmissionRequest,
+  parseSessionSubmissionRequest,
   parseSkills,
   sha256
 } from "../src/index.js";
@@ -84,14 +84,14 @@ describe("parseSkills — name-only refs", () => {
 
 describe("submission ingress — skills vs tools vs resolvedSkills", () => {
   it("parses submission.skills through the full request parser", () => {
-    const parsed = parseRunSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }]));
+    const parsed = parseSessionSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }]));
     expect(parsed.submission.skills).toEqual([{ kind: "skill", name: "alpha" }]);
   });
 
   it("rejects a kind:'skill' entry inside submission.tools with a redirect", () => {
     const req = baseRequest();
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...req,
         submission: {
           ...req.submission,
@@ -113,8 +113,8 @@ describe("submission ingress — skills vs tools vs resolvedSkills", () => {
         ]
       }
     };
-    expect(() => parseRunSubmissionRequest(withResolved)).toThrow(/platform-internal/);
-    const reparsed = parseRunSubmissionRequest(withResolved, { trustedReparse: true });
+    expect(() => parseSessionSubmissionRequest(withResolved)).toThrow(/platform-internal/);
+    const reparsed = parseSessionSubmissionRequest(withResolved, { trustedReparse: true });
     expect(reparsed.submission.resolvedSkills).toEqual([
       { kind: "skill", assetId: `asset_${"a".repeat(64)}`, name: "alpha", description: "Alpha skill." }
     ]);
@@ -127,19 +127,19 @@ describe("idempotency — name-only skills into the hashed submission", () => {
   it("hashes EQUAL when only the (unhashed) bytes would differ — i.e. same name", () => {
     // The wire submission carries name-only refs, so 'different bytes, same name'
     // is not even expressible here: both requests serialise identically.
-    const a = parseRunSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
-    const b = parseRunSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
+    const a = parseSessionSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
+    const b = parseSessionSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
     expect(sha256(a)).toBe(sha256(b));
   });
 
   it("hashes DIFFERENTLY when the skill NAME differs", () => {
-    const a = parseRunSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
-    const b = parseRunSubmissionRequest(withSkills([{ kind: "skill", name: "beta" }])).submission;
+    const a = parseSessionSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
+    const b = parseSessionSubmissionRequest(withSkills([{ kind: "skill", name: "beta" }])).submission;
     expect(sha256(a)).not.toBe(sha256(b));
   });
 
   it("resolvedSkills is derived, not hashed: it never appears on the ingress submission", () => {
-    const parsed = parseRunSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
+    const parsed = parseSessionSubmissionRequest(withSkills([{ kind: "skill", name: "alpha" }])).submission;
     expect("resolvedSkills" in parsed).toBe(false);
   });
 });

@@ -2,7 +2,7 @@
  * Blackbox coverage for output-body transfer resilience through a clean
  * installed package. The test never imports workspace internals: a consumer
  * script imports `@aexhq/sdk`, injects a fake fetch, and observes only the
- * public `sessions.outputs(runId)` API.
+ * public `sessions.outputs(sessionId)` API.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +51,7 @@ function makeFetch() {
   const fetch = async (input, init = {}) => {
     const path = requestPath(input);
     calls.push({ method: String(init.method || "GET").toUpperCase(), path });
-    if (path === "/api/runs/run-1/outputs") {
+    if (path === "/api/sessions/session-1/outputs") {
       return jsonResponse({
         outputs: [
           { id: "out-read", filename: "read.txt", sizeBytes: 16, contentType: "text/plain" },
@@ -61,7 +61,7 @@ function makeFetch() {
         ]
       });
     }
-    const match = /^\/api\/runs\/run-1\/outputs\/([^/]+)\/download$/.exec(path);
+    const match = /^\/api\/sessions\/session-1\/outputs\/([^/]+)\/download$/.exec(path);
     if (match) {
       const id = match[1];
       const next = (bodyAttempts.get(id) || 0) + 1;
@@ -109,7 +109,7 @@ const client = new Aex({
   fetch: harness.fetch,
   retry: false
 });
-const outputs = client.sessions.outputs("run-1");
+const outputs = client.sessions.outputs("session-1");
 
 const read = await outputs.read({ id: "out-read" }, { timeoutMs: 1 });
 strictEqual(read.text, "out-read after retry");

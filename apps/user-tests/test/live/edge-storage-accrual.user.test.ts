@@ -10,8 +10,8 @@
  * real total flows only to internal billing storage. Customers are billed for
  * storage they cannot see.
  *
- * ONE billable run total: produce a single output file with known contents,
- * wait for the run to settle, then poll the public record for a non-zero
+ * ONE billable session turn total: produce a single output file with known contents,
+ * wait for the session to settle, then poll the public record for a non-zero
  * `retainedStorageBytes`.
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
@@ -119,7 +119,7 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
           "Use your shell tool to write exactly 2048 bytes to /workspace/outputs/blob.bin " +
           "(for example: head -c 2048 /dev/zero > /workspace/outputs/blob.bin). " +
           "Create no other files. Then reply with the single word done.";
-        const runResult = await client.run({
+        const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: prompt,
@@ -129,18 +129,18 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
           idempotencyKey: "edge-storage-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
 
-        const session = await client.sessions.open(runResult.runId);
+        const session = await client.sessions.open(sessionResult.sessionId);
         const outs = await session.outputs();
         const listed = await outs.list();
         const blob = listed.find((o) => (o.filename || "").endsWith("blob.bin")) || null;
 
         // Poll the PUBLIC record for a non-zero retained byte total. Settle
-        // runs right after the turn finishes; 3 minutes is generous.
+        // sessions right after the turn finishes; 3 minutes is generous.
         let retained = 0;
         let polls = 0;
         const deadline = Date.now() + 3 * 60_000;
         while (Date.now() < deadline) {
-          const rec = (await client.sessions.open(runResult.runId)).record;
+          const rec = (await client.sessions.open(sessionResult.sessionId)).record;
           polls++;
           const v = rec.retainedStorageBytes;
           if (typeof v === "number" && v > 0) { retained = v; break; }
@@ -148,9 +148,9 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
         }
 
         process.stdout.write(JSON.stringify({
-          runId: runResult.runId,
-          ok: runResult.ok,
-          status: runResult.status,
+          sessionId: sessionResult.sessionId,
+          ok: sessionResult.ok,
+          status: sessionResult.status,
           outputCount: listed.length,
           blobBytes: blob ? blob.sizeBytes ?? null : null,
           retainedStorageBytes: retained,
@@ -159,7 +159,7 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
         process.exit(0);
       `;
       const out = (await runChild(install, "edge-storage-A.mjs", body)) as {
-        runId: string;
+        sessionId: string;
         ok: boolean;
         status: string;
         outputCount: number;
@@ -168,8 +168,8 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
         polls: number;
       };
 
-      // The run itself must have produced and retained the output.
-      expect(out.ok, `run ${out.runId} did not complete ok (status=${out.status})`).toBe(true);
+      // The session itself must have produced and retained the output.
+      expect(out.ok, `run ${out.sessionId} did not complete ok (status=${out.status})`).toBe(true);
       expect(
         (out.blobBytes ?? 0) > 0,
         `blob.bin missing or empty in captured outputs (count=${out.outputCount}, bytes=${out.blobBytes})`
@@ -181,11 +181,11 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
       // updated by any later code path — customers pay for retained bytes
       // they cannot see on any public surface. This assertion states the
       // contractually sensible behavior (field reflects retained bytes once
-      // the run settles); it fails today and goes green when the plane
+      // the session settles); it fails today and goes green when the plane
       // writes the settle-time outputsSummary total onto the record.
       expect(
         out.retainedStorageBytes,
-        `run ${out.runId} retains ${out.blobBytes ?? "?"} bytes of captured output (settled, ` +
+        `run ${out.sessionId} retains ${out.blobBytes ?? "?"} bytes of captured output (settled, ` +
           `polled ${out.polls}x over 3 min) but the public session record still reports ` +
           `retainedStorageBytes=0 — retained storage is billed yet invisible to the customer`
       ).toBeGreaterThan(0);

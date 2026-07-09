@@ -4,18 +4,18 @@
  * The findings this pins closed, all through the public event surface:
  *   H3   every event carries a FINITE numeric `sequence` — sorting never yields
  *        NaN (the loose-projection `sequence===undefined` runtime lie).
- *   H2   one identity scheme: `id === ${runId}:${sequence}`, so `list()` and the
+ *   H2   one identity scheme: `id === ${sessionId}:${sequence}`, so `list()` and the
  *        turn stream are joinable — the same logical event has ONE identity.
  *   T11a every event is a guard-BEARING view: `isTextMessage()`/`isToolCallStart()`
  *        /`isToolCallResult()` work and NARROW `data`.
  *   T11c the tool START/RESULT join key is discoverable via `toolCallId()`.
- *   WS8  a run's subagent children resolve through the run facade with lineage.
+ *   WS8  a session's subagent children resolve through the session record facade with lineage.
  */
 import { describe, expect, it } from "vitest";
-import type { SessionRunOptions } from "../../../src/index.js";
+import type { SessionStartOptions } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
-const RUN: SessionRunOptions = {
+const SESSION: SessionStartOptions = {
   model: "claude-haiku-4-5",
   message: "write a file",
   apiKeys: { anthropic: "sk-ant" }
@@ -24,7 +24,7 @@ const RUN: SessionRunOptions = {
 describe("blackbox: canonical event identity + lineage", () => {
   it("every event has a finite sequence, a canonical id, and working guard methods", async () => {
     const platform = new FakePlatform();
-    const result = await platform.run(RUN, {
+    const result = await platform.start(SESSION, {
       text: "here is your file",
       tools: [{ callId: "call_1", name: "write_file", result: "ok" }],
       costUsd: 0.01
@@ -38,8 +38,8 @@ describe("blackbox: canonical event identity + lineage", () => {
     const sorted = [...events].sort((a, b) => a.sequence - b.sequence);
     expect(sorted.map((e) => e.sequence)).toEqual([...events].map((e) => e.sequence).sort((a, b) => a - b));
 
-    // H2 — one identity scheme: id === `${runId}:${sequence}`.
-    for (const e of events) expect(e.id).toBe(`${result.runId}:${e.sequence}`);
+    // H2 — one identity scheme: id === `${sessionId}:${sequence}`.
+    for (const e of events) expect(e.id).toBe(`${result.sessionId}:${e.sequence}`);
 
     // T11a — guard methods exist and narrow.
     const text = events.find((e) => e.isTextMessage());
@@ -61,14 +61,14 @@ describe("blackbox: canonical event identity + lineage", () => {
 
   it("events().list() and the turn stream are JOINABLE by id (one identity, two surfaces)", async () => {
     const platform = new FakePlatform();
-    const result = await platform.run(RUN, {
+    const result = await platform.start(SESSION, {
       text: "joinable",
       tools: [{ callId: "call_x", name: "grep", result: "found" }],
       costUsd: 0.01
     });
 
-    // Re-open the run and read the snapshot the LIST endpoint serves.
-    const handle = await platform.aex.openSession(result.runId);
+    // Re-open the session and read the snapshot the LIST endpoint serves.
+    const handle = await platform.aex.openSession(result.sessionId);
     const listed = await handle.events().list();
 
     const listIds = new Set(listed.map((e) => e.id));
@@ -79,25 +79,25 @@ describe("blackbox: canonical event identity + lineage", () => {
     for (const id of streamIds) expect(listIds.has(id)).toBe(true);
     for (const e of listed) {
       expect(Number.isFinite(e.sequence)).toBe(true);
-      expect(e.id).toBe(`${result.runId}:${e.sequence}`);
+      expect(e.id).toBe(`${result.sessionId}:${e.sequence}`);
     }
   });
 
   it("children() resolves each subagent child with its lineage + outcome", async () => {
     const platform = new FakePlatform();
-    const result = await platform.run(RUN, { text: "spawned a subagent", costUsd: 0.02 });
+    const result = await platform.start(SESSION, { text: "spawned a subagent", costUsd: 0.02 });
 
-    platform.setChildren(result.runId, [
-      { id: "child-1", parentRunId: result.runId, depth: 1, status: "succeeded" },
-      { id: "child-2", parentRunId: result.runId, depth: 1, status: "failed" }
+    platform.setChildren(result.sessionId, [
+      { id: "child-1", parentSessionId: result.sessionId, depth: 1, status: "succeeded" },
+      { id: "child-2", parentSessionId: result.sessionId, depth: 1, status: "failed" }
     ]);
 
-    const handle = await platform.aex.openSession(result.runId);
+    const handle = await platform.aex.openSession(result.sessionId);
     const children = await handle.children();
 
     expect(children.map((c) => c.id)).toEqual(["child-1", "child-2"]);
     for (const c of children) {
-      expect(c.parentRunId).toBe(result.runId); // resolvable lineage
+      expect(c.parentSessionId).toBe(result.sessionId); // resolvable lineage
       expect(c.depth).toBe(1);
     }
     expect(children.map((c) => c.status)).toEqual(["succeeded", "failed"]);

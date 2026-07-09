@@ -14,7 +14,7 @@ import { Aex, Models, Sizes } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
 
-const result = await aex.run({
+const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   runtime: Sizes.SHARED_0_25X_1GB,
   system: "You are a concise engineering assistant.",
@@ -41,7 +41,7 @@ console.log(final.text);
 ## CLI smoke test
 
 ```bash
-aex run \
+aex start \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \

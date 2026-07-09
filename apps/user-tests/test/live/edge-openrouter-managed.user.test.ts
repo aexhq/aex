@@ -1,8 +1,8 @@
 /**
- * Live edge-case sweep: openrouter managed runs must fail honestly (or work).
+ * Live edge-case sweep: openrouter managed sessions must fail honestly (or work).
  *
  * REGRESSION PROBE — fixed after the 2026-07-04 dev sweep. Managed OpenRouter
- * runs used to crash BEFORE the first LLM call and burn the whole recovery
+ * sessions used to crash BEFORE the first LLM call and burn the whole recovery
  * budget:
  *
  *   - The api Lambda freezes the CANONICAL model id into the boot
@@ -26,10 +26,10 @@
  * before any provider auth, and after the platform fix the same probe run
  * should surface an HONEST provider auth failure (failureClass
  * "provider-permanent" naming HTTP 401/auth), never "recoveries_exhausted".
- * Repro evidence: run_3b972773ba204cb75519a35199f64397 /
- * run_3bb525927902852f9e501462740b93b5 (dev, 2026-07-04).
+ * Repro evidence: ses_3b972773ba204cb75519a35199f64397 /
+ * ses_3bb525927902852f9e501462740b93b5 (dev, 2026-07-04).
  *
- * Cost: no billable LLM turns today (the run dies pre-LLM), but several
+ * Cost: no billable LLM turns today (the session dies pre-LLM), but several
  * container boots and ~7 minutes of wall clock while the defect stands.
  *
  * Required env: AEX_API_URL, AEX_API_KEY + AEX_USER_TEST_TARBALL/VERSION
@@ -118,9 +118,9 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("edge: openrouter managed run fails honestly", () => {
+describe("edge: openrouter managed session fails honestly", () => {
   it(
-    "an openrouter run with a bad key surfaces a provider auth failure, not a recovery crash-loop",
+    "an openrouter session with a bad key surfaces a provider auth failure, not a recovery crash-loop",
     async () => {
       const body = `
         const out = { sessionId: null, status: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null, pollTrace: [] };

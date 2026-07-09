@@ -1,8 +1,8 @@
 /**
  * `aex deliveries <session-id>` — list a session's webhook delivery attempts
- * via GET /api/runs/{id}/webhook-deliveries and print them as JSON. (The
+ * via GET /api/sessions/{id}/webhook-deliveries and print them as JSON. (The
  * delivery ledger is keyed by the session id; the endpoint keeps its
- * run-namespaced path, matching the SDK's `session.webhooks().list()`.)
+ * session-namespaced path, matching the SDK's `session.webhooks().list()`.)
  */
 import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
@@ -15,11 +15,11 @@ import {
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";
 
-export async function runDeliveriesCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "deliveries")) return USAGE_ERR;
+export async function executeDeliveriesCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "deliveries")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
@@ -38,7 +38,7 @@ export async function runDeliveriesCmd(io: CliIO, argv: readonly string[]): Prom
 
   const http = makeHttpClient(io, common.flags);
   try {
-    const deliveries = await operations.getRunWebhookDeliveries(http, sessionId);
+    const deliveries = await operations.getSessionWebhookDeliveries(http, sessionId);
     io.stdout(JSON.stringify(deliveries) + "\n");
     return SUCCESS;
   } catch (err) {

@@ -1,18 +1,18 @@
 /**
  * Live edge-case sweep: idempotencyKey BODY-MISMATCH semantics.
  *
- * The public contract (apps/docs/content/docs/concepts/runs.md) promises:
+ * The public contract (apps/docs/content/docs/concepts/sessions.md) promises:
  *   "aex hashes the normalized non-secret submission, so a retry with the
  *    same key and same body returns the existing session while a mismatched
  *    body fails with an idempotency conflict."
  *
- * The existing lifecycle tests cover the SAME-body replay half (same runId,
- * no dup billable run). This covers the mismatched-body half: a same-key retry
+ * The existing lifecycle tests cover the SAME-body replay half (same sessionId,
+ * no dup billable session turn). This covers the mismatched-body half: a same-key retry
  * with a different message, model, or runtimeSize must return 409
  * rather than silently replaying the wrong run.
  *
- * ONE billable run total (tiny prompt); the mismatch probes replay/conflict
- * against that run and never start a second billable turn.
+ * ONE billable session turn total (tiny prompt); the mismatch probes replay/conflict
+ * against that session and never start a second billable turn.
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
@@ -133,7 +133,7 @@ afterAll(() => {
 interface MismatchResult {
   readonly errored: boolean;
   readonly error: { name: string; message: string; status: number | null; code: string | null } | null;
-  readonly runId: string | null;
+  readonly sessionId: string | null;
   readonly sameRun: boolean;
 }
 
@@ -152,25 +152,25 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
           idempotencyKey: KEY
         };
 
-        // 1. the ONE billable run
-        const first = await client.run(base, { timeoutMs: 5 * 60_000 });
+        // 1. the ONE billable session turn
+        const first = await client.start(base, { timeoutMs: 5 * 60_000 });
 
         // 2. same key + same body: contract says replay of the SAME run.
         let replay;
         try {
-          const r = await client.run(base, { timeoutMs: 5 * 60_000 });
-          replay = { errored: false, error: null, runId: r.runId, sameRun: r.runId === first.runId };
+          const r = await client.start(base, { timeoutMs: 5 * 60_000 });
+          replay = { errored: false, error: null, sessionId: r.sessionId, sameRun: r.sessionId === first.sessionId };
         } catch (e) {
-          replay = { errored: true, error: errShape(e), runId: null, sameRun: false };
+          replay = { errored: true, error: errShape(e), sessionId: null, sameRun: false };
         }
 
         // 3-5. same key + MISMATCHED body: contract says idempotency conflict.
         async function mismatch(overrides) {
           try {
-            const r = await client.run({ ...base, ...overrides }, { timeoutMs: 5 * 60_000 });
-            return { errored: false, error: null, runId: r.runId, sameRun: r.runId === first.runId };
+            const r = await client.start({ ...base, ...overrides }, { timeoutMs: 5 * 60_000 });
+            return { errored: false, error: null, sessionId: r.sessionId, sameRun: r.sessionId === first.sessionId };
           } catch (e) {
-            return { errored: true, error: errShape(e), runId: null, sameRun: false };
+            return { errored: true, error: errShape(e), sessionId: null, sameRun: false };
           }
         }
         const diffMessage = await mismatch({ message: "Reply with the single word OTHER. Do not use any tools." });
@@ -179,7 +179,7 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
         const diffRuntime = await mismatch({ runtime: "shared-0.25x-1gb" });
 
         process.stdout.write(JSON.stringify({
-          firstRunId: first.runId,
+          firstSessionId: first.sessionId,
           firstOk: first.ok,
           replay,
           diffMessage,
@@ -190,7 +190,7 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
         process.exit(0);
       `;
       const out = (await runChild(install, "edge-idem-A.mjs", body, 9 * 60_000)) as {
-        firstRunId: string;
+        firstSessionId: string;
         firstOk: boolean;
         replay: MismatchResult;
         diffMessage: MismatchResult;
@@ -199,15 +199,15 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
         httpLog: number[];
       };
 
-      expect(typeof out.firstRunId).toBe("string");
-      expect(out.firstRunId.length).toBeGreaterThan(0);
+      expect(typeof out.firstSessionId).toBe("string");
+      expect(out.firstSessionId.length).toBeGreaterThan(0);
 
       // Same key + same body: replay of the SAME run, no error, and the raw
       // createSession POST for it must not be another 201 (no second create).
       expect(out.replay.errored, `same-body replay errored: ${JSON.stringify(out.replay.error)}`).toBe(false);
       expect(
         out.replay.sameRun,
-        `same-body replay returned a DIFFERENT run (${out.replay.runId} vs ${out.firstRunId}) — duplicate billable submit`
+        `same-body replay returned a DIFFERENT run (${out.replay.sessionId} vs ${out.firstSessionId}) — duplicate billable submit`
       ).toBe(true);
       const creates = out.httpLog.filter((s) => s === 201).length;
       expect(creates, `expected exactly one 201 create, raw createSession statuses: ${JSON.stringify(out.httpLog)}`).toBe(1);
@@ -221,7 +221,7 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
         expect(
           probe.errored,
           `same idempotencyKey + ${label} did NOT conflict — server silently replayed run ` +
-            `${probe.runId ?? "?"} (sameRun=${probe.sameRun}); contract requires an idempotency conflict`
+            `${probe.sessionId ?? "?"} (sameRun=${probe.sameRun}); contract requires an idempotency conflict`
         ).toBe(true);
         const status = probe.error?.status ?? 0;
         expect(

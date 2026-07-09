@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseRunSubmissionRequest } from "../src/index.js";
-// `parseRunMachine` / `RunMachine` ride the `export * from "./submission.js"`
-// re-export (like parseRunLimits); pin them via the internal subpath.
-import { parseRunMachine, type RunMachine } from "../src/internal.js";
+import { parseSessionSubmissionRequest } from "../src/index.js";
+// `parseSessionMachine` / `SessionMachine` ride the `export * from "./submission.js"`
+// re-export (like parseSessionLimits); pin them via the internal subpath.
+import { parseSessionMachine, type SessionMachine } from "../src/internal.js";
 
 function baseRequest(overrides: Record<string, unknown> = {}) {
   return {
@@ -21,65 +21,65 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("parseRunMachine (shape gate)", () => {
+describe("parseSessionMachine (shape gate)", () => {
   it("returns undefined when absent", () => {
-    expect(parseRunMachine(undefined)).toBeUndefined();
+    expect(parseSessionMachine(undefined)).toBeUndefined();
   });
 
   it("collapses a no-signal object to undefined", () => {
-    expect(parseRunMachine({})).toBeUndefined();
+    expect(parseSessionMachine({})).toBeUndefined();
   });
 
   it("preserves an explicit spot:true", () => {
-    const machine: RunMachine = { spot: true };
-    expect(parseRunMachine(machine)).toEqual({ spot: true });
+    const machine: SessionMachine = { spot: true };
+    expect(parseSessionMachine(machine)).toEqual({ spot: true });
   });
 
   it("preserves an explicit spot:false", () => {
-    expect(parseRunMachine({ spot: false })).toEqual({ spot: false });
+    expect(parseSessionMachine({ spot: false })).toEqual({ spot: false });
   });
 
   it("rejects a non-boolean spot", () => {
-    expect(() => parseRunMachine({ spot: "yes" })).toThrow(/machine\.spot must be a boolean/);
-    expect(() => parseRunMachine({ spot: 1 })).toThrow(/machine\.spot must be a boolean/);
-    expect(() => parseRunMachine({ spot: null })).toThrow(/machine\.spot must be a boolean/);
+    expect(() => parseSessionMachine({ spot: "yes" })).toThrow(/machine\.spot must be a boolean/);
+    expect(() => parseSessionMachine({ spot: 1 })).toThrow(/machine\.spot must be a boolean/);
+    expect(() => parseSessionMachine({ spot: null })).toThrow(/machine\.spot must be a boolean/);
   });
 
   it("rejects an unknown subfield", () => {
-    expect(() => parseRunMachine({ spot: true, tier: "big" })).toThrow(
+    expect(() => parseSessionMachine({ spot: true, tier: "big" })).toThrow(
       /machine\.tier is not an allowed field/
     );
   });
 
   it("rejects a non-object input", () => {
-    expect(() => parseRunMachine("shared-2x-8gb")).toThrow(/machine must be an object/);
-    expect(() => parseRunMachine(7)).toThrow(/machine must be an object/);
-    expect(() => parseRunMachine([])).toThrow(/machine must be an object/);
+    expect(() => parseSessionMachine("shared-2x-8gb")).toThrow(/machine must be an object/);
+    expect(() => parseSessionMachine(7)).toThrow(/machine must be an object/);
+    expect(() => parseSessionMachine([])).toThrow(/machine must be an object/);
   });
 });
 
 describe("submission parser - machine", () => {
   it("surfaces machine.spot on the parsed request", () => {
-    const parsed = parseRunSubmissionRequest(baseRequest({ machine: { spot: true } }));
+    const parsed = parseSessionSubmissionRequest(baseRequest({ machine: { spot: true } }));
     expect(parsed.machine).toEqual({ spot: true });
   });
 
   it("omits machine when absent (default is standard capacity / spot:false)", () => {
-    expect(parseRunSubmissionRequest(baseRequest()).machine).toBeUndefined();
+    expect(parseSessionSubmissionRequest(baseRequest()).machine).toBeUndefined();
   });
 
   it("omits machine when the object carries no signal", () => {
-    expect(parseRunSubmissionRequest(baseRequest({ machine: {} })).machine).toBeUndefined();
+    expect(parseSessionSubmissionRequest(baseRequest({ machine: {} })).machine).toBeUndefined();
   });
 
   it("rejects an invalid machine value through the full request parser", () => {
-    expect(() => parseRunSubmissionRequest(baseRequest({ machine: { spot: "nope" } }))).toThrow(
+    expect(() => parseSessionSubmissionRequest(baseRequest({ machine: { spot: "nope" } }))).toThrow(
       /machine\.spot must be a boolean/
     );
   });
 
   it("rejects an unknown subfield on machine through the full request parser", () => {
-    expect(() => parseRunSubmissionRequest(baseRequest({ machine: { spot: true, bogus: 1 } }))).toThrow(
+    expect(() => parseSessionSubmissionRequest(baseRequest({ machine: { spot: true, bogus: 1 } }))).toThrow(
       /machine\.bogus is not an allowed field/
     );
   });

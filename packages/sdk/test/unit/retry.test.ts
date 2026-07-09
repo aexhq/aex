@@ -218,7 +218,7 @@ describe("withRetry: transient handling", () => {
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(2);
     expect(slept).toEqual([100]);
-    // The SAME request (idempotency key) is re-issued — no duplicate billable run.
+    // The SAME request (idempotency key) is re-issued — no duplicate billable session turn.
     expect((calls[0]!.headers as Record<string, string>)["Idempotency-Key"]).toBe("k1");
     expect((calls[1]!.headers as Record<string, string>)["Idempotency-Key"]).toBe("k1");
   });

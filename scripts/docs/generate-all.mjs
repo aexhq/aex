@@ -19,8 +19,8 @@ const publicSurface = await readPublicSurface();
 const guideSources = [
   ["quickstart.md", "quickstart"],
   ["authentication.md", "authentication"],
-  ["run-config.md", "run-config"],
-  ["run-record.md", "run-record"],
+  ["session-config.md", "session-config"],
+  ["session-record.md", "session-record"],
   ["limits.md", "limits"],
   ["defaults.md", "defaults"],
   ["limits-and-quotas.md", "limits-and-quotas"],
@@ -40,7 +40,7 @@ const guideSources = [
 ];
 
 const conceptSources = [
-  ["runs.md", "runs"],
+  ["sessions.md", "sessions"],
   ["composition.md", "composition"],
   ["providers-and-runtimes.md", "providers-and-runtimes"],
   ["agent-tools.md", "agent-tools"],
@@ -335,7 +335,7 @@ async function generateLlmsFiles() {
     `- [Overview](${publicDocsBase}/)`,
     `- [Features](${publicDocsBase}/features/)`,
     `- [Quickstart](${publicDocsBase}/guides/quickstart/)`,
-    `- [Runs](${publicDocsBase}/concepts/runs/)`,
+    `- [Sessions](${publicDocsBase}/concepts/sessions/)`,
     `- [Composition](${publicDocsBase}/concepts/composition/)`,
     `- [Providers & Runtimes](${publicDocsBase}/concepts/providers-and-runtimes/)`,
     `- [Secrets](${publicDocsBase}/guides/secrets/)`,

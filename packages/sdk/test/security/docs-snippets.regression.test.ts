@@ -8,8 +8,8 @@
  * The README and `packages/sdk/docs/*.md` have drifted before by advertising
  * removed or nonexistent helpers (`Skill.fromId(...)`, `uploadIfChanged(...)`,
  * two-arg `submit(...)`, etc.). The session redesign then DELETED `submit()` and
- * the entire run-id-addressed client surface (`getRun` / `stream` / `wait` /
- * `listRuns` / `readOutputText` / `download*` / `cancel` on the client) and
+ * the entire session-id-addressed client surface (`getSessionRecord` / `stream` / `wait` /
+ * `listSessionRecords` / `readOutputText` / `download*` / `cancel` on the client) and
  * folded everything into sessions. The docs must teach the session surface and
  * must not resurrect the removed one.
  *
@@ -82,15 +82,15 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const missing: string[] = [];
 
     // Client-level operations the docs call as `aex.<method>(...)`.
-    for (const key of ["openSession", "run", "whoami", "deleteWorkspaceAsset"]) {
+    for (const key of ["openSession", "start", "whoami", "deleteWorkspaceAsset"]) {
       if (!isFn(Aex.prototype, key)) missing.push(`Aex.prototype.${key}`);
     }
     // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
     // `outputs(id)` returns the SAME accessor as `session.outputs()` (shape
     // checked below), so id-addressed reads use `sessions.outputs(id).read(...)`.
-    // Cross-run output search RELOCATED to `aex.outputs.search()` (WS6); the old
+    // Cross-session output search RELOCATED to `aex.outputs.search()` (WS6); the old
     // `sessions.searchOutputs` is gone.
-    for (const key of ["create", "open", "get", "list", "outputs", "run"]) {
+    for (const key of ["create", "open", "get", "list", "outputs", "start"]) {
       if (!isFn(SessionClient.prototype, key)) missing.push(`SessionClient.prototype.${key}`);
     }
     // The lifecycle verbs a `session` handle keeps FLAT in the docs. The read /
@@ -159,26 +159,26 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     ).toBe(true);
   });
 
-  it("published docs do not advertise the removed submit / run-id-addressed client surface", () => {
+  it("published docs do not advertise the removed submit / session-id-addressed client surface", () => {
     const forbidden: ReadonlyArray<{ readonly name: string; readonly needle: RegExp }> = [
-      // Removed run-id-addressed client API — every read/control verb moved onto
+      // Removed session-id-addressed client API — every read/control verb moved onto
       // the session handle or `aex.sessions.*`.
       { name: "client .submit(...)", needle: /\.submit\s*\(/ },
-      { name: "client .getRun(...)", needle: /\.getRun\s*\(/ },
-      { name: "client .getRunUnit(...)", needle: /\.getRunUnit\s*\(/ },
+      { name: "client .getSessionRecord(...)", needle: /\.getSessionRecord\s*\(/ },
+      { name: "client .getSessionUnit(...)", needle: /\.getSessionUnit\s*\(/ },
       { name: "client .getUnit(...)", needle: /\.getUnit\s*\(/ },
-      { name: "client .listRuns(...)", needle: /\.listRuns\s*\(/ },
+      { name: "client .listSessionRecords(...)", needle: /\.listSessionRecords\s*\(/ },
       { name: "client .readOutputText(...)", needle: /\.readOutputText\s*\(/ },
       { name: "client .waitForRun(...)", needle: /\.waitForRun\s*\(/ },
       // Removed `RuntimeSizes` export (use `Sizes`).
       { name: "RuntimeSizes export", needle: /\bRuntimeSizes\b/ },
       // Renamed data-source chat tools (run vocabulary -> session vocabulary).
-      { name: "list_runs tool", needle: /\blist_runs\b/ },
-      { name: "get_run tool", needle: /\bget_run\b/ },
-      { name: "run_id tool arg", needle: /\brun_id\b/ },
-      // Removed RunRef / ref-style run API.
-      { name: "RunRef type", needle: /\bRunRef\b/ },
-      { name: "ref.runId", needle: /\bref\.runId\b/ },
+      { name: "list_sessions tool", needle: /\blist_sessions\b/ },
+      { name: "get_session tool", needle: /\bget_run\b/ },
+      { name: "session_id tool arg", needle: /\bsession_id\b/ },
+      // Removed LegacySessionRef / ref-style run API.
+      { name: "legacy ref type", needle: /\bLegacySessionRef\b/ },
+      { name: "ref.sessionId", needle: /\bref\.sessionId\b/ },
       { name: "runAndCollect alias", needle: /\brunAndCollect\b/ },
       { name: "secrets.get_value plaintext read", needle: /\.secrets\.get_value\s*\(/ },
       {
@@ -242,7 +242,7 @@ const LOCAL_INSTALL_DOCS = [
 // A bare `aex <verb>` command line (not prose like "aex is an agent…"): the
 // footgun after a LOCAL `npm i`, where the binary is not on PATH.
 const BARE_AEX_CMD =
-  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|outputs|download|cancel|delete|delete-asset|billing|webhooks|sessions|runs|deliveries)\b/m;
+  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|outputs|download|cancel|delete|delete-asset|billing|webhooks|sessions|sessions|deliveries)\b/m;
 
 describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
   it("onboarding docs use ONE constructor form: the string arg, never the object literal", () => {
@@ -269,9 +269,9 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     expect(failures).toEqual([]);
   });
 
-  it("the quickstart mints billing:read alongside the runs/outputs scopes", () => {
+  it("the quickstart mints billing:read alongside the sessions/outputs scopes", () => {
     const quickstart = readDoc("packages/sdk/docs/quickstart.md");
-    for (const scope of ["runs:read", "runs:write", "outputs:read", "billing:read"]) {
+    for (const scope of ["sessions:read", "sessions:write", "outputs:read", "billing:read"]) {
       expect(quickstart).toContain(scope);
     }
   });
@@ -303,7 +303,7 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
       expect(errors).toContain(needle);
     }
     // An empty idempotencyKey is a client-side fail-fast, not a wire round-trip.
-    expect(errors).toMatch(/empty[^.]*idempotencyKey[^.]*throws|idempotencyKey[^.]*throws[^.]*RunConfigValidationError/i);
+    expect(errors).toMatch(/empty[^.]*idempotencyKey[^.]*throws|idempotencyKey[^.]*throws[^.]*SessionConfigValidationError/i);
   });
 
   it("events.md documents capability-honest streaming (typed reject, not silent downgrade)", () => {

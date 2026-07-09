@@ -4,13 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Asserts the shared sidebar support footer is present on every exported page.
-// Runs as a postbuild step so a regression in the shared layout fails the docs build.
+// Sessions as a postbuild step so a regression in the shared layout fails the docs build.
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const outRoot = resolve(scriptDir, "..", "out");
 const SUPPORT_MAILTO = "mailto:support@aex.dev";
 
 if (!existsSync(outRoot)) {
-  console.error(`[support-footer] missing export directory: ${outRoot}. Run \`next build\` first.`);
+  console.error(`[support-footer] missing export directory: ${outRoot}. SessionRecord \`next build\` first.`);
   process.exit(1);
 }
 

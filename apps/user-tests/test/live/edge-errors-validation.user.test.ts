@@ -1,6 +1,6 @@
 /**
  * LIVE edge-case sweep of the SDK's HTTP / validation / auth error surface against
- * the target live plane, from a real customer's installed `@aexhq/sdk`. NO runs are ever
+ * the target live plane, from a real customer's installed `@aexhq/sdk`. NO sessions are ever
  * dispatched (no provider key needed, zero Fargate cost) — every case is a
  * validation reject, an auth reject, a 404, or a bounded network failure.
  *
@@ -10,9 +10,9 @@
  *   2. Valid apiKey → `whoami()` resolves to a workspace-identity object.
  *   3. Nonexistent sessionId → `sessions.open/get` and `sessions.outputs(id).list()`
  *      reject with a typed AexApiError 4xx (a clean 404, never a 5xx).
- *   4. Client-side malformed run config (missing model / empty message / missing
+ *   4. Client-side malformed session config (missing model / empty message / missing
  *      apiKeys / legacy field / provider-model mismatch) fails fast with a typed
- *      `RunConfigValidationError` (an `AexError`) BEFORE any network call.
+ *      `SessionConfigValidationError` (an `AexError`) BEFORE any network call.
  *   5. Unreachable baseUrl → the retry loop gives up with a bounded network error
  *      (does NOT hang), surfacing a real Error rather than swallowing it.
  *
@@ -77,12 +77,12 @@ describe("live plane — SDK error/validation/auth edge cases", () => {
   });
 
   it(
-    "rejects bad auth/ids/config with typed errors and bounds unreachable hosts (no runs dispatched)",
+    "rejects bad auth/ids/config with typed errors and bounds unreachable hosts (no sessions dispatched)",
     async () => {
       const bogusSession = "sess_edge_missing_" + Math.random().toString(36).slice(2, 10);
       const script = String.raw`
 import {
-  Aex, AexApiError, AexError, RunConfigValidationError, parseApiKey
+  Aex, AexApiError, AexError, SessionConfigValidationError, parseApiKey
 } from "@aexhq/sdk";
 
 const apiUrl = process.env.AEX_API_URL;
@@ -206,15 +206,15 @@ const missingSession = {
   outputs: await capture(() => client.sessions.outputs(bogusSession).list(), true)
 };
 
-// (4) Client-side malformed run config → typed RunConfigValidationError, no network.
+// (4) Client-side malformed session config → typed SessionConfigValidationError, no network.
 const M = "claude-haiku-4-5";
 const validation = {
-  emptyMessage: await capture(() => client.run({ model: M, message: "", apiKeys: { anthropic: "sk-x" } }), false),
+  emptyMessage: await capture(() => client.start({ model: M, message: "", apiKeys: { anthropic: "sk-x" } }), false),
   missingApiKeys: await capture(() => client.sessions.create({ model: M }), false),
   missingModel: await capture(() => client.sessions.create({ apiKeys: { anthropic: "sk-x" } }), false),
   legacyPromptField: await capture(() => client.sessions.create({ model: M, apiKeys: { anthropic: "sk-x" }, prompt: "hi" }), false),
   providerMismatch: await capture(() => client.sessions.create({ model: M, provider: "deepseek", apiKeys: { deepseek: "x" } }), false),
-  legacySignal: await capture(() => client.run({ model: M, message: "hi", apiKeys: { anthropic: "sk-x" }, signal: new AbortController().signal }), false)
+  legacySignal: await capture(() => client.start({ model: M, message: "hi", apiKeys: { anthropic: "sk-x" }, signal: new AbortController().signal }), false)
 };
 
 // (4b) Constructor with no credential — what TYPE does it throw?
@@ -318,12 +318,12 @@ process.exit(0);
         expect(e.status, `sessions.${key} must not be 5xx`).toBeLessThan(500);
       }
 
-      // (4) Client-side validation → typed RunConfigValidationError (an AexError), pre-network.
+      // (4) Client-side validation → typed SessionConfigValidationError (an AexError), pre-network.
       for (const [caseName, e] of Object.entries(result.validation)) {
         expect(e.rejected, `${caseName} should reject`).toBe(true);
         expect(e.isAexError, `${caseName} should be an AexError`).toBe(true);
-        expect(e.name, `${caseName} error type`).toBe("RunConfigValidationError");
-        expect(e.code, `${caseName} error code`).toBe("RUN_CONFIG_INVALID");
+        expect(e.name, `${caseName} error type`).toBe("SessionConfigValidationError");
+        expect(e.code, `${caseName} error code`).toBe("SESSION_CONFIG_INVALID");
         expect(typeof e.message === "string" && e.message.length > 0, `${caseName} has a message`).toBe(true);
         // Client-side validation never reaches the wire, so there is no HTTP status.
         expect(e.status, `${caseName} is pre-network (no status)`).toBeUndefined();

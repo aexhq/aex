@@ -15,7 +15,7 @@ loadLocalEnv();
  * That is safe: after the single `beforeAll` install the tree is read-only,
  * and every scenario drops a UNIQUELY-named runner script with a UNIQUE
  * idempotency key against an independent live run, so concurrent cells never
- * collide on disk or run identity. `maxConcurrency` is therefore the deliberate
+ * collide on disk or session identity. `maxConcurrency` is therefore the deliberate
  * bound on concurrent live-run spend and provider rate limits; raise
  * AEX_USER_TEST_TOOL_FUZZ_CONCURRENCY to go faster at higher spend/limit risk.
  */

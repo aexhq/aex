@@ -20,13 +20,13 @@ import {
   resolveCommonHostFlags,
   parseDuration,
   rejectUnknownFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
 
-export async function runEventsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "events")) return USAGE_ERR;
+export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "events")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

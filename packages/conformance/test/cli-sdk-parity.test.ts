@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Aex } from "../../sdk/dist/index.js";
-import type { SessionOutputs, SessionRunOptions } from "../../sdk/dist/index.js";
-import { CLI_VERB_NAMES, OUTPUTS_SUBVERBS, RUN_FLAGS, findVerbSpec } from "../../cli/dist/index.js";
+import type { SessionOutputs, SessionStartOptions } from "../../sdk/dist/index.js";
+import { CLI_VERB_NAMES, OUTPUTS_SUBVERBS, START_FLAGS as SESSION_FLAGS, findVerbSpec } from "../../cli/dist/index.js";
 import {
   CLI_PARITY_BARE_LIST,
   CLI_PARITY_NOT_SURFACED,
@@ -11,13 +11,13 @@ import {
 
 /**
  * COMPILE-TIME class-killer: these typed copies of the manifest maps fail to
- * BUILD the moment a `SessionRunOptions` / `SessionOutputs` key is added,
+ * BUILD the moment a `SessionStartOptions` / `SessionOutputs` key is added,
  * removed, or renamed without a corresponding manifest entry — so a new SDK
  * capability can never silently break CLI parity. The runtime `toEqual`
  * below pins the (loosely-typed) published manifest to these typed copies so
  * the two can't drift.
  */
-const RUN_OPTION_COVERAGE = {
+const SESSION_OPTION_COVERAGE = {
   provider: "--provider",
   model: "--model",
   system: "--system",
@@ -31,7 +31,7 @@ const RUN_OPTION_COVERAGE = {
   apiKeys: CLI_PARITY_PROVIDER_KEY_FLAG,
   environment: "--config",
   runtime: "--runtime-size",
-  overrides: "--run-timeout",
+  overrides: "--session-timeout",
   webhook: "--webhook",
   message: "--prompt",
   messageIdempotencyKey: "--idempotency-key",
@@ -42,7 +42,7 @@ const RUN_OPTION_COVERAGE = {
   approvalGate: CLI_PARITY_NOT_SURFACED,
   deleteAfter: CLI_PARITY_NOT_SURFACED,
   stream: CLI_PARITY_NOT_SURFACED
-} satisfies Record<keyof SessionRunOptions, string>;
+} satisfies Record<keyof SessionStartOptions, string>;
 
 const OUTPUTS_COVERAGE = {
   list: CLI_PARITY_BARE_LIST,
@@ -65,8 +65,8 @@ function publicAexMethods(): string[] {
 }
 
 describe("CLI ↔ SDK parity manifest", () => {
-  it("covers every SessionRunOptions key (compile-time) and pins the published manifest", () => {
-    expect(CLI_SDK_PARITY_MANIFEST.runOptionFlags).toEqual(RUN_OPTION_COVERAGE);
+  it("covers every SessionStartOptions key (compile-time) and pins the published manifest", () => {
+    expect(CLI_SDK_PARITY_MANIFEST.sessionOptionFlags).toEqual(SESSION_OPTION_COVERAGE);
   });
 
   it("covers every SessionOutputs accessor method (compile-time) and pins the published manifest", () => {
@@ -86,10 +86,10 @@ describe("CLI ↔ SDK parity manifest", () => {
     }
   });
 
-  it("maps every surfaced run-option to a REGISTERED `aex run` flag", () => {
-    for (const [key, flag] of Object.entries(CLI_SDK_PARITY_MANIFEST.runOptionFlags)) {
+  it("maps every surfaced session-option to a REGISTERED `aex start` flag", () => {
+    for (const [key, flag] of Object.entries(CLI_SDK_PARITY_MANIFEST.sessionOptionFlags)) {
       if (flag === CLI_PARITY_NOT_SURFACED || flag === CLI_PARITY_PROVIDER_KEY_FLAG) continue;
-      expect(RUN_FLAGS, `run-option "${key}" → flag "${flag}"`).toContain(flag);
+      expect(SESSION_FLAGS, `session-option "${key}" → flag "${flag}"`).toContain(flag);
     }
   });
 
@@ -107,9 +107,9 @@ describe("CLI ↔ SDK parity manifest", () => {
     }
   });
 
-  it("the `run` and `outputs` verbs declare the parity-mapped flags/sub-verbs", () => {
-    const run = findVerbSpec("run");
-    expect(run?.flags).toEqual(RUN_FLAGS);
+  it("the `start` and `outputs` verbs declare the parity-mapped flags/sub-verbs", () => {
+    const start = findVerbSpec("start");
+    expect(start?.flags).toEqual(SESSION_FLAGS);
     const outputs = findVerbSpec("outputs");
     expect(outputs?.subverbs).toEqual([...OUTPUTS_SUBVERBS]);
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SESSION_STATUSES,
-  getRunStatusKind,
+  getSessionControlStatusKind,
   operations,
   type HttpClient,
   type SessionRetentionPolicy,
@@ -49,14 +49,14 @@ function httpStub(): { readonly http: HttpClient; readonly calls: Array<{ readon
 }
 
 describe("session contracts", () => {
-  it("defines the resumable session status vocabulary separately from terminal runs", () => {
+  it("defines the resumable session status vocabulary separately from terminal sessions", () => {
     const statuses = new Set<SessionStatus>(SESSION_STATUSES);
     expect(statuses.has("idle")).toBe(true);
     expect(statuses.has("suspended")).toBe(true);
     expect(statuses.has("cancelling")).toBe(true);
     expect(statuses.has("deleted")).toBe(true);
-    expect(getRunStatusKind("idle")).toBe("active");
-    expect(getRunStatusKind("suspended")).toBe("active");
+    expect(getSessionControlStatusKind("idle")).toBe("active");
+    expect(getSessionControlStatusKind("suspended")).toBe("active");
   });
 
   it("posts session messages with an Idempotency-Key header", async () => {
@@ -88,7 +88,7 @@ describe("session contracts", () => {
       { idempotencyKey: "idem-create" }
     );
 
-    expect(result.runId).toBe("sess_1");
+    expect(result.sessionId).toBe("sess_1");
     expect(result.session.status).toBe("running");
     expect(calls).toHaveLength(2);
     expect(calls[0]!.path).toBe("/api/sessions");

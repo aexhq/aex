@@ -4,12 +4,12 @@ title: Networking
 
 # Networking
 
-A run executes your agent's code in a sandbox with **no direct route to the
+A session executes your agent's code in a sandbox with **no direct route to the
 internet**. Outbound traffic is governed by **two layers**:
 
-1. **The per-run policy (`environment.networking`)** — enforced by the agent
-   runtime *inside the run*. It applies to the standard proxy path every normal
-   HTTP client uses (see below) and can only *narrow* what the run may reach.
+1. **The per-session policy (`environment.networking`)** — enforced by the agent
+   runtime *inside the session*. It applies to the standard proxy path every normal
+   HTTP client uses (see below) and can only *narrow* what the session may reach.
 2. **The platform ceiling** — a fixed, platform-managed egress boundary every
    connection ultimately traverses. It allows the hosts aex itself manages
    (model providers, built-in tool endpoints, package registries, and related
@@ -20,19 +20,19 @@ internet**. Outbound traffic is governed by **two layers**:
    plane a subprocess that deliberately bypasses the proxy with a **raw socket**
    can still reach the on-link task-metadata IP (`169.254.170.2`), which exposes
    non-secret task identity (AWS account id via the task ARN, cluster/image ref)
-   — but **never IAM credentials** (the run's task role is unset, so the metadata
+   — but **never IAM credentials** (the session's task role is unset, so the metadata
    credential endpoint serves nothing) and never another tenant's data.
 
-Honest boundary statement: the per-run `allowedHosts` policy is enforced by the
-run's own runtime on the standard proxy path — it is **not** yet enforced at
+Honest boundary statement: the per-session `allowedHosts` policy is enforced by the
+session's own runtime on the standard proxy path — it is **not** yet enforced at
 the platform proxy layer. A subprocess that deliberately bypasses the standard
 proxy environment (a raw socket / raw CONNECT) is bounded by the **platform
-ceiling** rather than by the per-run list. Per-run enforcement at the platform
+ceiling** rather than by the per-session list. Per-session enforcement at the platform
 proxy layer is planned; until it ships, treat `allowedHosts` as a strong
 default-path control and an auditable statement of intent, not a hard isolation
-boundary against adversarial code inside the run.
+boundary against adversarial code inside the session.
 
-**Default posture.** A run that does not set `environment.networking` runs in
+**Default posture.** A session that does not set `environment.networking` sessions in
 `open` mode: its own code may reach anything within the platform ceiling with
 no allowlist required. Use `environment.networking` to *narrow* that surface
 when you want a tighter, auditable egress posture. Code cannot widen the
@@ -43,7 +43,7 @@ ceiling from inside the container.
 These reach the network over managed platform paths and are **not** subject to
 `environment.networking`, so you never list their hosts:
 
-- The model / provider call for the run (and its subagents).
+- The model / provider call for the session (and its subagents).
 - The built-in `web_search` and `web_fetch` tools. They run over a managed,
   SSRF-guarded server-side path, which is why they can reach arbitrary public
   URLs even though your own code is bounded by the ceiling.
@@ -57,12 +57,12 @@ These reach the network over managed platform paths and are **not** subject to
 code makes — a `curl` in the `bash` tool, a `requests`/`urllib` call in Python,
 a `fetch` in `code_execution`, or a third-party SDK.
 
-## Restrict a run to an allowlist
+## Restrict a session to an allowlist
 
 Set `mode: "limited"` and list exactly the hosts your code is allowed to reach.
-The run's runtime enforces the list on the standard proxy path: a connection to
+The session's runtime enforces the list on the standard proxy path: a connection to
 a host that is neither on the list nor one of the always-allowed paths above is
-refused before it leaves the run. Package-registry hosts implied by
+refused before it leaves the session. Package-registry hosts implied by
 `environment.packages` are appended automatically so installs keep working.
 
 Note that `allowedHosts` narrows *within* the platform ceiling — listing a host
@@ -76,7 +76,7 @@ import { Aex, Models, Providers } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
-await aex.run({
+await aex.start({
   provider: Providers.ANTHROPIC,
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Fetch the public status page and summarize it.",
@@ -100,15 +100,15 @@ visible at the same call site as the code that needs it.
 
 ## Open mode
 
-`open` is the default: a run that omits `environment.networking` already runs in
+`open` is the default: a session that omits `environment.networking` already sessions in
 open mode. Set `mode: "open"` explicitly when you want to be unambiguous. Open
-mode applies no per-run allowlist — the run's own code may reach anything the
+mode applies no per-session allowlist — the session's own code may reach anything the
 platform ceiling allows, still subject to the SSRF deny-list. Prefer `limited`
-whenever you can name the hosts — it gives the run a stable, auditable,
+whenever you can name the hosts — it gives the session a stable, auditable,
 least-privilege egress surface (it is the tighter posture, not the default).
 
 ```ts
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Research the topic across the open web.",
   environment: { networking: { mode: "open" } },
@@ -139,12 +139,12 @@ your client succeeds without extra setup.
 
 ## Limitations and gotchas
 
-- **The per-run policy is enforced by the run's runtime, not at the platform
+- **The per-session policy is enforced by the session's runtime, not at the platform
   proxy.** Clients that honor the standard proxy environment (almost all HTTP
   tooling) are held to the `allowedHosts` list. A subprocess that deliberately
   ignores the proxy environment and opens a raw connection is **not** held to
-  the per-run list — it is bounded by the platform ceiling (the aex-managed
-  provider/tool/registry host set) and the SSRF deny-list instead. Per-run
+  the per-session list — it is bounded by the platform ceiling (the aex-managed
+  provider/tool/registry host set) and the SSRF deny-list instead. Per-session
   enforcement at the platform proxy layer is planned.
 - **A client that hard-bypasses the standard environment may fail to connect.**
   A client that ignores the proxy environment, pins or replaces its certificate
@@ -159,5 +159,5 @@ your client succeeds without extra setup.
 
 For credentialed HTTP calls, pass the credential as an `environment.secrets`
 entry and let your code use its normal HTTP client. For remote tool servers, see
-[MCP](mcp.md). For the full set of run-config fields, see
-[Run configuration](run-config.md).
+[MCP](mcp.md). For the full set of session-config fields, see
+[SessionRecord configuration](session-config.md).

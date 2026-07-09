@@ -5,12 +5,12 @@
  * live-sdk-comprehensive.test.ts proves each cell works with a short
  * run, THIS suite submits one deliberately heavy, multi-minute session
  * per cell that exercises the *entire* customer feature surface at once
- * and validates EVERY observable aspect of the run. The goal is not to
+ * and validates EVERY observable aspect of the session. The goal is not to
  * test the model's capability — it is to prove the aex app
  * (materialization, BYOK proxy, event log, outputs pipeline, secret
  * redaction) behaves as expected under a maximal submission.
  *
- * Runs as an explicit gate AFTER the rest of the live user-tests pass
+ * Sessions as an explicit gate AFTER the rest of the live user-tests pass
  * (own Bun script `test:user:heavy` + own vitest config), so it is
  * never swept into the default `test:user` run. Wired into
  * live-user-tests.yml as the manual canary.
@@ -40,13 +40,13 @@
  * Managed cells (full assertion set — "validate all aspects"):
  *   - run reached `succeeded`; runtime/provider echo back correctly.
  *   - terminal event is observed. Legacy run streams are framed
- *     RUN_STARTED ... RUN_FINISHED; managed session turns may complete with
+ *     TURN_STARTED ... TURN_FINISHED; managed session turns may complete with
  *     CUSTOM `aex.session.succeeded` or park with CUSTOM `aex.session.idle`.
  *     terminal reason is "complete", runtimeExitCode 0-or-absent.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
  *     superset of every event type required for a successful managed session:
  *     TEXT_MESSAGE_CONTENT, TOOL_CALL_START, TOOL_CALL_RESULT, CUSTOM
- *     (RUN_FINISHED may be absent on managed sessions; RUN_ERROR is
+ *     (TURN_FINISHED may be absent on managed sessions; TURN_ERROR is
  *     failure-only and is covered by live-sdk-outputs-and-failures.test.ts).
  *     See AEX_EVENT_TYPES
  *     in packages/contracts/src/event-envelope.ts — the single source of
@@ -157,10 +157,10 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     `You are an assistant running a long automated verification session for an internal ` +
     `platform integration test. The session may take several minutes and involves multiple ` +
     `steps. Work carefully and complete every requested step in order.\n\n` +
-    `Operational context: this run exercises file tools, multiple skills, and remote ` +
+    `Operational context: this session exercises file tools, multiple skills, and remote ` +
     `tool servers. You have a shell available; use it to inspect your workspace and to ` +
     `create output files exactly as instructed.\n\n` +
-    `Your session reference for this run is ${probes.system}. When the user asks you to ` +
+    `Your session reference for this session is ${probes.system}. When the user asks you to ` +
     `acknowledge tracking references, include this session reference verbatim in your reply.`;
   const agentsMdText =
     `# Project tracking guidance\n\n` +
@@ -254,23 +254,23 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
           ? payload.terminalData.failureClass
           : null;
       const canRetryTransient =
-        payload.runStatus !== "succeeded" && failureClass === "transient-provider" && attempt < maxTransientRetries;
+        payload.sessionStatus !== "succeeded" && failureClass === "transient-provider" && attempt < maxTransientRetries;
       const channelProbeMisses = Array.isArray(payload.channelProbeMisses) ? payload.channelProbeMisses : [];
       const canRetryChannelProbeMiss =
-        payload.runStatus === "succeeded" && channelProbeMisses.length > 0 && attempt < maxChannelProbeRetries;
+        payload.sessionStatus === "succeeded" && channelProbeMisses.length > 0 && attempt < maxChannelProbeRetries;
       if (!canRetryTransient && !canRetryChannelProbeMiss) break;
       if (canRetryTransient) {
-        const reason = "transient-provider:" + payload.runId;
+        const reason = "transient-provider:" + payload.sessionId;
         retryReasons.push(reason);
         console.warn(
-          "[user-tests] run " + payload.runId + " failed (failureClass=transient-provider); " +
+          "[user-tests] run " + payload.sessionId + " failed (failureClass=transient-provider); " +
             "retrying run (attempt " + (attempt + 1) + "/" + maxTransientRetries + ")"
         );
       } else {
-        const reason = "channel-probe-miss:" + payload.runId + ":" + channelProbeMisses.join(",");
+        const reason = "channel-probe-miss:" + payload.sessionId + ":" + channelProbeMisses.join(",");
         retryReasons.push(reason);
         console.warn(
-          "[user-tests] run " + payload.runId + " succeeded but missed channel probes [" +
+          "[user-tests] run " + payload.sessionId + " succeeded but missed channel probes [" +
             channelProbeMisses.join(", ") + "]; retrying run (attempt " +
             (attempt + 1) + "/" + maxChannelProbeRetries + ")"
         );
@@ -283,14 +283,14 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         ...submitOpts,
         idempotencyKey: submitOpts.idempotencyKey + "-try" + attempt
       };
-      const result = await client.run(attemptSubmit, { timeoutMs: ${spec.pollDeadlineMs} });
-      const runId = result.runId;
+      const result = await client.start(attemptSubmit, { timeoutMs: ${spec.pollDeadlineMs} });
+      const sessionId = result.sessionId;
       const run = {
         status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
         runtime: "managed",
         provider: ${JSON.stringify(spec.provider)}
       };
-      const session = await client.sessions.open(runId);
+      const session = await client.sessions.open(sessionId);
 
       const fallbackEvents = Array.isArray(result.events) ? result.events : [];
       const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
@@ -348,7 +348,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         return null;
       }
       function hasTerminalEvent(list) {
-        return list.some((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR" || isSessionIdle(e));
+        return list.some((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR" || isSessionIdle(e));
       }
       try {
         const listedEvents = await session.events().list();
@@ -428,7 +428,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const toolCallStartCount = events.filter((e) => e.type === "TOOL_CALL_START").length;
       const toolCallResultCount = events.filter((e) => e.type === "TOOL_CALL_RESULT").length;
 
-      const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) ?? events.find(isSessionIdle);
+      const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
       const streamErrors = events
         .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
         .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
@@ -454,9 +454,9 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const serialized = JSON.stringify({ run, events, outputs });
       const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
       return {
-        runId: runId,
+        sessionId: sessionId,
         attempts: attempt + 1,
-        runStatus: run.status,
+        sessionStatus: session.status,
         runtime: run.runtime ?? "(missing)",
         provider: run.provider ?? "(missing)",
         probes: ${JSON.stringify(probes)},
@@ -499,12 +499,12 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   const rand = (): string => Math.random().toString(36).slice(2, 10);
   // Channel-probe separators are dots, NOT hyphens. The stream-before-disk
   // runtime redactor masks high-entropy
-  // runs of [A-Za-z0-9+/=-]{24,}. The model echoes these probes in a
+  // sessions of [A-Za-z0-9+/=-]{24,}. The model echoes these probes in a
   // key=value shape ("session=<ref> project=<ref> request=<ref>"), and a
   // hyphen-segmented ref glued to its `session=` label forms one 24+ char
   // run that the redactor eats whole — the probe never survives into the
   // managed-runtime stdout the event stream is built from. A dot is OUTSIDE that
-  // char class, so it splits the run into sub-24-char segments that
+  // char class, so it splits the session into sub-24-char segments that
   // survive regardless of how the model punctuates the reply. REF-out tokens
   // go to output FILES, not the redacted stdout stream, so they keep hyphens.
   const probes: Probes = {
@@ -567,7 +567,7 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
         install.installDir
       );
       console.info(
-        `[user-tests] heavy-session runId=${result.runId} status=${result.runStatus} terminalKind=${result.terminalKind ?? "(none)"}`
+        `[user-tests] heavy-session sessionId=${result.sessionId} status=${result.sessionStatus} terminalKind=${result.terminalKind ?? "(none)"}`
       );
       assertManagedShape(result, [
         managedHeavySkillName("alpha", "deepseek"),

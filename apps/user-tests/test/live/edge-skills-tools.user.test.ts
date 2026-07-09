@@ -5,10 +5,10 @@
  * `deepseek-v4-flash`, tiny prompts). Each case drives one live run and reduces
  * the event stream to observable assertions.
  *
- * Cases (5 live runs):
+ * Cases (5 live sessions):
  *   1. A custom Tool that THROWS — the error must surface cleanly to the model
- *      as an `isError` tool result and the run must still finish (a tool throw
- *      is recoverable, not a run-killer).
+ *      as an `isError` tool result and the session must still finish (a tool throw
+ *      is recoverable, not a session-killer).
  *   2. Builtin subset selection — `includeBuiltinTools:false` + a single
  *      cherry-picked `BuiltinTools.bash` gives the model exactly that one
  *      builtin, and it uses it (marker echoed).
@@ -17,13 +17,13 @@
  *      value while builtins coexist.
  *   4. Duplicate custom-tool NAME — two distinct Tools named `dup_tool` (backed
  *      by the offline wire test proving BOTH ride the wire). The collision must
- *      be handled cleanly server-side: either the run completes (dedup/shadow)
+ *      be handled cleanly server-side: either the session completes (dedup/shadow)
  *      or it fails with a structured error — never a silent hang / SDK crash.
- *   5. Empty tools + `includeBuiltinTools:false` — a run with zero tools still
+ *   5. Empty tools + `includeBuiltinTools:false` — a session with zero tools still
  *      completes cleanly and the model answers from memory (marker echoed).
  *
  * Gating mirrors the sibling live suites: `requireEnv` throws at module load
- * when a credential is missing, so the file is only collected/run with live
+ * when a credential is missing, so the file is only collected/session with live
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
  *   AEX_API_KEY              workspace API key
@@ -50,7 +50,7 @@ const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-skills-tools");
 const model = gateModel();
 
-const RUN_TIMEOUT_MS = 5 * 60_000;
+const SESSION_TIMEOUT_MS = 5 * 60_000;
 const CHILD_TIMEOUT_MS = 7 * 60_000;
 const IT_TIMEOUT_MS = 8 * 60_000;
 
@@ -66,7 +66,7 @@ interface ObservedToolResult {
 }
 interface Observation {
   readonly threw: string | null;
-  readonly runId: string | null;
+  readonly sessionId: string | null;
   readonly status: string;
   readonly errorMessage: string | null;
   readonly terminalKind: string | null;
@@ -111,7 +111,7 @@ function customName(e) { const d = eventData(e); return typeof d.name === "strin
 function customValue(e) { const d = eventData(e); const v = d.value; return v && typeof v === "object" ? v : {}; }
 const SESSION_TERMINAL_NAMES = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
 function isSessionIdle(e) { return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name); }
-function terminalKindOf(e) { if (!e) return null; return isSessionIdle(e) ? "RUN_FINISHED" : e.type; }
+function terminalKindOf(e) { if (!e) return null; return isSessionIdle(e) ? "TURN_FINISHED" : e.type; }
 function terminalReasonOf(e) {
   if (!e) return null;
   if (isSessionIdle(e)) { const v = customValue(e); return v.reason === "completed" ? "complete" : (v.reason ?? null); }
@@ -133,16 +133,16 @@ function blockText(content) {
 async function observe(result, threw) {
   if (!result) {
     return {
-      threw: threw ?? "unknown", runId: null, status: "threw", errorMessage: threw ?? null,
+      threw: threw ?? "unknown", sessionId: null, status: "threw", errorMessage: threw ?? null,
       terminalKind: null, terminalReason: null, eventKinds: [], toolCalls: [], toolResults: [],
       skillLoadedNames: [], assistantText: "", assistantTextEventCount: 0, streamErrors: [], leakedProviderKey: false
     };
   }
-  const runId = typeof result.runId === "string" ? result.runId : null;
+  const sessionId = typeof result.sessionId === "string" ? result.sessionId : null;
   let events = Array.isArray(result.events) ? result.events : [];
   try {
-    if (runId) {
-      const session = await client.sessions.open(runId);
+    if (sessionId) {
+      const session = await client.sessions.open(sessionId);
       const listed = await session.events().list();
       if (Array.isArray(listed) && listed.length > 0) events = listed;
     }
@@ -165,16 +165,16 @@ async function observe(result, threw) {
   const skillLoadedNames = customEvents.map(skillLoadedName).filter(Boolean);
   const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
   const assistantText = assistantTextEvents.map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : "")).join(" ");
-  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+  const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
   const eventKinds = events.map((e) => e.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
   const streamErrors = customEvents.filter((e) => customName(e) === "aex.stream_error").map((e) => customValue(e));
   const status = result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed");
   const errorMessage =
     (result.session && typeof result.session.errorMessage === "string" && result.session.errorMessage) ? result.session.errorMessage : null;
   const serialized = JSON.stringify({ events, status, errorMessage });
   return {
-    threw: null, runId, status, errorMessage,
+    threw: null, sessionId, status, errorMessage,
     terminalKind: terminalKindOf(terminal), terminalReason: terminalReasonOf(terminal),
     eventKinds, toolCalls, toolResults, skillLoadedNames,
     assistantText: assistantText.slice(0, 2000), assistantTextEventCount: assistantTextEvents.length,
@@ -185,7 +185,7 @@ async function observe(result, threw) {
 async function runOne(runArgs) {
   let result = null, threw = null;
   try {
-    result = await client.run(runArgs, { timeoutMs: ${RUN_TIMEOUT_MS} });
+    result = await client.start(runArgs, { timeoutMs: ${SESSION_TIMEOUT_MS} });
   } catch (e) {
     threw = e && e.message ? e.message : String(e);
   }
@@ -220,7 +220,7 @@ async function runScenarioWithPreCreateRetry(
       return result;
     }
 
-    // No runId means the submit never created a debuggable live run artifact.
+    // No sessionId means the submit never created a debuggable live session artifact.
     // Retry only this transport gap; all post-create failures stay single-shot.
     // eslint-disable-next-line no-console
     console.warn(
@@ -244,7 +244,7 @@ function norm(s: string): string {
 function diag(o: Observation): string {
   return [
     `threw=${o.threw}`,
-    `runId=${o.runId} status=${o.status} errorMessage=${JSON.stringify(o.errorMessage)}`,
+    `sessionId=${o.sessionId} status=${o.status} errorMessage=${JSON.stringify(o.errorMessage)}`,
     `terminalKind=${o.terminalKind} terminalReason=${JSON.stringify(o.terminalReason)}`,
     `eventKinds=[${o.eventKinds.join(", ")}]`,
     `toolCalls=[${toolCallNames(o).join(", ")}]`,
@@ -264,7 +264,7 @@ afterAll(() => {
 
 describe("live edge: skills & tools composition (gate provider, managed)", () => {
   it(
-    "1. a throwing custom Tool surfaces an isError result and the run still finishes",
+    "1. a throwing custom Tool surfaces an isError result and the session still finishes",
     async () => {
       const marker = "BOOM-" + tag();
       const indexSrc = `export default async function ({ input }) { throw new Error(${JSON.stringify("boom-thrown " + marker)}); }`;
@@ -289,10 +289,10 @@ await runOne({
       const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-throw.mjs", body);
       const dump = diag(observation);
 
-      // A throwing tool must NOT reject the SDK call nor kill the run.
+      // A throwing tool must NOT reject the SDK call nor kill the session.
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       expect(observation.terminalReason, dump).toBe("complete");
 
       // The model actually invoked the tool.
@@ -333,7 +333,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       expect(observation.terminalReason, dump).toBe("complete");
 
       // The single cherry-picked builtin was genuinely available and invoked.
@@ -376,7 +376,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       expect(observation.terminalReason, dump).toBe("complete");
 
       // The custom tool was invoked and executed cleanly, echoing stamp:<marker>.
@@ -417,19 +417,19 @@ await runOne({
       const dump = diag(observation);
 
       // The submission with a duplicate tool name must be handled cleanly.
-      // Acceptable: the run completes (server deduped / shadowed one), OR the
-      // submission fails with a STRUCTURED error (SDK threw a message, or the run
+      // Acceptable: the session completes (server deduped / shadowed one), OR the
+      // submission fails with a STRUCTURED error (SDK threw a message, or the session
       // ended failed with a diagnostic). Unacceptable: a silent success with no
-      // outcome, or a run that "succeeds" with no terminal frame.
+      // outcome, or a session that "succeeds" with no terminal frame.
       const outcome =
         observation.threw !== null ? "threw" : observation.status === "succeeded" ? "succeeded" : "failed";
       expect(["succeeded", "failed", "threw"], dump).toContain(outcome);
 
-      // Unconditional invariant (no branch-skippable expect): the run was handled
-      // cleanly. Accepted ⇒ a REAL clean terminal (RUN_FINISHED + reason=complete),
+      // Unconditional invariant (no branch-skippable expect): the session was handled
+      // cleanly. Accepted ⇒ a REAL clean terminal (TURN_FINISHED + reason=complete),
       // not a phantom success. Rejected ⇒ carries a non-empty diagnostic (SDK throw
-      // message, run errorMessage, or a stream error) — never a silent hang.
-      const cleanTerminal = observation.terminalKind === "RUN_FINISHED" && observation.terminalReason === "complete";
+      // message, turn errorMessage, or a stream error) — never a silent hang.
+      const cleanTerminal = observation.terminalKind === "TURN_FINISHED" && observation.terminalReason === "complete";
       const diagnostic = [observation.threw ?? "", observation.errorMessage ?? "", JSON.stringify(observation.streamErrors)].join(" ").trim();
       const handledCleanly = outcome === "succeeded" ? cleanTerminal : diagnostic.length > 0;
       expect(handledCleanly, dump).toBe(true);
@@ -463,7 +463,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       expect(observation.terminalReason, dump).toBe("complete");
       // No tools at all => the model cannot call any tool.
       expect(toolCallNames(observation), dump).toEqual([]);

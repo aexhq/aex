@@ -6,7 +6,7 @@
  *   aex outputs download <session-id> <path> [--out]  Download one file's raw bytes
  *   aex outputs link <session-id> <path>              Mint a temporary download URL (JSON)
  *   aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]
- *   aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--run-id ID] [--limit N]
+ *   aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N]
  *
  * `aex outputs search` (no session id) is the CROSS-RUN metadata search
  * (`aex.outputs.search`); the whole-namespace zip stays `aex download`.
@@ -24,15 +24,15 @@ import {
   emitJsonError,
   makeHttpClient,
   rejectUnknownFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   resolveCommonHostFlags,
   takeFlagValue
 } from "./common.js";
 
 const SUBVERBS = new Set(["read", "download", "link", "find", "search"]);
 
-export async function runOutputsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "outputs")) return USAGE_ERR;
+export async function executeOutputsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "outputs")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
@@ -181,21 +181,21 @@ async function outputsFind(io: CliIO, http: HttpClient, args: readonly string[])
   }
 }
 
-/** `aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--run-id ID] [--limit N]` — cross-run. */
+/** `aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N]` — cross-session. */
 async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const query = takeFlagValue(args, "--query");
   const name = takeFlagValue(query.remaining, "--name");
   const ext = takeFlagValue(name.remaining, "--ext");
   const contentType = takeFlagValue(ext.remaining, "--content-type");
   const limit = takeFlagValue(contentType.remaining, "--limit");
-  const runIds = collectRepeated(limit.remaining, "--run-id");
-  const err = query.error ?? name.error ?? ext.error ?? contentType.error ?? limit.error ?? runIds.error;
+  const sessionIds = collectRepeated(limit.remaining, "--session-id");
+  const err = query.error ?? name.error ?? ext.error ?? contentType.error ?? limit.error ?? sessionIds.error;
   if (err) { io.stderr(`${err}\n`); return USAGE_ERR; }
-  const usage = "usage: aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--run-id ID] [--limit N] [common flags]";
-  const unknown = rejectUnknownFlags(io, runIds.remaining, usage);
+  const usage = "usage: aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N] [common flags]";
+  const unknown = rejectUnknownFlags(io, sessionIds.remaining, usage);
   if (unknown) return unknown;
-  if (runIds.remaining.length > 0) {
-    io.stderr(`unexpected arguments: ${runIds.remaining.join(" ")}\n`);
+  if (sessionIds.remaining.length > 0) {
+    io.stderr(`unexpected arguments: ${sessionIds.remaining.join(" ")}\n`);
     io.stderr(`${usage}\n`);
     return USAGE_ERR;
   }
@@ -214,7 +214,7 @@ async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[
     ...(filename !== null ? { filename } : {}),
     ...(ext.value !== null ? { extension: ext.value } : {}),
     ...(contentType.value !== null ? { contentType: contentType.value } : {}),
-    ...(runIds.values.length > 0 ? { runIds: [...runIds.values] } : {}),
+    ...(sessionIds.values.length > 0 ? { sessionIds: [...sessionIds.values] } : {}),
     ...(limitValue !== undefined ? { limit: limitValue } : {})
   };
   try {
@@ -240,21 +240,21 @@ async function searchWorkspaceOutputs(
   query: OutputSearchQuery
 ): Promise<{ readonly hits: readonly OutputSearchHit[] }> {
   assertMetadataOnlyOutputSearch(query, "aex outputs search");
-  const runIds = query.runIds && query.runIds.length > 0 ? [...query.runIds] : undefined;
+  const sessionIds = query.sessionIds && query.sessionIds.length > 0 ? [...query.sessionIds] : undefined;
   const limit = query.limit ?? 100;
   const hits: OutputSearchHit[] = [];
-  const candidates = runIds ?? await listRecentRunIds(http, limit);
-  for (const runId of candidates) {
-    const outputs = await searchSessionOutputs(http, runId, query);
+  const candidates = sessionIds ?? await listRecentSessionIds(http, limit);
+  for (const sessionId of candidates) {
+    const outputs = await searchSessionOutputs(http, sessionId, query);
     for (const output of outputs) {
-      hits.push(outputHit(runId, output));
+      hits.push(outputHit(sessionId, output));
       if (hits.length >= limit) return { hits };
     }
   }
   return { hits };
 }
 
-async function listRecentRunIds(http: HttpClient, limit: number): Promise<string[]> {
+async function listRecentSessionIds(http: HttpClient, limit: number): Promise<string[]> {
   const out: string[] = [];
   let cursor: string | undefined;
   while (out.length < limit) {
@@ -269,7 +269,7 @@ async function listRecentRunIds(http: HttpClient, limit: number): Promise<string
 async function searchSessionOutputs(
   http: HttpClient,
   sessionId: string,
-  query: Omit<OutputSearchQuery, "runIds">
+  query: Omit<OutputSearchQuery, "sessionIds">
 ): Promise<readonly Output[]> {
   const listQuery: OutputQuery = {
     ...(query.extension !== undefined ? { extension: query.extension } : {}),
@@ -285,9 +285,9 @@ async function searchSessionOutputs(
   return outputs.filter((output) => typeof output.filename === "string" && match(output.filename));
 }
 
-function outputHit(runId: string, output: Output): OutputSearchHit {
+function outputHit(sessionId: string, output: Output): OutputSearchHit {
   return {
-    runId,
+    sessionId,
     outputId: output.id,
     ...(output.filename !== undefined ? { filename: output.filename } : {}),
     ...(output.sizeBytes !== undefined ? { sizeBytes: output.sizeBytes } : {}),

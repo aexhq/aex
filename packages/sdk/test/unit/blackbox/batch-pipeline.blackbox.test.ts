@@ -5,14 +5,14 @@
  *   T14   `aex.batch()` returns EVERY item's settled result plus an HONEST
  *         cost/usage rollup — a failed item lands in `failed[]`, never a silent
  *         `$0` success, and no item's cost is dropped from the total.
- *   T14b  `aex.submit()` is a distinct NON-blocking verb: it resolves the runId
- *         WITHOUT awaiting settle (the honest counterpart to await-settle run()).
+ *   T14b  `aex.submit()` is a distinct NON-blocking verb: it resolves the sessionId
+ *         WITHOUT awaiting settle (the honest counterpart to await-settle start()).
  */
 import { describe, expect, it } from "vitest";
-import type { SessionRunOptions } from "../../../src/index.js";
+import type { SessionStartOptions } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
-const item = (message: string): SessionRunOptions => ({
+const item = (message: string): SessionStartOptions => ({
   model: "claude-haiku-4-5",
   message,
   apiKeys: { anthropic: "sk-ant" }
@@ -30,7 +30,7 @@ describe("blackbox: batch rollup honesty", () => {
     expect(result.results.length).toBe(3);
     // Every item carries its OWN settled fields.
     for (const r of result.results) {
-      expect(typeof r.runId).toBe("string");
+      expect(typeof r.sessionId).toBe("string");
       expect(typeof r.costUsd).toBe("number");
     }
     const byOutcome = Object.fromEntries(result.results.map((r) => [r.status, r]));
@@ -48,11 +48,11 @@ describe("blackbox: batch rollup honesty", () => {
 });
 
 describe("blackbox: fire-and-forget submit", () => {
-  it("resolves the runId WITHOUT awaiting settle (no turn stream, no settle poll)", async () => {
+  it("resolves the sessionId WITHOUT awaiting settle (no turn stream, no settle poll)", async () => {
     const platform = new FakePlatform();
     const submitted = await platform.aex.submit(item("kick it off"));
 
-    expect(typeof submitted.runId).toBe("string");
+    expect(typeof submitted.sessionId).toBe("string");
     expect(submitted.session).toBeDefined();
     // Non-blocking submit still dispatches the first turn, but never opens a
     // stream or polls for settle.

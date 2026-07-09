@@ -4,7 +4,7 @@
  * built-in tools, runtime env vars/secrets, streamed events, output reads, and
  * a follow-up session turn.
  *
- * Run from the repository root after building the workspace package:
+ * SessionRecord from the repository root after building the workspace package:
  *
  *   AEX_API_KEY=... DEEPSEEK_API_KEY=... bun packages/sdk/examples/feature-tour.ts
  *

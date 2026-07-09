@@ -7,22 +7,22 @@
  *   - SDK `McpServer.remote(...)` / `McpServer.fromId(...)` construction guards
  *     (offline: missing/empty fields, stdio rejection, header/secret split,
  *     workspace-id pattern).
- *   - A run declaring a private/metadata/duplicate/bad-name MCP ref must FAIL
+ *   - A session declaring a private/metadata/duplicate/bad-name MCP ref must FAIL
  *     CLOSED without ever dialing the target and without leaking any cloud
  *     metadata. (On the dev plane this is enforced as a session error at the
  *     first turn — see the "observed behavior" note below.)
- *   - The container egress firewall on a `networking:limited` run: the declared
+ *   - The container egress firewall on a `networking:limited` session: the declared
  *     host stays reachable while a NON-allowlisted host AND cloud metadata
  *     (169.254.169.254) are BLOCKED. A reachable non-allowlisted host or a
  *     reachable IMDS would be a CRITICAL defect.
- *   - Secret MCP headers do not leak into the run event/output log.
+ *   - Secret MCP headers do not leak into the session event/output log.
  *
  * OBSERVED BEHAVIOR (dev, 2026-07-02): invalid MCP refs are ACCEPTED at
- * submission (HTTP 200 — a run is created) and only rejected ~45s later as a
+ * submission (HTTP 200 — a session is created) and only rejected ~45s later as a
  * `aex.session.failed` carrying the canonical `parseMcpServerRef` deny reason.
  * Security holds (fail-closed, target never dialed, no metadata leak), but the
  * documented "SSRF guard at the parser boundary" is NOT applied synchronously
- * at the API create endpoint. These fail-closed runs invoke no LLM (they error
+ * at the API create endpoint. These fail-closed sessions invoke no LLM (they error
  * during setup); only the egress + MCP-invocation cases spend model tokens.
  *
  * Required env (wired by the live runner):
@@ -95,7 +95,7 @@ interface ConstructionCase {
 interface SubmissionCase {
   readonly label: string;
   readonly resolveMs: number;
-  readonly runId: string | null;
+  readonly sessionId: string | null;
   readonly status: string | null;
   readonly failureClass: string | null;
   readonly errorMessage: string | null;
@@ -147,10 +147,10 @@ function validationChildScript(): string {
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     async function submitBad(label, mcpServers) {
       const t0 = Date.now();
-      let runId = null, status = null, threw = null;
+      let sessionId = null, status = null, threw = null;
       let failureClass = null, errorMessage = null;
       try {
-        const res = await client.run({
+        const res = await client.start({
           provider: process.env.PROVIDER,
           model: process.env.MODEL,
           message: "Output verbatim: EDGE",
@@ -159,17 +159,17 @@ function validationChildScript(): string {
           apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
           idempotencyKey: "edge-mcp-" + label + "-" + Date.now()
         }, { timeoutMs: 120000 });
-        runId = res && typeof res.runId === "string" ? res.runId : null;
+        sessionId = res && typeof res.sessionId === "string" ? res.sessionId : null;
         status = res && typeof res.status === "string" ? res.status : (res && res.ok ? "succeeded" : null);
       } catch (err) {
         threw = (err && err.name ? err.name : "Error") + "/status=" + (err && err.status) + ": " + (err && err.message ? String(err.message).slice(0, 200) : String(err));
       }
       let reason = null, dialed = false, metaLeak = [];
-      if (runId) {
+      if (sessionId) {
         try {
-          const s = await client.sessions.open(runId);
+          const s = await client.sessions.open(sessionId);
           try {
-            const rec = await client.sessions.get(runId);
+            const rec = await client.sessions.get(sessionId);
             status = typeof rec.status === "string" ? rec.status : status;
             failureClass = typeof rec.failureClass === "string" ? rec.failureClass : null;
             errorMessage = typeof rec.errorMessage === "string" ? rec.errorMessage : null;
@@ -178,7 +178,7 @@ function validationChildScript(): string {
           const events = await s.events().list();
           const errEvt = events.find((e) => e.type === "CUSTOM" && e.data && ["aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"].includes(String(e.data.name || "")))
             || events.find((e) => e.type === "CUSTOM" && e.data && String(e.data.name || "").includes("error"))
-            || events.find((e) => e.type === "RUN_ERROR");
+            || events.find((e) => e.type === "TURN_ERROR");
           if (errEvt && reason === null) reason = (errEvt.data && errEvt.data.value && errEvt.data.value.reason) || JSON.stringify(errEvt.data).slice(0, 300);
           dialed = events.some((e) => e.type === "TOOL_CALL_START");
           const serialized = JSON.stringify(events);
@@ -189,7 +189,7 @@ function validationChildScript(): string {
           }
         } catch (e) { reason = "inspect-err:" + String(e && e.message).slice(0, 120); }
       }
-      return { label, resolveMs: Date.now() - t0, runId, status, failureClass, errorMessage, threw, reason, dialed, metaLeak };
+      return { label, resolveMs: Date.now() - t0, sessionId, status, failureClass, errorMessage, threw, reason, dialed, metaLeak };
     }
 
     const submission = await Promise.all([
@@ -205,16 +205,16 @@ function validationChildScript(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Standard event-collection tail reused by the billable-run children.
+// Standard event-collection tail reused by the billable-session children.
 // ---------------------------------------------------------------------------
 const COLLECT = `
-  const runId = runResult.runId;
-  const status = runResult.ok ? "succeeded" : (typeof runResult.status === "string" && runResult.status ? runResult.status : "failed");
-  const fallbackEvents = Array.isArray(runResult.events) ? runResult.events : [];
+  const sessionId = sessionResult.sessionId;
+  const status = sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
+  const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
   let events = fallbackEvents;
-  let outputs = Array.isArray(runResult.outputs) ? runResult.outputs : [];
+  let outputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
   try {
-    const session = await client.sessions.open(runId);
+    const session = await client.sessions.open(sessionId);
     const listedEvents = await session.events().list();
     if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
     const listedOutputs = await session.outputs().list();
@@ -236,7 +236,7 @@ const COLLECT = `
 `;
 
 interface EgressResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly status: string;
   readonly eventKinds: readonly string[];
   readonly evidence: string;
@@ -276,7 +276,7 @@ o="$(probe_https OTHER https://api.github.com/)"
 i="$(probe_imds)"
 printf "%s %s %s\\n" "$a" "$o" "$i"`;
   const prompt =
-    "Using the shell, run exactly this bash script without replacing it with curl exit-code shortcuts. " +
+    "Using the shell, execute exactly this bash script without replacing it with curl exit-code shortcuts. " +
     "Classify reachability from HTTP status and proxy/gate response text: proxy 403/Forbidden, connection refused, HTTP 000, or timeout means BLOCKED. " +
     "A real IMDS response, including IMDSv2 401, means IMDS_REACHED. " +
     `Script:\n${probe}\n` +
@@ -284,7 +284,7 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
   return `
     import { Aex } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-    const runResult = await client.run({
+    const sessionResult = await client.start({
       provider: process.env.PROVIDER,
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
@@ -294,13 +294,13 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
     }, { timeoutMs: 8 * 60000 });
     ${COLLECT}
     const evidence = (toolResultText + " " + assistantText).replace(/\\s+/g, "");
-    process.stdout.write(JSON.stringify({ runId, status, eventKinds, evidence, streamErrors }));
+    process.stdout.write(JSON.stringify({ sessionId, status, eventKinds, evidence, streamErrors }));
     process.exit(0);
   `;
 }
 
 interface McpSecretResult {
-  readonly runId: string;
+  readonly sessionId: string;
   readonly status: string;
   readonly eventKinds: readonly string[];
   readonly toolRequests: ReadonlyArray<{ name: string | null; extension: string | null }>;
@@ -325,7 +325,7 @@ function mcpSecretChildScript(marker: string): string {
     });
     // The non-secret submission entry must NOT contain the marker.
     const subEntry = JSON.stringify(mcp.toSubmissionEntry());
-    const runResult = await client.run({
+    const sessionResult = await client.start({
       provider: process.env.PROVIDER,
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
@@ -337,7 +337,7 @@ function mcpSecretChildScript(marker: string): string {
     ${COLLECT}
     const marker = ${JSON.stringify(marker)};
     const secretLeaked = serialized.includes(marker) || subEntry.includes(marker);
-    process.stdout.write(JSON.stringify({ runId, status, eventKinds, toolRequests, toolResponseCount, assistantText, secretLeaked, streamErrors }));
+    process.stdout.write(JSON.stringify({ sessionId, status, eventKinds, toolRequests, toolResponseCount, assistantText, secretLeaked, streamErrors }));
     process.exit(0);
   `;
 }
@@ -363,8 +363,8 @@ function assertFailedClosed(s: SubmissionCase): void {
   // The target must NEVER be dialed and no cloud-metadata payload may appear.
   expect(s.dialed, `bad MCP ref DIALED its target — SSRF breach: ${dump}`).toBe(false);
   expect(s.metaLeak, `cloud-metadata content leaked: ${dump}`).toEqual([]);
-  // The run must not have succeeded on a bad ref.
-  expect(s.status === "succeeded", `bad MCP ref run SUCCEEDED (should fail closed): ${dump}`).toBe(false);
+  // The session must not have succeeded on a bad ref.
+  expect(s.status === "succeeded", `bad MCP ref session SUCCEEDED (should fail closed): ${dump}`).toBe(false);
   // It must be rejected somewhere: either a thrown API error OR an error terminal.
   const rejected = s.threw !== null || s.status === "error" || s.status === "failed" || s.reason !== null;
   expect(rejected, `bad MCP ref was neither rejected nor errored: ${dump}`).toBe(true);
@@ -448,14 +448,14 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
     expect(rejectionText(s), JSON.stringify(s)).toMatch(/duplicate/);
   });
 
-  // ---- Egress allowlist enforcement (KEY security check, 1 LLM run) ----
+  // ---- Egress allowlist enforcement (KEY security check, 1 LLM turn) ----
   it(
     "SECURITY: networking:limited blocks non-allowlisted host AND cloud metadata, allows the declared host",
     async () => {
       const out = await runChild(install, "edge-egress.mjs", egressChildScript(), 9 * 60_000);
       const r = JSON.parse(out) as EgressResult;
-      const dump = JSON.stringify({ runId: r.runId, status: r.status, eventKinds: r.eventKinds, streamErrors: r.streamErrors, evidence: r.evidence.slice(0, 800) });
-      // Run itself succeeds — platform proxy/model host is always allowed.
+      const dump = JSON.stringify({ sessionId: r.sessionId, status: r.status, eventKinds: r.eventKinds, streamErrors: r.streamErrors, evidence: r.evidence.slice(0, 800) });
+      // SessionRecord itself succeeds — platform proxy/model host is always allowed.
       expect(r.status, dump).toBe("succeeded");
       // Allowed host reachable.
       expect(r.evidence, dump).toContain("ALLOWED_REACHED");
@@ -472,7 +472,7 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
     10 * 60_000
   );
 
-  // ---- MCP invocation + secret-header non-leak (1 LLM run) ----
+  // ---- MCP invocation + secret-header non-leak (1 LLM turn) ----
   it(
     "SECURITY: a remote MCP is invoked and its secret header never leaks into events/outputs",
     async () => {
@@ -480,13 +480,13 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
       const out = await runChild(install, "edge-mcp-secret.mjs", mcpSecretChildScript(marker), 9 * 60_000);
       const r = JSON.parse(out) as McpSecretResult;
       const dump = JSON.stringify({
-        runId: r.runId, status: r.status, eventKinds: r.eventKinds,
+        sessionId: r.sessionId, status: r.status, eventKinds: r.eventKinds,
         toolRequests: r.toolRequests, toolResponseCount: r.toolResponseCount,
         streamErrors: r.streamErrors, assistantText: r.assistantText.slice(0, 300)
       });
       // The security invariant — a secret MCP header must NEVER appear in the
       // event/output log or the non-secret submission entry.
-      expect(r.secretLeaked, `SECRET MCP HEADER LEAKED into run event/output log: ${dump}`).toBe(false);
+      expect(r.secretLeaked, `SECRET MCP HEADER LEAKED into session event/output log: ${dump}`).toBe(false);
       expect(r.status, dump).toBe("succeeded");
       // The MCP was actually reached (with the secret header applied out-of-band).
       const mcpMatch = (v: string | null): boolean =>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateRuntimeSecurityProfile,
-  parseRunSubmissionRequest,
+  parseSessionSubmissionRequest,
   parseRuntimeSecurityProfile,
   resolveRuntimeSecurityProfile,
   serializeRuntimeSecurityProfile
@@ -37,7 +37,7 @@ describe("runtime security profiles", () => {
   });
 
   it("keeps the profile as an additive submission snapshot field", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
@@ -50,7 +50,7 @@ describe("runtime security profiles", () => {
 
   it("rejects unknown submission security profiles", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,

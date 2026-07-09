@@ -23,7 +23,7 @@ export const AEX_API_ERROR_CODES = [
   "not_found",
   "idempotency_conflict",
   "session_busy",
-  "run_not_terminal",
+  "session_not_terminal",
   "unknown_workspace",
   "workspace_concurrency_exceeded",
   "workspace_submit_rate_exceeded",
@@ -53,12 +53,12 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   not_found: "The requested resource was not found.",
   idempotency_conflict: "This idempotency key was already used with a different request body.",
   session_busy: "The session is busy handling another turn.",
-  run_not_terminal: "The run has not reached a terminal state yet.",
+  session_not_terminal: "The session has not reached a terminal state yet.",
   unknown_workspace: "The workspace could not be resolved from the API key.",
   workspace_concurrency_exceeded: "The workspace has reached its concurrent-run limit.",
   workspace_submit_rate_exceeded: "The workspace submit-rate limit was exceeded.",
   workspace_spend_cap_exceeded: "The workspace monthly spend cap was reached.",
-  insufficient_balance: "The workspace prepaid balance is insufficient to submit this run.",
+  insufficient_balance: "The workspace prepaid balance is insufficient to submit this session.",
   rate_limited: "Too many requests — retry after a short backoff.",
   upstream_error: "An upstream provider returned an error.",
   internal_error: "The aex API encountered an internal error."
@@ -74,7 +74,7 @@ export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = 
   token_revoked: "Mint a new API key.",
   workspace_spend_cap_exceeded: "Raise the workspace spend cap or wait for the next billing cycle.",
   insufficient_balance: "Top up the workspace balance or add a payment method.",
-  workspace_concurrency_exceeded: "Wait for in-flight runs to finish or raise the concurrency limit.",
+  workspace_concurrency_exceeded: "Wait for in-flight sessions to finish or raise the concurrency limit.",
   workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit."
 };
 

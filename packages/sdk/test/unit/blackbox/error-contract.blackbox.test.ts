@@ -8,12 +8,12 @@
  *   T12  an empty / whitespace `idempotencyKey` is REJECTED before any request
  *        (it must never silently ship a non-idempotent, potentially double-billed
  *        run); a real key is forwarded as the `Idempotency-Key` header.
- *   T13  a client-side config error is a typed `RunConfigValidationError`.
+ *   T13  a client-side config error is a typed `SessionConfigValidationError`.
  */
 import { describe, expect, it } from "vitest";
 import {
-  RunConfigValidationError,
-  type SessionRunOptions,
+  SessionConfigValidationError,
+  type SessionStartOptions,
   isAuthError,
   isIdempotencyConflict,
   isInsufficientScope,
@@ -21,14 +21,14 @@ import {
 } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
-const RUN: SessionRunOptions = { model: "claude-haiku-4-5", message: "go", apiKeys: { anthropic: "sk-ant" } };
+const SESSION: SessionStartOptions = { model: "claude-haiku-4-5", message: "go", apiKeys: { anthropic: "sk-ant" } };
 
 describe("blackbox: typed error dispatch", () => {
   it("a 409 idempotency_conflict surfaces as a narrowable typed error with a stable apiCode", async () => {
     const platform = new FakePlatform();
     platform.scriptError({ pathIncludes: "/api/sessions", status: 409, code: "idempotency_conflict" });
 
-    const err = await platform.run(RUN).then(
+    const err = await platform.start(SESSION).then(
       () => undefined,
       (e) => e as unknown
     );
@@ -43,7 +43,7 @@ describe("blackbox: typed error dispatch", () => {
     const platform = new FakePlatform();
     platform.scriptError({ pathIncludes: "/api/sessions", status: 403, code: "insufficient_scope" });
 
-    const err = await platform.run(RUN).then(
+    const err = await platform.start(SESSION).then(
       () => undefined,
       (e) => e as unknown
     );
@@ -55,7 +55,7 @@ describe("blackbox: typed error dispatch", () => {
     const platform = new FakePlatform();
     platform.scriptError({ pathIncludes: "/api/sessions", status: 404, code: "not_found" });
 
-    const err = await platform.run(RUN).then(
+    const err = await platform.start(SESSION).then(
       () => undefined,
       (e) => e as unknown
     );
@@ -66,19 +66,19 @@ describe("blackbox: typed error dispatch", () => {
 describe("blackbox: idempotency key is a real safety property", () => {
   it("rejects an empty idempotencyKey BEFORE any request (no silent non-idempotent run)", async () => {
     const platform = new FakePlatform();
-    await expect(platform.run({ ...RUN, idempotencyKey: "" })).rejects.toBeInstanceOf(RunConfigValidationError);
+    await expect(platform.start({ ...SESSION, idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
     // Fail-closed: nothing was put on the wire.
     expect(platform.requestLog.length).toBe(0);
   });
 
   it("rejects a whitespace-only idempotencyKey", async () => {
     const platform = new FakePlatform();
-    await expect(platform.run({ ...RUN, idempotencyKey: "   " })).rejects.toBeInstanceOf(RunConfigValidationError);
+    await expect(platform.start({ ...SESSION, idempotencyKey: "   " })).rejects.toBeInstanceOf(SessionConfigValidationError);
   });
 
   it("forwards a real idempotencyKey as the Idempotency-Key header on the create", async () => {
     const platform = new FakePlatform();
-    await platform.run({ ...RUN, idempotencyKey: "my-stable-key" }, { text: "ok", costUsd: 0.01 });
+    await platform.start({ ...SESSION, idempotencyKey: "my-stable-key" }, { text: "ok", costUsd: 0.01 });
     const create = platform.requestLog.find((r) => r.method === "POST" && r.path.endsWith("/api/sessions"));
     expect(create?.idempotencyKey).toBe("my-stable-key");
   });

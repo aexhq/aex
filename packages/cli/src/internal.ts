@@ -12,7 +12,7 @@ import type {
 } from "@aexhq/contracts";
 
 /**
- * Manifest file path inside the run container (always present).
+ * Manifest file path inside the session container (always present).
  *
  * The runner writes the manifest to this fixed path before invoking
  * in-container `aex` commands.
@@ -38,7 +38,7 @@ export interface CliIO {
   /**
    * Walk a directory and return every regular-file entry beneath it
    * (recursive). Used only by the internal `outputs sync` subcommand
-   * that the hosted runtime invokes from inside a managed run container at
+   * that the hosted runtime invokes from inside a managed session container at
    * session terminal. Returns `null` (not throws) when the directory
    * does not exist or is unreadable — `outputs sync` records the
    * miss in its structured output and continues to the next dir.

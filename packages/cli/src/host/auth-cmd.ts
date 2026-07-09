@@ -7,7 +7,7 @@
  * value is never printed by any of these verbs.
  *
  * These are host-only and require `io.configStore` (wired by `cli.ts`); they
- * read no env and are unavailable inside a managed run container.
+ * read no env and are unavailable inside a managed session container.
  */
 import { operations } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
@@ -20,12 +20,12 @@ import {
   extractCommonHostFlags,
   makeHttpClient,
   rejectUnknownFlags,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";
 import { AEX_DEFAULT_BASE_URL } from "@aexhq/contracts";
 
-export async function runLoginCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "login")) return USAGE_ERR;
+export async function executeLoginCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "login")) return USAGE_ERR;
   if (!io.configStore) {
     return emitJsonError(io, "config_store_unavailable", "config store unavailable in this environment");
   }
@@ -78,8 +78,8 @@ export async function runLoginCmd(io: CliIO, argv: readonly string[]): Promise<C
   return SUCCESS;
 }
 
-export async function runLogoutCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "logout")) return USAGE_ERR;
+export async function executeLogoutCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "logout")) return USAGE_ERR;
   if (!io.configStore) {
     return emitJsonError(io, "config_store_unavailable", "config store unavailable in this environment");
   }
@@ -101,8 +101,8 @@ export async function runLogoutCmd(io: CliIO, argv: readonly string[]): Promise<
   return SUCCESS;
 }
 
-export async function runAuthStatusCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "auth")) return USAGE_ERR;
+export async function executeAuthStatusCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "auth")) return USAGE_ERR;
   if (!io.configStore) {
     return emitJsonError(io, "config_store_unavailable", "config store unavailable in this environment");
   }

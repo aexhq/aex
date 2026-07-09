@@ -9,7 +9,7 @@
 export {
   Aex,
   AgentsMdClient,
-  ChildRunHandle,
+  ChildSessionHandle,
   FilesClient,
   OutputsClient,
   SecretsClient,
@@ -21,6 +21,7 @@ export {
 export type {
   AexOptions,
   BatchOptions,
+  ChildSessionEvents,
   Message,
   OutputDownloadOptions,
   OutputFilePathMatch,
@@ -28,19 +29,17 @@ export type {
   OutputFileSelector,
   OutputLinkSelector,
   PerSessionOutputSearchQuery,
-  RunCollectOptions,
-  RunEvents,
-  RunOutputs,
-  RunResult,
+  StartSessionOptions,
+  SessionOutputs,
+  SessionResult,
   SessionCreateOptions,
   SessionEnvironmentOptions,
   SessionEvents,
   SessionInput,
   SessionMessages,
-  SessionOutputs,
   SessionOverrides,
-  SessionRunOptions,
-  SessionRunResult,
+  SessionStartOptions,
+  SessionStartResult,
   SessionSendOptions,
   SessionTerminalRead,
   SessionTurnResult,
@@ -48,7 +47,7 @@ export type {
   SettleAwait,
   StreamEventsOptions,
   SubmitResult,
-  WaitForRunOptions
+  WaitForSessionOptions
 } from "./client.js";
 
 // Composition primitives
@@ -78,8 +77,8 @@ export {
   CleanupError,
   CredentialValidationError,
   ProviderError,
-  RunConfigValidationError,
-  RunStateError,
+  SessionConfigValidationError,
+  SessionStateError,
   apiErrorFromResponse,
   isAexApiErrorCode,
   isAuthError,
@@ -144,7 +143,7 @@ export type {
   OutputText,
   ProviderEvent,
   ReadOutputTextOptions,
-  Run,
+  SessionRecord,
   Session,
   SessionEvent,
   SessionListPage,
@@ -153,19 +152,19 @@ export type {
   SessionStatus,
   SessionSummary,
   SessionTurn,
-  RunRecordArchiveFileV1,
-  RunRecordArchiveFileRoleV1,
-  RunRecordArchiveNamespaceV1,
-  RunRecordCostV1,
-  RunRecordDownloadErrorV1,
-  RunRecordFileStatusV1,
-  RunRecordManifestV1,
-  RunRecordMetadataV1,
-  RunRecordNamespaceV1,
-  RunRecordSubmissionSnapshotV1,
-  RunRecordV1,
-  RunWebhookDelivery,
-  RunWebhookDeliveryStatus,
+  SessionRecordArchiveFileV1,
+  SessionRecordArchiveFileRoleV1,
+  SessionRecordArchiveNamespaceV1,
+  SessionRecordCostV1,
+  SessionRecordDownloadErrorV1,
+  SessionRecordFileStatusV1,
+  SessionRecordManifestV1,
+  SessionRecordMetadataV1,
+  SessionRecordNamespaceV1,
+  SessionRecordSubmissionSnapshotV1,
+  SessionRecordV1,
+  SessionWebhookDelivery,
+  SessionWebhookDeliveryStatus,
   RuntimeManifest,
   SecretRecord,
   UsageSummary,
@@ -178,10 +177,10 @@ export type {
 export type {
   PlatformInlineSecrets as InlineSecrets,
   PlatformMcpServerSecret as McpServerSecret,
-  PlatformEnvironment as RunEnvironment,
-  PlatformRunSubmissionRequest,
-  RunLimits,
-  RunWebhookSpec,
+  PlatformEnvironment as SessionEnvironment,
+  PlatformSessionSubmissionRequest,
+  SessionLimits,
+  SessionWebhookSpec,
 } from "@aexhq/contracts";
 
 // Runtime sizing — the closed set of valid managed runtime presets.
@@ -189,8 +188,8 @@ export type {
 // so an invalid token is a compile error, not a runtime 400.
 export {
   CUSTODY_MANIFEST_SCHEMA_VERSION,
-  RUN_RECORD_MANIFEST_SCHEMA_VERSION,
-  RUN_RECORD_SCHEMA_VERSION,
+  SESSION_RECORD_MANIFEST_SCHEMA_VERSION,
+  SESSION_RECORD_SCHEMA_VERSION,
   DEFAULT_RUNTIME_SIZE,
   RUNTIME_SIZE_PRESETS,
   RUNTIME_SIZES
@@ -208,24 +207,24 @@ export type { BuiltinToolName } from "@aexhq/contracts";
 // Provider/model surface. Provider choice decides the upstream model route;
 // execution uses the managed path.
 export {
-  DEFAULT_RUN_PROVIDER,
-  RUN_MODELS,
-  RUN_MODELS_BY_PROVIDER,
+  DEFAULT_PROVIDER,
+  SUPPORTED_MODELS,
+  SUPPORTED_MODELS_BY_PROVIDER,
   MODEL_PROVIDER_IDS,
   Models,
   providerForModel,
   providersForModel,
   resolveModelProvider,
   resolveProviderModelId,
-  isRunModel,
-  parseRunModel,
+  isModelName,
+  parseModelName,
   Providers,
-  RUN_PROVIDERS,
+  PROVIDERS,
   suggest
 } from "@aexhq/contracts";
 export type {
-  RunModel,
-  RunProvider
+  ModelName,
+  ProviderName
 } from "@aexhq/contracts";
 
 // Unified settled-result / batch / typed-decode / lineage surface (WS3/WS8/WS10).
@@ -233,14 +232,14 @@ export { usageFromProviderUsage } from "@aexhq/contracts";
 export type {
   BatchItemResult,
   BatchResult,
-  ChildRunRef,
-  ResolvableRunRef,
-  RunOutcome,
-  RunRefusalReason,
+  ChildSessionRef,
+  ResolvableSessionRef,
+  TurnOutcome,
+  TurnRefusalReason,
   SettledResult
 } from "@aexhq/contracts";
 
-// Status vocabulary (WS1): the terminal-outcome half + guard, bound to the run
+// Status vocabulary (WS1): the terminal-outcome half + guard, bound to the session
 // outcome SSoT. The bare session `error` is retired — a failed turn is `failed`.
 export { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES, isTerminalSessionStatus } from "@aexhq/contracts";
 export type { SessionTerminalOutcome } from "@aexhq/contracts";
@@ -263,13 +262,13 @@ export type { ApprovalGate, ResponseFormat, ResponseFormatKind, StreamableShape 
 
 // Event methods. Every event the SDK yields — the turn stream (`session.send()`),
 // `session.events().list()`, `session.events().streamEnvelopes()`, and
-// `RunResult.events` — is an `AexEventView`: the coordinator envelope enriched
+// `SessionResult.events` — is an `AexEventView`: the coordinator envelope enriched
 // with one type-guard METHOD per standardized event type, so a consumer branches
-// with `event.isTextMessage()` / `event.isToolCallStart()` / `event.isRunError()`
+// with `event.isTextMessage()` / `event.isToolCallStart()` / `event.isTurnError()`
 // / … instead of a free-function guard or a raw `event.type === "…"` compare.
 // `isTextMessage()` / `isToolCallStart()` / `isToolCallResult()` additionally
 // NARROW `event.data` to that type's fields (e.g. `event.data.text` is `string`).
-export { AEX_RUN_SETTLED_NAME } from "@aexhq/contracts";
+export { AEX_SESSION_SETTLED_NAME } from "@aexhq/contracts";
 export type {
   AexEventView,
   TextMessageEventView,

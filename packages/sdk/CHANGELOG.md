@@ -35,7 +35,7 @@ follows semantic versioning.
 - Held gapped terminal WebSocket events briefly so replay backfill can deliver
   lower-sequence text frames before a finished session stream ends.
 - Updated settle-consistent event stream docs and tests for the
-  `aex.run.settled` barrier emitted by the hosted planes.
+  `aex.session.settled` barrier emitted by the hosted planes.
 
 ## 0.40.12
 
@@ -116,8 +116,8 @@ follows semantic versioning.
 
 ### Fixed
 
-- Added `failureClass` to the typed `Run` record and preserved it when a
-  session-backed one-shot result is exposed through the run-compatible view.
+- Added `failureClass` to the typed `SessionRecord` record and preserved it when a
+  session-backed one-shot result is exposed through the session-record-compatible view.
 - Made unscoped `outputs.search()` scan sessions lazily and stop after the
   requested result limit instead of enumerating every session up front.
 - Updated live-session diagnostics for current managed terminals and sparse
@@ -135,7 +135,7 @@ follows semantic versioning.
 
 ### Fixed
 
-- Made `aex run --follow` wait briefly for the final session record to reach a
+- Made `aex start --follow` wait briefly for the final session record to reach a
   parked status after terminal stream events, avoiding false failures when the
   managed-plane event stream is ahead of the session mirror.
 
@@ -144,7 +144,7 @@ follows semantic versioning.
 ### Fixed
 
 - Fixed the shared fire-and-forget submit transport used by the bundled CLI so
-  `aex run --follow` dispatches the first turn instead of creating an idle
+  `aex start --follow` dispatches the first turn instead of creating an idle
   session and waiting for events that can never arrive.
 
 ## 0.40.0
@@ -157,7 +157,7 @@ follows semantic versioning.
 
 ### Fixed
 
-- Restored SDK validation for the removed `parentRunId` session submission
+- Restored SDK validation for the removed `parentSessionId` session submission
   field so legacy subagent lineage input fails before any HTTP request.
 
 ## 0.39.0
@@ -180,7 +180,7 @@ follows semantic versioning.
 ### Added
 
 - Added first-class projected session messages to one-shot and session-turn
-  results. `RunResult`, `SessionTurnResult`, and `SessionRunResult` now include
+  results. `SessionResult`, `SessionTurnResult`, and `SessionStartResult` now include
   `messages`, and `session.messages.all()` / `list()` return normalized message
   objects.
 
@@ -211,19 +211,19 @@ follows semantic versioning.
   without parsing raw error bodies.
 - Added stable idempotency handling for billable session create/send requests
   and `replayLast` coverage so SDK retries do not double-submit billable turns.
-- Added the `machine.spot` run-submission intent for opting into interruptible
+- Added the `machine.spot` session-submission intent for opting into interruptible
   managed capacity.
 
 ### Changed (breaking)
 
-- Removed the legacy public `parentRunId` submission field from the typed
+- Removed the legacy public `parentSessionId` submission field from the typed
   contract. Subagents run through the managed in-process tool path.
 
 ## 0.34.0
 
 ### Changed (breaking)
 
-- Sessions are now the low-level API and `run()` is the one-shot convenience
+- Sessions are now the low-level API and `start()` is the one-shot convenience
   wrapper over them. Open a session with `aex.openSession(options)`, drive it with
   `session.send(...).done()`, and resume it later with
   `aex.openSession(sessionId)`. A `SessionHandle` keeps lifecycle verbs flat
@@ -250,17 +250,17 @@ follows semantic versioning.
   and inspect delivery with `session.webhooks().list()` /
   `session.webhooks().redeliver(id)`. Verify inbound deliveries with
   `verifyAexWebhook`.
-- Renamed the data-source chat tools to session vocabulary: `list_runs` →
-  `list_sessions`, `get_run` → `get_session`, and their `run_id` argument →
+- Renamed the data-source chat tools to session vocabulary: `list_sessions` →
+  `list_sessions`, `get_run` → `get_session`, and their `session_id` argument →
   `session_id` (`list_outputs` / `read_output` / `search_outputs` keep their
-  names). `ChatCorpus.runIds` → `sessionIds`.
+  names). `ChatCorpus.sessionIds` → `sessionIds`.
 
 ### Removed
 
-- Removed `submit()` and the entire run-id-addressed client surface
-  (`wait` / `stream` / `streamEnvelopes` / `getRun` / `getRunUnit` / `listRuns` /
+- Removed `submit()` and the entire session-id-addressed client surface
+  (`wait` / `stream` / `streamEnvelopes` / `getSessionRecord` / `getSessionUnit` / `listSessionRecords` /
   `listOutputs` / `readOutputText` / `download*` / `cancel` / `searchOutputs` /
-  `getRunWebhookDeliveries` / `redeliverRunWebhook` on the client). Use the
+  `getSessionWebhookDeliveries` / `redeliverSessionWebhook` on the client). Use the
   session-handle and `aex.sessions.*` equivalents.
 - Normalized the `chat` surface into sessions: dropped the `ChatClient` /
   `ChatSession` / `ChatTurnStream` aliases (and the `Chat*` option/result types)
@@ -269,9 +269,9 @@ follows semantic versioning.
   removed too; build a corpus chat programmatically with `createCorpusTools`.
 - Removed the `RuntimeSizes` export; use the `Sizes` symbol const (e.g.
   `Sizes.SHARED_0_25X_1GB`).
-- Removed the `parentRunId` and `limits` submission options. Subagents run
+- Removed the `parentSessionId` and `limits` submission options. Subagents run
   in-process; use `overrides` (e.g. `overrides.maxSpendUsd`) for per-session caps.
-- Removed the `SubmitOptions`, `RunListPage`, `RunListQuery`, and `RunSummary`
+- Removed the `SubmitOptions`, `SessionRecordListPage`, `SessionRecordListQuery`, and `SessionRecordSummary`
   types.
 
 ## 0.33.1
@@ -295,9 +295,9 @@ follows semantic versioning.
 
 ### Changed (breaking)
 
-- `AgentExecutor.run()` now opens a resumable session and treats the returned
-  `runId` as the session id. Use `submit()` plus `wait()` / `stream()` when a
-  low-level run-record workflow is required.
+- `AgentExecutor.start()` now opens a resumable session and treats the returned
+  `sessionId` as the session id. Use `submit()` plus `wait()` / `stream()` when a
+  low-level session-record workflow is required.
 - Removed the public `postHook` submission option; validation or repair should
   be expressed as a follow-up session turn instead of an after-run hook.
 
@@ -305,8 +305,8 @@ follows semantic versioning.
 
 ### Changed (breaking)
 
-- Removed the `RunModels` back-compat alias. Use the canonical `Models` constants
-  (provider-neutral model ids); `RunModels` was a 1:1 alias of `Models`.
+- Removed the `ModelNames` back-compat alias. Use the canonical `Models` constants
+  (provider-neutral model ids); `ModelNames` was a 1:1 alias of `Models`.
 - Removed the deprecated `SignedOutputLink` type alias. Use `OutputLink`.
 - Removed the legacy DeepSeek model ids `deepseek-chat` / `deepseek-reasoner`
   (`Models.DEEPSEEK_CHAT` / `Models.DEEPSEEK_REASONER`). Use `deepseek-v4-flash`
@@ -327,7 +327,7 @@ follows semantic versioning.
 ### Fixed
 
 - Hardened CLI config validation coverage so invalid skill asset ids are
-  rejected before any run submission request is sent.
+  rejected before any session submission request is sent.
 - Added installed-package blackbox coverage for the major SDK submit input
   shapes, builder edge cases, secret redaction, and no-network validation paths.
 
@@ -335,49 +335,49 @@ follows semantic versioning.
 
 ### Added
 
-- Per-run spend cap via `limits.maxSpendUsd` (`SubmitOptions.limits`). A positive
-  USD amount that bounds total spend for a single run: once the run would exceed
-  the cap it is stopped. An absent field means no per-run cap (the run is still
+- Per-session spend cap via `limits.maxSpendUsd` (`SubmitOptions.limits`). A positive
+  USD amount that bounds total spend for a single run: once the session would exceed
+  the cap it is stopped. An absent field means no per-session cap (the session is still
   bounded by its `timeout` and any workspace-level cap). As with the other
   `limits` fields, `submit()` validates shape/positivity client-side and the
   server resolves the value against the workspace and platform ceilings.
-- Read-only chat over a fixed corpus of runs, built only on the public read
+- Read-only chat over a fixed corpus of sessions, built only on the public read
   surface:
   - `AgentExecutor.searchOutputs(query?)` — search across the token's own run
     outputs, returning lean references (pair with `readOutputText` to fetch the
     matching content).
   - `createCorpusTools(client, corpus, options?)` — packages the corpus read
-    surface (`list_runs` / `list_outputs` / `read_output` / search) as a
+    surface (`list_sessions` / `list_outputs` / `read_output` / search) as a
     vendor-neutral LLM tool set scoped to an explicit run allow-list or a
-    `listRuns` filter; every tool refuses a run outside the resolved corpus.
+    `listSessionRecords` filter; every tool refuses a session outside the resolved corpus.
   - `aex chat` — a read-only, multi-run chat CLI over a corpus that uses your own
     provider key plus the corpus read tools. See `examples/data-chat/`.
-- CLI host commands for auth and live run inspection:
+- CLI host commands for auth and live session inspection:
   - `aex login` / `aex logout` / `aex auth status` — persist your API key and
     default `--aex-url` to a `0600` config file so commands stop re-passing
     `--api-key`. `login` validates the token against `whoami` before writing (a
     bad token is never persisted) and the token value is never printed.
-  - `aex tail <run-id>` — live, human-readable follow over the coordinator
+  - `aex tail <session-id>` — live, human-readable follow over the coordinator
     envelope stream (the low-latency equivalent of `events --follow`), with
-    `--json` / `--filter` / `--logs` and a jump-to-failure line on `RUN_ERROR`.
-  - `aex inspect <run-id>` — one-shot full-timeline render with a header, a
+    `--json` / `--filter` / `--logs` and a jump-to-failure line on `TURN_ERROR`.
+  - `aex inspect <session-id>` — one-shot full-timeline render with a header, a
     settle-consistent timeline, a jump-to-failure line, and a cost/usage footer.
 
 ## 0.29.0
 
 ### Changed (breaking)
 
-- **Regions renamed to product tokens.** `RUN_REGIONS` / `RunRegions` /
-  `RunRegion` / `parseRunRegion` are now `REGIONS` / `Regions` / `Region` /
+- **Regions renamed to product tokens.** `SESSION_REGIONS` / `SessionRegions` /
+  `SessionRegion` / `parseSessionRegion` are now `REGIONS` / `Regions` / `Region` /
   `parseRegion`, and the accepted tokens are `eu-west` / `us-west` /
   `ap-northeast` (was `lhr` / `iad` / `sfo` / `bom`). `iad` (`us-east`) is
   dropped with no replacement. Update any `region:` value and any
-  `RunRegions.*` / `type RunRegion` import.
+  `SessionRegions.*` / `type SessionRegion` import.
 - **`runtimeSize` tokens right-sized to real boxes.** The preset set is now the
   six managed runtime tiers `shared-0.06x-256mb` / `shared-0.25x-1gb` /
   `shared-0.5x-4gb` / `shared-1x-6gb` / `shared-2x-8gb` / `shared-4x-12gb`
   (fractional vCPU). The default machine changes from `shared-1x-128mb` to
-  `shared-0.25x-1gb` (0.25 vCPU / 1 GiB), which changes default run memory
+  `shared-0.25x-1gb` (0.25 vCPU / 1 GiB), which changes default session memory
   headroom and cost. `RuntimeSizes.*` accessor keys are renamed accordingly.
 
 ## 0.28.1
@@ -386,11 +386,11 @@ follows semantic versioning.
 
 - Live event stream no longer hangs on a silently half-open coordinator socket.
   A stalled WebSocket (no close/error, no frames) previously blocked the async
-  iterator forever and could MISS a `RUN_FINISHED`/`RUN_ERROR` that was already
+  iterator forever and could MISS a `TURN_FINISHED`/`TURN_ERROR` that was already
   persisted server-side. The consumer now:
   - sends a lightweight keep-alive ping the coordinator auto-responds to
     (without forcing an extra server-side wake), and
-  - runs an idle watchdog (default 45s) that, on no inbound frame, treats the
+  - sessions an idle watchdog (default 45s) that, on no inbound frame, treats the
     socket as dead and reconnects — resuming from the last cursor, which replays
     the terminal exactly-once.
   Tunable via the internal stream options `idleTimeoutMs` / `pingIntervalMs`;
@@ -400,17 +400,17 @@ follows semantic versioning.
 
 ### Added
 
-- Per-run lineage limit overrides via `SubmitOptions.limits`:
-  - `limits.maxConcurrentChildRuns` — the max LIVE (non-terminal) child runs
+- Per-session lineage limit overrides via `SubmitOptions.limits`:
+  - `limits.maxConcurrentChildSessions` — the max LIVE (non-terminal) child sessions
     allowed under a lineage root before a spawn is rejected with
     `child_cap_exceeded` (platform default `1000`, hard ceiling `4096`).
-  - `limits.maxSubagentDepth` — the deepest subagent lineage the run may spawn
+  - `limits.maxSubagentDepth` — the deepest subagent lineage the session may spawn
     before a child submit is rejected with `depth_exceeded` (platform default and
     hard ceiling `5`).
   Both fields are optional; an absent field uses the platform default. The cap is
   resolved ONCE at the root submit and governs the whole subtree. `submit()`
   validates the override client-side (shape / positivity / allow-list) and throws
-  `AexError(RUN_CONFIG_INVALID)` before any asset upload — clamping to the
+  `AexError(SESSION_CONFIG_INVALID)` before any asset upload — clamping to the
   per-workspace and platform ceilings is the server's job, so an in-range value
   here is not a guarantee it won't be lowered server-side.
 
@@ -418,12 +418,12 @@ follows semantic versioning.
 
 ### Added
 
-- Data surface for reading a workspace's runs and outputs:
-  - `AgentExecutor.listRuns(query?)` — paginated, most-recent-first list of the
-    token's own runs (`status` / `since` / `limit` / `cursor`).
-  - `AgentExecutor.readOutputText(runId, selector, options?)` — byte-capped,
+- Data surface for reading a workspace's sessions and outputs:
+  - `AgentExecutor.listSessionRecords(query?)` — paginated, most-recent-first list of the
+    token's own sessions (`status` / `since` / `limit` / `cursor`).
+  - `AgentExecutor.readOutputText(sessionId, selector, options?)` — byte-capped,
     decoded-UTF-8 read of one output file (default 50 KB, 10 MB ceiling, optional
-    `grep`), built for handing run deliverables to an LLM.
+    `grep`), built for handing session deliverables to an LLM.
   - `createDataTools(client)` — packages the read surface as a vendor-neutral
     LLM tool set (`{ tools, instructions, execute }`). See `examples/data-chat/`.
 - Per-provider BYOK: `secrets.apiKeys` is a `{ [provider]: key }` map so subagents
@@ -441,9 +441,9 @@ follows semantic versioning.
 
 ### Added
 
-- Run Webhooks: submit a per-run `webhook: { url }` to receive the terminal
-  `run.finished` event (signed Standard-Webhooks style). New delivery APIs
-  `getRunWebhookDeliveries(runId)` and `redeliverRunWebhook(runId, deliveryId)`,
+- SessionRecord Webhooks: submit a per-session `webhook: { url }` to receive the terminal
+  `session.finished` event (signed Standard-Webhooks style). New delivery APIs
+  `getSessionWebhookDeliveries(sessionId)` and `redeliverSessionWebhook(sessionId, deliveryId)`,
   plus the `verifyAexWebhook(...)` helper to verify inbound deliveries with no
   extra dependency.
 

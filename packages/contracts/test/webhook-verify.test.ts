@@ -8,7 +8,7 @@ const SECRET_MATERIAL_B64 = randomBytes(32).toString("base64");
 const SECRET = `whsec_${SECRET_MATERIAL_B64}`;
 
 const ID = "msg_test_p5jXN8AQM9LWM0D4loKWxJek";
-const BODY = JSON.stringify({ specversion: "1.0", type: "run.finished", subject: "run_42" });
+const BODY = JSON.stringify({ specversion: "1.0", type: "session.finished", subject: "ses_42" });
 
 /**
  * Independent reference signer (Node `crypto`) — this is the interop

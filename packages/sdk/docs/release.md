@@ -21,7 +21,7 @@ bun run docs:build
 bun run pack:sdk
 ```
 
-`bun run pack:sdk` builds the SDK, runs a Bun pack dry-run, and runs the public
+`bun run pack:sdk` builds the SDK, sessions a Bun pack dry-run, and sessions the public
 boundary gate. Offline user tests install the packed SDK into a clean Bun
 project and exercise the SDK and CLI from that install tree.
 
@@ -30,15 +30,15 @@ project and exercise the SDK and CLI from that install tree.
 The manual `.github/workflows/release.yml` workflow:
 
 - Installs with `bun ci`.
-- Runs lint, unit/security, offline user tests, docs build, and `pack:sdk`.
+- Sessions lint, unit/security, offline user tests, docs build, and `pack:sdk`.
 - Refuses to publish if `@aexhq/sdk@<package version>` already exists.
 - Packs `packages/sdk` with `bun pm pack`.
-- Runs the publish job in the `npm-release` GitHub Environment and requires its
+- Sessions the publish job in the `npm-release` GitHub Environment and requires its
   `NPM_TOKEN` secret.
 - Publishes the tarball with npm provenance to the selected dist-tag (`canary`
   by default).
 - Waits for npm visibility.
-- Runs live user tests against the exact published version.
+- Sessions live user tests against the exact published version.
 
 Publish canary first for release validation. Promote the same immutable version
 only after the downstream platform release gate is green.
@@ -64,7 +64,7 @@ CLI version that supports OIDC trusted publishing.
 
 The manual `.github/workflows/promote.yml` workflow assigns an npm dist-tag to
 an already-published `@aexhq/sdk` version, usually `latest` after canary and
-platform validation. It also runs in `npm-release`, requires `NPM_TOKEN`, and
+platform validation. It also sessions in `npm-release`, requires `NPM_TOKEN`, and
 does not rebuild or republish the package.
 
 ## What ships in the tarball

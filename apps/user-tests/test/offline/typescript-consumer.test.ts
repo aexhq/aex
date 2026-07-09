@@ -78,10 +78,10 @@ describe("typescript consumer", () => {
       import {
         Aex,
         type Message,
-        type RunResult,
+        type SessionResult,
         type SessionCreateOptions,
-        type SessionRunOptions,
-        type SessionRunResult
+        type SessionStartOptions,
+        type SessionStartResult
       } from "@aexhq/sdk";
 
       const fetchFake: typeof fetch = async () =>
@@ -103,7 +103,7 @@ describe("typescript consumer", () => {
       const runOptions = {
         model: "claude-haiku-4-5",
         message: "Summarize the session in one sentence."
-      } satisfies SessionRunOptions;
+      } satisfies SessionStartOptions;
 
       const session = await client.sessions.open("sess_type_surface");
       const messages: readonly Message[] = await session.messages.all();
@@ -113,23 +113,23 @@ describe("typescript consumer", () => {
         return role + ": " + text;
       });
 
-      const runResultPromise: Promise<RunResult> = client.run(runOptions);
-      const sessionRunPromise: Promise<SessionRunResult> = client.sessions.run(runOptions);
-      const directTextPromise: Promise<string | undefined> = (async () => (await runResultPromise).text)();
-      const directRunMessagesPromise: Promise<readonly Message[]> = (async () => (await runResultPromise).messages)();
-      const directSessionTextPromise: Promise<string | undefined> = (async () => (await sessionRunPromise).text)();
-      const directSessionMessagesPromise: Promise<readonly Message[]> = (async () => (await sessionRunPromise).messages)();
+      const sessionResultPromise: Promise<SessionResult> = client.start(runOptions);
+      const sessionStartPromise: Promise<SessionStartResult> = client.sessions.start(runOptions);
+      const directTextPromise: Promise<string | undefined> = (async () => (await sessionResultPromise).text)();
+      const directStartMessagesPromise: Promise<readonly Message[]> = (async () => (await sessionResultPromise).messages)();
+      const directSessionTextPromise: Promise<string | undefined> = (async () => (await sessionStartPromise).text)();
+      const directSessionMessagesPromise: Promise<readonly Message[]> = (async () => (await sessionStartPromise).messages)();
 
       void clientWithDefaults;
       void createOptions;
       void renderedMessages;
       void directTextPromise;
-      void directRunMessagesPromise;
+      void directStartMessagesPromise;
       void directSessionTextPromise;
       void directSessionMessagesPromise;
     `;
     const negative = `
-      import type { SessionCreateOptions, SessionRunOptions } from "@aexhq/sdk";
+      import type { SessionCreateOptions, SessionStartOptions } from "@aexhq/sdk";
 
       // @ts-expect-error AgentExecutor is not part of the slim root surface.
       import { AgentExecutor } from "@aexhq/sdk";
@@ -148,7 +148,7 @@ describe("typescript consumer", () => {
       // @ts-expect-error Decode-style helpers are replaced by direct text/messages.
       import { decodeToolCalls } from "@aexhq/sdk";
       // @ts-expect-error Decode-style helpers are replaced by direct text/messages.
-      import { summarizeRunTrace } from "@aexhq/sdk";
+      import { summarizeTurnTrace } from "@aexhq/sdk";
       // @ts-expect-error Decode-style helpers are replaced by direct text/messages.
       import { textOf } from "@aexhq/sdk";
       // @ts-expect-error DataTools is not part of the slim root surface.
@@ -165,9 +165,9 @@ describe("typescript consumer", () => {
       const runOptions = {
         model: "claude-haiku-4-5",
         message: "hello",
-        // @ts-expect-error proxyEndpoints is not a slim session run option.
+        // @ts-expect-error proxyEndpoints is not a slim session session option.
         proxyEndpoints: []
-      } satisfies SessionRunOptions;
+      } satisfies SessionStartOptions;
 
       void createOptions;
       void runOptions;

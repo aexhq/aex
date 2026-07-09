@@ -26,7 +26,7 @@
       "console.log(result.status, result.text);"
     ],
     "cliLines": [
-      "aex run \\",
+      "aex start \\",
       "  --api-key \"$AEX_API_KEY\" \\",
       "  --anthropic-api-key \"$ANTHROPIC_API_KEY\" \\",
       "  --model claude-haiku-4-5 \\",
@@ -49,13 +49,13 @@
       "slug": "agent-runtime",
       "href": "/docs/features/#agent-runtime",
       "title": "Agent runtime",
-      "description": "Managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents."
+      "description": "Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents."
     },
     {
       "slug": "durable-infrastructure",
       "href": "/docs/features/#durable-infrastructure",
       "title": "Durable infrastructure",
-      "description": "Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes."
+      "description": "SessionRecord records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes."
     },
     {
       "slug": "agent-composition",
@@ -67,7 +67,7 @@
       "slug": "subagents",
       "href": "/docs/features/#subagents",
       "title": "Subagents",
-      "description": "Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation."
+      "description": "Typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation."
     },
     {
       "slug": "models-and-providers",

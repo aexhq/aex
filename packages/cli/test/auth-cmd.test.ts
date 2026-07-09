@@ -5,7 +5,7 @@
  * - auth status never prints the token value.
  */
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/run.js";
+import { executeCli } from "../src/main.js";
 import { type CliIO, type StoredCliConfig } from "../src/internal.js";
 
 function makeIo(opts: {
@@ -87,7 +87,7 @@ describe("aex login", () => {
     const cap = makeIo({
       argv: ["login", "--api-key", "tok-abc", "--aex-url", "https://dev.example"]
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.calls).toEqual(["https://dev.example/api/whoami"]);
     expect(cap.writes).toHaveLength(1);
@@ -103,7 +103,7 @@ describe("aex login", () => {
       argv: ["login", "--api-key", "bad-tok"],
       whoamiStatus: 401
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(1);
     expect(cap.writes).toHaveLength(0);
     const printed = JSON.parse(cap.err().trim()) as { error: string; status?: number; remedy?: string };
@@ -114,7 +114,7 @@ describe("aex login", () => {
 
   it("requires a token", async () => {
     const cap = makeIo({ argv: ["login"] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(2);
     expect(cap.err()).toContain("usage: aex login");
     expect(cap.calls).toHaveLength(0);
@@ -124,7 +124,7 @@ describe("aex login", () => {
 describe("aex logout", () => {
   it("clears the store", async () => {
     const cap = makeIo({ argv: ["logout"], stored: { apiKey: "tok" } });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     expect(cap.cleared()).toBe(1);
     const printed = JSON.parse(cap.out().trim()) as { ok: boolean; cleared: boolean };
@@ -138,7 +138,7 @@ describe("aex auth status", () => {
       argv: ["auth", "status"],
       stored: { apiKey: "super-secret-1234", aexUrl: "https://dev.example" }
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     const printed = JSON.parse(cap.out().trim()) as {
       configPath: string;
@@ -154,7 +154,7 @@ describe("aex auth status", () => {
 
   it("reports hasToken=false when nothing is stored", async () => {
     const cap = makeIo({ argv: ["auth", "status"], stored: null });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exit()).toBe(0);
     const printed = JSON.parse(cap.out().trim()) as { hasToken: boolean };
     expect(printed.hasToken).toBe(false);

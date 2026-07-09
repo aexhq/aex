@@ -17,7 +17,7 @@ agent can gate on.
 
 ## Prerequisites
 
-The run must provide:
+The session must provide:
 
 - `DOUBAO_API_KEY` in `environment.secrets`.
 - Networking access to `ark.ap-southeast.bytepluses.com`, or the matching host

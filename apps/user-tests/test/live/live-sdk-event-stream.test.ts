@@ -2,18 +2,18 @@
  * Live scenario: live-sdk-event-stream.test.ts
  *
  * Exercises the unified event coordinator end-to-end through the installed
- * SDK, the way a user listening to a run would:
+ * SDK, the way a user listening to a session would:
  *
- *   1. run (DeepSeek Managed) — a one-shot session via `client.run(...)`
+ *   1. run (DeepSeek Managed) — a one-shot session via `client.start(...)`
  *   2. LISTEN over the coordinator WebSocket via `session.events().streamEnvelopes(...)`
  *      (ticket broker → coordinator WS, exactly-once cursor resume).
- *   3. SNAPSHOT the same log from the settle-consistent `RunResult.events`.
+ *   3. SNAPSHOT the same log from the settle-consistent `SessionResult.events`.
  *   4. DOWNLOAD the durable event archive: mint a ticket and read the
  *      coordinator manifest (rolling object storage chunks + counts), proving the events
- *      are durably archived and downloadable after the run.
+ *      are durably archived and downloadable after the session.
  *
  * Asserts the expected unified-envelope events exist (AG-UI vocabulary):
- * RUN_STARTED, ≥1 TEXT_MESSAGE_CONTENT, RUN_FINISHED — over both the live WS
+ * TURN_STARTED, ≥1 TEXT_MESSAGE_CONTENT, TURN_FINISHED — over both the live WS
  * and the snapshot — and that the archive manifest records them.
  *
  * Required env:
@@ -41,7 +41,7 @@ const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 interface StreamResult {
-  readonly runStatus: string;
+  readonly sessionStatus: string;
   readonly streamedCount: number;
   readonly streamedTypes: readonly string[];
   readonly streamedCustomNames: readonly string[];
@@ -87,15 +87,15 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         const model = process.env.MODEL;
 
         const client = new Aex({ baseUrl, apiKey });
-        const result = await client.run({
+        const result = await client.start({
           provider: "deepseek",
           model,
           message: ${JSON.stringify(`Output verbatim: ${probe}`)},
           idempotencyKey: "user-test-event-stream-" + Date.now(),
           apiKeys: { deepseek: deepseekKey }
         }, { timeoutMs: 120 * 1000 });
-        const runId = result.runId;
-        const session = await client.sessions.open(runId);
+        const sessionId = result.sessionId;
+        const session = await client.sessions.open(sessionId);
 
         // 1. Listen live over the coordinator WebSocket (exactly-once,
         //    reconnecting). Stop on the terminal envelope or the deadline.
@@ -113,7 +113,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
               streamed.push(ev.type);
               const name = ev && ev.data && typeof ev.data.name === "string" ? ev.data.name : null;
               if (name) streamedCustomNames.push(name);
-              if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR" || (typeof name === "string" && name.startsWith("aex.session."))) break;
+              if (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR" || (typeof name === "string" && name.startsWith("aex.session."))) break;
             }
           } catch (e) {
             // socket dropped past terminal / abort — tolerate; snapshot below
@@ -156,10 +156,10 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           return redacted.toString();
         }
 
-        // 2. Snapshot the same log + final status. \`client.run(...)\` already
+        // 2. Snapshot the same log + final status. \`client.start(...)\` already
         //    waited for the session to park at a terminal state, so the
-        //    settle-consistent RunResult carries the final status + events
-        //    directly — no waitForRun/getRun/listEvents round-trip needed.
+        //    settle-consistent SessionResult carries the final status + events
+        //    directly — no waitForRun/getSessionRecord/listEvents round-trip needed.
         const run = {
           status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
           runtime: "managed",
@@ -182,7 +182,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         for (let attempt = 0; attempt < 5 && !manifest; attempt++) {
           if (attempt > 0) await new Promise((r) => setTimeout(r, 2000));
           try {
-            const tRes = await fetchBounded(baseUrl + "/api/runs/" + runId + "/events/ticket", {
+            const tRes = await fetchBounded(baseUrl + "/api/sessions/" + sessionId + "/events/ticket", {
               method: "POST",
               headers: { authorization: "Bearer " + apiKey }
             }, 8000);
@@ -225,7 +225,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           .filter((e) => e.type === "CUSTOM" && e.data && typeof e.data.name === "string")
           .map((e) => e.data.name);
         process.stdout.write(JSON.stringify({
-          runStatus: run.status,
+          sessionStatus: session.status,
           streamedCount: streamed.length,
           streamedTypes: [...new Set(streamed)],
           streamedCustomNames: [...new Set(streamedCustomNames)],
@@ -266,17 +266,17 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
       }
       const result = JSON.parse(child.stdout.trim()) as StreamResult;
 
-      expect(result.runStatus).toBe("succeeded");
+      expect(result.sessionStatus).toBe("succeeded");
       // Live WS delivered the unified envelope.
       expect(result.streamedCount).toBeGreaterThan(0);
       expect(result.streamedTypes).toContain("TEXT_MESSAGE_CONTENT");
       expect(
-        result.streamedTypes.includes("RUN_FINISHED") || result.streamedCustomNames.some((name) => name.startsWith("aex.session."))
+        result.streamedTypes.includes("TURN_FINISHED") || result.streamedCustomNames.some((name) => name.startsWith("aex.session."))
       ).toBe(true);
       // Snapshot agrees.
       expect(result.snapshotTypes).toContain("TEXT_MESSAGE_CONTENT");
       expect(
-        result.snapshotTypes.includes("RUN_FINISHED") || result.snapshotCustomNames.some((name) => name.startsWith("aex.session."))
+        result.snapshotTypes.includes("TURN_FINISHED") || result.snapshotCustomNames.some((name) => name.startsWith("aex.session."))
       ).toBe(true);
       expect(result.leakedKey).toBe(false);
       if (result.manifestEventCount <= 0 || result.manifestChunks < 1) {

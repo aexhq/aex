@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Aex, CredentialValidationError, RunConfigValidationError } from "../../src/index.js";
+import { Aex, CredentialValidationError, SessionConfigValidationError } from "../../src/index.js";
 
 function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   const calls: string[] = [];
@@ -55,7 +55,7 @@ describe("Aex.openSession — removed field validation", () => {
     expect(rec.calls).toHaveLength(0);
   });
 
-  it("rejects the legacy parentRunId field without an HTTP call", async () => {
+  it("rejects the legacy parentSessionId field without an HTTP call", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
@@ -63,9 +63,9 @@ describe("Aex.openSession — removed field validation", () => {
       client.openSession({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
-        parentRunId: "run_parent"
+        parentSessionId: "ses_parent"
       } as never)
-    ).rejects.toThrow(/parentRunId is not a supported option; subagent lineage is assigned by the platform/);
+    ).rejects.toThrow(/parentSessionId is not a supported option; subagent lineage is assigned by the platform/);
 
     expect(rec.calls).toHaveLength(0);
   });
@@ -96,7 +96,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
         apiKeys: { anthropic: "sk-x" },
         runtime: "lite"
       } as never)
-    ).rejects.toThrow(RunConfigValidationError);
+    ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
 
@@ -109,7 +109,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
         apiKeys: { anthropic: "sk-x" },
         overrides: { timeout: "banana" }
       })
-    ).rejects.toThrow(RunConfigValidationError);
+    ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
 
@@ -122,7 +122,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
         apiKeys: { anthropic: "sk-x" },
         overrides: { timeout: "10s" }
       })
-    ).rejects.toThrow(RunConfigValidationError);
+    ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
 

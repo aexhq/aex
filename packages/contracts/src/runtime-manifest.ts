@@ -1,14 +1,14 @@
-import type { RunProvider } from "./submission.js";
+import type { ProviderName } from "./submission.js";
 
 /**
- * Runtime manifest: the per-run description of where
+ * Runtime manifest: the per-session description of where
  * aex places things inside the agent container, plus the merged
  * env-var bag delivered via `RUNTIME.env` / `RUNTIME.json`.
  *
- * The hosted API computes a manifest at submitRun-response time
+ * The hosted API computes a manifest at startSessionRecord-response time
  * from the validated submission via {@link buildRuntimeManifest} and
  * echoes it on the wire as
- * `Run.runtimeManifest`, so caller code (anyone rendering catalog markdown
+ * `SessionRecord.runtimeManifest`, so caller code (anyone rendering catalog markdown
  * pre-submission, or resolving aex's in-container path strings) doesn't
  * have to guess.
  * The managed runtime materialises the actual `RUNTIME.env` / `RUNTIME.json`
@@ -17,7 +17,7 @@ import type { RunProvider } from "./submission.js";
  *
  * Manifest values are derived, never persisted separately — the source
  * of truth for the customer half remains `submission.environment.envVars`
- * on the run row; the aex half is constant for a given SDK version.
+ * on the session row; the aex half is constant for a given SDK version.
  */
 
 /**
@@ -32,18 +32,18 @@ import type { RunProvider } from "./submission.js";
  * under `/mnt/session/uploads/`.
  */
 export interface RuntimeManifest {
-  readonly provider: RunProvider | string;
+  readonly provider: ProviderName | string;
   /** Where skill bundles auto-discover in the managed runner. */
   readonly skillsRoot: string;
   /** Parent dir of File mounts: `<filesRoot>/<f_id>/<rel-path>`. */
   readonly filesRoot: string;
   /** Parent dir of non-SKILL.md asset mounts: `<assetsRoot>/<skl_id>/<rel-path>`. */
   readonly assetsRoot: string;
-  /** Absolute path of the in-container aex runtime bridge (invoke via `bun`). */
+  /** Absolute path of the in-container aex starttime bridge (invoke via `bun`). */
   readonly aexCli: string;
-  /** Absolute path of the in-container aex runtime index. */
+  /** Absolute path of the in-container aex starttime index. */
   readonly indexJson: string;
-  /** Absolute path of the always-mounted aex runtime contract README. */
+  /** Absolute path of the always-mounted aex starttime contract README. */
   readonly readme: string;
   /** Absolute path of the machine-readable manifest mirror. */
   readonly runtimeJson: string;
@@ -62,12 +62,12 @@ export interface RuntimeManifest {
    * caller can learn where a handed file landed. `mountPath` is the validated
    * directory the archive unzipped into (the SDK default is `/workspace`); a
    * single file lands at `<mountPath>/<realFilename>`, a folder lands its entries
-   * under `<mountPath>/`. Empty when the run carried no files.
+   * under `<mountPath>/`. Empty when the session carried no files.
    */
   readonly mountedFiles: readonly MountedFileManifest[];
 }
 
-/** One submitted `File`'s resolved mount directory (surfaced on the Run record). */
+/** One submitted `File`'s resolved mount directory (surfaced on the Session record). */
 export interface MountedFileManifest {
   /** The file's storage slug (`FileRef.name`). */
   readonly name: string;
@@ -97,7 +97,7 @@ export function runtimePaths(): typeof RUNTIME_PATHS {
 }
 
 export interface BuildRuntimeManifestInput {
-  readonly provider: RunProvider | string;
+  readonly provider: ProviderName | string;
   /**
    * Customer-supplied `environment.envVars` from the validated
    * submission. Keys with the reserved `AEX_` prefix are
@@ -124,7 +124,7 @@ const AEX_PREFIX = "AEX_";
 
 /**
  * Default mount DIRECTORY for a `File` with no explicit `mountPath`. Mirrors
- * `DEFAULT_FILE_MOUNT_PATH` in `run-config.ts`; duplicated here so this module
+ * `DEFAULT_FILE_MOUNT_PATH` in `session-config.ts`; duplicated here so this module
  * stays self-contained (tree-shakeable) — the same reason {@link AEX_PREFIX}
  * is inlined rather than imported from the submission parser.
  */

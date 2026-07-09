@@ -4,7 +4,7 @@
  * header-drop shipped no `Idempotency-Key`). Omitted keys auto-generate.
  */
 import { describe, expect, it } from "vitest";
-import { Aex, RunConfigValidationError } from "../../src/index.js";
+import { Aex, SessionConfigValidationError } from "../../src/index.js";
 
 function makeClient(): { client: Aex; keys: (string | undefined)[] } {
   const keys: (string | undefined)[] = [];
@@ -13,7 +13,7 @@ function makeClient(): { client: Aex; keys: (string | undefined)[] } {
     if (url.endsWith("/api/sessions") && (init?.method ?? "GET") === "POST") {
       const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers as HeadersInit);
       keys.push(headers.get("idempotency-key") ?? undefined);
-      return new Response(JSON.stringify({ session: { id: "run-1", status: "idle", turnSeq: 0 } }), {
+      return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", turnSeq: 0 } }), {
         status: 201,
         headers: { "content-type": "application/json" }
       });
@@ -28,16 +28,16 @@ describe("empty idempotencyKey fail-fast (WS4)", () => {
 
   it("openSession/create throws synchronously on an empty key (no HTTP)", async () => {
     const { client, keys } = makeClient();
-    await expect(client.openSession({ ...base, idempotencyKey: "" })).rejects.toBeInstanceOf(RunConfigValidationError);
-    await expect(client.openSession({ ...base, idempotencyKey: "   " })).rejects.toBeInstanceOf(RunConfigValidationError);
+    await expect(client.openSession({ ...base, idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    await expect(client.openSession({ ...base, idempotencyKey: "   " })).rejects.toBeInstanceOf(SessionConfigValidationError);
     expect(keys).toEqual([]);
   });
 
-  it("run/sessions.run throw synchronously on an empty key", async () => {
+  it("run/sessions.start throw synchronously on an empty key", async () => {
     const { client } = makeClient();
-    await expect(client.run({ ...base, message: "hi", idempotencyKey: "" })).rejects.toBeInstanceOf(RunConfigValidationError);
-    await expect(client.sessions.run({ ...base, message: "hi", idempotencyKey: "\t" })).rejects.toBeInstanceOf(
-      RunConfigValidationError
+    await expect(client.start({ ...base, message: "hi", idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    await expect(client.sessions.start({ ...base, message: "hi", idempotencyKey: "\t" })).rejects.toBeInstanceOf(
+      SessionConfigValidationError
     );
   });
 

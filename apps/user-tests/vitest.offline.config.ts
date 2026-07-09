@@ -17,7 +17,7 @@ export default defineConfig({
     include: ["test/offline/**/*.test.ts"],
     exclude: ["**/node_modules/**"],
     // Offline files are independent once the artifact tarball is selected.
-    // The package script pre-packs one tarball for local/CI runs, so parallel
+    // The package script pre-packs one tarball for local/CI sessions, so parallel
     // file slots spend time testing instead of each packing the SDK in sequence.
     fileParallelism: true,
     maxWorkers,

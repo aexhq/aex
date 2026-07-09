@@ -2,7 +2,7 @@
  * `aex inspect <session-id>` (DX3) — one-shot, settle-consistent render of a
  * session's FULL timeline plus a header and a footer (jump-to-failure +
  * cost/usage). Built on the same coordinator envelope stream as `aex tail`
- * (replay from seq 0 with the `aex.run.settled` barrier, so the final
+ * (replay from seq 0 with the `aex.session.settled` barrier, so the final
  * `getSession` is read-consistent).
  *
  * Human view: header → timeline → footer. `--json` emits one machine document
@@ -23,15 +23,15 @@ import {
   makeHttpClient,
   parseDuration,
   rejectUnknownFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   resolveCommonHostFlags,
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
 import { openEnvelopeStream, parseFilters, renderEnvelope } from "./stream-render.js";
 
-export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "inspect")) return USAGE_ERR;
+export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "inspect")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
@@ -72,7 +72,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     io.stderr(
       JSON.stringify({
         error: "websocket_unavailable",
-        message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
+        message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or session with bun.",
         sessionId
       }) + "\n"
     );
@@ -126,7 +126,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
       ...(debug ? { debug } : {})
     });
     for await (const e of stream) {
-      if (e.type === "RUN_ERROR") runErrorEvent = e;
+      if (e.type === "TURN_ERROR") runErrorEvent = e;
       if (filters.predicate && !filters.predicate(e)) continue;
       if (json) {
         if (logsFlag.present || e.channel !== "log") collected.push(e);
@@ -165,7 +165,7 @@ export async function runInspectCmd(io: CliIO, argv: readonly string[]): Promise
     // Footer: jump-to-failure + cost/usage.
     if (runErrorEvent) {
       const d = runErrorEvent.data as Record<string, unknown>;
-      const failureMessage = typeof d.failureMessage === "string" ? d.failureMessage : (runErrorEvent.message ?? "run error");
+      const failureMessage = typeof d.failureMessage === "string" ? d.failureMessage : (runErrorEvent.message ?? "turn error");
       const failureClass = typeof d.failureClass === "string" ? ` [${d.failureClass}]` : "";
       io.stdout(`\n✗ ${failureMessage}${failureClass}\n`);
     }

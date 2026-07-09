@@ -10,7 +10,7 @@ const WORKSPACE_MCP_ID_PATTERN = /^mcp_[A-Za-z0-9_-]{8,128}$/;
 /**
  * Wire shape for a workspace MCP server ref in `submission.mcpServers[]`.
  * The BFF resolves this to an inline `{name, url}` before the shared
- * parser runs. Auth still arrives inline in
+ * parser sessions. Auth still arrives inline in
  * `secrets.mcpServers[<resolved-name>].headers` — workspace refs do
  * not carry auth, by design.
  */

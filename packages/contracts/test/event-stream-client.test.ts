@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   filterStream,
   isFromSource,
-  isRunSettled,
+  isSessionSettled,
   mapStream,
   streamCoordinatorEvents,
   toAGUI,
@@ -68,7 +68,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
   it("yields events in order and stops on a terminal event", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       fetchTicket: async () => "tkt",
       webSocketFactory: (url) => (ws = new FakeWebSocket(url))
@@ -79,10 +79,10 @@ describe("streamCoordinatorEvents — live fanout", () => {
     })();
 
     await flush();
-    expect(ws!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=0");
+    expect(ws!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=0");
     ws!.message(evt(0));
     ws!.message(evt(1));
-    ws!.message(evt(2, "RUN_FINISHED"));
+    ws!.message(evt(2, "TURN_FINISHED"));
     await consume;
 
     expect(received).toEqual([0, 1, 2]);
@@ -91,12 +91,12 @@ describe("streamCoordinatorEvents — live fanout", () => {
 
   it("stops on a managed-runtime session-park terminal (aex.session.idle) — F19 no-hang", async () => {
     // A managed one-shot run PARKS (CUSTOM aex.session.idle) instead of emitting
-    // RUN_FINISHED. The default terminal predicate must treat that as terminal,
-    // else streamEnvelopes() over a finished managed run hangs on the watchdog.
+    // TURN_FINISHED. The default terminal predicate must treat that as terminal,
+    // else streamEnvelopes() over a finished managed session hangs on the watchdog.
     const idle = sessionIdle(2);
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       fetchTicket: async () => "tkt",
       webSocketFactory: (url) => (ws = new FakeWebSocket(url))
@@ -121,7 +121,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     try {
       let ws: FakeWebSocket | undefined;
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         fetchTicket: async () => "tkt",
         webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
@@ -160,7 +160,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     try {
       let ws: FakeWebSocket | undefined;
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         fetchTicket: async () => "tkt",
         webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
@@ -199,7 +199,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     try {
       const sockets: FakeWebSocket[] = [];
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         fetchTicket: async () => "tkt",
         webSocketFactory: (url) => {
@@ -234,7 +234,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
   it("preserves existing WebSocket URL query parameters", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe?region=us-west",
+      wsUrl: "wss://co/sessions/r/subscribe?region=us-west",
       from: 0,
       fetchTicket: async () => "tkt",
       webSocketFactory: (url) => (ws = new FakeWebSocket(url))
@@ -247,15 +247,15 @@ describe("streamCoordinatorEvents — live fanout", () => {
     })();
 
     await flush();
-    expect(ws!.url).toBe("wss://co/runs/r/subscribe?region=us-west&ticket=tkt&from=0");
-    ws!.message(evt(0, "RUN_FINISHED"));
+    expect(ws!.url).toBe("wss://co/sessions/r/subscribe?region=us-west&ticket=tkt&from=0");
+    ws!.message(evt(0, "TURN_FINISHED"));
     await consume;
   });
 
   it("sends a post-open replay request so catch-up does not depend only on the connection stream", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       fetchTicket: async () => "tkt",
       webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
@@ -272,14 +272,14 @@ describe("streamCoordinatorEvents — live fanout", () => {
     await flush();
     ws!.open();
     expect(ws!.sent).toEqual([JSON.stringify({ action: "replay" })]);
-    ws!.message(evt(0, "RUN_FINISHED"));
+    ws!.message(evt(0, "TURN_FINISHED"));
     await consume;
   });
 
   it("closes the WebSocket when the caller breaks the iterator early", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       fetchTicket: async () => "tkt",
       webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
@@ -307,17 +307,17 @@ describe("streamCoordinatorEvents — live fanout", () => {
 });
 
 describe("streamCoordinatorEvents — settle-consistent terminal predicate", () => {
-  it("keeps reading past RUN_FINISHED until the aex.run.settled barrier", async () => {
+  it("keeps reading past TURN_FINISHED until the aex.session.settled barrier", async () => {
     let ws: FakeWebSocket | undefined;
     const settled: AexEvent = {
       ...evt(4, "CUSTOM", "aex"),
-      data: { name: "aex.run.settled", value: { runId: "r", outcome: "succeeded" } }
+      data: { name: "aex.session.settled", value: { sessionId: "r", outcome: "succeeded" } }
     };
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       fetchTicket: async () => "tkt",
-      isTerminal: isRunSettled,
+      isTerminal: isSessionSettled,
       webSocketFactory: (url) => (ws = new FakeWebSocket(url))
     });
     const received: number[] = [];
@@ -328,7 +328,7 @@ describe("streamCoordinatorEvents — settle-consistent terminal predicate", () 
     await flush();
     ws!.message(evt(0));
     // The AG-UI terminal must NOT end a settle-consistent stream...
-    ws!.message(evt(1, "RUN_FINISHED"));
+    ws!.message(evt(1, "TURN_FINISHED"));
     // ...nor an interleaved lifecycle fact (CUSTOM without the settled name)...
     ws!.message(evt(2, "CUSTOM", "aex"));
     // ...only the post-mirror barrier ends it.
@@ -345,7 +345,7 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     const sockets: FakeWebSocket[] = [];
     const fetchTicket = vi.fn(async () => "tkt");
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       reconnectDelayMs: 0,
       fetchTicket,
@@ -369,10 +369,10 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
 
     expect(sockets).toHaveLength(2);
     // Resume strictly after the last seen sequence, with a freshly-minted ticket.
-    expect(sockets[1]!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=2");
+    expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=2");
     expect(fetchTicket).toHaveBeenCalledTimes(2);
     sockets[1]!.message(evt(2));
-    sockets[1]!.message(evt(3, "RUN_FINISHED"));
+    sockets[1]!.message(evt(3, "TURN_FINISHED"));
     await consume;
 
     expect(received).toEqual([0, 1, 2, 3]);
@@ -381,7 +381,7 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
   it("drops a duplicate replay at or below the cursor after reconnect", async () => {
     const sockets: FakeWebSocket[] = [];
     const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/runs/r/subscribe",
+      wsUrl: "wss://co/sessions/r/subscribe",
       from: 0,
       reconnectDelayMs: 0,
       fetchTicket: async () => "tkt",
@@ -405,7 +405,7 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     // Coordinator re-sends seq 1 (already delivered) plus fresh ones — the
     // client must drop seq <= cursor.
     sockets[1]!.message(evt(1));
-    sockets[1]!.message(evt(2, "RUN_FINISHED"));
+    sockets[1]!.message(evt(2, "TURN_FINISHED"));
     await consume;
 
     expect(received).toEqual([0, 1, 2]);
@@ -419,7 +419,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       const sockets: FakeWebSocket[] = [];
       const fetchTicket = vi.fn(async () => "tkt");
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         reconnectDelayMs: 10,
         idleTimeoutMs: 1000,
@@ -448,10 +448,10 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       expect(sockets).toHaveLength(2);
       expect(sockets[0]!.closed).toBe(true);
       // Resume strictly after the last delivered sequence, with a fresh ticket.
-      expect(sockets[1]!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=1");
+      expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
       expect(fetchTicket).toHaveBeenCalledTimes(2);
 
-      sockets[1]!.message(evt(1, "RUN_FINISHED"));
+      sockets[1]!.message(evt(1, "TURN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0, 1]);
@@ -465,7 +465,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
     try {
       const sockets: FakeWebSocket[] = [];
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         reconnectDelayMs: 0,
         idleTimeoutMs: 1000,
@@ -494,7 +494,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       expect(sockets).toHaveLength(1); // never tripped the watchdog
       expect(sockets[0]!.sent.filter((s) => s === "aex:ping").length).toBeGreaterThanOrEqual(7);
 
-      sockets[0]!.message(evt(0, "RUN_FINISHED"));
+      sockets[0]!.message(evt(0, "TURN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0]);
@@ -517,7 +517,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       const sockets: FakeWebSocket[] = [];
       const fetchTicket = vi.fn(async () => "tkt");
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         reconnectDelayMs: 10,
         idleTimeoutMs: 1000,
@@ -551,11 +551,11 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       expect(sockets).toHaveLength(2);
       expect(sockets[0]!.closed).toBe(true);
       // Resume strictly after the last delivered sequence, with a fresh ticket.
-      expect(sockets[1]!.url).toBe("wss://co/runs/r/subscribe?ticket=tkt&from=1");
+      expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
       expect(fetchTicket).toHaveBeenCalledTimes(2);
 
       sockets[1]!.open();
-      sockets[1]!.message(evt(1, "RUN_FINISHED"));
+      sockets[1]!.message(evt(1, "TURN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0, 1]);
@@ -569,7 +569,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
     try {
       const sockets: FakeWebSocket[] = [];
       const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/runs/r/subscribe",
+        wsUrl: "wss://co/sessions/r/subscribe",
         from: 0,
         reconnectDelayMs: 0,
         idleTimeoutMs: 0,
@@ -596,7 +596,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       }
       expect(sockets).toHaveLength(1);
 
-      sockets[0]!.message(evt(4, "RUN_FINISHED"));
+      sockets[0]!.message(evt(4, "TURN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0, 1, 2, 3, 4]);
@@ -619,9 +619,9 @@ describe("client-side filter + projection", () => {
   });
 
   it("mapStream projects to strict AG-UI", async () => {
-    const events = [evt(0, "TEXT_MESSAGE_CONTENT"), evt(1, "RUN_FINISHED")];
+    const events = [evt(0, "TEXT_MESSAGE_CONTENT"), evt(1, "TURN_FINISHED")];
     const out: string[] = [];
     for await (const a of mapStream(arr(events), toAGUI)) out.push(a.type);
-    expect(out).toEqual(["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]);
+    expect(out).toEqual(["TEXT_MESSAGE_CONTENT", "TURN_FINISHED"]);
   });
 });

@@ -1,4 +1,4 @@
-import type { RunProvider } from "./submission.js";
+import type { ProviderName } from "./submission.js";
 
 export interface SupportPointer {
   readonly label: string;
@@ -110,8 +110,8 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     evidence: COMMON_EVIDENCE,
     managedEvidence: COMMON_EVIDENCE
   }
-} as const satisfies Readonly<Record<RunProvider, ProviderPublicSupport>>;
+} as const satisfies Readonly<Record<ProviderName, ProviderPublicSupport>>;
 
-export function providerPublicSupport(provider: RunProvider): ProviderPublicSupport {
+export function providerPublicSupport(provider: ProviderName): ProviderPublicSupport {
   return PROVIDER_PUBLIC_SUPPORT[provider];
 }

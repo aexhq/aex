@@ -2,8 +2,8 @@
  * Unified runner event schema. The managed runtime feeds one shape into
  * the hosted aex event pipeline:
  *
- *   - The per-run managed runtime POSTs batches of NDJSON events to
- *     `/runs/{id}/runner/events`; the runtime adapter translates each
+ *   - The per-session managed runtime POSTs batches of NDJSON events to
+ *     `/sessions/{id}/runner/events`; the runtime adapter translates each
  *     event into one or more `RunnerEvent`s.
  *
  * The downstream subscribers (dashboard, SDK `streamEvents`, observable
@@ -40,9 +40,9 @@ export const RUNNER_EVENT_VERSION = 1 as const;
  *   - `notification`     — runtime/extension notification; catch-all
  *                          for diagnostic data.
  *   - `stream_error`     — stream-level error (non-fatal). Subscribers
- *                          may surface this as a UI warning; the run
+ *                          may surface this as a UI warning; the session
  *                          continues unless `runtime_terminal` follows.
- *   - `runtime_terminal` — the run reached a terminal state. The
+ *   - `runtime_terminal` — the session reached a terminal state. The
  *                          adapter MUST emit exactly one of these per
  *                          run; subscribers gate on it for end-of-stream.
  */
@@ -63,7 +63,7 @@ export type RunnerEventKind = (typeof RUNNER_EVENT_KINDS)[number];
 /**
  * One event in the unified stream. `seq` is monotonically increasing
  * within a single run (the adapter is responsible for assigning seqs
- * — no two events with the same `seq` for the same `runId`); `tMs` is
+ * — no two events with the same `seq` for the same `sessionId`); `tMs` is
  * a millisecond-resolution timestamp that is also monotonically
  * non-decreasing within a single run (an event's `tMs` is never less
  * than the previous event's `tMs`). `data` carries the runtime- and
@@ -85,7 +85,7 @@ export interface RunnerEvent {
  */
 export interface RunnerEventBatch {
   readonly v: typeof RUNNER_EVENT_VERSION;
-  readonly runId: string;
+  readonly sessionId: string;
   readonly events: readonly RunnerEvent[];
 }
 
@@ -110,7 +110,7 @@ export type RunnerEventBatchValidation =
 export const RUNNER_EVENT_BATCH_VALIDATION_CODES = [
   "invalid_envelope",
   "version_mismatch",
-  "missing_run_id",
+  "missing_session_id",
   "empty_batch",
   "batch_too_large",
   "invalid_event",
@@ -127,7 +127,7 @@ export type RunnerEventBatchValidationCode = (typeof RUNNER_EVENT_BATCH_VALIDATI
  * Successful validation guarantees:
  *   - top-level envelope matches {@link RunnerEventBatch}
  *   - `v === RUNNER_EVENT_VERSION`
- *   - `runId` is a non-empty string
+ *   - `sessionId` is a non-empty string
  *   - `events` is a non-empty array of at most
  *     {@link RUNNER_EVENT_BATCH_MAX_EVENTS} entries
  *   - each event is a {@link RunnerEvent} with a known `kind`
@@ -144,8 +144,8 @@ export function validateRunnerEventBatch(input: unknown): RunnerEventBatchValida
       `batch.v must equal ${RUNNER_EVENT_VERSION} (got ${JSON.stringify(input.v)})`
     );
   }
-  if (typeof input.runId !== "string" || input.runId.length === 0) {
-    return invalid("missing_run_id", "batch.runId must be a non-empty string");
+  if (typeof input.sessionId !== "string" || input.sessionId.length === 0) {
+    return invalid("missing_session_id", "batch.sessionId must be a non-empty string");
   }
   if (!Array.isArray(input.events) || input.events.length === 0) {
     return invalid("empty_batch", "batch.events must be a non-empty array");
@@ -218,7 +218,7 @@ export function validateRunnerEventBatch(input: unknown): RunnerEventBatchValida
   }
   return {
     ok: true,
-    batch: { v: RUNNER_EVENT_VERSION, runId: input.runId, events: Object.freeze(events) }
+    batch: { v: RUNNER_EVENT_VERSION, sessionId: input.sessionId, events: Object.freeze(events) }
   };
 }
 

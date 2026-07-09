@@ -4,8 +4,8 @@
  * Release-gating probes for session-path admission gates. These assert the
  * public SDK path sees the same hosted admission contract as one-shot submits:
  *
- *   1. Concurrency: `whoami().limits.maxConcurrentRuns` is enforced for
- *      `client.run(...)` / session turns with a public 429
+ *   1. Concurrency: `whoami().limits.maxConcurrentSessions` is enforced for
+ *      `client.start(...)` / session turns with a public 429
  *      `workspace_concurrency_exceeded` once the cap is saturated.
  *   2. A whitespace-only provider key is rejected at session create.
  *   3. A provider/model mismatch is rejected at session create, before any
@@ -21,7 +21,7 @@
  *
  * Optional env: AEX_ADMISSION_GATES_MAX_SAFE_CAP limits the concurrency probe
  * to low-cap isolated workspaces (default 10). The test fails before launching
- * runs when the target workspace cap is higher.
+ * sessions when the target workspace cap is higher.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -170,12 +170,12 @@ afterAll(() => {
 
 describe("edge: session-path admission gates", () => {
   it(
-    "the plan concurrency cap rejects turns beyond maxConcurrentRuns",
+    "the plan concurrency cap rejects turns beyond maxConcurrentSessions",
     async () => {
       const body = `
-        const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, initialRunning: 0, runIds: [], retryDisabledForOverflow: true };
+        const out = { cap: null, admitted: 0, rejected429: 0, otherErrors: [], peakRunning: 0, initialRunning: 0, sessionIds: [], retryDisabledForOverflow: true };
         const me = await client.whoami();
-        out.cap = me.limits.maxConcurrentRuns;
+        out.cap = me.limits.maxConcurrentSessions;
         if (!Number.isFinite(MAX_SAFE_CAP) || MAX_SAFE_CAP < 1) {
           out.setupError = "invalid_max_safe_cap";
           out.maxSafeCap = MAX_SAFE_CAP;
@@ -249,7 +249,7 @@ describe("edge: session-path admission gates", () => {
               apiKeys: { [PROVIDER]: PROVIDER_KEY },
               idempotencyKey: "admission-holder-create-" + nonce + "-" + i
             });
-            out.runIds.push(session.id);
+            out.sessionIds.push(session.id);
             holderPromises.push(
               session
                 .send(holderMessage(i), {
@@ -258,8 +258,8 @@ describe("edge: session-path admission gates", () => {
                 })
                 .done()
                 .then(
-                  () => ({ ok: true, runId: session.id }),
-                  (e) => ({ ok: false, runId: session.id, err: errShape(e) })
+                  () => ({ ok: true, sessionId: session.id }),
+                  (e) => ({ ok: false, sessionId: session.id, err: errShape(e) })
                 )
             );
           }
@@ -267,7 +267,7 @@ describe("edge: session-path admission gates", () => {
             out.setupError = "cap_not_saturated";
           } else {
             const extra = await noRetryClient
-              .run(
+              .start(
                 {
                   provider: PROVIDER,
                   model: MODEL,
@@ -279,12 +279,12 @@ describe("edge: session-path admission gates", () => {
                 { timeoutMs: 180000, await: "park" }
               )
               .then(
-                (r) => ({ ok: true, runId: r.runId }),
+                (r) => ({ ok: true, sessionId: r.sessionId }),
                 (e) => ({ ok: false, err: errShape(e) })
               );
             if (extra.ok) {
               out.admitted += 1;
-              out.runIds.push(extra.runId);
+              out.sessionIds.push(extra.sessionId);
             } else if (extra.err.status === 429 || /concurrency/i.test(extra.err.message)) {
               out.rejected429 += 1;
               out.rejection = extra.err;
@@ -298,7 +298,7 @@ describe("edge: session-path admission gates", () => {
             else out.otherErrors.push(r.err);
           }
         } finally {
-          for (const id of out.runIds) {
+          for (const id of out.sessionIds) {
             await raw("DELETE", "/api/sessions/" + id).catch(() => {});
           }
           out.elapsedMs = Date.now() - startedAt;
@@ -330,7 +330,7 @@ describe("edge: session-path admission gates", () => {
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.runId);
+        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);
@@ -357,7 +357,7 @@ describe("edge: session-path admission gates", () => {
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.runId);
+        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);

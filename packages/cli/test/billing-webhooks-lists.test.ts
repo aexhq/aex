@@ -2,12 +2,12 @@
  * Unit coverage for the workspace read verbs added for launch:
  *   - `aex billing` / `aex billing ledger` (GET /api/billing, /api/billing/ledger)
  *   - `aex webhooks secret` (POST /api/webhook/signing-secret)
- *   - `aex runs` / `aex sessions` (GET /api/runs, /api/sessions)
+ *   - `aex sessions` / `aex sessions` (GET /api/sessions, /api/sessions)
  *
  * Same injected-IO style as host.test.ts: fake fetch, captured stdout/stderr.
  */
 import { describe, expect, it } from "vitest";
-import { runCli } from "../src/run.js";
+import { executeCli } from "../src/main.js";
 import type { CliIO } from "../src/internal.js";
 
 interface FetchCall {
@@ -89,7 +89,7 @@ describe("aex billing", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing");
@@ -110,7 +110,7 @@ describe("aex billing", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(JSON.parse(cap.stdout)).toEqual(withExtra);
   });
@@ -124,7 +124,7 @@ describe("aex billing", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(1);
     const err = JSON.parse(cap.stderr) as { error: string; status: number };
     expect(err.error).toBe("billing_failed");
@@ -133,7 +133,7 @@ describe("aex billing", () => {
 
   it("rejects unexpected arguments", async () => {
     const cap = makeHostIo({ argv: ["billing", "extra", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex billing");
   });
@@ -147,7 +147,7 @@ describe("aex billing ledger", () => {
         entryType: "top_up",
         amountUsd: 10,
         currency: "USD",
-        runId: null,
+        sessionId: null,
         description: "admin top-up",
         createdBy: "admin:ops@example.test",
         createdAt: "2026-07-01T00:00:00Z"
@@ -161,7 +161,7 @@ describe("aex billing ledger", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const url = new URL(cap.calls[0]!.url);
     expect(url.pathname).toBe("/api/billing/ledger");
@@ -171,7 +171,7 @@ describe("aex billing ledger", () => {
 
   it("rejects a non-integer --limit", async () => {
     const cap = makeHostIo({ argv: ["billing", "ledger", "--limit", "many", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--limit");
     expect(cap.calls).toHaveLength(0);
@@ -199,7 +199,7 @@ describe("aex billing upgrade", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toBe("https://checkout.stripe.test/session\n");
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/checkout");
@@ -221,12 +221,12 @@ describe("aex billing upgrade", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(ok.io);
+    await executeCli(ok.io);
     expect(ok.exitCode).toBe(0);
     expect(JSON.parse(ok.stdout)).toEqual({ url: "https://checkout.stripe.test/team" });
 
     const bad = makeHostIo({ argv: ["billing", "upgrade", "free", ...COMMON] });
-    await runCli(bad.io);
+    await executeCli(bad.io);
     expect(bad.exitCode).toBe(2);
     expect(bad.stderr).toContain("billing upgrade pro|team");
     expect(bad.calls).toHaveLength(0);
@@ -243,7 +243,7 @@ describe("aex billing portal", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toBe("https://billing.stripe.test/session\n");
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/portal");
@@ -260,7 +260,7 @@ describe("aex billing portal", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(JSON.parse(cap.stdout)).toEqual({ url: "https://billing.stripe.test/session" });
   });
@@ -276,7 +276,7 @@ describe("aex webhooks secret", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/webhook/signing-secret");
@@ -296,7 +296,7 @@ describe("aex webhooks secret", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stderr).not.toContain("whsec_");
     expect(cap.stderr).not.toContain("c3VwZXItc2VjcmV0");
@@ -304,7 +304,7 @@ describe("aex webhooks secret", () => {
 
   it("rejects --rotate with an actionable message (the hosted API does not rotate)", async () => {
     const cap = makeHostIo({ argv: ["webhooks", "secret", "--rotate", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--rotate");
     expect(cap.stderr).toContain("not supported");
@@ -313,53 +313,53 @@ describe("aex webhooks secret", () => {
 
   it("requires the `secret` subcommand", async () => {
     const cap = makeHostIo({ argv: ["webhooks", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex webhooks secret");
   });
 });
 
-describe("aex runs", () => {
+describe("aex sessions", () => {
   const PAGE = {
-    runs: [
-      { id: "run-new", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.01 },
-      { id: "run-old", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
+    sessions: [
+      { id: "session-new", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.01 },
+      { id: "session-old", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
     ],
     nextCursor: "cursor-2"
   };
 
-  it("GETs /api/runs with limit + since and prints the page as JSON", async () => {
+  it("GETs /api/sessions with limit + since and prints the page as JSON", async () => {
     const cap = makeHostIo({
-      argv: ["runs", "--limit", "2", "--since", "2026-07-01T00:00:00Z", ...COMMON],
+      argv: ["sessions", "--limit", "2", "--since", "2026-07-01T00:00:00Z", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify(PAGE), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const url = new URL(cap.calls[0]!.url);
-    expect(url.pathname).toBe("/api/runs");
+    expect(url.pathname).toBe("/api/sessions");
     expect(url.searchParams.get("limit")).toBe("2");
     expect(url.searchParams.get("since")).toBe("2026-07-01T00:00:00Z");
-    const printed = JSON.parse(cap.stdout) as { runs: Array<{ id: string }>; nextCursor?: string };
+    const printed = JSON.parse(cap.stdout) as { sessions: Array<{ id: string }>; nextCursor?: string };
     // The deployed API ignores `since`; the CLI enforces it client-side so the
     // flag is honest rather than a silent no-op.
-    expect(printed.runs.map((r) => r.id)).toEqual(["run-new"]);
+    expect(printed.sessions.map((r) => r.id)).toEqual(["session-new"]);
     expect(printed.nextCursor).toBe("cursor-2");
   });
 
   it("prints the page unfiltered without --since", async () => {
     const cap = makeHostIo({
-      argv: ["runs", ...COMMON],
+      argv: ["sessions", ...COMMON],
       fetchHandler: () =>
         new Response(JSON.stringify(PAGE), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const url = new URL(cap.calls[0]!.url);
     expect(url.search).toBe("");
@@ -367,8 +367,8 @@ describe("aex runs", () => {
   });
 
   it("rejects an unparseable --since", async () => {
-    const cap = makeHostIo({ argv: ["runs", "--since", "yesterdayish", ...COMMON] });
-    await runCli(cap.io);
+    const cap = makeHostIo({ argv: ["sessions", "--since", "yesterdayish", ...COMMON] });
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--since");
     expect(cap.calls).toHaveLength(0);
@@ -388,7 +388,7 @@ describe("aex sessions", () => {
           headers: { "content-type": "application/json" }
         })
     });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const url = new URL(cap.calls[0]!.url);
     expect(url.pathname).toBe("/api/sessions");
@@ -398,7 +398,7 @@ describe("aex sessions", () => {
 
   it("rejects unexpected arguments", async () => {
     const cap = makeHostIo({ argv: ["sessions", "sess-1", ...COMMON] });
-    await runCli(cap.io);
+    await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("usage: aex sessions");
   });

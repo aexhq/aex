@@ -4,7 +4,7 @@
  * typecheck. Plus the UsageSummary projector from providerUsage.
  */
 import { describe, expect, it } from "vitest";
-import { usageFromProviderUsage, type SettledResult, type UsageSummary, type RunCostProviderUsage } from "../src/index.js";
+import { usageFromProviderUsage, type SettledResult, type UsageSummary, type SessionCostProviderUsage } from "../src/index.js";
 
 describe("SettledResult non-optional settle fields (WS3)", () => {
   it("[compile-time] SettledResult requires costUsd, usage, and a terminal status", () => {
@@ -24,7 +24,7 @@ describe("SettledResult non-optional settle fields (WS3)", () => {
 
 describe("usageFromProviderUsage projector (WS3)", () => {
   it("sums each token field across provider entries", () => {
-    const providerUsage: RunCostProviderUsage[] = [
+    const providerUsage: SessionCostProviderUsage[] = [
       { provider: "deepseek", inputTokens: 10, outputTokens: 5, totalTokens: 15 },
       { provider: "deepseek", inputTokens: 3, outputTokens: 2, totalTokens: 5 }
     ];

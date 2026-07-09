@@ -1,13 +1,13 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-  RUN_STATUSES,
-  TERMINAL_RUN_STATUSES,
-  getRunStatusKind,
-  isTerminalRunStatus,
-  parseRunSubmissionRequest,
+  SESSION_CONTROL_STATUSES,
+  TERMINAL_SESSION_CONTROL_STATUSES,
+  getSessionControlStatusKind,
+  isTerminalSessionControlStatus,
+  parseSessionSubmissionRequest,
   type JsonValue,
-  type PlatformRunSubmissionRequest
+  type PlatformSessionSubmissionRequest
 } from "../src/index.js";
 
 const deniedSecretFields = [
@@ -68,7 +68,7 @@ const submission = fc.record({
 describe("shared platform invariants", () => {
   it("accepts generated JSON-serializable platform submissions", () => {
     fc.assert(fc.property(submission, (input) => {
-      const parsed = parseRunSubmissionRequest(input);
+      const parsed = parseSessionSubmissionRequest(input);
       expect(parsed.workspaceId).toBe(input.workspaceId);
       expect(parsed.idempotencyKey).toBe(input.idempotencyKey);
       expect(parsed.submission.prompt.length).toBeGreaterThan(0);
@@ -86,7 +86,7 @@ describe("shared platform invariants", () => {
         const meta: Record<string, JsonValue> = {};
         insertNested(meta, [...path, secretKey], secretValue);
         (input.submission as { metadata?: Record<string, JsonValue> }).metadata = meta;
-        expect(() => parseRunSubmissionRequest(input)).toThrow(/Secret-bearing field is not allowed/);
+        expect(() => parseSessionSubmissionRequest(input)).toThrow(/Secret-bearing field is not allowed/);
       }
     ), { numRuns: 75 });
   });
@@ -97,24 +97,24 @@ describe("shared platform invariants", () => {
       (value) => {
         const input = makeValidSubmission();
         (input.submission as { metadata?: Record<string, JsonValue> }).metadata = { value };
-        expect(() => parseRunSubmissionRequest(input)).toThrow(/JSON-serializable/);
+        expect(() => parseSessionSubmissionRequest(input)).toThrow(/JSON-serializable/);
       }
     ));
   });
 
-  it("keeps the run-status partition complete and explicit", () => {
-    const terminal = new Set<string>(TERMINAL_RUN_STATUSES);
-    const active = RUN_STATUSES.filter((status) => !terminal.has(status));
+  it("keeps the session-status partition complete and explicit", () => {
+    const terminal = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
+    const active = SESSION_CONTROL_STATUSES.filter((status) => !terminal.has(status));
 
-    expect([...terminal, ...active].sort()).toEqual([...RUN_STATUSES].sort());
-    for (const status of RUN_STATUSES) {
-      expect(getRunStatusKind(status)).toBe(terminal.has(status) ? "terminal" : "active");
-      expect(isTerminalRunStatus(status)).toBe(terminal.has(status));
+    expect([...terminal, ...active].sort()).toEqual([...SESSION_CONTROL_STATUSES].sort());
+    for (const status of SESSION_CONTROL_STATUSES) {
+      expect(getSessionControlStatusKind(status)).toBe(terminal.has(status) ? "terminal" : "active");
+      expect(isTerminalSessionControlStatus(status)).toBe(terminal.has(status));
     }
   });
 });
 
-function makeValidSubmission(): PlatformRunSubmissionRequest {
+function makeValidSubmission(): PlatformSessionSubmissionRequest {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",

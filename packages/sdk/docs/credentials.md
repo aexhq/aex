@@ -11,7 +11,7 @@ aex uses explicit, per-session credentials:
 - `McpServer.remote(..., { headers })` carries MCP auth when a remote MCP server needs it.
 - `environment.secrets` carries runtime secrets for your own code.
 
-Secrets never belong in reusable run config, files, prompts, or examples.
+Secrets never belong in reusable session config, files, prompts, or examples.
 
 ## The client credential
 
@@ -35,7 +35,7 @@ A session selects one upstream provider and must carry a BYOK key for it. Includ
 additional provider keys only when subagents may use those providers.
 
 ```ts
-const result = await aex.run({
+const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Write a short report and save it as a file.",
   apiKeys: {
@@ -58,7 +58,7 @@ import { Aex, Models, Secret } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Call https://api.example.com/v1/status with INTERNAL_API_TOKEN and summarize it.",
   environment: {
@@ -74,7 +74,7 @@ await aex.run({
 });
 ```
 
-Inside the run, use normal HTTP code for the service:
+Inside the session, use normal HTTP code for the service:
 
 ```bash
 curl -sS \
@@ -86,7 +86,7 @@ curl -sS \
 
 > **Availability note:** workspace-secret `Secret.ref(...)` injection requires
 > the next platform deploy — on the current hosted plane the referenced
-> variable can resolve empty inside the run. Per-run `Secret.value(...)`
+> variable can resolve empty inside the session. Per-session `Secret.value(...)`
 > secrets are unaffected.
 
 Store reusable values once, then reference them by name:
@@ -97,7 +97,7 @@ await aex.secrets.set({
   value: process.env.INTERNAL_API_TOKEN!
 });
 
-await aex.run({
+await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   message: "Use INTERNAL_API_TOKEN for the status request.",
   environment: {
@@ -115,7 +115,7 @@ Secret reads return metadata only; they never return the stored value.
 
 Networking is open by default within the platform's managed egress ceiling. Use
 `environment.networking.mode: "limited"` with `allowedHosts` when you want a
-run's own code to reach only named hosts. See [Networking](networking.md) for
+session's own code to reach only named hosts. See [Networking](networking.md) for
 the two-layer enforcement model.
 
 ## Explicit call-site rule

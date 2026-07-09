@@ -1,5 +1,5 @@
 /**
- * SDK-level coverage for `SessionHandle.streamEvents` (the loose `RunEvent`
+ * SDK-level coverage for `SessionHandle.streamEvents` (the loose `TurnEvent`
  * snapshot poll loop). It polls the coordinator-backed `/events` endpoint,
  * dedupes by event id, and stops once the session parks (or on an abort). The
  * low-latency live envelope stream is covered separately (streamEnvelopes →
@@ -32,10 +32,10 @@ function makeFetch(plan: ReadonlyArray<{ match: RegExp; respond: () => Response 
 function evt(sequence: number, type: AexEvent["type"], data: Record<string, JsonValue> = {}): AexEvent {
   return {
     specversion: "1.0",
-    id: `run-abc:${sequence}`,
+    id: `session-abc:${sequence}`,
     source: type === "CUSTOM" ? "runtime" : "agent",
     type,
-    subject: "run-abc",
+    subject: "session-abc",
     time: new Date(sequence).toISOString(),
     sequence,
     data
@@ -99,18 +99,18 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
         }
       },
       {
-        match: /\/sessions\/run-abc$/,
+        match: /\/sessions\/session-abc$/,
         respond: () => {
           getCount++;
           // getCount 1 = openSession rehydrate; the poll loop reads status on
           // 2 (running) and 3 (succeeded → parked).
-          return jsonResponse({ id: "run-abc", status: getCount >= 3 ? "succeeded" : "running" });
+          return jsonResponse({ id: "session-abc", status: getCount >= 3 ? "succeeded" : "running" });
         }
       }
     ]);
 
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-    const session = await client.openSession("run-abc");
+    const session = await client.openSession("session-abc");
     const events: string[] = [];
     for await (const ev of session.events().stream({ intervalMs: 1 })) {
       events.push(ev.id);
@@ -123,10 +123,10 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
   it("stops promptly when the signal aborts", async () => {
     const { fetch: f, calls } = makeFetch([
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
-      { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "running" }) }
+      { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ id: "session-abc", status: "running" }) }
     ]);
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-    const session = await client.openSession("run-abc");
+    const session = await client.openSession("session-abc");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 5);
     const events: string[] = [];
@@ -153,11 +153,11 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
 
     try {
       const { fetch: f } = makeFetch([
-        { match: /\/sessions\/run-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/run-abc", ticket: "ticket" }) },
-        { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "succeeded" }) }
+        { match: /\/sessions\/session-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/session-abc", ticket: "ticket" }) },
+        { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ id: "session-abc", status: "succeeded" }) }
       ]);
       const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-      const session = await client.openSession("run-abc");
+      const session = await client.openSession("session-abc");
       const iterator = session.events().streamEnvelopes({ from: 0 })[Symbol.asyncIterator]();
 
       const first = iterator.next();
@@ -189,11 +189,11 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
 
     try {
       const { fetch: f } = makeFetch([
-        { match: /\/sessions\/run-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/run-abc", ticket: "ticket" }) },
-        { match: /\/sessions\/run-abc$/, respond: () => jsonResponse({ id: "run-abc", status: "succeeded" }) }
+        { match: /\/sessions\/session-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/session-abc", ticket: "ticket" }) },
+        { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ id: "session-abc", status: "succeeded" }) }
       ]);
       const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-      const session = await client.openSession("run-abc");
+      const session = await client.openSession("session-abc");
       const controller = new AbortController();
       const consume = (async () => {
         for await (const event of session.events().streamEnvelopes({

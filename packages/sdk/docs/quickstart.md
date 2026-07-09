@@ -16,7 +16,7 @@ This installs the TypeScript SDK exports and the bundled `aex` CLI.
 
 aex is currently in **invite-only beta**: workspaces and API keys are issued
 by the aex team — contact <support@aex.dev> for beta access. Once you have
-access, create a quickstart SDK token with `runs:read`, `runs:write`,
+access, create a quickstart SDK token with `sessions:read`, `sessions:write`,
 `outputs:read`, and `billing:read` in the dashboard at <https://aex.dev>. The
 examples also need your BYOK provider key for the model you choose. For the
 Claude examples below:
@@ -45,11 +45,11 @@ const first = await session.send("Write a short report and save it as a file.").
 console.log(first.status, first.costUsd, first.text);
 ```
 
-`send().done()` (and `run()`) **await settle by default**, so the result always
+`send().done()` (and `start()`) **await settle by default**, so the result always
 carries a terminal `status` (`succeeded` / `failed` / `timed_out` / `cancelled`
 — never a bare `idle`) plus `costUsd` and `usage`. Pass `await: 'park'` to
 return early at the render-complete park event when you don't need cost/usage.
-`costUsd` is aex runtime/storage spend and **excludes** your BYOK provider
+`costUsd` is aex starttime/storage spend and **excludes** your BYOK provider
 charges — price those from `usage` token counts against your provider's rates.
 
 The session parks as `idle` between turns and automatically moves to
@@ -62,17 +62,17 @@ await resumed.send("Now run the validation command and summarize the result.").d
 
 ## 4. One-shot convenience
 
-`run()` opens a session, sends `message` as one turn, and returns the collected
-result. Its `runId` is the session id.
+`start()` opens a session, sends `message` as one turn, and returns the collected
+result. Its `sessionId` is the session id.
 
 ```ts
-const result = await aex.run({
+const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
   message: "Write a short report and save it as a file."
 });
 
-console.log(result.runId, result.status, result.text);
+console.log(result.sessionId, result.status, result.text);
 ```
 
 ## 5. Session control: stream, wait, download
@@ -109,7 +109,7 @@ The same run from the bundled CLI (`npx aex` on a local install; or
 `npm i -g @aexhq/sdk` for a bare `aex`):
 
 ```bash
-npx aex run \
+npx aex start \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
@@ -120,7 +120,7 @@ npx aex run \
 ## Add capabilities
 
 - Add files, skills, AGENTS.md, MCP servers, packages, and networking controls with [Composition](concepts/composition.md).
-- Delegate bounded sub-tasks to child runs with [Subagents](concepts/subagents.md).
-- Get notified when a run finishes with [Webhooks](webhooks.md).
+- Delegate bounded sub-tasks to child sessions with [Subagents](concepts/subagents.md).
+- Get notified when a session finishes with [Webhooks](webhooks.md).
 - Narrow output capture or download individual files with [Outputs](outputs.md).
 - Check supported providers and models in the [provider/runtime capability matrix](provider-runtime-capabilities.md).

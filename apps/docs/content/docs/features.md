@@ -9,11 +9,11 @@ aex is an agent execution platform for launching autonomous agents from a simple
 
 ## Agent runtime
 
-Managed autonomous runs with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
+Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
 
 ## Durable infrastructure
 
-Run records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+SessionRecord records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
 
 ## Agent composition
 
@@ -21,7 +21,7 @@ Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, s
 
 ## Subagents
 
-Typed parent/child lineage for async child runs, output handoff, and bounded agent delegation.
+Typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation.
 
 ## Models and providers
 

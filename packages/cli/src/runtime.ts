@@ -1,4 +1,4 @@
-export { runOutputsSyncCmd } from "./outputs-sync.js";
+export { executeOutputsSyncCmd } from "./outputs-sync.js";
 export type { CliExitCode } from "./host/common.js";
 export {
   AEX_INDEX_PATH

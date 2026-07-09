@@ -2,13 +2,13 @@ name: Live On-Demand Tests
 
 # Consolidated, manually-dispatched pipeline for the OPTIONAL live suites that
 # are deliberately kept out of the default Live User Tests sweep. One trigger
-# runs them both:
+# sessions them both:
 #   1. Per-provider correctness matrix (apps/user-tests/test/live/providers/) —
 #      one minimal round-trip per extra provider (doubao, future
 #      openai/gemini/mistral/openrouter); required provider keys hard-fail when
 #      unset, so only dispatch this suite from a fully provisioned environment.
 #   2. Heavy full-feature long session (test:user:heavy) — one maximal-submission
-#      DeepSeek-managed run exercising the entire feature surface.
+#      DeepSeek-managed session exercising the entire feature surface.
 #
 # Feature depth on the two wire shapes (openai-chat via DeepSeek,
 # anthropic-messages via Anthropic) is covered on every dispatch by the default

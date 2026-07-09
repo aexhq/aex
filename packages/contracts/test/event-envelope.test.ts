@@ -9,11 +9,11 @@ import {
   isEventChannel,
   isFromSource,
   isLog,
-  isRunError,
-  isRunFinished,
-  isRunSettled,
-  isRunStarted,
-  isRunTerminal,
+  isTurnError,
+  isTurnFinished,
+  isSessionSettled,
+  isTurnStarted,
+  isTurnTerminal,
   isSessionParked,
   isTextMessage,
   isToolCallResult,
@@ -26,7 +26,7 @@ import {
   type RunnerEvent
 } from "../src/index.js";
 
-const ctx = { runId: "run_env", baseMs: 1_000_000 };
+const ctx = { sessionId: "ses_env", baseMs: 1_000_000 };
 
 const map = (evt: RunnerEvent) => runnerEventToAexEvent(evt, ctx);
 const ev = (seq: number, kind: RunnerEvent["kind"], data: RunnerEvent["data"] = {}): RunnerEvent => ({
@@ -40,8 +40,8 @@ describe("runnerEventToAexEvent — CloudEvents framing", () => {
   it("stamps stable identity, subject, sequence, and ISO time", () => {
     const out = map(ev(7, "assistant_text", { text: "hi" }));
     expect(out.specversion).toBe(AEX_EVENT_SPECVERSION);
-    expect(out.id).toBe("run_env:7");
-    expect(out.subject).toBe("run_env");
+    expect(out.id).toBe("ses_env:7");
+    expect(out.subject).toBe("ses_env");
     expect(out.sequence).toBe(7);
     expect(out.time).toBe(new Date(ctx.baseMs + 7).toISOString());
     expect(Object.isFrozen(out.data)).toBe(true);
@@ -49,10 +49,10 @@ describe("runnerEventToAexEvent — CloudEvents framing", () => {
 });
 
 describe("runnerEventToAexEvent — per-kind projection (type + source)", () => {
-  it("runtime_started → RUN_STARTED / runtime", () => {
+  it("runtime_started → TURN_STARTED / runtime", () => {
     const out = map(ev(0, "runtime_started", { source: "managed-runtime" }));
-    expect([out.type, out.source]).toEqual(["RUN_STARTED", "runtime"]);
-    expect(isRunStarted(out)).toBe(true);
+    expect([out.type, out.source]).toEqual(["TURN_STARTED", "runtime"]);
+    expect(isTurnStarted(out)).toBe(true);
   });
 
   it("assistant_text → TEXT_MESSAGE_CONTENT / agent, with a clipped message", () => {
@@ -90,7 +90,7 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
     expect(customName(file)).toBe("aex.file_uploaded");
   });
 
-  it("notification → CUSTOM / runtime; stream_error → CUSTOM / runtime (non-fatal, not RUN_ERROR)", () => {
+  it("notification → CUSTOM / runtime; stream_error → CUSTOM / runtime (non-fatal, not TURN_ERROR)", () => {
     const note = map(ev(7, "notification", { source: "anthropic", reason: "model_request_end" }));
     expect([note.type, note.source]).toEqual(["CUSTOM", "runtime"]);
     expect(customName(note)).toBe("aex.notification");
@@ -98,20 +98,20 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
     const err = map(ev(8, "stream_error", { source: "runtime", message: "echo timed out" }));
     expect([err.type, err.source]).toEqual(["CUSTOM", "runtime"]);
     expect(customName(err)).toBe("aex.stream_error");
-    // A non-fatal stream error must NOT masquerade as the terminal RUN_ERROR.
-    expect(isRunError(err)).toBe(false);
-    expect(isRunTerminal(err)).toBe(false);
+    // A non-fatal stream error must NOT masquerade as the terminal TURN_ERROR.
+    expect(isTurnError(err)).toBe(false);
+    expect(isTurnTerminal(err)).toBe(false);
     // ...but a session-park CUSTOM is a managed-runtime terminal (F19).
     expect(isSessionParked(err)).toBe(false);
   });
 
-  it("isSessionParked / isRunSettled recognize the managed session-park terminals (F19)", () => {
+  it("isSessionParked / isSessionSettled recognize the managed session-park terminals (F19)", () => {
     const parked = (name: string): AexEvent => ({
       specversion: AEX_EVENT_SPECVERSION,
-      id: "run_env:0",
+      id: "ses_env:0",
       source: "runtime",
       type: "CUSTOM",
-      subject: "run_env",
+      subject: "ses_env",
       time: new Date().toISOString(),
       sequence: 0,
       data: { name, value: {} }
@@ -127,32 +127,32 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
       "aex.session.cancelled"
     ]) {
       expect(isSessionParked(parked(name))).toBe(true);
-      // settleConsistent may terminate at the park if no later aex.run.settled
+      // settleConsistent may terminate at the park if no later aex.session.settled
       // barrier is delivered to this stream.
-      expect(isRunSettled(parked(name))).toBe(true);
+      expect(isSessionSettled(parked(name))).toBe(true);
     }
     // The retired bare `error` park is no longer recognized (→ `failed`).
     expect(isSessionParked(parked("aex.session.error"))).toBe(false);
     // A HELD approval gate ends the turn but the RUN is NOT settled.
-    expect(isRunSettled(parked("aex.session.awaiting_approval"))).toBe(false);
+    expect(isSessionSettled(parked("aex.session.awaiting_approval"))).toBe(false);
     // A non-park CUSTOM (e.g. skill_loaded) is neither.
     expect(isSessionParked(parked("aex.skill_loaded"))).toBe(false);
-    expect(isRunSettled(parked("aex.skill_loaded"))).toBe(false);
+    expect(isSessionSettled(parked("aex.skill_loaded"))).toBe(false);
     // A plain typed event is not a session park.
     expect(isSessionParked(map(ev(11, "runtime_terminal", { reason: "complete" })))).toBe(false);
   });
 
-  it("runtime_terminal → RUN_FINISHED normally, RUN_ERROR when the reason is error", () => {
+  it("runtime_terminal → TURN_FINISHED normally, TURN_ERROR when the reason is error", () => {
     const done = map(ev(9, "runtime_terminal", { reason: "complete", totalTokens: 10 }));
-    expect(done.type).toBe("RUN_FINISHED");
-    expect(isRunTerminal(done)).toBe(true);
+    expect(done.type).toBe("TURN_FINISHED");
+    expect(isTurnTerminal(done)).toBe(true);
 
     const cancelled = map(ev(10, "runtime_terminal", { reason: "cancelled" }));
-    expect(cancelled.type).toBe("RUN_FINISHED"); // the orchestrator owns the cancelled *status*
+    expect(cancelled.type).toBe("TURN_FINISHED"); // the orchestrator owns the cancelled *status*
 
     const failed = map(ev(11, "runtime_terminal", { reason: "error", failureClass: "session_failed", failureMessage: "boom" }));
-    expect(failed.type).toBe("RUN_ERROR");
-    expect(isRunError(failed)).toBe(true);
+    expect(failed.type).toBe("TURN_ERROR");
+    expect(isTurnError(failed)).toBe(true);
   });
 });
 
@@ -169,7 +169,7 @@ describe("honest guards close the Phase-0 gap", () => {
       "stream_error",
       "runtime_terminal"
     ];
-    const guards = [isRunStarted, isRunFinished, isRunError, isTextMessage, isToolCallStart, isToolCallResult, isCustom];
+    const guards = [isTurnStarted, isTurnFinished, isTurnError, isTextMessage, isToolCallStart, isToolCallResult, isCustom];
     for (const kind of kinds) {
       const out = map(ev(0, kind, kind === "runtime_terminal" ? { reason: "complete" } : {}));
       expect(guards.some((g) => g(out))).toBe(true);
@@ -188,9 +188,9 @@ describe("toAGUI — strict AG-UI projection", () => {
     expect(out).toEqual({ type: "TOOL_CALL_START", timestamp: ctx.baseMs + 2, toolCallId: "tc1", toolCallName: "read_file" });
   });
 
-  it("RUN_ERROR carries message + code from the failure fields", () => {
+  it("TURN_ERROR carries message + code from the failure fields", () => {
     const out = toAGUI(map(ev(3, "runtime_terminal", { reason: "error", failureClass: "session_failed", failureMessage: "boom" })));
-    expect(out).toEqual({ type: "RUN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "session_failed" });
+    expect(out).toEqual({ type: "TURN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "session_failed" });
   });
 
   it("CUSTOM round-trips name + value", () => {

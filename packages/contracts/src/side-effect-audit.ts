@@ -1,20 +1,20 @@
-import type { RunProvider } from "./submission.js";
+import type { ProviderName } from "./submission.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_KIND = "aex.side_effect_audit.v1";
 
 export const SIDE_EFFECT_AUDIT_ACTIONS = [
-  "run.submit.accepted",
-  "run.submit.rejected",
-  "run.cancel.requested",
-  "run.delete.requested",
-  "run.delete.completed",
-  "run.delete.failed",
-  "run.download.requested",
-  "run.output.downloaded",
-  "run.log.downloaded",
-  "run.event.downloaded",
+  "session.submit.accepted",
+  "session.submit.rejected",
+  "session.cancel.requested",
+  "session.delete.requested",
+  "session.delete.completed",
+  "session.delete.failed",
+  "session.download.requested",
+  "session.output.downloaded",
+  "session.log.downloaded",
+  "session.event.downloaded",
   "workspace.asset.uploaded",
   "workspace.asset.deleted",
   "proxy.endpoint.called",
@@ -61,15 +61,15 @@ export type SideEffectAuditAuthenticationKind =
 
 export const SIDE_EFFECT_AUDIT_TARGET_TYPES = [
   "workspace",
-  "run",
+  "session",
   "proxy_endpoint",
   "mcp_credential",
   "mcp_proxy",
   "provider_proxy",
   "output_archive",
-  "run_output",
-  "run_log",
-  "run_event_stream",
+  "session_output",
+  "session_log",
+  "session_event_stream",
   "workspace_asset",
   "custody_manifest",
   "custody_transition",
@@ -185,7 +185,7 @@ export interface SideEffectAuditStatusMetadataV1 {
 }
 
 export interface SideEffectAuditDimensionsMetadataV1 {
-  readonly provider?: RunProvider | string;
+  readonly provider?: ProviderName | string;
   readonly namespace?: "metadata" | "events" | "logs" | "outputs" | "archive";
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly surface?: string;
@@ -210,7 +210,7 @@ export interface SideEffectAuditEventV1 {
   readonly kind: typeof SIDE_EFFECT_AUDIT_KIND;
   readonly auditId?: string;
   readonly workspaceId: string;
-  readonly runId?: string;
+  readonly sessionId?: string;
   readonly action: SideEffectAuditAction;
   readonly outcome: SideEffectAuditOutcome;
   readonly observedAt: string;
@@ -236,9 +236,9 @@ export type SideEffectAuditEventInput = Omit<
   readonly metadata?: SideEffectAuditMetadataInput;
 };
 
-export interface SideEffectAuditRunScopedInput {
+export interface SideEffectAuditSessionScopedInput {
   readonly workspaceId: string;
-  readonly runId: string;
+  readonly sessionId: string;
   readonly observedAt: string;
   readonly actor: SideEffectAuditActorInput;
   readonly correlation?: SideEffectAuditCorrelationInput;
@@ -283,7 +283,7 @@ export function buildSideEffectAuditEvent(
     kind: SIDE_EFFECT_AUDIT_KIND,
     ...(input.auditId ? { auditId: assertSafeIdentifier(input.auditId, "auditId") } : {}),
     workspaceId: assertSafeIdentifier(input.workspaceId, "workspaceId"),
-    ...(input.runId ? { runId: assertSafeIdentifier(input.runId, "runId") } : {}),
+    ...(input.sessionId ? { sessionId: assertSafeIdentifier(input.sessionId, "sessionId") } : {}),
     action,
     outcome: normalizeOutcome(input.outcome),
     observedAt: assertTimestamp(input.observedAt, "observedAt"),
@@ -296,50 +296,50 @@ export function buildSideEffectAuditEvent(
   return event;
 }
 
-export function buildRunDeletionRequestedAuditEvent(
-  input: SideEffectAuditRunScopedInput
+export function buildSessionDeletionRequestedAuditEvent(
+  input: SideEffectAuditSessionScopedInput
 ): SideEffectAuditEventV1 {
-  return buildRunScopedAuditEvent(input, {
-    action: "run.delete.requested",
+  return buildSessionScopedAuditEvent(input, {
+    action: "session.delete.requested",
     outcome: "accepted",
     targetType: "deletion"
   });
 }
 
-export function buildRunDeletionCompletedAuditEvent(
-  input: SideEffectAuditRunScopedInput
+export function buildSessionDeletionCompletedAuditEvent(
+  input: SideEffectAuditSessionScopedInput
 ): SideEffectAuditEventV1 {
-  return buildRunScopedAuditEvent(input, {
-    action: "run.delete.completed",
+  return buildSessionScopedAuditEvent(input, {
+    action: "session.delete.completed",
     outcome: "succeeded",
     targetType: "deletion"
   });
 }
 
-export function buildRunDeletionFailedAuditEvent(
-  input: SideEffectAuditRunScopedInput
+export function buildSessionDeletionFailedAuditEvent(
+  input: SideEffectAuditSessionScopedInput
 ): SideEffectAuditEventV1 {
-  return buildRunScopedAuditEvent(input, {
-    action: "run.delete.failed",
+  return buildSessionScopedAuditEvent(input, {
+    action: "session.delete.failed",
     outcome: "failed",
     targetType: "deletion"
   });
 }
 
-export function buildRunDownloadRequestedAuditEvent(
-  input: SideEffectAuditRunScopedInput
+export function buildSessionDownloadRequestedAuditEvent(
+  input: SideEffectAuditSessionScopedInput
 ): SideEffectAuditEventV1 {
-  return buildRunScopedAuditEvent(input, {
-    action: "run.download.requested",
+  return buildSessionScopedAuditEvent(input, {
+    action: "session.download.requested",
     outcome: "accepted",
     targetType: "output_archive"
   });
 }
 
 export function buildCustodyManifestWrittenAuditEvent(
-  input: SideEffectAuditRunScopedInput
+  input: SideEffectAuditSessionScopedInput
 ): SideEffectAuditEventV1 {
-  return buildRunScopedAuditEvent(input, {
+  return buildSessionScopedAuditEvent(input, {
     action: "custody.manifest.written",
     outcome: "succeeded",
     targetType: "custody_manifest"
@@ -525,8 +525,8 @@ function assertSupportedNestedKeys(input: object, allowed: readonly string[], fi
   }
 }
 
-function buildRunScopedAuditEvent(
-  input: SideEffectAuditRunScopedInput,
+function buildSessionScopedAuditEvent(
+  input: SideEffectAuditSessionScopedInput,
   spec: {
     readonly action: SideEffectAuditAction;
     readonly outcome: SideEffectAuditOutcome;
@@ -535,12 +535,12 @@ function buildRunScopedAuditEvent(
 ): SideEffectAuditEventV1 {
   return buildSideEffectAuditEvent({
     workspaceId: input.workspaceId,
-    runId: input.runId,
+    sessionId: input.sessionId,
     action: spec.action,
     outcome: spec.outcome,
     observedAt: input.observedAt,
     actor: input.actor,
-    target: { type: spec.targetType, id: input.runId },
+    target: { type: spec.targetType, id: input.sessionId },
     ...(input.correlation ? { correlation: input.correlation } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {})
   });
@@ -593,7 +593,7 @@ function normalizeTargetType(input: SideEffectAuditTargetType): SideEffectAuditT
 }
 
 function isDeletionAction(action: SideEffectAuditAction | undefined): boolean {
-  return action === "run.delete.requested" || action === "run.delete.completed" || action === "run.delete.failed";
+  return action === "session.delete.requested" || action === "session.delete.completed" || action === "session.delete.failed";
 }
 
 function visitAuditValue(
@@ -647,7 +647,7 @@ const forbiddenStringPatterns: readonly {
     regex: /\b(?:sk-(?:ant|proj|live|test|deepseek|openai)|xox[baprs]-|AIza)[A-Za-z0-9_-]{8,}/i
   },
   { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "object_store_key", regex: /(^|[\s"'`])(?:runs|assets)\/[^?<#\s"'`]+/i },
+  { reason: "object_store_key", regex: /(^|[\s"'`])(?:sessions|assets)\/[^?<#\s"'`]+/i },
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",

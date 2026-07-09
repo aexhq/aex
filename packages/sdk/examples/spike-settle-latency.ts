@@ -1,7 +1,7 @@
 /**
  * SPIKE (throwaway): measure the real park-event -> record-idle gap for interactive
  * session turns. This is the extra wall-clock Option B (settle-consistent turn stream)
- * would force onto EVERY turn: the turn stream currently ends on the RUN_FINISHED park
+ * would force onto EVERY turn: the turn stream currently ends on the TURN_FINISHED park
  * event, but the session RECORD flips running->idle later, in the async settle lambda.
  *
  *   AEX_API_KEY=... DEEPSEEK_API_KEY=... AEX_API_URL=... bun packages/sdk/examples/spike-settle-latency.ts
@@ -9,7 +9,7 @@
  * Optional: SPIKE_TURNS=8 (samples), SPIKE_POLL_MS=120 (record poll interval).
  *
  * Method per turn:
- *   1) send a tiny prompt, stream events, capture t_runFinished at the RUN_FINISHED event
+ *   1) send a tiny prompt, stream events, capture t_runFinished at the TURN_FINISHED event
  *      (this is where the default turn stream ends), then stop consuming.
  *   2) tight-poll session.refresh() until status === "idle"; capture t_idle.
  *   3) settleGapMs = t_idle - t_runFinished  <-- the Option B tax.
@@ -48,21 +48,21 @@ const samples: Sample[] = [];
 for (let i = 0; i < turns; i++) {
   const stream = session.send(`Say hello #${i + 1} in one short sentence.`);
   const tStart = performance.now();
-  let tRunFinished = 0;
+  let tTurnFinished = 0;
   let errored = false;
   for await (const event of stream) {
-    if (event.isRunError()) {
+    if (event.isTurnError()) {
       errored = true;
-      tRunFinished = performance.now();
+      tTurnFinished = performance.now();
       break;
     }
-    if (event.isRunFinished()) {
-      tRunFinished = performance.now();
+    if (event.isTurnFinished()) {
+      tTurnFinished = performance.now();
       break; // default turn stream would end HERE
     }
   }
-  if (tRunFinished === 0) tRunFinished = performance.now();
-  const turnMs = tRunFinished - tStart;
+  if (tTurnFinished === 0) tTurnFinished = performance.now();
+  const turnMs = tTurnFinished - tStart;
 
   // Tight-poll the authoritative record until it leaves running.
   let polls = 0;
@@ -84,11 +84,11 @@ for (let i = 0; i < turns; i++) {
     }
     await sleep(pollMs);
   }
-  const settleGapMs = tIdle - tRunFinished;
+  const settleGapMs = tIdle - tTurnFinished;
   samples.push({ turn: i + 1, turnMs, settleGapMs, polls, timedOut });
   console.log(
     `turn ${String(i + 1).padStart(2)}  turn=${fmt(turnMs)}  settleGap=${fmt(settleGapMs)}  polls=${polls}` +
-      (errored ? "  (RUN_ERROR)" : "") +
+      (errored ? "  (TURN_ERROR)" : "") +
       (timedOut ? "  (TIMEOUT>90s)" : "")
   );
 }

@@ -5,7 +5,7 @@ import {
   normaliseSkillBundlePath,
   parseAssetRefFields,
   parseMcpServerRef
-} from "./run-config.js";
+} from "./session-config.js";
 import type {
   AgentsMdRef,
   FileRef,
@@ -14,12 +14,12 @@ import type {
   SkillRef,
   ToolInputSchema,
   ToolRef
-} from "./run-config.js";
-import { parseRunTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
+} from "./session-config.js";
+import { parseSessionTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import {
-  assertRunModelMatchesProvider,
-  parseRunModel,
-  type RunModel
+  assertModelNameMatchesProvider,
+  parseModelName,
+  type ModelName
 } from "./models.js";
 import {
   parseRuntimeSecurityProfile,
@@ -31,9 +31,9 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 
 /**
  * Networking + runtime-package snapshot carried inside a flat submission
- * so the hosted API can deep-clone and mutate it per run (e.g. injecting the
+ * so the hosted API can deep-clone and mutate it per session (e.g. injecting the
  * proxy hostname into `allowed_hosts`) without sharing state across
- * concurrent runs.
+ * concurrent sessions.
  *
  * `envVars` is the customer-controlled key/value bag delivered into the
  * managed container process and mirrored in the mounted `RUNTIME.env` /
@@ -151,12 +151,12 @@ export function packageInstallString(pkg: PlatformPackage): string {
 }
 
 /**
- * Run-time provider selector. Aex exposes one customer interface
+ * SessionRecord-time provider selector. Aex exposes one customer interface
  * for every provider. All new submissions execute through the managed
  * runtime; provider selection only decides which upstream model route
  * the managed provider-proxy uses.
  */
-export const RUN_PROVIDERS = [
+export const PROVIDERS = [
   "anthropic",
   "deepseek",
   "openai",
@@ -166,8 +166,8 @@ export const RUN_PROVIDERS = [
   "doubao",
   "doubao-cn"
 ] as const;
-export type RunProvider = (typeof RUN_PROVIDERS)[number];
-export const DEFAULT_RUN_PROVIDER: RunProvider = "anthropic";
+export type ProviderName = (typeof PROVIDERS)[number];
+export const DEFAULT_PROVIDER: ProviderName = "anthropic";
 
 /**
  * Symbol-style accessors for the closed provider set. Prefer these over raw
@@ -177,8 +177,8 @@ export const DEFAULT_RUN_PROVIDER: RunProvider = "anthropic";
  * submission field; name it explicitly with one of these constants rather than
  * relying on the model alone to determine routing.
  *
- * Every value mirrors {@link RUN_PROVIDERS} exactly; a unit test asserts
- * `Object.values(Providers)` deep-equals `RUN_PROVIDERS` so the two can never
+ * Every value mirrors {@link PROVIDERS} exactly; a unit test asserts
+ * `Object.values(Providers)` deep-equals `PROVIDERS` so the two can never
  * drift.
  */
 export const Providers = {
@@ -198,7 +198,7 @@ export const Providers = {
   DOUBAO: "doubao",
   /** Doubao (ByteDance) via the official China Volcengine Ark gateway. */
   DOUBAO_CN: "doubao-cn"
-} as const satisfies Readonly<Record<string, RunProvider>>;
+} as const satisfies Readonly<Record<string, ProviderName>>;
 
 export interface PlatformMcpServerSecret {
   readonly name: string;
@@ -207,8 +207,8 @@ export interface PlatformMcpServerSecret {
 }
 
 /**
- * Per-run inline secrets bundle. `apiKeys` holds the BYOK provider keys, keyed
- * by {@link RunProvider}. A run REQUIRES a key for its own `provider`; it MAY
+ * Per-session inline secrets bundle. `apiKeys` holds the BYOK provider keys, keyed
+ * by {@link ProviderName}. A session REQUIRES a key for its own `provider`; it MAY
  * carry keys for additional providers so a subagent spawned with a
  * different-family model inherits them server-side from the vault (the keys
  * never transit the container). `mcpServers` credentials are cross-provider
@@ -216,14 +216,14 @@ export interface PlatformMcpServerSecret {
  * client).
  */
 export interface PlatformInlineSecrets {
-  readonly apiKeys?: Partial<Record<RunProvider, string>>;
+  readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly mcpServers?: readonly PlatformMcpServerSecret[];
   /**
-   * Per-run env-var secret VALUES, keyed by env name. Each entry pairs with a
+   * Per-session env-var secret VALUES, keyed by env name. Each entry pairs with a
    * `submission.secretEnv[<envName>] = { ephemeral: true }` declaration. Lives
    * in the secrets channel so it is vaulted and excluded from the idempotency
    * hash; the runtime injects it as the named env var and it is deleted at the
-   * run's terminal. Workspace `{ ref }` bindings resolve server-side and never
+   * session's terminal. Workspace `{ ref }` bindings resolve server-side and never
    * appear here.
    */
   readonly envSecrets?: Readonly<Record<string, string>>;
@@ -240,7 +240,7 @@ export const SECRET_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
  * One `submission.secretEnv` entry — VALUE-FREE, so it rides the (hashed)
  * submission safely. `{ ref }` resolves a workspace secret server-side;
  * `{ ephemeral: true }` pairs with a `secrets.envSecrets[<envName>]` value
- * (per-run, vaulted, deleted at the run's terminal).
+ * (per-session, vaulted, deleted at the session's terminal).
  */
 export type PlatformSecretEnvEntry =
   | { readonly ref: string }
@@ -300,7 +300,7 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
  *     targets.
  *   - Bounded: max ENV_VARS_MAX_ENTRIES entries, max
  *     ENV_VARS_MAX_VALUE_BYTES per value, max ENV_VARS_MAX_TOTAL_BYTES
- *     overall. The caps stop a runaway customer from making the
+ *     overall. The caps stop a sessionaway customer from making the
  *     mounted RUNTIME files unbounded.
  *   - Values are arbitrary UTF-8 strings, EXCEPT NUL bytes are
  *     rejected (NUL terminates C-strings and breaks env-var
@@ -330,7 +330,7 @@ function parseEnvVars(input: unknown): Readonly<Record<string, string>> | undefi
     }
     if (key.startsWith(AEX_RESERVED_ENV_PREFIX)) {
       throw new Error(
-        `submission.environment.envVars.${key} uses reserved prefix "${AEX_RESERVED_ENV_PREFIX}" (set by aex runtime)`
+        `submission.environment.envVars.${key} uses reserved prefix "${AEX_RESERVED_ENV_PREFIX}" (set by aex starttime)`
       );
     }
     const raw = value[key];
@@ -486,7 +486,7 @@ export function crossValidateSecretEnvAndValues(
 export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
   // Absent/null secrets collapse to an empty bundle; the credential-policy gate
   // (enforceCredentialSecretPolicy) decides whether that is admissible for the
-  // run's mode (a run inheriting keys server-side may legitimately omit them).
+  // session's mode (a session inheriting keys server-side may legitimately omit them).
   if (input === undefined || input === null) return {};
   const value = requireRecord(input, "secrets");
   const allowedTopLevel = new Set<string>(["apiKeys", "mcpServers", "envSecrets"]);
@@ -518,23 +518,23 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
 
 /**
  * Parse the per-provider BYOK key map. Each key must name a known
- * {@link RunProvider}; each value must be a non-empty string. Returns
+ * {@link ProviderName}; each value must be a non-empty string. Returns
  * `undefined` for an absent or empty map so the spread above stays clean.
  */
-function parseApiKeys(input: unknown): Partial<Record<RunProvider, string>> | undefined {
+function parseApiKeys(input: unknown): Partial<Record<ProviderName, string>> | undefined {
   if (input === undefined || input === null) return undefined;
   const value = requireRecord(input, "secrets.apiKeys");
-  const out: Partial<Record<RunProvider, string>> = {};
+  const out: Partial<Record<ProviderName, string>> = {};
   for (const [provider, key] of Object.entries(value)) {
-    if (!(RUN_PROVIDERS as readonly string[]).includes(provider)) {
+    if (!(PROVIDERS as readonly string[]).includes(provider)) {
       throw new Error(
-        `secrets.apiKeys["${provider}"] is not a known provider; permitted: ${RUN_PROVIDERS.join(", ")}`
+        `secrets.apiKeys["${provider}"] is not a known provider; permitted: ${PROVIDERS.join(", ")}`
       );
     }
     if (typeof key !== "string" || key.length === 0) {
       throw new Error(`secrets.apiKeys["${provider}"] must be a non-empty string`);
     }
-    out[provider as RunProvider] = key;
+    out[provider as ProviderName] = key;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -715,11 +715,11 @@ function isJsonValue(input: unknown): input is JsonValue {
 }
 
 // ===========================================================================
-// Run submission submission wire shape
+// SessionRecord submission submission wire shape
 // ===========================================================================
 
 /**
- * Wire-level submission posted to /api/runs in the flat surface. The
+ * Wire-level submission posted to /api/sessions in the flat surface. The
  * `prompt` is always an array internally so the hosted API, the audit log,
  * and the BFF idempotency hash all see one shape. `mcpServers` carries
  * only the non-secret half; bearer headers travel in
@@ -730,7 +730,7 @@ function isJsonValue(input: unknown): input is JsonValue {
  * first-class input on `skills` (by-name refs), NOT part of `tools`.
  */
 export interface PlatformSubmission {
-  readonly model: RunModel;
+  readonly model: ModelName;
   readonly system?: string;
   readonly prompt: readonly string[];
   readonly tools?: readonly ToolRef[];
@@ -739,7 +739,7 @@ export interface PlatformSubmission {
    * public ingress shape the SDK sends and the ONLY skill field the idempotency
    * hash covers. The platform resolves each name to the workspace skill's
    * current bytes at submit time; a re-upload under the same name changes what
-   * later runs see (the name-only ref, and therefore the hash, is unchanged).
+   * later sessions see (the name-only ref, and therefore the hash, is unchanged).
    */
   readonly skills?: readonly SkillRef[];
   /**
@@ -758,7 +758,7 @@ export interface PlatformSubmission {
    * value is `{ ref }` (resolve a workspace secret server-side) or
    * `{ ephemeral: true }` (value supplied in `secrets.envSecrets`, vaulted and
    * deleted at terminal). The runtime injects the resolved value as the named
-   * env var. Lifecycle parity with skills/files: per-run by default, persisted
+   * env var. Lifecycle parity with skills/files: per-session by default, persisted
    * only when promoted to the workspace store.
    */
   readonly secretEnv?: Readonly<Record<string, PlatformSecretEnvEntry>>;
@@ -775,7 +775,7 @@ export interface PlatformSubmission {
    * Whether to inject the standard builtin tool set ({@link DEFAULT_BUILTIN_TOOLS}).
    *
    *   - omitted / `true` (default): inject the standard builtins.
-   *   - `false`: inject NO builtins — useful for a pure-MCP / pure-custom run.
+   *   - `false`: inject NO builtins — useful for a pure-MCP / pure-custom session.
    *
    * Pick a narrow subset alongside `includeBuiltinTools: false` by listing
    * builtin names in `tools` (a bare-string builtin reference; prefer
@@ -786,7 +786,7 @@ export interface PlatformSubmission {
    * Explicit builtin tool NAME references the caller listed in the wire `tools`
    * union (the bare-string members), extracted at parse time. Each is a member
    * of {@link BUILTIN_TOOL_NAMES}. Composed with {@link includeBuiltinTools} via
-   * {@link resolveBuiltinToolNames} to produce the run's final builtin tool set.
+   * {@link resolveBuiltinToolNames} to produce the session's final builtin tool set.
    * `tools` itself carries only the custom tool bundles ({@link ToolRef}).
    */
   readonly builtinTools?: readonly BuiltinToolName[];
@@ -802,7 +802,7 @@ export interface PlatformSubmission {
   /**
    * Structured-output policy. `{ kind: 'text' }` (default) is free-form; a
    * `{ kind: 'json_schema', … }` requests provider-native constrained decode.
-   * The run's typed outcome is then `decoded | refused` — no untyped path yields
+   * The session's typed outcome is then `decoded | refused` — no untyped path yields
    * a hallucinated object. Fail-closed for a provider lacking the capability.
    */
   readonly responseFormat?: ResponseFormat;
@@ -816,7 +816,7 @@ export interface PlatformSubmission {
   /**
    * Platform-injection controls. The platform prepends a small system
    * prompt (see `platformSystemPrompt`) ahead of `system` to explain
-   * managed-run expectations such as durable file capture. Set
+   * managed-session expectations such as durable file capture. Set
    * `systemPrompt: "off"` to suppress that injection and have the runtime
    * see only the customer's own `system`. Omitting the field (or
    * `systemPrompt: "default"`) keeps the injection on.
@@ -846,9 +846,9 @@ export interface PlatformOutputCaptureConfig {
   readonly captureTimeoutMs?: number;
   /** Maximum size of a single captured file in bytes. Positive integer. */
   readonly maxFileBytes?: number;
-  /** Maximum total captured output bytes for the run. Positive integer. */
+  /** Maximum total captured output bytes for the session. Positive integer. */
   readonly maxTotalBytes?: number;
-  /** Maximum number of captured files for the run. Positive integer. */
+  /** Maximum number of captured files for the session. Positive integer. */
   readonly maxFiles?: number;
 }
 
@@ -856,15 +856,15 @@ export interface PlatformInjectionConfig {
   readonly systemPrompt?: "default" | "off";
 }
 
-export interface PlatformRunSubmissionRequest {
+export interface PlatformSessionSubmissionRequest {
   readonly workspaceId: string;
   readonly idempotencyKey: string;
   /**
    * Provider selector. Always populated after parsing — absent on the
-   * wire means {@link DEFAULT_RUN_PROVIDER}. All providers are dispatched
+   * wire means {@link DEFAULT_PROVIDER}. All providers are dispatched
    * through the managed runtime.
    */
-  readonly provider: RunProvider;
+  readonly provider: ProviderName;
   readonly submission: PlatformSubmission;
   readonly secrets: PlatformInlineSecrets;
   /**
@@ -873,57 +873,57 @@ export interface PlatformRunSubmissionRequest {
    */
   readonly runtimeSize?: RuntimeSize;
   /**
-   * Run deadline in milliseconds, normalised by the parser from the wire
+   * SessionRecord deadline in milliseconds, normalised by the parser from the wire
    * `timeout` duration string (bounded to [1m, 8h]). Absent ⇒
-   * {@link DEFAULT_RUN_TIMEOUT_MS} (8h). Applies to the managed runner's
+   * {@link DEFAULT_SESSION_TIMEOUT_MS} (8h). Applies to the managed runner's
    * terminal wait window and self-kill deadline.
    */
   readonly timeoutMs?: number;
   /**
-   * Optional per-run callback URL. The platform delivers exactly the terminal
-   * `run.finished` event to this URL at the settle-consistent barrier, signed
+   * Optional per-session callback URL. The platform delivers exactly the terminal
+   * `session.finished` event to this URL at the settle-consistent barrier, signed
    * Standard-Webhooks style. It is a sibling of {@link idempotencyKey} — an
    * operational/delivery concern, NOT part of the hashed submission brief, so
    * the same idempotency key with a different callback URL never 409s and the
    * field never enters `request_hash`.
    */
-  readonly webhook?: RunWebhookSpec;
+  readonly webhook?: SessionWebhookSpec;
   /**
-   * Optional per-run override of the lineage limits (max concurrent child runs,
-   * max subagent depth, per-run spend cap). These are dials the client may
+   * Optional per-session override of the lineage limits (max concurrent child sessions,
+   * max subagent depth, per-session spend cap). These are dials the client may
    * *request*; the server resolves them against the per-workspace ceiling and
    * the hard platform ceiling (clamping happens in the resolver, NOT this
    * parser). Absent fields fall back to the platform defaults. Only shape +
    * positivity are validated here.
    */
-  readonly limits?: RunLimits;
+  readonly limits?: SessionLimits;
   /**
-   * Optional capacity intent for the run's managed machine. `spot: true` opts
-   * the run into interruptible capacity; absent / `spot: false` requests
+   * Optional capacity intent for the session's managed machine. `spot: true` opts
+   * the session into interruptible capacity; absent / `spot: false` requests
    * standard capacity (the default). Intent only — the managed runtime selects
    * capacity from it.
    */
-  readonly machine?: RunMachine;
+  readonly machine?: SessionMachine;
 }
 
-/** Per-run webhook callback. v1: terminal-only; the URL must be https. */
-export interface RunWebhookSpec {
+/** Per-session webhook callback. v1: terminal-only; the URL must be https. */
+export interface SessionWebhookSpec {
   readonly url: string;
 }
 
 /**
- * Per-run override of the lineage limits. Both fields are optional; an absent
- * field means "use the platform default". The parser ({@link parseRunLimits})
+ * Per-session override of the lineage limits. Both fields are optional; an absent
+ * field means "use the platform default". The parser ({@link parseSessionLimits})
  * only validates positivity/shape — clamping to the workspace + platform
- * ceilings is the resolver's job (see `resolveRunLimits` in `@aexhq/shared`).
+ * ceilings is the resolver's job (see `resolveSessionLimits` in `@aexhq/shared`).
  */
-export interface RunLimits {
-  readonly maxConcurrentChildRuns?: number;
+export interface SessionLimits {
+  readonly maxConcurrentChildSessions?: number;
   readonly maxSubagentDepth?: number;
   /**
-   * Per-run spend cap in USD (defense-in-depth). The platform kills the run once
-   * it would out-spend the cap. A positive number; omitted ⇒ unbounded per-run
-   * (only the run's wall-clock `timeout` + the per-workspace spend cap apply).
+   * Per-session spend cap in USD (defense-in-depth). The platform kills the session once
+   * it would out-spend the cap. A positive number; omitted ⇒ unbounded per-session
+   * (only the session's wall-clock `timeout` + the per-workspace spend cap apply).
    * Only shape/positivity are validated here.
    *
    * The frozen boot session config the managed runtime folds the loop against
@@ -932,9 +932,9 @@ export interface RunLimits {
    */
   readonly maxSpendUsd?: number;
   /**
-   * Maximum number of agent ITERATIONS (turns) the run may take before the
+   * Maximum number of agent ITERATIONS (turns) the session may take before the
    * platform parks it terminal. A positive integer; omitted ⇒ the platform
-   * default (`RUN_DEFAULT_MAX_TURNS`). Previously a bare server literal absent
+   * default (`SESSION_DEFAULT_MAX_TURNS`). Previously a bare server literal absent
    * from both the public contract and the limits SSoT — now a settable dial.
    * Only shape/positivity are validated here; clamping to the ceiling is the
    * resolver's job.
@@ -943,12 +943,12 @@ export interface RunLimits {
 }
 
 /**
- * Per-run machine/capacity intent. v1 exposes only `spot`: opt the run into
+ * Per-session machine/capacity intent. v1 exposes only `spot`: opt the session into
  * interruptible capacity (`spot: true`) vs standard capacity (absent /
  * `spot: false`, the default). Only the boolean intent is public — capacity
  * selection is a runtime concern.
  */
-export interface RunMachine {
+export interface SessionMachine {
   readonly spot?: boolean;
 }
 
@@ -962,24 +962,24 @@ export interface RunMachine {
  * itself.
  *
  * `provider` is also optional on the wire — absent means
- * {@link DEFAULT_RUN_PROVIDER} (`anthropic`). The parser fills it in
- * before the value enters the run snapshot.
+ * {@link DEFAULT_PROVIDER} (`anthropic`). The parser fills it in
+ * before the value enters the session snapshot.
  */
-export type PlatformRunSubmissionInput = Omit<
-  PlatformRunSubmissionRequest,
+export type PlatformSessionSubmissionInput = Omit<
+  PlatformSessionSubmissionRequest,
   "workspaceId" | "provider" | "timeoutMs"
 > & {
   readonly workspaceId?: string;
-  readonly provider?: RunProvider;
+  readonly provider?: ProviderName;
   /**
-   * Run deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
+   * SessionRecord deadline as a human duration string (`"1h"`, `"90m"`, `"30s"`).
    * Parsed + bounded to [1m, 8h] server-side into
-   * {@link PlatformRunSubmissionRequest.timeoutMs}. Absent ⇒ 8h default.
+   * {@link PlatformSessionSubmissionRequest.timeoutMs}. Absent ⇒ 8h default.
    */
   readonly timeout?: string;
 };
 
-export interface ParseRunSubmissionOptions {
+export interface ParseSessionSubmissionOptions {
   /**
    * Set by the in-container re-parse of the boot record (`aws-compose.ts`) to
    * accept trusted-only fields the BFF resolver wrote after ingress — currently
@@ -989,10 +989,10 @@ export interface ParseRunSubmissionOptions {
   readonly trustedReparse?: boolean;
 }
 
-export function parseRunSubmissionRequest(
+export function parseSessionSubmissionRequest(
   input: unknown,
-  options: ParseRunSubmissionOptions = {}
-): PlatformRunSubmissionRequest {
+  options: ParseSessionSubmissionOptions = {}
+): PlatformSessionSubmissionRequest {
   const value = requireRecord(input, "submission");
   const allowedTopLevelFields = new Set([
     "workspaceId",
@@ -1023,19 +1023,19 @@ export function parseRunSubmissionRequest(
     }
     assertNoSecretBearingFields(fieldValue, [key]);
   }
-  const provider = parseRunProvider(value.provider);
+  const provider = parseProviderName(value.provider);
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
-  const timeoutMs = parseRunTimeout(value.timeout);
-  const webhook = parseRunWebhook(value.webhook);
-  const limits = parseRunLimits(value.limits);
-  const machine = parseRunMachine(value.machine);
+  const timeoutMs = parseSessionTimeout(value.timeout);
+  const webhook = parseSessionWebhook(value.webhook);
+  const limits = parseSessionLimits(value.limits);
+  const machine = parseSessionMachine(value.machine);
   const secrets = parseInlineSecrets(value.secrets);
   enforceCredentialSecretPolicy(secrets, provider);
 
   const submission = parseSubmission(value.submission, {
     trustedReparse: options.trustedReparse === true
   });
-  assertRunModelMatchesProvider(provider, submission.model);
+  assertModelNameMatchesProvider(provider, submission.model);
   // Fail-closed streaming: `outputMode:'stream'` on a non-streamable provider is
   // a hard reject at parse time (no silent downgrade).
   assertStreamableOutputMode(submission.outputMode, provider);
@@ -1080,14 +1080,14 @@ export function parseRunSubmissionRequest(
 }
 
 /**
- * Parse + SSRF-shape-validate the optional per-run `webhook`. The URL must be
+ * Parse + SSRF-shape-validate the optional per-session `webhook`. The URL must be
  * https with no userinfo (a `user:pass@host` URL is rejected — credentials must
  * not ride in a callback URL). Unknown subfields are rejected so the strict
  * top-level allow-list extends to the nested object. Returns `undefined` when
  * absent. Delivery-time re-resolution + IP-deny checks live server-side; this
  * is the submit-time shape gate.
  */
-export function parseRunWebhook(input: unknown): RunWebhookSpec | undefined {
+export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefined {
   if (input === undefined) {
     return undefined;
   }
@@ -1115,30 +1115,30 @@ export function parseRunWebhook(input: unknown): RunWebhookSpec | undefined {
 }
 
 /**
- * Parse the optional per-run `limits` override. Mirrors {@link parseRunWebhook}:
+ * Parse the optional per-session `limits` override. Mirrors {@link parseSessionWebhook}:
  * absent ⇒ `undefined`; a non-object or any unknown subfield is rejected so the
  * strict top-level allow-list extends to the nested object. Each present field
  * is validated as a positive safe integer via {@link optionalPositiveInt}.
  *
  * This is a SHAPE/positivity gate only — it does NOT clamp to the workspace or
- * platform ceilings (that precedence lives in the resolver, `resolveRunLimits`).
+ * platform ceilings (that precedence lives in the resolver, `resolveSessionLimits`).
  * Only the present fields are returned; an all-absent override (e.g. `{}`)
  * collapses to `undefined` so it carries no signal onto the request.
  */
-export function parseRunLimits(input: unknown): RunLimits | undefined {
+export function parseSessionLimits(input: unknown): SessionLimits | undefined {
   if (input === undefined) {
     return undefined;
   }
   const value = requireRecord(input, "limits");
-  const allowed = new Set(["maxConcurrentChildRuns", "maxSubagentDepth", "maxSpendUsd", "maxTurns"]);
+  const allowed = new Set(["maxConcurrentChildSessions", "maxSubagentDepth", "maxSpendUsd", "maxTurns"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw new Error(`limits.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
     }
   }
-  const maxConcurrentChildRuns = optionalPositiveInt(
-    value.maxConcurrentChildRuns,
-    "limits.maxConcurrentChildRuns"
+  const maxConcurrentChildSessions = optionalPositiveInt(
+    value.maxConcurrentChildSessions,
+    "limits.maxConcurrentChildSessions"
   );
   const maxSubagentDepth = optionalPositiveInt(value.maxSubagentDepth, "limits.maxSubagentDepth");
   // maxSpendUsd is a USD amount (may be fractional, e.g. $2.50) so it is a positive
@@ -1149,10 +1149,10 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
   // is the resolver's job; here we enforce shape + positivity only.
   const maxTurns = optionalPositiveInt(value.maxTurns, "limits.maxTurns");
   // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
-  // lands an empty object on the request — matches sibling parsers (parseRunWebhook,
+  // lands an empty object on the request — matches sibling parsers (parseSessionWebhook,
   // parseEnvironment). The resolver supplies platform defaults for absent fields.
   if (
-    maxConcurrentChildRuns === undefined &&
+    maxConcurrentChildSessions === undefined &&
     maxSubagentDepth === undefined &&
     maxSpendUsd === undefined &&
     maxTurns === undefined
@@ -1160,7 +1160,7 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
     return undefined;
   }
   return {
-    ...(maxConcurrentChildRuns !== undefined ? { maxConcurrentChildRuns } : {}),
+    ...(maxConcurrentChildSessions !== undefined ? { maxConcurrentChildSessions } : {}),
     ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
     ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {})
@@ -1168,19 +1168,19 @@ export function parseRunLimits(input: unknown): RunLimits | undefined {
 }
 
 /**
- * Boot-session budget fragment. The public submit surface names a run's spend
+ * Boot-session budget fragment. The public submit surface names a session's spend
  * cap `limits.maxSpendUsd`; the frozen boot session config the managed runtime
  * folds the loop against names the SAME USD value `budgetUsd` — the field the
- * session planner reads to enforce/terminate a run that would out-spend its cap.
+ * session planner reads to enforce/terminate a session that would out-spend its cap.
  * This is the single source of truth for that wire→boot name mapping so the two
  * layers can never drift.
  *
  * Returns a fragment safe to spread into `sessionConfig.limits`: `{ budgetUsd }`
- * when a cap is set, `{}` when none is (an absent cap stays absent — the run is
- * unbounded per-run, subject only to the run timeout + the per-workspace cap).
+ * when a cap is set, `{}` when none is (an absent cap stays absent — the session is
+ * unbounded per-session, subject only to the session timeout + the per-workspace cap).
  * Pure: same input ⇒ same output.
  */
-export function sessionBudgetLimits(limits: RunLimits | undefined): { budgetUsd?: number } {
+export function sessionBudgetLimits(limits: SessionLimits | undefined): { budgetUsd?: number } {
   if (limits?.maxSpendUsd === undefined) {
     return {};
   }
@@ -1188,15 +1188,15 @@ export function sessionBudgetLimits(limits: RunLimits | undefined): { budgetUsd?
 }
 
 /**
- * Parse the optional per-run `machine` capacity intent. Mirrors
- * {@link parseRunWebhook}: absent ⇒ `undefined`; a non-object or any unknown
+ * Parse the optional per-session `machine` capacity intent. Mirrors
+ * {@link parseSessionWebhook}: absent ⇒ `undefined`; a non-object or any unknown
  * subfield is rejected so the strict top-level allow-list extends to the nested
  * object. `spot` must be a boolean when present. A no-signal object (e.g.
  * `machine: {}`) collapses to `undefined` so it never lands an empty object on
  * the request. An explicit `spot` (true or false) is preserved verbatim. Only
  * shape is validated here — capacity selection is a runtime concern.
  */
-export function parseRunMachine(input: unknown): RunMachine | undefined {
+export function parseSessionMachine(input: unknown): SessionMachine | undefined {
   if (input === undefined) {
     return undefined;
   }
@@ -1216,33 +1216,33 @@ export function parseRunMachine(input: unknown): RunMachine | undefined {
   return { spot: value.spot };
 }
 
-export function parseRunProvider(input: unknown): RunProvider {
+export function parseProviderName(input: unknown): ProviderName {
   if (input === undefined) {
-    return DEFAULT_RUN_PROVIDER;
+    return DEFAULT_PROVIDER;
   }
-  if (typeof input !== "string" || !(RUN_PROVIDERS as readonly string[]).includes(input)) {
+  if (typeof input !== "string" || !(PROVIDERS as readonly string[]).includes(input)) {
     throw new Error(
-      `provider must be one of: ${RUN_PROVIDERS.join(", ")} (got ${JSON.stringify(input)})`
+      `provider must be one of: ${PROVIDERS.join(", ")} (got ${JSON.stringify(input)})`
     );
   }
-  return input as RunProvider;
+  return input as ProviderName;
 }
 
 /**
  * Cross-check the supplied secrets bundle against the credential mode. BYOK
- * requires `secrets.apiKeys[provider]` (the key for the run's own `provider`).
- * Additional provider keys are optional (validated for shape only) so the run
+ * requires `secrets.apiKeys[provider]` (the key for the session's own `provider`).
+ * Additional provider keys are optional (validated for shape only) so the session
  * can supply keys for the other providers its subagents may use. MCP / proxy
  * endpoint auth carry across providers and are not checked here.
  *
- * A CHILD run (`inheritsFromParent`) is exempt from the own-key requirement: it
+ * A CHILD session (`inheritsFromParent`) is exempt from the own-key requirement: it
  * inherits its provider keys server-side from the parent's vaulted bundle, so
  * it need not carry any of its own. The server still verifies, at admission,
  * that the parent actually holds a key for the child's provider.
  */
 export function enforceCredentialSecretPolicy(
   secrets: PlatformInlineSecrets,
-  provider: RunProvider,
+  provider: ProviderName,
   opts?: { readonly inheritsFromParent?: boolean }
 ): void {
   if (opts?.inheritsFromParent) return;
@@ -1284,7 +1284,7 @@ export function parseSubmission(
       throw new Error(`submission.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
     }
   }
-  const model = parseRunModel(value.model, "submission.model");
+  const model = parseModelName(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
   const prompt = parsePrompt(value.prompt);
   const { tools, builtinTools } = parseTools(value.tools);
@@ -1416,23 +1416,23 @@ const PROVIDER_STREAM_SHAPE = {
   openrouter: "openai_chat",
   doubao: "openai_chat",
   "doubao-cn": "openai_chat"
-} as const satisfies Readonly<Record<RunProvider, StreamableShape | null>>;
+} as const satisfies Readonly<Record<ProviderName, StreamableShape | null>>;
 
 /** True when a provider has a streaming producer wired (a {@link STREAMABLE_SHAPES} shape). */
-export function isStreamableProvider(provider: RunProvider): boolean {
+export function isStreamableProvider(provider: ProviderName): boolean {
   return PROVIDER_STREAM_SHAPE[provider] !== null;
 }
 
-function streamableProviders(): readonly RunProvider[] {
-  return (Object.keys(PROVIDER_STREAM_SHAPE) as RunProvider[]).filter(isStreamableProvider);
+function streamableProviders(): readonly ProviderName[] {
+  return (Object.keys(PROVIDER_STREAM_SHAPE) as ProviderName[]).filter(isStreamableProvider);
 }
 
 /**
  * Fail-closed streaming gate: `outputMode:'stream'` on a NON-streamable provider
  * throws (a HARD reject — no silent downgrade to buffered). Called by
- * {@link parseRunSubmissionRequest} once mode + provider are both known.
+ * {@link parseSessionSubmissionRequest} once mode + provider are both known.
  */
-export function assertStreamableOutputMode(outputMode: OutputMode | undefined, provider: RunProvider): void {
+export function assertStreamableOutputMode(outputMode: OutputMode | undefined, provider: ProviderName): void {
   if (outputMode === "stream" && !isStreamableProvider(provider)) {
     throw new Error(
       `submission.outputMode 'stream' is not supported for provider ${provider}; ` +
@@ -1630,7 +1630,7 @@ export const DEFAULT_BUILTIN_TOOLS: readonly BuiltinToolName[] = BUILTIN_TOOL_NA
  * Fixed name of the single skills meta-tool. Deliberately NOT a member of
  * {@link BUILTIN_TOOL_NAMES} (that closed set is the customer-cherry-pickable
  * toggle surface, pinned equal to `HANDS_TOOLS`) — the skills tool is IMPLIED by
- * a run having ≥1 skill, not chosen, and is injected platform-side. Kept in
+ * a session having ≥1 skill, not chosen, and is injected platform-side. Kept in
  * lockstep with {@link SKILL_RESERVED_NAMES} so it can never be shadowed by a
  * custom tool or skill of the same name.
  */
@@ -1638,7 +1638,7 @@ export const SKILLS_TOOL_NAME = "skills";
 
 /**
  * The single default `skills` meta-tool (list/load) the platform injects when a
- * run references ≥1 workspace skill. Shared by the platform tool composer and
+ * session references ≥1 workspace skill. Shared by the platform tool composer and
  * kept adjacent to the reserved-name guard so the model-visible contract and the
  * name reservation stay in one place. It replaces the former N per-skill no-arg
  * load-tools with one arg-taking dispatcher.
@@ -1646,7 +1646,7 @@ export const SKILLS_TOOL_NAME = "skills";
 export const SKILLS_TOOL_DEFINITION = {
   name: "skills",
   description:
-    "List and load the workspace SKILLS available to this run. Call with {action:'list'} to see each skill's " +
+    "List and load the workspace SKILLS available to this session. Call with {action:'list'} to see each skill's " +
     "name + description (cheap; do this first). Call with {action:'load', name:'<skill>'} to read that skill's " +
     "full SKILL.md instructions into context before doing work the skill governs. A skill's supporting files are " +
     "already on disk under /workspace/skills/<name>/ — load pulls the instructions; read_file/bash read the rest.",
@@ -2024,9 +2024,9 @@ function parseTools(input: unknown): {
 }
 
 /**
- * Upper bound on the number of workspace skills a single run may reference.
- * A run's skill list is a discovery surface, not a bulk-mount channel; 64 is
- * generous headroom over any realistic per-run set while capping the meta-tool
+ * Upper bound on the number of workspace skills a single session may reference.
+ * A session's skill list is a discovery surface, not a bulk-mount channel; 64 is
+ * generous headroom over any realistic per-session set while capping the meta-tool
  * `list` payload and the submit-time resolution fan-out.
  */
 export const SKILLS_MAX = 64;

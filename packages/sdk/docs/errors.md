@@ -21,7 +21,7 @@ factory dispatches to a subclass by code/status:
 | `AexIdempotencyConflictError` | `409` `idempotency_conflict` | — |
 | `AexNotFoundError` | `404` `not_found` | — |
 | `AexRateLimitError` | `429` (rate_limited, workspace_concurrency_exceeded, workspace_submit_rate_exceeded) | `retryAfterMs` (when advertised) |
-| `AexApiError` (base) | every other stable code (session_busy, run_not_terminal, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
+| `AexApiError` (base) | every other stable code (session_busy, session_not_terminal, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
 
 Branch with the exported guards instead of parsing bodies or matching status
 codes: `isAuthError`, `isInsufficientScope`, `isIdempotencyConflict`,
@@ -31,7 +31,7 @@ codes: `isAuthError`, `isInsufficientScope`, `isIdempotencyConflict`,
 import { isInsufficientScope, isIdempotencyConflict } from "@aexhq/sdk";
 
 try {
-  await aex.run(config);
+  await aex.start(config);
 } catch (err) {
   if (isInsufficientScope(err)) {
     // err.requiredScope names the missing scope; mint a key that includes it.
@@ -44,7 +44,7 @@ try {
 The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
 `forbidden`, `insufficient_scope`, `token_invalid`, `token_revoked`,
 `token_expired`, `malformed_token`, `not_found`, `idempotency_conflict`,
-`session_busy`, `run_not_terminal`, `unknown_workspace`,
+`session_busy`, `session_not_terminal`, `unknown_workspace`,
 `workspace_concurrency_exceeded`, `workspace_submit_rate_exceeded`,
 `workspace_spend_cap_exceeded`, `insufficient_balance`, `rate_limited`,
 `upstream_error`, `internal_error`. A code outside this set (e.g. a validation
@@ -53,7 +53,7 @@ The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
 
 Transport failures with no HTTP response (DNS, connection refused, TLS reset)
 surface as `AexNetworkError`; client-side config validation surfaces as
-`RunConfigValidationError` (`err.code === "RUN_CONFIG_INVALID"`) before any
+`SessionConfigValidationError` (`err.code === "SESSION_CONFIG_INVALID"`) before any
 request is sent.
 
 ## 401 — authentication
@@ -78,7 +78,7 @@ is the cheapest way to validate a credential. See
 | `forbidden` | The authenticated workspace does not own the addressed resource. |
 
 ```json
-{ "error": "insufficient_scope", "requiredScope": "runs:write" }
+{ "error": "insufficient_scope", "requiredScope": "sessions:write" }
 ```
 
 ## 400 — validation
@@ -91,7 +91,7 @@ is the cheapest way to validate a credential. See
 | `malformed_token` | The bearer value is not a structurally valid aex token. |
 
 400s are permanent for that request — fix the input rather than retrying.
-The SDK's client-side validation (`RunConfigValidationError`) catches most of
+The SDK's client-side validation (`SessionConfigValidationError`) catches most of
 these before the request is sent.
 
 ## 402 — payment required
@@ -104,7 +104,7 @@ effective submit floor. Top up the balance or bind a payment method.
 ```json
 {
   "error": "insufficient_balance",
-  "message": "Workspace balance is depleted; top up your prepaid balance or bind a payment method to submit runs.",
+  "message": "Workspace balance is depleted; top up your prepaid balance or bind a payment method to submit sessions.",
   "balanceUsd": 0,
   "balanceGraceFloorUsd": 0,
   "paymentMethodStatus": "none",
@@ -132,13 +132,13 @@ raise it.
 ## 429 — rate limits
 
 **`workspace_concurrency_exceeded`** — admitting one more live run would exceed
-the workspace's concurrent-run cap. Wait for a run to finish, or contact
+the workspace's concurrent-run cap. Wait for a session to finish, or contact
 support to raise the cap.
 
 ```json
 {
   "error": "workspace_concurrency_exceeded",
-  "message": "Workspace concurrency limit reached: 50 live runs at the cap of 50. Wait for a run to finish, or contact support to raise your workspace limit.",
+  "message": "Workspace concurrency limit reached: 50 live sessions at the cap of 50. Wait for a session to finish, or contact support to raise your workspace limit.",
   "cap": 50,
   "observed": 50
 }
@@ -178,7 +178,7 @@ request body. The SDK raises `AexIdempotencyConflictError` (guard:
 the byte-identical body to replay the original result (a matching retry returns
 the existing session rather than conflicting). Note that the SDK validates the
 key client-side first: an empty or whitespace-only `idempotencyKey` throws
-`RunConfigValidationError` before the request is sent — never pass `""`.
+`SessionConfigValidationError` before the request is sent — never pass `""`.
 
 ## 5xx — server errors
 

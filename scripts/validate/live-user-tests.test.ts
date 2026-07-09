@@ -75,7 +75,7 @@ describe("live user-test release gate", () => {
       expect(workflow).toContain("AEX_API_KEY: ${{ secrets.AEX_API_KEY }}");
       expect(workflow).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
       expect(workflow).toContain("bun scripts/cicd/preflight-live-user-tests.mjs");
-      expect(workflow).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_RUNS: 50");
+      expect(workflow).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 50");
       expect(workflow).not.toContain("AEX_API_TOKEN");
     }
     const preflight = read("scripts/cicd/preflight-live-user-tests.mjs");
@@ -88,10 +88,10 @@ describe("live user-test release gate", () => {
     expect(preflight).toContain('res.headers.get("x-request-id")');
     expect(preflight).toContain('res.headers.get("apigw-requestid")');
     expect(preflight).toContain("transient HTTP");
-    expect(preflight).toContain("limits.maxConcurrentRuns");
-    expect(preflight).toContain("maxConcurrentRuns=${maxConcurrentRuns}");
+    expect(preflight).toContain("limits.maxConcurrentSessions");
+    expect(preflight).toContain("maxConcurrentSessions=${maxConcurrentSessions}");
     expect(preflight).toContain("AEX_EXPECTED_API_HOST");
-    expect(preflight).toContain("LIVE_USER_TEST_MAX_MAX_CONCURRENT_RUNS");
+    expect(preflight).toContain("LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS");
   });
 
   it("keeps the full live matrix in live-user-tests.yml and release.yml on published-artifact smoke", () => {
@@ -105,7 +105,7 @@ describe("live user-test release gate", () => {
     expect(live).toContain("name: Live user tests shard ${{ matrix.shard }}/50");
     expect(live).toContain("shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12");
     expect(live).toContain("48, 49, 50]");
-    expect(live).toContain("maxConcurrentRuns >= 50");
+    expect(live).toContain("maxConcurrentSessions >= 50");
     expect(live).toContain("AEX_USER_TEST_MAX_WORKERS: 1");
     expect(live).not.toContain("max-parallel: 1");
 
@@ -148,10 +148,10 @@ describe("live user-test release gate", () => {
       scripts?: Record<string, string>;
     };
     expect(packageJson.scripts?.["test:user:files"]).toBe(
-      "bun scripts/run-user-vitest.mjs --config vitest.config.ts"
+      "bun scripts/session-user-vitest.mjs --config vitest.config.ts"
     );
     expect(packageJson.scripts?.["test:user:admission-gates"]).toBe(
-      "bun scripts/run-user-vitest.mjs --config vitest.admission-gates.config.ts"
+      "bun scripts/session-user-vitest.mjs --config vitest.admission-gates.config.ts"
     );
     const rootPackageJson = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
     expect(rootPackageJson.scripts?.["test:user:files"]).toBe(
@@ -184,7 +184,7 @@ describe("live user-test release gate", () => {
     const packageJson = JSON.parse(read("apps/user-tests/package.json")) as {
       scripts?: Record<string, string>;
     };
-    const wrapper = read("apps/user-tests/scripts/run-user-vitest.mjs");
+    const wrapper = read("apps/user-tests/scripts/session-user-vitest.mjs");
 
     for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {
       expect(name.startsWith("pretest:user"), name).toBe(false);
@@ -262,7 +262,7 @@ describe("live user-test release gate", () => {
     expect(anthropicProviderTest).toContain('requireEnv("ANTHROPIC_API_KEY")');
     expect(anthropicProviderTest).toContain("function liveFailureDiagnostic(result: LiveResult)");
     expect(anthropicProviderTest).toContain("[REDACTED_ANTHROPIC_KEY]");
-    expect(anthropicProviderTest).toContain("expect(result.runStatus, diagnostic).toBe(\"succeeded\")");
+    expect(anthropicProviderTest).toContain("expect(result.sessionStatus, diagnostic).toBe(\"succeeded\")");
 
     // The non-gating on-demand workflow is the one place the Anthropic key flows.
     const onDemand = read(".github/workflows/live-on-demand-tests.yml");
@@ -317,9 +317,9 @@ describe("live user-test release gate", () => {
     expect(source).toContain('managedHeavySkillName("gamma", "deepseek")');
     expect(source).toContain("assertManagedShape(result, [");
     expect(fixture).toContain("produced no skill_loaded event");
-    expect(fixture).toContain('const SUCCESS_TERMINAL_KINDS = ["RUN_FINISHED", "aex.session.idle", "aex.session.succeeded"] as const;');
-    expect(fixture).toContain('if (result.terminalKind === "RUN_FINISHED")');
-    expect(fixture).toContain("legacy RUN_FINISHED stream did not include RUN_STARTED");
+    expect(fixture).toContain('const SUCCESS_TERMINAL_KINDS = ["TURN_FINISHED", "aex.session.idle", "aex.session.succeeded"] as const;');
+    expect(fixture).toContain('if (result.terminalKind === "TURN_FINISHED")');
+    expect(fixture).toContain("legacy TURN_FINISHED stream did not include TURN_STARTED");
     expect(source).toContain("return isSessionIdle(e) ? customName(e) : e.type;");
     expect(fixture).toContain('"aex.session.succeeded"');
     expect(source).toContain("const maxChannelProbeRetries = 2;");
@@ -336,7 +336,7 @@ describe("live user-test release gate", () => {
     expect(source.indexOf("function hasTerminalEvent(list)")).toBeLessThan(
       source.indexOf("const listedEvents = await session.events().list();")
     );
-    expect(source).not.toContain('"RUN_FINISHED",\n  "TEXT_MESSAGE_CONTENT"');
+    expect(source).not.toContain('"TURN_FINISHED",\n  "TEXT_MESSAGE_CONTENT"');
     expect(source).not.toContain('name: "heavy-alpha-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-beta-${spec.provider}"');
     expect(source).not.toContain('name: "heavy-gamma-${spec.provider}"');
@@ -419,7 +419,7 @@ describe("live user-test release gate", () => {
     expect(source).toContain("async function runScenarioWithPreCreateRetry(");
     expect(source).toContain("isPreCreateTransportFailure(result.observation)");
     expect(source).toContain("[edge-skills-tools]");
-    expect(source).toContain("No runId means the submit never created a debuggable live run artifact.");
+    expect(source).toContain("No sessionId means the submit never created a debuggable live session artifact.");
     expect(source).toContain("runScenarioWithPreCreateRetry(install, \"edge-throw.mjs\", body)");
     expect(source).toContain("runScenarioWithPreCreateRetry(install, \"edge-dup-name.mjs\", body)");
   });
@@ -430,7 +430,7 @@ describe("live user-test release gate", () => {
     expect(source).toContain('import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";');
     expect(source).toContain('await emitChildFailure("top-level", error);');
     expect(source).toContain("childFailure: true");
-    expect(source).toContain('runId: __childRunId');
+    expect(source).toContain('sessionId: __childSessionId');
     expect(source).toContain("isPreCreateChildFailure(error)");
     expect(source).toContain("childFailureDiagnostic(scriptName, parsed)");
     expect(source).toContain("did not print JSON: ${JSON.stringify({");
@@ -440,24 +440,24 @@ describe("live user-test release gate", () => {
   it("keeps event-stream settle consistency aligned with session-park terminals", () => {
     const source = read("apps/user-tests/test/live/edge-event-stream.user.test.ts");
 
-    expect(source).toContain("settleConsistent waits for the post-mirror aex.run.settled barrier");
+    expect(source).toContain("settleConsistent waits for the post-mirror aex.session.settled barrier");
     expect(source).toContain(
       'r.settleCustomNames.some((name) => name.startsWith("aex.session.")) || r.settleHasBarrier'
     );
     expect(source).toMatch(/expect\(\s*r\.settleEndedNaturally[\s\S]*?\)\.toBe\(true\);/);
   });
 
-  it("waits accepted corrupted-skill runs to terminal before asserting failure shape", () => {
+  it("waits accepted corrupted-skill sessions to terminal before asserting failure shape", () => {
     const source = read("apps/user-tests/test/live/live-sdk-outputs-and-failures.test.ts");
     const start = source.indexOf("function buildCorruptedSkillScript");
     const end = source.indexOf("function buildIncompatibleRuntimeScript");
     const corruptedSkillScript = source.slice(start, end);
 
     expect(corruptedSkillScript).toContain("const accepted = JSON.parse(submitBody);");
-    expect(corruptedSkillScript).toContain('"/api/runs/" + encodeURIComponent(runId)');
-    expect(corruptedSkillScript).toContain("terminalStatuses.has(runStatus)");
+    expect(corruptedSkillScript).toContain('"/api/sessions/" + encodeURIComponent(sessionId)');
+    expect(corruptedSkillScript).toContain("terminalStatuses.has(sessionStatus)");
     expect(corruptedSkillScript).toContain('"/events?limit=1000"');
-    expect(corruptedSkillScript).toContain('event.type === "RUN_ERROR"');
+    expect(corruptedSkillScript).toContain('event.type === "TURN_ERROR"');
     expect(corruptedSkillScript).toContain('terminalData = terminal && terminal.data');
   });
 

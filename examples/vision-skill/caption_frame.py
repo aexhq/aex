@@ -3,7 +3,7 @@
 depiction verdicts.
 
 The run supplies DOUBAO_API_KEY through environment.secrets. This script makes a
-normal HTTPS POST to the Ark OpenAI-compatible endpoint, so the run's networking
+normal HTTPS POST to the Ark OpenAI-compatible endpoint, so the session's networking
 policy must allow that host.
 """
 from __future__ import annotations

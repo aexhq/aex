@@ -7,7 +7,7 @@ describe("release manifest contract", () => {
     const manifest = buildPublicReleaseManifest({
       version: "0.40.17",
       distTag: "canary",
-      runId: "123",
+      sessionId: "123",
       runAttempt: "1",
       headSha: "abc",
       createdAt: "2026-07-09T00:00:00.000Z"
@@ -17,14 +17,14 @@ describe("release manifest contract", () => {
       schemaVersion: 1,
       kind: "aex-public-release-manifest",
       workflow: "release.yml",
-      runId: "123",
+      sessionId: "123",
       sdk: { packageName: "@aexhq/sdk", version: "0.40.17", initialDistTag: "canary" },
       promotion: { status: "candidate" }
     });
     expect(manifest.gates).toEqual(
       expect.arrayContaining(["publish", "published-artifact-smoke", "live-user-tests-preflight"])
     );
-    expect(validatePublicReleaseManifest(manifest, { version: "0.40.17", runId: "123" })).toEqual({
+    expect(validatePublicReleaseManifest(manifest, { version: "0.40.17", sessionId: "123" })).toEqual({
       ok: true,
       errors: []
     });
@@ -34,7 +34,7 @@ describe("release manifest contract", () => {
     const manifest = buildPublicReleaseManifest({
       version: "0.40.17",
       distTag: "canary",
-      runId: "123",
+      sessionId: "123",
       headSha: "abc"
     });
 
@@ -55,13 +55,13 @@ describe("release manifest contract", () => {
       {
         schemaVersion: 1,
         kind: "aex-platform-validation-manifest",
-        platform: { runId: "456" },
-        publicRelease: { runId: "123" },
+        platform: { sessionId: "456" },
+        publicRelease: { sessionId: "123" },
         sdk: { version: "0.40.17" },
         gates: ["suite_dev"],
         images: { brain: { tag: "sha-a" }, egress: { tag: "sha-b" }, byok: { tag: "sha-c" } }
       },
-      { version: "0.40.17", runId: "456", publicReleaseRunId: "123" }
+      { version: "0.40.17", sessionId: "456", publicReleaseSessionId: "123" }
     );
 
     expect(result.ok).toBe(false);

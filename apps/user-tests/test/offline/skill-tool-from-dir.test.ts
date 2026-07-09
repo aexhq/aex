@@ -10,7 +10,7 @@
  * the content hash, CRLF / BOM / quoted / extra-key frontmatter, and the exact
  * 2048-char description boundary.
  *
- * Same pattern as the reference: each case runs in a child process whose cwd is
+ * Same pattern as the reference: each case sessions in a child process whose cwd is
  * the user-test install tempdir, so `import "@aexhq/sdk"` resolves the packed
  * artifact, and a fake fetch captures the exact wire request (POST
  * /api/sessions plus the presign -> PUT -> finalize asset flow and skill

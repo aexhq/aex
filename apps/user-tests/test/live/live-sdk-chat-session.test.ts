@@ -4,7 +4,7 @@
  * Exercises the resumable chat/session API through a freshly installed SDK
  * against the hosted API:
  *   - create a session, send a turn over the coordinator stream, and stop on
- *     a clean `aex.session.*` turn terminal instead of `RUN_FINISHED`.
+ *     a clean `aex.session.*` turn terminal instead of `TURN_FINISHED`.
  *   - suspend an idle session, resume it, then send a follow-up turn that uses
  *     the prior turn's conversational context.
  *   - assert raw message idempotency and busy-session rejection on the same
@@ -62,7 +62,7 @@ interface ChatSessionLiveResult {
   readonly secondText: string;
   readonly snapshotTypes: readonly string[];
   readonly customNames: readonly string[];
-  readonly runFinishedCount: number;
+  readonly turnFinishedCount: number;
   readonly leakedKey: boolean;
 }
 
@@ -78,7 +78,7 @@ interface RawSessionLiveResult {
   readonly replayTurnSeq: number;
   readonly finalStatus: string;
   readonly customNames: readonly string[];
-  readonly runFinishedCount: number;
+  readonly turnFinishedCount: number;
   readonly leakedKey: boolean;
 }
 
@@ -175,7 +175,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         ).done();
         const secondIdle = await pollSession(session.id, CLEAN_SESSION_STATUSES);
         const idleEvents = await listEventsSettled(session, CLEAN_SESSION_TERMINAL_NAMES);
-        // The suite runs many shards against one shared workspace and the list is
+        // The suite sessions many shards against one shared workspace and the list is
         // newest-first, so with a "since" lower bound this session is the LAST
         // item in the range — concurrent shards' newer sessions fill page one.
         // Follow nextCursor pages; "since" keeps the page space small and finite.
@@ -208,7 +208,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           secondText: second.text,
           snapshotTypes: [...new Set(events.map((e) => e.type))],
           customNames: [...new Set(events.filter((e) => e.type === "CUSTOM").map((e) => e.data && e.data.name).filter(Boolean))],
-          runFinishedCount: events.filter((e) => e.type === "RUN_FINISHED").length,
+          turnFinishedCount: events.filter((e) => e.type === "TURN_FINISHED").length,
           leakedKey: serialized.includes(deepseekKey)
         }));
         process.exit(0);
@@ -244,7 +244,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       expect(result.snapshotTypes, dump()).toContain("CUSTOM");
       expect(result.customNames.some((name) => name === "aex.session.idle" || name === "aex.session.succeeded"), dump()).toBe(true);
       expect(result.customNames, dump()).toContain("aex.session.suspended");
-      expect(result.runFinishedCount, dump()).toBe(0);
+      expect(result.turnFinishedCount, dump()).toBe(0);
       expect(result.leakedKey, dump()).toBe(false);
     },
     13 * 60_000
@@ -362,7 +362,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           replayTurnSeq: replay.body && replay.body.turn ? replay.body.turn.turnSeq : -2,
           finalStatus: finalSession.status,
           customNames: [...new Set(events.filter((e) => e.type === "CUSTOM").map((e) => e.data && e.data.name).filter(Boolean))],
-          runFinishedCount: events.filter((e) => e.type === "RUN_FINISHED").length,
+          turnFinishedCount: events.filter((e) => e.type === "TURN_FINISHED").length,
           leakedKey: serialized.includes(deepseekKey)
         }));
         process.exit(0);
@@ -397,7 +397,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       expect(result.busyStatus, dump()).toBe(409);
       expect(["idle", "succeeded"], dump()).toContain(result.finalStatus);
       expect(result.customNames.some((name) => name === "aex.session.idle" || name === "aex.session.succeeded"), dump()).toBe(true);
-      expect(result.runFinishedCount, dump()).toBe(0);
+      expect(result.turnFinishedCount, dump()).toBe(0);
       expect(result.leakedKey, dump()).toBe(false);
     },
     10 * 60_000

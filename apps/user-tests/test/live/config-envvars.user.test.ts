@@ -1,5 +1,5 @@
 /**
- * USER TEST (SDK-driven) — environment.envVars is delivered on managed runs.
+ * USER TEST (SDK-driven) — environment.envVars is delivered on managed sessions.
  *
  * Validates the FIX end-to-end through the installed SDK: a customer-supplied
  * `environment.envVars` value reaches the agent via the managed runtime's
@@ -18,7 +18,7 @@ import { dense, requireUserEnv, runSdkScript, sdkRunnerScript } from "./_sdk.js"
 
 const env = requireUserEnv({ deepseek: true });
 
-describe("user/SDK: environment.envVars reaches the agent on managed runs", () => {
+describe("user/SDK: environment.envVars reaches the agent on managed sessions", () => {
   let install: InstallResult;
   beforeAll(async () => {
     install = await installAex();
@@ -30,7 +30,7 @@ describe("user/SDK: environment.envVars reaches the agent on managed runs", () =
     async () => {
       const canary = "ENVVAR-" + Math.random().toString(36).slice(2, 10);
       const script = sdkRunnerScript({
-        run: `{
+        session: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: [

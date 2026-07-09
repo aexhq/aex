@@ -79,7 +79,7 @@ describe("buildRuntimeManifest", () => {
     ]);
   });
 
-  it("mountedFiles is an empty array when the run carried no files", () => {
+  it("mountedFiles is an empty array when the session carried no files", () => {
     expect(buildRuntimeManifest({ provider: "anthropic" }).mountedFiles).toEqual([]);
   });
 

@@ -1,15 +1,15 @@
 /**
  * Aex-level resilience coverage: the built-in transport retry, the
  * STABLE idempotency key that keeps a retried submit from creating a duplicate
- * billable run (defect sdk-dx-3), `session.replayLast()`, and the structured
+ * billable session turn (defect sdk-dx-3), `session.replayLast()`, and the structured
  * throttle error surfaced on a provider-throttled turn.
  *
- * Runs against the SDK source (not a packed install) with a scripted fetch + a
+ * Sessions against the SDK source (not a packed install) with a scripted fetch + a
  * fake coordinator WebSocket, so a whole `run` / `send` turn is driven
  * deterministically without a live backend.
  */
 import { describe, expect, it } from "vitest";
-import { Aex, isRateLimited, AexRateLimitError, RunStateError } from "../../src/index.js";
+import { Aex, isRateLimited, AexRateLimitError, SessionStateError } from "../../src/index.js";
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 
 interface RecordedCall {
@@ -38,10 +38,10 @@ function json(body: unknown, status = 200): Response {
 function idleEvent(turnSeq = 1, seq = 1024): AexEvent {
   return {
     specversion: "1.0",
-    id: `run-1:${seq}`,
+    id: `session-1:${seq}`,
     source: "runtime",
     type: "CUSTOM",
-    subject: "run-1",
+    subject: "session-1",
     time: new Date(seq).toISOString(),
     sequence: seq,
     data: { name: "aex.session.idle", value: { turnSeq } } as Record<string, JsonValue>
@@ -51,10 +51,10 @@ function idleEvent(turnSeq = 1, seq = 1024): AexEvent {
 function errorEvent(turnSeq = 1, seq = 1024): AexEvent {
   return {
     specversion: "1.0",
-    id: `run-1:${seq}`,
+    id: `session-1:${seq}`,
     source: "runtime",
     type: "CUSTOM",
-    subject: "run-1",
+    subject: "session-1",
     time: new Date(seq).toISOString(),
     sequence: seq,
     data: { name: "aex.session.error", value: { turnSeq } } as Record<string, JsonValue>
@@ -64,10 +64,10 @@ function errorEvent(turnSeq = 1, seq = 1024): AexEvent {
 function runErrorEvent(seq = 1024): AexEvent {
   return {
     specversion: "1.0",
-    id: `run-1:${seq}`,
+    id: `session-1:${seq}`,
     source: "runtime",
-    type: "RUN_ERROR",
-    subject: "run-1",
+    type: "TURN_ERROR",
+    subject: "session-1",
     time: new Date(seq).toISOString(),
     sequence: seq,
     data: {
@@ -114,13 +114,13 @@ interface Harness {
 }
 
 /**
- * @param finalSession the record the post-stream `GET /api/sessions/run-1`
+ * @param finalSession the record the post-stream `GET /api/sessions/session-1`
  *        returns (drives run ok/error/throttle branches).
  * @param createStatuses status codes the create endpoint plays IN ORDER (last
  *        repeats); e.g. `[429, 201]` to inject one throttle before success.
  */
 function harness(
-  finalSession: Record<string, unknown> = { id: "run-1", status: "idle", turnSeq: 1 },
+  finalSession: Record<string, unknown> = { id: "session-1", status: "idle", turnSeq: 1 },
   createStatuses: readonly number[] = [201]
 ): Harness {
   const calls: RecordedCall[] = [];
@@ -132,20 +132,20 @@ function harness(
     const method = String(init?.method ?? "GET").toUpperCase();
     calls.push({ method, url, headers: headersToObject(init?.headers) });
 
-    if (url.endsWith("/api/sessions/run-1/events/ticket")) {
-      return json({ wsUrl: "wss://events.example.test/sessions/run-1", ticket: "ticket", expiresAtMs: 1 });
+    if (url.endsWith("/api/sessions/session-1/events/ticket")) {
+      return json({ wsUrl: "wss://events.example.test/sessions/session-1", ticket: "ticket", expiresAtMs: 1 });
     }
-    if (url.endsWith("/api/sessions/run-1/outputs")) {
+    if (url.endsWith("/api/sessions/session-1/outputs")) {
       return json({ outputs: [] });
     }
-    if (url.endsWith("/api/sessions/run-1/messages")) {
+    if (url.endsWith("/api/sessions/session-1/messages")) {
       return json({
-        session: { id: "run-1", status: "running", turnSeq: 1 },
-        turn: { sessionId: "run-1", turnSeq: 1 },
+        session: { id: "session-1", status: "running", turnSeq: 1 },
+        turn: { sessionId: "session-1", turnSeq: 1 },
         eventCursor: 1024
       });
     }
-    if (url.endsWith("/api/sessions/run-1")) {
+    if (url.endsWith("/api/sessions/session-1")) {
       // Settle-stamped (costUsd present) so the default await-settle resolves on
       // the first read instead of polling to the deadline.
       return json({ session: { costUsd: 0, ...finalSession } });
@@ -154,7 +154,7 @@ function harness(
       const status = createStatuses[Math.min(createCount, createStatuses.length - 1)] ?? 201;
       createCount += 1;
       if (status >= 400) return json({ error: "slow down" }, status);
-      return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } }, status);
+      return json({ session: { id: "session-1", status: "idle", turnSeq: 0 } }, status);
     }
     return json({});
   };
@@ -186,9 +186,9 @@ function harness(
 }
 
 describe("Aex idempotency (sdk-dx-3)", () => {
-  it("run() derives the message key from the create key so a retried run never double-bills", async () => {
+  it("start() derives the message key from the create key so a retried run never double-bills", async () => {
     const h = harness();
-    const promise = h.client.run(
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" }, idempotencyKey: "fixed-key" },
       { webSocketFactory: h.webSocketFactory }
     );
@@ -198,14 +198,14 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     expect(result.ok).toBe(true);
 
     // The create carries the caller's key; the billable turn carries the DERIVED
-    // key — so re-invoking run() with the same key de-duplicates BOTH.
+    // key — so re-invoking start() with the same key de-duplicates BOTH.
     expect(h.idempotencyKeys("/api/sessions")).toEqual(["fixed-key"]);
-    expect(h.idempotencyKeys("/api/sessions/run-1/messages")).toEqual(["fixed-key:message"]);
+    expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual(["fixed-key:message"]);
   });
 
-  it("run() without a key still ties the message key to the create key", async () => {
+  it("start() without a key still ties the message key to the create key", async () => {
     const h = harness();
-    const promise = h.client.run(
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" } },
       { webSocketFactory: h.webSocketFactory }
     );
@@ -214,32 +214,32 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     await promise;
 
     const createKey = h.idempotencyKeys("/api/sessions")[0]!;
-    const messageKey = h.idempotencyKeys("/api/sessions/run-1/messages")[0]!;
+    const messageKey = h.idempotencyKeys("/api/sessions/session-1/messages")[0]!;
     expect(createKey).toBeTruthy();
     expect(messageKey).toBe(`${createKey}:message`);
   });
 
-  it("sessions.run() derives the message key the same way", async () => {
+  it("sessions.start() derives the message key the same way", async () => {
     const h = harness();
-    const promise = h.client.sessions.run({
+    const promise = h.client.sessions.start({
       model: "claude-haiku-4-5",
       message: "hello",
       apiKeys: { anthropic: "sk-ant" },
-      idempotencyKey: "run-key",
+      idempotencyKey: "session-key",
       stream: { webSocketFactory: h.webSocketFactory }
     });
     await waitForSocket(h.sockets, 1);
     h.sockets[0]!.message(idleEvent());
     await promise;
-    expect(h.idempotencyKeys("/api/sessions")).toEqual(["run-key"]);
-    expect(h.idempotencyKeys("/api/sessions/run-1/messages")).toEqual(["run-key:message"]);
+    expect(h.idempotencyKeys("/api/sessions")).toEqual(["session-key"]);
+    expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual(["session-key:message"]);
   });
 });
 
 describe("Aex built-in transport retry", () => {
-  it("retries a throttled create with the SAME idempotency key (no duplicate billable run)", async () => {
-    const h = harness({ id: "run-1", status: "idle", turnSeq: 1 }, [429, 201]);
-    const promise = h.client.run(
+  it("retries a throttled create with the SAME idempotency key (no duplicate billable session turn)", async () => {
+    const h = harness({ id: "session-1", status: "idle", turnSeq: 1 }, [429, 201]);
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" }, idempotencyKey: "K" },
       { webSocketFactory: h.webSocketFactory }
     );
@@ -254,8 +254,8 @@ describe("Aex built-in transport retry", () => {
   });
 
   it("surfaces AexRateLimitError when a create is throttled past the attempt budget", async () => {
-    const h = harness({ id: "run-1", status: "idle", turnSeq: 1 }, [429]);
-    const promise = h.client.run(
+    const h = harness({ id: "session-1", status: "idle", turnSeq: 1 }, [429]);
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hello", apiKeys: { anthropic: "sk-ant" } },
       { webSocketFactory: h.webSocketFactory }
     );
@@ -284,7 +284,7 @@ describe("SessionHandle.replayLast", () => {
     h.sockets[1]!.message(idleEvent());
     await replay;
 
-    const keys = h.idempotencyKeys("/api/sessions/run-1/messages");
+    const keys = h.idempotencyKeys("/api/sessions/session-1/messages");
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]);
     expect(keys[0]).toBeTruthy();
@@ -309,16 +309,16 @@ describe("SessionHandle.replayLast", () => {
     h.sockets[1]!.message(idleEvent());
     await replay;
 
-    const keys = h.idempotencyKeys("/api/sessions/run-1/messages");
+    const keys = h.idempotencyKeys("/api/sessions/session-1/messages");
     expect(keys[1]).toBe("override");
     expect(keys[0]).not.toBe("override");
   });
 });
 
 describe("Aex throttle error on a provider-throttled turn", () => {
-  it("ends a session turn on RUN_ERROR even when no aex.session.error event follows", async () => {
-    const h = harness({ id: "run-1", status: "error", turnSeq: 1, errorMessage: "provider returned no public assistant content" });
-    const promise = h.client.run(
+  it("ends a session turn on TURN_ERROR even when no aex.session.error event follows", async () => {
+    const h = harness({ id: "session-1", status: "error", turnSeq: 1, errorMessage: "provider returned no public assistant content" });
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
       { webSocketFactory: h.webSocketFactory }
     );
@@ -327,23 +327,23 @@ describe("Aex throttle error on a provider-throttled turn", () => {
 
     const result = await Promise.race([
       promise,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("session turn did not end on RUN_ERROR")), 250))
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("session turn did not end on TURN_ERROR")), 250))
     ]);
 
     expect(result.ok).toBe(false);
-    // The bare `error` outcome is retired — a RUN_ERROR turn reads `failed`.
+    // The bare `error` outcome is retired — a TURN_ERROR turn reads `failed`.
     expect(result.status).toBe("failed");
-    expect(result.events.map((event) => event.type)).toEqual(["RUN_ERROR"]);
+    expect(result.events.map((event) => event.type)).toEqual(["TURN_ERROR"]);
   });
 
   it("throwOnFailure raises AexRateLimitError from a structured provider fault", async () => {
     const h = harness({
-      id: "run-1",
+      id: "session-1",
       status: "error",
       turnSeq: 1,
       providerFault: { provider: "anthropic", kind: "overloaded", status: 529, retryAfterMs: 4000 }
     });
-    const promise = h.client.run(
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
@@ -359,8 +359,8 @@ describe("Aex throttle error on a provider-throttled turn", () => {
   });
 
   it("throwOnFailure raises AexRateLimitError from a rate-limit error MESSAGE", async () => {
-    const h = harness({ id: "run-1", status: "error", turnSeq: 1, errorMessage: "provider rate limit (429) exceeded" });
-    const promise = h.client.run(
+    const h = harness({ id: "session-1", status: "error", turnSeq: 1, errorMessage: "provider rate limit (429) exceeded" });
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
@@ -371,16 +371,16 @@ describe("Aex throttle error on a provider-throttled turn", () => {
     expect((err as AexRateLimitError).source).toBe("provider");
   });
 
-  it("a non-throttle failure still raises the plain RunStateError", async () => {
-    const h = harness({ id: "run-1", status: "error", turnSeq: 1, errorMessage: "disk full" });
-    const promise = h.client.run(
+  it("a non-throttle failure still raises the plain SessionStateError", async () => {
+    const h = harness({ id: "session-1", status: "error", turnSeq: 1, errorMessage: "disk full" });
+    const promise = h.client.start(
       { model: "claude-haiku-4-5", message: "hi", apiKeys: { anthropic: "sk-ant" } },
       { throwOnFailure: true, webSocketFactory: h.webSocketFactory }
     );
     await waitForSocket(h.sockets, 1);
     h.sockets[0]!.message(errorEvent());
     const err = await promise.catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(RunStateError);
+    expect(err).toBeInstanceOf(SessionStateError);
     expect(isRateLimited(err)).toBe(false);
   });
 });

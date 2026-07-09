@@ -23,12 +23,12 @@ import {
   emitJsonError,
   makeHttpClient,
   resolveCommonHostFlags,
-  refuseInsideManagedRun,
+  refuseInsideManagedSession,
   takeBooleanFlag
 } from "./common.js";
 
-export async function runWebhooksCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "webhooks")) return USAGE_ERR;
+export async function sessionWebhooksCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "webhooks")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
@@ -46,7 +46,7 @@ export async function runWebhooksCmd(io: CliIO, argv: readonly string[]): Promis
   if (rotate) {
     io.stderr(
       "--rotate is not supported: the hosted API reveals (or creates on first use) the workspace " +
-        "webhook signing secret but does not rotate it. Run `aex webhooks secret` to reveal the current value.\n"
+        "webhook signing secret but does not rotate it. SessionRecord `aex webhooks secret` to reveal the current value.\n"
     );
     return USAGE_ERR;
   }

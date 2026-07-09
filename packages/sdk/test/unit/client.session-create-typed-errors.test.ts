@@ -1,14 +1,14 @@
 /**
  * DX4a: every `openSession` / `run` offline validation rejects with a TYPED,
  * code-carrying `AexError` subclass (not a bare `Error`), so callers can `catch`
- * by `err.code` / `instanceof RunConfigValidationError`.
+ * by `err.code` / `instanceof SessionConfigValidationError`.
  */
 import { describe, expect, it, vi } from "vitest";
-import type { RunModel } from "@aexhq/contracts";
+import type { ModelName } from "@aexhq/contracts";
 import {
   AexError,
   Aex,
-  RunConfigValidationError
+  SessionConfigValidationError
 } from "../../src/index.js";
 
 /** A fetch that NEVER resolves a network call — every assertion below must fail
@@ -31,24 +31,24 @@ function makeClient(fetchImpl: typeof fetch): Aex {
   return new Aex({ apiKey: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
 }
 
-const unknownModel = "totally-unknown-model-xyz" as unknown as RunModel;
+const unknownModel = "totally-unknown-model-xyz" as unknown as ModelName;
 
-describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
-  it("throws RunConfigValidationError with code RUN_CONFIG_INVALID for a missing options object", async () => {
+describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => {
+  it("throws SessionConfigValidationError with code SESSION_CONFIG_INVALID for a missing options object", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
       // deliberately pass an invalid value
       (client.openSession as unknown as (o: unknown) => Promise<unknown>)(undefined)
     ).rejects.toMatchObject({
-      name: "RunConfigValidationError",
-      code: "RUN_CONFIG_INVALID",
+      name: "SessionConfigValidationError",
+      code: "SESSION_CONFIG_INVALID",
       message: "Aex.openSession: options is required"
     });
     expect(calls).toBe(0);
   });
 
-  it("is both an AexError and a RunConfigValidationError (instanceof reliable)", async () => {
+  it("is both an AexError and a SessionConfigValidationError (instanceof reliable)", async () => {
     const { fetch } = noNetworkFetch();
     const client = makeClient(fetch);
     let caught: unknown;
@@ -60,24 +60,24 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     } catch (err) {
       caught = err;
     }
-    expect(caught).toBeInstanceOf(RunConfigValidationError);
+    expect(caught).toBeInstanceOf(SessionConfigValidationError);
     expect(caught).toBeInstanceOf(AexError);
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as AexError).code).toBe("RUN_CONFIG_INVALID");
+    expect((caught as AexError).code).toBe("SESSION_CONFIG_INVALID");
   });
 
   it("rejects an empty one-shot message with the unchanged message + code", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
-      client.run({
+      client.start({
         model: "claude-haiku-4-5",
         message: "",
         apiKeys: { anthropic: "sk-x" }
       })
     ).rejects.toMatchObject({
-      code: "RUN_CONFIG_INVALID",
-      message: "Aex.run: message must be a non-empty string"
+      code: "SESSION_CONFIG_INVALID",
+      message: "Aex.start: message must be a non-empty string"
     });
     expect(calls).toBe(0);
   });
@@ -87,7 +87,7 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     const client = makeClient(fetch);
     await expect(
       client.openSession({ model: "claude-haiku-4-5" })
-    ).rejects.toMatchObject({ code: "RUN_CONFIG_INVALID" });
+    ).rejects.toMatchObject({ code: "SESSION_CONFIG_INVALID" });
     // The historic regex still matches on the new surface.
     await expect(
       client.openSession({ model: "claude-haiku-4-5" })
@@ -106,8 +106,8 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
         apiKeys: { deepseek: "sk-x" }
       })
     ).rejects.toMatchObject({
-      name: "RunConfigValidationError",
-      code: "RUN_CONFIG_INVALID",
+      name: "SessionConfigValidationError",
+      code: "SESSION_CONFIG_INVALID",
       message: expect.stringMatching(/"totally-unknown-model-xyz" is not a known model id.*pass provider explicitly/)
     });
     expect(calls).toBe(0);
@@ -127,7 +127,7 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
     ).rejects.toThrow(/no network call should be made/);
   });
 
-  it("rejects a provider that does not serve the model with code RUN_CONFIG_INVALID", async () => {
+  it("rejects a provider that does not serve the model with code SESSION_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
@@ -137,13 +137,13 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
         apiKeys: { anthropic: "sk-x" }
       })
     ).rejects.toMatchObject({
-      name: "RunConfigValidationError",
-      code: "RUN_CONFIG_INVALID"
+      name: "SessionConfigValidationError",
+      code: "SESSION_CONFIG_INVALID"
     });
     expect(calls).toBe(0);
   });
 
-  it("rejects a non-Tool / non-builtin tools entry with code RUN_CONFIG_INVALID", async () => {
+  it("rejects a non-Tool / non-builtin tools entry with code SESSION_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
@@ -153,7 +153,7 @@ describe("Aex.openSession — typed RunConfigValidationError (DX4a)", () => {
         // not a builtin tool name
         tools: ["definitely_not_a_builtin"] as unknown as never
       })
-    ).rejects.toMatchObject({ code: "RUN_CONFIG_INVALID" });
+    ).rejects.toMatchObject({ code: "SESSION_CONFIG_INVALID" });
     expect(calls).toBe(0);
   });
 });

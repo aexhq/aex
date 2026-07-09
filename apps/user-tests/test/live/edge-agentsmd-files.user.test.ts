@@ -5,8 +5,8 @@
  * model `deepseek-v4-flash`, tiny prompts). Each case drives one live run and
  * reduces the event stream / tool results to observable assertions.
  *
- * Cases (7 live runs):
- *   1. AgentsMd STEERS the run — `fromContent` instructs the model to prefix
+ * Cases (7 live sessions):
+ *   1. AgentsMd STEERS the session — `fromContent` instructs the model to prefix
  *      every reply with a random one-time token; the token must appear in the
  *      reply (proves the agents.md reached the agent AND changed its behaviour,
  *      not just that a benign fact was recalled).
@@ -26,7 +26,7 @@
  *      and "café.txt" (unicode); both read back by their real on-disk names.
  *
  * Gating mirrors the sibling live suites: `requireEnv` throws at module load
- * when a credential is missing, so the file is only collected/run with live
+ * when a credential is missing, so the file is only collected/session with live
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
  *   AEX_API_KEY              workspace API key
@@ -54,7 +54,7 @@ const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-agentsmd-files");
 const model = gateModel();
 
-const RUN_TIMEOUT_MS = 5 * 60_000;
+const SESSION_TIMEOUT_MS = 5 * 60_000;
 const CHILD_TIMEOUT_MS = 7 * 60_000;
 const IT_TIMEOUT_MS = 8 * 60_000;
 
@@ -66,7 +66,7 @@ interface ObservedToolResult {
 }
 interface Observation {
   readonly threw: string | null;
-  readonly runId: string | null;
+  readonly sessionId: string | null;
   readonly status: string;
   readonly errorMessage: string | null;
   readonly terminalKind: string | null;
@@ -110,7 +110,7 @@ function customName(e) { const d = eventData(e); return typeof d.name === "strin
 function customValue(e) { const d = eventData(e); const v = d.value; return v && typeof v === "object" ? v : {}; }
 const SESSION_TERMINAL_NAMES = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
 function isSessionIdle(e) { return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name); }
-function terminalKindOf(e) { if (!e) return null; return isSessionIdle(e) ? "RUN_FINISHED" : e.type; }
+function terminalKindOf(e) { if (!e) return null; return isSessionIdle(e) ? "TURN_FINISHED" : e.type; }
 function terminalReasonOf(e) {
   if (!e) return null;
   if (isSessionIdle(e)) { const v = customValue(e); return v.reason === "completed" ? "complete" : (v.reason ?? null); }
@@ -125,16 +125,16 @@ function blockText(content) {
 async function observe(result, threw) {
   if (!result) {
     return {
-      threw: threw ?? "unknown", runId: null, status: "threw", errorMessage: threw ?? null,
+      threw: threw ?? "unknown", sessionId: null, status: "threw", errorMessage: threw ?? null,
       terminalKind: null, terminalReason: null, eventKinds: [], toolCallNames: [], toolResults: [],
       assistantText: "", assistantTextEventCount: 0, streamErrors: [], leakedProviderKey: false
     };
   }
-  const runId = typeof result.runId === "string" ? result.runId : null;
+  const sessionId = typeof result.sessionId === "string" ? result.sessionId : null;
   let events = Array.isArray(result.events) ? result.events : [];
   try {
-    if (runId) {
-      const session = await client.sessions.open(runId);
+    if (sessionId) {
+      const session = await client.sessions.open(sessionId);
       const listed = await session.events().list();
       if (Array.isArray(listed) && listed.length > 0) events = listed;
     }
@@ -156,16 +156,16 @@ async function observe(result, threw) {
   const customEvents = events.filter((e) => e.type === "CUSTOM");
   const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
   const assistantText = assistantTextEvents.map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : "")).join(" ");
-  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") ?? events.find(isSessionIdle);
+  const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
   const eventKinds = events.map((e) => e.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("RUN_FINISHED")) eventKinds.push("RUN_FINISHED");
+  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
   const streamErrors = customEvents.filter((e) => customName(e) === "aex.stream_error").map((e) => customValue(e));
   const status = result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed");
   const errorMessage =
     (result.session && typeof result.session.errorMessage === "string" && result.session.errorMessage) ? result.session.errorMessage : null;
   const serialized = JSON.stringify({ events, status, errorMessage });
   return {
-    threw: null, runId, status, errorMessage,
+    threw: null, sessionId, status, errorMessage,
     terminalKind: terminalKindOf(terminal), terminalReason: terminalReasonOf(terminal),
     eventKinds, toolCallNames, toolResults,
     assistantText: assistantText.slice(0, 4000), assistantTextEventCount: assistantTextEvents.length,
@@ -176,7 +176,7 @@ async function observe(result, threw) {
 async function runOne(runArgs) {
   let result = null, threw = null;
   try {
-    result = await client.run(runArgs, { timeoutMs: ${RUN_TIMEOUT_MS} });
+    result = await client.start(runArgs, { timeoutMs: ${SESSION_TIMEOUT_MS} });
   } catch (e) {
     threw = e && e.message ? e.message : String(e);
   }
@@ -211,7 +211,7 @@ async function runScenarioWithPreCreateRetry(
       return result;
     }
 
-    // No runId means the submit never created a debuggable live run artifact.
+    // No sessionId means the submit never created a debuggable live session artifact.
     // Retry only this transport gap; all post-create failures stay single-shot.
     // eslint-disable-next-line no-console
     console.warn(
@@ -235,7 +235,7 @@ function toolText(o: Observation): string {
 function diag(o: Observation): string {
   return [
     `threw=${o.threw}`,
-    `runId=${o.runId} status=${o.status} errorMessage=${JSON.stringify(o.errorMessage)}`,
+    `sessionId=${o.sessionId} status=${o.status} errorMessage=${JSON.stringify(o.errorMessage)}`,
     `terminalKind=${o.terminalKind} terminalReason=${JSON.stringify(o.terminalReason)}`,
     `eventKinds=[${o.eventKinds.join(", ")}]`,
     `toolCalls=[${o.toolCallNames.join(", ")}]`,
@@ -255,7 +255,7 @@ afterAll(() => {
 
 describe("live edge: agents.md + files composition (gate provider, managed)", () => {
   it(
-    "1. AgentsMd.fromContent steers the run (one-time prefix token obeyed)",
+    "1. AgentsMd.fromContent steers the session (one-time prefix token obeyed)",
     async () => {
       const token = "QUOKKA-" + tag();
       const md =
@@ -279,7 +279,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       // The steering token appears in the reply => agents.md reached AND changed behaviour.
       expect(norm(observation.assistantText), dump).toContain(token);
 
@@ -300,7 +300,7 @@ await runOne({
   provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Read files with it; never guess file contents.",
-  message: ${JSON.stringify("Run exactly this command with your bash tool and reply with only its output: " + cmd)},
+  message: ${JSON.stringify("SessionRecord exactly this command with your bash tool and reply with only its output: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [await File.fromBytes({ name: "notes.txt", bytes: new TextEncoder().encode(${JSON.stringify(content)}) })],
@@ -313,7 +313,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       // The marker surfaced from the mounted file (bash cat result or the reply).
       const seen = norm(toolText(observation) + " " + observation.assistantText);
       expect(seen, dump).toContain(marker);
@@ -350,7 +350,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       // The codename buried at the end of a 100 KB agents.md survived (not truncated).
       expect(norm(observation.assistantText), dump).toContain(codename);
 
@@ -374,7 +374,7 @@ await runOne({
   provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only what is asked, nothing else.",
-  message: ${JSON.stringify("Run exactly this with your bash tool, then reply with ONLY the 64-character hex digest it prints: " + cmd)},
+  message: ${JSON.stringify("SessionRecord exactly this with your bash tool, then reply with ONLY the 64-character hex digest it prints: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [await File.fromBytes({ name: "blob.bin", bytes })],
@@ -387,7 +387,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       // The digest computed INSIDE the runtime over the unzipped file must equal
       // the digest of the exact bytes we uploaded — proves byte-exact round-trip.
       const seen = (toolText(observation) + " " + observation.assistantText).toLowerCase();
@@ -400,7 +400,7 @@ await runOne({
   );
 
   it(
-    "5. multiple files + an agents.md compose together in one run",
+    "5. multiple files + an agents.md compose together in one session",
     async () => {
       const wordA = "ALFA-" + tag();
       const wordB = "BETA-" + tag();
@@ -434,7 +434,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
 
       const all = norm(toolText(observation) + " " + observation.assistantText);
       // Both files materialized (words from disk)...
@@ -463,7 +463,7 @@ await runOne({
   provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only the command's output, verbatim.",
-  message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
+  message: ${JSON.stringify("SessionRecord exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [await File.fromBytes({ name: "escape-probe.txt", bytes: new TextEncoder().encode(${JSON.stringify(content)}), mountPath: "/etc" })],
@@ -503,7 +503,7 @@ await runOne({
   provider: PROVIDER,
   model: MODEL,
   system: "You have a bash tool. Reply with only the command's output, verbatim.",
-  message: ${JSON.stringify("Run exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
+  message: ${JSON.stringify("SessionRecord exactly this command with your bash tool and reply with its complete output verbatim: " + cmd)},
   includeBuiltinTools: false,
   tools: [BuiltinTools.bash],
   files: [
@@ -520,7 +520,7 @@ await runOne({
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
       // Both tricky filenames were preserved on disk and read back.
       expect(seen, dump).toContain(markerS);
       expect(seen, dump).toContain(markerU);

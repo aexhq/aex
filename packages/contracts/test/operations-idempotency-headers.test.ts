@@ -5,7 +5,7 @@
  * fetch is issued.
  */
 import { describe, expect, it } from "vitest";
-import { HttpClient, RunConfigValidationError, operations } from "../src/index.js";
+import { HttpClient, SessionConfigValidationError, operations } from "../src/index.js";
 
 const http = new HttpClient({
   apiKey: "t",
@@ -17,8 +17,8 @@ const http = new HttpClient({
 
 describe("idempotency key fail-closed (WS4)", () => {
   it("resolveIdempotencyKey rejects empty and whitespace-only keys", () => {
-    expect(() => operations.resolveIdempotencyKey("")).toThrow(RunConfigValidationError);
-    expect(() => operations.resolveIdempotencyKey("   ")).toThrow(RunConfigValidationError);
+    expect(() => operations.resolveIdempotencyKey("")).toThrow(SessionConfigValidationError);
+    expect(() => operations.resolveIdempotencyKey("   ")).toThrow(SessionConfigValidationError);
   });
 
   it("resolveIdempotencyKey returns a real key verbatim and generates one when absent", () => {
@@ -29,7 +29,7 @@ describe("idempotency key fail-closed (WS4)", () => {
   it("idempotencyHeaders fails closed on an empty key before any fetch (via suspendSession)", async () => {
     await expect(
       operations.suspendSession(http, "sess_1", { idempotencyKey: "" })
-    ).rejects.toBeInstanceOf(RunConfigValidationError);
+    ).rejects.toBeInstanceOf(SessionConfigValidationError);
   });
 
   it("a valid idempotency key ships the Idempotency-Key header", async () => {

@@ -22,7 +22,7 @@
  */
 
 import type { AexEvent, AexEventSource } from "./event-envelope.js";
-import { channelOf, isRunSettled, isAwaitingApproval, isResultDecoded, isResultRefused } from "./event-envelope.js";
+import { channelOf, isSessionSettled, isAwaitingApproval, isResultDecoded, isResultRefused } from "./event-envelope.js";
 import type { JsonValue } from "./submission.js";
 
 /**
@@ -72,21 +72,21 @@ export interface ToolCallResultEventView extends AexEventView {
  * unchanged. Construct one with {@link asAexEventView}.
  */
 export class AexEventView {
-  /** True for the run-start lifecycle event. */
-  isRunStarted(): boolean {
-    return this.type === "RUN_STARTED";
+  /** True for the turn-start lifecycle event. */
+  isTurnStarted(): boolean {
+    return this.type === "TURN_STARTED";
   }
   /** True for the terminal success event. */
-  isRunFinished(): boolean {
-    return this.type === "RUN_FINISHED";
+  isTurnFinished(): boolean {
+    return this.type === "TURN_FINISHED";
   }
   /** True for the terminal error event. */
-  isRunError(): boolean {
-    return this.type === "RUN_ERROR";
+  isTurnError(): boolean {
+    return this.type === "TURN_ERROR";
   }
   /** True for a terminal event of either flavour (finished or error). */
-  isRunTerminal(): boolean {
-    return this.type === "RUN_FINISHED" || this.type === "RUN_ERROR";
+  isTurnTerminal(): boolean {
+    return this.type === "TURN_FINISHED" || this.type === "TURN_ERROR";
   }
   /** True for an assistant text event; narrows `data.text` to `string`. */
   isTextMessage(): this is TextMessageEventView {
@@ -139,8 +139,8 @@ export class AexEventView {
    * session-park terminal (idle/error/suspended) — the one check that reliably
    * means "this stream is done and the record is authoritative".
    */
-  isRunSettled(): boolean {
-    return isRunSettled(this);
+  isSessionSettled(): boolean {
+    return isSessionSettled(this);
   }
   /** True when the record originates from the given coarse source. */
   isFromSource(source: AexEventSource): boolean {

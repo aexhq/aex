@@ -30,7 +30,7 @@ pack checks.
    `bun run test`, `bun run test:user:offline`, `bun run docs:build`, and
    `bun run pack:sdk`.
 4. Open a PR against `main`. [`CI`](.github/workflows/ci.yml)
-   runs the static/type/unit/offline user-test/docs/package gates after merge
+   sessions the static/type/unit/offline user-test/docs/package gates after merge
    to `main` or manual dispatch.
 5. Don't force-push `main`. Force-pushing your topic branch is fine.
 

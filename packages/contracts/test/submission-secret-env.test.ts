@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRunSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/index.js";
 
 /**
  * `submission.secretEnv` (value-free declarations, hashed) + `secrets.envSecrets`
@@ -8,7 +8,7 @@ import { parseRunSubmissionRequest } from "../src/index.js";
  *   secretEnv[ENV] = { ref: "<handle>" }   → resolved from the workspace store
  *                                            server-side; NO value travels.
  *   secretEnv[ENV] = { ephemeral: true }   → paired with secrets.envSecrets[ENV]
- *                                            (per-run, deleted at terminal).
+ *                                            (per-session, deleted at terminal).
  *
  * Cross-validation rejects orphan values, and a `ref` never ships a value.
  */
@@ -26,7 +26,7 @@ const base = {
 
 describe("submission.secretEnv / secrets.envSecrets — contract", () => {
   it("accepts a workspace ref (value resolved server-side; no envSecrets entry)", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ref: "serper" } } }
     });
@@ -35,7 +35,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
   });
 
   it("accepts an ephemeral declaration paired with its vaulted value", () => {
-    const parsed = parseRunSubmissionRequest({
+    const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ephemeral: true } } },
       secrets: { ...base.secrets, envSecrets: { SERPER_API_KEY: "sk-live-XYZ" } }
@@ -46,7 +46,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects an ephemeral declaration with no matching vaulted value", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ephemeral: true } } }
       })
@@ -55,7 +55,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects a workspace ref that ALSO supplies a vaulted value", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ref: "serper" } } },
         secrets: { ...base.secrets, envSecrets: { SERPER_API_KEY: "sk-live-XYZ" } }
@@ -65,7 +65,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects an orphan vaulted value with no secretEnv declaration", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         secrets: { ...base.secrets, envSecrets: { SERPER_API_KEY: "sk-live-XYZ" } }
       })
@@ -74,7 +74,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects an invalid env var name", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { "bad-name": { ref: "serper" } } }
       })
@@ -83,7 +83,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects an invalid workspace handle", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ref: "bad handle!" } } }
       })
@@ -92,7 +92,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects an entry that is neither ref nor ephemeral", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { foo: "x" } } }
       })
@@ -101,7 +101,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects ephemeral set to a non-true value", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ephemeral: false } } }
       })
@@ -110,7 +110,7 @@ describe("submission.secretEnv / secrets.envSecrets — contract", () => {
 
   it("rejects a non-string vaulted value", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...base,
         submission: { ...base.submission, secretEnv: { SERPER_API_KEY: { ephemeral: true } } },
         secrets: { ...base.secrets, envSecrets: { SERPER_API_KEY: 123 } }

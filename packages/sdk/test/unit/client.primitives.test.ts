@@ -1,18 +1,18 @@
 /**
- * WS10 new primitives (schema-decode `run<T>`, fire-and-forget `submit`, `batch`
+ * WS10 new primitives (schema-decode `start<T>`, fire-and-forget `submit`, `batch`
  * rollup, HITL approval gate) + WS8 subagent `children()`.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { Aex, ChildRunHandle, SessionHandle } from "../../src/index.js";
+import { Aex, ChildSessionHandle, SessionHandle } from "../../src/index.js";
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 
 function evt(sequence: number, type: AexEvent["type"], data: Record<string, JsonValue>): AexEvent {
   return {
     specversion: "1.0",
-    id: `run-1:${sequence}`,
+    id: `session-1:${sequence}`,
     source: type === "CUSTOM" ? "runtime" : "agent",
     type,
-    subject: "run-1",
+    subject: "session-1",
     time: new Date(sequence).toISOString(),
     sequence,
     data
@@ -55,7 +55,7 @@ interface Env {
 
 const RealWebSocket = globalThis.WebSocket;
 
-function makeEnv(session: Record<string, unknown> = { id: "run-1", status: "idle", turnSeq: 1, costUsd: 0.001, costTelemetry: { providerUsage: [{ totalTokens: 5 }] } }): Env {
+function makeEnv(session: Record<string, unknown> = { id: "session-1", status: "idle", turnSeq: 1, costUsd: 0.001, costTelemetry: { providerUsage: [{ totalTokens: 5 }] } }): Env {
   const bodies: Record<string, unknown>[] = [];
   const headers: Array<Record<string, string>> = [];
   const urls: string[] = [];
@@ -66,19 +66,19 @@ function makeEnv(session: Record<string, unknown> = { id: "run-1", status: "idle
     if (typeof init?.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
     const json = (b: unknown, status = 200): Response =>
       new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
-    if (url.endsWith("/events/ticket")) return json({ wsUrl: "wss://ev.test/run-1", ticket: "t", expiresAtMs: 1 });
-    if (/\/api\/(sessions|runs)\/[^/]+\/outputs$/.test(url)) return json({ outputs: [] });
-    if (url.endsWith("/api/sessions/run-1/messages")) {
-      return json({ session: { id: "run-1", status: "running", turnSeq: 1 }, turn: { sessionId: "run-1", turnSeq: 1 }, eventCursor: 1024 });
+    if (url.endsWith("/events/ticket")) return json({ wsUrl: "wss://ev.test/session-1", ticket: "t", expiresAtMs: 1 });
+    if (/\/api\/(sessions|sessions)\/[^/]+\/outputs$/.test(url)) return json({ outputs: [] });
+    if (url.endsWith("/api/sessions/session-1/messages")) {
+      return json({ session: { id: "session-1", status: "running", turnSeq: 1 }, turn: { sessionId: "session-1", turnSeq: 1 }, eventCursor: 1024 });
     }
-    if (url.endsWith("/api/sessions/run-1/request-approval")) return json({ session: { id: "run-1", status: "awaiting_approval" } });
-    if (url.endsWith("/api/sessions/run-1/approve")) return json({ session: { id: "run-1", status: "running" } });
-    if (url.endsWith("/api/sessions/run-1/deny")) return json({ session: { id: "run-1", status: "cancelled" } });
-    if (url.endsWith("/api/runs/run-1/children")) {
-      return json({ children: [{ id: "child-1", parentRunId: "run-1", status: "succeeded", depth: 1, costUsd: 0 }] });
+    if (url.endsWith("/api/sessions/session-1/request-approval")) return json({ session: { id: "session-1", status: "awaiting_approval" } });
+    if (url.endsWith("/api/sessions/session-1/approve")) return json({ session: { id: "session-1", status: "running" } });
+    if (url.endsWith("/api/sessions/session-1/deny")) return json({ session: { id: "session-1", status: "cancelled" } });
+    if (url.endsWith("/api/sessions/session-1/children")) {
+      return json({ children: [{ id: "child-1", parentSessionId: "session-1", status: "succeeded", depth: 1, costUsd: 0 }] });
     }
-    if (url.endsWith("/api/sessions/run-1")) return json({ session });
-    if (url.endsWith("/api/sessions")) return json({ session: { id: "run-1", status: "idle", turnSeq: 0 } }, 201);
+    if (url.endsWith("/api/sessions/session-1")) return json({ session });
+    if (url.endsWith("/api/sessions")) return json({ session: { id: "session-1", status: "idle", turnSeq: 0 } }, 201);
     return json({});
   };
   return { client: new Aex({ apiKey: "tk", baseUrl: "https://x", fetch }), bodies, headers, urls };
@@ -113,7 +113,7 @@ afterEach(() => {
   (globalThis as { WebSocket: unknown }).WebSocket = RealWebSocket;
 });
 
-describe("run<T> — typed schema-decode outcome (WS10)", () => {
+describe("start<T> — typed schema-decode outcome (WS10)", () => {
   it("returns a decoded value from an aex.result.decoded event", async () => {
     SOCKET_EVENTS = [
       evt(1024, "TEXT_MESSAGE_CONTENT", { text: "{...}", messageId: "m1" }),
@@ -121,7 +121,7 @@ describe("run<T> — typed schema-decode outcome (WS10)", () => {
       evt(1026, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } })
     ];
     const { client } = makeEnv();
-    const result = await client.run<{ answer: number }>({
+    const result = await client.start<{ answer: number }>({
       model: "claude-haiku-4-5",
       message: "give me the number",
       apiKeys: { anthropic: "sk-ant" },
@@ -136,7 +136,7 @@ describe("run<T> — typed schema-decode outcome (WS10)", () => {
       evt(1026, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } })
     ];
     const { client } = makeEnv();
-    const result = await client.run({
+    const result = await client.start({
       model: "claude-haiku-4-5",
       message: "give me the number",
       apiKeys: { anthropic: "sk-ant" },
@@ -147,21 +147,21 @@ describe("run<T> — typed schema-decode outcome (WS10)", () => {
 });
 
 describe("aex.submit — fire-and-forget (WS10)", () => {
-  it("resolves with {runId, session} WITHOUT opening a coordinator socket", async () => {
+  it("resolves with {sessionId, session} WITHOUT opening a coordinator socket", async () => {
     const { client, bodies, headers, urls } = makeEnv();
-    const { runId, session } = await client.submit({
+    const { sessionId, session } = await client.submit({
       model: "claude-haiku-4-5",
       message: "go",
       idempotencyKey: "submit-key",
       messageIdempotencyKey: "turn-key",
       apiKeys: { anthropic: "sk-ant" }
     });
-    expect(runId).toBe("run-1");
+    expect(sessionId).toBe("session-1");
     expect(session).toBeInstanceOf(SessionHandle);
     expect((globalThis as { __wsOpened?: () => number }).__wsOpened!()).toBe(0);
     expect(urls.filter((url) => url.startsWith("POST https://x/api/sessions"))).toEqual([
       "POST https://x/api/sessions",
-      "POST https://x/api/sessions/run-1/messages"
+      "POST https://x/api/sessions/session-1/messages"
     ]);
     expect("input" in bodies[0]!).toBe(false);
     expect(bodies[1]!.input).toBe("go");
@@ -173,7 +173,7 @@ describe("aex.submit — fire-and-forget (WS10)", () => {
 describe("sessions.get — terminal failure projection", () => {
   it("preserves failed status, outcome, failureClass, and errorMessage", async () => {
     const { client } = makeEnv({
-      id: "run-1",
+      id: "session-1",
       status: "failed",
       turnSeq: 1,
       lastTurnOutcome: "failed",
@@ -183,7 +183,7 @@ describe("sessions.get — terminal failure projection", () => {
       usage: {}
     });
 
-    const session = await client.sessions.get("run-1");
+    const session = await client.sessions.get("session-1");
 
     expect(session.status).toBe("failed");
     expect(session.lastTurnOutcome).toBe("failed");
@@ -232,18 +232,18 @@ describe("HITL approval gate (WS10)", () => {
 });
 
 describe("subagent children (WS8)", () => {
-  it("session.children() returns resolvable ChildRunHandles backed by the run facade", async () => {
+  it("session.children() returns resolvable ChildSessionHandles backed by the session record facade", async () => {
     const { client } = makeEnv();
     const session = await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
     const children = await session.children();
     expect(children).toHaveLength(1);
     const child = children[0]!;
-    expect(child).toBeInstanceOf(ChildRunHandle);
+    expect(child).toBeInstanceOf(ChildSessionHandle);
     expect(child.id).toBe("child-1");
-    expect(child.parentRunId).toBe("run-1");
+    expect(child.parentSessionId).toBe("session-1");
     expect(child.depth).toBe(1);
     expect(child.status).toBe("succeeded");
-    // Resolves through the RUN facade (/runs/:id/outputs), not openSession.
+    // Resolves through the RUN facade (/sessions/:id/outputs), not openSession.
     const outputs = await child.outputs().list();
     expect(outputs).toEqual([]);
   });

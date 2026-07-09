@@ -8,7 +8,7 @@ import {
   STREAMABLE_SHAPES,
   isStreamableProvider,
   assertStreamableOutputMode,
-  parseRunSubmissionRequest
+  parseSessionSubmissionRequest
 } from "../src/internal.js";
 
 describe("streaming capability gate (WS9)", () => {
@@ -31,9 +31,9 @@ describe("streaming capability gate (WS9)", () => {
     expect(() => assertStreamableOutputMode(undefined, "gemini")).not.toThrow();
   });
 
-  it("parseRunSubmissionRequest hard-rejects stream on a non-streamable provider", () => {
+  it("parseSessionSubmissionRequest hard-rejects stream on a non-streamable provider", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         workspaceId: "w1",
         idempotencyKey: "i1",
         provider: "gemini",
@@ -50,8 +50,8 @@ describe("streaming capability gate (WS9)", () => {
     ).toThrow(/'stream' is not supported for provider gemini/);
   });
 
-  it("parseRunSubmissionRequest accepts stream on a streamable provider", () => {
-    const parsed = parseRunSubmissionRequest({
+  it("parseSessionSubmissionRequest accepts stream on a streamable provider", () => {
+    const parsed = parseSessionSubmissionRequest({
       workspaceId: "w1",
       idempotencyKey: "i1",
       provider: "deepseek",

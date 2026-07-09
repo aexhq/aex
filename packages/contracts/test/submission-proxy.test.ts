@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRunSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/index.js";
 
 const baseSubmission = {
   workspaceId: "workspace-1",
@@ -17,7 +17,7 @@ const baseSubmission = {
 describe("submission proxy endpoint fields", () => {
   it("rejects proxyEndpoints as a removed public submission field", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...baseSubmission,
         proxyEndpoints: [
           {
@@ -34,7 +34,7 @@ describe("submission proxy endpoint fields", () => {
 
   it("rejects secrets.proxyEndpointAuth as a removed public secrets field", () => {
     expect(() =>
-      parseRunSubmissionRequest({
+      parseSessionSubmissionRequest({
         ...baseSubmission,
         secrets: {
           ...baseSubmission.secrets,

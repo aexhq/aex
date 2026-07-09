@@ -20,7 +20,7 @@ describe("describeApiError network failures", () => {
     const err = new AexNetworkError({
       method: "POST",
       host: "api.example.test",
-      path: "/api/runs",
+      path: "/api/sessions",
       cause: undiciFetchFailed("ECONNREFUSED")
     });
     const d = describeApiError(err);

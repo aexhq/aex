@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { parseRunSubmissionRequest, type PlatformRunSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest, type PlatformSessionSubmissionRequest } from "../src/index.js";
 
 /**
  * Robustness/totality fuzz for the top-level submission validator. Complements
@@ -11,7 +11,7 @@ import { parseRunSubmissionRequest, type PlatformRunSubmissionRequest } from "..
  * unknown/extra field is the wire-shape bug class this guards.
  */
 
-function makeValid(): PlatformRunSubmissionRequest {
+function makeValid(): PlatformSessionSubmissionRequest {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "key-1",
@@ -27,12 +27,12 @@ function makeValid(): PlatformRunSubmissionRequest {
   };
 }
 
-describe("parseRunSubmissionRequest robustness (property)", () => {
+describe("parseSessionSubmissionRequest robustness (property)", () => {
   it("is TOTAL: arbitrary input either parses to a valid request or throws an Error", () => {
     fc.assert(
       fc.property(fc.anything(), (input) => {
         try {
-          const parsed = parseRunSubmissionRequest(input);
+          const parsed = parseSessionSubmissionRequest(input);
           // On the rare accept, the core required fields must be present + well-typed.
           expect(typeof parsed.workspaceId === "string" || parsed.workspaceId === undefined).toBe(true);
           expect(Array.isArray(parsed.submission.prompt)).toBe(true);
@@ -58,7 +58,7 @@ describe("parseRunSubmissionRequest robustness (property)", () => {
             configurable: true,
             writable: true
           });
-          expect(() => parseRunSubmissionRequest(input)).toThrow();
+          expect(() => parseSessionSubmissionRequest(input)).toThrow();
         }
       ),
       { numRuns: 200 }
@@ -69,11 +69,11 @@ describe("parseRunSubmissionRequest robustness (property)", () => {
     for (const prompt of [[], [""], ["   "], ["\n\t "]]) {
       const input = makeValid();
       (input.submission as { prompt: unknown }).prompt = prompt;
-      expect(() => parseRunSubmissionRequest(input)).toThrow();
+      expect(() => parseSessionSubmissionRequest(input)).toThrow();
     }
     const noSub = makeValid() as unknown as Record<string, unknown>;
     delete noSub.submission;
-    expect(() => parseRunSubmissionRequest(noSub)).toThrow();
+    expect(() => parseSessionSubmissionRequest(noSub)).toThrow();
   });
 
   it("rejects a non-record top-level input", () => {
@@ -81,7 +81,7 @@ describe("parseRunSubmissionRequest robustness (property)", () => {
       fc.property(
         fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(null), fc.array(fc.anything())),
         (input) => {
-          expect(() => parseRunSubmissionRequest(input)).toThrow();
+          expect(() => parseSessionSubmissionRequest(input)).toThrow();
         }
       ),
       { numRuns: 150 }

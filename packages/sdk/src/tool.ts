@@ -134,7 +134,7 @@ export class Tool {
   toJSON(): ToolRef {
     if (this.#ref.kind === "draft") {
       throw new Error(
-        "Tool: draft Tools cannot be JSON-serialised — they only become wire refs when aex.run / openSession uploads the bytes as an asset."
+        "Tool: draft Tools cannot be JSON-serialised — they only become wire refs when aex.start / openSession uploads the bytes as an asset."
       );
     }
     return this.#ref;
@@ -187,7 +187,7 @@ const JS_MODULE_ENTRY = /\.(?:js|mjs|cjs)$/i;
 
 /**
  * Validate the tool's ENTRY is a JS module at authoring time (fail-fast), not
- * mid-run when the runtime module-loader rejects a `run.sh`. The entry must end
+ * mid-session when the runtime module-loader rejects a `run.sh`. The entry must end
  * in `.js`/`.mjs`/`.cjs` and — when the bundle files are known
  * ({@link Tool.fromFiles}) — must be present in `files`.
  */

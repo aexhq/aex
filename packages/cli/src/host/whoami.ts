@@ -1,6 +1,6 @@
 /**
  * `aex whoami` — resolve the API key to its workspace + scopes via the public
- * whoami operation. Lets agents confirm the key before submitting a real run.
+ * whoami operation. Lets agents confirm the key before submitting a real session.
  * Always emits JSON; `--json` is a globally-recognized no-op flag (consumed by
  * the common-flags parser) so `aex whoami --json` never errors.
  */
@@ -14,11 +14,11 @@ import {
   emitJsonError,
   makeHttpClient,
   resolveCommonHostFlags,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";
 
-export async function runWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedRun(io, "whoami")) return USAGE_ERR;
+export async function executeWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "whoami")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {

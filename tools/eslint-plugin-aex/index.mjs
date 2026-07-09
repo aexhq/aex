@@ -97,7 +97,7 @@ function snippetOf(node) {
 //   if (x != null)       { expect(x)... }
 //   if (typeof x !== "undefined") { expect(x)... }
 //
-// Why this is poisonous: the assertion ONLY runs when `x` is defined. If a
+// Why this is poisonous: the assertion ONLY sessions when `x` is defined. If a
 // regression makes `x` go missing entirely, the test passes silently — it
 // pretends to assert but doesn't. Real assertions should either:
 //   (a) require the field unconditionally (`expect(x).toBe(...)`), or

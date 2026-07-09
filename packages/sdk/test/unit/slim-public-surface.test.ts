@@ -10,8 +10,8 @@ const removedRootExports = [
   "ProxyEndpoint",
   "decodeAssistantText",
   "decodeToolCalls",
-  "summarizeRunTrace",
-  "summarizeRunUsage",
+  "summarizeTurnTrace",
+  "summarizeSessionUsage",
   "textOf"
 ] as const;
 
@@ -22,11 +22,11 @@ const removedEventGuards = [
   "isEventChannel",
   "isFromSource",
   "isLog",
-  "isRunError",
-  "isRunFinished",
-  "isRunSettled",
-  "isRunStarted",
-  "isRunTerminal",
+  "isTurnError",
+  "isTurnFinished",
+  "isSessionSettled",
+  "isTurnStarted",
+  "isTurnTerminal",
   "isTextMessage",
   "isToolCallResult",
   "isToolCallStart"

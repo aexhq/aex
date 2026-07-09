@@ -2,7 +2,7 @@
  * USER TEST (SDK-driven) — environment.networking allowlist works as expected.
  *
  * Validates the FIX end-to-end through the installed SDK: on a managed
- * (managed runtime) run with `networking.mode:"limited"`, an explicitly ALLOWED host
+ * (managed runtime) session with `networking.mode:"limited"`, an explicitly ALLOWED host
  * stays reachable while a non-allowed host is BLOCKED — proving the OS-level
  * egress firewall is precise, not a
  * block-everything sledgehammer.
@@ -28,7 +28,7 @@ describe("user/SDK: managed networking:limited allowlist is precise (allowed rea
   afterAll(() => install?.cleanup());
 
   it(
-    "an allowed host is reachable and a non-allowed host is blocked on the same managed run",
+    "an allowed host is reachable and a non-allowed host is blocked on the same managed session",
     async () => {
       const probe = `set -u
 probe_https() {
@@ -54,7 +54,7 @@ printf "%s %s\\n" "$a" "$o"`;
         `Script:\n${probe}\n` +
         "Reply with ONLY the final two probe tokens separated by a single space.";
       const script = sdkRunnerScript({
-        run: `{
+        session: `{
           provider: "deepseek",
           model: MODEL_DEEPSEEK,
           message: ${JSON.stringify(prompt)},
@@ -70,7 +70,7 @@ printf "%s %s\\n" "$a" "$o"`;
       });
 
       expect(result.runtime).toBe("managed");
-      // The run still SUCCEEDS — the platform proxy/model host is always-allowed
+      // The session still SUCCEEDS — the platform proxy/model host is always-allowed
       // through the firewall, so the agent could run at all.
       expect(result.status).toBe("succeeded");
 

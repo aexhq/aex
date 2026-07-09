@@ -1,5 +1,5 @@
 {
-  "$comment": "Per-test-file wall-clock seconds for duration-balanced CI sharding (scripts/shard-files.mjs). Measured from aexhq/aex-platform run 28666442107 and aexhq/aex run 28657317192 (2026-07-03, max of both). Files absent from this map get the median of recorded values. Refresh occasionally from recent CI vitest per-file times; exactness does not matter, only relative weight.",
+  "$comment": "Per-test-file wall-clock seconds for duration-balanced CI sharding (scripts/shard-files.mjs). Measured from aexhq/aex-platform run 28666442107 and aexhq/aex start 28657317192 (2026-07-03, max of both). Files absent from this map get the median of recorded values. Refresh occasionally from recent CI vitest per-file times; exactness does not matter, only relative weight.",
   "test/_fixtures/install.test.ts": 2,
   "test/live/config-agentsmd.user.test.ts": 27,
   "test/live/config-envvars.user.test.ts": 25,
@@ -17,8 +17,8 @@
   "test/live/edge-list-search.user.test.ts": 260,
   "test/live/edge-mcp-egress.user.test.ts": 116,
   "test/live/edge-outputs.user.test.ts": 116,
-  "test/live/edge-run-lifecycle.user.test.ts": 211,
-  "test/live/edge-run-limits.user.test.ts": 30,
+  "test/live/edge-session-lifecycle.user.test.ts": 211,
+  "test/live/edge-session-limits.user.test.ts": 30,
   "test/live/edge-skills-tools.user.test.ts": 144,
   "test/live/edge-webhooks.user.test.ts": 181,
   "test/live/live-cli-installed.test.ts": 50,

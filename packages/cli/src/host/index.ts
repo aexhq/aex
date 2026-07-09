@@ -3,24 +3,24 @@
  * import from here so the per-file structure stays an implementation
  * detail.
  */
-export { runRunCmd } from "./run-cmd.js";
-export { runStatusCmd } from "./status.js";
-export { runDeliveriesCmd } from "./deliveries.js";
-export { runWaitCmd } from "./wait.js";
-export { runEventsCmd } from "./events.js";
-export { runOutputsCmd } from "./outputs.js";
-export { runDownloadCmd } from "./download.js";
-export { runCancelCmd } from "./cancel.js";
-export { runDeleteCmd } from "./delete.js";
-export { runDeleteAssetCmd } from "./delete-asset.js";
-export { runWhoamiCmd } from "./whoami.js";
-export { runBillingCmd } from "./billing.js";
-export { runWebhooksCmd } from "./webhooks-cmd.js";
-export { runRunsCmd, runSessionsCmd } from "./list-cmds.js";
-export { runLoginCmd, runLogoutCmd, runAuthStatusCmd } from "./auth-cmd.js";
-export { runModelsCmd, runProvidersCmd, runToolsCmd, runRuntimeSizesCmd } from "./discover-cmd.js";
-export { runTailCmd } from "./tail.js";
-export { runInspectCmd } from "./inspect.js";
+export { executeStartCmd } from "./start-cmd.js";
+export { executeStatusCmd } from "./status.js";
+export { executeDeliveriesCmd } from "./deliveries.js";
+export { executeWaitCmd } from "./wait.js";
+export { executeEventsCmd } from "./events.js";
+export { executeOutputsCmd } from "./outputs.js";
+export { executeDownloadCmd } from "./download.js";
+export { executeCancelCmd } from "./cancel.js";
+export { executeDeleteCmd } from "./delete.js";
+export { executeDeleteAssetCmd } from "./delete-asset.js";
+export { executeWhoamiCmd } from "./whoami.js";
+export { executeBillingCmd } from "./billing.js";
+export { sessionWebhooksCmd } from "./webhooks-cmd.js";
+export { executeSessionsCmd } from "./list-cmds.js";
+export { executeLoginCmd, executeLogoutCmd, executeAuthStatusCmd } from "./auth-cmd.js";
+export { modelNamesCmd, providerNamesCmd, executeToolsCmd, executeRuntimeSizesCmd } from "./discover-cmd.js";
+export { executeTailCmd } from "./tail.js";
+export { executeInspectCmd } from "./inspect.js";
 export {
   type CliExitCode,
   SUCCESS,
@@ -31,5 +31,5 @@ export {
   resolveCommonHostFlags,
   describeApiError,
   suggest,
-  refuseInsideManagedRun
+  refuseInsideManagedSession
 } from "./common.js";

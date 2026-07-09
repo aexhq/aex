@@ -3,7 +3,7 @@ import { Aex } from "../../src/index.js";
 
 /**
  * SDK contract: runtimeManifest is accessed on the self-contained unit read
- * (`session.unit()` → GET /api/runs/:id). Older BFFs may omit it, so callers
+ * (`session.unit()` → GET /api/sessions/:id). Older BFFs may omit it, so callers
  * must treat the field as optional rather than relying on the create echo.
  */
 
@@ -18,7 +18,7 @@ function stubFetchReturning(args: { readonly createBody: unknown; readonly unitB
   }) as typeof fetch;
 }
 
-describe("RunUnit.runtimeManifest — read from the unit record", () => {
+describe("SessionUnit.runtimeManifest — read from the unit record", () => {
   it("populates runtimeManifest when the BFF includes it on the unit read", async () => {
     const manifest = {
       provider: "anthropic" as const,
@@ -36,9 +36,9 @@ describe("RunUnit.runtimeManifest — read from the unit record", () => {
       }
     };
     const fetchStub = stubFetchReturning({
-      createBody: { id: "run_with_manifest", status: "queued" },
+      createBody: { id: "ses_with_manifest", status: "queued" },
       unitBody: {
-        id: "run_with_manifest",
+        id: "ses_with_manifest",
         status: "queued",
         runtimeManifest: manifest
       }
@@ -49,7 +49,7 @@ describe("RunUnit.runtimeManifest — read from the unit record", () => {
       apiKeys: { anthropic: "k" },
       environment: { variables: { BROLL_STORE: "/mnt/session/broll/store" } }
     });
-    expect(session.id).toBe("run_with_manifest");
+    expect(session.id).toBe("ses_with_manifest");
     const unit = await session.unit();
     expect(unit.runtimeManifest).toEqual(manifest);
     expect(unit.runtimeManifest?.envVars.BROLL_STORE).toBe("/mnt/session/broll/store");
@@ -57,15 +57,15 @@ describe("RunUnit.runtimeManifest — read from the unit record", () => {
 
   it("leaves runtimeManifest undefined when the BFF omits it (deployment skew)", async () => {
     const fetchStub = stubFetchReturning({
-      createBody: { id: "run_no_manifest", status: "queued" },
-      unitBody: { id: "run_no_manifest", status: "queued" }
+      createBody: { id: "ses_no_manifest", status: "queued" },
+      unitBody: { id: "ses_no_manifest", status: "queued" }
     });
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch: fetchStub });
     const session = await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "k" }
     });
-    expect(session.id).toBe("run_no_manifest");
+    expect(session.id).toBe("ses_no_manifest");
     const unit = await session.unit();
     expect(unit.runtimeManifest).toBeUndefined();
   });

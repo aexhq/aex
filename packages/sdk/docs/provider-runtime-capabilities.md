@@ -40,7 +40,7 @@ All new submissions run on the managed runtime. Public support is expressed as s
 
 ## Skills
 
-Skills are supplied through the top-level `skills` option. Build one with `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles`, `Skill.fromContent`, or `Skill.fromBytes`; each normalizes to a named workspace skill that the platform snapshots into durable run asset storage.
+Skills are supplied through the top-level `skills` option. Build one with `Skill.fromDir`, `Skill.fromUrl`, `Skill.fromFiles`, `Skill.fromContent`, or `Skill.fromBytes`; each normalizes to a named workspace skill that the platform snapshots into durable session asset storage.
 
 Notes:
 

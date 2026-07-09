@@ -244,7 +244,7 @@ function checkSdkBunPack() {
   if (missingBuiltFiles.length > 0) {
     failures.push(
       `SDK Bun pack is missing built file(s): ${missingBuiltFiles.join(", ")}. ` +
-        "Run bun run --filter @aexhq/sdk build before the boundary check."
+        "SessionRecord bun run --filter @aexhq/sdk build before the boundary check."
     );
     return;
   }
@@ -396,8 +396,8 @@ function removedSlimSurfaceTerms() {
     { name: "proxyEndpoints", pattern: /\bproxyEndpoints\b/ },
     { name: "decodeAssistantText", pattern: /\bdecodeAssistantText\b/ },
     { name: "decodeToolCalls", pattern: /\bdecodeToolCalls\b/ },
-    { name: "summarizeRunTrace", pattern: /\bsummarizeRunTrace\b/ },
-    { name: "summarizeRunUsage", pattern: /\bsummarizeRunUsage\b/ },
+    { name: "summarizeTurnTrace", pattern: /\bsummarizeTurnTrace\b/ },
+    { name: "summarizeSessionUsage", pattern: /\bsummarizeSessionUsage\b/ },
     { name: "textOf", pattern: /\btextOf\b/ }
   ];
 }

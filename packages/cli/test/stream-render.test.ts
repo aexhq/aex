@@ -11,10 +11,10 @@ import { renderEnvelope } from "../src/host/stream-render.js";
 const custom = (data: Record<string, unknown>, message?: string): AexEvent =>
   ({
     specversion: "1.0",
-    id: "run-x:6",
+    id: "session-x:6",
     source: "runtime",
     type: "CUSTOM",
-    subject: "run-x",
+    subject: "session-x",
     time: new Date(6).toISOString(),
     sequence: 6,
     data: data as AexEvent["data"],

@@ -1,5 +1,5 @@
 /**
- * Customer-side verification for aex run webhooks (Standard Webhooks scheme).
+ * Customer-side verification for aex start webhooks (Standard Webhooks scheme).
  *
  * aex signs every delivery HMAC-SHA256 over `${webhook-id}.${webhook-timestamp}.${rawBody}`
  * and sends three headers:
