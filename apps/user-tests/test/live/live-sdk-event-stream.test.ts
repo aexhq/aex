@@ -225,7 +225,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           .filter((e) => e.type === "CUSTOM" && e.data && typeof e.data.name === "string")
           .map((e) => e.data.name);
         process.stdout.write(JSON.stringify({
-          sessionStatus: session.status,
+          sessionStatus: run.status,
           streamedCount: streamed.length,
           streamedTypes: [...new Set(streamed)],
           streamedCustomNames: [...new Set(streamedCustomNames)],

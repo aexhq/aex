@@ -456,7 +456,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       return {
         sessionId: sessionId,
         attempts: attempt + 1,
-        sessionStatus: session.status,
+        sessionStatus: run.status,
         runtime: run.runtime ?? "(missing)",
         provider: run.provider ?? "(missing)",
         probes: ${JSON.stringify(probes)},

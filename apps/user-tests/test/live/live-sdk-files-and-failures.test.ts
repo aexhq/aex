@@ -179,7 +179,7 @@ function buildFileScript(cell: Cell, marker: string): string {
 
     const result = {
       sessionId: sessionId,
-      sessionStatus: session.status,
+      sessionStatus: sessionInfo.status,
       runtime: sessionInfo.runtime ?? "(missing)",
       provider: sessionInfo.provider ?? "(missing)",
       marker: ${JSON.stringify(marker)},

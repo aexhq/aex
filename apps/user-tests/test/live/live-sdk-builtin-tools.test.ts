@@ -164,7 +164,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: session.status,
+      sessionStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       mode: ${JSON.stringify(mode)},

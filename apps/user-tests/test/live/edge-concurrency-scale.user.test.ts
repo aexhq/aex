@@ -14,7 +14,7 @@
  *   - SessionHandle.send(...)            back-to-back turns on ONE session
  *   - SessionEvents.streamEnvelopes()    concurrent fanout consumers on one session
  *
- * Cost (DeepSeek, tiny "SessionFile verbatim" prompts): case A ~10 billable session turns,
+ * Cost (DeepSeek, tiny exact-reply prompts): case A ~10 billable session turns,
  * case C ~1 (the rest dedup), case D <=4 turns on one session, case E ~1 run;
  * cases B create sessions only (no LLM turn). Waves are run selectively with
  * `-t`. Total kept well under the ~15-live-sessions-per-wave budget.
@@ -191,7 +191,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
             client.start({
               provider: "deepseek",
               model: MODEL,
-              message: "SessionFile verbatim: " + marker,
+              message: "Reply with exactly this marker and no other text: " + marker,
               idempotencyKey: "cdist-" + STAMP + "-" + i,
               apiKeys: { deepseek: DEEPSEEK_KEY }
             }, { timeoutMs: 8 * 60_000 })
@@ -328,7 +328,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
             client.start({
               provider: "deepseek",
               model: MODEL,
-              message: "SessionFile verbatim: " + marker,
+              message: "Reply with exactly this marker and no other text: " + marker,
               idempotencyKey: key,
               apiKeys: { deepseek: DEEPSEEK_KEY }
             }, { timeoutMs: 8 * 60_000 })
@@ -419,7 +419,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         for (let i = 0; i < M; i++) {
           const key = "cstorm-" + STAMP + "-" + i;
           const turn = (
-            session.send("SessionFile verbatim: S" + i + "Z" + STAMP, { idempotencyKey: key })
+            session.send("Reply with exactly this marker and no other text: S" + i + "Z" + STAMP, { idempotencyKey: key })
               .done()
               .then((res) => ({ i, key, status: String(res.status), text: dense(res.text) }))
               .catch((e) => ({ i, key, error: errShape(e) }))
@@ -472,7 +472,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         const runRes = await client.start({
           provider: "deepseek",
           model: MODEL,
-          message: "SessionFile verbatim: " + marker,
+          message: "Reply with exactly this marker and no other text: " + marker,
           idempotencyKey: "cfan-" + STAMP,
           apiKeys: { deepseek: DEEPSEEK_KEY }
         }, { timeoutMs: 8 * 60_000 });
@@ -559,7 +559,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
             .then((r) => ({ label, threw: false, sessionId: r.sessionId }))
             .catch((e) => ({ label, threw: true, error: errShape(e) }));
         }
-        const base = { provider: "deepseek", model: MODEL, message: "SessionFile verbatim: X", apiKeys: { deepseek: DEEPSEEK_KEY } };
+        const base = { provider: "deepseek", model: MODEL, message: "Reply with exactly this marker and no other text: X", apiKeys: { deepseek: DEEPSEEK_KEY } };
         const results = await Promise.all([
           probeReject("top_level_limits", { ...base, limits: { concurrency: 5000, maxConcurrentChildSessions: 9999 } }),
           probeReject("parent_session_id", { ...base, parentSessionId: "ses_fake_parent" }),

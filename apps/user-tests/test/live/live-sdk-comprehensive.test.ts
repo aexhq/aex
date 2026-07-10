@@ -311,7 +311,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: session.status,
+      sessionStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       probes: ${JSON.stringify(probes)},

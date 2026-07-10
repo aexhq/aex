@@ -128,7 +128,7 @@ function buildScript(cell: Cell, marker: string): string {
 
     const payload = {
       sessionId: sessionId,
-      sessionStatus: session.status,
+      sessionStatus: run.status,
       files: files.map((o) => ({ id: o.id, filename: o.filename ?? null })),
       download: probe(downloadAll),
       downloadFiles: probe(downloadOut),

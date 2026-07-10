@@ -213,7 +213,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
 
         const run = await executeCli(
           [
-            "run",
+            "start",
             "--provider", GATE_PROVIDER,
             "--model", model,
             "--prompt", `@${promptPath}`,

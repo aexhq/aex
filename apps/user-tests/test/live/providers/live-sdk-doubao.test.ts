@@ -138,7 +138,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         const serialized = JSON.stringify({ run, events, files });
         const payload = {
           sessionId: sessionId,
-          sessionStatus: session.status,
+          sessionStatus: run.status,
           probe: ${JSON.stringify(probe)},
           eventCount: events.length,
           eventKinds: events.map((e) => e.type),

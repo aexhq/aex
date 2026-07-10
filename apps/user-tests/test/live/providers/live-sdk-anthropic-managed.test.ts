@@ -153,7 +153,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
         const serialized = JSON.stringify({ run, events, files });
         const result = {
           sessionId: sessionId,
-          sessionStatus: session.status,
+          sessionStatus: run.status,
           runtime: run.runtime ?? "(missing)",
           provider: run.provider ?? "(missing)",
           probe: ${JSON.stringify(probe)},

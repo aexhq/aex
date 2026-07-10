@@ -123,12 +123,18 @@ describe("live user-test release gate", () => {
   });
 
   it("keeps published CLI smoke on the current public start verb", () => {
-    const source = read("apps/user-tests/test/live/live-cli-installed.test.ts");
+    const installedSource = read("apps/user-tests/test/live/live-cli-installed.test.ts");
+    const edgeSource = read("apps/user-tests/test/live/edge-cli.user.test.ts");
 
-    expect(source).toContain('"start",');
-    expect(source).toContain("submits with start --follow");
-    expect(source).not.toContain('"run",');
-    expect(source).not.toContain("submits with run --follow");
+    for (const [path, source] of [
+      ["apps/user-tests/test/live/live-cli-installed.test.ts", installedSource],
+      ["apps/user-tests/test/live/edge-cli.user.test.ts", edgeSource]
+    ] as const) {
+      expect(source, path).toContain('"start",');
+      expect(source, path).not.toMatch(/(?:executeCli|runCommand)\(\s*\[\s*"run"\s*,/s);
+      expect(source, path).not.toContain("submits with run --follow");
+    }
+    expect(installedSource).toContain("submits with start --follow");
   });
 
   it("keeps the published DeepSeek SDK smoke status sourced from the start result", () => {
@@ -137,6 +143,30 @@ describe("live user-test release gate", () => {
     expect(source).toContain("const run = {");
     expect(source).toContain("sessionStatus: run.status");
     expect(source).not.toContain("sessionStatus: session.status");
+  });
+
+  it("keeps generated live SDK scripts from reading status off session handles", () => {
+    const liveDir = resolve(repoRoot, "apps/user-tests/test/live");
+    const paths = [
+      ...readdirSync(liveDir)
+        .filter((name) => name.endsWith(".ts"))
+        .map((name) => `apps/user-tests/test/live/${name}`),
+      ...readdirSync(resolve(liveDir, "providers"))
+        .filter((name) => name.endsWith(".ts"))
+        .map((name) => `apps/user-tests/test/live/providers/${name}`)
+    ];
+
+    for (const path of paths) {
+      const source = read(path);
+      expect(source, path).not.toContain("sessionStatus: session.status");
+    }
+  });
+
+  it("keeps the high-concurrency exact-reply probe from using missing-file wording", () => {
+    const source = read("apps/user-tests/test/live/edge-concurrency-scale.user.test.ts");
+
+    expect(source).toContain("Reply with exactly this marker and no other text:");
+    expect(source).not.toContain("SessionFile verbatim");
   });
 
   it("serializes Bun installs across live-test worker processes", () => {

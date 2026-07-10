@@ -247,7 +247,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: session.status,
+      sessionStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       uniqueToken: ${JSON.stringify(uniqueToken)},
