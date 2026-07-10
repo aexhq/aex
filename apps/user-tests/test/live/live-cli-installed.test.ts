@@ -142,7 +142,7 @@ describe("live hosted API via installed CLI", () => {
   }
 
   async function runCliCreateWithPreCreateRetry(args: readonly string[], timeoutMs: number): Promise<SessionResult> {
-    return await withPreCreateTransportRetry("live-cli-installed run --follow", async () => {
+    return await withPreCreateTransportRetry("live-cli-installed start --follow", async () => {
       const result = await executeCli(args, timeoutMs);
       const diag = commandDiagnostic("aex start --follow", result);
       if (result.exitCode !== 0 && firstSessionId(result.stdout) === null && isPreCreateTransportMessage(diag)) {
@@ -152,14 +152,14 @@ describe("live hosted API via installed CLI", () => {
     });
   }
 
-  it("submits with run --follow, then reads status/events/files/wait/download through the installed binary", async () => {
+  it("submits with start --follow, then reads status/events/files/wait/download through the installed binary", async () => {
     const diagnostics: string[] = [];
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const marker = `CLI-LIVE-${Date.now().toString(36)}-${attempt}-${Math.random().toString(36).slice(2, 8)}`;
       const run = await runCliCreateWithPreCreateRetry(
         [
-          "run",
+          "start",
           "--provider",
           "deepseek",
           "--model",

@@ -176,6 +176,7 @@ jobs:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 50
+          LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,files:read
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
   publish:

@@ -74,6 +74,7 @@ describe("live user-test release gate", () => {
       expect(workflow).toContain("AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}");
       expect(workflow).toContain("AEX_API_KEY: ${{ secrets.AEX_API_KEY }}");
       expect(workflow).toContain("DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}");
+      expect(workflow).toContain("LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,files:read");
       expect(workflow).toContain("bun scripts/cicd/preflight-live-user-tests.mjs");
       expect(workflow).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 50");
       expect(workflow).not.toContain("AEX_API_TOKEN");
@@ -90,6 +91,8 @@ describe("live user-test release gate", () => {
     expect(preflight).toContain("transient HTTP");
     expect(preflight).toContain("limits.maxConcurrentSessions");
     expect(preflight).toContain("maxConcurrentSessions=${maxConcurrentSessions}");
+    expect(preflight).toContain("DEFAULT_REQUIRED_SCOPES");
+    expect(preflight).toContain("missing required scope(s)");
     expect(preflight).toContain("AEX_EXPECTED_API_HOST");
     expect(preflight).toContain("LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS");
   });
@@ -117,6 +120,15 @@ describe("live user-test release gate", () => {
     expect(release).toContain("full behavioral matrix is the");
     expect(release).not.toContain("name: Live user tests shard");
     expect(release).not.toContain("scripts/shard-files.mjs --shard");
+  });
+
+  it("keeps published CLI smoke on the current public start verb", () => {
+    const source = read("apps/user-tests/test/live/live-cli-installed.test.ts");
+
+    expect(source).toContain('"start",');
+    expect(source).toContain("submits with start --follow");
+    expect(source).not.toContain('"run",');
+    expect(source).not.toContain("submits with run --follow");
   });
 
   it("shards live user tests by recorded duration, not file count", () => {

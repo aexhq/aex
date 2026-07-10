@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.41.1
+
+### Fixed
+
+- Updated published-artifact release smoke coverage to use the current
+  `aex start` CLI verb and fail preflight before publish when the live-test API
+  key lacks write/file scopes.
+
 ## 0.41.0
 
 ### Changed

@@ -8,6 +8,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 8_000;
 const DEFAULT_MIN_MAX_CONCURRENT_SESSIONS = 50;
+const DEFAULT_REQUIRED_SCOPES = ["sessions:read", "sessions:write", "files:read"];
 
 class PreflightFatalError extends Error {}
 
@@ -83,6 +84,7 @@ export async function checkLiveUserTestsPreflight(options = {}) {
     10_000
   );
   const maxMaxConcurrentSessions = optionalPositiveInt(env.LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS, 10_000);
+  const requiredScopes = parseRequiredScopes(env.LIVE_USER_TEST_REQUIRED_SCOPES);
   const expectedApiHost = String(env.AEX_EXPECTED_API_HOST ?? "").trim();
   if (expectedApiHost && apiUrl.hostname !== expectedApiHost) {
     throw new PreflightFatalError(
@@ -128,10 +130,17 @@ export async function checkLiveUserTestsPreflight(options = {}) {
           `live-user-tests workspace maxConcurrentSessions=${maxConcurrentSessions} is above allowed maximum ${maxMaxConcurrentSessions} (requestId=${requestId}).`
         );
       }
+      const scopes = new Set(Array.isArray(body?.scopes) ? body.scopes.filter((scope) => typeof scope === "string") : []);
+      const missingScopes = requiredScopes.filter((scope) => !scopes.has(scope));
+      if (missingScopes.length > 0) {
+        throw new PreflightFatalError(
+          `live-user-tests /api/whoami token is missing required scope(s): ${missingScopes.join(", ")} (requestId=${requestId}).`
+        );
+      }
       out.write(
-        `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentSessions=${maxConcurrentSessions}, attempt=${attempt}/${attempts}).\n`
+        `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentSessions=${maxConcurrentSessions}, requiredScopes=${requiredScopes.join(",")}, attempt=${attempt}/${attempts}).\n`
       );
-      return { status: res.status, requestId, maxConcurrentSessions, attempt, attempts };
+      return { status: res.status, requestId, maxConcurrentSessions, requiredScopes, attempt, attempts };
     } catch (error) {
       if (error instanceof PreflightFatalError) throw error;
       if (attempt < attempts && isRetryableFetchFailure(error)) {
@@ -193,6 +202,15 @@ function optionalPositiveInt(value, max) {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
   return positiveInt(raw, 0, max);
+}
+
+function parseRequiredScopes(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return DEFAULT_REQUIRED_SCOPES;
+  return raw
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
 }
 
 function positiveInt(value, fallback, max = Number.POSITIVE_INFINITY) {

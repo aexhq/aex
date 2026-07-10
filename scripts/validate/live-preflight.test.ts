@@ -20,6 +20,7 @@ interface ChildResult {
   readonly result?: {
     readonly status: number;
     readonly maxConcurrentSessions: number;
+    readonly requiredScopes: readonly string[];
     readonly attempt: number;
   };
   readonly calls: number;
@@ -43,11 +44,12 @@ function runScenario(scenario: string): ChildResult {
       if (scenario === "retry503") {
         return calls === 1
           ? response(503, { error: "db_resuming" }, { "apigw-requestid": "req-1", "retry-after": "3" })
-          : response(200, { limits: { maxConcurrentSessions: 50 } }, { "x-amzn-requestid": "req-2" });
+          : response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] }, { "x-amzn-requestid": "req-2" });
       }
       if (scenario === "auth401") return response(401, { error: "unauthorized" });
       if (scenario === "lowLimit") return response(200, { limits: { maxConcurrentSessions: 49 } });
-      return response(200, { limits: { maxConcurrentSessions: 50 } });
+      if (scenario === "missingScope") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read"] });
+      return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
     };
     try {
       const env = {
@@ -93,6 +95,7 @@ describe("live user-test preflight", () => {
 
     expect(result.ok).toBe(true);
     expect(result.result).toMatchObject({ status: 200, maxConcurrentSessions: 50, attempt: 2 });
+    expect(result.result?.requiredScopes).toEqual(["sessions:read", "sessions:write", "files:read"]);
     expect(result.calls).toBe(2);
     expect(result.sleeps).toEqual([3000]);
     expect(result.logs).toContain("transient HTTP 503");
@@ -130,6 +133,13 @@ describe("live user-test preflight", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("maxConcurrentSessions=49");
+  });
+
+  it("requires the write/read/file scopes used by live smoke tests", () => {
+    const result = runScenario("missingScope");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("missing required scope(s): sessions:write, files:read");
   });
 
   it("rejects private live endpoints unless explicitly allowed", () => {
