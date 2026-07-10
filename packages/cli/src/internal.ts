@@ -37,13 +37,13 @@ export interface CliIO {
   readonly cwd: () => string;
   /**
    * Walk a directory and return every regular-file entry beneath it
-   * (recursive). Used only by the internal `outputs sync` subcommand
+   * (recursive). Used only by the internal `files sync` subcommand
    * that the hosted runtime invokes from inside a managed session container at
    * session terminal. Returns `null` (not throws) when the directory
-   * does not exist or is unreadable — `outputs sync` records the
+   * does not exist or is unreadable — `files sync` records the
    * miss in its structured output and continues to the next dir.
    */
-  readonly walkDirectory?: (root: string) => Promise<readonly OutputsSyncFileEntry[] | null>;
+  readonly walkDirectory?: (root: string) => Promise<readonly SessionFilesSyncFileEntry[] | null>;
   /**
    * Persistent CLI config store (token + default `--aex-url`). Wired ONLY by
    * the host entrypoint (`cli.ts`), which is the single file allowed to touch
@@ -91,7 +91,7 @@ export interface CliConfigStore {
   clear(): Promise<void>;
 }
 
-export interface OutputsSyncFileEntry {
+export interface SessionFilesSyncFileEntry {
   /** Absolute path inside the container. */
   readonly path: string;
   /** File size in bytes. */

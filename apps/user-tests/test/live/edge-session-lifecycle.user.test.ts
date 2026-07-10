@@ -143,7 +143,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         const probe = "OK-" + Math.random().toString(36).slice(2,8);
         const r = await client.start({
           provider:PROVIDER, model:MODEL,
-          message:"Output verbatim: " + probe,
+          message:"SessionFile verbatim: " + probe,
           idempotencyKey: uid("edge-baseline"),
           apiKeys: gateKeys,
           totallyUnknownOption: { nope: 1 } // must be ignored, not rejected
@@ -174,7 +174,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const key = uid("edge-idem-seq");
-        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"Output verbatim: SEQ", idempotencyKey:key, apiKeys:gateKeys });
+        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: SEQ", idempotencyKey:key, apiKeys:gateKeys });
         const first = await client.start(opts(), { timeoutMs: WAIT });
         const second = await client.start(opts(), { timeoutMs: WAIT });
         print({ sessionId1:first.sessionId, sessionId2:second.sessionId, same:(first.sessionId === second.sessionId), ok1:first.ok, ok2:second.ok, status1:first.status, status2:second.status });
@@ -193,7 +193,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const key = uid("edge-idem-conc");
-        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"Output verbatim: CONC", idempotencyKey:key, apiKeys:gateKeys });
+        const opts = () => ({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: CONC", idempotencyKey:key, apiKeys:gateKeys });
         const settled = await Promise.allSettled([
           client.start(opts(), { timeoutMs: WAIT }),
           client.start(opts(), { timeoutMs: WAIT })
@@ -219,7 +219,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       const body = `
         const r = await client.start({
           provider:PROVIDER, model:MODEL,
-          message:"Output verbatim: DEL",
+          message:"SessionFile verbatim: DEL",
           idempotencyKey: uid("edge-del"),
           apiKeys: gateKeys,
           deleteAfter: true
@@ -273,7 +273,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const probe = "u" + Math.random().toString(36).slice(2,6);
-        const msg = "Output this token verbatim then stop: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
+        const msg = "SessionFile this token verbatim then stop: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
         const r = await client.start({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-unicode"), apiKeys:gateKeys }, { timeoutMs: WAIT });
         const out = { sessionId:r.sessionId, ok:r.ok, status:r.status, probe, denseText: dense(r.text).slice(0,200), textLen: (r.text||"").length };
         print({ ...out, leaked: leaks(out) });
@@ -320,7 +320,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const probe = "arr" + Math.random().toString(36).slice(2,6);
-        const r = await client.start({ provider:PROVIDER, model:MODEL, message:["Output verbatim:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
+        const r = await client.start({ provider:PROVIDER, model:MODEL, message:["SessionFile verbatim:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
         const out = { sessionId:r.sessionId, ok:r.ok, status:r.status, probe, denseText: dense(r.text).slice(0,200), textLen:(r.text||"").length };
         print({ ...out, leaked: leaks(out) });
       `;
@@ -365,7 +365,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         const t0 = Date.now();
         let outcome, res=null, err=null;
         try {
-          const r = await client.start({ provider:PROVIDER, model:MODEL, message:"Output verbatim: TINY", idempotencyKey: uid("edge-tiny"), apiKeys:gateKeys }, { timeoutMs: 1 });
+          const r = await client.start({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: TINY", idempotencyKey: uid("edge-tiny"), apiKeys:gateKeys }, { timeoutMs: 1 });
           outcome = "resolved";
           res = { ok:r.ok, status:r.status, eventCount: Array.isArray(r.events)?r.events.length:null, hasError: !!r.error, error:r.error||null };
         } catch(e) { outcome = "threw"; err = errInfo(e); }

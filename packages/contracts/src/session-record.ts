@@ -5,13 +5,13 @@ import {
   type CustodyRedactionFinding
 } from "./session-custody.js";
 import type { AexEvent } from "./event-envelope.js";
-import type { SessionRecord, Output } from "./runtime-types.js";
+import type { SessionRecord, SessionFile } from "./runtime-types.js";
 import type { PlatformSubmission } from "./submission.js";
 
 export const SESSION_RECORD_SCHEMA_VERSION = "aex.session-record.v1" as const;
 export const SESSION_RECORD_MANIFEST_SCHEMA_VERSION = "aex.session-record.manifest.v1" as const;
 
-export type SessionRecordArchiveNamespaceV1 = "metadata" | "events" | "outputs";
+export type SessionRecordArchiveNamespaceV1 = "metadata" | "events" | "files";
 
 export type SessionRecordFileStatusV1 =
   | "present"
@@ -28,7 +28,7 @@ export type SessionRecordArchiveFileRoleV1 =
   | "custody"
   | "typed_events"
   | "coordinator_events_manifest"
-  | "output";
+  | "file";
 
 export interface SessionRecordSubmissionSnapshotV1 {
   readonly submission: PlatformSubmission;
@@ -56,7 +56,7 @@ export interface SessionRecordV1 {
   readonly sessionId: string;
   readonly metadata: SessionRecordMetadataV1;
   readonly events: SessionRecordEventsV1;
-  readonly outputs: readonly Output[];
+  readonly sessionFiles: readonly SessionFile[];
   readonly manifest: SessionRecordManifestV1;
 }
 
@@ -87,7 +87,7 @@ export interface SessionRecordArtifactSummaryV1 {
 }
 
 export interface SessionRecordDownloadErrorV1 {
-  readonly namespace: "outputs";
+  readonly namespace: "files";
   readonly id: string;
   readonly filename: string | null;
   readonly message: string;
@@ -99,18 +99,14 @@ export interface SessionRecordManifestV1 {
   readonly sessionId: string;
   readonly namespaces: readonly SessionRecordNamespaceV1[];
   readonly files: readonly SessionRecordArchiveFileV1[];
-  /**
-   * Compatibility aliases for existing consumers of `manifest.json`.
-   * Prefer `files[]` for new code because it carries namespace, role, and
-   * presence state for optional session-record members.
-   */
-  readonly outputs: readonly SessionRecordArtifactSummaryV1[];
+  /** Captured session files included in the archive. */
+  readonly sessionFiles: readonly SessionRecordArtifactSummaryV1[];
   readonly errors: readonly SessionRecordDownloadErrorV1[];
 }
 
 export interface BuildSessionRecordDownloadManifestV1Input {
   readonly sessionId: string;
-  readonly outputs: readonly SessionRecordArtifactSummaryV1[];
+  readonly sessionFiles: readonly SessionRecordArtifactSummaryV1[];
   readonly errors?: readonly SessionRecordDownloadErrorV1[];
   readonly typedEventCount?: number;
   readonly submission?: SessionRecordFileManifestInputV1;
@@ -129,7 +125,7 @@ export interface SessionRecordArchiveEntryForRedactionV1 {
   readonly bytes: Uint8Array;
   readonly contentType?: string;
   /**
-   * Customer-authored output bytes are intentionally outside the public-record
+   * Customer-authored file bytes are intentionally outside the public-record
    * redaction guarantee. Metadata, event exports, and manifests remain scanned.
    */
   readonly customerContent?: boolean;
@@ -156,7 +152,7 @@ export class SessionRecordArchiveRedactionError extends Error {
 export function buildSessionRecordDownloadManifestV1(
   input: BuildSessionRecordDownloadManifestV1Input
 ): SessionRecordManifestV1 {
-  const outputs = input.outputs.map((file) => normalizeArtifactSummary(file));
+  const sessionFiles = input.sessionFiles.map((file) => normalizeArtifactSummary(file));
   const errors = (input.errors ?? []).map((error) => Object.freeze({ ...error }));
 
   return Object.freeze({
@@ -166,7 +162,7 @@ export function buildSessionRecordDownloadManifestV1(
     namespaces: Object.freeze([
       namespace("metadata", "SessionRecord metadata, submission snapshot, custody, and cost files."),
       namespace("events", "Typed event-channel exports."),
-      namespace("outputs", "Captured deliverables produced by the session.")
+      namespace("files", "Captured files produced by the session.")
     ]),
     files: Object.freeze([
       file("metadata", "metadata/session.json", "session_metadata", "present"),
@@ -182,11 +178,11 @@ export function buildSessionRecordDownloadManifestV1(
         "coordinator_events_manifest",
         input.coordinatorEventsManifest?.status ?? "unavailable"
       ),
-      ...outputs.map((output) =>
-        artifactFile("outputs", "output", "outputs/", output)
+      ...sessionFiles.map((fileSummary) =>
+        artifactFile("files", "file", "files/", fileSummary)
       )
     ]),
-    outputs: Object.freeze(outputs),
+    sessionFiles: Object.freeze(sessionFiles),
     errors: Object.freeze(errors)
   });
 }
@@ -220,9 +216,9 @@ function file(
 }
 
 function artifactFile(
-  namespaceName: "outputs",
-  role: "output",
-  prefix: "outputs/",
+  namespaceName: "files",
+  role: "file",
+  prefix: "files/",
   artifact: SessionRecordArtifactSummaryV1
 ): SessionRecordArchiveFileV1 {
   return Object.freeze({
@@ -271,7 +267,7 @@ export function assertSessionRecordArchivePublicSafeV1(
 }
 
 function shouldScanArchiveEntry(entry: SessionRecordArchiveEntryForRedactionV1): boolean {
-  if (entry.path.startsWith("outputs/")) {
+  if (entry.path.startsWith("files/")) {
     return false;
   }
   const contentType = entry.contentType?.toLowerCase() ?? "";
@@ -319,7 +315,7 @@ function isAllowedArchiveHighEntropyField(
   if (finding.reason !== "high_entropy_token" || !entryPath.endsWith("manifest.json")) {
     return false;
   }
-  return /^\$(?:\.files\[\d+\]|\.outputs\[\d+\])\.id$/.test(finding.path);
+  return /^\$(?:\.files\[\d+\]|\.sessionFiles\[\d+\])\.id$/.test(finding.path);
 }
 
 function parseArchiveTextValues(

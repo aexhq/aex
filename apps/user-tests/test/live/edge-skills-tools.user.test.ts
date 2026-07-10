@@ -451,7 +451,7 @@ await runOne({
 await runOne({
   provider: PROVIDER,
   model: MODEL,
-  message: "Output verbatim: ${marker}",
+  message: "SessionFile verbatim: ${marker}",
   includeBuiltinTools: false,
   tools: [],
   apiKeys: { [PROVIDER]: PROVIDER_KEY },

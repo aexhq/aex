@@ -3,7 +3,7 @@
  *
  * One canonical struct that captures every non-secret artifact persisted
  * for a single session: parsed submission inputs, status/lifecycle, attempts,
- * indexed events, raw-event Storage manifest, outputs, and capture failures.
+ * indexed events, raw-event Storage manifest, session files, and capture failures.
  *
  * Wire contract for `GET /api/sessions/:sessionId`, the per-session archive's
  * `session.json`/`submission.json`/`caps.json`, and the SDK/CLI
@@ -109,14 +109,14 @@ export interface SessionUnitRawEventPage {
   readonly createdAt: string;
 }
 
-export interface SessionUnitOutput {
+export interface SessionUnitFile {
   readonly id: string;
   readonly fileName: string;
   readonly byteSize: number;
   readonly contentType?: string;
 }
 
-export interface SessionUnitOutputCaptureFailure {
+export interface SessionUnitFileCaptureFailure {
   readonly id: string;
   readonly providerFileId?: string;
   readonly filename?: string;
@@ -147,8 +147,8 @@ export interface SessionUnit {
   readonly attempts: readonly SessionUnitAttempt[];
   readonly events: SessionUnitEventPage;
   readonly rawEventPages: readonly SessionUnitRawEventPage[];
-  readonly outputs: readonly SessionUnitOutput[];
-  readonly outputCaptureFailures: readonly SessionUnitOutputCaptureFailure[];
+  readonly sessionFiles: readonly SessionUnitFile[];
+  readonly fileCaptureFailures: readonly SessionUnitFileCaptureFailure[];
   readonly costTelemetry?: import("./session-cost.js").SessionCostTelemetry;
   /**
    * Per-session, per-provider runtime manifest — derived from the validated
@@ -189,13 +189,13 @@ export function parseSessionUnitSubmission(input: unknown, fallbackModel?: unkno
 
 function parseFlatProjection(value: Record<string, unknown>, fallbackModel?: unknown): SessionUnitFlatSubmission {
   const submissionRaw = isRecord(value.submission) ? value.submission : {};
-  const outputsRaw = isRecord(submissionRaw.outputs) ? submissionRaw.outputs : {};
-  const allowedDirs = toOptionalStringArray(outputsRaw.allowedDirs);
-  const deniedDirs = toOptionalStringArray(outputsRaw.deniedDirs);
-  const captureTimeoutMs = toOptionalPositiveInteger(outputsRaw.captureTimeoutMs);
-  const maxFileBytes = toOptionalPositiveInteger(outputsRaw.maxFileBytes);
-  const maxTotalBytes = toOptionalPositiveInteger(outputsRaw.maxTotalBytes);
-  const maxFiles = toOptionalPositiveInteger(outputsRaw.maxFiles);
+  const fileCaptureRaw = isRecord(submissionRaw.fileCapture) ? submissionRaw.fileCapture : {};
+  const allowedDirs = toOptionalStringArray(fileCaptureRaw.allowedDirs);
+  const deniedDirs = toOptionalStringArray(fileCaptureRaw.deniedDirs);
+  const captureTimeoutMs = toOptionalPositiveInteger(fileCaptureRaw.captureTimeoutMs);
+  const maxFileBytes = toOptionalPositiveInteger(fileCaptureRaw.maxFileBytes);
+  const maxTotalBytes = toOptionalPositiveInteger(fileCaptureRaw.maxTotalBytes);
+  const maxFiles = toOptionalPositiveInteger(fileCaptureRaw.maxFiles);
   const submission: PlatformSubmission = {
     model: coerceSessionUnitModel(submissionRaw.model ?? fallbackModel),
     ...(typeof submissionRaw.system === "string" ? { system: submissionRaw.system } : {}),
@@ -218,7 +218,7 @@ function parseFlatProjection(value: Record<string, unknown>, fallbackModel?: unk
     maxTotalBytes !== undefined ||
     maxFiles !== undefined
       ? {
-          outputs: {
+          fileCapture: {
             ...(allowedDirs ? { allowedDirs } : {}),
             ...(deniedDirs ? { deniedDirs } : {}),
             ...(captureTimeoutMs !== undefined ? { captureTimeoutMs } : {}),
@@ -272,11 +272,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Normalize a `GET /api/sessions/:sessionId` payload into a SessionUnit whose type contract
  * holds AT RUNTIME. The managed (AWS) plane returns a LEAN record (scalars +
  * costTelemetry only) and omits the aggregate collections; the SessionUnit type
- * declares those non-optional, so a naive cast leaves `unit.outputs` /
+ * declares those non-optional, so a naive cast leaves `unit.sessionFiles` /
  * `unit.events.totalCount` `undefined` and a typed consumer crashes on
  * `.map()` / `.totalCount` (pre-launch edge-sweep F25). We fill the aggregates
  * with their empty defaults so array/page access is always safe. NOTE: on the
- * managed plane these summaries are best-effort — read `outputs()` / `events()`
+ * managed plane these summaries are best-effort — read `files()` / `events()`
  * / `messages()` for the authoritative per-session data.
  */
 export function normalizeSessionUnit(raw: unknown): SessionUnit {
@@ -316,8 +316,8 @@ export function normalizeSessionUnit(raw: unknown): SessionUnit {
       ...(str(eventsRaw.nextCursor) ? { nextCursor: eventsRaw.nextCursor as string } : {})
     },
     rawEventPages: arr<SessionUnitRawEventPage>(r.rawEventPages),
-    outputs: arr<SessionUnitOutput>(r.outputs),
-    outputCaptureFailures: arr<SessionUnitOutputCaptureFailure>(r.outputCaptureFailures),
+    sessionFiles: arr<SessionUnitFile>(r.sessionFiles),
+    fileCaptureFailures: arr<SessionUnitFileCaptureFailure>(r.fileCaptureFailures),
     ...(isRecord(r.costTelemetry)
       ? { costTelemetry: r.costTelemetry as unknown as NonNullable<SessionUnit["costTelemetry"]> }
       : {}),

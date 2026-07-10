@@ -68,7 +68,7 @@ export function runDiagnostics(result: SdkSessionResult): string {
     `assistantText=${JSON.stringify(result.assistantText).slice(0, 500)}`,
     `toolResultText=${JSON.stringify(result.toolResultText).slice(0, 500)}`,
     `streamErrors=${JSON.stringify(result.streamErrors).slice(0, 500)}`,
-    `outputCount=${result.outputCount}`
+    `fileCount=${result.fileCount}`
   ].join("\n");
 }
 
@@ -83,7 +83,7 @@ export interface SdkSessionResult {
   readonly toolResultText: string;
   readonly eventKinds: readonly string[];
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
-  readonly outputCount: number;
+  readonly fileCount: number;
 }
 
 /**
@@ -99,7 +99,7 @@ const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 
 /**
  * Read the settle-consistent SessionResult that `client.start(...)` returns
- * (events/outputs/text are already collected — no poll loop) + print the
+ * (events/files/text are already collected — no poll loop) + print the
  * standard result JSON.
  */
 const TAIL = `
@@ -119,16 +119,16 @@ try {
 } catch {
   events = fallbackEvents;
 }
-const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
-let outputs = fallbackOutputs;
+const fallbackFiles = Array.isArray(result.files) ? result.files : [];
+let files = fallbackFiles;
 if (listedSession) {
   try {
-    const listedOutputs = await listedSession.outputs().list();
-    if (Array.isArray(listedOutputs)) {
-      outputs = listedOutputs;
+    const listedFiles = await listedSession.files().list();
+    if (Array.isArray(listedFiles)) {
+      files = listedFiles;
     }
   } catch {
-    outputs = fallbackOutputs;
+    files = fallbackFiles;
   }
 }
 const text = typeof result.text === "string" ? result.text : "";
@@ -188,7 +188,7 @@ process.stdout.write(JSON.stringify({
   toolResultText,
   eventKinds,
   streamErrors,
-  outputCount: outputs.length
+  fileCount: files.length
 }));
 `;
 

@@ -1,6 +1,6 @@
 ---
 title: "Integrations"
-description: "Public integration points for providers, MCP servers, skills, files, webhooks, and outputs."
+description: "Public integration points for providers, MCP servers, skills, files, webhooks, and files."
 ---
 
 # Integrations
@@ -27,6 +27,6 @@ Register workspace MCP servers in the dashboard, then reference them by id from 
 
 Attach reusable behavior with [skills](/docs/guides/skills/), mount files with [run configuration](/docs/guides/session-config/), and include AGENTS.md context with [composition](/docs/concepts/composition/).
 
-## Webhooks and outputs
+## Webhooks and files
 
-Use [webhooks](/docs/guides/webhooks/) for terminal callbacks and [outputs](/docs/guides/outputs/) for captured files, links, downloads, and search.
+Use [webhooks](/docs/guides/webhooks/) for terminal callbacks and [files](/docs/guides/files/) for captured files, links, downloads, and search.

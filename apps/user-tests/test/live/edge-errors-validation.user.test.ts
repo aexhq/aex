@@ -8,7 +8,7 @@
  *   1. Garbage apiKey → `whoami()` rejects with a typed AexApiError, status 401
  *      (or 403) — a clean auth reject, never an opaque throw or a hang.
  *   2. Valid apiKey → `whoami()` resolves to a workspace-identity object.
- *   3. Nonexistent sessionId → `sessions.open/get` and `sessions.outputs(id).list()`
+ *   3. Nonexistent sessionId → `sessions.open/get` and `sessions.files(id).list()`
  *      reject with a typed AexApiError 4xx (a clean 404, never a 5xx).
  *   4. Client-side malformed session config (missing model / empty message / missing
  *      apiKeys / legacy field / provider-model mismatch) fails fast with a typed
@@ -49,7 +49,7 @@ interface EdgeResult {
   readonly missingBearer: TokenReject;
   readonly wellFormedUnauthToken: TokenReject;
   readonly validWhoami: { ok: boolean; isObject: boolean; keyCount: number };
-  readonly missingSession: { open: EdgeErr; get: EdgeErr; outputs: EdgeErr };
+  readonly missingSession: { open: EdgeErr; get: EdgeErr; files: EdgeErr };
   readonly validation: Record<string, EdgeErr>;
   readonly missingApiKeyCtor: { name: string | null; isAexError: boolean; message: string | null };
   readonly unreachable: { rejected: boolean; isApiError: boolean; name: string | null; elapsedMs: number };
@@ -195,7 +195,7 @@ try {
   validWhoami = { ok: false, isObject: false, keyCount: 0, error: REDACT(String(err && err.message)) };
 }
 
-// (3) Nonexistent session id → typed AexApiError 4xx on open/get/outputs.
+// (3) Nonexistent session id → typed AexApiError 4xx on open/get/files.
 async function capture(fn, includeStatus) {
   try { await fn(); return { rejected: false }; }
   catch (err) { return describeErr(err, includeStatus); }
@@ -203,7 +203,7 @@ async function capture(fn, includeStatus) {
 const missingSession = {
   open: await capture(() => client.sessions.open(bogusSession), true),
   get: await capture(() => client.sessions.get(bogusSession), true),
-  outputs: await capture(() => client.sessions.outputs(bogusSession).list(), true)
+  files: await capture(() => client.sessions.files(bogusSession).list(), true)
 };
 
 // (4) Client-side malformed session config → typed SessionConfigValidationError, no network.
@@ -310,7 +310,7 @@ process.exit(0);
       expect(result.validWhoami.keyCount).toBeGreaterThan(0);
 
       // (3) Nonexistent session → typed 4xx (clean 404), never a 5xx.
-      for (const key of ["open", "get", "outputs"] as const) {
+      for (const key of ["open", "get", "files"] as const) {
         const e = result.missingSession[key];
         expect(e.rejected, `sessions.${key} should reject for a bogus id`).toBe(true);
         expect(e.isApiError, `sessions.${key} error should be AexApiError`).toBe(true);

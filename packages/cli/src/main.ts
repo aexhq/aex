@@ -12,8 +12,8 @@
  *     - `aex events <session-id> [--follow] [--timeout <dur>]`
  *     - `aex tail <session-id> [--json] [--filter ...] [--logs] [--settle] [--timeout <dur>]`
  *     - `aex inspect <session-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
- *     - `aex outputs <session-id>`
- *     - `aex download <session-id> [--only outputs|events|metadata] [--out path]`
+ *     - `aex files <session-id>`
+ *     - `aex download <session-id> [--only files|events|metadata] [--out path]`
  *     - `aex cancel <session-id>`
  *     - `aex delete <session-id>`
  *     - `aex sessions [--limit <n>] [--since <iso>]`
@@ -32,7 +32,7 @@
  */
 import { PROVIDERS } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
-import { executeOutputsSyncCmd } from "./outputs-sync.js";
+import { executeFilesSyncCmd } from "./files-sync.js";
 import { findVerbSpec, renderVerbHelp, wantsVerbHelp } from "./host/registry.js";
 import {
   RUNTIME_ERR,
@@ -44,7 +44,7 @@ import {
   executeDeleteAssetCmd,
   executeDownloadCmd,
   executeEventsCmd,
-  executeOutputsCmd,
+  executeSessionFilesCmd,
   executeStartCmd,
   executeStatusCmd,
   executeDeliveriesCmd,
@@ -93,9 +93,9 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
   const rest = args.slice(1);
   // Per-verb `--help`/`-h`: rendered from the static verb registry BEFORE the
   // auth-requiring handler executes, so discovering a verb's flags never needs an
-  // API key (T6f). The `outputs sync` in-container internal verb is exempt.
+  // API key (T6f). The `files sync` in-container internal verb is exempt.
   const spec = sub === undefined ? undefined : findVerbSpec(sub);
-  if (spec && wantsVerbHelp(rest) && !(sub === "outputs" && rest[0] === "sync")) {
+  if (spec && wantsVerbHelp(rest) && !(sub === "files" && rest[0] === "sync")) {
     io.stdout(renderVerbHelp(spec));
     return SUCCESS;
   }
@@ -116,19 +116,19 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
     case "inspect":
       // One-shot full-timeline render + summary/jump-to-failure (WS stream).
       return executeInspectCmd(io, rest);
-    case "outputs":
-      // `outputs sync <dirs>` is the legacy in-container internal
-      // capture walker. The bare `outputs <session-id>` form is the
+    case "files":
+      // `files sync <dirs>` is the legacy in-container internal
+      // capture walker. The bare `files <session-id>` form is the
       // host-side list verb. We
       // distinguish on the first sub-arg rather than on
       // manifest-presence so a misconfigured host invocation
-      // (e.g. `aex outputs sync ...` on a developer machine)
+      // (e.g. `aex files sync ...` on a developer machine)
       // produces a clear "in-container only" error instead of
       // silently routing to the wrong handler.
       if (rest[0] === "sync") {
-        return executeOutputsSyncCmd(io, rest.slice(1));
+        return executeFilesSyncCmd(io, rest.slice(1));
       }
-      return executeOutputsCmd(io, rest);
+      return executeSessionFilesCmd(io, rest);
     case "download":
       return executeDownloadCmd(io, rest);
     case "cancel":
@@ -174,7 +174,7 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
 
 async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   // Host-side help: the unified surface over the aex SDK. Capability parity
-  // (every SDK method/session-option/outputs accessor has a verb/flag) is enforced
+  // (every SDK method/session-option/files accessor has a verb/flag) is enforced
   // by the conformance `cli-sdk-parity` manifest test.
   io.stdout("aex — unified CLI for the aex platform (a thin pass-through over the SDK)\n\n");
   io.stdout("Usage:\n");
@@ -186,8 +186,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex events <session-id> [--follow] [--timeout 8m] --api-key T\n");
   io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-key T\n");
   io.stdout("  aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key T\n");
-  io.stdout("  aex outputs <session-id> --api-key T\n");
-  io.stdout("  aex download <session-id> [--only outputs|events|metadata] [--out path] --api-key T\n");
+  io.stdout("  aex files <session-id> --api-key T\n");
+  io.stdout("  aex download <session-id> [--only files|events|metadata] [--out path] --api-key T\n");
   io.stdout("  aex cancel <session-id> --api-key T\n");
   io.stdout("  aex delete <session-id> --api-key T\n");
   io.stdout("  aex delete-asset <assetId|hash> --api-key T\n");

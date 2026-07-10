@@ -14,7 +14,7 @@ export const SESSION_CONTROL_STATUSES = [
   "deleted",
   "expired",
   "cancelling",
-  "capturing_outputs",
+  "capturing_files",
   "cleaning_up",
   "succeeded",
   "failed",

@@ -135,8 +135,8 @@ function harness(
     if (url.endsWith("/api/sessions/session-1/events/ticket")) {
       return json({ wsUrl: "wss://events.example.test/sessions/session-1", ticket: "ticket", expiresAtMs: 1 });
     }
-    if (url.endsWith("/api/sessions/session-1/outputs")) {
-      return json({ outputs: [] });
+    if (url.endsWith("/api/sessions/session-1/files")) {
+      return json({ files: [] });
     }
     if (url.endsWith("/api/sessions/session-1/messages")) {
       return json({

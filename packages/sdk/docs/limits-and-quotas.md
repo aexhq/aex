@@ -33,7 +33,7 @@ And whether you can **raise** it: per-session option, per-plan, or no.
 | Per-session spend cap | None by default; when set, the session is stopped once its spend would exceed the cap | aex policy | Per-session via `overrides.maxSpendUsd` (a positive USD amount) | — |
 | Max agent iterations (turns) per session | 20 by default; hard ceiling 200 | aex policy | Per-session via `overrides.maxTurns` (a positive integer, clamped to the ceiling) | `SESSION_DEFAULT_MAX_TURNS` / `SESSION_MAX_TURNS_CEILING` |
 
-### Output capture (per session)
+### SessionFile capture (per session)
 
 Files stream from the container to object storage one at a time. When a cap is
 reached, remaining files are **dropped and counted in the summary**, never
@@ -127,7 +127,7 @@ per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
 | --- | --- | --- | --- |
 | SessionRecord cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | SessionRecord delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
-| Signed output link | 120 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| Signed file link | 120 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API key create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API key delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 
@@ -145,5 +145,5 @@ before submitting. See [Authentication](authentication.md) and
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Signed output URL TTL | 300 seconds | aex policy | Per-call via `expiresSeconds` | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
+| Signed file URL TTL | 300 seconds | aex policy | Per-call via `expiresSeconds` | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
 | Event-stream connection ticket TTL | 60 seconds | aex policy | Per-mint via `ttlMs` | `REQUEST_TICKET_DEFAULT_TTL_MS` |

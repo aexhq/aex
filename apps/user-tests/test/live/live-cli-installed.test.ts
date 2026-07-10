@@ -152,7 +152,7 @@ describe("live hosted API via installed CLI", () => {
     });
   }
 
-  it("submits with run --follow, then reads status/events/outputs/wait/download through the installed binary", async () => {
+  it("submits with run --follow, then reads status/events/files/wait/download through the installed binary", async () => {
     const diagnostics: string[] = [];
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -219,11 +219,11 @@ describe("live hosted API via installed CLI", () => {
       }
       expect(visibleText, `${commandDiagnostic("aex events", events)}\n\nprior attempts:\n${diagnostics.join("\n\n")}`).toContain(marker);
 
-      const outputs = await executeCli(["outputs", sessionId as string, ...commonArgs()]);
-      expect(outputs.exitCode, commandDiagnostic("aex outputs", outputs)).toBe(0);
-      const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
+      const files = await executeCli(["files", sessionId as string, ...commonArgs()]);
+      expect(files.exitCode, commandDiagnostic("aex files", files)).toBe(0);
+      const outputRows = files.stdout.trim().length > 0 ? parseJsonLines(files.stdout) : [];
       for (const output of outputRows) {
-        expect(typeof output["id"], commandDiagnostic("aex outputs", outputs)).toBe("string");
+        expect(typeof output["id"], commandDiagnostic("aex files", files)).toBe("string");
       }
 
       const archivePath = join(install.installDir, `live-cli-events-${sessionId}.zip`);

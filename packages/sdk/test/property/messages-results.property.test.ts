@@ -178,8 +178,8 @@ function captureSessionClient(firstSeq: number): {
         expiresAtMs: Date.now() + 60_000
       });
     }
-    if (call.method === "GET" && call.pathname === "/api/sessions/sess_1/outputs") {
-      return json({ outputs: [] });
+    if (call.method === "GET" && call.pathname === "/api/sessions/sess_1/files") {
+      return json({ files: [] });
     }
     throw new Error(`unexpected SDK request: ${call.method} ${call.pathname}${call.search}`);
   };
@@ -704,19 +704,19 @@ describe("slim session messages/results properties", () => {
   it("keeps run and session-send results consistent for text, messages, events, and trace", async () => {
     await fc.assert(
       fc.asyncProperty(resultStreamCase, async (generated) => {
-        const sessionResult = await collectSessionSend(generated.events, generated.firstSeq);
-        const sessionResult = await collectRun(generated.events, generated.firstSeq);
+        const sessionSendResult = await collectSessionSend(generated.events, generated.firstSeq);
+        const runResult = await collectRun(generated.events, generated.firstSeq);
         const expectedEvents = generated.events;
         const expectedText = assistantText(expectedEvents);
         const expectedMessages = projectedMessages(expectedEvents);
 
-        expect(sessionResult.text).toBe(expectedText);
-        expect(sessionResult.text).toBe(expectedText);
-        expect(sessionResult.messages).toEqual(expectedMessages);
-        expect(sessionResult.messages).toEqual(expectedMessages);
-        expect(sessionResult.events).toEqual(expectedEvents);
-        expect(sessionResult.events).toEqual(expectedEvents);
-        expect(sessionResult.trace).toEqual(expectedTrace(expectedEvents));
+        expect(sessionSendResult.text).toBe(expectedText);
+        expect(runResult.text).toBe(expectedText);
+        expect(sessionSendResult.messages).toEqual(expectedMessages);
+        expect(runResult.messages).toEqual(expectedMessages);
+        expect(sessionSendResult.events).toEqual(expectedEvents);
+        expect(runResult.events).toEqual(expectedEvents);
+        expect(runResult.trace).toEqual(expectedTrace(expectedEvents));
       }),
       { numRuns: 120 }
     );

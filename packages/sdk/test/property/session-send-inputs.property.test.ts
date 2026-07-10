@@ -117,8 +117,8 @@ function makeHarness(): Harness {
         expiresAtMs: 1
       });
     }
-    if (method === "GET" && url.endsWith(`/api/sessions/${SESSION_ID}/outputs`)) {
-      return json({ outputs: [{ id: "out_property", filename: "answer.txt" }] });
+    if (method === "GET" && url.endsWith(`/api/sessions/${SESSION_ID}/files`)) {
+      return json({ files: [{ id: "out_property", filename: "answer.txt" }] });
     }
     if (method === "GET" && url.endsWith(`/api/sessions/${SESSION_ID}`)) {
       return json({
@@ -301,7 +301,7 @@ function assertTurnEventProjection(result: SessionResult, specs: readonly TextEv
   ]);
   expect(result.trace.text).toEqual(expectedTraceText(specs));
   expect(result.trace.toolCalls).toEqual([]);
-  expect(result.outputs).toEqual([{ id: "out_property", filename: "answer.txt" }]);
+  expect(result.files).toEqual([{ id: "out_property", filename: "answer.txt" }]);
   expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 5, totalTokens: 8 });
   expect(result.costUsd).toBe(0.001);
 }

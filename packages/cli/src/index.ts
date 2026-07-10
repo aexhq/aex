@@ -10,7 +10,7 @@ export type { CliIO } from "./internal.js";
 export {
   CLI_VERBS,
   CLI_VERB_NAMES,
-  OUTPUTS_SUBVERBS,
+  FILES_SUBVERBS,
   START_FLAGS,
   findVerbSpec
 } from "./host/registry.js";

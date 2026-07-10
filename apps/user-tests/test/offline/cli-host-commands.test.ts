@@ -173,13 +173,13 @@ async function startFakeApi(): Promise<FakeApi> {
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/outputs") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/files") {
       json(res, 200, {
-        outputs: [{ id: "out-1", filename: "report.txt", sizeBytes: 11, contentType: "text/plain" }]
+        files: [{ id: "out-1", filename: "report.txt", sizeBytes: 11, contentType: "text/plain" }]
       });
       return;
     }
-    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/outputs/out-1/download") {
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/files/out-1/download") {
       bytes(res, 200, strToU8("hello world"), "text/plain");
       return;
     }
@@ -216,13 +216,13 @@ describe("installed CLI host commands", () => {
     install?.cleanup();
   });
 
-  it("sessions run/status/events/wait/download/cancel through the installed binary", async () => {
+  it("sessions start/status/events/wait/download/cancel through the installed binary", async () => {
     const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
 
     const run = await runCommand(
       binPath,
       [
-        "run",
+        "start",
         "--provider",
         "deepseek",
         "--model",
@@ -294,11 +294,11 @@ describe("installed CLI host commands", () => {
     const entries = unzipSync(new Uint8Array(readFileSync(outPath)));
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
+      "files/report.txt",
       "manifest.json",
-      "metadata/session.json",
-      "outputs/report.txt"
+      "metadata/session.json"
     ]);
-    expect(new TextDecoder().decode(entries["outputs/report.txt"]!)).toBe("hello world");
+    expect(new TextDecoder().decode(entries["files/report.txt"]!)).toBe("hello world");
 
     const cancel = await runCommand(binPath, ["cancel", "session-cli-1", ...common], {
       cwd: install.installDir,
@@ -321,8 +321,8 @@ describe("installed CLI host commands", () => {
         // download assembles the public zip from the session-namespaced read endpoints
         "GET /api/sessions/session-cli-1",
         "GET /api/sessions/session-cli-1/events",
-        "GET /api/sessions/session-cli-1/outputs",
-        "GET /api/sessions/session-cli-1/outputs/out-1/download"
+        "GET /api/sessions/session-cli-1/files",
+        "GET /api/sessions/session-cli-1/files/out-1/download"
       ])
     );
 

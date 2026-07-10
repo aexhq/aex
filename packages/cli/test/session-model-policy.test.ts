@@ -32,7 +32,7 @@ describe("aex start model policy (T6c/T6g — SDK arbitrates, no SUPPORTED_MODEL
   it("accepts a forward-compat unknown model when --provider is explicit", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "future-model-x",
         "--provider", "deepseek",
         "--deepseek-api-key", "sk-ds-1",
@@ -52,7 +52,7 @@ describe("aex start model policy (T6c/T6g — SDK arbitrates, no SUPPORTED_MODEL
   it("emits a shared did-you-mean hint for a typo'd known model (no --provider)", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "deepseek-v4-flsh",
         "--deepseek-api-key", "sk-ds-1",
         "--prompt", "hi",

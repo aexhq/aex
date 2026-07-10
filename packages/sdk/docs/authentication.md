@@ -77,7 +77,7 @@ missing scope. The customer-grantable scopes:
 | `sessions:write` | Open sessions, send turns, submit sessions, suspend/resume, redeliver webhooks, reveal the webhook signing secret. |
 | `sessions:cancel` | Cancel a session/run. |
 | `sessions:delete` | Delete a session/session record. |
-| `outputs:read` | List, read, download, and mint links for captured outputs. |
+| `files:read` | List, read, download, and mint links for captured files. |
 | `files:write` | Upload asset bytes (files, skills, AGENTS.md) staged for a session. |
 | `files:delete` | Delete workspace asset-store entries. |
 | `secrets:read` | List workspace secrets and read their metadata (never values). |
@@ -95,7 +95,7 @@ and AGENTS.md asset uploads are covered by `files:write` — so treat them as
 inert placeholders for future per-asset-type routes.
 
 A typical automation token carries `sessions:read`, `sessions:write`, and
-`outputs:read`. Grant the rest only where the workload needs them — a read-only
+`files:read`. Grant the rest only where the workload needs them — a read-only
 reporting token, for example, needs no `sessions:write`.
 
 ## Introspection: `whoami`

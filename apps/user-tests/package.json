@@ -5,15 +5,15 @@
   "type": "module",
   "description": "Layer-4 'user tests' — exercise the packed/published aex artifact in a clean install tree, the way a real user or AI agent would on day one. Product SDK/CLI access goes through a child process whose cwd is a fresh `bun install` tempdir; the harness may import shared conformance matchers.",
   "scripts": {
-    "test:user": "bun scripts/session-user-vitest.mjs --config vitest.config.ts test",
-    "test:user:files": "bun scripts/session-user-vitest.mjs --config vitest.config.ts",
-    "test:user:smoke": "bun scripts/session-user-vitest.mjs --config vitest.smoke.config.ts",
-    "test:user:admission-gates": "bun scripts/session-user-vitest.mjs --config vitest.admission-gates.config.ts",
-    "test:user:offline": "bun scripts/session-user-vitest.mjs --config vitest.offline.config.ts",
-    "test:user:heavy": "bun scripts/session-user-vitest.mjs --config vitest.heavy.config.ts",
-    "test:user:providers": "bun scripts/session-user-vitest.mjs --config vitest.providers.config.ts",
+    "test:user": "bun scripts/user-vitest.mjs --config vitest.config.ts test",
+    "test:user:files": "bun scripts/user-vitest.mjs --config vitest.config.ts",
+    "test:user:smoke": "bun scripts/user-vitest.mjs --config vitest.smoke.config.ts",
+    "test:user:admission-gates": "bun scripts/user-vitest.mjs --config vitest.admission-gates.config.ts",
+    "test:user:offline": "bun scripts/user-vitest.mjs --config vitest.offline.config.ts",
+    "test:user:heavy": "bun scripts/user-vitest.mjs --config vitest.heavy.config.ts",
+    "test:user:providers": "bun scripts/user-vitest.mjs --config vitest.providers.config.ts",
     "test:user:fuzz": "vitest run --config vitest.fuzz.config.ts",
-    "test:user:tool-fuzz": "bun scripts/session-user-vitest.mjs --config vitest.tool-fuzz.config.ts",
+    "test:user:tool-fuzz": "bun scripts/user-vitest.mjs --config vitest.tool-fuzz.config.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

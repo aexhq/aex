@@ -35,11 +35,11 @@ putting the whole response in model context:
 2. Keep any upstream HTTPS credentials in `environment.secrets`.
 3. Have the CLI write the full payload to the session filesystem. By default,
    files it creates or modifies are captured automatically; pass
-   `outputs.allowedDirs` only when you want to narrow capture to specific roots.
+   `fileCapture.allowedDirs` only when you want to narrow capture to specific roots.
    Return only a small handle (path, item count, summary) to the model.
 
 The agent sees the handle in context; the bytes ride out through
-`download()` as a normal captured output.
+`download()` as normal captured files.
 
 If you genuinely want everything in context (small responses, code
 search, etc.), use MCP. If the payload would blow your context budget,

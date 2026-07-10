@@ -13,7 +13,7 @@ interface SpawnInvocation {
 }
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const runUserVitestUrl = pathToFileURL(resolve(repoRoot, "apps/user-tests/scripts/session-user-vitest.mjs")).href;
+const runUserVitestUrl = pathToFileURL(resolve(repoRoot, "apps/user-tests/scripts/user-vitest.mjs")).href;
 
 function callUserVitestHelper(expression: string): SpawnInvocation {
   const code = [
@@ -29,7 +29,7 @@ function callUserVitestHelper(expression: string): SpawnInvocation {
   ) as SpawnInvocation;
 }
 
-describe("session-user-vitest argv spawning", () => {
+describe("user-vitest argv spawning", () => {
   it("keeps --testNamePattern values with spaces in one argv element", () => {
     const command = process.platform === "win32" ? "C:\\tools\\bun.exe" : "/usr/local/bin/bun";
     const pattern = "seeded file/navigation case covers read write edit";

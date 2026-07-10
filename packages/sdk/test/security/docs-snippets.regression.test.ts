@@ -9,7 +9,7 @@
  * removed or nonexistent helpers (`Skill.fromId(...)`, `uploadIfChanged(...)`,
  * two-arg `submit(...)`, etc.). The session redesign then DELETED `submit()` and
  * the entire session-id-addressed client surface (`getSessionRecord` / `stream` / `wait` /
- * `listSessionRecords` / `readOutputText` / `download*` / `cancel` on the client) and
+ * `listSessionRecords` / `readSessionFileText` / `download*` / `cancel` on the client) and
  * folded everything into sessions. The docs must teach the session surface and
  * must not resurrect the removed one.
  *
@@ -86,16 +86,16 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       if (!isFn(Aex.prototype, key)) missing.push(`Aex.prototype.${key}`);
     }
     // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
-    // `outputs(id)` returns the SAME accessor as `session.outputs()` (shape
-    // checked below), so id-addressed reads use `sessions.outputs(id).read(...)`.
-    // Cross-session output search RELOCATED to `aex.outputs.search()` (WS6); the old
-    // `sessions.searchOutputs` is gone.
-    for (const key of ["create", "open", "get", "list", "outputs", "start"]) {
+    // `files(id)` returns the SAME accessor as `session.files()` (shape
+    // checked below), so id-addressed reads use `sessions.files(id).read(...)`.
+    // Cross-session file search lives at `aex.files.search()`; the old
+    // `sessions.searchFiles` is gone.
+    for (const key of ["create", "open", "get", "list", "files", "start"]) {
       if (!isFn(SessionClient.prototype, key)) missing.push(`SessionClient.prototype.${key}`);
     }
     // The lifecycle verbs a `session` handle keeps FLAT in the docs. The read /
     // stream / download surface was regrouped into accessor sub-resources
-    // (`session.messages()/events()/outputs()/webhooks()`), checked below.
+    // (`session.messages()/events()/files()/webhooks()`), checked below.
     for (const key of [
       "send",
       "refresh",
@@ -108,7 +108,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       "download",
       "downloadMetadata",
       "events",
-      "outputs",
+      "files",
       "webhooks"
     ]) {
       if (!isFn(SessionHandle.prototype, key)) missing.push(`SessionHandle.prototype.${key}`);
@@ -122,7 +122,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const accessorVerbs: ReadonlyArray<{ readonly group: string; readonly verbs: readonly string[] }> = [
       { group: "messages", verbs: ["all", "list", "last", "first"] },
       { group: "events", verbs: ["list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
-      { group: "outputs", verbs: ["list", "last", "first", "read", "find", "findOne", "search", "link", "fetch", "download"] },
+      { group: "files", verbs: ["list", "last", "first", "read", "find", "findOne", "search", "link", "fetch", "download"] },
       { group: "webhooks", verbs: ["list", "redeliver"] }
     ];
     for (const { group, verbs } of accessorVerbs) {
@@ -168,7 +168,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       { name: "client .getSessionUnit(...)", needle: /\.getSessionUnit\s*\(/ },
       { name: "client .getUnit(...)", needle: /\.getUnit\s*\(/ },
       { name: "client .listSessionRecords(...)", needle: /\.listSessionRecords\s*\(/ },
-      { name: "client .readOutputText(...)", needle: /\.readOutputText\s*\(/ },
+      { name: "client .readSessionFileText(...)", needle: /\.readSessionFileText\s*\(/ },
       { name: "client .waitForRun(...)", needle: /\.waitForRun\s*\(/ },
       // Removed `RuntimeSizes` export (use `Sizes`).
       { name: "RuntimeSizes export", needle: /\bRuntimeSizes\b/ },
@@ -183,19 +183,19 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       { name: "secrets.get_value plaintext read", needle: /\.secrets\.get_value\s*\(/ },
       {
         name: "ref method",
-        needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|outputs|download|downloadOutput|downloadOutputs|downloadEvents|downloadMetadata|cancel|delete)\s*\(/
+        needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|files|download|downloadSessionFile|downloadFiles|downloadEvents|downloadMetadata|cancel|delete)\s*\(/
       },
       // The session read/stream/download surface moved from flat handle methods
       // onto accessor sub-resources (`session.events().list()`,
-      // `session.outputs().read(...)`, `session.messages().last()`, …). The docs
+      // `session.files().read(...)`, `session.messages().last()`, …). The docs
       // must not resurrect the removed flat form invoked directly on a handle.
       // `session.download(...)` / `session.downloadMetadata(...)` stay flat, and
       // `session.events().streamEnvelopes(...)` (accessor form) is allowed —
       // only the direct `session.streamEnvelopes(...)` is forbidden.
       {
-        name: "flat session-handle read/stream/download verb (now under messages()/events()/outputs()/webhooks())",
+        name: "flat session-handle read/stream/download verb (now under messages()/events()/files()/webhooks())",
         needle:
-          /\b(?:session|resumed|handle)\.(?:listEvents|streamEvents|streamEnvelopes|eventArchiveLink|downloadEvents|listOutputs|readOutput|findOutputs|findOutput|outputLink|fetchOutput|downloadOutputs|downloadOutput|webhookDeliveries|redeliverWebhook)\s*\(/
+          /\b(?:session|resumed|handle)\.(?:listEvents|streamEvents|streamEnvelopes|eventArchiveLink|downloadEvents|listFiles|readSessionFile|findFiles|findSessionFile|sessionFileLink|fetchSessionFile|downloadFiles|downloadSessionFile|webhookDeliveries|redeliverWebhook)\s*\(/
       }
     ];
     const failures: string[] = [];
@@ -242,7 +242,7 @@ const LOCAL_INSTALL_DOCS = [
 // A bare `aex <verb>` command line (not prose like "aex is an agent…"): the
 // footgun after a LOCAL `npm i`, where the binary is not on PATH.
 const BARE_AEX_CMD =
-  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|outputs|download|cancel|delete|delete-asset|billing|webhooks|sessions|sessions|deliveries)\b/m;
+  /^aex\s+(run|login|logout|whoami|auth|models|providers|tools|runtime-sizes|events|tail|inspect|wait|status|files|download|cancel|delete|delete-asset|billing|webhooks|sessions|sessions|deliveries)\b/m;
 
 describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
   it("onboarding docs use ONE constructor form: the string arg, never the object literal", () => {
@@ -269,15 +269,15 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     expect(failures).toEqual([]);
   });
 
-  it("the quickstart mints billing:read alongside the sessions/outputs scopes", () => {
+  it("the quickstart mints billing:read alongside the sessions/files scopes", () => {
     const quickstart = readDoc("packages/sdk/docs/quickstart.md");
-    for (const scope of ["sessions:read", "sessions:write", "outputs:read", "billing:read"]) {
+    for (const scope of ["sessions:read", "sessions:write", "files:read", "billing:read"]) {
       expect(quickstart).toContain(scope);
     }
   });
 
-  it("outputs.md carries NO baseline-snapshot / filesystem-diff capture fiction", () => {
-    const outputs = readDoc("packages/sdk/docs/outputs.md");
+  it("files.md carries NO baseline-snapshot / filesystem-diff capture fiction", () => {
+    const files = readDoc("packages/sdk/docs/files.md");
     const fictions = [
       /snapshots the filesystem/i,
       /filesystem diff/i,
@@ -285,10 +285,10 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
       /baseline snapshot/i,
       /excluded by timing/i
     ];
-    const hits = fictions.filter((f) => f.test(outputs)).map((f) => f.source);
+    const hits = fictions.filter((f) => f.test(files)).map((f) => f.source);
     expect(hits).toEqual([]);
     // …and it still teaches the honest identity-based exclusion.
-    expect(outputs).toMatch(/by IDENTITY/);
+    expect(files).toMatch(/by IDENTITY/);
   });
 
   it("errors.md documents the typed hierarchy, idempotency conflict, and the empty-key throw", () => {

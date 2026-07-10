@@ -163,7 +163,7 @@ describe("side-effect audit contract", () => {
       ["headers", { headers: { authorization: "Bearer runner-token-1234567890" } }, "forbidden_field_name"],
       ["provider key", "sk-ant-test-1234567890", "provider_key"],
       ["signed URL", "https://object-storage.example.test/file?X-Amz-Signature=abc", "signed_url"],
-      ["object-store key", "sessions/session-11111111/outputs/result.txt", "object_store_key"],
+      ["object-store key", "sessions/session-11111111/files/result.txt", "object_store_key"],
       ["Vault id", "vault_secret_1234567890", "vault_id"],
       ["resource handle", "machine_1234567890", "private_resource_handle"],
       ["raw URL", "https://service.example.test/path", "raw_url"],
@@ -321,7 +321,7 @@ describe("side-effect audit contract", () => {
       observedAt: "2026-06-02T12:00:00.000Z",
       actor,
       metadata: {
-        counts: { outputCount: 2, logCount: 1, eventCount: 3 },
+        counts: { fileCount: 2, logCount: 1, eventCount: 3 },
         dimensions: { namespace: "archive", method: "GET", surface: "sdk_zip_download" }
       }
     });
@@ -343,7 +343,7 @@ describe("side-effect audit contract", () => {
     expect(download).toMatchObject({
       action: "session.download.requested",
       outcome: "accepted",
-      target: { type: "output_archive", id: "session-11111111" },
+      target: { type: "file_archive", id: "session-11111111" },
       metadata: { dimensions: { namespace: "archive", method: "GET" } }
     });
     expect(custody).toMatchObject({
@@ -389,9 +389,9 @@ describe("side-effect audit contract", () => {
 
     expect(() =>
       redactSideEffectAuditMetadata({
-        counts: { outputCount: -1 }
+        counts: { fileCount: -1 }
       })
-    ).toThrow(/outputCount must be a non-negative finite number/);
+    ).toThrow(/fileCount must be a non-negative finite number/);
 
     expect(() =>
       redactSideEffectAuditMetadata({

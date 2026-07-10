@@ -4,15 +4,15 @@
  * Exercises the session-artifact namespace split end-to-end against a real
  * run on the live API:
  *
- *   - A session's deliverables live in the `outputs` namespace.
- *   - `listOutputs` returns ONLY deliverables (no diagnostic-prefixed
+ *   - A session's deliverables live in the `files` namespace.
+ *   - `listFiles` returns ONLY deliverables (no diagnostic-prefixed
  *     entries leak in).
- *   - Public download verbs (`download`, `downloadOutputs`) each
+ *   - Public download verbs (`download`, `downloadFiles`) each
  *     produce a valid (PK-magic) zip against the real server.
  *
  * The zip's internal folder layout is pinned by the shared unit test
  * (packages/contracts/test/operations-download.test.ts); here we prove the
- * REAL server keeps diagnostics out of public outputs and every public
+ * REAL server keeps diagnostics out of public files and every public
  * download verb round-trips against a live run, without unzipping in the child.
  *
  * Required env: same as the other live-sdk-* files
@@ -80,16 +80,16 @@ interface ZipProbe {
 interface CaseResult {
   readonly sessionId: string;
   readonly sessionStatus: string;
-  readonly outputs: ReadonlyArray<{ id: string; filename: string | null }>;
+  readonly files: ReadonlyArray<{ id: string; filename: string | null }>;
   readonly download: ZipProbe;
-  readonly downloadOutputs: ZipProbe;
+  readonly downloadFiles: ZipProbe;
   readonly marker: string;
 }
 
 function buildScript(cell: Cell, marker: string): string {
   const prompt =
     `Use your filesystem tools to create a file called \`report.txt\` ` +
-    `inside \`/workspace/outputs/report-folder/\`. ` +
+    `inside \`/workspace/files/report-folder/\`. ` +
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
@@ -105,7 +105,7 @@ function buildScript(cell: Cell, marker: string): string {
       model: ${JSON.stringify(deepseekModel)},
       message: ${JSON.stringify(prompt)},
       includeBuiltinTools: true,
-      outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
+      fileCapture: { allowedDirs: ["/workspace/files/report-folder"] },
       apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
@@ -122,16 +122,16 @@ function buildScript(cell: Cell, marker: string): string {
       magicOk: bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04
     });
 
-    const outputs = await session.outputs().list();
+    const files = await session.files().list();
     const downloadAll = await session.download();
-    const downloadOut = await session.outputs().download(undefined);
+    const downloadOut = await session.files().download(undefined);
 
     const payload = {
       sessionId: sessionId,
       sessionStatus: session.status,
-      outputs: outputs.map((o) => ({ id: o.id, filename: o.filename ?? null })),
+      files: files.map((o) => ({ id: o.id, filename: o.filename ?? null })),
       download: probe(downloadAll),
-      downloadOutputs: probe(downloadOut),
+      downloadFiles: probe(downloadOut),
       marker: ${JSON.stringify(marker)}
     };
     process.stdout.write(JSON.stringify(payload));
@@ -142,12 +142,12 @@ function buildScript(cell: Cell, marker: string): string {
 function dump(cell: Cell, r: CaseResult): string {
   return [
     `cell=${cell.id} sessionId=${r.sessionId} status=${r.sessionStatus} marker=${r.marker}`,
-    `outputs=${JSON.stringify(r.outputs)}`,
-    `zips: download=${JSON.stringify(r.download)} outputs=${JSON.stringify(r.downloadOutputs)}`
+    `files=${JSON.stringify(r.files)}`,
+    `zips: download=${JSON.stringify(r.download)} files=${JSON.stringify(r.downloadFiles)}`
   ].join("\n");
 }
 
-describe("live: session-artifact public outputs + download verbs", () => {
+describe("live: session-artifact public files + download verbs", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -160,7 +160,7 @@ describe("live: session-artifact public outputs + download verbs", () => {
 
   for (const cell of CELLS) {
     it(
-      `[${cell.id}] keeps diagnostics out of outputs and public download verbs round-trip`,
+      `[${cell.id}] keeps diagnostics out of files and public download verbs round-trip`,
       async () => {
         const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
         const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
@@ -182,32 +182,32 @@ describe("live: session-artifact public outputs + download verbs", () => {
         const r = JSON.parse(child.stdout.trim()) as CaseResult;
         const ctx = `\n\n${dump(cell, r)}`;
 
-        // 1. The `outputs` namespace is deliverables-only — no diagnostic
+        // 1. The `files` namespace is deliverables-only — no diagnostic
         //    artifact leaks into the customer-facing listing.
-        const leaked = r.outputs.filter((o) => isDiagnostic(o.filename));
-        expect(leaked, `diagnostics leaked into outputs listing${ctx}`).toEqual([]);
+        const leaked = r.files.filter((o) => isDiagnostic(o.filename));
+        expect(leaked, `diagnostics leaked into files listing${ctx}`).toEqual([]);
 
-        // 2. Outputs have a stable id-space and contain only deliverables.
-        const outIds = new Set(r.outputs.map((o) => o.id));
-        expect(outIds.size).toBe(r.outputs.length);
+        // 2. Files have a stable id-space and contain only deliverables.
+        const outIds = new Set(r.files.map((o) => o.id));
+        expect(outIds.size).toBe(r.files.length);
 
         // 3. Every public download verb produced a valid (PK-magic) zip.
         for (const [verb, z] of [
           ["download", r.download],
-          ["downloadOutputs", r.downloadOutputs]
+          ["downloadFiles", r.downloadFiles]
         ] as const) {
           expect(z.byteLength, `${verb} zip empty${ctx}`).toBeGreaterThan(0);
           expect(z.magicOk, `${verb} zip not a zip (bad magic)${ctx}`).toBe(true);
         }
 
         // 4. The session reaches a successful terminal state and the deliverable
-        //    is captured in the outputs namespace. (Asserted unconditionally:
+        //    is captured in the files namespace. (Asserted unconditionally:
         //    this is the happy path, and checks 1-5 above already assume a
         //    completed run.)
         expect(r.sessionStatus, `run did not succeed${ctx}`).toBe("succeeded");
         expect(
-          r.outputs.some((o) => (o.filename ?? "").endsWith("report.txt")),
-          `report.txt missing from outputs on a succeeded run${ctx}`
+          r.files.some((o) => (o.filename ?? "").endsWith("report.txt")),
+          `report.txt missing from files on a succeeded run${ctx}`
         ).toBe(true);
       },
       9 * 60_000

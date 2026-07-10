@@ -22,7 +22,7 @@ export const CUSTODY_RESOURCE_CLASSES = [
   "proxy_token",
   "execution_secret",
   "event_archive",
-  "session_output",
+  "session_file",
   "session_log",
   "session_asset"
 ] as const;
@@ -86,7 +86,7 @@ export const CUSTODY_EVIDENCE_SOURCES = [
   "runtime_manifest",
   "terminal_event",
   "cleanup_step",
-  "output_capture",
+  "file_capture",
   "proxy_audit",
   "provider_cleanup_summary"
 ] as const;
@@ -614,11 +614,11 @@ const forbiddenStringPatterns: readonly {
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
-    // `<keyword><sep><id>` opaque handles (`session_a1B2c3D4e5`, `file_9f8e7d…`).
+    // `<keyword><sep><id>` opaque handles (`machine_a1B2c3D4e5`, `resource_9f8e7d...`).
     // The keyword set overlaps ordinary prose, so require the id segment to
     // carry a digit. That keeps genuine minted handles flagged while avoiding
     // dictionary-word chains such as `agent_decision_failure`.
-    regex: /\b(?:machine|session|agent|file|skill|env|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i,
+    regex: /\b(?:machine|agent|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i,
     accept: isMintedResourceHandle
   },
   {
@@ -639,8 +639,8 @@ const forbiddenStringPatterns: readonly {
 
 /** A content-addressed hash (md5/sha1/sha256 hex digest) — the platform's own
  * asset filenames and content references. Exempt from the entropy catch-all so
- * a captured output named after its sha256 (or a hash echoed in tool-result
- * text) is not misclassified as a leaked secret. */
+ * a captured file named after its sha256 (or a hash echoed in tool-result text)
+ * is not misclassified as a leaked secret. */
 const CONTENT_HASH_SEQUENCE = /^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
 /**

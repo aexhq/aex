@@ -514,37 +514,37 @@ describe("session-config — parseSessionSubmissionRequest", () => {
     ).toThrow(/prompt/i);
   });
 
-  it("accepts valid outputs.allowedDirs and normalises duplicates / trailing slashes", () => {
+  it("accepts valid fileCapture.allowedDirs and normalises duplicates / trailing slashes", () => {
     const parsed = parseSessionSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
-        outputs: { allowedDirs: ["/workspace/outputs/", "/workspace/outputs", "/workspace/state"] }
+        fileCapture: { allowedDirs: ["/workspace/files/", "/workspace/files", "/workspace/state"] }
       }
     });
-    expect(parsed.submission.outputs?.allowedDirs).toEqual([
-      "/workspace/outputs",
+    expect(parsed.submission.fileCapture?.allowedDirs).toEqual([
+      "/workspace/files",
       "/workspace/state"
     ]);
   });
 
-  it("omits outputs from the parsed submission when empty arrays are supplied", () => {
+  it("omits fileCapture from the parsed submission when empty arrays are supplied", () => {
     const parsed = parseSessionSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
-        outputs: { allowedDirs: [], deniedDirs: [] }
+        fileCapture: { allowedDirs: [], deniedDirs: [] }
       }
     });
-    expect(parsed.submission.outputs).toBeUndefined();
+    expect(parsed.submission.fileCapture).toBeUndefined();
   });
 
-  it("accepts output capture limits and clamps capture timeout to the platform maximum", () => {
+  it("accepts file capture limits and clamps capture timeout to the platform maximum", () => {
     const parsed = parseSessionSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
-        outputs: {
+        fileCapture: {
           captureTimeoutMs: 24 * 60 * 60 * 1000,
           maxFileBytes: 1_000_000_000_000,
           maxTotalBytes: 1_000_000_000_000,
@@ -552,7 +552,7 @@ describe("session-config — parseSessionSubmissionRequest", () => {
         }
       }
     });
-    expect(parsed.submission.outputs).toEqual({
+    expect(parsed.submission.fileCapture).toEqual({
       captureTimeoutMs: 6 * 60 * 60 * 1000,
       maxFileBytes: 1_000_000_000_000,
       maxTotalBytes: 1_000_000_000_000,
@@ -560,7 +560,7 @@ describe("session-config — parseSessionSubmissionRequest", () => {
     });
   });
 
-  it("rejects non-positive and non-integer output capture limits", () => {
+  it("rejects non-positive and non-integer file capture limits", () => {
     for (const [field, value] of [
       ["captureTimeoutMs", 0],
       ["maxFileBytes", -1],
@@ -572,53 +572,53 @@ describe("session-config — parseSessionSubmissionRequest", () => {
           ...baseSubmission,
           submission: {
             ...baseSubmission.submission,
-            outputs: { [field]: value }
+            fileCapture: { [field]: value }
           }
         })
-      ).toThrow(new RegExp(`submission\\.outputs\\.${field} must be a positive integer`));
+      ).toThrow(new RegExp(`submission\\.fileCapture\\.${field} must be a positive integer`));
     }
   });
 
-  it("rejects outputs.allowedDirs entries that are not absolute paths", () => {
+  it("rejects fileCapture.allowedDirs entries that are not absolute paths", () => {
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputs: { allowedDirs: ["relative/path"] }
+          fileCapture: { allowedDirs: ["relative/path"] }
         }
       })
     ).toThrow(/absolute UNIX path/);
   });
 
-  it("rejects outputs.allowedDirs entries that contain '..'", () => {
+  it("rejects fileCapture.allowedDirs entries that contain '..'", () => {
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputs: { allowedDirs: ["/workspace/../escape"] }
+          fileCapture: { allowedDirs: ["/workspace/../escape"] }
         }
       })
     ).toThrow(/'\.\.'/);
   });
 
-  it("accepts outputs.deniedDirs — absolute subtree, bare segment, *.ext", () => {
+  it("accepts fileCapture.deniedDirs — absolute subtree, bare segment, *.ext", () => {
     const parsed = parseSessionSubmissionRequest({
       ...baseSubmission,
       submission: {
         ...baseSubmission.submission,
-        outputs: { deniedDirs: ["/var/cache/", "node_modules", "*.tmp", "node_modules"] }
+        fileCapture: { deniedDirs: ["/var/cache/", "node_modules", "*.tmp", "node_modules"] }
       }
     });
-    expect(parsed.submission.outputs?.deniedDirs).toEqual(["/var/cache", "node_modules", "*.tmp"]);
+    expect(parsed.submission.fileCapture?.deniedDirs).toEqual(["/var/cache", "node_modules", "*.tmp"]);
   });
 
-  it("rejects outputs.deniedDirs entries that contain '..'", () => {
+  it("rejects fileCapture.deniedDirs entries that contain '..'", () => {
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseSubmission,
-        submission: { ...baseSubmission.submission, outputs: { deniedDirs: ["../escape"] } }
+        submission: { ...baseSubmission.submission, fileCapture: { deniedDirs: ["../escape"] } }
       })
     ).toThrow(/'\.\.'/);
   });
@@ -636,41 +636,47 @@ describe("session-config — parseSessionSubmissionRequest", () => {
         submission: { ...baseSubmission.submission, outputExcludes: ["node_modules"] }
       })
     ).toThrow(/not an allowed field/);
+    expect(() =>
+      parseSessionSubmissionRequest({
+        ...baseSubmission,
+        submission: { ...baseSubmission.submission, outputs: { allowedDirs: ["/workspace/out"] } }
+      })
+    ).toThrow(/not an allowed field/);
   });
 
-  it("rejects outputs.allowedDirs entries with NUL bytes", () => {
+  it("rejects fileCapture.allowedDirs entries with NUL bytes", () => {
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputs: { allowedDirs: ["/workspace/\0evil"] }
+          fileCapture: { allowedDirs: ["/workspace/\0evil"] }
         }
       })
     ).toThrow(/NUL/);
   });
 
-  it("rejects outputs.allowedDirs lists with more than 32 entries", () => {
+  it("rejects fileCapture.allowedDirs lists with more than 32 entries", () => {
     const tooMany = Array.from({ length: 33 }, (_, i) => `/workspace/out-${i}`);
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputs: { allowedDirs: tooMany }
+          fileCapture: { allowedDirs: tooMany }
         }
       })
     ).toThrow(/max is 32/);
   });
 
-  it("rejects outputs.allowedDirs entries longer than 512 bytes", () => {
+  it("rejects fileCapture.allowedDirs entries longer than 512 bytes", () => {
     const huge = "/" + "a".repeat(520);
     expect(() =>
       parseSessionSubmissionRequest({
         ...baseSubmission,
         submission: {
           ...baseSubmission.submission,
-          outputs: { allowedDirs: [huge] }
+          fileCapture: { allowedDirs: [huge] }
         }
       })
     ).toThrow(/exceeds 512 bytes/);

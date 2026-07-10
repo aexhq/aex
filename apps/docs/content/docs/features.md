@@ -13,7 +13,7 @@ Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open
 
 ## Durable infrastructure
 
-SessionRecord records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+SessionRecord records, status, wait/cancel/delete, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
 
 ## Agent composition
 
@@ -21,7 +21,7 @@ Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, s
 
 ## Subagents
 
-Typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation.
+Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 
 ## Models and providers
 

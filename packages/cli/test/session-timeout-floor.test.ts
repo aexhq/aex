@@ -32,7 +32,7 @@ describe("aex start --session-timeout floor (T6d — SSoT parser, sync reject)",
   it("rejects a sub-1m --session-timeout synchronously, firing NO network call", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-1",
@@ -52,7 +52,7 @@ describe("aex start --session-timeout floor (T6d — SSoT parser, sync reject)",
   it("accepts a valid --session-timeout above the floor", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-1",

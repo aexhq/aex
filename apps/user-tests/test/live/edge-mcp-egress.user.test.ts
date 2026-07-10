@@ -153,7 +153,7 @@ function validationChildScript(): string {
         const res = await client.start({
           provider: process.env.PROVIDER,
           model: process.env.MODEL,
-          message: "Output verbatim: EDGE",
+          message: "SessionFile verbatim: EDGE",
           mcpServers,
           includeBuiltinTools: false,
           apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
@@ -212,13 +212,13 @@ const COLLECT = `
   const status = sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
   const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
   let events = fallbackEvents;
-  let outputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
+  let files = Array.isArray(sessionResult.files) ? sessionResult.files : [];
   try {
     const session = await client.sessions.open(sessionId);
     const listedEvents = await session.events().list();
     if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    const listedOutputs = await session.outputs().list();
-    if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+    const listedFiles = await session.files().list();
+    if (Array.isArray(listedFiles)) files = listedFiles;
   } catch {}
   const eventKinds = events.map((e) => e.type);
   const assistantText = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
@@ -232,7 +232,7 @@ const COLLECT = `
   const toolResponseCount = events.filter((e) => e.type === "TOOL_CALL_RESULT").length;
   const streamErrors = events.filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
     .map((e) => JSON.stringify(e.data).slice(0, 400));
-  const serialized = JSON.stringify({ events, outputs });
+  const serialized = JSON.stringify({ events, files });
 `;
 
 interface EgressResult {
@@ -317,7 +317,7 @@ function mcpSecretChildScript(marker: string): string {
   return `
     import { Aex, McpServer } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-    // Secret header carried under secrets.mcpServers — must never surface in events/outputs.
+    // Secret header carried under secrets.mcpServers — must never surface in events/files.
     const mcp = McpServer.remote({
       name: ${JSON.stringify(MCP_NAME)},
       url: ${JSON.stringify(MCP_URL)},
@@ -474,7 +474,7 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
 
   // ---- MCP invocation + secret-header non-leak (1 LLM turn) ----
   it(
-    "SECURITY: a remote MCP is invoked and its secret header never leaks into events/outputs",
+    "SECURITY: a remote MCP is invoked and its secret header never leaks into events/files",
     async () => {
       const marker = "AEXSECRET" + Math.random().toString(36).slice(2, 12).toUpperCase();
       const out = await runChild(install, "edge-mcp-secret.mjs", mcpSecretChildScript(marker), 9 * 60_000);

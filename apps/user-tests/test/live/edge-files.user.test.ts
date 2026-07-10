@@ -1,21 +1,21 @@
 /**
- * Live edge-case sweep: SessionOutputs (outputs & downloads surface).
+ * Live edge-case sweep: SessionFiles (files & downloads surface).
  *
- * Acts as a real customer hammering the OUTPUTS + DOWNLOAD verbs of the
+ * Acts as a real customer hammering the FILES + DOWNLOAD verbs of the
  * installed `@aexhq/sdk` against the DEV plane, hunting for edge-case defects
  * before a prod launch. The existing live tests exercise `list()` + the archive
  * `download()` verbs; NONE exercise `read` / `find` / `findOne` / `link` /
- * `fetch` or the output selector matrix through the session accessor. This file
+ * `fetch` or the file selector matrix through the session accessor. This file
  * closes that gap.
  *
- * Surface under test (packages/sdk/src/client.ts `SessionOutputs`):
+ * Surface under test (packages/sdk/src/client.ts `SessionFiles`):
  *   list / last / first / read(selector) / find(query) / findOne(query) /
  *   link(selectorOrQuery) / fetch(selectorOrQuery) / download(selector?)
  *   + session.download() / session.downloadMetadata()
  *
  * Model: deepseek-v4-flash, BYOK via the gate-provider apiKeys map. Tiny prompts. Four
  * live sessions total (A rich-selector-matrix, B large-file round-trip, C
- * unicode+space filename, D no-outputs), each independent, each probing many
+ * unicode+space filename, D no-files), each independent, each probing many
  * facets in ONE child process and emitting a JSON verdict the parent asserts on.
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
@@ -30,14 +30,14 @@ import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
-    throw new Error(`user-tests live (edge-outputs): required env ${name} is missing.`);
+    throw new Error(`user-tests live (edge-files): required env ${name} is missing.`);
   }
   return value;
 }
 
 const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
-const providerKey = requireGateKey("edge-outputs");
+const providerKey = requireGateKey("edge-files");
 const model = gateModel();
 
 function buildPassEnv(extras: Record<string, string>): Record<string, string> {
@@ -129,7 +129,7 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
   };
   // Wrap a probe so ONE failing/hanging verb never aborts the whole script:
   // record a structured {label, ok, value|error}. The SDK has its own bounded
-  // output transfer timeout/retry; this outer race catches anything below it.
+  // session-file transfer timeout/retry; this outer race catches anything below it.
   async function probe(label, fn) {
     try {
       const value = await Promise.race([
@@ -241,13 +241,13 @@ async function runChild(
   });
   if (child.exitCode !== 0) {
     throw new Error(
-      `edge-outputs runner (${scriptName}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      `edge-files runner (${scriptName}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
     );
   }
   try {
     return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
   } catch {
-    throw new Error(`edge-outputs runner (${scriptName}) produced non-JSON stdout:\n${child.stdout}`);
+    throw new Error(`edge-files runner (${scriptName}) produced non-JSON stdout:\n${child.stdout}`);
   }
 }
 
@@ -270,7 +270,7 @@ type ProbeResult = {
 };
 function byLabel(probes: ProbeResult[], label: string): ProbeResult {
   const p = probes.find((x) => x.label === label);
-  if (!p) throw new Error(`probe "${label}" missing from child output; got: ${probes.map((x) => x.label).join(", ")}`);
+  if (!p) throw new Error(`probe "${label}" missing from child result; got: ${probes.map((x) => x.label).join(", ")}`);
   return p;
 }
 
@@ -282,14 +282,14 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", () => {
+describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () => {
   it(
     "A: small deliverable — every read/find/link/fetch/download selector resolves; bad selectors error cleanly",
     async () => {
       const marker = "MK" + Math.random().toString(36).slice(2, 10).toUpperCase();
       const prompt =
         `Use your shell/filesystem tools to create a text file at the path ` +
-        `/workspace/outputs/report.txt whose ENTIRE contents are exactly these characters: ${marker} ` +
+        `/workspace/files/report.txt whose ENTIRE contents are exactly these characters: ${marker} ` +
         `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
       const body = `
         const sessionResult = await client.start({
@@ -297,14 +297,14 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
-          outputs: { allowedDirs: ["/workspace/outputs"] },
+          fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
-          idempotencyKey: "edge-out-A-" + Date.now()
+          idempotencyKey: "edge-files-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.outputs();
+        const outs = await session.files();
 
         // list (sessions endpoint) and find({}) (sessions endpoint) — cross-check parity.
         const listed = await outs.list();
@@ -319,10 +319,10 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         const probes = [];
         probes.push(await probeIdempotent("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
         probes.push(await probeIdempotent("read_exact", async () => await outs.read({ path: exactPath })));
-        probes.push(await probeIdempotent("read_output_obj", async () => report ? await outs.read(report) : null));
+        probes.push(await probeIdempotent("read_file_obj", async () => report ? await outs.read(report) : null));
         probes.push(await probeIdempotent("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
-        const LIVE_OUTPUT_TRANSFER_TIMEOUT_MS = 20_000;
-        probes.push(await probeIdempotent("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }) : null));
+        const LIVE_FILE_TRANSFER_TIMEOUT_MS = 20_000;
+        probes.push(await probeIdempotent("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }) : null));
         probes.push(await probeIdempotent("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
         probes.push(await probeIdempotent("find_extension", async () => (await outs.find({ extension: "txt" })).length));
         probes.push(await probeIdempotent("find_type_text", async () => (await outs.find({ type: "text" })).length));
@@ -344,7 +344,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           return { status: resp.status, text: (await resp.text()).slice(0, 256) };
         }));
 
-        // download one file's raw bytes (by Output selector).
+        // download one file's raw bytes (by SessionFile selector).
         probes.push(await probeIdempotent("download_selector", async () => {
           if (!report) return null;
           const bytes = await outs.download(report);
@@ -352,18 +352,18 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         }));
         probes.push(await probeIdempotent("download_selector_timeout_option", async () => {
           if (!report) return null;
-          const bytes = await outs.download(report, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS });
+          const bytes = await outs.download(report, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS });
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
         // archive verbs.
-        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
-        probes.push(await probeIdempotent("download_outputs_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS }))));
+        probes.push(await probeIdempotent("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
+        probes.push(await probeIdempotent("download_files_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }))));
         probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
         probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         // Bad-selector / boundary probes — must error CLEANLY (no hang).
         probes.push(await probe("read_missing_path", async () => await outs.read({ path: "nope-" + Date.now() + ".txt", match: "suffix" })));
-        probes.push(await probe("download_missing_id", async () => await outs.download({ id: "output_nonexistent_zzz" })));
+        probes.push(await probe("download_missing_id", async () => await outs.download({ id: "file_nonexistent_zzz" })));
         probes.push(await probe("link_nomatch", async () => await outs.link({ filename: "nope-" + Date.now() + ".txt" })));
         probes.push(await probe("link_expires_zero", async () => await outs.link({ filename: "report.txt" }, { expiresIn: 0 })));
         probes.push(await probe("link_expires_badpreset", async () => await outs.link({ filename: "report.txt" }, { expiresIn: "5m" })));
@@ -371,7 +371,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         process.stdout.write(JSON.stringify({ sessionId, status, marker: ${JSON.stringify(marker)}, listMeta, findMeta, reportIdx, exactPath, httpDebug: debugTail(), probes }));
         process.exit(0);
       `;
-      const r = await runChild(install, "edge-out-A.mjs", body, 9 * 60_000);
+      const r = await runChild(install, "edge-files-A.mjs", body, 9 * 60_000);
       const ctxPayload = {
         httpDebug: r.httpDebug,
         sessionId: r.sessionId,
@@ -397,7 +397,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
 
       // 2. No internal/diagnostic namespace bleeds into the deliverables listing.
       const leaked = listMeta.filter((o) => o.filename && (o.filename.startsWith("runtime/") || o.filename.startsWith("host/")));
-      expect(leaked, `diagnostic namespace leaked into outputs list${ctx}`).toEqual([]);
+      expect(leaked, `diagnostic namespace leaked into files list${ctx}`).toEqual([]);
 
       // 3. list() (sessions endpoint) and find({}) (sessions endpoint) agree —
       //    the two endpoints must not diverge for the same deliverable set.
@@ -405,10 +405,10 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         .toEqual(new Set(listMeta.map((o) => o.id)));
 
       // 4. read via every selector shape returns the exact content.
-      for (const label of ["read_suffix", "read_exact", "read_output_obj", "read_by_id", "read_timeout_option"]) {
+      for (const label of ["read_suffix", "read_exact", "read_file_obj", "read_by_id", "read_timeout_option"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
-        const v = p.value as { text: string; truncated: boolean; totalBytes: number; output?: { sizeBytes?: number } };
+        const v = p.value as { text: string; truncated: boolean; totalBytes: number; file?: { sizeBytes?: number } };
         expect(v.text, `${label} wrong text${ctx}`).toBe(r.marker);
         expect(v.truncated, `${label} unexpectedly truncated${ctx}`).toBe(false);
         // totalBytes must equal the byte size of the marker (ASCII → 1 byte/char).
@@ -449,7 +449,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       const dtv = dselTimeout.value as { len: number; text: string };
       expect(dtv.text, `download(selector, timeoutMs) content mismatch${ctx}`).toBe(r.marker);
       expect(dtv.len, `download(selector, timeoutMs) len != sizeBytes${ctx}`).toBe(report!.sizeBytes);
-      for (const label of ["download_outputs_zip", "download_outputs_zip_timeout_option", "download_all_zip", "download_metadata_zip"]) {
+      for (const label of ["download_files_zip", "download_files_zip_timeout_option", "download_all_zip", "download_metadata_zip"]) {
         const p = byLabel(probes, label);
         expect(p.ok, `${label} threw: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
         const z = p.value as { byteLength: number; magicOk: boolean; hasManifest: boolean; manifestErrors: unknown[] };
@@ -474,23 +474,23 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
     "B: large (~60KB) file — bytes round-trip; read() caps at maxBytes with correct truncated/totalBytes",
     async () => {
       const prompt =
-        `Create a text file at /workspace/outputs/big.txt containing the single letter A repeated exactly 60000 times ` +
+        `Create a text file at /workspace/files/big.txt containing the single letter A repeated exactly 60000 times ` +
         `(60000 bytes, no newline, nothing else). Generate it precisely with a shell command, for example: ` +
-        `python3 -c "open('/workspace/outputs/big.txt','w').write('A'*60000)". Then reply with the single word done.`;
+        `python3 -c "open('/workspace/files/big.txt','w').write('A'*60000)". Then reply with the single word done.`;
       const body = `
         const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
-          outputs: { allowedDirs: ["/workspace/outputs"] },
+          fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
-          idempotencyKey: "edge-out-B-" + Date.now()
+          idempotencyKey: "edge-files-B-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.outputs();
+        const outs = await session.files();
         const listed = await outs.list();
         const big = listed.find((o) => (o.filename || "").endsWith("big.txt")) || null;
         const sizeBytes = big ? (big.sizeBytes ?? null) : null;
@@ -516,7 +516,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         process.stdout.write(JSON.stringify({ sessionId, status, sizeBytes, filename: big ? big.filename : null, probes }));
         process.exit(0);
       `;
-      const r = await runChild(install, "edge-out-B.mjs", body, 9 * 60_000);
+      const r = await runChild(install, "edge-files-B.mjs", body, 9 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 3000)}`;
       const probes = r.probes as ProbeResult[];
       const sizeBytes = r.sizeBytes as number | null;
@@ -551,12 +551,12 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
   );
 
   it(
-    "C: unicode + space in output filename — listing, read, link/fetch all preserve it",
+    "C: unicode + space in session filename — listing, read, link/fetch all preserve it",
     async () => {
       const marker = "CAFE" + Math.random().toString(36).slice(2, 8).toUpperCase();
       // Filename with a non-ASCII char (é) AND a space.
       const command =
-        "mkdir -p /workspace/outputs && printf '%s' '" + marker + "' > '/workspace/outputs/café menu.txt'";
+        "mkdir -p /workspace/files && printf '%s' '" + marker + "' > '/workspace/files/café menu.txt'";
       const prompt =
         `Use the shell tool once. The complete shell command is between the fences; do not add prose or tokens to it.\n` +
         "```bash\n" +
@@ -569,14 +569,14 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
-          outputs: { allowedDirs: ["/workspace/outputs"] },
+          fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
-          idempotencyKey: "edge-out-C-" + Date.now()
+          idempotencyKey: "edge-files-C-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.outputs();
+        const outs = await session.files();
         const listed = await outs.list();
         const listNames = listed.map((o) => o.filename ?? null);
         const target = listed.find((o) => (o.filename || "").endsWith("menu.txt")) || null;
@@ -595,7 +595,7 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         process.stdout.write(JSON.stringify({ sessionId, status, marker: ${JSON.stringify(marker)}, listNames, targetFilename: target ? target.filename : null, probes }));
         process.exit(0);
       `;
-      const r = await runChild(install, "edge-out-C.mjs", body, 9 * 60_000);
+      const r = await runChild(install, "edge-files-C.mjs", body, 9 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 3000)}`;
       const probes = r.probes as ProbeResult[];
       const targetFilename = r.targetFilename as string | null;
@@ -624,22 +624,22 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
   );
 
   it(
-    "D: session with NO outputs — list() is empty, bad reads error, archive verbs still yield valid zips",
+    "D: session with NO files — list() is empty, bad reads error, archive verbs still yield valid zips",
     async () => {
-      const probe = "NOOUT-" + Math.random().toString(36).slice(2, 8);
-      const prompt = `Output verbatim: ${probe}. Do not create, write, or save any files.`;
+      const probe = "NOFILES-" + Math.random().toString(36).slice(2, 8);
+      const prompt = `SessionFile verbatim: ${probe}. Do not create, write, or save any files.`;
       const body = `
         const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
-          idempotencyKey: "edge-out-D-" + Date.now()
+          idempotencyKey: "edge-files-D-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.outputs();
+        const outs = await session.files();
 
         const probes = [];
         probes.push(await probeIdempotent("list_len", async () => (await outs.list()).length));
@@ -648,20 +648,20 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
         probes.push(await probeIdempotent("first_undefined", async () => (await outs.first()) === undefined));
         probes.push(await probeIdempotent("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
         probes.push(await probe("read_missing", async () => await outs.read({ path: "whatever.txt", match: "suffix" })));
-        probes.push(await probeIdempotent("download_outputs_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
+        probes.push(await probeIdempotent("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
         probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
         probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         process.stdout.write(JSON.stringify({ sessionId, status, probes }));
         process.exit(0);
       `;
-      const r = await runChild(install, "edge-out-D.mjs", body, 9 * 60_000);
+      const r = await runChild(install, "edge-files-D.mjs", body, 9 * 60_000);
       const ctx = `\n\n${JSON.stringify(r, null, 2).slice(0, 3000)}`;
       const probes = r.probes as ProbeResult[];
 
       expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
-      expect(byLabel(probes, "list_len").value, `list() not empty on a no-output run${ctx}`).toBe(0);
-      expect(byLabel(probes, "find_all_len").value, `find({}) not empty on a no-output run${ctx}`).toBe(0);
+      expect(byLabel(probes, "list_len").value, `list() not empty on a no-files session${ctx}`).toBe(0);
+      expect(byLabel(probes, "find_all_len").value, `find({}) not empty on a no-files session${ctx}`).toBe(0);
       expect(byLabel(probes, "last_undefined").value, `last() should be undefined when empty${ctx}`).toBe(true);
       expect(byLabel(probes, "first_undefined").value, `first() should be undefined when empty${ctx}`).toBe(true);
       const fo = byLabel(probes, "findOne_null");
@@ -669,14 +669,14 @@ describe("edge: SessionOutputs read/find/link/fetch/download selector matrix", (
       const rm = byLabel(probes, "read_missing");
       expect(rm.ok, `read of a missing file must throw, not resolve${ctx}`).toBe(false);
       expect(rm.error!.message, `read of missing file hung${ctx}`).not.toContain("PROBE_TIMEOUT");
-      for (const label of ["download_outputs_zip", "download_all_zip", "download_metadata_zip"]) {
+      for (const label of ["download_files_zip", "download_all_zip", "download_metadata_zip"]) {
         const p = byLabel(probes, label);
-        expect(p.ok, `${label} threw on a no-output run: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
+        expect(p.ok, `${label} threw on a no-files session: ${JSON.stringify(p.error)}${ctx}`).toBe(true);
         const z = p.value as { byteLength: number; magicOk: boolean; hasManifest: boolean; manifestErrors: unknown[] };
-        expect(z.byteLength, `${label} empty on no-output run${ctx}`).toBeGreaterThan(0);
-        expect(z.magicOk, `${label} not a valid zip on no-output run${ctx}`).toBe(true);
-        expect(z.hasManifest, `${label} missing manifest.json on no-output run${ctx}`).toBe(true);
-        expect(z.manifestErrors, `${label} manifest recorded per-artifact download errors on no-output run${ctx}`).toEqual([]);
+        expect(z.byteLength, `${label} empty on no-files session${ctx}`).toBeGreaterThan(0);
+        expect(z.magicOk, `${label} not a valid zip on no-files session${ctx}`).toBe(true);
+        expect(z.hasManifest, `${label} missing manifest.json on no-files session${ctx}`).toBe(true);
+        expect(z.manifestErrors, `${label} manifest recorded per-artifact download errors on no-files session${ctx}`).toEqual([]);
       }
     },
     10 * 60_000

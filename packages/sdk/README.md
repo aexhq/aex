@@ -11,7 +11,7 @@ The package ships:
 - `Aex` for sessions, one-shot sessions, inspect, download, cancel, and delete.
 - `sessions` / `openSession()` for durable, resumable agent sessions.
 - Typed run primitives: `Models`, `Providers`, `Sizes`, `Skill`, `Tool` / `Tools`, `AgentsMd`, `File`, `McpServer`, and `Secret`.
-- A bundled `aex` CLI with the same run, status, events, outputs, download, cancel, delete, and whoami operations.
+- A bundled `aex` CLI with the same run, status, events, files, download, cancel, delete, and whoami operations.
 
 ## Install
 
@@ -63,7 +63,7 @@ so it can be resumed later with `openSession(sessionId)`.
 const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
-  message: "Write the report and save outputs."
+  message: "Write the report and save files."
 });
 
 console.log(result.sessionId, result.status, result.text);
@@ -89,7 +89,7 @@ npx aex start \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
-  --prompt "Write the report and save outputs." \
+  --prompt "Write the report and save files." \
   --follow
 ```
 
@@ -129,7 +129,7 @@ you can `catch` by code; CLI failures print a JSON envelope carrying the HTTP
 
 Use sessions for conversational flows. `start()` is the one-shot convenience; a
 `SessionHandle` is the lower-level surface when you want multiple turns,
-streaming, messages, events, outputs, or downloads.
+streaming, messages, events, files, or downloads.
 
 ```ts
 const session = await aex.openSession(result.sessionId);
@@ -137,15 +137,15 @@ const next = await session.send("Turn this into a checklist.").done();
 console.log(next.text);
 
 const messages = await session.messages().list();
-const outputs = await aex.sessions.outputs(session.id).list();
+const files = await aex.sessions.files(session.id).list();
 ```
 
 ## Feature Areas
 
 - **Agent runtime:** managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
-- **Durable infrastructure:** session records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+- **Durable infrastructure:** session records, status, wait/cancel/delete, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
 - **Agent composition:** skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
-- **Subagents:** typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation.
+- **Subagents:** typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 - **Models and providers:** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
 - **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 

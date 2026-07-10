@@ -31,7 +31,7 @@ const forbidden = [
   ["legacy screaming env prefix", /\bRUN_[A-Z0-9_]*\b/],
   [
     "legacy standalone product phrase",
-    /\brun (?:row|rows|record|records|artifact|artifacts|config|cost|custody|retention|unit|trace|lifecycle|limits|status|execution|orchestrator|bus|submission|compute|capacity|teardown|provider|deliverable|deliverables|polling|readiness|finished|events|outputs|secret|secrets|vault|flow|actions|honesty|delete|children|error|did not fail|launched|time)\b/
+    /\brun (?:row|rows|record|records|artifact|artifacts|config|cost|custody|retention|unit|trace|lifecycle|limits|status|execution|orchestrator|bus|submission|compute|capacity|teardown|provider|deliverable|deliverables|polling|readiness|finished|events|files|secret|secrets|vault|flow|actions|honesty|delete|children|error|did not fail|launched|time)\b/
   ]
 ];
 

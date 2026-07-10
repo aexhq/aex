@@ -9,7 +9,7 @@
  *   - `client.secrets` vault (set/list/get/rotate/delete)
  *
  * The overriding invariant under test is NON-LEAKAGE: a provider key or a
- * `secretEnv` value must NEVER appear in the persisted events, outputs, run
+ * `secretEnv` value must NEVER appear in the persisted events, files, run
  * record, or any customer-readable surface. The platform proves injection of a
  * secret via a SHA-256 digest computed IN the subprocess (the raw value is
  * redacted out of model-facing output by design), so these tests mirror that
@@ -106,7 +106,7 @@ async function runScript(
 
 /**
  * Shared in-script preamble: build the client + a `gather(sessionId)` that pulls
- * EVERY customer-readable surface (events, outputs, session record, messages,
+ * EVERY customer-readable surface (events, files, session record, messages,
  * text) and a `leakScan(surfaces, needle)` that reports, per surface, whether
  * the raw needle appears. Emitted verbatim into each script.
  */
@@ -118,28 +118,28 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 async function gather(sessionId, sessionResult) {
   let events = Array.isArray(sessionResult?.events) ? sessionResult.events : [];
-  let outputs = Array.isArray(sessionResult?.outputs) ? sessionResult.outputs : [];
+  let files = Array.isArray(sessionResult?.files) ? sessionResult.files : [];
   let record = null, messages = [];
   try {
     const s = await client.sessions.open(sessionId);
     const le = await s.events().list();
     if (Array.isArray(le) && le.length > 0) events = le;
-    const lo = await s.outputs().list();
-    if (Array.isArray(lo)) outputs = lo;
+    const lo = await s.files().list();
+    if (Array.isArray(lo)) files = lo;
     try { messages = await s.messages.all(); } catch {}
   } catch {}
   try { record = await client.sessions.get(sessionId); } catch {}
-  return { events, outputs, record, messages };
+  return { events, files, record, messages };
 }
 function leakScan(surfaces, needle, extra) {
   const per = {
     events: JSON.stringify(surfaces.events).includes(needle),
-    outputs: JSON.stringify(surfaces.outputs).includes(needle),
+    files: JSON.stringify(surfaces.files).includes(needle),
     record: JSON.stringify(surfaces.record).includes(needle),
     messages: JSON.stringify(surfaces.messages).includes(needle),
     text: String((extra && extra.text) || "").includes(needle)
   };
-  const anywhere = per.events || per.outputs || per.record || per.messages || per.text;
+  const anywhere = per.events || per.files || per.record || per.messages || per.text;
   return { leaked: anywhere, per };
 }
 function assistantText(surfaces, sessionResult) {
@@ -170,7 +170,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const probe = process.env.PROBE;
         const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
-          message: "Output verbatim: " + probe,
+          message: "SessionFile verbatim: " + probe,
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-keyleak-" + Date.now()
         }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -180,7 +180,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const scan = leakScan(surfaces, PROVIDER_KEY, { text });
         process.stdout.write(JSON.stringify({
           sessionId, status: statusOf(sessionResult), probe, text,
-          eventCount: surfaces.events.length, outputCount: surfaces.outputs.length,
+          eventCount: surfaces.events.length, fileCount: surfaces.files.length,
           leaked: scan.leaked, per: scan.per
         }));
       `;
@@ -282,13 +282,13 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         try {
           sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
-            message: "Output verbatim: hello",
+            message: "SessionFile verbatim: hello",
             apiKeys: { [PROVIDER]: BAD_KEY },
             idempotencyKey: "edge-badkey-" + Date.now()
           }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
         } catch (e) { threw = e && e.message ? e.message : String(e); }
         const sessionId = sessionResult ? sessionResult.sessionId : null;
-        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], outputs: [], record: null, messages: [] };
+        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], files: [], record: null, messages: [] };
         const text = assistantText(surfaces, sessionResult || {});
         const errorMessage =
           (sessionResult && typeof sessionResult.error === "string" ? sessionResult.error : "") ||
@@ -358,7 +358,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const UNUSED_KEY = process.env.UNUSED_KEY;
         const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
-          message: "Output verbatim: " + probe,
+          message: "SessionFile verbatim: " + probe,
           apiKeys: { [PROVIDER]: PROVIDER_KEY, anthropic: UNUSED_KEY },
           idempotencyKey: "edge-multiprov-" + Date.now()
         }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -413,7 +413,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
         } catch (e) { runErr = e && e.message ? e.message : String(e); }
         const sessionId = sessionResult ? sessionResult.sessionId : null;
-        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], outputs: [], record: null, messages: [] };
+        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], files: [], record: null, messages: [] };
         const text = assistantText(surfaces, sessionResult || {});
         const scan = leakScan(surfaces, CANARY, { text });
         // metadata read must never contain the value either
@@ -459,14 +459,14 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         try {
           sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
-            message: "Output verbatim: " + probe,
+            message: "SessionFile verbatim: " + probe,
             environment: { secrets: { GHOST_VAR: Secret.ref(GHOST) } },
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-ghost-" + Date.now()
           }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
         } catch (e) { submitOrStartErr = e && e.message ? e.message : String(e); }
         const sessionId = sessionResult ? sessionResult.sessionId : null;
-        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], outputs: [], record: null, messages: [] };
+        const surfaces = sessionId ? await gather(sessionId, sessionResult) : { events: [], files: [], record: null, messages: [] };
         const text = assistantText(surfaces, sessionResult || {});
         process.stdout.write(JSON.stringify({
           sessionId, status: statusOf(sessionResult), submitOrStartErr,

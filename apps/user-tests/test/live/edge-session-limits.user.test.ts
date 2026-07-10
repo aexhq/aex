@@ -375,7 +375,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
         const sessionResult = await client.start({
           ...BASE,
           runtime: "shared-0.5x-4gb",
-          message: ${JSON.stringify(`Output verbatim: ${probeMarker}`)},
+          message: ${JSON.stringify(`SessionFile verbatim: ${probeMarker}`)},
           idempotencyKey: "edge-size-session-" + Date.now()
         }, { timeoutMs: 8 * 60 * 1000 });
         // Best-effort: surface any server-side reflection of the chosen size.

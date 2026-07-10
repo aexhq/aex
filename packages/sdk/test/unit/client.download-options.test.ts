@@ -7,7 +7,7 @@ import { Aex } from "../../src/index.js";
 function downloadClient(): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    if (url.endsWith("/api/sessions/session-1/outputs/abc/download")) {
+    if (url.endsWith("/api/sessions/session-1/files/abc/download")) {
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
     }
     if (url.endsWith("/api/sessions/session-1/events")) {
@@ -16,8 +16,8 @@ function downloadClient(): Aex {
         headers: { "content-type": "application/json" }
       });
     }
-    if (url.endsWith("/api/sessions/session-1/outputs")) {
-      return new Response(JSON.stringify({ outputs: [] }), {
+    if (url.endsWith("/api/sessions/session-1/files")) {
+      return new Response(JSON.stringify({ files: [] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -66,12 +66,12 @@ describe("SessionHandle download { to } options", () => {
     }
   });
 
-  it("downloadOutput writes raw output bytes to disk and still returns them", async () => {
+  it("downloadSessionFile writes raw file bytes to disk and still returns them", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "report.txt");
       const session = await downloadClient().openSession("session-1");
-      const bytes = await session.outputs().download({ id: "abc" }, { to: path });
+      const bytes = await session.files().download({ id: "abc" }, { to: path });
       expect(new TextDecoder().decode(bytes)).toBe("hello");
       expect(await readFile(path, "utf8")).toBe("hello");
     } finally {
@@ -79,7 +79,7 @@ describe("SessionHandle download { to } options", () => {
     }
   });
 
-  it("downloadOutput retries a stalled selected-output body once", async () => {
+  it("downloadSessionFile retries a stalled selected-file body once", async () => {
     let downloadCalls = 0;
     const fetch: typeof globalThis.fetch = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
@@ -89,7 +89,7 @@ describe("SessionHandle download { to } options", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith("/api/sessions/session-1/outputs/abc/download")) {
+      if (url.endsWith("/api/sessions/session-1/files/abc/download")) {
         downloadCalls += 1;
         return downloadCalls === 1 ? stalledFileResponse() : new Response("hello", { status: 200 });
       }
@@ -97,7 +97,7 @@ describe("SessionHandle download { to } options", () => {
     };
     const session = await new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }).openSession("session-1");
 
-    const bytes = await session.outputs().download({ id: "abc" }, { timeoutMs: 1 });
+    const bytes = await session.files().download({ id: "abc" }, { timeoutMs: 1 });
 
     expect(new TextDecoder().decode(bytes)).toBe("hello");
     expect(downloadCalls).toBe(2);

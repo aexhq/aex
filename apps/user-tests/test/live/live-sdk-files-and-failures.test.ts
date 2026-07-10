@@ -1,13 +1,13 @@
 /**
- * Live scenario: live-sdk-outputs-and-failures.test.ts
+ * Live scenario: live-sdk-files-and-failures.test.ts
  *
- * Block A — outputs round-trip (matrix over cells)
+ * Block A — files round-trip (matrix over cells)
  *   Prompts the agent to write a specific marker into a known filename
- *   inside its output directory, then asserts the bytes round-trip via
- *   listOutputs + downloadOutput. Catches:
+ *   inside its files directory, then asserts the bytes round-trip via
+ *   listFiles + downloadSessionFile. Catches:
  *     - upload silently truncates
- *     - opaque-output-id ↔ filename collisions
- *     - managed runtime output-capture not wired
+ *     - opaque-file-id ↔ filename collisions
+ *     - managed runtime file-capture not wired
  *
  * Block B — failure surfacing (single cell)
  *   Three sub-cases exercise the SDK's error contract:
@@ -29,7 +29,7 @@ import { getBunCommand, installAex, runCommand, type InstallResult } from "../_f
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
-    throw new Error(`user-tests live (outputs-and-failures): required env ${name} is missing.`);
+    throw new Error(`user-tests live (files-and-failures): required env ${name} is missing.`);
   }
   return value;
 }
@@ -78,9 +78,9 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
   return env;
 }
 
-/* -------------------- Block A: outputs round-trip -------------------- */
+/* -------------------- Block A: files round-trip -------------------- */
 
-interface OutputCaseResult {
+interface FileCaseResult {
   readonly sessionId: string;
   readonly sessionStatus: string;
   readonly runtime: string;
@@ -88,19 +88,19 @@ interface OutputCaseResult {
   readonly marker: string;
   readonly eventCount: number;
   readonly eventKinds: readonly string[];
-  readonly outputs: ReadonlyArray<{ filename: string | null; sizeBytes: number; downloadedLen: number; sample: string }>;
+  readonly files: ReadonlyArray<{ filename: string | null; sizeBytes: number; downloadedLen: number; sample: string }>;
   readonly assistantTextJoined: string;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
 }
 
-function buildOutputScript(cell: Cell, marker: string): string {
-  // This case narrows capture to an explicit outputs.allowedDirs root. Naming the
+function buildFileScript(cell: Cell, marker: string): string {
+  // This case narrows capture to an explicit fileCapture.allowedDirs root. Naming the
   // path explicitly in the prompt avoids model variance around path choice.
   const prompt =
     `Use your filesystem tools to create a file called \`report.txt\` ` +
-    `inside \`/workspace/outputs/report-folder/\`. ` +
+    `inside \`/workspace/files/report-folder/\`. ` +
     `The file's only contents must be the literal text: ${marker} ` +
     `(no newline, no extra characters). Then reply briefly that you wrote it.`;
   return `
@@ -116,9 +116,9 @@ function buildOutputScript(cell: Cell, marker: string): string {
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
       includeBuiltinTools: true,
-      outputs: { allowedDirs: ["/workspace/outputs/report-folder"] },
+      fileCapture: { allowedDirs: ["/workspace/files/report-folder"] },
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
-      idempotencyKey: "outputs-${cell.id}-" + Date.now()
+      idempotencyKey: "files-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const session = await client.sessions.open(sessionId);
@@ -128,25 +128,25 @@ function buildOutputScript(cell: Cell, marker: string): string {
       provider: ${JSON.stringify(cell.provider)}
     };
     const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
+    const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
     let events = fallbackEvents;
-    let outputs = fallbackOutputs;
+    let files = fallbackFiles;
     try {
       const listedEvents = await session.events().list();
       if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedOutputs = await session.outputs().list();
-      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+      const listedFiles = await session.files().list();
+      if (Array.isArray(listedFiles)) files = listedFiles;
     } catch {
       events = fallbackEvents;
-      outputs = fallbackOutputs;
+      files = fallbackFiles;
     }
 
     const downloaded = [];
-    for (const out of outputs) {
+    for (const out of files) {
       let downloadedLen = 0;
       let sample = "";
       try {
-        const bytes = await session.outputs().download(out);
+        const bytes = await session.files().download(out);
         const text = new TextDecoder().decode(bytes);
         downloadedLen = text.length;
         sample = text.slice(0, 512);
@@ -185,7 +185,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
       marker: ${JSON.stringify(marker)},
       eventCount: events.length,
       eventKinds,
-      outputs: downloaded,
+      files: downloaded,
       assistantTextJoined,
       terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
       terminalData,
@@ -196,7 +196,7 @@ function buildOutputScript(cell: Cell, marker: string): string {
   `;
 }
 
-function dumpOutputResult(cell: Cell, result: OutputCaseResult): string {
+function dumpFileResult(cell: Cell, result: FileCaseResult): string {
   const lines: string[] = [];
   lines.push(`cell=${cell.id} sessionId=${result.sessionId} marker=${result.marker}`);
   lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
@@ -208,8 +208,8 @@ function dumpOutputResult(cell: Cell, result: OutputCaseResult): string {
       lines.push(`  - ${JSON.stringify(se).slice(0, 600)}`);
     }
   }
-  lines.push(`outputs:`);
-  for (const o of result.outputs) {
+  lines.push(`files:`);
+  for (const o of result.files) {
     lines.push(
       `  - filename=${o.filename} sizeBytes=${o.sizeBytes} downloadedLen=${o.downloadedLen} sample=${o.sample.slice(0, 200)}`
     );
@@ -218,33 +218,33 @@ function dumpOutputResult(cell: Cell, result: OutputCaseResult): string {
   return lines.join("\n");
 }
 
-function assertCleanOutputLifecycle(cell: Cell, result: OutputCaseResult): void {
-  const dump = (): string => dumpOutputResult(cell, result);
+function assertCleanFileLifecycle(cell: Cell, result: FileCaseResult): void {
+  const dump = (): string => dumpFileResult(cell, result);
   if (result.streamErrors.length > 0) {
-    throw new Error(`clean output session emitted stream errors\n\n${dump()}`);
+    throw new Error(`clean files session emitted stream errors\n\n${dump()}`);
   }
-  const outputs = result.terminalData ? result.terminalData["outputs"] : undefined;
-  if (outputs !== undefined) {
-    if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
-      throw new Error(`terminal outputs summary is malformed\n\n${dump()}`);
+  const files = result.terminalData ? result.terminalData["files"] : undefined;
+  if (files !== undefined) {
+    if (!files || typeof files !== "object" || Array.isArray(files)) {
+      throw new Error(`terminal files summary is malformed\n\n${dump()}`);
     }
-    const summary = outputs as Record<string, unknown>;
+    const summary = files as Record<string, unknown>;
     for (const field of ["uploaded", "skipped", "failures", "droppedByCap", "totalBytes"] as const) {
       const value = summary[field];
       if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(`terminal outputs.${field} must be a finite number\n\n${dump()}`);
+        throw new Error(`terminal files.${field} must be a finite number\n\n${dump()}`);
       }
     }
     if ((summary["uploaded"] as number) < 1 || summary["failures"] !== 0 || summary["droppedByCap"] !== 0) {
-      throw new Error(`unexpected terminal outputs summary on clean session: ${JSON.stringify(summary)}\n\n${dump()}`);
+      throw new Error(`unexpected terminal files summary on clean session: ${JSON.stringify(summary)}\n\n${dump()}`);
     }
   }
 }
 
-async function startOutputCell(cell: Cell, installDir: string): Promise<OutputCaseResult> {
+async function startFileCell(cell: Cell, installDir: string): Promise<FileCaseResult> {
   const marker = `REPORT-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
-  const script = buildOutputScript(cell, marker);
-  const scriptPath = join(installDir, `outputs-${cell.id}.mjs`);
+  const script = buildFileScript(cell, marker);
+  const scriptPath = join(installDir, `files-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
   const passEnv = buildPassEnv({
     AEX_API_URL: apiUrl,
@@ -258,10 +258,10 @@ async function startOutputCell(cell: Cell, installDir: string): Promise<OutputCa
   });
   if (child.exitCode !== 0) {
     throw new Error(
-      `outputs runner (${cell.id}) exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      `files runner (${cell.id}) exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
     );
   }
-  return JSON.parse(child.stdout.trim()) as OutputCaseResult;
+  return JSON.parse(child.stdout.trim()) as FileCaseResult;
 }
 
 /* -------------------- Block B: failure surfacing -------------------- */
@@ -705,12 +705,12 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("live outputs — agent writes a known file, bytes round-trip", () => {
+describe("live files — agent writes a known file, bytes round-trip", () => {
   it.each(CELLS)(
-    "$id: agent writes report.txt with marker, listOutputs + download recovers it",
+    "$id: agent writes report.txt with marker, listFiles + download recovers it",
     async (cell) => {
-      const result = await startOutputCell(cell, install.installDir);
-      const dump = (): string => dumpOutputResult(cell, result);
+      const result = await startFileCell(cell, install.installDir);
+      const dump = (): string => dumpFileResult(cell, result);
 
       expect(result.sessionStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
@@ -723,18 +723,18 @@ describe("live outputs — agent writes a known file, bytes round-trip", () => {
       if (terminalReason !== "complete") {
         throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
       }
-      assertCleanOutputLifecycle(cell, result);
+      assertCleanFileLifecycle(cell, result);
 
       // Find the report.txt the agent wrote. Filename is relative to
       // workspaceRoot (/workspace) so an agent writing to
-      // /workspace/outputs/report-folder/report.txt yields filename
-      // "outputs/report-folder/report.txt". Asserting on endsWith keeps
+      // /workspace/files/report-folder/report.txt yields filename
+      // "files/report-folder/report.txt". Asserting on endsWith keeps
       // the test robust to the model drifting one directory level.
-      const reportFile = result.outputs.find(
+      const reportFile = result.files.find(
         (o) => o.filename && o.filename.endsWith("report.txt")
       );
       if (!reportFile) {
-        throw new Error(`no output filename endsWith "report.txt"\n\n${dump()}`);
+        throw new Error(`no session filename endsWith "report.txt"\n\n${dump()}`);
       }
 
       // Bytes round-trip — content matches marker, sizeBytes matches

@@ -27,12 +27,12 @@ export interface CaseResult {
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
-  readonly outputCount: number;
-  readonly outputSource: string;
-  readonly outputListError: string | null;
-  readonly fallbackOutputCount: number;
-  readonly listedOutputCount: number | null;
-  readonly outputs: readonly { filename: string | null; sizeBytes: number; sample: string | null }[];
+  readonly fileCount: number;
+  readonly fileSource: string;
+  readonly fileListError: string | null;
+  readonly fallbackFileCount: number;
+  readonly listedFileCount: number | null;
+  readonly files: readonly { filename: string | null; sizeBytes: number; sample: string | null }[];
   readonly outProbesFound: readonly string[];
   readonly channelProbeSources: Readonly<Record<string, readonly string[]>>;
   readonly channelProbeMisses: readonly string[];
@@ -68,8 +68,8 @@ export function dumpCase(result: CaseResult): string {
       `listedEvents=${result.listedEventCount ?? "(not listed)"} eventListError=${result.eventListError ?? "(none)"}`
   );
   lines.push(
-    `outputSource=${result.outputSource} fallbackOutputs=${result.fallbackOutputCount} ` +
-      `listedOutputs=${result.listedOutputCount ?? "(not listed)"} outputListError=${result.outputListError ?? "(none)"}`
+    `fileSource=${result.fileSource} fallbackFiles=${result.fallbackFileCount} ` +
+      `listedFiles=${result.listedFileCount ?? "(not listed)"} fileListError=${result.fileListError ?? "(none)"}`
   );
   lines.push(
     `toolCallStart=${result.toolCallStartCount} toolCallResult=${result.toolCallResultCount} ` +
@@ -86,8 +86,8 @@ export function dumpCase(result: CaseResult): string {
       lines.push(`  - ${JSON.stringify(se).slice(0, 800)}`);
     }
   }
-  lines.push(`outputs=${result.outputs.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
-  for (const o of result.outputs) {
+  lines.push(`files=${result.files.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
+  for (const o of result.files) {
     if (o.filename && o.filename.startsWith(".runtime/")) {
       lines.push(`--- ${o.filename} (sample, first 256 bytes) ---`);
       lines.push(o.sample ?? "(empty)");
@@ -172,16 +172,16 @@ export function assertManagedShape(result: CaseResult, expectedSkillPrefixes: re
     fail(result, `channel probes did not round-trip in the event transcript: ${missing.join(", ")}`);
   }
 
-  for (const out of result.outputs) {
+  for (const out of result.files) {
     if (out.sizeBytes < 0) {
-      fail(result, `output ${out.filename ?? "(unknown)"} reported negative size ${out.sizeBytes}`);
+      fail(result, `file ${out.filename ?? "(unknown)"} reported negative size ${out.sizeBytes}`);
     }
     if (out.sample !== null && out.sample.startsWith("(download error")) {
-      fail(result, `output ${out.filename ?? "(unknown)"} failed to download`);
+      fail(result, `file ${out.filename ?? "(unknown)"} failed to download`);
     }
   }
   if (result.outProbesFound.length < 1) {
-    fail(result, `no agent-written output file carried any expected REF-out token; outputs pipeline unverified`);
+    fail(result, `no agent-written session file carried any expected REF-out token; files pipeline unverified`);
   }
 
   if (result.leakedDeepseekKey) {

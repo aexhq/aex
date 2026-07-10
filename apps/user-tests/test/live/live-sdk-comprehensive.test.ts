@@ -17,9 +17,9 @@
  *   - 1 AGENTS.md (probe-tagged so a model reply that omits it fails)
  *   - 1 `system` message (probe-tagged)
  *   - 1 prompt (probe-tagged)
- *   - 1 custom outputs.allowedDirs entry (not /workspace/outputs — exercises
+ *   - 1 custom fileCapture.allowedDirs entry (not /workspace/files — exercises
  *     the custom-dir submission path; this session does not force a write into it,
- *     so the re-root is not asserted here, only that any uploaded outputs
+ *     so the re-root is not asserted here, only that any uploaded files
  *     round-trip)
  *   - `secrets` carrying the customer's provider key
  *
@@ -35,7 +35,7 @@
  *     prompt probes (proves `composeInstructions()` carried all three
  *     channels into the recipe.yaml that the managed runtime reads).
  *   - No secret value (the provider key) appears anywhere
- *     in the SDK-visible payload (run + events + outputs).
+ *     in the SDK-visible payload (run + events + files).
  *
  * No env-var flags gate scope. The five `test:*` commands are the
  * only knobs.
@@ -88,8 +88,8 @@ interface CaseResult {
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
-  readonly outputCount: number;
-  readonly outputs: readonly { filename: string; sizeBytes: number; sample: string | null }[];
+  readonly fileCount: number;
+  readonly files: readonly { filename: string; sizeBytes: number; sample: string | null }[];
   readonly leakedProviderKey: boolean;
   // Full payload of every stream_error event the runner emitted —
   // captures the actual exception message + phase when materialize or
@@ -208,7 +208,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       system: ${JSON.stringify(systemText)},
       message: ${JSON.stringify(promptText)},
       agentsMd: [rules],
-      outputs: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
+      fileCapture: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
       apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
@@ -224,17 +224,17 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       provider: ${JSON.stringify(spec.provider)}
     };
     const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
+    const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
     let events = fallbackEvents;
-    let outputs = fallbackOutputs;
+    let files = fallbackFiles;
     try {
       const listedEvents = await session.events().list();
       if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedOutputs = await session.outputs().list();
-      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+      const listedFiles = await session.files().list();
+      if (Array.isArray(listedFiles)) files = listedFiles;
     } catch {
       events = fallbackEvents;
-      outputs = fallbackOutputs;
+      files = fallbackFiles;
     }
 
     // CUSTOM envelopes nest the original payload under data.value.
@@ -294,20 +294,20 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
-    const outputsCollected = [];
-    for (const out of outputs.slice(0, 8)) {
+    const filesCollected = [];
+    for (const out of files.slice(0, 8)) {
       let sample = null;
       try {
-        const bytes = await session.outputs().download(out);
+        const bytes = await session.files().download(out);
         const text = new TextDecoder().decode(bytes);
         sample = text.slice(0, 256);
       } catch (err) {
         sample = "(download error: " + (err && err.message ? err.message : String(err)) + ")";
       }
-      outputsCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
+      filesCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
     }
 
-    const serialized = JSON.stringify({ run, events, outputs });
+    const serialized = JSON.stringify({ run, events, files });
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
@@ -324,8 +324,8 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       assistantTextEventCount: assistantTextEvents.length,
       terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
       terminalData,
-      outputCount: outputs.length,
-      outputs: outputsCollected,
+      fileCount: files.length,
+      files: filesCollected,
       leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
       streamErrors
     };
@@ -387,10 +387,10 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   // events sit in between.
   // On terminal mismatch, dump everything we know so the failure
   // log is self-diagnosing. The comprehensive case touches many
-  // surfaces (skills, MCP, AGENTS.md, system, custom outputs.allowedDirs)
+  // surfaces (skills, MCP, AGENTS.md, system, custom fileCapture.allowedDirs)
   // and a runner_error here means materialize() or the manifest fetch tripped.
   // Internal runtime diagnostics are intentionally not exposed through the
-  // public outputs list.
+  // public files list.
   const dumpComprehensive = (): string => {
     const lines: string[] = [];
     lines.push(`sessionId=${result.sessionId} runtime=${result.runtime} provider=${result.provider}`);
@@ -406,7 +406,7 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
         lines.push(`  - ${JSON.stringify(se).slice(0, 800)}`);
       }
     }
-    lines.push(`outputs=${result.outputs.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
+    lines.push(`files=${result.files.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
     lines.push(`assistantTextJoined=${result.assistantTextJoined.slice(0, 800)}`);
     return lines.join("\n");
   };
@@ -453,12 +453,12 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   // No secret leakage anywhere in the SDK-visible payload.
   expect(result.leakedProviderKey).toBe(false);
 
-  // Outputs: any file the managed runtime wrote under the custom outputs.allowedDirs path was
+  // Files: any file the managed runtime wrote under the custom fileCapture.allowedDirs path was
   // uploaded. Downloading each one returns content (a download error
   // would surface in `sample`). We don't require managed runtime to write files —
   // some upstreams + models do, some don't — but if it did, the bytes
   // must round-trip.
-  for (const out of result.outputs) {
+  for (const out of result.files) {
     expect(out.sizeBytes).toBeGreaterThanOrEqual(0);
     if (out.sample !== null) {
       expect(out.sample.startsWith("(download error")).toBe(false);
@@ -478,7 +478,7 @@ afterAll(() => {
 
 describe("live hosted API — comprehensive end-to-end via installed SDK", () => {
   it(
-    "managed deepseek: real managed runtime + skills + MCP + AGENTS.md + system + outputs.allowedDirs",
+    "managed deepseek: real managed runtime + skills + MCP + AGENTS.md + system + fileCapture.allowedDirs",
     async () => {
       const result = await runCase(
         {

@@ -8,7 +8,7 @@ export { executeStatusCmd } from "./status.js";
 export { executeDeliveriesCmd } from "./deliveries.js";
 export { executeWaitCmd } from "./wait.js";
 export { executeEventsCmd } from "./events.js";
-export { executeOutputsCmd } from "./outputs.js";
+export { executeSessionFilesCmd } from "./files.js";
 export { executeDownloadCmd } from "./download.js";
 export { executeCancelCmd } from "./cancel.js";
 export { executeDeleteCmd } from "./delete.js";

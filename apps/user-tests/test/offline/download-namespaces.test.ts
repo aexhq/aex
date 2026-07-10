@@ -6,9 +6,9 @@
  *
  *   - `SessionHandle` exposes the whole-run verb `download` and the metadata
  *     verb `downloadMetadata` flat, plus the per-namespace download verbs via
- *     its `outputs().download()` / `events().download()` accessors.
+ *     its `files().download()` / `events().download()` accessors.
  *   - The installed SDK assembles a public session archive from metadata, events,
- *     and outputs only; it must not call the removed logs namespace or event
+ *     and files only; it must not call the removed logs namespace or event
  *     channel opt-in routes.
  *   - The CLI `download` command validates `--only <namespace>` BEFORE any
  *     network call: an unknown namespace exits non-zero with the
@@ -56,7 +56,7 @@ describe("download namespaces surface (offline)", () => {
         session: {
           download: typeof session.download,
           downloadMetadata: typeof session.downloadMetadata,
-          outputsDownload: typeof session.outputs().download,
+          filesDownload: typeof session.files().download,
           eventsDownload: typeof session.events().download
         },
         // The whole download surface moved off the client onto the session handle.
@@ -65,9 +65,9 @@ describe("download namespaces surface (offline)", () => {
           downloadMetadata: typeof c.downloadMetadata
         }
       };
-      // The old flat per-namespace verbs folded into the outputs()/events()
+      // The old flat per-namespace verbs folded into the files()/events()
       // accessors; the removed logs verbs stay gone everywhere.
-      for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
+      for (const removed of ["downloadFiles", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
         result.session[removed] = typeof session[removed];
         result.client[removed] = typeof c[removed];
       }
@@ -78,13 +78,13 @@ describe("download namespaces surface (offline)", () => {
     const child = await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
     expect(child.exitCode, child.stderr).toBe(0);
     const result = JSON.parse(child.stdout) as { session: Record<string, string>; client: Record<string, string> };
-    for (const v of ["download", "downloadMetadata", "outputsDownload", "eventsDownload"]) {
+    for (const v of ["download", "downloadMetadata", "filesDownload", "eventsDownload"]) {
       expect(result.session[v], `SessionHandle ${v} should be a function`).toBe("function");
     }
     for (const v of ["download", "downloadMetadata"]) {
       expect(result.client[v], `Aex.${v} should not be exposed`).toBe("undefined");
     }
-    for (const removed of ["downloadOutputs", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
+    for (const removed of ["downloadFiles", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
       expect(result.session[removed], `SessionHandle.${removed} should not be exposed`).toBe("undefined");
       expect(result.client[removed], `Aex.${removed} should not be exposed`).toBe("undefined");
     }
@@ -123,15 +123,15 @@ describe("download namespaces surface (offline)", () => {
             headers: { "content-type": "application/json" }
           });
         }
-        if (key === "/api/sessions/session-1/outputs") {
+        if (key === "/api/sessions/session-1/files") {
           return new Response(JSON.stringify({
-            outputs: [{ id: "out-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
+            files: [{ id: "out-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
           }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
-        if (key === "/api/sessions/session-1/outputs/out-1/download") {
+        if (key === "/api/sessions/session-1/files/out-1/download") {
           return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
         }
         throw new Error("unexpected route: " + key);
@@ -146,7 +146,7 @@ describe("download namespaces surface (offline)", () => {
         entries: Object.keys(entries).sort(),
         manifestNamespaces: manifest.namespaces.map((entry) => entry.name),
         manifestHasLogsAlias: Object.prototype.hasOwnProperty.call(manifest, "logs"),
-        outputText: strFromU8(entries["outputs/report.txt"])
+        outputText: strFromU8(entries["files/report.txt"])
       }));
     `;
     const path = join(install.installDir, "download-public-archive.mjs");
@@ -161,18 +161,17 @@ describe("download namespaces surface (offline)", () => {
       readonly outputText: string;
     };
     expect([...result.calls].sort()).toEqual([
-      "/api/sessions/session-1",
       "/api/sessions/session-1/events",
-      "/api/sessions/session-1/outputs",
-      "/api/sessions/session-1/outputs/out-1/download"
+      "/api/sessions/session-1/files",
+      "/api/sessions/session-1/files/out-1/download"
     ].sort());
     expect(result.entries).toEqual([
       "events/events.jsonl",
+      "files/report.txt",
       "manifest.json",
-      "metadata/session.json",
-      "outputs/report.txt"
+      "metadata/session.json"
     ]);
-    expect(result.manifestNamespaces).toEqual(["metadata", "events", "outputs"]);
+    expect(result.manifestNamespaces).toEqual(["metadata", "events", "files"]);
     expect(result.manifestHasLogsAlias).toBe(false);
     expect(result.outputText).toBe("hello");
   });
@@ -186,7 +185,7 @@ describe("download namespaces surface (offline)", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toMatch(/--only outputs\|events\|metadata/);
+    expect(result.stderr).toMatch(/--only files\|events\|metadata/);
   });
 
   it("`aex download --only logs` rejects as a removed public namespace", async () => {
@@ -196,7 +195,7 @@ describe("download namespaces surface (offline)", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toMatch(/--only must be one of: outputs, events, metadata/);
+    expect(result.stderr).toMatch(/--only must be one of: files, events, metadata/);
   });
 
   it("`aex download --only <bogus>` rejects before any network call", async () => {
@@ -206,6 +205,6 @@ describe("download namespaces surface (offline)", () => {
       { cwd: install.installDir, timeoutMs: 30_000 }
     );
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toMatch(/--only must be one of: outputs, events, metadata/);
+    expect(result.stderr).toMatch(/--only must be one of: files, events, metadata/);
   });
 });

@@ -41,7 +41,7 @@ describe("SessionHandle.wait — terminal statuses", () => {
       const session = await client.openSession("session-abc");
       const before = f.calls;
       const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
-      expect(session.status).toBe(status);
+      expect(run.status).toBe(status);
       expect(f.calls - before).toBe(1);
     }
   });
@@ -52,7 +52,7 @@ describe("SessionHandle.wait — terminal statuses", () => {
     const session = await client.openSession("session-abc");
     const before = f.calls; // the openSession rehydrate read
     const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
-    expect(session.status).toBe("timed_out");
+    expect(run.status).toBe("timed_out");
     // A single status read is enough; no polling loop means no sleep happened.
     expect(f.calls - before).toBe(1);
   });
@@ -64,7 +64,7 @@ describe("SessionHandle.wait — terminal statuses", () => {
       const session = await client.openSession("session-abc");
       const before = f.calls;
       const run = await session.wait({ intervalMs: 1, timeoutMs: 1_000 });
-      expect(session.status).toBe(status);
+      expect(run.status).toBe(status);
       expect(f.calls - before).toBe(1);
     }
   });

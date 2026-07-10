@@ -19,17 +19,17 @@ import { readFile, writeFile, readdir, stat, mkdir, chmod, rm } from "node:fs/pr
 import { resolve as resolvePath, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { executeCli } from "./main.js";
-import type { CliIO, CliConfigStore, StoredCliConfig, OutputsSyncFileEntry } from "./internal.js";
+import type { CliIO, CliConfigStore, StoredCliConfig, SessionFilesSyncFileEntry } from "./internal.js";
 import type { WebSocketLike } from "@aexhq/contracts";
 
-async function walkDirectory(root: string): Promise<readonly OutputsSyncFileEntry[] | null> {
+async function walkDirectory(root: string): Promise<readonly SessionFilesSyncFileEntry[] | null> {
   try {
     const rootStat = await stat(root);
     if (!rootStat.isDirectory()) return null;
   } catch {
     return null;
   }
-  const out: OutputsSyncFileEntry[] = [];
+  const out: SessionFilesSyncFileEntry[] = [];
   async function visit(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {

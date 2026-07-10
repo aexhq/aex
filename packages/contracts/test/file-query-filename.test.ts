@@ -1,17 +1,17 @@
 /**
- * WS6: OutputSearchQuery.filename and OutputQuery.filename are the SAME type
+ * WS6: SessionFileSearchQuery.filename and SessionFileQuery.filename are the SAME type
  * (`string | RegExp`), and one shared `toFilenameMatcher` never passes a RegExp
  * into a string-only path (the T16 crash class).
  */
 import { describe, expect, it } from "vitest";
-import { operations, type OutputQuery, type OutputSearchQuery } from "../src/index.js";
+import { operations, type SessionFileQuery, type SessionFileSearchQuery } from "../src/index.js";
 
 describe("unified filename query type (WS6)", () => {
-  it("[compile-time] OutputSearchQuery.filename and OutputQuery.filename are interchangeable", () => {
-    const re: OutputQuery["filename"] = /report/i;
-    const searchFromQuery: OutputSearchQuery["filename"] = re;
-    const queryFromSearch: OutputQuery["filename"] = searchFromQuery;
-    const str: OutputSearchQuery["filename"] = "notes.txt";
+  it("[compile-time] SessionFileSearchQuery.filename and SessionFileQuery.filename are interchangeable", () => {
+    const re: SessionFileQuery["filename"] = /report/i;
+    const searchFromQuery: SessionFileSearchQuery["filename"] = re;
+    const queryFromSearch: SessionFileQuery["filename"] = searchFromQuery;
+    const str: SessionFileSearchQuery["filename"] = "notes.txt";
     expect([re, searchFromQuery, queryFromSearch, str].length).toBe(4);
   });
 

@@ -12,7 +12,7 @@ The billing reads — `aex.billing()`, `aex.billingLedger()`, and the CLI
 `aex billing` (and its `ledger` sub-verb) — require the **`billing:read`**
 scope; a token without it fails with `403 insufficient_scope` (see
 [Errors](errors.md)). This is why the [Quickstart](quickstart.md) mints
-`billing:read` alongside `sessions:read` / `sessions:write` / `outputs:read`.
+`billing:read` alongside `sessions:read` / `sessions:write` / `files:read`.
 
 ## Read the billing summary
 

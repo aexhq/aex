@@ -96,8 +96,8 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
     if (url.endsWith("/api/sessions/sess_1/events/ticket")) {
       return json({ wsUrl: "wss://events.example.test/sessions/sess_1", ticket: "ticket", expiresAtMs: 1 });
     }
-    if (url.endsWith("/api/sessions/sess_1/outputs")) {
-      return json({ outputs: [{ id: "out_1", filename: "answer.txt" }] });
+    if (url.endsWith("/api/sessions/sess_1/files")) {
+      return json({ files: [{ id: "out_1", filename: "answer.txt" }] });
     }
     if (url.endsWith("/api/sessions/sess_1")) {
       // Settle-stamped (costUsd present) so the default await-settle resolves on
@@ -143,13 +143,15 @@ describe("Aex sessions", () => {
     expect(result.session.status).toBe("idle");
     expect(result.text).toBe("hello");
     expect(result.events.map((evt) => evt.sequence)).toEqual([4096, 4097]);
-    expect(result.outputs).toEqual([{ id: "out_1", filename: "answer.txt" }]);
+    expect(result.files).toEqual([{ id: "out_1", filename: "answer.txt" }]);
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
       "POST https://api.example.test/api/sessions/sess_1/messages"
     );
     const create = calls.find((call) => call.method === "POST" && call.url.endsWith("/api/sessions"));
     expect((create!.body as Record<string, unknown>).retention).toEqual({ idleTtl: "3m" });
-    expect(calls.some((call) => call.url.endsWith("/api/sessions"))).toBe(false);
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
+      "GET https://api.example.test/api/sessions/sess_1/files"
+    );
   });
 
   it("patches a stale (running) post-stream record from the terminal event (await:'park')", async () => {

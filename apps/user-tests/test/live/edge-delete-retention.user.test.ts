@@ -4,19 +4,19 @@
  * DEFECT PROBE — on the dev plane, DELETE /api/sessions/:id (SDK
  * `session.delete()`, CLI `aex delete`) only flips the record's status
  * attribute to "deleted" (api.ts deleteRun): it deletes nothing from the
- * output store, no purge job consumes `runDeletedAt`, and none of the read
- * paths (outputs list / download / link / archive) gate on the deleted
+ * session file store, no purge job consumes `runDeletedAt`, and none of the read
+ * paths (files list / download / link / archive) gate on the deleted
  * status. Consequences a customer can observe:
- *   1. Every output of a "deleted" run stays listable AND downloadable
+ *   1. Every file of a "deleted" run stays listable AND downloadable
  *      byte-for-byte, indefinitely.
  *   2. The hourly retained-storage accrual bills the deleted run forever —
  *      its basis (session_cost storedBytes) is never cleared by deletion.
  *
  * This probe covers (1), the public surface: delete a settled run, then
- * assert its output content is no longer retrievable. It FAILS until the
- * platform purges (or at least fences reads of) deleted sessions' outputs.
+ * assert its file content is no longer retrievable. It FAILS until the
+ * platform purges (or at least fences reads of) deleted sessions' files.
  *
- * ONE billable session turn total (tiny prompt, one small output file).
+ * ONE billable session turn total (tiny prompt, one small session file).
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
  * AEX_USER_TEST_TARBALL/VERSION (wired by the shared runner).
@@ -132,9 +132,9 @@ interface DeleteRetentionResult {
   readonly postDeleteReadError: { name: string; message: string; status: number | null; code: string | null } | null;
 }
 
-describe("edge: deleting a session retires its outputs", () => {
+describe("edge: deleting a session retires its files", () => {
   it(
-    "outputs of a deleted run are no longer listable or downloadable",
+    "files of a deleted run are no longer listable or downloadable",
     async () => {
       const body = `
         const marker = "DELETE-RETENTION-" + Date.now();
@@ -148,7 +148,7 @@ describe("edge: deleting a session retires its outputs", () => {
         }, { timeoutMs: 6 * 60_000 });
 
         const session = await client.sessions.open(sessionResult.sessionId);
-        const outs = session.outputs();
+        const outs = session.files();
         const listed = await outs.list();
         const pre = listed.find((o) => (o.filename || "").endsWith("keep.txt")) || null;
 
@@ -181,14 +181,14 @@ describe("edge: deleting a session retires its outputs", () => {
       `;
       const out = (await runChild(install, "edge-delete-retention-A.mjs", body)) as unknown as DeleteRetentionResult;
 
-      // The session itself must have completed and captured the output.
+      // The session itself must have completed and captured the file.
       expect(out.ok, `run ${out.sessionId} did not complete ok (status=${out.status})`).toBe(true);
       expect((out.preDeleteBytes ?? 0) > 0, `keep.txt was not captured pre-delete (${out.sessionId})`).toBe(true);
 
       // The delete must have been accepted.
       expect(out.deletedStatus, `run ${out.sessionId}: status after delete`).toBe("deleted");
 
-      // DEFECT PROBE: after a successful delete the output CONTENT must be
+      // DEFECT PROBE: after a successful delete the file content must be
       // unreachable — either the list is empty or the read fails with a typed
       // error. Today the dev plane serves both (soft status flip only), so a
       // customer's "deleted" deliverables remain downloadable forever (and the
@@ -196,7 +196,7 @@ describe("edge: deleting a session retires its outputs", () => {
       const contentStillServed = out.postDeleteReadText !== null && out.postDeleteReadError === null;
       expect(
         contentStillServed,
-        `run ${out.sessionId}: output content is still downloadable after delete ` +
+        `run ${out.sessionId}: file content is still downloadable after delete ` +
           `(list count=${out.postDeleteListCount}, read="${out.postDeleteReadText}")`
       ).toBe(false);
     },

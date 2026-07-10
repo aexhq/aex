@@ -173,7 +173,7 @@ interface Observation {
   readonly assistantText: string;
   readonly toolCalls: readonly ToolCall[];
   readonly toolResults: readonly ToolResult[];
-  readonly outputs: readonly OutputSample[];
+  readonly files: readonly OutputSample[];
 }
 
 const SCRIPT_PREAMBLE = `
@@ -235,18 +235,18 @@ function blockText(content) {
 
 async function observe(result) {
   const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-  const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
+  const fallbackFiles = Array.isArray(result.files) ? result.files : [];
   const session = await client.sessions.open(result.sessionId);
   let events = fallbackEvents;
-  let outputs = fallbackOutputs;
+  let files = fallbackFiles;
   try {
     const listedEvents = await session.events().list();
     if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    const listedOutputs = await session.outputs().list();
-    if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+    const listedFiles = await session.files().list();
+    if (Array.isArray(listedFiles)) files = listedFiles;
   } catch {
     events = fallbackEvents;
-    outputs = fallbackOutputs;
+    files = fallbackFiles;
   }
   const starts = events.filter((event) => event.type === "TOOL_CALL_START");
   const nameById = new Map();
@@ -281,10 +281,10 @@ async function observe(result) {
     eventKinds.push("TURN_FINISHED");
   }
   const outputSamples = [];
-  for (const output of outputs.slice(0, 24)) {
+  for (const output of files.slice(0, 24)) {
     let text = null;
     try {
-      const bytes = await session.outputs().download(output);
+      const bytes = await session.files().download(output);
       text = new TextDecoder().decode(bytes).slice(0, 16_384);
     } catch (error) {
       text = "(download failed: " + (error && error.message ? error.message : String(error)) + ")";
@@ -306,7 +306,7 @@ async function observe(result) {
     assistantText: typeof result.text === "string" ? result.text : "",
     toolCalls,
     toolResults,
-    outputs: outputSamples
+    files: outputSamples
   };
 }
 `;
@@ -378,7 +378,7 @@ function allObservedText(observation: Observation): string {
   return [
     observation.assistantText,
     ...observation.toolResults.map((result) => result.text),
-    ...observation.outputs.map((output) => output.text ?? "")
+    ...observation.files.map((output) => output.text ?? "")
   ].join("\n");
 }
 
@@ -390,7 +390,7 @@ function diagnostics(observation: Observation): string {
     `events=[${observation.eventKinds.join(",")}]`,
     `calls=${JSON.stringify(observation.toolCalls).slice(0, 3000)}`,
     `results=${JSON.stringify(observation.toolResults).slice(0, 4000)}`,
-    `outputs=${JSON.stringify(observation.outputs.map((output) => ({
+    `files=${JSON.stringify(observation.files.map((output) => ({
       filename: output.filename,
       sizeBytes: output.sizeBytes,
       text: output.text?.slice(0, 300)
@@ -422,7 +422,7 @@ function assertToolSurface(
 }
 
 function outputEnding(observation: Observation, suffix: string): OutputSample | undefined {
-  return observation.outputs.find((output) => (output.filename ?? "").endsWith(suffix));
+  return observation.files.find((output) => (output.filename ?? "").endsWith(suffix));
 }
 
 function sha256(value: string): string {
@@ -486,7 +486,7 @@ const result = await client.start({
     BuiltinTools.head,
     BuiltinTools.tail
   ],
-  outputs: { allowedDirs: ["/workspace/fuzz"] },
+  fileCapture: { allowedDirs: ["/workspace/fuzz"] },
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-files-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
@@ -550,7 +550,7 @@ const result = await client.start({
     BuiltinTools.wait,
     BuiltinTools.git
   ],
-  outputs: { allowedDirs: ["/workspace/.aex"] },
+  fileCapture: { allowedDirs: ["/workspace/.aex"] },
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-process-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
@@ -577,9 +577,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
         .map((call) => call.arguments["language"]);
       expect(languages, dump).toContain("python");
       expect(languages, dump).toContain("javascript");
-      const todoOutput = outputEnding(observation, "todos.json");
-      expect(todoOutput, dump).toBeDefined();
-      expect(JSON.parse(todoOutput?.text ?? "null"), dump).toEqual(todos);
+      const todoSessionFile = outputEnding(observation, "todos.json");
+      expect(todoSessionFile, dump).toBeDefined();
+      expect(JSON.parse(todoSessionFile?.text ?? "null"), dump).toEqual(todos);
     },
     16 * 60_000
   );

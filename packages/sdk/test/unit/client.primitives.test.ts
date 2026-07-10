@@ -67,7 +67,7 @@ function makeEnv(session: Record<string, unknown> = { id: "session-1", status: "
     const json = (b: unknown, status = 200): Response =>
       new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
     if (url.endsWith("/events/ticket")) return json({ wsUrl: "wss://ev.test/session-1", ticket: "t", expiresAtMs: 1 });
-    if (/\/api\/(sessions|sessions)\/[^/]+\/outputs$/.test(url)) return json({ outputs: [] });
+    if (/\/api\/(sessions|sessions)\/[^/]+\/files$/.test(url)) return json({ files: [] });
     if (url.endsWith("/api/sessions/session-1/messages")) {
       return json({ session: { id: "session-1", status: "running", turnSeq: 1 }, turn: { sessionId: "session-1", turnSeq: 1 }, eventCursor: 1024 });
     }
@@ -243,8 +243,8 @@ describe("subagent children (WS8)", () => {
     expect(child.parentSessionId).toBe("session-1");
     expect(child.depth).toBe(1);
     expect(child.status).toBe("succeeded");
-    // Resolves through the RUN facade (/sessions/:id/outputs), not openSession.
-    const outputs = await child.outputs().list();
-    expect(outputs).toEqual([]);
+    // Resolves through the RUN facade (/sessions/:id/files), not openSession.
+    const files = await child.files().list();
+    expect(files).toEqual([]);
   });
 });

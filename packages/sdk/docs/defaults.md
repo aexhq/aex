@@ -43,7 +43,7 @@ For the hard ceilings and who can raise them, see
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| Output link / signed-URL TTL | 300 seconds (5 minutes) at the storage layer; `session.outputs().link(...)` defaults to `"1h"` | Per-call via `expiresSeconds` (storage) or `expiresIn` on `session.outputs().link` / `session.outputs().fetch`. | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
+| SessionFile link / signed-URL TTL | 300 seconds (5 minutes) at the storage layer; `session.files().link(...)` defaults to `"1h"` | Per-call via `expiresSeconds` (storage) or `expiresIn` on `session.files().link` / `session.files().fetch`. | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
 | Event-stream connection ticket TTL | 60 seconds | Per-mint via the `ttlMs` argument. | `REQUEST_TICKET_DEFAULT_TTL_MS` |
 
 ## Subagents

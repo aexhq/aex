@@ -128,8 +128,8 @@ function makeHarness(overrides: Partial<HarnessState> = {}): {
     if (url.endsWith("/api/sessions/sess_1/events/ticket")) {
       return json({ wsUrl: "wss://events.example.test/sessions/sess_1", ticket: "ticket", expiresAtMs: 1 });
     }
-    if (url.endsWith("/api/sessions/sess_1/outputs")) {
-      return json({ outputs: [] });
+    if (url.endsWith("/api/sessions/sess_1/files")) {
+      return json({ files: [] });
     }
     if (url.endsWith("/api/sessions/sess_1")) {
       if (state.flipRunningToIdleOnRead && state.sessionStatus === "running") state.sessionStatus = "idle";

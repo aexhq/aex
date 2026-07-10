@@ -24,28 +24,33 @@ const SAMPLE_UNIT: SessionUnit = {
   attempts: [],
   events: { entries: [], totalCount: 0, truncated: false },
   rawEventPages: [],
-  outputs: [],
-  outputCaptureFailures: []
+  sessionFiles: [],
+  fileCaptureFailures: []
 };
 
 describe("SessionHandle.unit", () => {
   it("hits GET /api/sessions/:id and parses the wire SessionUnit", async () => {
     const calls: string[] = [];
+    let sessionReads = 0;
     const stub: typeof fetch = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       calls.push(url);
-      // The session rehydrate read echoes a minimal session record; the unit
-      // read returns the full SessionUnit. Both are served from the same fixture.
       if (url.endsWith("/api/sessions/session-1")) {
+        sessionReads++;
+        if (sessionReads > 1) {
+          return new Response(JSON.stringify(SAMPLE_UNIT), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        // The session rehydrate read echoes a minimal session record; the unit
+        // read returns the full SessionUnit from the same session-keyed route.
         return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
-      return new Response(JSON.stringify(SAMPLE_UNIT), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      });
+      return new Response("not found", { status: 404 });
     };
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch: stub });
     const session = await client.openSession("session-1");

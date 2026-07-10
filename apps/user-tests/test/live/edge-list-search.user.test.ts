@@ -1,5 +1,5 @@
 /**
- * Live edge-case sweep: sessions.list / outputs.search / SessionHandle.unit /
+ * Live edge-case sweep: sessions.list / files.search / SessionHandle.unit /
  * the client `debug` option.
  *
  * Acts as a real customer hammering these four verbs of the installed
@@ -10,7 +10,7 @@
  *
  * Surface under test (packages/sdk/src/client.ts):
  *   - SessionClient.list(query)            pagination / filter / order / bogus cursor
- *   - Aex.outputs.search(query)            cross-session output search + cursor-dedup termination
+ *   - Aex.files.search(query)            cross-session file search + cursor-dedup termination
  *   - SessionHandle.unit()                 the self-contained SessionUnit read shape
  *   - AexOptions.debug (true | function)   redacted per-request stderr trace, no secret leak
  *
@@ -162,15 +162,15 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("edge: sessions.list / outputs.search / unit / debug", () => {
+describe("edge: sessions.list / files.search / unit / debug", () => {
   it(
-    "A search+unit: a marker deliverable is found by outputs.search (scoped + cross-session), and unit() returns a coherent SessionUnit",
+    "A search+unit: a marker deliverable is found by files.search (scoped + cross-session), and unit() returns a coherent SessionUnit",
     async () => {
       const marker = "EDGES" + Math.random().toString(36).slice(2, 10).toUpperCase();
       const filename = "edgesearch_" + marker + ".txt";
       const prompt =
         `Use your shell/filesystem tools to create a text file at the path ` +
-        `/workspace/outputs/${filename} whose ENTIRE contents are exactly these characters: ${marker} ` +
+        `/workspace/files/${filename} whose ENTIRE contents are exactly these characters: ${marker} ` +
         `(no trailing newline, nothing else). Do not create any other files. Then reply with the single word done.`;
       const body = `
         const sessionResult = await client.start({
@@ -178,7 +178,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           model: MODEL,
           message: ${JSON.stringify(prompt)},
           includeBuiltinTools: true,
-          outputs: { allowedDirs: ["/workspace/outputs"] },
+          fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-ls-A-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
@@ -223,9 +223,9 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
             hasAttemptCount: typeof u.attemptCount === "number",
             hasEvents: u.events != null,
             eventsTotal: (u.events && typeof u.events.totalCount === "number") ? u.events.totalCount : null,
-            hasOutputs: Array.isArray(u.outputs),
-            outputsLen: Array.isArray(u.outputs) ? u.outputs.length : null,
-            outputNames: Array.isArray(u.outputs) ? u.outputs.map((o) => o.fileName) : null,
+            hasFiles: Array.isArray(u.files),
+            filesLen: Array.isArray(u.files) ? u.files.length : null,
+            fileNames: Array.isArray(u.files) ? u.files.map((o) => o.fileName) : null,
             hasCleanupStatus: u.cleanupStatus != null,
             hasCapsSnapshot: capsObj !== null,
             capsKeys: capsObj ? Object.keys(capsObj) : null,
@@ -241,9 +241,9 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           };
         }, 120000));
 
-        // ---- outputs.search : SCOPED (sessionIds) — fast + deterministic -----
+        // ---- files.search : SCOPED (sessionIds) — fast + deterministic -----
         probes.push(await probe("search_scoped_marker", async () => {
-          const page = await client.outputs.search({ sessionIds: [sessionId], filename: MARKER });
+          const page = await client.files.search({ sessionIds: [sessionId], filename: MARKER });
           return {
             hits: page.hits.length,
             sessionIds: [...new Set(page.hits.map((h) => h.sessionId))],
@@ -252,37 +252,37 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
           };
         }, 30000));
         probes.push(await probe("search_scoped_ext", async () => {
-          const page = await client.outputs.search({ sessionIds: [sessionId], extension: "txt" });
+          const page = await client.files.search({ sessionIds: [sessionId], extension: "txt" });
           return { hits: page.hits.length };
         }, 30000));
         probes.push(await probe("search_scoped_nomatch", async () => {
-          const page = await client.outputs.search({ sessionIds: [sessionId], filename: "zzz-no-such-marker-" + Date.now() });
+          const page = await client.files.search({ sessionIds: [sessionId], filename: "zzz-no-such-marker-" + Date.now() });
           return { hits: page.hits.length, isArray: Array.isArray(page.hits) };
         }, 30000));
         probes.push(await probe("search_scoped_empty_query", async () => {
-          const page = await client.outputs.search({ sessionIds: [sessionId] });
+          const page = await client.files.search({ sessionIds: [sessionId] });
           return { hits: page.hits.length };
         }, 30000));
         // Duplicate sessionId in the allow-list must NOT double-count past the limit.
         probes.push(await probe("search_dup_runids", async () => {
-          const page = await client.outputs.search({ sessionIds: [sessionId, sessionId, sessionId], filename: MARKER });
+          const page = await client.files.search({ sessionIds: [sessionId, sessionId, sessionId], filename: MARKER });
           return { hits: page.hits.length };
         }, 30000));
 
-        // ---- outputs.search : UNSCOPED limit — proves EARLY termination ---
+        // ---- files.search : UNSCOPED limit — proves EARLY termination ---
         // No filter + small limit returns as soon as the limit hits are collected,
         // so it must scan only a few sessions (NOT the whole workspace).
         probes.push(await probe("search_limit_early_stop", async () => {
           const t0 = Date.now();
-          const page = await client.outputs.search({ limit: 2 });
+          const page = await client.files.search({ limit: 2 });
           return { hits: page.hits.length, ms: Date.now() - t0 };
         }, 60000));
 
-        // ---- outputs.search : UNSCOPED marker — cross-session + full-scan
+        // ---- files.search : UNSCOPED marker — cross-session + full-scan
         //      termination (exercises the seenCursors dedup on the real workspace).
         probes.push(await probe("search_unscoped_marker", async () => {
           const t0 = Date.now();
-          const page = await client.outputs.search({ filename: MARKER });
+          const page = await client.files.search({ filename: MARKER });
           return {
             hits: page.hits.length,
             foundThisRun: page.hits.some((h) => h.sessionId === sessionId),
@@ -299,7 +299,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
 
       expect(r.status, `run did not succeed${ctx}`).toBe("succeeded");
 
-      // ================= outputs.search — the correct behaviors ==========
+      // ================= files.search — the correct behaviors ==========
       const sm = byLabel(probes, "search_scoped_marker");
       expect(sm.ok, `scoped marker search threw: ${JSON.stringify(sm.error)}${ctx}`).toBe(true);
       const smv = sm.value as { hits: number; allThisRun: boolean; names: (string | null)[] };
@@ -321,7 +321,7 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
       expect(es.ok, `limit early-stop search threw/hung: ${JSON.stringify(es.error)}${ctx}`).toBe(true);
       expect((es.value as { hits: number }).hits, `limit:2 returned more than 2 hits (limit not honored)${ctx}`).toBeLessThanOrEqual(2);
 
-      // ---- outputs.search unscoped full-scan termination ----------------
+      // ---- files.search unscoped full-scan termination ----------------
       const us = byLabel(probes, "search_unscoped_marker");
       // Two acceptable outcomes: it TERMINATED and found our marker, or it merely
       // ran out of the race budget on a large workspace (PROBE_TIMEOUT). A
@@ -340,20 +340,20 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
       // eslint-disable-next-line no-console
       console.log(
         us.ok
-          ? `[edge-list-search] unscoped outputs.search full-scan terminated in ${(us.value as { ms: number }).ms}ms with ${(us.value as { hits: number }).hits} hit(s)`
-          : `[edge-list-search] NOTE: unscoped outputs.search did not terminate cleanly: ${JSON.stringify(us.error)}`
+          ? `[edge-list-search] unscoped files.search full-scan terminated in ${(us.value as { ms: number }).ms}ms with ${(us.value as { hits: number }).hits} hit(s)`
+          : `[edge-list-search] NOTE: unscoped files.search did not terminate cleanly: ${JSON.stringify(us.error)}`
       );
 
-      // ---- outputs.search dup-sessionIds (LOW finding, reported not gated) ----
+      // ---- files.search dup-sessionIds (LOW finding, reported not gated) ----
       // A single deliverable, but its sessionId repeated 3x in the allow-list. The
-      // SDK iterates sessionIds verbatim (no dedup), so the same (sessionId,outputId)
+      // SDK iterates sessionIds verbatim (no dedup), so the same (sessionId,fileId)
       // hit is emitted once per repeat → duplicated hits. Low severity, but a
       // real user concatenating corpus allow-lists can hit it.
       const dup = byLabel(probes, "search_dup_runids");
       if (dup.ok) {
         const dupHits = (dup.value as { hits: number }).hits;
         // eslint-disable-next-line no-console
-        console.log(`[edge-list-search] FINDING(low): outputs.search does NOT dedup sessionIds — [sessionId,sessionId,sessionId] gave ${dupHits} hits for a single output (expected ${smv.hits}).`);
+        console.log(`[edge-list-search] FINDING(low): files.search does NOT dedup sessionIds — [sessionId,sessionId,sessionId] gave ${dupHits} hits for a single file (expected ${smv.hits}).`);
       }
 
       // ================= unit() — SessionUnit contract check =================
@@ -369,26 +369,26 @@ describe("edge: sessions.list / outputs.search / unit / debug", () => {
         `[edge-list-search] unit() shape: finalStatus=${JSON.stringify(u.finalStatus)} polledToTerminal=${u.polledToTerminal} polls=${u.polls} ` +
           `topKeys=${JSON.stringify(u.topKeys)} hasSubmission=${u.hasSubmission} submissionModel=${JSON.stringify(u.submissionModel)} ` +
           `hasAttempts=${u.hasAttempts} hasAttemptCount=${u.hasAttemptCount} hasEvents=${u.hasEvents} eventsTotal=${JSON.stringify(u.eventsTotal)} ` +
-          `hasOutputs=${u.hasOutputs} outputsLen=${JSON.stringify(u.outputsLen)} hasCleanupStatus=${u.hasCleanupStatus} ` +
+          `hasFiles=${u.hasFiles} filesLen=${JSON.stringify(u.filesLen)} hasCleanupStatus=${u.hasCleanupStatus} ` +
           `hasCapsSnapshot=${u.hasCapsSnapshot} capsKeys=${JSON.stringify(u.capsKeys)} capsRuntimeSize=${JSON.stringify(u.capsRuntimeSize)} ` +
           `hasRuntimeManifest=${u.hasRuntimeManifest} manifestKeys=${JSON.stringify(u.manifestKeys)} manifestRuntimeSize=${JSON.stringify(u.manifestRuntimeSize)} ` +
           `topRuntimeSize=${JSON.stringify(u.topRuntimeSize)} hasCostTelemetry=${u.hasCostTelemetry}`
       );
       // CONTRACT: the SDK types getSessionUnit()/SessionHandle.unit() as `SessionUnit`,
-      // whose `submission` / `attempts` / `events` / `outputs` are NON-optional.
-      // A typed consumer WILL read `unit.outputs`, `unit.submission.submission`,
+      // whose `submission` / `attempts` / `events` / `files` are NON-optional.
+      // A typed consumer WILL read `unit.files`, `unit.submission.submission`,
       // `unit.events.totalCount` — so these should be present on a settled run.
       // (Polled to terminal above to rule out settle-lag.) On dev unit() returns
       // a lean session-summary record instead — surfaced as a NON-GATING finding so
       // the green suite still guards the id / no-secret-leak invariants above.
-      if (!(u.hasSubmission && u.hasAttempts && u.hasEvents && u.hasOutputs)) {
+      if (!(u.hasSubmission && u.hasAttempts && u.hasEvents && u.hasFiles)) {
         // eslint-disable-next-line no-console
         console.log(
           `[edge-list-search] FINDING(med,PRODUCT_BUG): unit() (GET /api/sessions/:id) returns a LEAN record after ` +
             `settling (finalStatus=${JSON.stringify(u.finalStatus)}, polledToTerminal=${u.polledToTerminal}). The SDK ` +
-            `types getSessionUnit()/SessionHandle.unit() as SessionUnit with REQUIRED submission/attempts/events/outputs ` +
+            `types getSessionUnit()/SessionHandle.unit() as SessionUnit with REQUIRED submission/attempts/events/files ` +
             `(+ capsSnapshot/runtimeManifest), but dev returns only ${JSON.stringify(u.topKeys)}. A typed consumer ` +
-            `reading unit.outputs / unit.submission.submission.model / unit.events.totalCount gets undefined at runtime.`
+            `reading unit.files / unit.submission.submission.model / unit.events.totalCount gets undefined at runtime.`
         );
       }
     },

@@ -36,18 +36,18 @@ import {
   type FileRecord,
   type FileRef,
   type McpServerRef,
-  type Output,
-  type OutputFileType,
-  type OutputLink,
-  type OutputLinkOptions,
-  type OutputQuery,
-  type OutputText,
+  type SessionFile,
+  type SessionFileType,
+  type SessionFileLink,
+  type SessionFileLinkOptions,
+  type SessionFileQuery,
+  type SessionFileText,
   type OutputMode,
-  type ReadOutputTextOptions,
+  type ReadSessionFileTextOptions,
   type ResponseFormat,
-  type OutputSearchQuery,
-  type OutputSearchHit,
-  type OutputSearchPage,
+  type SessionFileSearchQuery,
+  type SessionFileSearchHit,
+  type SessionFileSearchPage,
   type SessionCostProviderUsage,
   type TurnOutcome,
   type Session,
@@ -142,7 +142,7 @@ export interface AexOptions {
  * the terminal `status` (a {@link SessionTerminalOutcome}), `ok`, `costUsd`
  * (`number`, `>= 0`), and `usage` are ALWAYS present — `start()` awaits the settle
  * commit by default. Adds the one-shot conveniences: the session-record-compatible record,
- * events, decoded trace, assistant text, and captured outputs.
+ * events, decoded trace, assistant text, and captured files.
  *
  * `T` is the `responseFormat` decode type: when the session was submitted with a
  * `json_schema` `responseFormat`, {@link outcome} carries the typed decoded
@@ -164,8 +164,8 @@ export interface SessionResult<T = unknown> extends SettledResult {
   readonly events: readonly AexEventView[];
   /** Decoded view of the events: tool calls + usage + assistant text. */
   readonly trace: TurnTrace;
-  /** The session's captured output files. */
-  readonly outputs: readonly Output[];
+  /** The session's captured files. */
+  readonly files: readonly SessionFile[];
   /**
    * The typed schema-decode outcome — present only when the session was submitted
    * with a `json_schema` `responseFormat`: `{ kind:'decoded', value }` or
@@ -278,11 +278,11 @@ export interface SessionCreateOptions {
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
   /**
-   * Output capture policy for the session's output files. `allowedDirs` omitted
+   * File capture policy for the session's captured files. `allowedDirs` omitted
    * captures every regular file the session creates or modifies; the listed
    * roots narrow capture; `deniedDirs` subtracts noise.
    */
-  readonly outputs?: {
+  readonly fileCapture?: {
     readonly allowedDirs?: readonly string[];
     readonly deniedDirs?: readonly string[];
     readonly captureTimeoutMs?: number;
@@ -380,7 +380,7 @@ export interface SessionTurnResult<T = unknown> extends SettledResult {
   readonly turn: SessionTurn;
   readonly text: string;
   readonly events: readonly AexEventView[];
-  readonly outputs: readonly Output[];
+  readonly files: readonly SessionFile[];
   readonly messages: readonly Message[];
   /** The typed schema-decode outcome when a `json_schema` `responseFormat` was set. */
   readonly outcome?: TurnOutcome<T>;
@@ -507,37 +507,37 @@ export interface SessionEvents {
   first(): Promise<AexEventView | undefined>;
   stream(options?: StreamEventsOptions): AsyncIterable<AexEventView>;
   streamEnvelopes(options?: StreamEnvelopesOptions): AsyncIterable<AexEventView>;
-  archiveLink(options?: OutputLinkOptions): Promise<OutputLink>;
+  archiveLink(options?: SessionFileLinkOptions): Promise<SessionFileLink>;
   /** Download the events-namespace archive as a zip. */
-  download(options?: OutputDownloadOptions): Promise<Uint8Array>;
+  download(options?: DownloadOptions): Promise<Uint8Array>;
 }
 
 /**
- * Accessor over the session's captured output files (`session.outputs()`):
+ * Accessor over the session's captured files (`session.files()`):
  * enumerate, read one as capped text, locate/resolve, and download.
  */
-export interface SessionOutputs {
-  list(query?: OutputQuery): Promise<readonly Output[]>;
-  last(): Promise<Output | undefined>;
-  first(): Promise<Output | undefined>;
-  read(selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText>;
-  find(query: OutputQuery): Promise<readonly Output[]>;
-  findOne(query: OutputQuery): Promise<Output | null>;
+export interface SessionFiles {
+  list(query?: SessionFileQuery): Promise<readonly SessionFile[]>;
+  last(): Promise<SessionFile | undefined>;
+  first(): Promise<SessionFile | undefined>;
+  read(selector: SessionFileSelector, options?: ReadSessionFileTextOptions): Promise<SessionFileText>;
+  find(query: SessionFileQuery): Promise<readonly SessionFile[]>;
+  findOne(query: SessionFileQuery): Promise<SessionFile | null>;
   /**
-   * Search THIS session's captured outputs by filename (`string | RegExp`) /
+   * Search THIS session's captured files by filename (`string | RegExp`) /
    * extension / content type. Metadata-only (reference hits, no bytes). A
    * content-shaped query throws a typed "content search unsupported" rather than
    * silently returning 0 hits.
    */
-  search(query?: PerSessionOutputSearchQuery): Promise<OutputSearchPage>;
-  link(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink>;
-  fetch(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<Response>;
-  /** No selector = outputs-namespace zip; with selector = one file's raw bytes. */
-  download(selector?: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
+  search(query?: PerSessionFileSearchQuery): Promise<SessionFileSearchPage>;
+  link(selectorOrQuery: SessionFileLinkSelector, options?: SessionFileLinkOptions): Promise<SessionFileLink>;
+  fetch(selectorOrQuery: SessionFileLinkSelector, options?: SessionFileLinkOptions): Promise<Response>;
+  /** No selector = files-namespace zip; with selector = one file's raw bytes. */
+  download(selector?: SessionFileSelector, options?: DownloadOptions): Promise<Uint8Array>;
 }
 
-/** A per-session output search — {@link OutputSearchQuery} without the cross-session `sessionIds` corpus. */
-export type PerSessionOutputSearchQuery = Omit<OutputSearchQuery, "sessionIds">;
+/** A per-session file search — {@link SessionFileSearchQuery} without the cross-session `sessionIds` corpus. */
+export type PerSessionFileSearchQuery = Omit<SessionFileSearchQuery, "sessionIds">;
 
 /**
  * Accessor over the session's webhook delivery ledger (`session.webhooks()`).
@@ -617,9 +617,9 @@ export class SessionHandle {
         ? readSession
         : (await settledSessionRecord(this.#http, this.id, readSession, options.signal)) ?? readSession;
     this.#session = withTerminalSessionStatus(settled, read);
-    const outputs = await operations.listSessionOutputs(this.#http, this.id).catch(() => [] as readonly Output[]);
+    const files = await operations.listSessionFiles(this.#http, this.id).catch(() => [] as readonly SessionFile[]);
     const messages = projectAssistantMessages(events);
-    return settledTurnResult(this.id, this.#session, turn, events, outputs, messages, read);
+    return settledTurnResult(this.id, this.#session, turn, events, files, messages, read);
   }
 
   /**
@@ -738,7 +738,7 @@ export class SessionHandle {
 
   /**
    * Enumerate this session's subagent CHILD sessions (`GET /sessions/:id/children`). Each is
-   * a {@link ChildSessionHandle} backed by the RUN facade (getSessionRecord/events/outputs) —
+   * a {@link ChildSessionHandle} backed by the RUN facade (getSessionRecord/events/files) —
    * NOT `openSession` — so every child the platform hands you is resolvable, with
    * its lineage (`parentSessionId`/`depth`) and terminal outcome exposed.
    */
@@ -800,20 +800,20 @@ export class SessionHandle {
       first: async () => (await list())[0],
       stream: (options?: StreamEventsOptions) => streamSessionEventsPolling(http, id, options ?? {}),
       streamEnvelopes: (options?: StreamEnvelopesOptions) => streamSessionEnvelopes(http, id, options ?? {}),
-      archiveLink: (options?: OutputLinkOptions) => operations.eventArchiveLink(http, id, options),
-      download: async (options?: OutputDownloadOptions) =>
+      archiveLink: (options?: SessionFileLinkOptions) => operations.eventArchiveLink(http, id, options),
+      download: async (options?: DownloadOptions) =>
         writeOptionalFile(await operations.downloadEvents(http, id), options?.to)
     };
   }
 
   /**
-   * Accessor for the session's captured output files: `list`/`last`/`first`
+   * Accessor for the session's captured files: `list`/`last`/`first`
    * enumerate them; `read` streams one as capped text; `find`/`findOne`/`link`/
-   * `fetch` locate and resolve them; `download` fetches the outputs-namespace
+   * `fetch` locate and resolve them; `download` fetches the files-namespace
    * zip (no selector) or one file's raw bytes (with selector).
    */
-  outputs(): SessionOutputs {
-    return sessionOutputs(this.#http, this.id, this.#fetch);
+  files(): SessionFiles {
+    return sessionFiles(this.#http, this.id, this.#fetch);
   }
 
   /**
@@ -860,12 +860,12 @@ export class SessionHandle {
 
   /**
    * Fetch the self-contained `SessionUnit` for this session: parsed submission,
-   * attempts, indexed events, outputs, capture failures, proxy-call audit, and
+   * attempts, indexed events, session files, capture failures, proxy-call audit, and
    * resolved skills. Use this when you need fields beyond the session record.
    *
    * On the managed plane this is a LEAN summary — the aggregate collections
-   * (`attempts` / `events.entries` / `outputs` / `rawEventPages`) default to
-   * empty. For authoritative per-session data use `outputs()` / `events()` /
+   * (`attempts` / `events.entries` / `sessionFiles` / `rawEventPages`) default to
+   * empty. For authoritative per-session data use `files()` / `events()` /
    * `messages()`. The returned shape is always type-valid (never `undefined`
    * where the type promises an array/page), so array/page access is safe.
    */
@@ -876,15 +876,15 @@ export class SessionHandle {
   /**
    * Download EVERYTHING public about this session as one zip, assembled
    * client-side from the public read endpoints. Organised into `metadata/`,
-   * `events/`, and `outputs/` folders, plus a `manifest.json`. Pass `to` to
+   * `events/`, and `files/` folders, plus a `manifest.json`. Pass `to` to
    * also write the bytes to a file path while still returning them.
    */
-  async download(options?: OutputDownloadOptions): Promise<Uint8Array> {
+  async download(options?: DownloadOptions): Promise<Uint8Array> {
     return writeOptionalFile(await operations.download(this.#http, this.id), options?.to);
   }
 
   /** Download only the session record (the `metadata` namespace) as a zip. */
-  async downloadMetadata(options?: OutputDownloadOptions): Promise<Uint8Array> {
+  async downloadMetadata(options?: DownloadOptions): Promise<Uint8Array> {
     return writeOptionalFile(await operations.downloadMetadata(this.#http, this.id), options?.to);
   }
 }
@@ -931,14 +931,14 @@ export class SessionClient {
   }
 
   /**
-   * Accessor over one session's captured output files, addressed by id without
-   * opening a handle. Returns the SAME rich {@link SessionOutputs} surface as
-   * `session.outputs()` — `aex.sessions.outputs(id).list()` /
+   * Accessor over one session's captured files, addressed by id without
+   * opening a handle. Returns the SAME rich {@link SessionFiles} surface as
+   * `session.files()` — `aex.sessions.files(id).list()` /
    * `.read(selector)` / `.download()` / … — so the workspace client and the
    * live handle share one accessor convention.
    */
-  outputs(sessionId: string): SessionOutputs {
-    return sessionOutputs(this.#http, sessionId, this.#fetch);
+  files(sessionId: string): SessionFiles {
+    return sessionFiles(this.#http, sessionId, this.#fetch);
   }
 
   async start(options: SessionStartOptions): Promise<SessionStartResult> {
@@ -964,37 +964,37 @@ export class SessionClient {
 }
 
 /**
- * Cross-session output search (`aex.outputs`). Composed client-side (per-session
- * `listSessionOutputs` + the contracts output filter): scope a corpus with
+ * Cross-session captured-file search (`aex.files.search`). Composed client-side (per-session
+ * `listSessionFiles` + the contracts file filter): scope a corpus with
  * `query.sessionIds`, or omit it to scan every session in the workspace. Metadata-only
  * (reference hits, no bytes); a content-shaped query throws a typed
  * "content search unsupported".
  */
-export class OutputsClient {
+class SessionFilesSearchClient {
   readonly #http: HttpClient;
 
   constructor(http: HttpClient) {
     this.#http = http;
   }
 
-  async search(query: OutputSearchQuery = {}): Promise<OutputSearchPage> {
-    assertMetadataOnlyOutputSearch(query, "aex.outputs.search");
+  async search(query: SessionFileSearchQuery = {}): Promise<SessionFileSearchPage> {
+    assertMetadataOnlyFileSearch(query, "aex.files.search");
     // Dedup the caller-supplied allow-list so a session repeated in `sessionIds` (from
     // concatenating corpora) isn't scanned twice and doesn't inflate hit count.
     const unscoped = query.sessionIds === undefined;
     const limit = query.limit ?? 100;
     if (unscoped) return this.#searchWorkspace(query, limit);
     const sessionIds = [...new Set(query.sessionIds)];
-    const hits: OutputSearchHit[] = [];
+    const hits: SessionFileSearchHit[] = [];
     for (const sessionId of sessionIds) {
-      let outputs: readonly Output[];
+      let files: readonly SessionFile[];
       try {
-        outputs = await searchSessionOutputs(this.#http, sessionId, query);
+        files = await searchSessionFiles(this.#http, sessionId, query);
       } catch (err) {
-        if (unscoped && isMissingOutputsSession(err)) continue;
+        if (unscoped && isMissingFilesSession(err)) continue;
         throw err;
       }
-      for (const hit of outputHits(sessionId, outputs, limit - hits.length)) {
+      for (const hit of fileHits(sessionId, files, limit - hits.length)) {
         hits.push(hit);
         if (hits.length >= limit) return { hits };
       }
@@ -1003,14 +1003,14 @@ export class OutputsClient {
   }
 
   /** Scan the workspace lazily by paging sessions and stopping once the hit limit is satisfied. */
-  async #searchWorkspace(query: Omit<OutputSearchQuery, "sessionIds">, limit: number): Promise<OutputSearchPage> {
-    const hits: OutputSearchHit[] = [];
+  async #searchWorkspace(query: Omit<SessionFileSearchQuery, "sessionIds">, limit: number): Promise<SessionFileSearchPage> {
+    const hits: SessionFileSearchHit[] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
       if (cursor !== undefined) {
         if (seenCursors.has(cursor)) {
-          throw new Error("aex.outputs.search: listSessions returned a repeated cursor");
+          throw new Error("aex.files.search: listSessions returned a repeated cursor");
         }
         seenCursors.add(cursor);
       }
@@ -1019,14 +1019,14 @@ export class OutputsClient {
         ...(cursor ? { cursor } : {})
       });
       for (const session of page.sessions) {
-        let outputs: readonly Output[];
+        let files: readonly SessionFile[];
         try {
-          outputs = await searchSessionOutputs(this.#http, session.id, query);
+          files = await searchSessionFiles(this.#http, session.id, query);
         } catch (err) {
-          if (isMissingOutputsSession(err)) continue;
+          if (isMissingFilesSession(err)) continue;
           throw err;
         }
-        for (const hit of outputHits(session.id, outputs, limit - hits.length)) {
+        for (const hit of fileHits(session.id, files, limit - hits.length)) {
           hits.push(hit);
           if (hits.length >= limit) return { hits };
         }
@@ -1043,20 +1043,20 @@ export interface ChildSessionEvents {
   stream(options?: StreamEventsOptions): AsyncIterable<AexEventView>;
 }
 
-/** A session facade outputs accessor (a subset of {@link SessionOutputs}) keyed on a session id. */
-export interface SessionOutputs {
-  list(query?: OutputQuery): Promise<readonly Output[]>;
-  find(query: OutputQuery): Promise<readonly Output[]>;
-  findOne(query: OutputQuery): Promise<Output | null>;
-  read(selector: OutputFileSelector, options?: ReadOutputTextOptions): Promise<OutputText>;
-  link(selectorOrQuery: OutputLinkSelector, options?: OutputLinkOptions): Promise<OutputLink>;
-  download(selector?: OutputFileSelector, options?: OutputDownloadOptions): Promise<Uint8Array>;
+/** A session facade files accessor (a subset of {@link SessionFiles}) keyed on a session id. */
+export interface SessionFiles {
+  list(query?: SessionFileQuery): Promise<readonly SessionFile[]>;
+  find(query: SessionFileQuery): Promise<readonly SessionFile[]>;
+  findOne(query: SessionFileQuery): Promise<SessionFile | null>;
+  read(selector: SessionFileSelector, options?: ReadSessionFileTextOptions): Promise<SessionFileText>;
+  link(selectorOrQuery: SessionFileLinkSelector, options?: SessionFileLinkOptions): Promise<SessionFileLink>;
+  download(selector?: SessionFileSelector, options?: DownloadOptions): Promise<Uint8Array>;
 }
 
 /**
  * A first-class, lineage-discoverable SUBAGENT child session — handed out by
  * `session.children()`, backed by the session-record facade
- * (getSessionRecord/events/outputs), NOT `openSession`. Every child the platform hands you
+ * (getSessionRecord/events/files), NOT `openSession`. Every child the platform hands you
  * is resolvable through this handle; its lineage (`parentSessionId`/`depth`) and
  * terminal outcome (`status`) are first-class.
  */
@@ -1102,9 +1102,9 @@ export class ChildSessionHandle {
     return childSessionEventsAccessor(this.#http, this.id);
   }
 
-  /** The child's captured outputs over the RUN facade (`/sessions/:id/outputs`). */
-  outputs(): SessionOutputs {
-    return sessionOutputs(this.#http, this.id, this.#fetch);
+  /** The child's captured files over the session-record facade (`/sessions/:id/files`). */
+  files(): SessionFiles {
+    return sessionFiles(this.#http, this.id, this.#fetch);
   }
 
   /** This child's own subagent children (recursive lineage). */
@@ -1127,7 +1127,7 @@ function childSessionEventsAccessor(http: HttpClient, id: string): ChildSessionE
   };
 }
 
-/** SessionRecord-facade outputs accessor — used by {@link ChildSessionHandle}. */
+/** SessionRecord-facade files accessor — used by {@link ChildSessionHandle}. */
 /**
  * Poll a child session's events (via the session record facade) until it reaches a terminal status,
  * the signal aborts, or the caller breaks the iterator. Uses `getSessionRecord` (not
@@ -1288,80 +1288,80 @@ function isSessionEnvelopeTerminal(event: AexEvent): boolean {
 }
 
 /**
- * Download captured deliverables. No selector → the full outputs namespace as a
+ * Download captured files. No selector → the full files namespace as a
  * zip; a selector → one file's raw bytes. Module-level so
- * `SessionHandle.outputs()` can hand it to its accessor object literal.
+ * `SessionHandle.files()` can hand it to its accessor object literal.
  */
-async function downloadSessionOutput(
+async function downloadSessionFile(
   http: HttpClient,
   id: string,
-  selector?: OutputFileSelector,
-  options?: OutputDownloadOptions
+  selector?: SessionFileSelector,
+  options?: DownloadOptions
 ): Promise<Uint8Array> {
-  // One selector-resolution path: the contracts `downloadOutput` lists-if-path
+  // One selector-resolution path: the contracts `downloadSessionFile` lists-if-path
   // then downloads, throwing with PUBLIC verb names — no duplicated resolver.
   const transferOptions = options?.timeoutMs === undefined ? undefined : { timeoutMs: options.timeoutMs };
   const bytes =
     selector === undefined
-      ? await operations.downloadOutputs(http, id, transferOptions)
-      : (await operations.downloadOutput(http, id, selector, transferOptions)).bytes;
+      ? await operations.downloadSessionFiles(http, id, transferOptions)
+      : (await operations.downloadSessionFile(http, id, selector, transferOptions)).bytes;
   return writeOptionalFile(bytes, options?.to);
 }
 
 /**
- * Build the outputs accessor for a session id. Shared by
- * `SessionHandle.outputs()` (bound to the live handle) and
- * `SessionClient.outputs(id)` (addressed by id without opening a handle), so both
- * expose the identical rich {@link SessionOutputs} surface — one accessor
+ * Build the files accessor for a session id. Shared by
+ * `SessionHandle.files()` (bound to the live handle) and
+ * `SessionClient.files(id)` (addressed by id without opening a handle), so both
+ * expose the identical rich {@link SessionFiles} surface — one accessor
  * convention, one implementation.
  */
-function sessionOutputs(http: HttpClient, id: string, fetchLike: FetchLike | undefined): SessionOutputs {
-  const list = (query?: OutputQuery): Promise<readonly Output[]> =>
-    operations.listSessionOutputs(http, id, query);
+function sessionFiles(http: HttpClient, id: string, fetchLike: FetchLike | undefined): SessionFiles {
+  const list = (query?: SessionFileQuery): Promise<readonly SessionFile[]> =>
+    operations.listSessionFiles(http, id, query);
   return {
     list,
     last: async () => (await list()).at(-1),
     first: async () => (await list())[0],
-    read: (selector, options) => operations.readOutputText(http, id, selector, options),
-    find: (query) => operations.findOutputs(http, id, query),
-    findOne: (query) => operations.findOutput(http, id, query),
-    search: async (query: PerSessionOutputSearchQuery = {}) => {
-      assertMetadataOnlyOutputSearch(query, "outputs().search");
-      const outputs = await searchSessionOutputs(http, id, query);
-      return { hits: outputHits(id, outputs, query.limit ?? 100) };
+    read: (selector, options) => operations.readSessionFileText(http, id, selector, options),
+    find: (query) => operations.findSessionFiles(http, id, query),
+    findOne: (query) => operations.findSessionFile(http, id, query),
+    search: async (query: PerSessionFileSearchQuery = {}) => {
+      assertMetadataOnlyFileSearch(query, "files().search");
+      const files = await searchSessionFiles(http, id, query);
+      return { hits: fileHits(id, files, query.limit ?? 100) };
     },
-    link: (selectorOrQuery, options) => operations.outputLink(http, id, selectorOrQuery, options),
+    link: (selectorOrQuery, options) => operations.sessionFileLink(http, id, selectorOrQuery, options),
     fetch: async (selectorOrQuery, options) => {
-      const link = await operations.outputLink(http, id, selectorOrQuery, options);
+      const link = await operations.sessionFileLink(http, id, selectorOrQuery, options);
       return (fetchLike ?? globalThis.fetch)(link.url);
     },
-    download: (selector, options) => downloadSessionOutput(http, id, selector, options)
+    download: (selector, options) => downloadSessionFile(http, id, selector, options)
   };
 }
 
 /**
- * List one session's outputs matching a metadata search: `extension`/`contentType`
+ * List one session's files matching a metadata search: `extension`/`contentType`
  * via the contracts filter, and `filename` via {@link operations.toFilenameMatcher}
  * — a case-insensitive SUBSTRING for a string, `.test` for a RegExp (RegExp-safe;
  * no `escapeRegExp` footgun on a reused pattern).
  */
-async function searchSessionOutputs(
+async function searchSessionFiles(
   http: HttpClient,
   sessionId: string,
-  query: Omit<OutputSearchQuery, "sessionIds">
-): Promise<readonly Output[]> {
-  const listQuery: OutputQuery = {
+  query: Omit<SessionFileSearchQuery, "sessionIds">
+): Promise<readonly SessionFile[]> {
+  const listQuery: SessionFileQuery = {
     ...(query.extension !== undefined ? { extension: query.extension } : {}),
     ...(query.contentType !== undefined ? { contentType: query.contentType } : {})
   };
-  const outputs = await operations.listSessionOutputs(
+  const files = await operations.listSessionFiles(
     http,
     sessionId,
     Object.keys(listQuery).length > 0 ? listQuery : undefined
   );
-  if (query.filename === undefined) return outputs;
+  if (query.filename === undefined) return files;
   const match = operations.toFilenameMatcher(query.filename);
-  return outputs.filter((output) => typeof output.filename === "string" && match(output.filename));
+  return files.filter((file) => typeof file.filename === "string" && match(file.filename));
 }
 
 /**
@@ -1369,7 +1369,7 @@ async function searchSessionOutputs(
  * a `content`/`text`/`query` needle throws a typed error rather than silently
  * returning 0 hits (which reads as "no matches" for a query that was never executed).
  */
-function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
+function assertMetadataOnlyFileSearch(query: object, surface: string): void {
   for (const key of ["content", "text", "query", "grep", "body"]) {
     if (Object.prototype.hasOwnProperty.call(query, key)) {
       throw new SessionConfigValidationError(
@@ -1380,18 +1380,18 @@ function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
   }
 }
 
-/** Project a session's output files to reference-only {@link OutputSearchHit}s, capped. */
-function outputHits(sessionId: string, outputs: readonly Output[], limit: number): OutputSearchHit[] {
+/** Project a session's files to reference-only {@link SessionFileSearchHit}s, capped. */
+function fileHits(sessionId: string, files: readonly SessionFile[], limit: number): SessionFileSearchHit[] {
   const cap = Math.max(0, Math.floor(limit));
   if (cap === 0) return [];
-  const hits: OutputSearchHit[] = [];
-  for (const o of outputs) {
+  const hits: SessionFileSearchHit[] = [];
+  for (const file of files) {
     hits.push({
       sessionId,
-      outputId: o.id,
-      ...(o.filename !== undefined ? { filename: o.filename } : {}),
-      ...(o.sizeBytes !== undefined ? { sizeBytes: o.sizeBytes } : {}),
-      ...(o.contentType !== undefined ? { contentType: o.contentType } : {})
+      fileId: file.id,
+      ...(file.filename !== undefined ? { filename: file.filename } : {}),
+      ...(file.sizeBytes !== undefined ? { sizeBytes: file.sizeBytes } : {}),
+      ...(file.contentType !== undefined ? { contentType: file.contentType } : {})
     });
     if (hits.length >= cap) break;
   }
@@ -1413,7 +1413,7 @@ function isMissingMessagesEndpoint(err: unknown): boolean {
   return err instanceof AexApiError && (err.status === 404 || err.status === 405 || err.status === 501);
 }
 
-function isMissingOutputsSession(err: unknown): boolean {
+function isMissingFilesSession(err: unknown): boolean {
   return err instanceof AexApiError && err.status === 404;
 }
 
@@ -1771,7 +1771,7 @@ function settledTurnResult(
   session: Session,
   turn: SessionTurn,
   events: readonly AexEventView[],
-  outputs: readonly Output[],
+  files: readonly SessionFile[],
   messages: readonly Message[],
   read: SessionTerminalRead | undefined
 ): SessionTurnResult {
@@ -1795,7 +1795,7 @@ function settledTurnResult(
     ...(error !== undefined ? { error } : {}),
     text: assistantTextFromEvents(events),
     events,
-    outputs,
+    files,
     messages,
     ...(outcome !== undefined ? { outcome } : {})
   };
@@ -1843,8 +1843,8 @@ export interface StreamEnvelopesOptions {
    * keeps reading PAST the render terminal until the post-mirror
    * `aex.session.settled` barrier when the plane emits it, or a session park
    * fallback otherwise. When it ends a subsequent `getSessionRecord` is guaranteed
-   * terminal and `listOutputs` is complete.
-   * Note: outputs are durable at the TURN_FINISHED event already; this only adds
+   * terminal and `listSessionFiles` is complete.
+   * Note: files are durable at the TURN_FINISHED event already; this only adds
    * the session-record consistency barrier.
    */
   readonly settleConsistent?: boolean;
@@ -1856,26 +1856,26 @@ export interface WaitForSessionOptions {
   readonly signal?: AbortSignal;
 }
 
-export type OutputFilePathMatch = "exact" | "suffix";
+export type SessionFilePathMatch = "exact" | "suffix";
 
-export interface OutputFilePathSelector {
+export interface SessionFilePathSelector {
   readonly path: string;
-  readonly match?: OutputFilePathMatch;
+  readonly match?: SessionFilePathMatch;
 }
 
-export interface OutputFileIdSelector {
+export interface SessionFileIdSelector {
   readonly id: string;
 }
 
-export type OutputFileSelector = Output | OutputFileIdSelector | OutputFilePathSelector;
+export type SessionFileSelector = SessionFile | SessionFileIdSelector | SessionFilePathSelector;
 
-export type OutputLinkSelector = string | OutputFileSelector | OutputQuery;
+export type SessionFileLinkSelector = string | SessionFileSelector | SessionFileQuery;
 
-export interface OutputDownloadOptions {
+export interface DownloadOptions {
   readonly to?: string;
   /**
-   * Per-attempt timeout for fetching and reading the selected output body.
-   * Defaults to 30_000ms; idempotent output downloads retry once on timeout.
+   * Per-attempt timeout for fetching and reading the selected file body.
+   * Defaults to 30_000ms; idempotent file downloads retry once on timeout.
    */
   readonly timeoutMs?: number;
 }
@@ -1918,9 +1918,11 @@ export class AgentsMdClient {
  */
 export class FilesClient {
   readonly #http: HttpClient;
+  readonly #sessionSearch: SessionFilesSearchClient;
 
   constructor(http: HttpClient) {
     this.#http = http;
+    this.#sessionSearch = new SessionFilesSearchClient(http);
   }
 
   list(): Promise<readonly FileRecord[]> {
@@ -1933,6 +1935,11 @@ export class FilesClient {
 
   delete(fileId: string): Promise<void> {
     return operations.deleteFile(this.#http, fileId);
+  }
+
+  /** Cross-session captured-file metadata search. */
+  search(query?: SessionFileSearchQuery): Promise<SessionFileSearchPage> {
+    return this.#sessionSearch.search(query);
   }
 }
 
@@ -2047,8 +2054,6 @@ export class Aex {
   readonly skills: SkillsClient;
   readonly secrets: SecretsClient;
   readonly sessions: SessionClient;
-  /** Cross-session output search (`aex.outputs.search(...)`). */
-  readonly outputs: OutputsClient;
 
   constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
   constructor(options: AexOptions);
@@ -2089,7 +2094,6 @@ export class Aex {
     this.skills = new SkillsClient(this.#http);
     this.secrets = new SecretsClient(this.#http);
     this.sessions = new SessionClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
-    this.outputs = new OutputsClient(this.#http);
   }
 
   /**
@@ -2161,7 +2165,7 @@ export class Aex {
    * Convenience one-shot on top of the canonical session API:
    * open a session, send `message` as the first turn, stream until the session
    * parks (`idle` / `suspended` / `error`), then return the collected text,
-   * events, outputs, and session record. The returned `sessionId` is the session id,
+   * events, files, and session record. The returned `sessionId` is the session id,
    * so callers can resume later with `openSession(sessionId)`.
    */
   async start<T = unknown>(options: SessionStartOptions, opts: StartSessionOptions = {}): Promise<SessionResult<T>> {
@@ -2226,7 +2230,7 @@ export class Aex {
         messages: turnResult.messages,
         events: turnResult.events,
         trace,
-        outputs: turnResult.outputs,
+        files: turnResult.files,
         ...(turnResult.error !== undefined ? { error: turnResult.error } : {}),
         ...(outcome !== undefined ? { outcome } : {})
       };
@@ -2407,7 +2411,7 @@ export class Aex {
       options.mcpServers ?? [],
       []
     );
-    const outputCapture = outputsForWire(options.outputs);
+    const fileCapture = fileCaptureForWire(options.fileCapture);
     const environment = sessionEnvironmentForWire(options.environment);
 
     const submission: SessionCreateRequest["submission"] = {
@@ -2426,7 +2430,7 @@ export class Aex {
       ...(Object.keys(secretEnvDeclarations).length > 0 ? { secretEnv: secretEnvDeclarations } : {}),
       ...(environment ? { environment: environment as NonNullable<PlatformSubmission["environment"]> } : {}),
       ...(options.metadata ? { metadata: options.metadata } : {}),
-      ...(outputCapture ? { outputs: outputCapture } : {}),
+      ...(fileCapture ? { fileCapture } : {}),
       ...(options.includeBuiltinTools !== undefined
         ? { includeBuiltinTools: options.includeBuiltinTools }
         : {}),
@@ -2824,27 +2828,27 @@ function validateApiKeys(
   }
 }
 
-function outputsForWire(outputs: SessionCreateOptions["outputs"]): PlatformSubmission["outputs"] | undefined {
-  if (outputs === undefined) {
+function fileCaptureForWire(fileCapture: SessionCreateOptions["fileCapture"]): PlatformSubmission["fileCapture"] | undefined {
+  if (fileCapture === undefined) {
     return undefined;
   }
-  const allowedDirs = outputs.allowedDirs?.filter((dir) => dir.length > 0);
-  const deniedDirs = outputs.deniedDirs?.filter((dir) => dir.length > 0);
+  const allowedDirs = fileCapture.allowedDirs?.filter((dir) => dir.length > 0);
+  const deniedDirs = fileCapture.deniedDirs?.filter((dir) => dir.length > 0);
   const hasNumericOverride =
-    outputs.captureTimeoutMs !== undefined ||
-    outputs.maxFileBytes !== undefined ||
-    outputs.maxTotalBytes !== undefined ||
-    outputs.maxFiles !== undefined;
+    fileCapture.captureTimeoutMs !== undefined ||
+    fileCapture.maxFileBytes !== undefined ||
+    fileCapture.maxTotalBytes !== undefined ||
+    fileCapture.maxFiles !== undefined;
   if ((allowedDirs?.length ?? 0) === 0 && (deniedDirs?.length ?? 0) === 0 && !hasNumericOverride) {
     return undefined;
   }
   return {
     ...(allowedDirs && allowedDirs.length > 0 ? { allowedDirs } : {}),
     ...(deniedDirs && deniedDirs.length > 0 ? { deniedDirs } : {}),
-    ...(outputs.captureTimeoutMs !== undefined ? { captureTimeoutMs: outputs.captureTimeoutMs } : {}),
-    ...(outputs.maxFileBytes !== undefined ? { maxFileBytes: outputs.maxFileBytes } : {}),
-    ...(outputs.maxTotalBytes !== undefined ? { maxTotalBytes: outputs.maxTotalBytes } : {}),
-    ...(outputs.maxFiles !== undefined ? { maxFiles: outputs.maxFiles } : {})
+    ...(fileCapture.captureTimeoutMs !== undefined ? { captureTimeoutMs: fileCapture.captureTimeoutMs } : {}),
+    ...(fileCapture.maxFileBytes !== undefined ? { maxFileBytes: fileCapture.maxFileBytes } : {}),
+    ...(fileCapture.maxTotalBytes !== undefined ? { maxTotalBytes: fileCapture.maxTotalBytes } : {}),
+    ...(fileCapture.maxFiles !== undefined ? { maxFiles: fileCapture.maxFiles } : {})
   };
 }
 
@@ -3141,4 +3145,4 @@ function mergeMcpServers(
   };
 }
 
-export type { OutputFileType, OutputLink, OutputLinkOptions, OutputQuery };
+export type { SessionFileType, SessionFileLink, SessionFileLinkOptions, SessionFileQuery };

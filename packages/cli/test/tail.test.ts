@@ -309,7 +309,7 @@ describe("aex start --follow", () => {
   it("streams live coordinator envelopes as NDJSON after submit", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-test",
@@ -343,7 +343,7 @@ describe("aex start --follow", () => {
   it("includes the accepted session state when follow times out", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-test",
@@ -368,7 +368,7 @@ describe("aex start --follow", () => {
   it("waits for the session record to park after a terminal stream event", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-test",

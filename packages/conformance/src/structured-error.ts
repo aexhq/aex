@@ -1,6 +1,6 @@
 // Pins the SDK's structured-error contract: AexError (or other
 // named subclasses), never a bare `Error`. Used by failure-case tests
-// (b1, b2, b3 in live-sdk-outputs-and-failures.test.ts).
+// (b1, b2, b3 in live-sdk-files-and-failures.test.ts).
 //
 // The pre-Phase-1 shape was `if (errorClass === "Error" || errorClass === null) throw`,
 // which let an `errorClass: null` slip through silently. This matcher

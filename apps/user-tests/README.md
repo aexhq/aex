@@ -127,10 +127,10 @@ one deliberately long (multi-minute) session per cell that exercises the
 **entire** customer feature surface at once — 3 inline skills, 2 remote
 MCP servers, a long `system` message, a multi-step `prompt` (shell +
 multiple file writes + read-backs), an AGENTS.md, a custom
-`outputs.allowedDirs` path, `builtins`, `environment.envVars` and `metadata` — and validates
+`fileCapture.allowedDirs` path, `builtins`, `environment.envVars` and `metadata` — and validates
 **every observable aspect** of the session: the full AG-UI event vocabulary
 (incl. `TOOL_CALL_*`, not just text), tool use, skill materialization,
-the system/AGENTS.md/prompt channel probes, the outputs round-trip
+the system/AGENTS.md/prompt channel probes, the files round-trip
 pipeline, and secret redaction. (Input files / workspace assets are not
 exercised — that feature was dropped in the MVP.) Its purpose is to
 prove the **app** behaves as expected under a

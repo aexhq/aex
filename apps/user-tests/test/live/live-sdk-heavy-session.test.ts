@@ -7,7 +7,7 @@
  * per cell that exercises the *entire* customer feature surface at once
  * and validates EVERY observable aspect of the session. The goal is not to
  * test the model's capability — it is to prove the aex app
- * (materialization, BYOK proxy, event log, outputs pipeline, secret
+ * (materialization, BYOK proxy, event log, files pipeline, secret
  * redaction) behaves as expected under a maximal submission.
  *
  * Sessions as an explicit gate AFTER the rest of the live user-tests pass
@@ -28,7 +28,7 @@
  *   - a multi-step `prompt` array (forces shell + multiple file WRITES +
  *                                  multiple file READS, then a probe ack)
  *   - 1 AGENTS.md               (probe-tagged project guidance)
- *   - a custom `outputs.allowedDirs` path (proves re-rooting under workspaceRoot)
+ *   - a custom `fileCapture.allowedDirs` path (proves re-rooting under workspaceRoot)
  *   - `builtins: ["developer"]`, `environment.envVars`, `metadata`
  *   - `secrets` carrying the customer provider key
  *
@@ -47,7 +47,7 @@
  *     superset of every event type required for a successful managed session:
  *     TEXT_MESSAGE_CONTENT, TOOL_CALL_START, TOOL_CALL_RESULT, CUSTOM
  *     (TURN_FINISHED may be absent on managed sessions; TURN_ERROR is
- *     failure-only and is covered by live-sdk-outputs-and-failures.test.ts).
+ *     failure-only and is covered by live-sdk-files-and-failures.test.ts).
  *     See AEX_EVENT_TYPES
  *     in packages/contracts/src/event-envelope.ts — the single source of
  *     truth this list is kept in sync with.
@@ -57,11 +57,11 @@
  *   - system + AGENTS.md + prompt probes all appear in the SDK-visible event
  *     transcript (assistant text, tool-call arguments, or tool results), proving
  *     composeInstructions carried all three channels into the recipe.
- *   - the OUTPUTS pipeline round-trips: every captured output downloads
+ *   - the FILES pipeline round-trips: every captured file downloads
  *     without error, and at least one agent-written file carries its
  *     expected REF-out token (write → capture → object storage → download e2e).
  *   - the customer provider key never appears anywhere in the
- *     SDK-visible payload (run + events + outputs).
+ *     SDK-visible payload (run + events + files).
  *
  * Required env:
  *   AEX_API_URL                live hosted API URL (local or prod)
@@ -96,14 +96,14 @@ const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "de
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
 const MCP_SERVER_NAME = "deepwiki";
 
-// Custom explicit outputs path. Must be BOTH agent-writable and
-// captured by outputs.allowedDirs: the runner's resolveInsideWorkspace re-roots
+// Custom explicit files path. Must be BOTH agent-writable and
+// captured by fileCapture.allowedDirs: the runner's resolveInsideWorkspace re-roots
 // allowed dirs under workspaceRoot (/workspace) and dedupes a leading
-// `workspace/` segment, so "/workspace/outputs/heavy" captures exactly
+// `workspace/` segment, so "/workspace/files/heavy" captures exactly
 // the path the agent writes to. (An arbitrary path like /data/... gets
 // captured at <root>/data/... but the agent can't write to literal
 // /data — its writable tree is /workspace.)
-const CUSTOM_OUTPUT_DIR = "/workspace/outputs/heavy";
+const CUSTOM_OUTPUT_DIR = "/workspace/files/heavy";
 
 function managedHeavySkillName(role: "alpha" | "beta" | "gamma", provider: CaseSpec["provider"]): string {
   return `heavy-${role}-managed-${provider}`;
@@ -159,7 +159,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     `steps. Work carefully and complete every requested step in order.\n\n` +
     `Operational context: this session exercises file tools, multiple skills, and remote ` +
     `tool servers. You have a shell available; use it to inspect your workspace and to ` +
-    `create output files exactly as instructed.\n\n` +
+    `create session files exactly as instructed.\n\n` +
     `Your session reference for this session is ${probes.system}. When the user asks you to ` +
     `acknowledge tracking references, include this session reference verbatim in your reply.`;
   const agentsMdText =
@@ -174,7 +174,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
   // ack last had the agent finish the file ops and stop before emitting
   // it. Steps 2-4 force a shell call (ls), multiple file WRITES, and
   // multiple file READS (read-back), which drive TOOL_CALL_START/RESULT
-  // events and the outputs pipeline.
+  // events and the files pipeline.
   // (Input files / workspace assets are intentionally NOT used — that
   // feature was dropped in the MVP; "read file" coverage comes from the
   // agent reading back the files it wrote, on the supported
@@ -209,7 +209,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     const skillBeta = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedHeavySkillName("beta", spec.provider)}\ndescription: Always follow the project tracking guidance.\n---\n# beta\nAlways follow the project tracking guidance.`)}, {
       name: ${JSON.stringify(managedHeavySkillName("beta", spec.provider))}
     });
-    const skillGamma = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedHeavySkillName("gamma", spec.provider)}\ndescription: Write output files exactly as instructed, then acknowledge references.\n---\n# gamma\nWrite output files exactly as instructed, then acknowledge references.`)}, {
+    const skillGamma = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedHeavySkillName("gamma", spec.provider)}\ndescription: Write session files exactly as instructed, then acknowledge references.\n---\n# gamma\nWrite session files exactly as instructed, then acknowledge references.`)}, {
       name: ${JSON.stringify(managedHeavySkillName("gamma", spec.provider))}
     });
 
@@ -235,7 +235,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       skills: [skillAlpha, skillBeta, skillGamma],
       mcpServers: [mcpPrimary, mcpSecondary],
       agentsMd: [rules],
-      outputs: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
+      fileCapture: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
       includeBuiltinTools: true,
       environment: { variables: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.provider}" },
@@ -293,15 +293,15 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const session = await client.sessions.open(sessionId);
 
       const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-      const fallbackOutputs = Array.isArray(result.outputs) ? result.outputs : [];
+      const fallbackFiles = Array.isArray(result.files) ? result.files : [];
       let events = fallbackEvents;
-      let outputs = fallbackOutputs;
+      let files = fallbackFiles;
       let eventSource = "fallback result.events";
       let eventListError = null;
       let listedEventCount = null;
-      let outputSource = "fallback result.outputs";
-      let outputListError = null;
-      let listedOutputCount = null;
+      let fileSource = "fallback result.files";
+      let fileListError = null;
+      let listedFileCount = null;
       // CUSTOM envelopes nest the original payload under data.value.
       function customName(e) {
         return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
@@ -363,15 +363,15 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         events = fallbackEvents;
       }
       try {
-        const listedOutputs = await session.outputs().list();
-        listedOutputCount = Array.isArray(listedOutputs) ? listedOutputs.length : null;
-        if (Array.isArray(listedOutputs)) {
-          outputs = listedOutputs;
-          outputSource = "session.outputs().list";
+        const listedFiles = await session.files().list();
+        listedFileCount = Array.isArray(listedFiles) ? listedFiles.length : null;
+        if (Array.isArray(listedFiles)) {
+          files = listedFiles;
+          fileSource = "session.files().list";
         }
       } catch (err) {
-        outputListError = err && err.message ? err.message : String(err);
-        outputs = fallbackOutputs;
+        fileListError = err && err.message ? err.message : String(err);
+        files = fallbackFiles;
       }
 
       const notifications = events.filter((e) => e.type === "CUSTOM");
@@ -434,12 +434,12 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
 
       const outProbes = ${JSON.stringify(probes.out)};
-      const outputsCollected = [];
+      const filesCollected = [];
       const outProbesFound = new Set();
-      for (const out of outputs.slice(0, 16)) {
+      for (const out of files.slice(0, 16)) {
         let sample = null;
         try {
-          const bytes = await session.outputs().download(out);
+          const bytes = await session.files().download(out);
           const text = new TextDecoder().decode(bytes);
           sample = text.slice(0, 256);
           for (const p of outProbes) {
@@ -448,10 +448,10 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         } catch (err) {
           sample = "(download error: " + (err && err.message ? err.message : String(err)) + ")";
         }
-        outputsCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
+        filesCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
       }
 
-      const serialized = JSON.stringify({ run, events, outputs });
+      const serialized = JSON.stringify({ run, events, files });
       const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
       return {
         sessionId: sessionId,
@@ -475,12 +475,12 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         assistantTextEventCount: assistantTextEvents.length,
         terminalKind: terminalKindOf(terminal),
         terminalData: terminalDataOf(terminal),
-        outputCount: outputs.length,
-        outputSource,
-        outputListError,
-        fallbackOutputCount: fallbackOutputs.length,
-        listedOutputCount,
-        outputs: outputsCollected,
+        fileCount: files.length,
+        fileSource,
+        fileListError,
+        fallbackFileCount: fallbackFiles.length,
+        listedFileCount,
+        files: filesCollected,
         outProbesFound: Array.from(outProbesFound),
         channelProbeSources,
         channelProbeMisses,
@@ -506,7 +506,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // managed-runtime stdout the event stream is built from. A dot is OUTSIDE that
   // char class, so it splits the session into sub-24-char segments that
   // survive regardless of how the model punctuates the reply. REF-out tokens
-  // go to output FILES, not the redacted stdout stream, so they keep hyphens.
+  // go to session files, not the redacted stdout stream, so they keep hyphens.
   const probes: Probes = {
     system: "REF.verify." + rand(),
     agentsMd: "REF.verify." + rand(),
@@ -551,7 +551,7 @@ afterAll(() => {
 
 describe("live hosted API — heavy full-feature long session via installed SDK", () => {
   it(
-    "managed deepseek: 3 skills + 2 MCP + long system + multi-step write+read + outputs + full event vocab",
+    "managed deepseek: 3 skills + 2 MCP + long system + multi-step write+read + files + full event vocab",
     async () => {
       const result = await runCase(
         {

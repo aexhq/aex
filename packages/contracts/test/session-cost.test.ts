@@ -12,18 +12,18 @@ describe("session cost telemetry", () => {
   const privateCostFieldPattern =
     /estimatedCostUsd|unitRate|rateCard|margin|discount|providerAccount|systemKey|apiKey|reconciliation|calculator|ledgerCursor/i;
 
-  it("records duration, output, retry, capture, and provider usage data", () => {
+  it("records duration, file, retry, capture, and provider usage data", () => {
     const telemetry = buildSessionCostTelemetry({
       sessionId: "11111111-1111-4111-8111-111111111111",
       provider: "anthropic",
       recordedAt: "2026-06-01T00:00:00.000Z",
       durations: {
         runtimeMs: 1200,
-        outputCaptureMs: 300,
+        fileCaptureMs: 300,
         cleanupMs: 80,
         totalMs: 1580
       },
-      outputs: {
+      files: {
         discoveredFiles: 3,
         capturedFiles: 2,
         failedFiles: 1,
@@ -32,7 +32,7 @@ describe("session cost telemetry", () => {
       retries: {
         runtimeAttempts: 1,
         providerPollRetries: 2,
-        outputUploadRetries: 1
+        fileUploadRetries: 1
       },
       capture: {
         attempted: true,
@@ -68,7 +68,7 @@ describe("session cost telemetry", () => {
 
     expect(telemetry.schemaVersion).toBe(SESSION_COST_TELEMETRY_SCHEMA_VERSION);
     expect(telemetry.durations?.runtimeMs).toBe(1200);
-    expect(telemetry.outputs?.capturedBytes).toBe(4096);
+    expect(telemetry.files?.capturedBytes).toBe(4096);
     expect(telemetry.retries?.providerPollRetries).toBe(2);
     expect(telemetry.capture?.failureReasons).toEqual(["provider_file_missing"]);
     expect(telemetry.providerUsage?.[0]?.totalTokens).toBe(35);
@@ -155,10 +155,10 @@ describe("session cost telemetry", () => {
           source: { type: "runtime-job", id: "runtime-interval-1" }
         },
         {
-          sampleId: "usage-output",
-          metric: "output.captured_bytes",
+          sampleId: "usage-file",
+          metric: "file.captured_bytes",
           quantity: 4096,
-          source: { type: "output-object", id: "out_1" }
+          source: { type: "file-object", id: "file_1" }
         },
         {
           sampleId: "usage-retry",
@@ -202,7 +202,7 @@ describe("session cost telemetry", () => {
       "usage-provider-total"
     ]);
     expect(telemetry.durations?.runtimeMs).toBe(1200);
-    expect(telemetry.outputs?.capturedBytes).toBe(4096);
+    expect(telemetry.files?.capturedBytes).toBe(4096);
     expect(telemetry.retries?.providerPollRetries).toBe(2);
     expect(telemetry.storage?.storedBytes).toBe(4096);
     expect(telemetry.proxy?.calls).toBe(1);
@@ -215,19 +215,19 @@ describe("session cost telemetry", () => {
     const first = buildSessionCostTelemetry({
       provider: "anthropic",
       durations: { runtimeMs: 10 },
-      outputs: { capturedBytes: 20 },
+      files: { capturedBytes: 20 },
       providerUsage: [{ provider: "anthropic", inputTokens: 1 }]
     });
 
     const merged = mergeSessionCostTelemetry(first, {
       durations: { runtimeMs: 5, cleanupMs: 2 },
-      outputs: { capturedBytes: 7, failedFiles: 1 },
+      files: { capturedBytes: 7, failedFiles: 1 },
       providerUsage: [{ provider: "anthropic", outputTokens: 3 }]
     });
 
     expect(first.durations?.runtimeMs).toBe(10);
     expect(merged.durations).toEqual({ runtimeMs: 15, cleanupMs: 2 });
-    expect(merged.outputs).toEqual({ capturedBytes: 27, failedFiles: 1 });
+    expect(merged.files).toEqual({ capturedBytes: 27, failedFiles: 1 });
     expect(merged.providerUsage).toHaveLength(2);
   });
 

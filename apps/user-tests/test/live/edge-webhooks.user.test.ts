@@ -199,7 +199,7 @@ describe("live hosted - session webhooks edge cases", () => {
         const sessionResult = await client.start({
           provider: PROVIDER,
           model,
-          message: "Output verbatim: " + probe,
+          message: "SessionFile verbatim: " + probe,
           apiKeys: { [PROVIDER]: providerKey },
           webhook: { url: "https://example.com/aex-webhook-probe" },
           idempotencyKey: "user-test-wh-valid-" + Date.now()
@@ -341,7 +341,7 @@ describe("live hosted - session webhooks edge cases", () => {
             const sessionResult = await client.start({
               provider: PROVIDER,
               model,
-              message: "Output verbatim: ssrf-probe",
+              message: "SessionFile verbatim: ssrf-probe",
               apiKeys: { [PROVIDER]: providerKey },
               webhook: { url: t.url },
               idempotencyKey: "user-test-wh-ssrf-" + t.name + "-" + Date.now()

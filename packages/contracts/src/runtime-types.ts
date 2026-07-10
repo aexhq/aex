@@ -348,7 +348,7 @@ export interface SessionRecordListPage {
 
 /**
  * The minimal capability a value must carry to be RESOLVABLE through the session
- * facade — `getSessionRecord` / `listSessionRecordEvents` / `listOutputs` all key on this `id`.
+ * facade — `getSessionRecord` / `listSessionRecordEvents` / `listSessionFiles` all key on this `id`.
  * Encodes the "handed ⇒ resolvable" invariant at the type level: anything the
  * platform hands you as a session reference exposes a resolvable `id`, so a session can
  * never be surfaced as a bare unresolvable string.
@@ -360,7 +360,7 @@ export interface ResolvableSessionRef {
 /**
  * A subagent child session, enumerated under its parent via `GET /sessions/:id/children`.
  * A first-class, lineage-discoverable run reference: it {@link ResolvableSessionRef}
- * (its `id` resolves through the session record facade — events/outputs/getSessionRecord), carries the
+ * (its `id` resolves through the session record facade — events/files/getSessionRecord), carries the
  * lineage (`parentSessionId`/`depth`) and the terminal outcome/cost, so a child is
  * observable exactly like a top-level session.
  */
@@ -380,18 +380,18 @@ export interface ChildSessionRef extends ResolvableSessionRef {
 }
 
 /**
- * Cross-session output search query (`Aex.sessions.searchOutputs`). Restrict to a
+ * Cross-session session-file search query (`Aex.files.search`). Restrict to a
  * corpus with `sessionIds`; filter by filename substring / extension / content type.
- * The MVP composes this client-side (per-session `listOutputs` + filter) — a future
- * server-side `GET /api/outputs/search` can back the same contract with a real
+ * The MVP composes this client-side (per-session `listSessionFiles` + filter) — a future
+ * server-side `GET /api/files/search` can back the same contract with a real
  * cross-session index, body-only swap.
  */
-export interface OutputSearchQuery {
+export interface SessionFileSearchQuery {
   /** Restrict the search to these sessions (the chat corpus allow-list). */
   readonly sessionIds?: readonly string[];
   /**
    * Filename match. A string is a case-insensitive SUBSTRING match; a RegExp is
-   * tested as given. Unified with {@link OutputQuery.filename} (`string | RegExp`)
+   * tested as given. Unified with {@link SessionFileQuery.filename} (`string | RegExp`)
    * so the same value works on `find()` and `search()` — feed it through
    * {@link import("./operations.js").toFilenameMatcher} rather than assuming a string.
    */
@@ -404,18 +404,18 @@ export interface OutputSearchQuery {
   readonly limit?: number;
 }
 
-/** One output-search hit — a reference only (no bytes); read with `readOutputText`. */
-export interface OutputSearchHit {
+/** One session-file search hit — a reference only (no bytes); read with `readSessionFileText`. */
+export interface SessionFileSearchHit {
   readonly sessionId: string;
-  readonly outputId: string;
+  readonly fileId: string;
   readonly filename?: string;
   readonly sizeBytes?: number;
   readonly contentType?: string;
 }
 
-/** A page of output-search hits. */
-export interface OutputSearchPage {
-  readonly hits: readonly OutputSearchHit[];
+/** A page of session-file search hits. */
+export interface SessionFileSearchPage {
+  readonly hits: readonly SessionFileSearchHit[];
 }
 
 // The loose `TurnEvent` snapshot shape has been RETIRED. Every event read
@@ -464,10 +464,10 @@ export interface ProviderEvent {
 }
 
 /**
- * One captured output file as the dashboard reports it. Use
- * `outputLink` / `createOutputLink` to get a temporary direct URL for download.
+ * One captured session file as the dashboard reports it. Use
+ * `sessionFileLink` / `createSessionFileLink` to get a temporary direct URL for download.
  */
-export interface Output {
+export interface SessionFile {
   readonly id: string;
   readonly filename?: string;
   readonly sizeBytes?: number;
@@ -476,9 +476,9 @@ export interface Output {
   readonly [key: string]: unknown;
 }
 
-export type OutputFilePathMatch = "exact" | "suffix";
+export type SessionFilePathMatch = "exact" | "suffix";
 
-export type OutputFileType =
+export type SessionFileType =
   | "text"
   | "json"
   | "image"
@@ -489,13 +489,13 @@ export type OutputFileType =
   | "binary"
   | "unknown";
 
-export interface OutputQuery {
-  /** Exact normalized output path. Leading `/` and `outputs/` are ignored. */
+export interface SessionFileQuery {
+  /** Exact normalized file path. Leading `/` and `files/` are ignored. */
   readonly path?: string;
   /** Basename match. A RegExp is tested against the basename only. */
   readonly filename?: string | RegExp;
   /**
-   * Directory prefix. Leading `/` and `outputs/` are ignored.
+   * Directory prefix. Leading `/` and `files/` are ignored.
    * `recursive` defaults to true.
    */
   readonly dir?: string;
@@ -505,27 +505,27 @@ export interface OutputQuery {
   /** Exact content type or a prefix wildcard such as `image/*`. */
   readonly contentType?: string;
   /** High-level type inferred from content type first, then extension. */
-  readonly type?: OutputFileType;
+  readonly type?: SessionFileType;
 }
 
-export interface OutputFilePathSelector {
+export interface SessionFilePathSelector {
   readonly path: string;
-  readonly match?: OutputFilePathMatch;
+  readonly match?: SessionFilePathMatch;
 }
 
-export interface OutputFileIdSelector {
+export interface SessionFileIdSelector {
   readonly id: string;
 }
 
-export type OutputFileSelector = Output | OutputFileIdSelector | OutputFilePathSelector;
+export type SessionFileSelector = SessionFile | SessionFileIdSelector | SessionFilePathSelector;
 
-export interface OutputFileDownload {
-  readonly output: Output;
+export interface SessionFileDownload {
+  readonly file: SessionFile;
   readonly bytes: Uint8Array;
 }
 
-/** Options for `Aex.sessions.outputs(id).read` / {@link import("./operations.js").readOutputText}. */
-export interface ReadOutputTextOptions {
+/** Options for `Aex.sessions.files(id).read` / {@link import("./operations.js").readSessionFileText}. */
+export interface ReadSessionFileTextOptions {
   /**
    * Stop reading after this many bytes. Defaults to 50_000; clamped server-side
    * of the SDK to [1, 10_000_000]. The read streams and cancels once the cap is
@@ -533,8 +533,8 @@ export interface ReadOutputTextOptions {
    */
   readonly maxBytes?: number;
   /**
-   * Per-attempt timeout for fetching and reading the selected output body.
-   * Defaults to 30_000ms; idempotent output reads retry once on timeout before
+   * Per-attempt timeout for fetching and reading the selected file body.
+   * Defaults to 30_000ms; idempotent file reads retry once on timeout before
    * surfacing a structured NETWORK_ERROR.
    */
   readonly timeoutMs?: number;
@@ -546,14 +546,14 @@ export interface ReadOutputTextOptions {
 }
 
 /**
- * A byte-capped, decoded text read of one output file, as returned by
- * `Aex.sessions.outputs(id).read`. Built for feeding session deliverables to an LLM
+ * A byte-capped, decoded text read of one session file, as returned by
+ * `Aex.sessions.files(id).read`. Built for feeding session deliverables to an LLM
  * without loading the whole (possibly very large) file into memory or context:
  * the read streams and stops at `maxBytes`, so `text` is at most that many bytes
  * decoded as UTF-8. Check {@link truncated} before treating `text` as complete.
  */
-export interface OutputText {
-  readonly output: Output;
+export interface SessionFileText {
+  readonly file: SessionFile;
   /** Decoded UTF-8, capped to the requested `maxBytes`. */
   readonly text: string;
   /** True when the file is larger than `maxBytes` (so `text` is a prefix). */
@@ -565,18 +565,18 @@ export interface OutputText {
   readonly totalBytes: number;
 }
 
-export type OutputLinkExpiresIn = number | "15m" | "1h" | "1d";
+export type SessionFileLinkExpiresIn = number | "15m" | "1h" | "1d";
 
-export interface OutputLinkOptions {
+export interface SessionFileLinkOptions {
   /** Seconds or one of the documented presets. Defaults to `"1h"`. */
-  readonly expiresIn?: OutputLinkExpiresIn;
+  readonly expiresIn?: SessionFileLinkExpiresIn;
 }
 
-export interface OutputLink {
+export interface SessionFileLink {
   readonly url: string;
   readonly expiresAt?: string;
   readonly expiresInSeconds?: number;
-  readonly output?: Output;
+  readonly file?: SessionFile;
   readonly [key: string]: unknown;
 }
 
@@ -605,9 +605,9 @@ export interface WhoAmI {
     readonly sessionSubmitPerMinute?: number;
     /** Hard cap on concurrent non-terminal sessions the workspace may hold. */
     readonly maxConcurrentSessions?: number;
-    /** Storage cap (bytes) on captured output objects, workspace-wide. `null` means unlimited. */
+    /** Storage cap (bytes) on captured file objects, workspace-wide. `null` means unlimited. */
     readonly storageCapBytes?: number | null;
-    /** Current captured-output usage in bytes. */
+    /** Current captured-file usage in bytes. */
     readonly storageUsedBytes?: number;
     /**
      * Wall-clock ceiling on a single run before forced termination.

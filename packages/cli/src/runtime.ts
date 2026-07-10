@@ -1,9 +1,9 @@
-export { executeOutputsSyncCmd } from "./outputs-sync.js";
+export { executeFilesSyncCmd } from "./files-sync.js";
 export type { CliExitCode } from "./host/common.js";
 export {
   AEX_INDEX_PATH
 } from "./internal.js";
 export type {
   CliIO,
-  OutputsSyncFileEntry
+  SessionFilesSyncFileEntry
 } from "./internal.js";

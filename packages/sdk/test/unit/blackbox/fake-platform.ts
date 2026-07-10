@@ -24,7 +24,7 @@
  *   POST /api/sessions/:id/messages            send a turn
  *   POST /api/sessions/:id/events/ticket       WS ticket
  *   GET  /api/sessions/:id                     settle poll (settled record)
- *   GET  /api/sessions/:id/outputs             captured outputs
+ *   GET  /api/sessions/:id/files             captured files
  *   POST /api/sessions/:id/{suspend,cancel,resume,approve,deny,request-approval}
  *   GET  /api/sessions/:id/children                subagent lineage
  *   GET  /api/sessions/:id                          session facade resolve (child)
@@ -54,8 +54,8 @@ export interface TurnScript {
   readonly costUsd?: number;
   /** Settle-stamped token usage → costTelemetry.providerUsage (the single token SSoT). */
   readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number; readonly totalTokens?: number };
-  /** Captured output files GET /outputs returns. */
-  readonly outputs?: readonly Record<string, unknown>[];
+  /** Captured session files GET /files returns. */
+  readonly files?: readonly Record<string, unknown>[];
   /**
    * Model the real park→settle LAG: the park event fires with the record still
    * UNSETTLED; GET /api/sessions/:id only returns the settled record after a poll.
@@ -323,7 +323,7 @@ export class FakePlatform {
       };
     }
     if (outcome === "failed") session.errorMessage = script.errorMessage ?? "session failed";
-    session.__outputs = script.outputs ?? [];
+    session.__files = script.files ?? [];
   }
 
   /** Script a one-shot non-2xx wire response for the next request whose path contains `pathIncludes`. */
@@ -386,8 +386,8 @@ export class FakePlatform {
       if (method === "POST" && sub === "/events/ticket") {
         return json({ wsUrl: `wss://events.aex.test/${id}`, ticket: "t", expiresAtMs: 1 });
       }
-      if (method === "GET" && sub === "/outputs") {
-        return json({ outputs: (session.__outputs as Row[]) ?? [] });
+      if (method === "GET" && sub === "/files") {
+        return json({ files: (session.__files as Row[]) ?? [] });
       }
       if (method === "GET" && sub === "/events") {
         // The SAME canonical AexEvents the turn streamed — list() and the stream
@@ -451,10 +451,10 @@ export class FakePlatform {
       const session = this.#sessions.get(id);
       return json({ session: session ? publicSession(session) : { id, status: "idle" } });
     }
-    const re = path.match(/\/api\/sessions\/([^/?]+)\/(events|outputs)/);
+    const re = path.match(/\/api\/sessions\/([^/?]+)\/(events|files)/);
     if (method === "GET" && re) {
       const session = this.#sessions.get(decodeURIComponent(re[1]!));
-      if (re[2] === "outputs") return json({ outputs: (session?.__outputs as Row[]) ?? [] });
+      if (re[2] === "files") return json({ files: (session?.__files as Row[]) ?? [] });
       return json({ events: (session?.__events as AexEvent[]) ?? [] });
     }
     return json({});
@@ -463,9 +463,9 @@ export class FakePlatform {
 
 /** The public session projection GET returns (drops the internal `__script`). */
 function publicSession(session: Row): Row {
-  const { __script, __outputs, __events, __pendingSettle, ...pub } = session;
+  const { __script, __files, __events, __pendingSettle, ...pub } = session;
   void __script;
-  void __outputs;
+  void __files;
   void __events;
   void __pendingSettle;
   return pub;

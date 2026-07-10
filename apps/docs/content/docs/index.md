@@ -7,14 +7,14 @@ description: "aex is an agent execution platform for launching autonomous agents
 
 aex is an agent execution platform for launching autonomous agents from a simple TypeScript SDK and CLI.
 
-Open durable agent sessions, send turns, stream events, capture outputs, and compose agents with skills, files, MCP, secrets, networking controls, and subagents across the managed runtime.
+Open durable agent sessions, send turns, stream events, capture files, and compose agents with skills, files, MCP, secrets, networking controls, and subagents across the managed runtime.
 
 ## Feature areas
 
 - **Agent runtime.** Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open web fetch/search, background commands, code execution, git, and subagents.
-- **Durable infrastructure.** SessionRecord records, status, wait/cancel/delete, idempotency, typed events, output capture, downloads, timeouts, and runtime sizes.
+- **Durable infrastructure.** SessionRecord records, status, wait/cancel/delete, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
 - **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, secrets, and networking controls.
-- **Subagents.** Typed parent/child lineage for async child sessions, output handoff, and bounded agent delegation.
+- **Subagents.** Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 - **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
 - **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
 

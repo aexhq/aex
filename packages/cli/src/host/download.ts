@@ -1,14 +1,14 @@
 /**
  * `aex download <session-id> [--only namespace] [--out path]` — download
  * a session's content as a zip, assembled client-side from the public read
- * endpoints (no per-output id required), matching the SDK's
+ * endpoints (no per-file id required), matching the SDK's
  * `session.download()`.
  *
  * Without `--only`, downloads everything public — organised into
- * `metadata/session.json`, typed `events/events.jsonl`, `outputs/<rel>`
- * (deliverables), plus `manifest.json`.
+ * `metadata/session.json`, typed `events/events.jsonl`, `files/<rel>`,
+ * plus `manifest.json`.
  *
- * `--only outputs|events|metadata` downloads just that one
+ * `--only files|events|metadata` downloads just that one
  * namespace (files plus `manifest.json` at the zip root).
  *
  * `--out` resolves relative to the host CWD; if omitted the file is
@@ -31,10 +31,10 @@ import {
   takeFlagValue
 } from "./common.js";
 
-type Namespace = "outputs" | "events" | "metadata";
+type Namespace = "files" | "events" | "metadata";
 
 const NAMESPACE_DOWNLOADERS = {
-  outputs: operations.downloadOutputs,
+  files: operations.downloadSessionFiles,
   events: operations.downloadEvents,
   metadata: operations.downloadMetadata
 } satisfies Record<Namespace, typeof operations.download>;
@@ -63,7 +63,7 @@ export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Pr
   }
   const namespace = onlyFlag.value as Namespace | null;
 
-  const usage = "usage: aex download <session-id> [--only outputs|events|metadata] [--out path] [common flags]";
+  const usage = "usage: aex download <session-id> [--only files|events|metadata] [--out path] [common flags]";
   const unknown = rejectUnknownFlags(io, onlyFlag.remaining, usage);
   if (unknown) return unknown;
   const positional = onlyFlag.remaining;

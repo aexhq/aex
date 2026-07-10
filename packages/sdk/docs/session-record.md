@@ -4,11 +4,11 @@ title: Session record
 
 # Session record
 
-The session record is the durable product primitive for one session. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured outputs, and manifest entries for custody and cost telemetry.
+The session record is the durable product primitive for one session. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured files, and manifest entries for custody and cost telemetry.
 
 ## Listing sessions
 
-`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API key, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: combine it with `aex.sessions.outputs(id).list()` / `.read(...)` (see [Outputs](outputs.md)) to reach any session's deliverables.
+`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API key, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: combine it with `aex.sessions.files(id).list()` / `.read(...)` (see [Files](files.md)) to reach any session's deliverables.
 
 ```ts
 let cursor: string | undefined;
@@ -33,7 +33,7 @@ metadata/session.json
 metadata/submission.json      # when a public-safe submission snapshot is returned by the read API
 metadata/cost.json            # when public cost telemetry is returned by the read API
 events/events.jsonl
-outputs/<captured deliverable files>
+files/<captured deliverable files>
 ```
 
 `manifest.json` is versioned as `SessionRecordManifestV1`:
@@ -43,9 +43,9 @@ outputs/<captured deliverable files>
 | `schemaVersion` | `aex.session-record.manifest.v1`. |
 | `sessionRecordSchemaVersion` | `aex.session-record.v1`. |
 | `sessionId` | The session the archive was assembled for. |
-| `namespaces[]` | The documented top-level namespaces: `metadata`, `events`, `outputs`. |
+| `namespaces[]` | The documented top-level namespaces: `metadata`, `events`, `files`. |
 | `files[]` | Inventory of expected and present files with `namespace`, `path`, `role`, and `status`. |
-| `outputs[]` | Compatibility alias for present captured output artifacts. |
+| `sessionFiles[]` | Session file metadata for entries present under the `files/` namespace. |
 | `errors[]` | Per-artifact byte fetch failures during archive assembly. |
 
 Current v1 downloads always include `metadata/session.json` and `events/events.jsonl`. `events/events.jsonl` contains typed event-channel records only; internal diagnostics and full internal streams are not mixed into that file.

@@ -29,12 +29,12 @@ export type SessionDeletionBlocker = (typeof SESSION_DELETION_BLOCKERS)[number];
 
 export const SESSION_DELETION_COUNT_CLASSES = [
   "object_store_objects",
-  "outputs",
+  "files",
   "logs",
   "events",
   "assets",
   "db_event_rows",
-  "db_output_rows",
+  "db_file_rows",
   "capture_failures",
   "storage_samples",
   "custody_manifests"
@@ -443,7 +443,7 @@ export function assertSessionDeletionOrder(proof: SessionDeletionOrderProofV1): 
     throw new SessionRetentionValidationError("session deletion cannot purge assets before the deletion manifest is written");
   }
   if (purgeStarted && manifest.mode !== "final") {
-    throw new SessionRetentionValidationError("session deletion cannot purge assets from a dry-session deletion manifest");
+    throw new SessionRetentionValidationError("session deletion cannot purge assets from a dry-run deletion manifest");
   }
 }
 
@@ -709,7 +709,7 @@ const forbiddenStringPatterns: readonly {
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
-    regex: /\b(?:machine|session|resource|handle|provider|asset)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
+    regex: /\b(?:machine|resource|handle|provider|asset)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
   },
   { reason: "hash_like_value", regex: /\b(?:sha256|hash)[:_-][A-Fa-f0-9]{16,}\b/ }
 ]);

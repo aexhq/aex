@@ -162,7 +162,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
         let parentOutputCount = 0;
         try {
           const s = await client.sessions.open(parentSessionId);
-          const outs = await s.outputs().list();
+          const outs = await s.files().list();
           parentOutputCount = Array.isArray(outs) ? outs.length : 0;
         } catch {}
 
@@ -185,7 +185,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
             childEventKinds = cevArr.map((e) => e.type);
             childEventsStr = JSON.stringify(cevArr);
             childMarkerInChildEvents = childEventsStr.includes(CHILD_MARKER);
-            const cout = await cs.outputs().list();
+            const cout = await cs.files().list();
             childOutputCount = Array.isArray(cout) ? cout.length : 0;
           } catch (e) { childOpenError = e instanceof Error ? e.message : String(e); }
         }

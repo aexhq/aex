@@ -137,35 +137,35 @@ const secret = fc.oneof(secretRef, secretValue);
 const environmentSecrets = numberedRecord("SECRET_", secret, { maxLength: 4 });
 const nonEmptyEnvironmentSecrets = numberedRecord("SECRET_", secret, { minLength: 1, maxLength: 4 });
 
-const outputDirs = (minLength: number) =>
+const fileCaptureDirs = (minLength: number) =>
   fc.uniqueArray(outputPath, { minLength, maxLength: 4 });
 const positiveInteger = fc.integer({ min: 1, max: 1_000_000 });
-const outputCaptureTimeoutMs = fc.integer({ min: 1, max: 6 * 60 * 60 * 1000 });
+const fileCaptureTimeoutMs = fc.integer({ min: 1, max: 6 * 60 * 60 * 1000 });
 
-const richOutputs = fc
+const richFileCapture = fc
   .record({
-    allowedDirs: outputDirs(1),
-    deniedDirs: outputDirs(1),
-    captureTimeoutMs: outputCaptureTimeoutMs,
+    allowedDirs: fileCaptureDirs(1),
+    deniedDirs: fileCaptureDirs(1),
+    captureTimeoutMs: fileCaptureTimeoutMs,
     maxFileBytes: positiveInteger,
     maxTotalBytes: positiveInteger,
     maxFiles: fc.integer({ min: 1, max: 10_000 })
   })
-  .map((parts) => buildOutputs(parts));
+  .map((parts) => buildFileCapture(parts));
 
-const sparseOutputs = fc
+const sparseFileCapture = fc
   .record(
     {
-      allowedDirs: fc.option(outputDirs(0), { nil: undefined }),
-      deniedDirs: fc.option(outputDirs(0), { nil: undefined }),
-      captureTimeoutMs: fc.option(outputCaptureTimeoutMs, { nil: undefined }),
+      allowedDirs: fc.option(fileCaptureDirs(0), { nil: undefined }),
+      deniedDirs: fc.option(fileCaptureDirs(0), { nil: undefined }),
+      captureTimeoutMs: fc.option(fileCaptureTimeoutMs, { nil: undefined }),
       maxFileBytes: fc.option(positiveInteger, { nil: undefined }),
       maxTotalBytes: fc.option(positiveInteger, { nil: undefined }),
       maxFiles: fc.option(fc.integer({ min: 1, max: 10_000 }), { nil: undefined })
     },
     { requiredKeys: [] }
   )
-  .map((parts) => buildOutputs(parts));
+  .map((parts) => buildFileCapture(parts));
 
 const spendLimit = fc.integer({ min: 1, max: 100_000 }).map((cents) => cents / 100);
 const richOverrides = fc
@@ -210,7 +210,7 @@ const richValidCase = providerChoice.chain((choice) =>
         system: shortText,
         metadata: nonEmptyMetadata,
         environment: richEnvironment,
-        outputs: richOutputs,
+        fileCapture: richFileCapture,
         overrides: richOverrides,
         runtime: runtimeSize,
         outputMode,
@@ -227,7 +227,7 @@ const richValidCase = providerChoice.chain((choice) =>
           system: parts.system,
           metadata: parts.metadata,
           environment: parts.environment,
-          outputs: parts.outputs,
+          fileCapture: parts.fileCapture,
           overrides: parts.overrides,
           runtime: parts.runtime,
           outputMode: parts.outputMode,
@@ -249,7 +249,7 @@ const sparseValidCase = providerChoice.chain((choice) =>
           system: fc.option(shortText, { nil: undefined }),
           metadata: fc.option(metadata, { nil: undefined }),
           environment: fc.option(sparseEnvironment, { nil: undefined }),
-          outputs: fc.option(sparseOutputs, { nil: undefined }),
+          fileCapture: fc.option(sparseFileCapture, { nil: undefined }),
           overrides: fc.option(sparseOverrides, { nil: undefined }),
           runtime: fc.option(runtimeSize, { nil: undefined }),
           outputMode: fc.option(outputMode, { nil: undefined }),
@@ -268,7 +268,7 @@ const sparseValidCase = providerChoice.chain((choice) =>
           system: parts.system,
           metadata: parts.metadata,
           environment: parts.environment,
-          outputs: parts.outputs,
+          fileCapture: parts.fileCapture,
           overrides: parts.overrides,
           runtime: parts.runtime,
           outputMode: parts.outputMode,
@@ -445,7 +445,7 @@ function buildSessionOptions(
     readonly system?: string | undefined;
     readonly metadata?: Record<string, JsonValue> | undefined;
     readonly environment?: SessionCreateOptions["environment"] | undefined;
-    readonly outputs?: SessionCreateOptions["outputs"] | undefined;
+    readonly fileCapture?: SessionCreateOptions["fileCapture"] | undefined;
     readonly overrides?: SessionCreateOptions["overrides"] | undefined;
     readonly runtime?: RuntimeSize | undefined;
     readonly outputMode?: OutputMode | undefined;
@@ -461,7 +461,7 @@ function buildSessionOptions(
   if (parts.system !== undefined) options.system = parts.system;
   if (parts.metadata !== undefined) options.metadata = parts.metadata;
   if (parts.environment !== undefined) options.environment = parts.environment;
-  if (parts.outputs !== undefined) options.outputs = parts.outputs;
+  if (parts.fileCapture !== undefined) options.fileCapture = parts.fileCapture;
   if (parts.overrides !== undefined) options.overrides = parts.overrides;
   if (parts.runtime !== undefined) options.runtime = parts.runtime;
   if (parts.outputMode !== undefined) options.outputMode = parts.outputMode;
@@ -482,22 +482,22 @@ function buildEnvironment(parts: {
   return environment;
 }
 
-function buildOutputs(parts: {
+function buildFileCapture(parts: {
   readonly allowedDirs?: readonly string[] | undefined;
   readonly deniedDirs?: readonly string[] | undefined;
   readonly captureTimeoutMs?: number | undefined;
   readonly maxFileBytes?: number | undefined;
   readonly maxTotalBytes?: number | undefined;
   readonly maxFiles?: number | undefined;
-}): NonNullable<SessionCreateOptions["outputs"]> {
-  const outputs: Mutable<NonNullable<SessionCreateOptions["outputs"]>> = {};
-  if (parts.allowedDirs !== undefined) outputs.allowedDirs = parts.allowedDirs;
-  if (parts.deniedDirs !== undefined) outputs.deniedDirs = parts.deniedDirs;
-  if (parts.captureTimeoutMs !== undefined) outputs.captureTimeoutMs = parts.captureTimeoutMs;
-  if (parts.maxFileBytes !== undefined) outputs.maxFileBytes = parts.maxFileBytes;
-  if (parts.maxTotalBytes !== undefined) outputs.maxTotalBytes = parts.maxTotalBytes;
-  if (parts.maxFiles !== undefined) outputs.maxFiles = parts.maxFiles;
-  return outputs;
+}): NonNullable<SessionCreateOptions["fileCapture"]> {
+  const fileCapture: Mutable<NonNullable<SessionCreateOptions["fileCapture"]>> = {};
+  if (parts.allowedDirs !== undefined) fileCapture.allowedDirs = parts.allowedDirs;
+  if (parts.deniedDirs !== undefined) fileCapture.deniedDirs = parts.deniedDirs;
+  if (parts.captureTimeoutMs !== undefined) fileCapture.captureTimeoutMs = parts.captureTimeoutMs;
+  if (parts.maxFileBytes !== undefined) fileCapture.maxFileBytes = parts.maxFileBytes;
+  if (parts.maxTotalBytes !== undefined) fileCapture.maxTotalBytes = parts.maxTotalBytes;
+  if (parts.maxFiles !== undefined) fileCapture.maxFiles = parts.maxFiles;
+  return fileCapture;
 }
 
 function buildOverrides(parts: {

@@ -52,7 +52,7 @@ function openWith(secrets: Record<string, Secret>) {
 describe("openSession environment.secrets split", () => {
   it("workspace ref → submission.secretEnv {ref}; no value travels", async () => {
     const { calls, run } = openWith({ SERPER_API_KEY: Secret.ref("serper") });
-    await start();
+    await run();
     const body = calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
     const secrets = body.secrets as Record<string, unknown>;
@@ -62,7 +62,7 @@ describe("openSession environment.secrets split", () => {
 
   it("ephemeral value → submission.secretEnv {ephemeral} + secrets.envSecrets value", async () => {
     const { calls, run } = openWith({ SERPER_API_KEY: Secret.value("sk-live-XYZ") });
-    await start();
+    await run();
     const body = calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
     const secrets = body.secrets as Record<string, unknown>;
@@ -72,7 +72,7 @@ describe("openSession environment.secrets split", () => {
 
   it("the ephemeral value is NEVER in the (hashed) submission half", async () => {
     const { calls, run } = openWith({ SERPER_API_KEY: Secret.value("sk-live-XYZ") });
-    await start();
+    await run();
     const body = calls[0]!.body as Record<string, unknown>;
     expect(JSON.stringify(body.submission)).not.toContain("sk-live-XYZ");
     expect(JSON.stringify(body.secrets)).toContain("sk-live-XYZ");
@@ -83,7 +83,7 @@ describe("openSession environment.secrets split", () => {
       SERPER_API_KEY: Secret.ref("serper"),
       DOUBAO_API_KEYS: Secret.value("ark-secret")
     });
-    await start();
+    await run();
     const body = calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
     const secrets = body.secrets as Record<string, unknown>;
@@ -105,7 +105,7 @@ describe("openSession environment.secrets split", () => {
 
   it("rejects an invalid env var name", async () => {
     const { run } = openWith({ "bad-name": Secret.ref("serper") });
-    await expect(start()).rejects.toThrow(/env var name/i);
+    await expect(run()).rejects.toThrow(/env var name/i);
   });
 
   it("rejects a non-Secret value", async () => {

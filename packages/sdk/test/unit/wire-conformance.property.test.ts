@@ -55,7 +55,7 @@ function captureClient(): { client: Aex; bodies: unknown[] } {
  * rides /messages), PLUS a `retention` policy. We adapt those framing
  * differences back to a session-submission shape and let the REAL parser vet every
  * wire piece the SDK actually assembled (secrets, MCP,
- * runtimeSize, timeout, limits, metadata, outputs, secretEnv, environment).
+ * runtimeSize, timeout, limits, metadata, files, secretEnv, environment).
  */
 function validateWire(body: unknown): void {
   const { retention: _retention, submission, ...rest } = body as Record<string, unknown>;

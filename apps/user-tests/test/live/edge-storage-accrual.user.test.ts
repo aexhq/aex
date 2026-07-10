@@ -1,7 +1,7 @@
 /**
  * Live edge-case sweep: retained-storage visibility on the public session record.
  *
- * A session that retains captured outputs bills retained-output storage (the
+ * A session that retains captured files bills retained-file storage (the
  * hourly accrual sweep charges byte-hours from the settle-recorded byte total).
  * The ONLY public surface where a customer can see the retained byte total is
  * the session record's `retainedStorageBytes` field — and on the dev plane it
@@ -10,7 +10,7 @@
  * real total flows only to internal billing storage. Customers are billed for
  * storage they cannot see.
  *
- * ONE billable session turn total: produce a single output file with known contents,
+ * ONE billable session turn total: produce a single session file with known contents,
  * wait for the session to settle, then poll the public record for a non-zero
  * `retainedStorageBytes`.
  *
@@ -112,25 +112,25 @@ afterAll(() => {
 
 describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
   it(
-    "a settled run retaining a captured output surfaces a non-zero retainedStorageBytes on the public session record",
+    "a settled session retaining a captured file surfaces a non-zero retainedStorageBytes on the public session record",
     async () => {
       const body = `
         const prompt =
-          "Use your shell tool to write exactly 2048 bytes to /workspace/outputs/blob.bin " +
-          "(for example: head -c 2048 /dev/zero > /workspace/outputs/blob.bin). " +
+          "Use your shell tool to write exactly 2048 bytes to /workspace/files/blob.bin " +
+          "(for example: head -c 2048 /dev/zero > /workspace/files/blob.bin). " +
           "Create no other files. Then reply with the single word done.";
         const sessionResult = await client.start({
           provider: PROVIDER,
           model: MODEL,
           message: prompt,
           includeBuiltinTools: true,
-          outputs: { allowedDirs: ["/workspace/outputs"] },
+          fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-storage-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
 
         const session = await client.sessions.open(sessionResult.sessionId);
-        const outs = await session.outputs();
+        const outs = await session.files();
         const listed = await outs.list();
         const blob = listed.find((o) => (o.filename || "").endsWith("blob.bin")) || null;
 
@@ -151,7 +151,7 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
           sessionId: sessionResult.sessionId,
           ok: sessionResult.ok,
           status: sessionResult.status,
-          outputCount: listed.length,
+          fileCount: listed.length,
           blobBytes: blob ? blob.sizeBytes ?? null : null,
           retainedStorageBytes: retained,
           polls
@@ -162,30 +162,30 @@ describe("edge: retained-storage visibility (retainedStorageBytes)", () => {
         sessionId: string;
         ok: boolean;
         status: string;
-        outputCount: number;
+        fileCount: number;
         blobBytes: number | null;
         retainedStorageBytes: number;
         polls: number;
       };
 
-      // The session itself must have produced and retained the output.
+      // The session itself must have produced and retained the file.
       expect(out.ok, `run ${out.sessionId} did not complete ok (status=${out.status})`).toBe(true);
       expect(
         (out.blobBytes ?? 0) > 0,
-        `blob.bin missing or empty in captured outputs (count=${out.outputCount}, bytes=${out.blobBytes})`
+        `blob.bin missing or empty in captured files (count=${out.fileCount}, bytes=${out.blobBytes})`
       ).toBe(true);
 
-      // DEFECT PROBE: retained-output storage is billed hourly from the
+      // DEFECT PROBE: retained-file storage is billed hourly from the
       // settle-recorded byte total, but the public record's
       // retainedStorageBytes is written once as 0 at create and never
       // updated by any later code path — customers pay for retained bytes
       // they cannot see on any public surface. This assertion states the
       // contractually sensible behavior (field reflects retained bytes once
       // the session settles); it fails today and goes green when the plane
-      // writes the settle-time outputsSummary total onto the record.
+      // writes the settle-time filesSummary total onto the record.
       expect(
         out.retainedStorageBytes,
-        `run ${out.sessionId} retains ${out.blobBytes ?? "?"} bytes of captured output (settled, ` +
+        `session ${out.sessionId} retains ${out.blobBytes ?? "?"} bytes of captured files (settled, ` +
           `polled ${out.polls}x over 3 min) but the public session record still reports ` +
           `retainedStorageBytes=0 — retained storage is billed yet invisible to the customer`
       ).toBeGreaterThan(0);

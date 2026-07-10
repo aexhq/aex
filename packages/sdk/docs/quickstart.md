@@ -17,7 +17,7 @@ This installs the TypeScript SDK exports and the bundled `aex` CLI.
 aex is currently in **invite-only beta**: workspaces and API keys are issued
 by the aex team — contact <support@aex.dev> for beta access. Once you have
 access, create a quickstart SDK token with `sessions:read`, `sessions:write`,
-`outputs:read`, and `billing:read` in the dashboard at <https://aex.dev>. The
+`files:read`, and `billing:read` in the dashboard at <https://aex.dev>. The
 examples also need your BYOK provider key for the model you choose. For the
 Claude examples below:
 
@@ -101,7 +101,7 @@ console.log(messages.at(-1)?.text);
 const record = await session.wait();
 console.log(record.status);
 
-// Download the whole session record (metadata, events, outputs) as a zip.
+// Download the whole session record (metadata, events, files) as a zip.
 await session.download({ to: "./session.zip" });
 ```
 
@@ -122,5 +122,5 @@ npx aex start \
 - Add files, skills, AGENTS.md, MCP servers, packages, and networking controls with [Composition](concepts/composition.md).
 - Delegate bounded sub-tasks to child sessions with [Subagents](concepts/subagents.md).
 - Get notified when a session finishes with [Webhooks](webhooks.md).
-- Narrow output capture or download individual files with [Outputs](outputs.md).
+- Narrow file capture or download individual files with [Files](files.md).
 - Check supported providers and models in the [provider/runtime capability matrix](provider-runtime-capabilities.md).

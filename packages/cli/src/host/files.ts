@@ -1,17 +1,17 @@
 /**
- * `aex outputs` — host CLI wrappers over the public output operations:
+ * `aex files` — host CLI wrappers over the public captured-file operations:
  *
- *   aex outputs <session-id>                          List captured outputs (NDJSON)
- *   aex outputs read <session-id> <path>              Read one file as capped text (JSON)
- *   aex outputs download <session-id> <path> [--out]  Download one file's raw bytes
- *   aex outputs link <session-id> <path>              Mint a temporary download URL (JSON)
- *   aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]
- *   aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N]
+ *   aex files <session-id>                          List captured files (NDJSON)
+ *   aex files read <session-id> <path>              Read one file as capped text (JSON)
+ *   aex files download <session-id> <path> [--out]  Download one file's raw bytes
+ *   aex files link <session-id> <path>              Mint a temporary download URL (JSON)
+ *   aex files find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]
+ *   aex files search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N]
  *
- * `aex outputs search` (no session id) is the CROSS-RUN metadata search
- * (`aex.outputs.search`); the whole-namespace zip stays `aex download`.
+ * `aex files search` (no session id) is the cross-session metadata search
+ * (`aex.files.search`); the whole-namespace zip stays `aex download`.
  */
-import { operations, type HttpClient, type Output, type OutputFileType, type OutputQuery, type OutputSearchHit, type OutputSearchQuery } from "@aexhq/contracts";
+import { operations, type HttpClient, type SessionFile, type SessionFileType, type SessionFileQuery, type SessionFileSearchHit, type SessionFileSearchQuery } from "@aexhq/contracts";
 import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import {
@@ -31,8 +31,8 @@ import {
 
 const SUBVERBS = new Set(["read", "download", "link", "find", "search"]);
 
-export async function executeOutputsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "outputs")) return USAGE_ERR;
+export async function executeSessionFilesCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
+  if (await refuseInsideManagedSession(io, "files")) return USAGE_ERR;
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
@@ -45,23 +45,23 @@ export async function executeOutputsCmd(io: CliIO, argv: readonly string[]): Pro
 
   switch (sub) {
     case "read":
-      return outputsRead(io, http, args.slice(1));
+      return filesRead(io, http, args.slice(1));
     case "download":
-      return outputsDownload(io, http, args.slice(1), common.flags);
+      return filesDownload(io, http, args.slice(1), common.flags);
     case "link":
-      return outputsLink(io, http, args.slice(1));
+      return filesLink(io, http, args.slice(1));
     case "find":
-      return outputsFind(io, http, args.slice(1));
+      return filesFind(io, http, args.slice(1));
     case "search":
-      return outputsSearch(io, http, args.slice(1));
+      return filesSearch(io, http, args.slice(1));
     default:
-      return outputsList(io, http, args);
+      return filesList(io, http, args);
   }
 }
 
-/** `aex outputs <session-id>` — list every captured output as NDJSON. */
-async function outputsList(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const usage = "usage: aex outputs <session-id> [common flags]";
+/** `aex files <session-id>` — list every captured file as NDJSON. */
+async function filesList(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
+  const usage = "usage: aex files <session-id> [common flags]";
   const unknown = rejectUnknownFlags(io, args, usage);
   if (unknown) return unknown;
   const positional = args;
@@ -71,17 +71,17 @@ async function outputsList(io: CliIO, http: HttpClient, args: readonly string[])
   }
   const sessionId = positional[0]!;
   try {
-    const outputs = await operations.listSessionOutputs(http, sessionId);
-    for (const out of outputs) io.stdout(JSON.stringify(out) + "\n");
+    const files = await operations.listSessionFiles(http, sessionId);
+    for (const file of files) io.stdout(JSON.stringify(file) + "\n");
     return SUCCESS;
   } catch (err) {
-    return outputsError(io, "outputs_failed", err, { sessionId });
+    return filesError(io, "files_failed", err, { sessionId });
   }
 }
 
-/** `aex outputs read <session-id> <path>` — read one file as capped text. */
-async function outputsRead(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const usage = "usage: aex outputs read <session-id> <path> [common flags]";
+/** `aex files read <session-id> <path>` — read one file as capped text. */
+async function filesRead(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
+  const usage = "usage: aex files read <session-id> <path> [common flags]";
   const unknown = rejectUnknownFlags(io, args, usage);
   if (unknown) return unknown;
   const positional = args;
@@ -91,20 +91,20 @@ async function outputsRead(io: CliIO, http: HttpClient, args: readonly string[])
   }
   const [sessionId, selector] = positional as [string, string];
   try {
-    const text = await operations.readOutputText(http, sessionId, { path: selector });
+    const text = await operations.readSessionFileText(http, sessionId, { path: selector });
     io.stdout(JSON.stringify(text) + "\n");
     return SUCCESS;
   } catch (err) {
-    return outputsError(io, "outputs_read_failed", err, { sessionId, path: selector });
+    return filesError(io, "files_read_failed", err, { sessionId, path: selector });
   }
 }
 
-/** `aex outputs download <session-id> <path> [--out file]` — one file's raw bytes. */
-async function outputsDownload(io: CliIO, http: HttpClient, args: readonly string[], flags: CommonHostFlags): Promise<CliExitCode> {
+/** `aex files download <session-id> <path> [--out file]` — one file's raw bytes. */
+async function filesDownload(io: CliIO, http: HttpClient, args: readonly string[], flags: CommonHostFlags): Promise<CliExitCode> {
   const outFlag = takeFlagValue(args, "--out");
   if (outFlag.error) { io.stderr(`${outFlag.error}\n`); return USAGE_ERR; }
   void flags;
-  const usage = "usage: aex outputs download <session-id> <path> [--out file] [common flags]";
+  const usage = "usage: aex files download <session-id> <path> [--out file] [common flags]";
   const unknown = rejectUnknownFlags(io, outFlag.remaining, usage);
   if (unknown) return unknown;
   const positional = outFlag.remaining;
@@ -115,9 +115,9 @@ async function outputsDownload(io: CliIO, http: HttpClient, args: readonly strin
   const [sessionId, selector] = positional as [string, string];
   let bytes: Uint8Array;
   try {
-    bytes = (await operations.downloadOutput(http, sessionId, { path: selector })).bytes;
+    bytes = (await operations.downloadSessionFile(http, sessionId, { path: selector })).bytes;
   } catch (err) {
-    return outputsError(io, "outputs_download_failed", err, { sessionId, path: selector });
+    return filesError(io, "files_download_failed", err, { sessionId, path: selector });
   }
   const destination = resolvePath(io.cwd(), outFlag.value ?? baseName(selector));
   try {
@@ -129,9 +129,9 @@ async function outputsDownload(io: CliIO, http: HttpClient, args: readonly strin
   return SUCCESS;
 }
 
-/** `aex outputs link <session-id> <path>` — mint a temporary download URL. */
-async function outputsLink(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const usage = "usage: aex outputs link <session-id> <path> [common flags]";
+/** `aex files link <session-id> <path>` — mint a temporary download URL. */
+async function filesLink(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
+  const usage = "usage: aex files link <session-id> <path> [common flags]";
   const unknown = rejectUnknownFlags(io, args, usage);
   if (unknown) return unknown;
   const positional = args;
@@ -141,23 +141,23 @@ async function outputsLink(io: CliIO, http: HttpClient, args: readonly string[])
   }
   const [sessionId, selector] = positional as [string, string];
   try {
-    const link = await operations.outputLink(http, sessionId, { path: selector });
+    const link = await operations.sessionFileLink(http, sessionId, { path: selector });
     io.stdout(JSON.stringify(link) + "\n");
     return SUCCESS;
   } catch (err) {
-    return outputsError(io, "outputs_link_failed", err, { sessionId, path: selector });
+    return filesError(io, "files_link_failed", err, { sessionId, path: selector });
   }
 }
 
-/** `aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]`. */
-async function outputsFind(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
+/** `aex files find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]`. */
+async function filesFind(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const name = takeFlagValue(args, "--name");
   const ext = takeFlagValue(name.remaining, "--ext");
   const type = takeFlagValue(ext.remaining, "--type");
   const contentType = takeFlagValue(type.remaining, "--content-type");
   const err = name.error ?? ext.error ?? type.error ?? contentType.error;
   if (err) { io.stderr(`${err}\n`); return USAGE_ERR; }
-  const usage = "usage: aex outputs find <session-id> [--name S] [--ext E] [--type T] [--content-type CT] [common flags]";
+  const usage = "usage: aex files find <session-id> [--name S] [--ext E] [--type T] [--content-type CT] [common flags]";
   const unknown = rejectUnknownFlags(io, contentType.remaining, usage);
   if (unknown) return unknown;
   const positional = contentType.remaining;
@@ -166,23 +166,23 @@ async function outputsFind(io: CliIO, http: HttpClient, args: readonly string[])
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;
-  const query: OutputQuery = {
+  const query: SessionFileQuery = {
     ...(name.value !== null ? { filename: name.value } : {}),
     ...(ext.value !== null ? { extension: ext.value } : {}),
-    ...(type.value !== null ? { type: type.value as OutputFileType } : {}),
+    ...(type.value !== null ? { type: type.value as SessionFileType } : {}),
     ...(contentType.value !== null ? { contentType: contentType.value } : {})
   };
   try {
-    const hits = await searchSessionOutputs(http, sessionId, query);
+    const hits = await searchSessionFiles(http, sessionId, query);
     for (const hit of hits) io.stdout(JSON.stringify(hit) + "\n");
     return SUCCESS;
   } catch (err2) {
-    return outputsError(io, "outputs_find_failed", err2, { sessionId });
+    return filesError(io, "files_find_failed", err2, { sessionId });
   }
 }
 
-/** `aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N]` — cross-session. */
-async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
+/** `aex files search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N]` — cross-session. */
+async function filesSearch(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
   const query = takeFlagValue(args, "--query");
   const name = takeFlagValue(query.remaining, "--name");
   const ext = takeFlagValue(name.remaining, "--ext");
@@ -191,7 +191,7 @@ async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[
   const sessionIds = collectRepeated(limit.remaining, "--session-id");
   const err = query.error ?? name.error ?? ext.error ?? contentType.error ?? limit.error ?? sessionIds.error;
   if (err) { io.stderr(`${err}\n`); return USAGE_ERR; }
-  const usage = "usage: aex outputs search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N] [common flags]";
+  const usage = "usage: aex files search [--query S] [--name S] [--ext E] [--content-type CT] [--session-id ID] [--limit N] [common flags]";
   const unknown = rejectUnknownFlags(io, sessionIds.remaining, usage);
   if (unknown) return unknown;
   if (sessionIds.remaining.length > 0) {
@@ -210,7 +210,7 @@ async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[
     }
     limitValue = n;
   }
-  const search: OutputSearchQuery = {
+  const search: SessionFileSearchQuery = {
     ...(filename !== null ? { filename } : {}),
     ...(ext.value !== null ? { extension: ext.value } : {}),
     ...(contentType.value !== null ? { contentType: contentType.value } : {}),
@@ -218,15 +218,15 @@ async function outputsSearch(io: CliIO, http: HttpClient, args: readonly string[
     ...(limitValue !== undefined ? { limit: limitValue } : {})
   };
   try {
-    const page = await searchWorkspaceOutputs(http, search);
+    const page = await searchWorkspaceFiles(http, search);
     io.stdout(JSON.stringify(page) + "\n");
     return SUCCESS;
   } catch (err2) {
-    return outputsError(io, "outputs_search_failed", err2, {});
+    return filesError(io, "files_search_failed", err2, {});
   }
 }
 
-function outputsError(io: CliIO, code: string, err: unknown, extra: Record<string, unknown>): CliExitCode {
+function filesError(io: CliIO, code: string, err: unknown, extra: Record<string, unknown>): CliExitCode {
   const d = describeApiError(err);
   return emitJsonError(io, code, d.message, {
     ...extra,
@@ -235,19 +235,19 @@ function outputsError(io: CliIO, code: string, err: unknown, extra: Record<strin
   });
 }
 
-async function searchWorkspaceOutputs(
+async function searchWorkspaceFiles(
   http: HttpClient,
-  query: OutputSearchQuery
-): Promise<{ readonly hits: readonly OutputSearchHit[] }> {
-  assertMetadataOnlyOutputSearch(query, "aex outputs search");
+  query: SessionFileSearchQuery
+): Promise<{ readonly hits: readonly SessionFileSearchHit[] }> {
+  assertMetadataOnlySessionFileSearch(query, "aex files search");
   const sessionIds = query.sessionIds && query.sessionIds.length > 0 ? [...query.sessionIds] : undefined;
   const limit = query.limit ?? 100;
-  const hits: OutputSearchHit[] = [];
+  const hits: SessionFileSearchHit[] = [];
   const candidates = sessionIds ?? await listRecentSessionIds(http, limit);
   for (const sessionId of candidates) {
-    const outputs = await searchSessionOutputs(http, sessionId, query);
-    for (const output of outputs) {
-      hits.push(outputHit(sessionId, output));
+    const files = await searchSessionFiles(http, sessionId, query);
+    for (const file of files) {
+      hits.push(fileHit(sessionId, file));
       if (hits.length >= limit) return { hits };
     }
   }
@@ -266,39 +266,39 @@ async function listRecentSessionIds(http: HttpClient, limit: number): Promise<st
   return out;
 }
 
-async function searchSessionOutputs(
+async function searchSessionFiles(
   http: HttpClient,
   sessionId: string,
-  query: Omit<OutputSearchQuery, "sessionIds">
-): Promise<readonly Output[]> {
-  const listQuery: OutputQuery = {
+  query: Omit<SessionFileSearchQuery, "sessionIds">
+): Promise<readonly SessionFile[]> {
+  const listQuery: SessionFileQuery = {
     ...(query.extension !== undefined ? { extension: query.extension } : {}),
     ...(query.contentType !== undefined ? { contentType: query.contentType } : {})
   };
-  const outputs = await operations.listSessionOutputs(
+  const files = await operations.listSessionFiles(
     http,
     sessionId,
     Object.keys(listQuery).length > 0 ? listQuery : undefined
   );
-  if (query.filename === undefined) return outputs;
+  if (query.filename === undefined) return files;
   const match = operations.toFilenameMatcher(query.filename);
-  return outputs.filter((output) => typeof output.filename === "string" && match(output.filename));
+  return files.filter((file) => typeof file.filename === "string" && match(file.filename));
 }
 
-function outputHit(sessionId: string, output: Output): OutputSearchHit {
+function fileHit(sessionId: string, file: SessionFile): SessionFileSearchHit {
   return {
     sessionId,
-    outputId: output.id,
-    ...(output.filename !== undefined ? { filename: output.filename } : {}),
-    ...(output.sizeBytes !== undefined ? { sizeBytes: output.sizeBytes } : {}),
-    ...(output.contentType !== undefined ? { contentType: output.contentType } : {})
+    fileId: file.id,
+    ...(file.filename !== undefined ? { filename: file.filename } : {}),
+    ...(file.sizeBytes !== undefined ? { sizeBytes: file.sizeBytes } : {}),
+    ...(file.contentType !== undefined ? { contentType: file.contentType } : {})
   };
 }
 
-function assertMetadataOnlyOutputSearch(query: object, surface: string): void {
+function assertMetadataOnlySessionFileSearch(query: object, surface: string): void {
   for (const key of ["content", "text", "query", "grep", "body"]) {
     if (Object.prototype.hasOwnProperty.call(query, key)) {
-      throw new Error(`${surface}: ${key} is not supported; output search is metadata-only`);
+      throw new Error(`${surface}: ${key} is not supported; file search is metadata-only`);
     }
   }
 }

@@ -14,7 +14,7 @@ tool-approval hook.
 
 A session's reads and streams are grouped under accessor sub-resources:
 `session.events()` owns the event timeline, `session.messages()` owns the decoded
-assistant text, and `session.outputs()` owns the captured files. Reach a verb by
+assistant text, and `session.files()` owns the captured files. Reach a verb by
 chaining it off the accessor.
 
 ```ts
@@ -191,7 +191,7 @@ const settled = await aex.sessions.get(session.id); // parked/terminal here
 `settleConsistent: true` makes the iterator end exactly when `event.isSessionSettled()`
 first fires; on a raw stream, call `event.isSessionSettled()` yourself. What it
 guarantees: when the stream ends, a subsequent `aex.sessions.get(id)` reads a
-parked/terminal status and `session.outputs().list()` is complete. Outputs are
+parked/terminal status and `session.files().list()` is complete. Files are
 uploaded before the terminal is broadcast, so they are readable the moment the
 stream ends.
 

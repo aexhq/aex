@@ -220,7 +220,7 @@ describe("LIVE API adversarial fuzz", () => {
       fc.constantFrom("../etc", "%2e%2e", "ses_'; DROP", "🔥", "a".repeat(300), "..%2f..%2f")
     );
     await fc.assert(
-      fc.asyncProperty(sessionId, fc.constantFrom("", "/events", "/outputs"), async (id, suffix) => {
+      fc.asyncProperty(sessionId, fc.constantFrom("", "/events", "/files"), async (id, suffix) => {
         const enc = encodeURIComponent(id);
         const r = await call("GET", `/api/sessions/${enc}${suffix}`, { token: TOKEN });
         expectNo5xx(`GET /sessions/<id>${suffix}`, r);

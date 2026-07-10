@@ -23,16 +23,16 @@ import type {
   BillingSummary,
   ChildSessionRef,
   FileRecord,
-  Output,
-  OutputLink,
-  OutputLinkOptions,
-  OutputFileDownload,
-  OutputFilePathSelector,
-  OutputFileSelector,
-  OutputFileType,
-  OutputQuery,
-  OutputText,
-  ReadOutputTextOptions,
+  SessionFile,
+  SessionFileLink,
+  SessionFileLinkOptions,
+  SessionFileDownload,
+  SessionFilePathSelector,
+  SessionFileSelector,
+  SessionFileType,
+  SessionFileQuery,
+  SessionFileText,
+  ReadSessionFileTextOptions,
   SessionRecord,
   SessionRecordListPage,
   SessionRecordListQuery,
@@ -79,7 +79,7 @@ export async function getSessionRecord(http: HttpClient, sessionId: string): Pro
  * Strongly-typed accessor for the full self-contained session unit:
  * parsed submission inputs, attempts, indexed events (with
  * pagination cursor for large sessions), raw-event Storage manifest,
- * outputs, capture failures, and the proxy-call audit.
+ * files, capture failures, and the proxy-call audit.
  *
  * Backed by the same `GET /api/sessions/:sessionId` endpoint that
  * `getSessionRecord` calls; this variant just narrows the return type to
@@ -89,7 +89,7 @@ export async function getSessionRecord(http: HttpClient, sessionId: string): Pro
 export async function getSessionUnit(http: HttpClient, sessionId: string): Promise<SessionUnit> {
   // Normalize so the SessionUnit type contract holds at runtime: the managed plane
   // returns a lean record and omits the aggregate collections (F25). The
-  // aggregates default to empty (safe array/page access) — read outputs()/events()
+  // aggregates default to empty (safe array/page access) — read files()/events()
   // for the authoritative per-session data on that plane.
   return normalizeSessionUnit(await http.request<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`));
 }
@@ -409,15 +409,15 @@ export async function listSessionEvents(
   return all;
 }
 
-export async function listSessionOutputs(
+export async function listSessionFiles(
   http: HttpClient,
   sessionId: string,
-  query?: OutputQuery
-): Promise<readonly Output[]> {
-  const result = await http.request<{ readonly outputs: readonly Output[] }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/outputs`
+  query?: SessionFileQuery
+): Promise<readonly SessionFile[]> {
+  const result = await http.request<{ readonly files: readonly SessionFile[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/files`
   );
-  return query === undefined ? result.outputs : filterOutputs(result.outputs, query);
+  return query === undefined ? result.files : filterSessionFiles(result.files, query);
 }
 
 export async function getSessionCoordinatorTicket(
@@ -482,51 +482,40 @@ export async function getCoordinatorTicket(http: HttpClient, sessionId: string):
   );
 }
 
-export async function listOutputs(
+export async function findSessionFiles(
   http: HttpClient,
   sessionId: string,
-  query?: OutputQuery
-): Promise<readonly Output[]> {
-  const result = await http.request<{ readonly outputs: readonly Output[] }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/outputs`
-  );
-  return query === undefined ? result.outputs : filterOutputs(result.outputs, query);
+  query: SessionFileQuery
+): Promise<readonly SessionFile[]> {
+  return listSessionFiles(http, sessionId, query);
 }
 
-export async function findOutputs(
+export async function findSessionFile(
   http: HttpClient,
   sessionId: string,
-  query: OutputQuery
-): Promise<readonly Output[]> {
-  return listOutputs(http, sessionId, query);
-}
-
-export async function findOutput(
-  http: HttpClient,
-  sessionId: string,
-  query: OutputQuery
-): Promise<Output | null> {
-  const matches = await findOutputs(http, sessionId, query);
+  query: SessionFileQuery
+): Promise<SessionFile | null> {
+  const matches = await findSessionFiles(http, sessionId, query);
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0]!;
-  throw new SessionStateError("outputs.findOne: output query matched multiple files", {
+  throw new SessionStateError("files.findOne: file query matched multiple files", {
     sessionId,
-    matches: matches.map((output) => output.filename ?? output.id)
+    matches: matches.map((file) => file.filename ?? file.id)
   });
 }
 
-export type OutputLinkSelector = string | OutputFileSelector | OutputQuery;
+export type SessionFileLinkSelector = string | SessionFileSelector | SessionFileQuery;
 
-export async function outputLink(
+export async function sessionFileLink(
   http: HttpClient,
   sessionId: string,
-  selectorOrQuery: OutputLinkSelector,
-  options?: OutputLinkOptions
-): Promise<OutputLink> {
-  const output = await resolveOutputLinkTarget(http, sessionId, selectorOrQuery);
-  const expiresInSeconds = normalizeOutputLinkExpiresIn(options?.expiresIn);
-  const result = await http.request<OutputLink>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(output.id)}/link`,
+  selectorOrQuery: SessionFileLinkSelector,
+  options?: SessionFileLinkOptions
+): Promise<SessionFileLink> {
+  const file = await resolveSessionFileLinkTarget(http, sessionId, selectorOrQuery);
+  const expiresInSeconds = normalizeSessionFileLinkExpiresIn(options?.expiresIn);
+  const result = await http.request<SessionFileLink>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(file.id)}/link`,
     {
       method: "POST",
       body: JSON.stringify({ expiresInSeconds })
@@ -537,7 +526,7 @@ export async function outputLink(
     ...result,
     expiresInSeconds: effectiveExpiresIn,
     expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn),
-    output: result.output ?? output
+    file: result.file ?? file
   };
 }
 
@@ -550,22 +539,22 @@ function syntheticExpiresAt(expiresInSeconds: number): string {
   return new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 }
 
-export async function createOutputLink(
+export async function createSessionFileLink(
   http: HttpClient,
   sessionId: string,
-  selectorOrQuery: OutputLinkSelector,
-  options?: OutputLinkOptions
-): Promise<OutputLink> {
-  return outputLink(http, sessionId, selectorOrQuery, options);
+  selectorOrQuery: SessionFileLinkSelector,
+  options?: SessionFileLinkOptions
+): Promise<SessionFileLink> {
+  return sessionFileLink(http, sessionId, selectorOrQuery, options);
 }
 
 export async function eventArchiveLink(
   http: HttpClient,
   sessionId: string,
-  options?: OutputLinkOptions
-): Promise<OutputLink> {
-  const expiresInSeconds = normalizeOutputLinkExpiresIn(options?.expiresIn);
-  const result = await http.request<OutputLink>(
+  options?: SessionFileLinkOptions
+): Promise<SessionFileLink> {
+  const expiresInSeconds = normalizeSessionFileLinkExpiresIn(options?.expiresIn);
+  const result = await http.request<SessionFileLink>(
     `/api/sessions/${encodeURIComponent(sessionId)}/events/link`,
     {
       method: "POST",
@@ -580,19 +569,19 @@ export async function eventArchiveLink(
   };
 }
 
-export function resolveOutputFileSelector(
-  outputs: readonly Output[],
-  selector: OutputFileSelector,
+export function resolveSessionFileSelector(
+  files: readonly SessionFile[],
+  selector: SessionFileSelector,
   sessionId?: string
-): Output {
+): SessionFile {
   if (isPathSelector(selector)) {
-    const target = normalizeOutputLookupPath(selector.path);
+    const target = normalizeSessionFileLookupPath(selector.path);
     if (!target) {
-      throw new SessionStateError("outputs.download: output path must be non-empty", { sessionId, path: selector.path });
+      throw new SessionStateError("files.download: file path must be non-empty", { sessionId, path: selector.path });
     }
-    const matches = outputs.filter((output) => {
-      if (typeof output.filename !== "string") return false;
-      const filename = normalizeOutputLookupPath(output.filename);
+    const matches = files.filter((file) => {
+      if (typeof file.filename !== "string") return false;
+      const filename = normalizeSessionFileLookupPath(file.filename);
       if (selector.match === "suffix") {
         return filename === target || filename.endsWith(`/${target}`);
       }
@@ -601,100 +590,100 @@ export function resolveOutputFileSelector(
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new SessionStateError(
-        `outputs.download: output path "${selector.path}" matched multiple files`,
-        { sessionId, path: selector.path, matches: matches.map((output) => output.filename ?? output.id) }
+        `files.download: file path "${selector.path}" matched multiple files`,
+        { sessionId, path: selector.path, matches: matches.map((file) => file.filename ?? file.id) }
       );
     }
-    throw new SessionStateError(`outputs.download: output path "${selector.path}" was not found`, {
+    throw new SessionStateError(`files.download: file path "${selector.path}" was not found`, {
       sessionId,
       path: selector.path
     });
   }
   if (typeof selector?.id !== "string" || selector.id.length === 0) {
-    throw new SessionStateError("outputs.download: selector must include an output id or path", { sessionId });
+    throw new SessionStateError("files.download: selector must include a file id or path", { sessionId });
   }
   return { ...selector, id: selector.id };
 }
 
-export async function downloadOutput(
+export async function downloadSessionFile(
   http: HttpClient,
   sessionId: string,
-  selector: OutputFileSelector,
-  options?: OutputTransferOptions
-): Promise<OutputFileDownload> {
-  const output = isPathSelector(selector)
-    ? resolveOutputFileSelector(await listOutputs(http, sessionId), selector, sessionId)
-    : resolveOutputFileSelector([], selector, sessionId);
-  const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
-  const path = `/api/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(output.id)}/download`;
-  return { output, bytes: await downloadOutputBytesWithRetry(http, path, timeoutMs) };
+  selector: SessionFileSelector,
+  options?: SessionFileTransferOptions
+): Promise<SessionFileDownload> {
+  const file = isPathSelector(selector)
+    ? resolveSessionFileSelector(await listSessionFiles(http, sessionId), selector, sessionId)
+    : resolveSessionFileSelector([], selector, sessionId);
+  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(file.id)}/download`;
+  return { file, bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs) };
 }
 
-/** Byte ceiling for {@link readOutputText} — a hard cap even if a caller asks for more. */
-export const READ_OUTPUT_TEXT_MAX_BYTES = 10_000_000;
-/** Default `maxBytes` for {@link readOutputText} — a chat-sized preview. */
-export const READ_OUTPUT_TEXT_DEFAULT_BYTES = 50_000;
-/** Default per-attempt timeout while fetching or reading one output body. */
-export const OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS = 30_000;
-/** Idempotent output GETs retry once on a transfer timeout. */
-export const OUTPUT_FILE_TRANSFER_ATTEMPTS = 2;
+/** Byte ceiling for {@link readSessionFileText} — a hard cap even if a caller asks for more. */
+export const READ_SESSION_FILE_TEXT_MAX_BYTES = 10_000_000;
+/** Default `maxBytes` for {@link readSessionFileText} — a chat-sized preview. */
+export const READ_SESSION_FILE_TEXT_DEFAULT_BYTES = 50_000;
+/** Default per-attempt timeout while fetching or reading one session file body. */
+export const SESSION_FILE_TRANSFER_DEFAULT_TIMEOUT_MS = 30_000;
+/** Idempotent file GETs retry once on a transfer timeout. */
+export const SESSION_FILE_TRANSFER_ATTEMPTS = 2;
 
-export interface OutputTransferOptions {
+export interface SessionFileTransferOptions {
   readonly timeoutMs?: number;
 }
 
 /**
- * Read ONE output file as byte-capped, decoded UTF-8 text. Built for handing a session
+ * Read ONE session file as byte-capped, decoded UTF-8 text. Built for handing a session
  * deliverable to an LLM tool: it streams the file body and STOPS at `maxBytes`, so
  * a 200 MB artifact never fully buffers in memory or context. `truncated` is true
  * when the file is larger than the cap. Optionally `grep` keeps only matching lines.
  *
- * Selector is the same `{ path }` / `{ id }` shape as `downloadOutput`. A path
- * selector lists the session's outputs to resolve the id; an id selector skips that.
+ * Selector is the same `{ path }` / `{ id }` shape as `downloadSessionFile`. A path
+ * selector lists the session's files to resolve the id; an id selector skips that.
  */
-export async function readOutputText(
+export async function readSessionFileText(
   http: HttpClient,
   sessionId: string,
-  selector: OutputFileSelector,
-  options?: ReadOutputTextOptions
-): Promise<OutputText> {
-  const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_OUTPUT_TEXT_DEFAULT_BYTES, READ_OUTPUT_TEXT_MAX_BYTES));
-  const output = isPathSelector(selector)
-    ? resolveOutputFileSelector(await listOutputs(http, sessionId), selector, sessionId)
-    : resolveOutputFileSelector([], selector, sessionId);
-  const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
-  const path = `/api/sessions/${encodeURIComponent(sessionId)}/outputs/${encodeURIComponent(output.id)}/download`;
-  const capped = await readOutputTextWithRetry(http, path, maxBytes, timeoutMs);
+  selector: SessionFileSelector,
+  options?: ReadSessionFileTextOptions
+): Promise<SessionFileText> {
+  const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_SESSION_FILE_TEXT_DEFAULT_BYTES, READ_SESSION_FILE_TEXT_MAX_BYTES));
+  const file = isPathSelector(selector)
+    ? resolveSessionFileSelector(await listSessionFiles(http, sessionId), selector, sessionId)
+    : resolveSessionFileSelector([], selector, sessionId);
+  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(file.id)}/download`;
+  const capped = await readSessionFileTextWithRetry(http, path, maxBytes, timeoutMs);
   const text = options?.grep === undefined ? capped.text : grepLines(capped.text, options.grep);
-  return { output, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
+  return { file, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
 }
 
-async function downloadOutputBytesWithRetry(
+async function downloadSessionFileBytesWithRetry(
   http: HttpClient,
   path: string,
   timeoutMs: number
 ): Promise<Uint8Array> {
-  return outputTransferWithRetry(path, timeoutMs, async () => {
-    const response = await downloadOutputResponse(http, path, timeoutMs);
+  return sessionFileTransferWithRetry(path, timeoutMs, async () => {
+    const response = await downloadSessionFileResponse(http, path, timeoutMs);
     return readResponseBytes(response, timeoutMs);
   });
 }
 
-async function readOutputTextWithRetry(
+async function readSessionFileTextWithRetry(
   http: HttpClient,
   path: string,
   maxBytes: number,
   timeoutMs: number
 ): Promise<{ readonly text: string; readonly truncated: boolean; readonly totalBytes: number }> {
-  return outputTransferWithRetry(path, timeoutMs, async () => {
-    const response = await downloadOutputResponse(http, path, timeoutMs);
+  return sessionFileTransferWithRetry(path, timeoutMs, async () => {
+    const response = await downloadSessionFileResponse(http, path, timeoutMs);
     return readCappedText(response, maxBytes, timeoutMs);
   });
 }
 
-async function downloadOutputResponse(http: HttpClient, path: string, timeoutMs: number): Promise<Response> {
+async function downloadSessionFileResponse(http: HttpClient, path: string, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
-  const { response } = await withOutputTransferTimeout(
+  const { response } = await withSessionFileTransferTimeout(
     http.download(path, { signal: controller.signal }),
     timeoutMs,
     () => controller.abort(),
@@ -703,18 +692,18 @@ async function downloadOutputResponse(http: HttpClient, path: string, timeoutMs:
   return response;
 }
 
-async function outputTransferWithRetry<T>(
+async function sessionFileTransferWithRetry<T>(
   path: string,
   timeoutMs: number,
   action: () => Promise<T>
 ): Promise<T> {
   const startedMs = Date.now();
-  let lastTimeout: OutputTransferTimeoutError | undefined;
-  for (let attempt = 1; attempt <= OUTPUT_FILE_TRANSFER_ATTEMPTS; attempt += 1) {
+  let lastTimeout: SessionFileTransferTimeoutError | undefined;
+  for (let attempt = 1; attempt <= SESSION_FILE_TRANSFER_ATTEMPTS; attempt += 1) {
     try {
       return await action();
     } catch (err) {
-      if (!(err instanceof OutputTransferTimeoutError)) throw err;
+      if (!(err instanceof SessionFileTransferTimeoutError)) throw err;
       lastTimeout = err;
     }
   }
@@ -722,47 +711,47 @@ async function outputTransferWithRetry<T>(
     method: "GET",
     host: "",
     path,
-    cause: lastTimeout ?? new OutputTransferTimeoutError("unknown", timeoutMs),
-    attempts: OUTPUT_FILE_TRANSFER_ATTEMPTS,
+    cause: lastTimeout ?? new SessionFileTransferTimeoutError("unknown", timeoutMs),
+    attempts: SESSION_FILE_TRANSFER_ATTEMPTS,
     elapsedMs: Date.now() - startedMs
   });
 }
 
-function normalizeOutputTransferTimeoutMs(value: number | undefined): number {
-  if (value === undefined) return OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS;
+function normalizeSessionFileTransferTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return SESSION_FILE_TRANSFER_DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(value) || value <= 0) {
-    throw new SessionConfigValidationError("outputs.download: timeoutMs must be a positive finite number", {
+    throw new SessionConfigValidationError("files.download: timeoutMs must be a positive finite number", {
       timeoutMs: value
     });
   }
   return Math.max(1, Math.floor(value));
 }
 
-type OutputTransferPhase = "download-open" | "body-read" | "unknown";
+type SessionFileTransferPhase = "download-open" | "body-read" | "unknown";
 
-class OutputTransferTimeoutError extends Error {
+class SessionFileTransferTimeoutError extends Error {
   readonly code = "ETIMEDOUT";
-  readonly phase: OutputTransferPhase;
+  readonly phase: SessionFileTransferPhase;
 
-  constructor(phase: OutputTransferPhase, timeoutMs: number) {
-    super(`output transfer phase=${phase} timed out after ${timeoutMs}ms`);
-    this.name = "OutputTransferTimeoutError";
+  constructor(phase: SessionFileTransferPhase, timeoutMs: number) {
+    super(`file transfer phase=${phase} timed out after ${timeoutMs}ms`);
+    this.name = "SessionFileTransferTimeoutError";
     this.phase = phase;
   }
 }
 
-async function withOutputTransferTimeout<T>(
+async function withSessionFileTransferTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   abort: () => void,
-  phase: OutputTransferPhase
+  phase: SessionFileTransferPhase
 ): Promise<T> {
   let timedOut = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
       timedOut = true;
-      reject(new OutputTransferTimeoutError(phase, timeoutMs));
+      reject(new SessionFileTransferTimeoutError(phase, timeoutMs));
       queueMicrotask(() => {
         try {
           abort();
@@ -775,7 +764,7 @@ async function withOutputTransferTimeout<T>(
   try {
     return await Promise.race([promise, timeoutPromise]);
   } catch (err) {
-    if (timedOut && isAbortLikeError(err)) throw new OutputTransferTimeoutError(phase, timeoutMs);
+    if (timedOut && isAbortLikeError(err)) throw new SessionFileTransferTimeoutError(phase, timeoutMs);
     throw err;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
@@ -790,7 +779,7 @@ function isAbortLikeError(err: unknown): boolean {
 async function readResponseBytes(response: Response, timeoutMs: number): Promise<Uint8Array> {
   const body = response.body;
   if (!body) {
-    const buffer = await withOutputTransferTimeout(
+    const buffer = await withSessionFileTransferTimeout(
       response.arrayBuffer(),
       timeoutMs,
       () => {},
@@ -803,7 +792,7 @@ async function readResponseBytes(response: Response, timeoutMs: number): Promise
   const chunks: Uint8Array[] = [];
   try {
     while (true) {
-      const { done, value } = await withOutputTransferTimeout(
+      const { done, value } = await withSessionFileTransferTimeout(
         reader.read(),
         timeoutMs,
         () => {
@@ -838,7 +827,7 @@ async function readCappedText(
   if (!body) {
     // No streaming body (some fetch polyfills) — buffer, then slice to the cap.
     const buf = new Uint8Array(
-      await withOutputTransferTimeout(response.arrayBuffer(), timeoutMs, () => {}, "body-read")
+      await withSessionFileTransferTimeout(response.arrayBuffer(), timeoutMs, () => {}, "body-read")
     );
     const total = declared ?? buf.byteLength;
     return {
@@ -853,7 +842,7 @@ async function readCappedText(
   let sawMore = false;
   try {
     while (read < maxBytes) {
-      const { done, value } = await withOutputTransferTimeout(
+      const { done, value } = await withSessionFileTransferTimeout(
         reader.read(),
         timeoutMs,
         () => {
@@ -869,7 +858,7 @@ async function readCappedText(
     }
     if (read >= maxBytes) {
       // We hit the cap; peek once more to learn whether bytes remain, then stop.
-      const next = await withOutputTransferTimeout(
+      const next = await withSessionFileTransferTimeout(
         reader.read(),
         timeoutMs,
         () => {
@@ -914,7 +903,7 @@ function grepLines(text: string, pattern: string | RegExp): string {
 /**
  * List a session's subagent child sessions (`GET /sessions/:id/children`). Each row is a
  * {@link ChildSessionRef} whose `id` resolves through the session record facade (getSessionRecord /
- * events / outputs) — so every child the platform hands you is resolvable. An
+ * events / files) — so every child the platform hands you is resolvable. An
  * empty array means the session spawned no children.
  */
 export async function listSessionChildren(
@@ -1044,16 +1033,16 @@ export async function getWebhookSigningSecret(http: HttpClient): Promise<Webhook
  * A session's downloadable content is organised into three public namespaces, each
  * with a matching `download*` verb:
  *
- *   - `outputs`  — the session's real deliverables (`sessions/<id>/outputs/`).
+ *   - `files`    — the session's captured files (`sessions/<id>/files/`).
  *   - `events`   — typed event-channel records (`events.jsonl`) plus its namespace manifest.
  *   - `metadata` — the session record (`session.json`) plus its namespace manifest.
  *
- * `download` bundles all three as top-level folders; `downloadOutputs` /
+ * `download` bundles all three as top-level folders; `downloadSessionFiles` /
  * `downloadEvents` / `downloadMetadata` each bundle one.
  * Every zip is assembled client-side from the public read endpoints —
  * there is no server-side archive route. Callers write the bytes to disk.
  */
-type ArtifactNamespace = "outputs";
+type ArtifactNamespace = "files";
 
 interface CollectedArtifacts {
   readonly entries: readonly ZipEntry[];
@@ -1068,7 +1057,7 @@ interface ZipEntry extends SessionRecordArchiveEntryForRedactionV1 {
 
 /**
  * Download each artifact's bytes into a zip-file map keyed by
- * `<zipPrefix><relative-path>`, fetched from the `outputs`
+ * `<zipPrefix><relative-path>`, fetched from the `files`
  * download route. Best-effort: a per-artifact fetch failure records an
  * `errors[]` entry rather than aborting the rest, so the failure is
  * surfaced (never silent) while a partially-available run still yields a
@@ -1077,10 +1066,10 @@ interface ZipEntry extends SessionRecordArchiveEntryForRedactionV1 {
 async function collectArtifactBytes(
   http: HttpClient,
   sessionId: string,
-  items: readonly Output[],
+  items: readonly SessionFile[],
   zipPrefix: string,
   namespace: ArtifactNamespace,
-  timeoutMs = OUTPUT_FILE_TRANSFER_DEFAULT_TIMEOUT_MS
+  timeoutMs = SESSION_FILE_TRANSFER_DEFAULT_TIMEOUT_MS
 ): Promise<CollectedArtifacts> {
   const entries: ZipEntry[] = [];
   const captured: SessionRecordArtifactSummaryV1[] = [];
@@ -1092,7 +1081,7 @@ async function collectArtifactBytes(
       const path = `/api/sessions/${encodeURIComponent(sessionId)}/${namespace}/${encodeURIComponent(item.id)}/download`;
       entries.push({
         path: `${zipPrefix}${rel}`,
-        bytes: await downloadOutputBytesWithRetry(http, path, timeoutMs),
+        bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs),
         ...(item.contentType !== undefined ? { contentType: item.contentType } : {}),
         customerContent: true
       });
@@ -1114,23 +1103,23 @@ function eventsJsonl(events: readonly AexEvent[]): Uint8Array {
   return strToU8(events.map((event) => JSON.stringify(event)).join("\n"));
 }
 
-function isPathSelector(selector: OutputFileSelector): selector is OutputFilePathSelector {
+function isPathSelector(selector: SessionFileSelector): selector is SessionFilePathSelector {
   return Boolean(selector && typeof selector === "object" && "path" in selector);
 }
 
-function normalizeOutputLookupPath(path: string): string {
+function normalizeSessionFileLookupPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
-export function filterOutputs(outputs: readonly Output[], query: OutputQuery): readonly Output[] {
-  return outputs.filter((output) => outputMatchesQuery(output, query));
+export function filterSessionFiles(files: readonly SessionFile[], query: SessionFileQuery): readonly SessionFile[] {
+  return files.filter((file) => sessionFileMatchesQuery(file, query));
 }
 
 /**
- * The single filename-matcher for cross-session / per-session output SEARCH. A
+ * The single filename-matcher for cross-session / per-session file SEARCH. A
  * string is a case-insensitive SUBSTRING match; a RegExp is tested as given (and
  * reset to `lastIndex = 0` so a reused `/g` regex is safe). Sharing this SSoT is
- * what closes the T16 crash class: `searchOutputs` no longer assumes `filename`
+ * what closes the T16 crash class: session-file search no longer assumes `filename`
  * is a string and passes a RegExp into `escapeRegExp(...).replace(...)`.
  */
 export function toFilenameMatcher(filename: string | RegExp): (name: string) => boolean {
@@ -1144,8 +1133,8 @@ export function toFilenameMatcher(filename: string | RegExp): (name: string) => 
   };
 }
 
-export function classifyOutput(output: Pick<Output, "filename" | "contentType">): OutputFileType {
-  const contentType = normalizeContentType(output.contentType);
+export function classifySessionFile(file: Pick<SessionFile, "filename" | "contentType">): SessionFileType {
+  const contentType = normalizeContentType(file.contentType);
   if (contentType) {
     if (contentType === "application/json" || contentType.endsWith("+json") || contentType.includes("json")) {
       return "json";
@@ -1170,7 +1159,7 @@ export function classifyOutput(output: Pick<Output, "filename" | "contentType">)
     return "unknown";
   }
 
-  const extension = extensionOf(output.filename);
+  const extension = extensionOf(file.filename);
   if (!extension) return "unknown";
   if (["json", "jsonl", "ndjson"].includes(extension)) return "json";
   if (["txt", "log", "md", "markdown", "csv", "tsv", "xml", "html", "htm", "yaml", "yml"].includes(extension)) {
@@ -1187,10 +1176,10 @@ export function classifyOutput(output: Pick<Output, "filename" | "contentType">)
   return "unknown";
 }
 
-export function normalizeOutputLinkExpiresIn(input: OutputLinkOptions["expiresIn"] = "1h"): number {
+export function normalizeSessionFileLinkExpiresIn(input: SessionFileLinkOptions["expiresIn"] = "1h"): number {
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input <= 0) {
-      throw new SessionStateError("outputLink: expiresIn must be a positive number of seconds", {
+      throw new SessionStateError("sessionFileLink: expiresIn must be a positive number of seconds", {
         expiresIn: input
       });
     }
@@ -1199,39 +1188,39 @@ export function normalizeOutputLinkExpiresIn(input: OutputLinkOptions["expiresIn
   if (input === "15m") return 15 * 60;
   if (input === "1h") return 60 * 60;
   if (input === "1d") return 24 * 60 * 60;
-  throw new SessionStateError("outputLink: expiresIn must be seconds, \"15m\", \"1h\", or \"1d\"", {
+  throw new SessionStateError("sessionFileLink: expiresIn must be seconds, \"15m\", \"1h\", or \"1d\"", {
     expiresIn: input
   });
 }
 
-async function resolveOutputLinkTarget(
+async function resolveSessionFileLinkTarget(
   http: HttpClient,
   sessionId: string,
-  selectorOrQuery: OutputLinkSelector
-): Promise<Output> {
+  selectorOrQuery: SessionFileLinkSelector
+): Promise<SessionFile> {
   if (typeof selectorOrQuery === "string") {
     if (selectorOrQuery.length === 0) {
-      throw new SessionStateError("outputLink: selector must include an output id or query", { sessionId });
+      throw new SessionStateError("sessionFileLink: selector must include a file id or query", { sessionId });
     }
     return { id: selectorOrQuery };
   }
-  if (hasOutputId(selectorOrQuery)) {
+  if (hasSessionFileId(selectorOrQuery)) {
     if (selectorOrQuery.id.length === 0) {
-      throw new SessionStateError("outputLink: selector must include an output id or query", { sessionId });
+      throw new SessionStateError("sessionFileLink: selector must include a file id or query", { sessionId });
     }
     return selectorOrQuery;
   }
-  if (isPathSelector(selectorOrQuery as OutputFileSelector) && (selectorOrQuery as OutputFilePathSelector).match === "suffix") {
-    return resolveOutputFileSelector(await listOutputs(http, sessionId), selectorOrQuery as OutputFilePathSelector, sessionId);
+  if (isPathSelector(selectorOrQuery as SessionFileSelector) && (selectorOrQuery as SessionFilePathSelector).match === "suffix") {
+    return resolveSessionFileSelector(await listSessionFiles(http, sessionId), selectorOrQuery as SessionFilePathSelector, sessionId);
   }
-  const match = await findOutput(http, sessionId, selectorOrQuery as OutputQuery);
+  const match = await findSessionFile(http, sessionId, selectorOrQuery as SessionFileQuery);
   if (match) return match;
-  throw new SessionStateError("outputLink: output query matched no files", { sessionId });
+  throw new SessionStateError("sessionFileLink: file query matched no files", { sessionId });
 }
 
-function outputMatchesQuery(output: Output, query: OutputQuery): boolean {
-  const normalizedPath = typeof output.filename === "string" ? normalizeOutputQueryPath(output.filename) : "";
-  if (query.path !== undefined && normalizedPath !== normalizeOutputQueryPath(query.path)) {
+function sessionFileMatchesQuery(file: SessionFile, query: SessionFileQuery): boolean {
+  const normalizedPath = typeof file.filename === "string" ? normalizeSessionFileQueryPath(file.filename) : "";
+  if (query.path !== undefined && normalizedPath !== normalizeSessionFileQueryPath(query.path)) {
     return false;
   }
   if (query.filename !== undefined) {
@@ -1249,23 +1238,23 @@ function outputMatchesQuery(output: Output, query: OutputQuery): boolean {
   if (query.extension !== undefined && extensionOf(normalizedPath) !== normalizeExtension(query.extension)) {
     return false;
   }
-  if (query.contentType !== undefined && !contentTypeMatches(output.contentType, query.contentType)) {
+  if (query.contentType !== undefined && !contentTypeMatches(file.contentType, query.contentType)) {
     return false;
   }
-  if (query.type !== undefined && classifyOutput(output) !== query.type) {
+  if (query.type !== undefined && classifySessionFile(file) !== query.type) {
     return false;
   }
   return true;
 }
 
-function hasOutputId(value: OutputFileSelector | OutputQuery): value is Output {
+function hasSessionFileId(value: SessionFileSelector | SessionFileQuery): value is SessionFile {
   return Boolean(value && typeof value === "object" && "id" in value && typeof value.id === "string");
 }
 
-function normalizeOutputQueryPath(path: string): string {
+function normalizeSessionFileQueryPath(path: string): string {
   let normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
-  while (normalized === "outputs" || normalized.startsWith("outputs/")) {
-    normalized = normalized === "outputs" ? "" : normalized.slice("outputs/".length);
+  while (normalized === "files" || normalized.startsWith("files/")) {
+    normalized = normalized === "files" ? "" : normalized.slice("files/".length);
   }
   return normalized.replace(/\/+$/, "");
 }
@@ -1275,7 +1264,7 @@ function basenameOf(path: string): string {
 }
 
 function directoryMatches(path: string, dir: string, recursive: boolean): boolean {
-  const normalizedDir = normalizeOutputQueryPath(dir);
+  const normalizedDir = normalizeSessionFileQueryPath(dir);
   if (normalizedDir.length === 0) return true;
   const prefix = `${normalizedDir}/`;
   if (!path.startsWith(prefix)) return false;
@@ -1289,7 +1278,7 @@ function normalizeExtension(extension: string): string {
 
 function extensionOf(path: string | undefined): string {
   if (!path) return "";
-  const basename = basenameOf(normalizeOutputQueryPath(path));
+  const basename = basenameOf(normalizeSessionFileQueryPath(path));
   const index = basename.lastIndexOf(".");
   return index > 0 && index < basename.length - 1 ? basename.slice(index + 1).toLowerCase() : "";
 }
@@ -1314,23 +1303,23 @@ function contentTypeMatches(actual: string | undefined, expected: string): boole
  *
  *   metadata/session.json     — the session record.
  *   events/events.jsonl   — typed event-channel records.
- *   outputs/<rel>         — the session's deliverables.
+ *   files/<rel>       — the session's captured files.
  *   manifest.json         — `SessionRecordManifestV1`.
  */
 export async function download(http: HttpClient, sessionId: string): Promise<Uint8Array> {
-  const [sessionRecord, events, outputs] = await Promise.all([
+  const [sessionRecord, events, files] = await Promise.all([
     getSessionRecord(http, sessionId),
     listSessionRecordEvents(http, sessionId),
-    listOutputs(http, sessionId)
+    listSessionFiles(http, sessionId)
   ]);
 
-  const out = await collectArtifactBytes(http, sessionId, outputs, "outputs/", "outputs");
+  const collectedFiles = await collectArtifactBytes(http, sessionId, files, "files/", "files");
   const submissionSnapshot = extractSubmissionSnapshot(sessionRecord);
   const costTelemetry = extractCostTelemetry(sessionRecord);
   const manifest = buildSessionRecordDownloadManifestV1({
     sessionId,
-    outputs: out.captured,
-    errors: out.errors,
+    sessionFiles: collectedFiles.captured,
+    errors: collectedFiles.errors,
     typedEventCount: events.length,
     ...(submissionSnapshot ? { submission: { status: "present" } } : {}),
     ...(costTelemetry ? { cost: { status: "present" } } : {})
@@ -1341,27 +1330,27 @@ export async function download(http: HttpClient, sessionId: string): Promise<Uin
     ...(submissionSnapshot ? [jsonEntry("metadata/submission.json", submissionSnapshot)] : []),
     ...(costTelemetry ? [jsonEntry("metadata/cost.json", costTelemetry)] : []),
     jsonlEntry("events/events.jsonl", events),
-    ...out.entries,
+    ...collectedFiles.entries,
     jsonEntry("manifest.json", manifest)
   ]);
 }
 
 /**
- * Download only the session's deliverables (the `outputs` namespace). Zip
+ * Download only the session's captured files (the `files` namespace). Zip
  * layout: `<rel>` per file plus a `manifest.json`
- * (`{ sessionId, namespace: "outputs", outputs[], errors[] }`).
+ * (`{ sessionId, namespace: "files", files[], errors[] }`).
  */
-export async function downloadOutputs(
+export async function downloadSessionFiles(
   http: HttpClient,
   sessionId: string,
-  options?: OutputTransferOptions
+  options?: SessionFileTransferOptions
 ): Promise<Uint8Array> {
-  const outputs = await listOutputs(http, sessionId);
-  const timeoutMs = normalizeOutputTransferTimeoutMs(options?.timeoutMs);
-  const { entries, captured, errors } = await collectArtifactBytes(http, sessionId, outputs, "", "outputs", timeoutMs);
+  const files = await listSessionFiles(http, sessionId);
+  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
+  const { entries, captured, errors } = await collectArtifactBytes(http, sessionId, files, "", "files", timeoutMs);
   return zipEntries([
     ...entries,
-    jsonEntry("manifest.json", { sessionId, namespace: "outputs", outputs: captured, errors })
+    jsonEntry("manifest.json", { sessionId, namespace: "files", files: captured, errors })
   ]);
 }
 

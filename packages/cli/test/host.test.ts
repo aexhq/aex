@@ -396,13 +396,13 @@ describe("aex events --follow --timeout", () => {
   });
 });
 
-describe("aex outputs", () => {
-  it("lists outputs as NDJSON", async () => {
+describe("aex files", () => {
+  it("lists files as NDJSON", async () => {
     const cap = makeHostIo({
-      argv: ["outputs", "session-9", ...COMMON],
+      argv: ["files", "session-9", ...COMMON],
       fetchHandler: () =>
         new Response(
-          JSON.stringify({ outputs: [{ id: "o1", filename: "report.md" }] }),
+          JSON.stringify({ files: [{ id: "o1", filename: "report.md" }] }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
     });
@@ -499,17 +499,17 @@ describe("aex cancel + delete", () => {
 
 describe("aex download", () => {
   // Route the reads the download verbs fan out to: getSessionRecord + listEvents +
-  // listOutputs + per-output /download.
+  // listSessionFiles + per-file /download.
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const wholeSessionHandler =
     (sessionId: string) =>
     ({ url }: { url: string }): Response => {
       if (url.endsWith(`/api/sessions/${sessionId}/events`)) return json({ events: [{ seq: 0, kind: "runtime_start" }] });
-      if (url.endsWith(`/api/sessions/${sessionId}/outputs`)) {
-        return json({ outputs: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] });
+      if (url.endsWith(`/api/sessions/${sessionId}/files`)) {
+        return json({ files: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] });
       }
-      if (url.endsWith(`/api/sessions/${sessionId}/outputs/o1/download`)) {
+      if (url.endsWith(`/api/sessions/${sessionId}/files/o1/download`)) {
         return new Response(strToU8("hello").buffer, { status: 200, headers: { "content-type": "text/plain" } });
       }
       return json({ id: sessionId, status: "succeeded" });
@@ -524,7 +524,7 @@ describe("aex download", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // getSessionRecord + events + outputs + one per-output download.
+    // getSessionRecord + events + files + one per-file download.
     expect(cap.calls).toHaveLength(4);
 
     const writtenKey = [...writes.keys()][0]!;
@@ -532,11 +532,11 @@ describe("aex download", () => {
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual([
       "events/events.jsonl",
+      "files/report.txt",
       "manifest.json",
-      "metadata/session.json",
-      "outputs/report.txt"
+      "metadata/session.json"
     ]);
-    expect(new TextDecoder().decode(entries["outputs/report.txt"]!)).toBe("hello");
+    expect(new TextDecoder().decode(entries["files/report.txt"]!)).toBe("hello");
     expect(JSON.parse(new TextDecoder().decode(entries["metadata/session.json"]!)).id).toBe("session-1");
 
     const printed = JSON.parse(cap.stdout.trim()) as { sessionId: string; namespace: string; bytes: number };
@@ -558,21 +558,21 @@ describe("aex download", () => {
     expect(writtenKey).toMatch(/aex-session-session-2\.zip$/);
   });
 
-  it("--only outputs zips just the deliverables (no logs, no metadata/events)", async () => {
+  it("--only files zips just the deliverables (no logs, no metadata/events)", async () => {
     const writes = new Map<string, Uint8Array>();
     const cap = makeHostIo({
-      argv: ["download", "session-1", "--only", "outputs", ...COMMON],
+      argv: ["download", "session-1", "--only", "files", ...COMMON],
       writes,
       fetchHandler: wholeSessionHandler("session-1")
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     const writtenKey = [...writes.keys()][0]!;
-    expect(writtenKey).toMatch(/aex-session-session-1-outputs\.zip$/);
+    expect(writtenKey).toMatch(/aex-session-session-1-files\.zip$/);
     const entries = unzipSync(writes.get(writtenKey)!);
     expect(Object.keys(entries).sort()).toEqual(["manifest.json", "report.txt"]);
     expect(new TextDecoder().decode(entries["report.txt"]!)).toBe("hello");
-    expect((JSON.parse(cap.stdout.trim()) as { namespace: string }).namespace).toBe("outputs");
+    expect((JSON.parse(cap.stdout.trim()) as { namespace: string }).namespace).toBe("files");
   });
 
   it("rejects --only logs with a usage error", async () => {
@@ -678,7 +678,7 @@ describe("aex start", () => {
     };
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--config",
         "/abs/session.json",
         "--anthropic-api-key",
@@ -734,7 +734,7 @@ describe("aex start", () => {
   it("opens a session from --model/--prompt/--mcp/--mcp-auth flags", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -776,7 +776,7 @@ describe("aex start", () => {
     let creates = 0;
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -826,7 +826,7 @@ describe("aex start", () => {
   it("opens DeepSeek sessions with --provider deepseek and --deepseek-api-key", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--provider",
         "deepseek",
         "--model",
@@ -851,7 +851,7 @@ describe("aex start", () => {
   it("threads --webhook into the request body as webhook.url", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -891,7 +891,7 @@ describe("aex start", () => {
     };
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -915,7 +915,7 @@ describe("aex start", () => {
   it("rejects removed proxy auth flags even without a proxy endpoint", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -935,7 +935,7 @@ describe("aex start", () => {
   it("rejects --mcp-auth that does not match a declared --mcp", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -957,7 +957,7 @@ describe("aex start", () => {
   it("merges multiple --mcp-auth flags for the same server (does not collapse)", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -990,7 +990,7 @@ describe("aex start", () => {
   it("rejects duplicate --mcp-auth header names for the same server", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",
@@ -1023,7 +1023,7 @@ describe("aex start", () => {
   it("treats @@literal as a literal '@literal' on --prompt", async () => {
     const cap = makeHostIo({
       argv: [
-        "run",
+        "start",
         "--model",
         "claude-haiku-4-5",
         "--prompt",

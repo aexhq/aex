@@ -18,7 +18,7 @@ optional `system`, `provider`, `runtimeSize`, `timeout`,
 and `files`. The call is **always async**: on a successful spawn it returns
 immediately with the child session id, and the parent keeps working while the child
 sessions. When a child settles, the parent is notified in its loop, and it reads
-the child's status and captured outputs on demand with the companion
+the child's status and captured files on demand with the companion
 `subagent_result` tool.
 
 Children inherit the parent's vaulted BYOK provider keys server-side — the
@@ -73,13 +73,13 @@ the parent can share.
 Every child — in-process or container — is a first-class session record:
 
 - The parent's transcript logs each spawn with the child's session id.
-- Each child has its own status, typed event timeline, and captured outputs.
-  The child's events and outputs are readable by id
-  (`aex.sessions.outputs(id)` in the SDK, or the CLI's `aex events` /
-  `aex outputs`). Child sessions are not served by the session read surface
+- Each child has its own status, typed event timeline, and captured files.
+  The child's events and files are readable by id
+  (`aex.sessions.files(id)` in the SDK, or the CLI's `aex events` /
+  `aex files`). Child sessions are not served by the session read surface
   today — `aex.sessions.get(id)` / `aex sessions` / the CLI's `aex status`
   answer `not_found` for a child id.
-- The child's outputs are handed back to the parent via `subagent_result`, and
+- The child's files are handed back to the parent via `subagent_result`, and
   they remain independently downloadable after the lineage finishes.
 
 ## Bounding delegation

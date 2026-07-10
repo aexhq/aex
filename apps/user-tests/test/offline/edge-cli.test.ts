@@ -91,11 +91,11 @@ describe("installed aex CLI — offline edge cases", () => {
     expect(r.stderr).toMatch(/aex --help/);
   });
 
-  // ---------------------------------------------------------------- run: usage errors
+  // ---------------------------------------------------------------- start: usage errors
 
   it("start rejects an unknown flag with exit 2", async () => {
     const r = await executeCli([
-      "run",
+      "start",
       "--provider", "anthropic",
       "--anthropic-api-key", "k",
       "--model", "claude-haiku-4-5",
@@ -127,7 +127,7 @@ describe("installed aex CLI — offline edge cases", () => {
 
   it("session with a near-miss model suggests the correct one (exit 2)", async () => {
     const r = await executeCli([
-      "run",
+      "start",
       "--anthropic-api-key", "k",
       "--model", "claude-haiku",
       "--prompt", "hi",
@@ -141,7 +141,7 @@ describe("installed aex CLI — offline edge cases", () => {
 
   it("session with a near-miss provider suggests the correct one (exit 2)", async () => {
     const r = await executeCli([
-      "run",
+      "start",
       "--provider", "anthropicc",
       "--anthropic-api-key", "k",
       "--model", "claude-haiku-4-5",
@@ -155,7 +155,7 @@ describe("installed aex CLI — offline edge cases", () => {
 
   it("removed --proxy-endpoint flag on start exits 2 with a migration hint", async () => {
     const r = await executeCli([
-      "run",
+      "start",
       "--anthropic-api-key", "k",
       "--model", "claude-haiku-4-5",
       "--prompt", "hi",
@@ -233,7 +233,7 @@ describe("installed aex CLI — offline edge cases", () => {
     const SECRET_TOKEN = "SUPERSECRETTOKEN-do-not-leak-4711";
     const SECRET_KEY = "SUPERSECRETKEY-do-not-leak-8842";
     const r = await executeCli([
-      "run",
+      "start",
       "--anthropic-api-key", SECRET_KEY,
       "--model", "definitely-not-a-model",
       "--prompt", "hi",

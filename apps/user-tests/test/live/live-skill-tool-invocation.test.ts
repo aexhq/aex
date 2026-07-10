@@ -130,7 +130,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 // `Observation` on stdout. Raw-event iteration mirrors the proven sibling
 // harnesses (live-sdk-skill-invocation / live-sdk-tool-capability-fuzz):
 //   - TOOL_CALL_START names/args → which tools were invoked, including `skills` loads
-//   - TOOL_CALL_RESULT content → deterministic tool outputs
+//   - TOOL_CALL_RESULT content → deterministic tool files
 //   - CUSTOM aex.skill_loaded → which skills were staged into the container
 //   - TEXT_MESSAGE_CONTENT + result.text → the model's answer
 const SCRIPT_PREAMBLE = `

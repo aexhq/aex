@@ -143,7 +143,7 @@ describe("resolveCommonHostFlags — stored-config fallback (DX1)", () => {
     });
     await executeCli(cap.io);
     expect(cap.exit()).toBe(2);
-    expect(cap.err()).toContain("cannot session inside a managed session container");
+    expect(cap.err()).toContain("cannot execute inside a managed session container");
     expect(cap.calls).toHaveLength(0);
   });
 });

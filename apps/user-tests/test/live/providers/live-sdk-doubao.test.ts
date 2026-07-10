@@ -9,7 +9,7 @@
  *
  * This is a per-provider correctness round-trip: it proves the doubao
  * adapter/routing/registry wiring reaches the real Ark upstream and returns a
- * valid response. Feature depth (skills, MCP, AGENTS.md, outputs) is already
+ * valid response. Feature depth (skills, MCP, AGENTS.md, files) is already
  * covered on the two wire shapes by the DeepSeek (openai-chat) and Anthropic
  * (anthropic-messages) workhorse suites; doubao is openai-chat, so it needs
  * only this connectivity check, not the full scenario matrix.
@@ -64,8 +64,8 @@ interface LiveResult {
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
-  readonly outputCount: number;
-  readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
+  readonly fileCount: number;
+  readonly files: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
   readonly leakedDoubaoKey: boolean;
 }
 
@@ -93,7 +93,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
   });
 
   it(
-    "submits via SDK, waits for terminal, fetches events + outputs, asserts a real Doubao response landed in the event log",
+    "submits via SDK, waits for terminal, fetches events + files, asserts a real Doubao response landed in the event log",
     async () => {
       // Drive the SDK from a child Bun process whose cwd is the install
       // tempdir, so `import "@aexhq/sdk"` resolves to the installed tarball —
@@ -116,7 +116,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         const result = await client.start({
           provider,
           model,
-          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
           idempotencyKey: "user-test-doubao-" + Date.now(),
           apiKeys: { doubao: doubaoKey }
         }, { timeoutMs: 8 * 60 * 1000 });
@@ -128,14 +128,14 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         };
 
         const events = Array.isArray(result.events) ? result.events : [];
-        const outputs = Array.isArray(result.outputs) ? result.outputs : [];
+        const files = Array.isArray(result.files) ? result.files : [];
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
           .join(" ");
         const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR"));
 
-        const serialized = JSON.stringify({ run, events, outputs });
+        const serialized = JSON.stringify({ run, events, files });
         const payload = {
           sessionId: sessionId,
           sessionStatus: session.status,
@@ -146,8 +146,8 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
           assistantTextEventCount: assistantTextEvents.length,
           terminalKind: terminal ? terminal.type : null,
           terminalData: terminal ? terminal.data : null,
-          outputCount: outputs.length,
-          outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
+          fileCount: files.length,
+          files: files.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
           leakedDoubaoKey: serialized.includes(doubaoKey)
         };
         process.stdout.write(JSON.stringify(payload));

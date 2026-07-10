@@ -766,11 +766,11 @@ export interface PlatformSubmission {
   readonly securityProfile?: RuntimeSecurityProfileName;
   readonly metadata?: Record<string, JsonValue>;
   /**
-   * Output capture policy. Omit `outputs.allowedDirs` to capture the whole
+   * File capture policy. Omit `fileCapture.allowedDirs` to capture the whole
    * filesystem delta; provide it to narrow capture to the listed roots.
-   * `outputs.deniedDirs` subtracts denied roots/patterns from the allowed set.
+   * `fileCapture.deniedDirs` subtracts denied roots/patterns from the allowed set.
    */
-  readonly outputs?: PlatformOutputCaptureConfig;
+  readonly fileCapture?: PlatformFileCaptureConfig;
   /**
    * Whether to inject the standard builtin tool set ({@link DEFAULT_BUILTIN_TOOLS}).
    *
@@ -821,14 +821,14 @@ export interface PlatformSubmission {
    * see only the customer's own `system`. Omitting the field (or
    * `systemPrompt: "default"`) keeps the injection on.
    *
-   * This does not change output capture scope. Omitted
-   * `outputs.allowedDirs` means capture all created/modified files; explicit
-   * `outputs.allowedDirs` narrows it.
+   * This does not change file capture scope. Omitted
+   * `fileCapture.allowedDirs` means capture all created/modified files; explicit
+   * `fileCapture.allowedDirs` narrows it.
    */
   readonly platform?: PlatformInjectionConfig;
 }
 
-export interface PlatformOutputCaptureConfig {
+export interface PlatformFileCaptureConfig {
   /**
    * Allowed capture roots. Omit or pass an empty list to use the default
    * whole-filesystem delta capture. Entries are absolute UNIX paths.
@@ -840,13 +840,13 @@ export interface PlatformOutputCaptureConfig {
    */
   readonly deniedDirs?: readonly string[];
   /**
-   * Maximum time the platform may spend capturing outputs after the agent exits.
+   * Maximum time the platform may spend capturing files after the agent exits.
    * Positive integer milliseconds; values above the platform maximum are clamped.
    */
   readonly captureTimeoutMs?: number;
   /** Maximum size of a single captured file in bytes. Positive integer. */
   readonly maxFileBytes?: number;
-  /** Maximum total captured output bytes for the session. Positive integer. */
+  /** Maximum total captured file bytes for the session. Positive integer. */
   readonly maxTotalBytes?: number;
   /** Maximum number of captured files for the session. Positive integer. */
   readonly maxFiles?: number;
@@ -1272,7 +1272,7 @@ export function parseSubmission(
     "environment",
     "securityProfile",
     "metadata",
-    "outputs",
+    "fileCapture",
     "includeBuiltinTools",
     "outputMode",
     "responseFormat",
@@ -1297,7 +1297,7 @@ export function parseSubmission(
   const environment = parseEnvironment(value.environment);
   const securityProfile = parseRuntimeSecurityProfile(value.securityProfile);
   const metadata = optionalJsonRecord(value.metadata, "submission.metadata");
-  const outputs = parseOutputs(value.outputs);
+  const fileCapture = parseFileCapture(value.fileCapture);
   const includeBuiltinTools = parseIncludeBuiltinTools(value.includeBuiltinTools);
   const outputMode = parseOutputMode(value.outputMode);
   const responseFormat = parseResponseFormat(value.responseFormat);
@@ -1318,7 +1318,7 @@ export function parseSubmission(
     ...(environment ? { environment } : {}),
     ...(securityProfile ? { securityProfile } : {}),
     ...(metadata ? { metadata } : {}),
-    ...(outputs ? { outputs } : {}),
+    ...(fileCapture ? { fileCapture } : {}),
     ...(includeBuiltinTools !== undefined ? { includeBuiltinTools } : {}),
     ...(builtinTools.length > 0 ? { builtinTools } : {}),
     ...(outputMode !== undefined ? { outputMode } : {}),
@@ -1699,45 +1699,45 @@ function parseIncludeBuiltinTools(input: unknown): boolean | undefined {
 }
 
 /**
- * Maximum number of output capture entries accepted per list.
+ * Maximum number of file capture entries accepted per list.
  *
  * 32 is enough room for the typical "one or two capture roots" pattern
  * plus a generous margin for legitimate multi-root use cases (per-tool
- * output directory + scratch state + logs, repeated across a few
+ * file directory + scratch state + logs, repeated across a few
  * subdirectories), without inviting abuse of the synthetic-turn path
  * the platform capture path drives at session terminal.
  */
-const MAX_OUTPUT_DIRS = 32;
+const MAX_FILE_CAPTURE_DIRS = 32;
 
 /**
- * Maximum byte length of a single output capture entry (after UTF-8
+ * Maximum byte length of a single file capture entry (after UTF-8
  * encoding). 512 bytes comfortably covers `/very/long/nested/path`
  * style entries without letting a misuse smuggle large blobs through
  * the field.
  */
-const MAX_OUTPUT_DIR_BYTES = 512;
-const MAX_OUTPUT_CAPTURE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const MAX_FILE_CAPTURE_DIR_BYTES = 512;
+const MAX_FILE_CAPTURE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
-function parseOutputs(input: unknown): PlatformOutputCaptureConfig | undefined {
+function parseFileCapture(input: unknown): PlatformFileCaptureConfig | undefined {
   if (input === undefined || input === null) {
     return undefined;
   }
-  const value = requireRecord(input, "submission.outputs");
+  const value = requireRecord(input, "submission.fileCapture");
   const allowed = new Set(["allowedDirs", "deniedDirs", "captureTimeoutMs", "maxFileBytes", "maxTotalBytes", "maxFiles"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
-      throw new Error(`submission.outputs.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
+      throw new Error(`submission.fileCapture.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
     }
   }
-  const allowedDirs = parseOutputAllowedDirs(value.allowedDirs);
-  const deniedDirs = parseOutputDeniedDirs(value.deniedDirs);
-  const captureTimeoutMs = parseOutputPositiveInteger(value.captureTimeoutMs, "submission.outputs.captureTimeoutMs", {
-    max: MAX_OUTPUT_CAPTURE_TIMEOUT_MS,
+  const allowedDirs = parseFileCaptureAllowedDirs(value.allowedDirs);
+  const deniedDirs = parseFileCaptureDeniedDirs(value.deniedDirs);
+  const captureTimeoutMs = parseFileCapturePositiveInteger(value.captureTimeoutMs, "submission.fileCapture.captureTimeoutMs", {
+    max: MAX_FILE_CAPTURE_TIMEOUT_MS,
     clamp: true
   });
-  const maxFileBytes = parseOutputPositiveInteger(value.maxFileBytes, "submission.outputs.maxFileBytes");
-  const maxTotalBytes = parseOutputPositiveInteger(value.maxTotalBytes, "submission.outputs.maxTotalBytes");
-  const maxFiles = parseOutputPositiveInteger(value.maxFiles, "submission.outputs.maxFiles");
+  const maxFileBytes = parseFileCapturePositiveInteger(value.maxFileBytes, "submission.fileCapture.maxFileBytes");
+  const maxTotalBytes = parseFileCapturePositiveInteger(value.maxTotalBytes, "submission.fileCapture.maxTotalBytes");
+  const maxFiles = parseFileCapturePositiveInteger(value.maxFiles, "submission.fileCapture.maxFiles");
   if (!allowedDirs && !deniedDirs && captureTimeoutMs === undefined && maxFileBytes === undefined && maxTotalBytes === undefined && maxFiles === undefined) {
     return undefined;
   }
@@ -1751,7 +1751,7 @@ function parseOutputs(input: unknown): PlatformOutputCaptureConfig | undefined {
   };
 }
 
-function parseOutputPositiveInteger(
+function parseFileCapturePositiveInteger(
   input: unknown,
   field: string,
   options: { readonly max?: number; readonly clamp?: boolean } = {}
@@ -1768,21 +1768,21 @@ function parseOutputPositiveInteger(
   return input;
 }
 
-function parseOutputAllowedDirs(input: unknown): readonly string[] | undefined {
+function parseFileCaptureAllowedDirs(input: unknown): readonly string[] | undefined {
   if (input === undefined) {
     return undefined;
   }
   if (!Array.isArray(input)) {
-    throw new Error("submission.outputs.allowedDirs must be an array of absolute UNIX paths");
+    throw new Error("submission.fileCapture.allowedDirs must be an array of absolute UNIX paths");
   }
   if (input.length === 0) {
     // Treat an empty array as omission so the idempotency hash matches
     // the "no allowedDirs" case.
     return undefined;
   }
-  if (input.length > MAX_OUTPUT_DIRS) {
+  if (input.length > MAX_FILE_CAPTURE_DIRS) {
     throw new Error(
-      `submission.outputs.allowedDirs has ${input.length} entries; max is ${MAX_OUTPUT_DIRS}`
+      `submission.fileCapture.allowedDirs has ${input.length} entries; max is ${MAX_FILE_CAPTURE_DIRS}`
     );
   }
   const seen = new Set<string>();
@@ -1790,31 +1790,31 @@ function parseOutputAllowedDirs(input: unknown): readonly string[] | undefined {
   for (let i = 0; i < input.length; i++) {
     const item = input[i];
     if (typeof item !== "string") {
-      throw new Error(`submission.outputs.allowedDirs[${i}] must be a string`);
+      throw new Error(`submission.fileCapture.allowedDirs[${i}] must be a string`);
     }
     if (item.length === 0) {
-      throw new Error(`submission.outputs.allowedDirs[${i}] must be a non-empty absolute UNIX path`);
+      throw new Error(`submission.fileCapture.allowedDirs[${i}] must be a non-empty absolute UNIX path`);
     }
     const bytes = new TextEncoder().encode(item).length;
-    if (bytes > MAX_OUTPUT_DIR_BYTES) {
+    if (bytes > MAX_FILE_CAPTURE_DIR_BYTES) {
       throw new Error(
-        `submission.outputs.allowedDirs[${i}] exceeds ${MAX_OUTPUT_DIR_BYTES} bytes (got ${bytes})`
+        `submission.fileCapture.allowedDirs[${i}] exceeds ${MAX_FILE_CAPTURE_DIR_BYTES} bytes (got ${bytes})`
       );
     }
     if (!item.startsWith("/")) {
       throw new Error(
-        `submission.outputs.allowedDirs[${i}] must be an absolute UNIX path (start with '/')`
+        `submission.fileCapture.allowedDirs[${i}] must be an absolute UNIX path (start with '/')`
       );
     }
     if (item.includes("\0")) {
-      throw new Error(`submission.outputs.allowedDirs[${i}] must not contain NUL bytes`);
+      throw new Error(`submission.fileCapture.allowedDirs[${i}] must not contain NUL bytes`);
     }
     if (item.includes("\n") || item.includes("\r")) {
-      throw new Error(`submission.outputs.allowedDirs[${i}] must not contain newline characters`);
+      throw new Error(`submission.fileCapture.allowedDirs[${i}] must not contain newline characters`);
     }
     const segments = item.split("/");
     if (segments.includes("..")) {
-      throw new Error(`submission.outputs.allowedDirs[${i}] must not contain '..' segments`);
+      throw new Error(`submission.fileCapture.allowedDirs[${i}] must not contain '..' segments`);
     }
     const collapsed = segments
       .filter((seg, idx) => seg.length > 0 || idx === 0)
@@ -1833,41 +1833,41 @@ function parseOutputAllowedDirs(input: unknown): readonly string[] | undefined {
   return normalised;
 }
 
-function parseOutputDeniedDirs(input: unknown): readonly string[] | undefined {
+function parseFileCaptureDeniedDirs(input: unknown): readonly string[] | undefined {
   if (input === undefined) {
     return undefined;
   }
   if (!Array.isArray(input)) {
-    throw new Error("submission.outputs.deniedDirs must be an array of strings");
+    throw new Error("submission.fileCapture.deniedDirs must be an array of strings");
   }
   if (input.length === 0) {
     return undefined;
   }
-  if (input.length > MAX_OUTPUT_DIRS) {
-    throw new Error(`submission.outputs.deniedDirs has ${input.length} entries; max is ${MAX_OUTPUT_DIRS}`);
+  if (input.length > MAX_FILE_CAPTURE_DIRS) {
+    throw new Error(`submission.fileCapture.deniedDirs has ${input.length} entries; max is ${MAX_FILE_CAPTURE_DIRS}`);
   }
   const seen = new Set<string>();
   const normalised: string[] = [];
   for (let i = 0; i < input.length; i++) {
     const item = input[i];
     if (typeof item !== "string") {
-      throw new Error(`submission.outputs.deniedDirs[${i}] must be a string`);
+      throw new Error(`submission.fileCapture.deniedDirs[${i}] must be a string`);
     }
     if (item.length === 0) {
-      throw new Error(`submission.outputs.deniedDirs[${i}] must be a non-empty pattern`);
+      throw new Error(`submission.fileCapture.deniedDirs[${i}] must be a non-empty pattern`);
     }
     const bytes = new TextEncoder().encode(item).length;
-    if (bytes > MAX_OUTPUT_DIR_BYTES) {
-      throw new Error(`submission.outputs.deniedDirs[${i}] exceeds ${MAX_OUTPUT_DIR_BYTES} bytes (got ${bytes})`);
+    if (bytes > MAX_FILE_CAPTURE_DIR_BYTES) {
+      throw new Error(`submission.fileCapture.deniedDirs[${i}] exceeds ${MAX_FILE_CAPTURE_DIR_BYTES} bytes (got ${bytes})`);
     }
     if (item.includes("\0")) {
-      throw new Error(`submission.outputs.deniedDirs[${i}] must not contain NUL bytes`);
+      throw new Error(`submission.fileCapture.deniedDirs[${i}] must not contain NUL bytes`);
     }
     if (item.includes("\n") || item.includes("\r")) {
-      throw new Error(`submission.outputs.deniedDirs[${i}] must not contain newline characters`);
+      throw new Error(`submission.fileCapture.deniedDirs[${i}] must not contain newline characters`);
     }
     if (item.split("/").includes("..")) {
-      throw new Error(`submission.outputs.deniedDirs[${i}] must not contain '..' segments`);
+      throw new Error(`submission.fileCapture.deniedDirs[${i}] must not contain '..' segments`);
     }
     let canonical = item;
     if (item.startsWith("/")) {

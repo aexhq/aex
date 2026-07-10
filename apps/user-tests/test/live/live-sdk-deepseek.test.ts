@@ -57,13 +57,13 @@ interface LiveResult {
   readonly assistantTextEventCount: number;
   readonly terminalKind: string | null;
   readonly terminalData: Record<string, unknown> | null;
-  readonly outputCount: number;
-  // Per-file filenames + sizes returned by GET /api/sessions/:id/outputs.
-  // Captured for diagnostic dumps so output-surface failures are
+  readonly fileCount: number;
+  // Per-file filenames + sizes returned by GET /api/sessions/:id/files.
+  // Captured for diagnostic dumps so files-surface failures are
   // self-describing without a retry. Namespace separation is covered by
   // live-sdk-download-namespaces.test.ts; this simple text round-trip does not
   // assert that the model/runtime produced no user deliverables.
-  readonly outputs: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
+  readonly files: ReadonlyArray<{ readonly filename: string; readonly sizeBytes: number }>;
   readonly leakedDeepseekKey: boolean;
 }
 
@@ -79,7 +79,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
   });
 
   it(
-    "submits via SDK, waits for terminal, fetches events + outputs, asserts a real DeepSeek response landed in the event log",
+    "submits via SDK, waits for terminal, fetches events + files, asserts a real DeepSeek response landed in the event log",
     async () => {
       // Drive the SDK from a child Bun process whose cwd is the
       // install tempdir, so `import "aex"` resolves to the
@@ -108,7 +108,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         const sessionResult = await client.start({
           provider: "deepseek",
           model,
-          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
           idempotencyKey: "user-test-deepseek-" + Date.now(),
           apiKeys: { deepseek: deepseekKey }
         }, { timeoutMs: 8 * 60 * 1000 });
@@ -122,18 +122,18 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           provider: "deepseek"
         };
         const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-        const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
+        const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
         let events = fallbackEvents;
-        let outputs = fallbackOutputs;
+        let files = fallbackFiles;
         try {
           const session = await client.sessions.open(sessionId);
           const listedEvents = await session.events().list();
           if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-          const listedOutputs = await session.outputs().list();
-          if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+          const listedFiles = await session.files().list();
+          if (Array.isArray(listedFiles)) files = listedFiles;
         } catch {
           events = fallbackEvents;
-          outputs = fallbackOutputs;
+          files = fallbackFiles;
         }
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
@@ -148,7 +148,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
           : terminal ? terminal.data : null;
 
-        const serialized = JSON.stringify({ run, events, outputs });
+        const serialized = JSON.stringify({ run, events, files });
         const result = {
           sessionId: sessionId,
           sessionStatus: session.status,
@@ -159,8 +159,8 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           assistantTextEventCount: assistantTextEvents.length,
           terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
           terminalData,
-          outputCount: outputs.length,
-          outputs: outputs.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
+          fileCount: files.length,
+          files: files.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
           leakedDeepseekKey: serialized.includes(deepseekKey)
         };
         process.stdout.write(JSON.stringify(result));

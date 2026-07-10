@@ -1,8 +1,8 @@
 /**
- * Blackbox coverage for output-body transfer resilience through a clean
+ * Blackbox coverage for session-file body transfer resilience through a clean
  * installed package. The test never imports workspace internals: a consumer
  * script imports `@aexhq/sdk`, injects a fake fetch, and observes only the
- * public `sessions.outputs(sessionId)` API.
+ * public `sessions.files(sessionId)` API.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,22 +51,22 @@ function makeFetch() {
   const fetch = async (input, init = {}) => {
     const path = requestPath(input);
     calls.push({ method: String(init.method || "GET").toUpperCase(), path });
-    if (path === "/api/sessions/session-1/outputs") {
+    if (path === "/api/sessions/session-1/files") {
       return jsonResponse({
-        outputs: [
-          { id: "out-read", filename: "read.txt", sizeBytes: 16, contentType: "text/plain" },
-          { id: "out-download", filename: "download.txt", sizeBytes: 20, contentType: "text/plain" },
-          { id: "out-archive", filename: "archive.txt", sizeBytes: 19, contentType: "text/plain" },
-          { id: "out-timeout", filename: "timeout.txt", sizeBytes: 7, contentType: "text/plain" }
+        files: [
+          { id: "file-read", filename: "read.txt", sizeBytes: 16, contentType: "text/plain" },
+          { id: "file-download", filename: "download.txt", sizeBytes: 20, contentType: "text/plain" },
+          { id: "file-archive", filename: "archive.txt", sizeBytes: 19, contentType: "text/plain" },
+          { id: "file-timeout", filename: "timeout.txt", sizeBytes: 7, contentType: "text/plain" }
         ]
       });
     }
-    const match = /^\/api\/sessions\/session-1\/outputs\/([^/]+)\/download$/.exec(path);
+    const match = /^\/api\/sessions\/session-1\/files\/([^/]+)\/download$/.exec(path);
     if (match) {
       const id = match[1];
       const next = (bodyAttempts.get(id) || 0) + 1;
       bodyAttempts.set(id, next);
-      if (id === "out-timeout") return stalledBodyResponse();
+      if (id === "file-timeout") return stalledBodyResponse();
       if (next === 1) return stalledBodyResponse();
       return textResponse(id + " after retry");
     }
@@ -76,7 +76,7 @@ function makeFetch() {
 }
 `;
 
-describe("output transfer retry (installed package)", () => {
+describe("session file transfer retry (installed package)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -97,7 +97,7 @@ describe("output transfer retry (installed package)", () => {
     return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
   }
 
-  it("bounds stalled output bodies, retries idempotent reads/downloads once, and keeps archive downloads usable", async () => {
+  it("bounds stalled file bodies, retries idempotent reads/downloads once, and keeps archive downloads usable", async () => {
     const script =
       CHILD_HARNESS +
       String.raw`
@@ -109,26 +109,26 @@ const client = new Aex({
   fetch: harness.fetch,
   retry: false
 });
-const outputs = client.sessions.outputs("session-1");
+const files = client.sessions.files("session-1");
 
-const read = await outputs.read({ id: "out-read" }, { timeoutMs: 1 });
-strictEqual(read.text, "out-read after retry");
+const read = await files.read({ id: "file-read" }, { timeoutMs: 1 });
+strictEqual(read.text, "file-read after retry");
 strictEqual(read.truncated, false);
-strictEqual(harness.bodyAttempts.get("out-read"), 2);
+strictEqual(harness.bodyAttempts.get("file-read"), 2);
 
-const bytes = await outputs.download({ id: "out-download" }, { timeoutMs: 1 });
-strictEqual(new TextDecoder().decode(bytes), "out-download after retry");
-strictEqual(harness.bodyAttempts.get("out-download"), 2);
+const bytes = await files.download({ id: "file-download" }, { timeoutMs: 1 });
+strictEqual(new TextDecoder().decode(bytes), "file-download after retry");
+strictEqual(harness.bodyAttempts.get("file-download"), 2);
 
-const archive = await outputs.download(undefined, { timeoutMs: 1 });
+const archive = await files.download(undefined, { timeoutMs: 1 });
 ok(archive.byteLength > 4, "archive download should return bytes");
 strictEqual(archive[0], 0x50);
 strictEqual(archive[1], 0x4b);
-strictEqual(harness.bodyAttempts.get("out-archive"), 2);
+strictEqual(harness.bodyAttempts.get("file-archive"), 2);
 
 let timeoutError = null;
 try {
-  await outputs.read({ id: "out-timeout" }, { timeoutMs: 1 });
+  await files.read({ id: "file-timeout" }, { timeoutMs: 1 });
 } catch (err) {
   timeoutError = {
     name: err && err.name,
@@ -142,11 +142,11 @@ ok(timeoutError, "persistent stalled body should reject");
 strictEqual(timeoutError.code, "NETWORK_ERROR");
 strictEqual(timeoutError.attempts, 2);
 strictEqual(timeoutError.causeCode, "ETIMEDOUT");
-ok(harness.bodyAttempts.get("out-timeout") >= 2);
+ok(harness.bodyAttempts.get("file-timeout") >= 2);
 
 let validationError = null;
 try {
-  await outputs.download({ id: "out-download" }, { timeoutMs: 0 });
+  await files.download({ id: "file-download" }, { timeoutMs: 0 });
 } catch (err) {
   validationError = { name: err && err.name, message: err && err.message };
 }
@@ -155,16 +155,16 @@ ok(/timeoutMs must be a positive finite number/.test(validationError.message));
 
 console.log(JSON.stringify({
   ok: true,
-  readAttempts: harness.bodyAttempts.get("out-read"),
-  downloadAttempts: harness.bodyAttempts.get("out-download"),
-  archiveAttempts: harness.bodyAttempts.get("out-archive"),
-  timeoutAttempts: harness.bodyAttempts.get("out-timeout"),
+  readAttempts: harness.bodyAttempts.get("file-read"),
+  downloadAttempts: harness.bodyAttempts.get("file-download"),
+  archiveAttempts: harness.bodyAttempts.get("file-archive"),
+  timeoutAttempts: harness.bodyAttempts.get("file-timeout"),
   timeoutError,
   validationError,
   calls: harness.calls
 }));
 `;
-    const result = await runChild(script, "output-transfer-retry.mjs");
+    const result = await runChild(script, "file-transfer-retry.mjs");
     expect(result).toMatchObject({
       ok: true,
       archiveAttempts: 2,

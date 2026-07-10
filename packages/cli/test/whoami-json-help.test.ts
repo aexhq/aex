@@ -38,11 +38,11 @@ describe("aex whoami --json + per-verb --help (T6e/T6f)", () => {
     expect(cap.calls).toHaveLength(0);
   });
 
-  it("`outputs --help` prints the sub-verbs with exit 0", async () => {
-    const cap = makeIo({ argv: ["outputs", "--help"] });
+  it("`files --help` prints the sub-verbs with exit 0", async () => {
+    const cap = makeIo({ argv: ["files", "--help"] });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.stdout).toContain("aex outputs");
+    expect(cap.stdout).toContain("aex files");
     expect(cap.stdout).toContain("read");
     expect(cap.stdout).toContain("search");
     expect(cap.calls).toHaveLength(0);

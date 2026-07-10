@@ -7,7 +7,7 @@
  * cover:
  *   - a real one-shot `aex start --follow` reaches a clean terminal + prints the
  *     assistant text and session id (with a UNICODE prompt round-trip),
- *   - the read verbs (status/events/outputs/download) work on that session,
+ *   - the read verbs (status/events/files/download) work on that session,
  *   - the auth/error paths (bad token -> 401, missing run -> 404) return a clean
  *     JSON error envelope + non-zero exit, NOT a stack trace or a hang,
  *   - no secret (api key or provider key) is ever echoed to stdout/stderr.
@@ -209,7 +209,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         // file-read + JSON transmission path for multi-byte content.
         const unicodeMarker = "日本語 café";
         const promptPath = join(install.installDir, `edge-cli-prompt-${asciiId}.txt`);
-        writeFileSync(promptPath, `Output verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
+        writeFileSync(promptPath, `SessionFile verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
 
         const run = await executeCli(
           [
@@ -266,12 +266,12 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         expect(joined, "latin-1 marker did not round-trip through the CLI").toContain("café");
         assertNoSecretLeak("events", events);
 
-        // outputs: exit 0 (list may be empty for a pure text turn)
-        const outputs = await executeCli(["outputs", id, ...common()]);
-        expect(outputs.exitCode, diag("aex outputs", outputs)).toBe(0);
-        const outputRows = outputs.stdout.trim().length > 0 ? parseJsonLines(outputs.stdout) : [];
-        for (const o of outputRows) expect(typeof o["id"], diag("aex outputs", outputs)).toBe("string");
-        assertNoSecretLeak("outputs", outputs);
+        // files: exit 0 (list may be empty for a pure text turn)
+        const files = await executeCli(["files", id, ...common()]);
+        expect(files.exitCode, diag("aex files", files)).toBe(0);
+        const outputRows = files.stdout.trim().length > 0 ? parseJsonLines(files.stdout) : [];
+        for (const o of outputRows) expect(typeof o["id"], diag("aex files", files)).toBe("string");
+        assertNoSecretLeak("files", files);
 
         // download --only events -> a real zip with events.jsonl
         const zipPath = join(install.installDir, `edge-cli-events-${id}.zip`);

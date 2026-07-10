@@ -64,7 +64,7 @@ describe("aex start --skill/--tool/--agents-md/--file (T6a attach)", () => {
   it("stages every attached asset kind and submits their public refs", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--skill", "@s.md",
@@ -111,7 +111,7 @@ describe("aex start --skill/--tool/--agents-md/--file (T6a attach)", () => {
   it("reports a clear error when an attached asset file is missing", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--file", "@missing.txt",

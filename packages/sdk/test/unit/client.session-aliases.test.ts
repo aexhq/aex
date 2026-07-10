@@ -20,7 +20,7 @@ function aliasClient(): { readonly client: Aex; readonly calls: RecordedCall[] }
     const method = (init?.method ?? "GET").toString();
     calls.push({ url, method });
     if (url.endsWith("/api/sessions/sess-1/events")) return json({ events: [{ id: "evt-1", type: "agent.message" }] });
-    if (url.endsWith("/api/sessions/sess-1/outputs")) return json({ outputs: [] });
+    if (url.endsWith("/api/sessions/sess-1/files")) return json({ files: [] });
     if (url.endsWith("/api/sessions/sess-1/cancel")) return json({ session: { id: "sess-1", status: "cancelling" } });
     if (url.endsWith("/api/sessions/sess-1")) {
       if (method === "DELETE") return new Response(null, { status: 204 });
@@ -37,7 +37,7 @@ function aliasClient(): { readonly client: Aex; readonly calls: RecordedCall[] }
 }
 
 describe("SessionHandle operations delegate to the session/run endpoints", () => {
-  it("route refresh/unit/listEvents/listOutputs/cancel/delete to the right verbs and paths", async () => {
+  it("route refresh/unit/listEvents/listFiles/cancel/delete to the right verbs and paths", async () => {
     const { client, calls } = aliasClient();
     const session = await client.openSession("sess-1");
     // Drop the openSession rehydrate read; assert only the operations below.
@@ -46,7 +46,7 @@ describe("SessionHandle operations delegate to the session/run endpoints", () =>
     await session.refresh();
     await session.unit();
     await session.events().list();
-    await session.outputs().list();
+    await session.files().list();
     await session.cancel();
     await session.delete();
 
@@ -54,7 +54,7 @@ describe("SessionHandle operations delegate to the session/run endpoints", () =>
       { url: "https://example.test/api/sessions/sess-1", method: "GET" },
       { url: "https://example.test/api/sessions/sess-1", method: "GET" },
       { url: "https://example.test/api/sessions/sess-1/events", method: "GET" },
-      { url: "https://example.test/api/sessions/sess-1/outputs", method: "GET" },
+      { url: "https://example.test/api/sessions/sess-1/files", method: "GET" },
       { url: "https://example.test/api/sessions/sess-1/cancel", method: "POST" },
       { url: "https://example.test/api/sessions/sess-1", method: "DELETE" }
     ]);

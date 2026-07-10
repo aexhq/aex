@@ -192,13 +192,13 @@ describe("Aex.openSession — session-create wire shape", () => {
     ).rejects.toThrow(/Aex\.openSession: a provider API key is required/);
   });
 
-  it("serializes outputs when only capture overrides are supplied", async () => {
+  it("serializes fileCapture when only capture overrides are supplied", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await client.openSession({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "k" },
-      outputs: {
+      fileCapture: {
         captureTimeoutMs: 120000,
         maxFileBytes: 1_000_000_000_000,
         maxTotalBytes: 1_000_000_000_000,
@@ -208,7 +208,7 @@ describe("Aex.openSession — session-create wire shape", () => {
 
     const body = calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
-    expect(submission.outputs).toEqual({
+    expect(submission.fileCapture).toEqual({
       captureTimeoutMs: 120000,
       maxFileBytes: 1_000_000_000_000,
       maxTotalBytes: 1_000_000_000_000,

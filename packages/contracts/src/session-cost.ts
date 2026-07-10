@@ -29,7 +29,7 @@ export const SESSION_USAGE_SAMPLE_SOURCE_TYPES = [
   "coordinator-event",
   "session-event",
   "usage-ledger",
-  "output-object",
+  "file-object",
   "proxy-call",
   "runtime-job",
   "provider-session",
@@ -47,17 +47,17 @@ export const SESSION_USAGE_SAMPLE_METRICS = [
   "provider.total_tokens",
   "runtime.queued_ms",
   "runtime.active_ms",
-  "runtime.output_capture_ms",
+  "runtime.file_capture_ms",
   "runtime.cleanup_ms",
   "session.total_ms",
-  "output.discovered_files",
-  "output.captured_files",
-  "output.failed_files",
-  "output.captured_bytes",
+  "file.discovered_files",
+  "file.captured_files",
+  "file.failed_files",
+  "file.captured_bytes",
   "retry.runtime_attempts",
   "retry.provider_poll",
-  "retry.output_capture",
-  "retry.output_upload",
+  "retry.file_capture",
+  "retry.file_upload",
   "capture.uploaded_files",
   "capture.failed_files",
   "capture.total_bytes",
@@ -80,17 +80,17 @@ const SESSION_USAGE_SAMPLE_METRIC_UNITS = {
   "provider.total_tokens": "token",
   "runtime.queued_ms": "millisecond",
   "runtime.active_ms": "millisecond",
-  "runtime.output_capture_ms": "millisecond",
+  "runtime.file_capture_ms": "millisecond",
   "runtime.cleanup_ms": "millisecond",
   "session.total_ms": "millisecond",
-  "output.discovered_files": "file",
-  "output.captured_files": "file",
-  "output.failed_files": "file",
-  "output.captured_bytes": "byte",
+  "file.discovered_files": "file",
+  "file.captured_files": "file",
+  "file.failed_files": "file",
+  "file.captured_bytes": "byte",
   "retry.runtime_attempts": "count",
   "retry.provider_poll": "count",
-  "retry.output_capture": "count",
-  "retry.output_upload": "count",
+  "retry.file_capture": "count",
+  "retry.file_upload": "count",
   "capture.uploaded_files": "file",
   "capture.failed_files": "file",
   "capture.total_bytes": "byte",
@@ -136,12 +136,12 @@ export interface SessionCostSourceSummary {
 export interface SessionCostDurations {
   readonly queuedMs?: number;
   readonly runtimeMs?: number;
-  readonly outputCaptureMs?: number;
+  readonly fileCaptureMs?: number;
   readonly cleanupMs?: number;
   readonly totalMs?: number;
 }
 
-export interface SessionCostOutputTelemetry {
+export interface SessionCostFileTelemetry {
   readonly discoveredFiles?: number;
   readonly capturedFiles?: number;
   readonly failedFiles?: number;
@@ -151,8 +151,8 @@ export interface SessionCostOutputTelemetry {
 export interface SessionCostRetryTelemetry {
   readonly runtimeAttempts?: number;
   readonly providerPollRetries?: number;
-  readonly outputCaptureRetries?: number;
-  readonly outputUploadRetries?: number;
+  readonly fileCaptureRetries?: number;
+  readonly fileUploadRetries?: number;
 }
 
 export interface SessionCostCaptureTelemetry {
@@ -213,7 +213,7 @@ export interface SessionCostTelemetry {
   readonly status?: SessionCostSummaryStatus;
   readonly sourceSummary?: SessionCostSourceSummary;
   readonly durations?: SessionCostDurations;
-  readonly outputs?: SessionCostOutputTelemetry;
+  readonly files?: SessionCostFileTelemetry;
   readonly retries?: SessionCostRetryTelemetry;
   readonly capture?: SessionCostCaptureTelemetry;
   readonly providerUsage?: readonly SessionCostProviderUsage[];
@@ -296,7 +296,7 @@ export function buildSessionCostTelemetry(input: SessionCostTelemetryInput): Ses
     ...(input.status ? { status: normalizeSummaryStatus(input.status) } : {}),
     ...(input.sourceSummary ? { sourceSummary: normalizeSourceSummary(input.sourceSummary) } : {}),
     ...(input.durations ? { durations: normalizeDurations(input.durations) } : {}),
-    ...(input.outputs ? { outputs: normalizeOutputs(input.outputs) } : {}),
+    ...(input.files ? { files: normalizeFiles(input.files) } : {}),
     ...(input.retries ? { retries: normalizeRetries(input.retries) } : {}),
     ...(input.capture ? { capture: normalizeCapture(input.capture) } : {}),
     ...(input.providerUsage ? { providerUsage: input.providerUsage.map(normalizeProviderUsage) } : {}),
@@ -320,7 +320,7 @@ export function buildSessionCostTelemetryFromUsageSamples(
   if (input.status) telemetry.status = input.status;
 
   const durations: Partial<Record<keyof SessionCostDurations, number>> = {};
-  const outputs: Partial<Record<keyof SessionCostOutputTelemetry, number>> = {};
+  const files: Partial<Record<keyof SessionCostFileTelemetry, number>> = {};
   const retries: Partial<Record<keyof SessionCostRetryTelemetry, number>> = {};
   const capture: Partial<Omit<SessionCostCaptureTelemetry, "attempted" | "failureReasons">> = {};
   const storage: Partial<Record<keyof SessionCostStorageTelemetry, number>> = {};
@@ -351,8 +351,8 @@ export function buildSessionCostTelemetryFromUsageSamples(
       case "runtime.active_ms":
         addDraftNumber(durations, "runtimeMs", sample.quantity);
         break;
-      case "runtime.output_capture_ms":
-        addDraftNumber(durations, "outputCaptureMs", sample.quantity);
+      case "runtime.file_capture_ms":
+        addDraftNumber(durations, "fileCaptureMs", sample.quantity);
         break;
       case "runtime.cleanup_ms":
         addDraftNumber(durations, "cleanupMs", sample.quantity);
@@ -360,17 +360,17 @@ export function buildSessionCostTelemetryFromUsageSamples(
       case "session.total_ms":
         addDraftNumber(durations, "totalMs", sample.quantity);
         break;
-      case "output.discovered_files":
-        addDraftNumber(outputs, "discoveredFiles", sample.quantity);
+      case "file.discovered_files":
+        addDraftNumber(files, "discoveredFiles", sample.quantity);
         break;
-      case "output.captured_files":
-        addDraftNumber(outputs, "capturedFiles", sample.quantity);
+      case "file.captured_files":
+        addDraftNumber(files, "capturedFiles", sample.quantity);
         break;
-      case "output.failed_files":
-        addDraftNumber(outputs, "failedFiles", sample.quantity);
+      case "file.failed_files":
+        addDraftNumber(files, "failedFiles", sample.quantity);
         break;
-      case "output.captured_bytes":
-        addDraftNumber(outputs, "capturedBytes", sample.quantity);
+      case "file.captured_bytes":
+        addDraftNumber(files, "capturedBytes", sample.quantity);
         break;
       case "retry.runtime_attempts":
         addDraftNumber(retries, "runtimeAttempts", sample.quantity);
@@ -378,11 +378,11 @@ export function buildSessionCostTelemetryFromUsageSamples(
       case "retry.provider_poll":
         addDraftNumber(retries, "providerPollRetries", sample.quantity);
         break;
-      case "retry.output_capture":
-        addDraftNumber(retries, "outputCaptureRetries", sample.quantity);
+      case "retry.file_capture":
+        addDraftNumber(retries, "fileCaptureRetries", sample.quantity);
         break;
-      case "retry.output_upload":
-        addDraftNumber(retries, "outputUploadRetries", sample.quantity);
+      case "retry.file_upload":
+        addDraftNumber(retries, "fileUploadRetries", sample.quantity);
         break;
       case "capture.uploaded_files":
         captureAttempted = true;
@@ -421,7 +421,7 @@ export function buildSessionCostTelemetryFromUsageSamples(
   }
 
   if (Object.keys(durations).length > 0) telemetry.durations = durations;
-  if (Object.keys(outputs).length > 0) telemetry.outputs = outputs;
+  if (Object.keys(files).length > 0) telemetry.files = files;
   if (Object.keys(retries).length > 0) telemetry.retries = retries;
   if (captureAttempted || Object.keys(capture).length > 0) {
     telemetry.capture = { attempted: true, ...capture };
@@ -460,7 +460,7 @@ export function mergeSessionCostTelemetry(
   const status = patch.status ?? base.status;
   const sourceSummary = mergeSourceSummary(base.sourceSummary, patch.sourceSummary);
   const durations = sumDurations(base.durations, patch.durations);
-  const outputs = sumOutputs(base.outputs, patch.outputs);
+  const files = sumFiles(base.files, patch.files);
   const retries = sumRetries(base.retries, patch.retries);
   const capture = mergeCapture(base.capture, patch.capture);
   const providerUsage = [...(base.providerUsage ?? []), ...(patch.providerUsage ?? [])];
@@ -477,7 +477,7 @@ export function mergeSessionCostTelemetry(
   if (status) merged.status = status;
   if (sourceSummary) merged.sourceSummary = sourceSummary;
   if (durations) merged.durations = durations;
-  if (outputs) merged.outputs = outputs;
+  if (files) merged.files = files;
   if (retries) merged.retries = retries;
   if (capture) merged.capture = capture;
   if (providerUsage.length > 0) merged.providerUsage = providerUsage;
@@ -492,14 +492,14 @@ function normalizeDurations(input: SessionCostDurations): SessionCostDurations {
   return freezeOptionalNumbers<keyof SessionCostDurations>({
     queuedMs: input.queuedMs,
     runtimeMs: input.runtimeMs,
-    outputCaptureMs: input.outputCaptureMs,
+    fileCaptureMs: input.fileCaptureMs,
     cleanupMs: input.cleanupMs,
     totalMs: input.totalMs
   });
 }
 
-function normalizeOutputs(input: SessionCostOutputTelemetry): SessionCostOutputTelemetry {
-  return freezeOptionalNumbers<keyof SessionCostOutputTelemetry>({
+function normalizeFiles(input: SessionCostFileTelemetry): SessionCostFileTelemetry {
+  return freezeOptionalNumbers<keyof SessionCostFileTelemetry>({
     discoveredFiles: input.discoveredFiles,
     capturedFiles: input.capturedFiles,
     failedFiles: input.failedFiles,
@@ -511,8 +511,8 @@ function normalizeRetries(input: SessionCostRetryTelemetry): SessionCostRetryTel
   return freezeOptionalNumbers<keyof SessionCostRetryTelemetry>({
     runtimeAttempts: input.runtimeAttempts,
     providerPollRetries: input.providerPollRetries,
-    outputCaptureRetries: input.outputCaptureRetries,
-    outputUploadRetries: input.outputUploadRetries
+    fileCaptureRetries: input.fileCaptureRetries,
+    fileUploadRetries: input.fileUploadRetries
   });
 }
 
@@ -702,17 +702,17 @@ function sumDurations(
   next: SessionCostDurations | undefined
 ): SessionCostDurations | undefined {
   return sumNumberFields<keyof SessionCostDurations>(
-    ["queuedMs", "runtimeMs", "outputCaptureMs", "cleanupMs", "totalMs"],
+    ["queuedMs", "runtimeMs", "fileCaptureMs", "cleanupMs", "totalMs"],
     base,
     next
   );
 }
 
-function sumOutputs(
-  base: SessionCostOutputTelemetry | undefined,
-  next: SessionCostOutputTelemetry | undefined
-): SessionCostOutputTelemetry | undefined {
-  return sumNumberFields<keyof SessionCostOutputTelemetry>(
+function sumFiles(
+  base: SessionCostFileTelemetry | undefined,
+  next: SessionCostFileTelemetry | undefined
+): SessionCostFileTelemetry | undefined {
+  return sumNumberFields<keyof SessionCostFileTelemetry>(
     ["discoveredFiles", "capturedFiles", "failedFiles", "capturedBytes"],
     base,
     next
@@ -724,7 +724,7 @@ function sumRetries(
   next: SessionCostRetryTelemetry | undefined
 ): SessionCostRetryTelemetry | undefined {
   return sumNumberFields<keyof SessionCostRetryTelemetry>(
-    ["runtimeAttempts", "providerPollRetries", "outputCaptureRetries", "outputUploadRetries"],
+    ["runtimeAttempts", "providerPollRetries", "fileCaptureRetries", "fileUploadRetries"],
     base,
     next
   );

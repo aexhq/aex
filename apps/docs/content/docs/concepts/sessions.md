@@ -5,10 +5,10 @@ icon: Play
 ---
 
 A session is a durable, resumable **session**: the model, system message, composition
-primitives, output policy, and per-provider keys you open it with, plus every
+primitives, assistant-text policy, file capture policy, and per-provider keys you open it with, plus every
 turn you send to it. aex snapshots the non-secret inputs, holds secrets for the
 session lifecycle, dispatches each turn through the managed runtime, and records
-status, typed events, and outputs. Sessions are the low-level API; `start()` is the
+status, typed events, and files. Sessions are the low-level API; `start()` is the
 one-shot convenience wrapper over them.
 
 ```ts
@@ -34,8 +34,8 @@ await session.download({ to: "./session.zip" });
 
 The same durable record backs SDK and CLI reads. From the handle use `refresh`,
 `unit`, `wait`, and `download` for lifecycle, plus the grouped read accessors —
-`messages()`, `events()`, and `outputs()` (each with `list()`/`last()`/`first()`,
-and `events().stream()` / `events().streamEnvelopes()` / `outputs().read(...)` for
+`messages()`, `events()`, and `files()` (each with `list()`/`last()`/`first()`,
+and `events().stream()` / `events().streamEnvelopes()` / `files().read(...)` for
 streaming and byte-capped reads) — to inspect the session live or after it parks;
 from the client, `aex.sessions.list()` / `aex.sessions.get(id)` read across the
 workspace (CLI mirrors: `aex sessions` and `aex sessions` list the workspace's

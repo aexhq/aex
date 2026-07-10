@@ -1,6 +1,6 @@
 export const REDACTED = "[REDACTED]";
 
-export interface ChildSessionOutput {
+export interface ChildSessionSessionFile {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
@@ -18,7 +18,7 @@ export function redactKnownValues(text: string, knownValues: readonly (string | 
 
 export function formatChildFailure(
   label: string,
-  child: ChildSessionOutput,
+  child: ChildSessionSessionFile,
   knownSecrets: readonly (string | undefined)[]
 ): string {
   return `${label} exited ${child.exitCode}\n--- stdout ---\n${redactKnownValues(

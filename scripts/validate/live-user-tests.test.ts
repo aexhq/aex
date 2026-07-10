@@ -148,10 +148,10 @@ describe("live user-test release gate", () => {
       scripts?: Record<string, string>;
     };
     expect(packageJson.scripts?.["test:user:files"]).toBe(
-      "bun scripts/session-user-vitest.mjs --config vitest.config.ts"
+      "bun scripts/user-vitest.mjs --config vitest.config.ts"
     );
     expect(packageJson.scripts?.["test:user:admission-gates"]).toBe(
-      "bun scripts/session-user-vitest.mjs --config vitest.admission-gates.config.ts"
+      "bun scripts/user-vitest.mjs --config vitest.admission-gates.config.ts"
     );
     const rootPackageJson = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
     expect(rootPackageJson.scripts?.["test:user:files"]).toBe(
@@ -184,7 +184,7 @@ describe("live user-test release gate", () => {
     const packageJson = JSON.parse(read("apps/user-tests/package.json")) as {
       scripts?: Record<string, string>;
     };
-    const wrapper = read("apps/user-tests/scripts/session-user-vitest.mjs");
+    const wrapper = read("apps/user-tests/scripts/user-vitest.mjs");
 
     for (const [name, script] of Object.entries(packageJson.scripts ?? {})) {
       expect(name.startsWith("pretest:user"), name).toBe(false);
@@ -361,10 +361,10 @@ describe("live user-test release gate", () => {
     expect(source).toContain('token, redirect: "manual"');
   });
 
-  it("keeps edge output transfer probes live-plane realistic and diagnostic", () => {
-    const source = read("apps/user-tests/test/live/edge-outputs.user.test.ts");
+  it("keeps edge file transfer probes live-plane realistic and diagnostic", () => {
+    const source = read("apps/user-tests/test/live/edge-files.user.test.ts");
 
-    expect(source).toContain("const LIVE_OUTPUT_TRANSFER_TIMEOUT_MS = 20_000;");
+    expect(source).toContain("const LIVE_FILE_TRANSFER_TIMEOUT_MS = 20_000;");
     expect(source).not.toContain("timeoutMs: 5000");
     expect(source).toContain("HTTP_DEBUG_LINES");
     expect(source).toContain("redactedUrlForDebug");
@@ -375,8 +375,8 @@ describe("live user-test release gate", () => {
     expect(source).toContain("httpDebug: r.httpDebug");
   });
 
-  it("keeps edge output success probes resilient to transient idempotent GET failures", () => {
-    const source = read("apps/user-tests/test/live/edge-outputs.user.test.ts");
+  it("keeps edge file success probes resilient to transient idempotent GET failures", () => {
+    const source = read("apps/user-tests/test/live/edge-files.user.test.ts");
 
     expect(source).toContain("async function probeIdempotent(label, fn)");
     expect(source).toContain("transient failure");
@@ -391,17 +391,17 @@ describe("live user-test release gate", () => {
       "read_exact",
       "read_timeout_option",
       "download_selector",
-      "download_outputs_zip",
+      "download_files_zip",
       "download_all_zip",
       "download_metadata_zip"
     ]) {
       expect(source).toContain(`probeIdempotent("${label}"`);
     }
     expect(source).toContain(
-      'probeIdempotent("download_outputs_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined)))'
+      'probeIdempotent("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined)))'
     );
     expect(source).toContain(
-      'probeIdempotent("download_outputs_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_OUTPUT_TRANSFER_TIMEOUT_MS })))'
+      'probeIdempotent("download_files_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS })))'
     );
     expect(source).toContain(
       'probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download()))'
@@ -448,7 +448,7 @@ describe("live user-test release gate", () => {
   });
 
   it("waits accepted corrupted-skill sessions to terminal before asserting failure shape", () => {
-    const source = read("apps/user-tests/test/live/live-sdk-outputs-and-failures.test.ts");
+    const source = read("apps/user-tests/test/live/live-sdk-files-and-failures.test.ts");
     const start = source.indexOf("function buildCorruptedSkillScript");
     const end = source.indexOf("function buildIncompatibleRuntimeScript");
     const corruptedSkillScript = source.slice(start, end);
@@ -461,7 +461,7 @@ describe("live user-test release gate", () => {
     expect(corruptedSkillScript).toContain('terminalData = terminal && terminal.data');
   });
 
-  it("keeps lineage observability scratch output inside the live-test sandbox", () => {
+  it("keeps lineage observability scratch file inside the live-test sandbox", () => {
     const source = read("apps/user-tests/test/live/edge-lineage-observability.user.test.ts");
 
     expect(source).toContain('writeFileSync(join(install.installDir, "lineage-wave1-out.json")');

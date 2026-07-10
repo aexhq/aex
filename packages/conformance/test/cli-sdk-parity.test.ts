@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Aex } from "../../sdk/dist/index.js";
-import type { SessionOutputs, SessionStartOptions } from "../../sdk/dist/index.js";
-import { CLI_VERB_NAMES, OUTPUTS_SUBVERBS, START_FLAGS as SESSION_FLAGS, findVerbSpec } from "../../cli/dist/index.js";
+import type { SessionFiles, SessionStartOptions } from "../../sdk/dist/index.js";
+import { CLI_VERB_NAMES, FILES_SUBVERBS, START_FLAGS as SESSION_FLAGS, findVerbSpec } from "../../cli/dist/index.js";
 import {
   CLI_PARITY_BARE_LIST,
   CLI_PARITY_NOT_SURFACED,
@@ -11,7 +11,7 @@ import {
 
 /**
  * COMPILE-TIME class-killer: these typed copies of the manifest maps fail to
- * BUILD the moment a `SessionStartOptions` / `SessionOutputs` key is added,
+ * BUILD the moment a `SessionStartOptions` / `SessionFiles` key is added,
  * removed, or renamed without a corresponding manifest entry — so a new SDK
  * capability can never silently break CLI parity. The runtime `toEqual`
  * below pins the (loosely-typed) published manifest to these typed copies so
@@ -35,7 +35,7 @@ const SESSION_OPTION_COVERAGE = {
   webhook: "--webhook",
   message: "--prompt",
   messageIdempotencyKey: "--idempotency-key",
-  outputs: CLI_PARITY_NOT_SURFACED,
+  fileCapture: CLI_PARITY_NOT_SURFACED,
   includeBuiltinTools: CLI_PARITY_NOT_SURFACED,
   outputMode: CLI_PARITY_NOT_SURFACED,
   responseFormat: CLI_PARITY_NOT_SURFACED,
@@ -44,7 +44,7 @@ const SESSION_OPTION_COVERAGE = {
   stream: CLI_PARITY_NOT_SURFACED
 } satisfies Record<keyof SessionStartOptions, string>;
 
-const OUTPUTS_COVERAGE = {
+const FILES_COVERAGE = {
   list: CLI_PARITY_BARE_LIST,
   read: "read",
   download: "download",
@@ -55,7 +55,7 @@ const OUTPUTS_COVERAGE = {
   first: CLI_PARITY_NOT_SURFACED,
   findOne: CLI_PARITY_NOT_SURFACED,
   fetch: CLI_PARITY_NOT_SURFACED
-} satisfies Record<keyof SessionOutputs, string>;
+} satisfies Record<keyof SessionFiles, string>;
 
 /** Public `Aex` client methods, reflected off the prototype (drop ctor + internals). */
 function publicAexMethods(): string[] {
@@ -69,8 +69,8 @@ describe("CLI ↔ SDK parity manifest", () => {
     expect(CLI_SDK_PARITY_MANIFEST.sessionOptionFlags).toEqual(SESSION_OPTION_COVERAGE);
   });
 
-  it("covers every SessionOutputs accessor method (compile-time) and pins the published manifest", () => {
-    expect(CLI_SDK_PARITY_MANIFEST.outputsSubverbs).toEqual(OUTPUTS_COVERAGE);
+  it("covers every SessionFiles accessor method (compile-time) and pins the published manifest", () => {
+    expect(CLI_SDK_PARITY_MANIFEST.filesSubverbs).toEqual(FILES_COVERAGE);
   });
 
   it("accounts for every public Aex client method — a new SDK method fails until mapped", () => {
@@ -93,24 +93,24 @@ describe("CLI ↔ SDK parity manifest", () => {
     }
   });
 
-  it("maps every surfaced outputs accessor to a REGISTERED `aex outputs` sub-verb", () => {
-    for (const [key, sub] of Object.entries(CLI_SDK_PARITY_MANIFEST.outputsSubverbs)) {
+  it("maps every surfaced files accessor to a REGISTERED `aex files` sub-verb", () => {
+    for (const [key, sub] of Object.entries(CLI_SDK_PARITY_MANIFEST.filesSubverbs)) {
       if (sub === CLI_PARITY_NOT_SURFACED || sub === CLI_PARITY_BARE_LIST) continue;
-      expect(OUTPUTS_SUBVERBS, `outputs.${key} → sub-verb "${sub}"`).toContain(sub);
+      expect(FILES_SUBVERBS, `files.${key} → sub-verb "${sub}"`).toContain(sub);
     }
   });
 
-  it("every registered `aex outputs` sub-verb is reachable from an SDK accessor method", () => {
-    const surfaced = new Set(Object.values(CLI_SDK_PARITY_MANIFEST.outputsSubverbs));
-    for (const sub of OUTPUTS_SUBVERBS) {
+  it("every registered `aex files` sub-verb is reachable from an SDK accessor method", () => {
+    const surfaced = new Set(Object.values(CLI_SDK_PARITY_MANIFEST.filesSubverbs));
+    for (const sub of FILES_SUBVERBS) {
       expect(surfaced, `sub-verb "${sub}" has an SDK accessor`).toContain(sub);
     }
   });
 
-  it("the `start` and `outputs` verbs declare the parity-mapped flags/sub-verbs", () => {
+  it("the `start` and `files` verbs declare the parity-mapped flags/sub-verbs", () => {
     const start = findVerbSpec("start");
     expect(start?.flags).toEqual(SESSION_FLAGS);
-    const outputs = findVerbSpec("outputs");
-    expect(outputs?.subverbs).toEqual([...OUTPUTS_SUBVERBS]);
+    const files = findVerbSpec("files");
+    expect(files?.subverbs).toEqual([...FILES_SUBVERBS]);
   });
 });

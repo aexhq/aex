@@ -2,7 +2,7 @@
 //
 // The CLI is implemented against the public contracts layer, but it must still
 // expose the same user-facing capability surface as the SDK: every public SDK
-// capability (an `Aex` client method, a session-start option, an outputs-accessor
+// capability (an `Aex` client method, a session-start option, a files-accessor
 // method) must surface as a registered CLI verb / flag / sub-verb. This
 // manifest enumerates that surface and maps each capability onto its CLI
 // counterpart; the conformance `cli-sdk-parity` test then asserts, against the
@@ -18,8 +18,8 @@
 /** A session-option / accessor method the CLI deliberately does not expose. */
 export const CLI_PARITY_NOT_SURFACED = "(not surfaced in CLI)";
 
-/** The bare `aex outputs <id>` list form (no sub-verb token). */
-export const CLI_PARITY_BARE_LIST = "(bare: aex outputs <id>)";
+/** The bare `aex files <id>` list form (no sub-verb token). */
+export const CLI_PARITY_BARE_LIST = "(bare: aex files <id>)";
 
 /** The dynamic per-provider `--<provider>-api-key` flag family. */
 export const CLI_PARITY_PROVIDER_KEY_FLAG = "--<provider>-api-key";
@@ -29,8 +29,8 @@ export interface CliSdkParityManifest {
   readonly aexMethods: Readonly<Record<string, string>>;
   /** `SessionStartOptions` key → the CLI `start` flag that supplies it. */
   readonly sessionOptionFlags: Readonly<Record<string, string>>;
-  /** `SessionOutputs` accessor method → the CLI `outputs` sub-verb that surfaces it. */
-  readonly outputsSubverbs: Readonly<Record<string, string>>;
+  /** `SessionFiles` accessor method → the CLI `files` sub-verb that surfaces it. */
+  readonly filesSubverbs: Readonly<Record<string, string>>;
 }
 
 export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
@@ -66,7 +66,7 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     message: "--prompt",
     messageIdempotencyKey: "--idempotency-key",
     // Programmatic-only / no scriptable analogue:
-    outputs: CLI_PARITY_NOT_SURFACED,
+    fileCapture: CLI_PARITY_NOT_SURFACED,
     includeBuiltinTools: CLI_PARITY_NOT_SURFACED,
     outputMode: CLI_PARITY_NOT_SURFACED,
     responseFormat: CLI_PARITY_NOT_SURFACED,
@@ -74,7 +74,7 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     deleteAfter: CLI_PARITY_NOT_SURFACED,
     stream: CLI_PARITY_NOT_SURFACED
   },
-  outputsSubverbs: {
+  filesSubverbs: {
     list: CLI_PARITY_BARE_LIST,
     read: "read",
     download: "download",

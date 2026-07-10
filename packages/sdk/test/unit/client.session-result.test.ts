@@ -71,8 +71,8 @@ function runClient(session: Record<string, unknown>): {
     if (url.endsWith("/api/sessions/session-1/events/ticket")) {
       return json({ wsUrl: "wss://events.example.test/sessions/session-1", ticket: "ticket", expiresAtMs: 1 });
     }
-    if (url.endsWith("/api/sessions/session-1/outputs")) {
-      return json({ outputs: [{ id: "o1", filename: "report.txt" }] });
+    if (url.endsWith("/api/sessions/session-1/files")) {
+      return json({ files: [{ id: "o1", filename: "report.txt" }] });
     }
     if (url.endsWith("/api/sessions/session-1/messages")) {
       return json({
@@ -147,7 +147,8 @@ describe("Aex.start -> unified settled SessionResult", () => {
     expect(result.costUsd).toBe(0.0123);
     expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
     expect(result.error).toBeUndefined();
-    expect(urls.some((url) => url.includes("/api/sessions"))).toBe(false);
+    expect(result.files).toEqual([{ id: "o1", filename: "report.txt" }]);
+    expect(urls).toContain("GET https://x/api/sessions/session-1/files");
   });
 
   it("derives usage from costTelemetry.providerUsage (retiring the session.usage path)", async () => {
@@ -194,7 +195,8 @@ describe("Aex.start -> unified settled SessionResult", () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
     expect(result.error).toBe("invalid provider api key");
-    expect(result.session.failureClass).toBe("provider-permanent");
+    expect(result.session).toBeDefined();
+    expect(result.session!.failureClass).toBe("provider-permanent");
   });
 
   it("waits for the settled record so cost/usage survive the park-event → settle race", async () => {
@@ -206,7 +208,7 @@ describe("Aex.start -> unified settled SessionResult", () => {
       if (url.endsWith("/api/sessions/session-1/events/ticket")) {
         return json({ wsUrl: "wss://events.example.test/sessions/session-1", ticket: "ticket", expiresAtMs: 1 });
       }
-      if (url.endsWith("/api/sessions/session-1/outputs")) return json({ outputs: [] });
+      if (url.endsWith("/api/sessions/session-1/files")) return json({ files: [] });
       if (url.endsWith("/api/sessions/session-1/messages")) {
         return json({
           session: { id: "session-1", status: "running", turnSeq: 1 },
@@ -266,7 +268,7 @@ describe("Aex.start -> unified settled SessionResult", () => {
       if (url.endsWith("/api/sessions/session-1/events/ticket")) {
         return json({ wsUrl: "wss://events.example.test/sessions/session-1", ticket: "ticket", expiresAtMs: 1 });
       }
-      if (url.endsWith("/api/sessions/session-1/outputs")) return json({ outputs: [] });
+      if (url.endsWith("/api/sessions/session-1/files")) return json({ files: [] });
       if (url.endsWith("/api/sessions/session-1/messages")) {
         return json({ session: { id: "session-1", status: "running", turnSeq: 1 }, turn: { sessionId: "session-1", turnSeq: 1 }, eventCursor: 1024 });
       }

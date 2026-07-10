@@ -1,7 +1,7 @@
 /**
  * SDK feature tour: one managed session that uses typed model/runtime constants,
  * inline AGENTS.md guidance, uploaded files, a custom tool bundle, selected
- * built-in tools, runtime env vars/secrets, streamed events, output reads, and
+ * built-in tools, runtime env vars/secrets, streamed events, file reads, and
  * a follow-up session turn.
  *
  * SessionRecord from the repository root after building the workspace package:
@@ -107,7 +107,7 @@ const runRules = await AgentsMd.fromContent(
     "# Feature tour rules",
     "- Use `/workspace/input/quarterly-metrics.csv` as the source table.",
     "- Call `metric_lookup` for atlas, beacon, and cinder before writing conclusions.",
-    "- Write final artifacts under `/workspace/outputs`.",
+    "- Write final artifacts under `/workspace/files`.",
     "- Never print runtime secret values or provider keys."
   ].join("\n"),
   { name: "feature-tour-rules" }
@@ -156,12 +156,12 @@ const session = await aex.openSession({
     networking: { mode: "open" },
     variables: {
       FEATURE_TOUR: "true",
-      REPORT_DIR: "/workspace/outputs"
+      REPORT_DIR: "/workspace/files"
     },
     ...(environmentSecrets ? { secrets: environmentSecrets } : {})
   },
-  outputs: {
-    allowedDirs: ["/workspace/outputs"],
+  fileCapture: {
+    allowedDirs: ["/workspace/files"],
     deniedDirs: ["*.tmp"],
     maxFiles: 10,
     maxFileBytes: 1_000_000
@@ -185,8 +185,8 @@ console.log(`session: ${session.id}`);
 const prompt = [
   "Analyze the attached quarterly metrics.",
   "Call metric_lookup for atlas, beacon, and cinder.",
-  "Create /workspace/outputs/feature-tour-report.md with a short table, a ranking by q2_revenue_usd, and two risks.",
-  "Create /workspace/outputs/summary.json with keys topProduct, totalQ2RevenueUsd, highestActivationProduct, and riskCount."
+  "Create /workspace/files/feature-tour-report.md with a short table, a ranking by q2_revenue_usd, and two risks.",
+  "Create /workspace/files/summary.json with keys topProduct, totalQ2RevenueUsd, highestActivationProduct, and riskCount."
 ].join(" ");
 
 const firstTurn = session.send(prompt);
@@ -230,24 +230,24 @@ console.log(`assistant messages: ${messages.length}`);
 const events = await session.events().list();
 console.log(`captured events: ${events.length}`);
 
-const outputs = await session.outputs().list();
-console.log("outputs:");
-for (const output of outputs) {
-  console.log(`- ${output.filename ?? output.id} (${output.contentType ?? "unknown"})`);
+const files = await session.files().list();
+console.log("files:");
+for (const file of files) {
+  console.log(`- ${file.filename ?? file.id} (${file.contentType ?? "unknown"})`);
 }
 
-const summary = await session.outputs().read(
+const summary = await session.files().read(
   { path: "summary.json", match: "suffix" },
   { maxBytes: 20_000 }
 );
 console.log("summary.json:");
 console.log(summary.text);
 
-const report = await session.outputs().findOne({
+const report = await session.files().findOne({
   filename: "feature-tour-report.md"
 });
 if (report) {
-  const reportPreview = await session.outputs().read(report, {
+  const reportPreview = await session.files().read(report, {
     maxBytes: 4_000,
     grep: "risk"
   });
@@ -255,8 +255,8 @@ if (report) {
   console.log(reportPreview.text || "(no risk lines found)");
 }
 
-const reopenedOutputs = await aex.sessions.outputs(session.id).list();
-console.log(`outputs via aex.sessions.outputs(...): ${reopenedOutputs.length}`);
+const reopenedFiles = await aex.sessions.files(session.id).list();
+console.log(`files via aex.sessions.files(...): ${reopenedFiles.length}`);
 
 if (downloadPath) {
   const bytes = await session.download({ to: downloadPath });

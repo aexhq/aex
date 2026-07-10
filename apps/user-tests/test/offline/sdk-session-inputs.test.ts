@@ -325,7 +325,7 @@ const session = await client.sessions.create({
   },
   metadata: { suite: "sdk-session-inputs", nested: { count: 2 } },
   runtime: Sizes.SHARED_2X_8GB,
-  outputs: {
+  fileCapture: {
     allowedDirs: ["/workspace/out", ""],
     deniedDirs: ["", "/workspace/out/tmp"],
     captureTimeoutMs: 120000,
@@ -376,7 +376,7 @@ deepStrictEqual(submission.environment, {
 });
 strictEqual(submission.includeBuiltinTools, false);
 strictEqual(submission.outputMode, "stream");
-deepStrictEqual(submission.outputs, {
+deepStrictEqual(submission.fileCapture, {
   allowedDirs: ["/workspace/out"],
   deniedDirs: ["/workspace/out/tmp"],
   captureTimeoutMs: 120000,
@@ -737,7 +737,7 @@ console.log(JSON.stringify({
     });
   });
 
-  it("covers provider/outputs extremes and empty-shape normalization", async () => {
+  it("covers provider/files extremes and empty-shape normalization", async () => {
     const script = CHILD_HARNESS + String.raw`
 const { Aex, Models, Sizes } = await importSdk();
 const { calls, fetch } = makeFetch();
@@ -750,7 +750,7 @@ const client = new Aex({
 await client.sessions.create({
   provider: "deepseek",
   model: "deepseek-v4-flash",
-  outputs: {
+  fileCapture: {
     allowedDirs: ["", "/workspace/one", "/workspace/two", ""],
     deniedDirs: ["", "/workspace/two/tmp"],
     captureTimeoutMs: 1,
@@ -759,11 +759,11 @@ await client.sessions.create({
     maxFiles: 100000
   },
   apiKeys: { deepseek: "sk-deepseek" },
-  idempotencyKey: "idem-extreme-outputs"
+  idempotencyKey: "idem-extreme-files"
 });
 let body = onlyCreateBody(calls);
 strictEqual(body.provider, "deepseek");
-deepStrictEqual(body.submission.outputs, {
+deepStrictEqual(body.submission.fileCapture, {
   allowedDirs: ["/workspace/one", "/workspace/two"],
   deniedDirs: ["/workspace/two/tmp"],
   captureTimeoutMs: 1,
@@ -800,12 +800,12 @@ strictEqual(body.submission.includeBuiltinTools, true);
 resetCalls(calls);
 await client.sessions.create({
   model: "claude-haiku-4-5",
-  outputs: { allowedDirs: [""], deniedDirs: [""] },
+  fileCapture: { allowedDirs: [""], deniedDirs: [""] },
   apiKeys: { anthropic: "sk-ant" },
   idempotencyKey: "idem-normalize-empty"
 });
 body = onlyCreateBody(calls);
-ok(!("outputs" in body.submission));
+ok(!("fileCapture" in body.submission));
 ok(!("postHook" in body));
 ok(!("limits" in body));
 

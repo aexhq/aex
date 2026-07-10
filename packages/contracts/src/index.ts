@@ -51,7 +51,7 @@ export type {
   PlatformInjectionConfig,
   PlatformMcpServerSecret,
   PlatformNetworking,
-  PlatformOutputCaptureConfig,
+  PlatformFileCaptureConfig,
   PlatformPackage,
   PlatformPackageEcosystem,
   PlatformPackageInput,

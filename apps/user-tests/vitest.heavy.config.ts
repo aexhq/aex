@@ -12,7 +12,7 @@ loadLocalEnv();
  *
  * Timeouts are larger than the default config: each cell drives a
  * multi-minute session (skills + MCP + files + multi-step prompt +
- * outputs) and the per-test `it(...)` timeouts inside the file are the
+ * files) and the per-test `it(...)` timeouts inside the file are the
  * real ceiling — these are the outer safety net.
  */
 export default defineConfig({

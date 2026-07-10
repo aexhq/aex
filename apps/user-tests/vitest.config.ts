@@ -43,7 +43,7 @@ export default defineConfig({
     minWorkers: 1,
     // Tests WITHIN a file run CONCURRENTLY. The shared install tempdir is
     // read-only after the `beforeAll` install, and every scenario writes a
-    // UNIQUELY-named runner script (e.g. `outputs-<cell>.mjs`,
+    // UNIQUELY-named runner script (e.g. `files-<cell>.mjs`,
     // `user-envvars-managed.mjs`, `comprehensive-managed-anthropic.mjs`) with a
     // unique idempotencyKey — so concurrent tests in one file never collide on
     // disk or session identity. `maxConcurrency: 1` serializes live cells inside a

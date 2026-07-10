@@ -171,8 +171,8 @@ function makeHarness() {
         ]
       });
     }
-    if (parsed.pathname === "/api/sessions/sess_user_1/outputs" && method === "GET") {
-      return json({ outputs: [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }] });
+    if (parsed.pathname === "/api/sessions/sess_user_1/files" && method === "GET") {
+      return json({ files: [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }] });
     }
     if (parsed.pathname === "/api/sessions/sess_user_1/suspend" && method === "POST") {
       sessionStatus = "suspended";
@@ -331,7 +331,7 @@ const session = await client.openSession({
     variables: { CHAT_MODE: "test" },
     secrets: { CHAT_SECRET: Secret.value("ephemeral-chat-secret") }
   },
-  outputs: { allowedDirs: ["/workspace/out"], deniedDirs: [""] },
+  fileCapture: { allowedDirs: ["/workspace/out"], deniedDirs: [""] },
   includeBuiltinTools: false,
   outputMode: "stream",
   metadata: { suite: "chat-session-user-inputs" },
@@ -366,7 +366,7 @@ strictEqual(submission.agentsMd.length, 1);
 strictEqual(submission.files.length, 1);
 strictEqual(submission.includeBuiltinTools, false);
 strictEqual(submission.outputMode, "stream");
-deepStrictEqual(submission.outputs, { allowedDirs: ["/workspace/out"] });
+deepStrictEqual(submission.fileCapture, { allowedDirs: ["/workspace/out"] });
 deepStrictEqual(submission.metadata, { suite: "chat-session-user-inputs" });
 deepStrictEqual(submission.environment, { envVars: { CHAT_MODE: "test" } });
 deepStrictEqual(submission.secretEnv, { CHAT_SECRET: { ephemeral: true } });
@@ -381,7 +381,7 @@ await session.resume({ idempotencyKey: "idem-resume" });
 await client.sessions.get(session.id);
 await client.sessions.list({ status: "idle", limit: 5 });
 await session.events().list();
-await session.outputs().list({ filename: "answer.txt" });
+await session.files().list({ filename: "answer.txt" });
 await session.delete({ idempotencyKey: "idem-delete" });
 
 strictEqual(onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/suspend").headers["idempotency-key"], "idem-suspend");
@@ -390,7 +390,7 @@ strictEqual(onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/resume").header
 strictEqual(onlyCall(h.calls, "DELETE", "/api/sessions/sess_user_1").headers["idempotency-key"], "idem-delete");
 ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions" && call.search.includes("status=idle")));
 ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/events"));
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/outputs"));
+ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/files"));
 
 console.log(JSON.stringify({ ok: true, createCalls: callsFor(h.calls, "POST", "/api/sessions").length }));
 `;
@@ -418,7 +418,7 @@ strictEqual(result.status, "succeeded");
 strictEqual(result.session.status, "idle");
 strictEqual(result.turn.turnSeq, 1);
 strictEqual(result.text, "hello from chat");
-deepStrictEqual(result.outputs, [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }]);
+deepStrictEqual(result.files, [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }]);
 deepStrictEqual(result.events.map((event) => event.type), ["TEXT_MESSAGE_CONTENT", "CUSTOM"]);
 strictEqual(h.sockets.length, 1);
 strictEqual(h.sockets[0].url, "wss://events.example.test/api/sessions/sess_user_1/subscribe?ticket=ticket-1&from=10");
@@ -428,7 +428,7 @@ strictEqual(message.headers["idempotency-key"], "idem-message");
 deepStrictEqual(message.body, { input: ["hello", "again"] });
 ok(h.calls.some((call) => call.method === "POST" && call.path === "/api/sessions/sess_user_1/events/ticket"));
 ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1"));
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/outputs"));
+ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/files"));
 
 console.log(JSON.stringify({ ok: true, events: result.events.length, sockets: h.sockets.length }));
 `;

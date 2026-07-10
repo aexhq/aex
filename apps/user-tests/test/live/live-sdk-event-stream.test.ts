@@ -90,7 +90,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         const result = await client.start({
           provider: "deepseek",
           model,
-          message: ${JSON.stringify(`Output verbatim: ${probe}`)},
+          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
           idempotencyKey: "user-test-event-stream-" + Date.now(),
           apiKeys: { deepseek: deepseekKey }
         }, { timeoutMs: 120 * 1000 });

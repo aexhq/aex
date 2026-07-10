@@ -77,7 +77,7 @@ describe("session custody manifest contract", () => {
           evidence: [{ source: "cleanup_step", status: "confirmed", count: 1 }]
         },
         {
-          class: "session_output",
+          class: "session_file",
           count: 2,
           exposures: [{ surface: "session_artifact_store", access: "stored", status: "retained" }],
           disposition: {
@@ -130,7 +130,7 @@ describe("session custody manifest contract", () => {
       ["signed URL", "https://object-storage.example.test/file?X-Amz-Signature=abc", "signed_url"],
       ["object-store key", "sessions/session-11111111/metadata/custody.json", "object_store_key"],
       ["vault id", "vault_secret_1234567890", "vault_id"],
-      ["resource handle", "session_1234567890", "private_resource_handle"],
+      ["resource handle", "machine_1234567890", "private_resource_handle"],
       ["forbidden field", { vaultId: "redacted" }, "forbidden_field_name"]
     ];
 
@@ -213,7 +213,7 @@ describe("session custody manifest contract", () => {
     const survivors: ReadonlyArray<readonly [string, unknown]> = [
       ["sha256 content hash", sha256],
       ["sha256 asset filename path", `/workspace/files/asset_${sha256}/source-video-subtitles-srt`],
-      ["manifest filename field", { files: [{ path: `outputs/${sha256}`, filename: sha256 }], outputs: [{ filename: sha256 }] }],
+      ["manifest filename field", { files: [{ path: `files/${sha256}`, filename: sha256 }], sessionFiles: [{ filename: sha256 }] }],
       ["canonical uuid", "9728bf4e-9711-4e6f-9152-15d6a9c70578"],
       ["normal https url", "https://www.reddit.com/r/television/comments/1rma2ro/ted_season_2_peacock_official_discussion_thread/"],
       ["web_fetch url argument", { data: { arguments: { url: "https://en.wikipedia.org/wiki/Norah_Jones?oldid=123456789" } } }],
@@ -251,14 +251,12 @@ describe("session custody manifest contract", () => {
 
     // Regression for the existing keyword/handle patterns: a MINTED handle (the
     // id segment carries a digit) is still flagged after the prose-veto fix.
-    const handle = scanCustodyPayloadForSensitiveValues("session_1234567890abcdef");
+    const handle = scanCustodyPayloadForSensitiveValues("machine_1234567890abcdef");
     expect(handle.map((f) => f.reason)).toContain("private_resource_handle");
 
     for (const h of [
-      "session_1234567890",
       "machine_1234567890",
-      "session_a1B2c3D4e5",
-      "file_9f8e7d6c5b4a",
+      "resource_a1B2c3D4e5",
       "agent_7f3a9b2c1d",
       "token_hash_9f8e7d6c5b4a3f2e",
       "bearer_hash_0011223344556677"

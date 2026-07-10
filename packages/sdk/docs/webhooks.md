@@ -39,7 +39,7 @@ idempotency key but a different callback URL never conflicts.
 
 One POST carrying the terminal `session.finished` event, sent at the
 settle-consistent barrier — when you receive it, the session record is already
-terminal and its outputs are complete and readable. The body is built once at
+terminal and its files are complete and readable. The body is built once at
 settle, frozen, and re-sent byte-identical on every retry or manual redelivery:
 
 ```json

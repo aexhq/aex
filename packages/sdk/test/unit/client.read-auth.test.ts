@@ -1,5 +1,5 @@
 /**
- * H-1 coherence: the session read + output-download surface on the hosted API
+ * H-1 coherence: the session read + file-download surface on the hosted API
  * plane is workspace-token gated. Our own clients must keep working against
  * it, which means EVERY read path has to send `Authorization: Bearer <apiKey>`.
  *
@@ -81,23 +81,23 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("listOutputs sends Authorization: Bearer", async () => {
-    const { client, calls } = recordingClient({ outputs: [] });
+  it("listFiles sends Authorization: Bearer", async () => {
+    const { client, calls } = recordingClient({ files: [] });
     const session = await openHandle(client, calls);
-    await session.outputs().list();
-    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs`);
+    await session.files().list();
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/files`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("outputLink by id sends Authorization: Bearer (POST /link)", async () => {
-    const { client, calls } = recordingClient({ url: `${BASE}/api/sessions/${SID}/outputs/abc/download` });
+  it("sessionFileLink by id sends Authorization: Bearer (POST /link)", async () => {
+    const { client, calls } = recordingClient({ url: `${BASE}/api/sessions/${SID}/files/abc/download` });
     const session = await openHandle(client, calls);
-    await session.outputs().link("abc");
-    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs/abc/link`);
+    await session.files().link("abc");
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/files/abc/link`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("outputLink resolves queries with Authorization: Bearer and sends the TTL body", async () => {
+  it("sessionFileLink resolves queries with Authorization: Bearer and sends the TTL body", async () => {
     const calls: RecordedCall[] = [];
     const stub: typeof fetch = async (input, init) => {
       const url =
@@ -115,8 +115,8 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/sessions/${SID}/outputs`)) {
-        return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
+      if (url.endsWith(`/api/sessions/${SID}/files`)) {
+        return new Response(JSON.stringify({ files: [{ id: "abc", filename: "reports/result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -130,22 +130,22 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const session = await client.openSession(SID);
     calls.length = 0;
 
-    const link = await session.outputs().link({ filename: "result.txt" }, { expiresIn: "15m" });
+    const link = await session.files().link({ filename: "result.txt" }, { expiresIn: "15m" });
 
     expect(link).toMatchObject({
       url: "https://objects.example/result.txt",
       expiresInSeconds: 900,
-      output: { id: "abc", filename: "reports/result.txt" }
+      file: { id: "abc", filename: "reports/result.txt" }
     });
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/sessions/${SID}/outputs`,
-      `${BASE}/api/sessions/${SID}/outputs/abc/link`
+      `${BASE}/api/sessions/${SID}/files`,
+      `${BASE}/api/sessions/${SID}/files/abc/link`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
     expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 900 });
   });
 
-  it("fetchOutput fetches the temporary direct URL without the SDK Authorization header", async () => {
+  it("fetchSessionFile fetches the temporary direct URL without the SDK Authorization header", async () => {
     const calls: RecordedCall[] = [];
     const directUrl = "https://objects.example/result.txt?X-Amz-Signature=abc";
     const stub: typeof fetch = async (input, init) => {
@@ -160,13 +160,13 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/sessions/${SID}/outputs`)) {
-        return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "result.txt" }] }), {
+      if (url.endsWith(`/api/sessions/${SID}/files`)) {
+        return new Response(JSON.stringify({ files: [{ id: "abc", filename: "result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/sessions/${SID}/outputs/abc/link`)) {
+      if (url.endsWith(`/api/sessions/${SID}/files/abc/link`)) {
         return new Response(JSON.stringify({ url: directUrl }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -178,12 +178,12 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const session = await client.openSession(SID);
     calls.length = 0;
 
-    const response = await session.outputs().fetch({ filename: "result.txt" });
+    const response = await session.files().fetch({ filename: "result.txt" });
 
     expect(await response.text()).toBe("direct-bytes");
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/sessions/${SID}/outputs`,
-      `${BASE}/api/sessions/${SID}/outputs/abc/link`,
+      `${BASE}/api/sessions/${SID}/files`,
+      `${BASE}/api/sessions/${SID}/files/abc/link`,
       directUrl
     ]);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
@@ -199,16 +199,16 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("downloadOutput by id sends Authorization: Bearer to the gated download route", async () => {
+  it("downloadSessionFile by id sends Authorization: Bearer to the gated download route", async () => {
     const { client, calls } = recordingClient("hello", "text/plain");
     const session = await openHandle(client, calls);
-    const bytes = await session.outputs().download({ id: "abc" });
+    const bytes = await session.files().download({ id: "abc" });
     expect(new TextDecoder().decode(bytes)).toBe("hello");
-    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs/abc/download`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/files/abc/download`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("downloadOutput by path sends Authorization: Bearer on list and download", async () => {
+  it("downloadSessionFile by path sends Authorization: Bearer on list and download", async () => {
     const calls: RecordedCall[] = [];
     const stub: typeof fetch = async (input, init) => {
       const url =
@@ -222,8 +222,8 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith(`/api/sessions/${SID}/outputs`)) {
-        return new Response(JSON.stringify({ outputs: [{ id: "abc", filename: "reports/result.txt" }] }), {
+      if (url.endsWith(`/api/sessions/${SID}/files`)) {
+        return new Response(JSON.stringify({ files: [{ id: "abc", filename: "reports/result.txt" }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -234,37 +234,37 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
     const session = await client.openSession(SID);
     calls.length = 0;
 
-    const bytes = await session.outputs().download({ path: "result.txt", match: "suffix" });
+    const bytes = await session.files().download({ path: "result.txt", match: "suffix" });
 
     expect(new TextDecoder().decode(bytes)).toBe("hello");
     expect(calls.map((c) => c.url)).toEqual([
-      `${BASE}/api/sessions/${SID}/outputs`,
-      `${BASE}/api/sessions/${SID}/outputs/abc/download`
+      `${BASE}/api/sessions/${SID}/files`,
+      `${BASE}/api/sessions/${SID}/files/abc/download`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
 
-  it("downloadOutput without a selector downloads the outputs zip with Authorization: Bearer", async () => {
-    const { client, calls } = recordingClient({ outputs: [] });
+  it("downloadSessionFile without a selector downloads the files zip with Authorization: Bearer", async () => {
+    const { client, calls } = recordingClient({ files: [] });
     const session = await openHandle(client, calls);
-    const bytes = await session.outputs().download();
+    const bytes = await session.files().download();
     expect(bytes.byteLength).toBeGreaterThan(0);
-    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/outputs`);
+    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/files`);
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
   it("download assembles the session zip and every read carries Authorization: Bearer", async () => {
     // `download` is the SDK's whole-run verb: it fans out to getSessionRecord +
-    // listSessionRecordEvents + listOutputs (and per-output /download) and zips the result
+    // listSessionRecordEvents + listSessionFiles (and per-file /download) and zips the result
     // client-side. EVERY one of those reads must carry the token because the
     // public read/download surface is gated.
-    const { client, calls } = recordingClient({ events: [], outputs: [] });
+    const { client, calls } = recordingClient({ events: [], files: [] });
     const session = await openHandle(client, calls);
     await session.download();
     expect(calls.map((c) => c.url)).toEqual([
       `${BASE}/api/sessions/${SID}`,
       `${BASE}/api/sessions/${SID}/events`,
-      `${BASE}/api/sessions/${SID}/outputs`
+      `${BASE}/api/sessions/${SID}/files`
     ]);
     expect(calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });

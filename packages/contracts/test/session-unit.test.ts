@@ -11,7 +11,7 @@ describe("normalizeSessionUnit (F25 — lean managed record → type-valid Sessi
       createdAt: "2026-07-02T00:00:00.000Z",
       updatedAt: "2026-07-02T00:01:00.000Z",
       terminalAt: "2026-07-02T00:01:00.000Z"
-      // NO submission / attempts / events / outputs — the managed lean shape.
+      // NO submission / attempts / events / files — the managed lean shape.
     };
     const unit = normalizeSessionUnit(lean);
     expect(unit.id).toBe("ses_abc");
@@ -19,13 +19,13 @@ describe("normalizeSessionUnit (F25 — lean managed record → type-valid Sessi
     // The type promises arrays + an event page — must be present at runtime.
     expect(Array.isArray(unit.attempts)).toBe(true);
     expect(unit.attempts).toEqual([]);
-    expect(Array.isArray(unit.outputs)).toBe(true);
-    expect(unit.outputs.map((o) => o.fileName)).toEqual([]);
+    expect(Array.isArray(unit.sessionFiles)).toBe(true);
+    expect(unit.sessionFiles.map((file) => file.fileName)).toEqual([]);
     expect(unit.events.totalCount).toBe(0);
     expect(unit.events.entries).toEqual([]);
     expect(unit.events.truncated).toBe(false);
     expect(unit.rawEventPages).toEqual([]);
-    expect(unit.outputCaptureFailures).toEqual([]);
+    expect(unit.fileCaptureFailures).toEqual([]);
     expect(unit.attemptCount).toBe(0);
     expect(unit.cleanupStatus).toBe("not_started");
     // submission is always present (fallback for a missing snapshot).
@@ -43,7 +43,7 @@ describe("normalizeSessionUnit (F25 — lean managed record → type-valid Sessi
       attemptCount: 2,
       attempts: [{ id: "a1", attemptNumber: 1, status: "ok", createdAt: "2026-07-02T00:00:00.000Z" }],
       events: { entries: [{ id: "e1", type: "TURN_STARTED", processedAt: "2026-07-02T00:00:00.000Z" }], totalCount: 5, truncated: true, nextCursor: "c1" },
-      outputs: [{ id: "o1", fileName: "out.txt", byteSize: 3 }],
+      sessionFiles: [{ id: "o1", fileName: "out.txt", byteSize: 3 }],
       costTelemetry: { schemaVersion: 1, billedCostUsd: 0.01 }
     };
     const unit = normalizeSessionUnit(full);
@@ -52,7 +52,7 @@ describe("normalizeSessionUnit (F25 — lean managed record → type-valid Sessi
     expect(unit.events.totalCount).toBe(5);
     expect(unit.events.truncated).toBe(true);
     expect(unit.events.nextCursor).toBe("c1");
-    expect(unit.outputs[0]?.fileName).toBe("out.txt");
+    expect(unit.sessionFiles[0]?.fileName).toBe("out.txt");
     expect(unit.cleanupStatus).toBe("succeeded");
     expect(unit.costTelemetry).toBeDefined();
   });
@@ -97,7 +97,7 @@ describe("parseSessionUnitSubmission", () => {
           packages: [{ name: "node", version: "22" }]
         },
         metadata: { team: "platform" },
-        outputs: {
+        fileCapture: {
           allowedDirs: ["/workspace/out"],
           deniedDirs: ["node_modules"],
           captureTimeoutMs: 60000,
@@ -120,12 +120,12 @@ describe("parseSessionUnitSubmission", () => {
     expect(parsed.submission.environment?.networking?.mode).toBe("limited");
     expect(parsed.submission.environment?.packages?.[0]?.name).toBe("node");
     expect(parsed.submission.metadata).toEqual({ team: "platform" });
-    expect(parsed.submission.outputs?.allowedDirs).toEqual(["/workspace/out"]);
-    expect(parsed.submission.outputs?.deniedDirs).toEqual(["node_modules"]);
-    expect(parsed.submission.outputs?.captureTimeoutMs).toBe(60000);
-    expect(parsed.submission.outputs?.maxFileBytes).toBe(1234);
-    expect(parsed.submission.outputs?.maxTotalBytes).toBe(5678);
-    expect(parsed.submission.outputs?.maxFiles).toBe(9);
+    expect(parsed.submission.fileCapture?.allowedDirs).toEqual(["/workspace/out"]);
+    expect(parsed.submission.fileCapture?.deniedDirs).toEqual(["node_modules"]);
+    expect(parsed.submission.fileCapture?.captureTimeoutMs).toBe(60000);
+    expect(parsed.submission.fileCapture?.maxFileBytes).toBe(1234);
+    expect(parsed.submission.fileCapture?.maxTotalBytes).toBe(5678);
+    expect(parsed.submission.fileCapture?.maxFiles).toBe(9);
     expect("cleanup" in parsed).toBe(false);
   });
 

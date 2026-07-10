@@ -1,12 +1,12 @@
 /**
  * The single source of truth for the CLI's verb surface: every subcommand, the
- * `start` flags, and the `outputs` sub-verbs. Two consumers read it:
+ * `start` flags, and the `files` sub-verbs. Two consumers read it:
  *
  *   1. Per-verb `--help` (`aex <verb> --help`) renders a static usage table
  *      from here BEFORE any auth-requiring handler sessions, so discovering a
  *      verb's flags never needs an API key.
  *   2. The conformance CLI↔SDK parity manifest test asserts every SDK public
- *      capability (Aex method / session option / outputs accessor) maps to a verb
+ *      capability (Aex method / session option / files accessor) maps to a verb
  *      or flag REGISTERED here — turning "mirrors the SDK" from a comment into
  *      a CI-enforced invariant.
  *
@@ -14,7 +14,7 @@
  */
 
 export interface CliVerbSpec {
-  /** The subcommand token, e.g. `start`, `outputs`, `delete-asset`. */
+  /** The subcommand token, e.g. `start`, `files`, `delete-asset`. */
   readonly name: string;
   /** One-line description shown in per-verb help. */
   readonly summary: string;
@@ -25,7 +25,7 @@ export interface CliVerbSpec {
    * per-verb help flag list AND the parity manifest's session-option coverage.
    */
   readonly flags?: readonly string[];
-  /** Sub-verbs (e.g. `outputs read|download|link|find|search`). */
+  /** Sub-verbs (e.g. `files read|download|link|find|search`). */
   readonly subverbs?: readonly string[];
 }
 
@@ -58,8 +58,8 @@ export const START_FLAGS: readonly string[] = [
   "--timeout"
 ];
 
-/** The `aex outputs` sub-verbs (`aex outputs <id>` bare = list). */
-export const OUTPUTS_SUBVERBS: readonly string[] = ["read", "download", "link", "find", "search"];
+/** The `aex files` sub-verbs (`aex files <id>` bare = list). */
+export const FILES_SUBVERBS: readonly string[] = ["read", "download", "link", "find", "search"];
 
 export const CLI_VERBS: readonly CliVerbSpec[] = [
   {
@@ -116,23 +116,23 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     flags: ["--filter", "--logs", "--timeout"]
   },
   {
-    name: "outputs",
-    summary: "List a session's captured outputs, or read/download/link/find/search one file.",
+    name: "files",
+    summary: "List a session's captured files, or read/download/link/find/search one file.",
     usage: [
-      "aex outputs <session-id>                         List captured outputs (NDJSON)",
-      "aex outputs read <session-id> <path>             Read one file as capped text",
-      "aex outputs download <session-id> <path> [--out] Download one file's raw bytes",
-      "aex outputs link <session-id> <path>             Mint a temporary download URL",
-      "aex outputs find <session-id> [--name S] [--ext E] [--type T]",
-      "aex outputs search [--query S] [--name S] [--ext E] [--session-id ID]   Cross-session"
+      "aex files <session-id>                         List captured files (NDJSON)",
+      "aex files read <session-id> <path>             Read one file as capped text",
+      "aex files download <session-id> <path> [--out] Download one file's raw bytes",
+      "aex files link <session-id> <path>             Mint a temporary download URL",
+      "aex files find <session-id> [--name S] [--ext E] [--type T]",
+      "aex files search [--query S] [--name S] [--ext E] [--session-id ID]   Cross-session"
     ],
     flags: ["--out", "--name", "--ext", "--type", "--content-type", "--query", "--session-id", "--limit", "--max-bytes"],
-    subverbs: OUTPUTS_SUBVERBS
+    subverbs: FILES_SUBVERBS
   },
   {
     name: "download",
     summary: "Download a session's content as a zip (whole or one namespace).",
-    usage: ["aex download <session-id> [--only outputs|events|metadata] [--out path]"],
+    usage: ["aex download <session-id> [--only files|events|metadata] [--out path]"],
     flags: ["--only", "--out"]
   },
   {

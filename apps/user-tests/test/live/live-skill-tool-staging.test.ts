@@ -12,7 +12,7 @@
  *     (appending `\n[skill SKILL.md truncated at 400000 bytes]` when it cut),
  *   - sessions it through the shape-based secret redactor before returning it.
  *
- * Four independent live sessions, each asserting only via OBSERVABLE session output
+ * Four independent live sessions, each asserting only via OBSERVABLE session evidence
  * (assistant text + the event stream, including TOOL_CALL_RESULT `data.content`
  * — the verbatim tool result). All assertions key off PLANTED DETERMINISTIC
  * TOKENS (never free-form model phrasing), so they survive LLM nondeterminism.
@@ -74,7 +74,7 @@ interface ScriptConfig {
    * checks. Evaluated inside the child sessionner, where these vars are in scope:
    *   assistantTextJoined / assistantTextNorm  — joined TEXT_MESSAGE_CONTENT
    *   toolResultsJoined    / toolResultsNorm   — JSON of every TOOL_CALL_RESULT
-   *   haystack             / haystackNorm      — JSON of all events + outputs
+   *   haystack             / haystackNorm      — JSON of all events + files
    * (`*Norm` variants are whitespace-stripped so streamed token boundaries and
    * model-inserted spaces never break a substring match on a planted token.)
    */
@@ -168,18 +168,18 @@ function buildScript(cfg: ScriptConfig): string {
     }, { timeoutMs: 8 * 60_000 });
 
     const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    const fallbackOutputs = Array.isArray(sessionResult.outputs) ? sessionResult.outputs : [];
+    const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
     let events = fallbackEvents;
-    let outputs = fallbackOutputs;
+    let files = fallbackFiles;
     try {
       const session = await client.sessions.open(sessionResult.sessionId);
       const listedEvents = await session.events().list();
       if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedOutputs = await session.outputs().list();
-      if (Array.isArray(listedOutputs)) outputs = listedOutputs;
+      const listedFiles = await session.files().list();
+      if (Array.isArray(listedFiles)) files = listedFiles;
     } catch {
       events = fallbackEvents;
-      outputs = fallbackOutputs;
+      files = fallbackFiles;
     }
 
     // CUSTOM envelopes nest the original payload under data.value, keyed by data.name.
@@ -231,8 +231,8 @@ function buildScript(cfg: ScriptConfig): string {
     const toolResultsNorm = toolResultsJoined.replace(/\\s+/g, "");
 
     const eventsJson = JSON.stringify(events);
-    const outputsJson = JSON.stringify(outputs);
-    const haystack = eventsJson + " " + outputsJson;
+    const filesJson = JSON.stringify(files);
+    const haystack = eventsJson + " " + filesJson;
     const haystackNorm = haystack.replace(/\\s+/g, "");
 
     const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);

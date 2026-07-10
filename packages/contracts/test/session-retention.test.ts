@@ -180,7 +180,7 @@ describe("session retention and deletion contract", () => {
           countedAt: "2026-06-02T09:59:59.000Z"
         },
         {
-          class: "outputs",
+          class: "files",
           count: 2,
           status: "counted"
         },
@@ -225,7 +225,7 @@ describe("session retention and deletion contract", () => {
   it("rejects paths, object keys, filenames, sizes, hashes, provider ids, Vault ids, handles, and signed URLs", () => {
     const cases: readonly [string, unknown, string][] = [
       ["path field", { path: "redacted" }, "forbidden_field_name"],
-      ["object key", "sessions/session-11111111/outputs/result.txt", "object_store_key"],
+      ["object key", "sessions/session-11111111/files/result.txt", "object_store_key"],
       ["filename field", { filename: "result.txt" }, "forbidden_field_name"],
       ["size field", { size: 10 }, "forbidden_field_name"],
       ["hash field", { hash: "sha256:abcdef1234567890" }, "forbidden_field_name"],
@@ -247,7 +247,7 @@ describe("session retention and deletion contract", () => {
         mode: "final",
         session: terminalSession,
         request: { reason: "manual_delete", actorClass: "user" },
-        counts: [{ class: "outputs", count: 1, status: "failed", errorClass: "sessions/session-11111111/output.txt" }]
+        counts: [{ class: "files", count: 1, status: "failed", errorClass: "sessions/session-11111111/file.txt" }]
       })
     ).toThrow(SessionRetentionRedactionError);
   });

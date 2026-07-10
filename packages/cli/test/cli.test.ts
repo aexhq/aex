@@ -105,7 +105,7 @@ describe("aex start provider inference (SDK parity)", () => {
     // with "--anthropic-api-key is required". Live-observed on dev.
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--model", "deepseek-v4-flash",
         "--prompt", "hi",
         "--deepseek-api-key", "dsk-test",
@@ -126,7 +126,7 @@ describe("aex start provider inference (SDK parity)", () => {
   it("still requires the matching key for an explicitly selected provider", async () => {
     const cap = makeIo({
       argv: [
-        "run",
+        "start",
         "--provider", "deepseek",
         "--model", "deepseek-v4-flash",
         "--prompt", "hi",

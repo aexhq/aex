@@ -45,7 +45,7 @@ aex start \
   --api-key "$AEX_API_KEY" \
   --anthropic-api-key "$ANTHROPIC_API_KEY" \
   --model claude-haiku-4-5 \
-  --prompt "Write a short report and save it as outputs/report.md" \
+  --prompt "Write a short report and save it as files/report.md" \
   --follow
 ```
 

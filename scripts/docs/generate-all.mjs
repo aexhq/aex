@@ -32,7 +32,7 @@ const guideSources = [
   ["skills.md", "skills"],
   ["vision-skills.md", "vision-skills"],
   ["mcp.md", "mcp"],
-  ["outputs.md", "outputs"],
+  ["files.md", "files"],
   ["events.md", "events"],
   ["webhooks.md", "webhooks"],
   ["billing.md", "billing"],

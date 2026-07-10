@@ -398,7 +398,7 @@ export function customName(e: AexEvent): string | null {
  * The `data.name` of the settle-consistency barrier event. The coordinator
  * broadcasts ONE such CUSTOM event as a session's LAST stream event, after the
  * Postgres mirror lands — so observing it ⇒ a subsequent `getSessionRecord` is terminal
- * and `listOutputs` is complete. It is intentionally a CUSTOM event (not a
+ * and `listSessionFiles` is complete. It is intentionally a CUSTOM event (not a
  * typed SESSION_* event): off-the-shelf AG-UI clients ignore it, while
  * `streamEnvelopes(sessionId, { settleConsistent: true })` ends the iterator on it.
  * Unlike TURN_FINISHED (the AG-UI render-complete UX signal, emitted by the

@@ -11,7 +11,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 
 function extractCorruptedSkillRunnerScript(): string {
   const source = readFileSync(
-    resolve(repoRoot, "apps/user-tests/test/live/live-sdk-outputs-and-failures.test.ts"),
+    resolve(repoRoot, "apps/user-tests/test/live/live-sdk-files-and-failures.test.ts"),
     "utf8"
   ).replace(/\r\n/g, "\n");
   const functionStart = source.indexOf("function buildCorruptedSkillScript");

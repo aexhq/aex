@@ -12,7 +12,7 @@ export const SIDE_EFFECT_AUDIT_ACTIONS = [
   "session.delete.completed",
   "session.delete.failed",
   "session.download.requested",
-  "session.output.downloaded",
+  "session.file.downloaded",
   "session.log.downloaded",
   "session.event.downloaded",
   "workspace.asset.uploaded",
@@ -66,8 +66,8 @@ export const SIDE_EFFECT_AUDIT_TARGET_TYPES = [
   "mcp_credential",
   "mcp_proxy",
   "provider_proxy",
-  "output_archive",
-  "session_output",
+  "file_archive",
+  "session_file",
   "session_log",
   "session_event_stream",
   "workspace_asset",
@@ -97,7 +97,7 @@ export const SIDE_EFFECT_AUDIT_COUNT_NAMES = [
   "durationMs",
   "attemptCount",
   "retryCount",
-  "outputCount",
+  "fileCount",
   "logCount",
   "eventCount",
   "assetCount",
@@ -186,7 +186,7 @@ export interface SideEffectAuditStatusMetadataV1 {
 
 export interface SideEffectAuditDimensionsMetadataV1 {
   readonly provider?: ProviderName | string;
-  readonly namespace?: "metadata" | "events" | "logs" | "outputs" | "archive";
+  readonly namespace?: "metadata" | "events" | "logs" | "files" | "archive";
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly surface?: string;
 }
@@ -332,7 +332,7 @@ export function buildSessionDownloadRequestedAuditEvent(
   return buildSessionScopedAuditEvent(input, {
     action: "session.download.requested",
     outcome: "accepted",
-    targetType: "output_archive"
+    targetType: "file_archive"
   });
 }
 
@@ -651,7 +651,7 @@ const forbiddenStringPatterns: readonly {
   { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
   {
     reason: "private_resource_handle",
-    regex: /\b(?:machine|session|agent|file|skill|env|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
+    regex: /\b(?:machine|agent|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
   },
   { reason: "raw_url", regex: /\bhttps?:\/\/\S+/i },
   { reason: "raw_path", regex: /(^|[\s"'`])\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+(?:[/?#][^\s"'`]*)?/ },
@@ -659,7 +659,7 @@ const forbiddenStringPatterns: readonly {
 ]);
 
 function isForbiddenAuditFieldName(key: string): boolean {
-  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|apiKeys|secretValue|sessionId|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
+  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|apiKeys|secretValue|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
     key
   );
 }

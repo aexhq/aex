@@ -11,7 +11,7 @@ Email [support@aex.dev](mailto:support@aex.dev) with the SDK version, command or
 
 ## Status
 
-For session-specific issues, check the dashboard run detail page first: events, outputs, and terminal status usually identify the failure class. If the dashboard is unavailable, include the affected plane and timestamp in your support request.
+For session-specific issues, check the dashboard run detail page first: events, files, and terminal status usually identify the failure class. If the dashboard is unavailable, include the affected plane and timestamp in your support request.
 
 ## Access
 

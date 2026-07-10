@@ -1,10 +1,10 @@
 /**
- * aex outputs sync — IN-CONTAINER ONLY internal subcommand.
+ * aex files sync — IN-CONTAINER ONLY internal subcommand.
  *
  * This is NOT a user-facing verb. It is a legacy/internal directory walker:
  * callers pass explicit absolute directories, and the command emits a
- * structured JSON line per file to stdout. Managed sessions now capture output by
- * filesystem baseline/delta; there is no default output directory and no
+ * structured JSON line per file to stdout. Managed sessions now capture files from
+ * checkpointed workspace state; there is no default file directory and no
  * synthetic terminal agent turn.
  *
  * The subcommand:
@@ -22,21 +22,21 @@
 import { AEX_INDEX_PATH, type CliIO } from "./internal.js";
 import { RUNTIME_ERR, SUCCESS, USAGE_ERR, type CliExitCode } from "./host/common.js";
 
-export async function executeOutputsSyncCmd(io: CliIO, dirs: readonly string[]): Promise<CliExitCode> {
+export async function executeFilesSyncCmd(io: CliIO, dirs: readonly string[]): Promise<CliExitCode> {
   if (dirs.length === 0) {
-    io.stderr("usage: aex outputs sync <dir> [<dir> ...]\n");
+    io.stderr("usage: aex files sync <dir> [<dir> ...]\n");
     return USAGE_ERR;
   }
   try {
     await io.readFile(AEX_INDEX_PATH);
   } catch {
     io.stderr(
-      "`aex outputs sync` is an in-container internal command and cannot run on the host.\n"
+      "`aex files sync` is an in-container internal command and cannot run on the host.\n"
     );
     return USAGE_ERR;
   }
   if (!io.walkDirectory) {
-    io.stderr("aex outputs sync: walkDirectory IO is not available\n");
+    io.stderr("aex files sync: walkDirectory IO is not available\n");
     return RUNTIME_ERR;
   }
 
@@ -45,7 +45,7 @@ export async function executeOutputsSyncCmd(io: CliIO, dirs: readonly string[]):
   for (const dir of dirs) {
     if (!dir.startsWith("/")) {
       io.stderr(
-        JSON.stringify({ dir, error: "non_absolute_path", message: "skipping non-absolute output dir" }) + "\n"
+        JSON.stringify({ dir, error: "non_absolute_path", message: "skipping non-absolute file dir" }) + "\n"
       );
       missing++;
       continue;

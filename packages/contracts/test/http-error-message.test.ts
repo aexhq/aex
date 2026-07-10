@@ -24,7 +24,7 @@ function clientReturning(body: unknown, status: number, headers: Record<string, 
 describe("AexApiError message extraction", () => {
   it("session_busy carries the session's current status", async () => {
     const client = clientReturning(
-      { error: "session_busy", sessionId: "ses_x", sessionId: "ses_x", status: "deleted", turnSeq: 0 },
+      { error: "session_busy", sessionId: "ses_x", status: "deleted", turnSeq: 0 },
       409
     );
     const err = await client.request("/api/sessions/ses_x/messages", { method: "POST" }).then(

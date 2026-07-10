@@ -13,15 +13,15 @@ describe("SessionRecordV1 manifest helpers", () => {
     const manifest = buildSessionRecordDownloadManifestV1({
       sessionId: "session-1",
       typedEventCount: 2,
-      outputs: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }],
-      errors: [{ namespace: "outputs", id: "missing", filename: "missing.txt", message: "not found" }]
+      sessionFiles: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }],
+      errors: [{ namespace: "files", id: "missing", filename: "missing.txt", message: "not found" }]
     });
 
     expect(manifest.schemaVersion).toBe(SESSION_RECORD_MANIFEST_SCHEMA_VERSION);
     expect(manifest.sessionRecordSchemaVersion).toBe(SESSION_RECORD_SCHEMA_VERSION);
-    expect(manifest.namespaces.map((entry) => entry.name)).toEqual(["metadata", "events", "outputs"]);
-    expect(manifest.outputs.map((entry) => entry.id)).toEqual(["o1"]);
-    expect(manifest.errors[0]).toMatchObject({ namespace: "outputs", id: "missing" });
+    expect(manifest.namespaces.map((entry) => entry.name)).toEqual(["metadata", "events", "files"]);
+    expect(manifest.sessionFiles.map((entry) => entry.id)).toEqual(["o1"]);
+    expect(manifest.errors[0]).toMatchObject({ namespace: "files", id: "missing" });
 
     expect(manifest.files).toEqual(
       expect.arrayContaining([
@@ -30,7 +30,7 @@ describe("SessionRecordV1 manifest helpers", () => {
         expect.objectContaining({ path: "metadata/cost.json", role: "cost", status: "pending" }),
         expect.objectContaining({ path: "metadata/custody.json", role: "custody", status: "pending" }),
         expect.objectContaining({ path: "events/events.jsonl", role: "typed_events", status: "present", recordCount: 2 }),
-        expect.objectContaining({ path: "outputs/report.txt", role: "output", status: "present", id: "o1" })
+        expect.objectContaining({ path: "files/report.txt", role: "file", status: "present", id: "o1" })
       ])
     );
   });
@@ -39,7 +39,7 @@ describe("SessionRecordV1 manifest helpers", () => {
     const manifest = buildSessionRecordDownloadManifestV1({
       sessionId: "session-2",
       typedEventCount: 1,
-      outputs: [],
+      sessionFiles: [],
       submission: { status: "present" },
       cost: { status: "present" }
     });
@@ -58,15 +58,15 @@ describe("scanSessionRecordArchiveEntriesV1 — public-safety guard (download ov
   const SHA256 = "abf1471e1a247d1839f66d723e15b46456ea30926d36a7a37a2e12bdb4787deb";
   const enc = (s: string) => new TextEncoder().encode(s);
 
-  it("PASSES a successful session's archive with a sha256-named output and web-search result events", () => {
+  it("PASSES a successful session's archive with a sha256-named file and web-search result events", () => {
     // Mirrors the broll Stage-1 download() that used to throw 14
-    // SessionRecordArchiveRedactionError findings: an output captured under its
+    // SessionRecordArchiveRedactionError findings: a session file captured under its
     // sha256 name, plus events.jsonl carrying web_search/web_fetch RESULT text
     // and a normal fetched URL (all legitimately high-entropy, none secret).
     const manifest = buildSessionRecordDownloadManifestV1({
       sessionId: "9728bf4e-9711-4e6f-9152-15d6a9c70578",
       typedEventCount: 2,
-      outputs: [
+      sessionFiles: [
         { id: "out_report0001", filename: "report.txt", sizeBytes: 10, contentType: "text/plain" },
         { id: "out_hashed9999", filename: SHA256, sizeBytes: 22508, contentType: "application/octet-stream" }
       ]
