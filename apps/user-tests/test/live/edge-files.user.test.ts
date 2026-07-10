@@ -85,6 +85,14 @@ const CHILD_PRELUDE = `
       return "[non-url]";
     }
   };
+  const redactTextForDebug = (text) => String(text).replace(/https?:\\/\\/[^\\s<>"'\`]+/g, (raw) => {
+    try {
+      const u = new URL(raw);
+      return u.origin + u.pathname + (u.search ? "?[redacted]" : "");
+    } catch {
+      return "[redacted-url]";
+    }
+  });
   const tracedFetch = async (input, init) => {
     const started = Date.now();
     const method = (init && init.method) || (input && typeof input.method === "string" ? input.method : "GET");
@@ -96,7 +104,7 @@ const CHILD_PRELUDE = `
       return res;
     } catch (error) {
       const name = error && error.constructor ? error.constructor.name : "Error";
-      const message = error && error.message ? String(error.message).slice(0, 180) : String(error);
+      const message = redactTextForDebug(error && error.message ? String(error.message).slice(0, 180) : String(error));
       pushHttpDebug("[fetch] " + method + " " + url + " !! " + name + ": " + message + " " + (Date.now() - started) + "ms");
       throw error;
     }
@@ -115,7 +123,7 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const PROBE_TIMEOUT_MS = 45000;
   const errorStringField = (error, key) => {
     const value = error && error[key];
-    return typeof value === "string" ? value : null;
+    return typeof value === "string" ? redactTextForDebug(value) : null;
   };
   const errorNumberField = (error, key) => {
     const value = error && error[key];
@@ -143,7 +151,7 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
         ok: false,
         error: {
           name: e && e.constructor ? e.constructor.name : "Error",
-          message: e && e.message ? String(e.message) : String(e),
+          message: redactTextForDebug(e && e.message ? String(e.message) : String(e)),
           status: e && typeof e.status === "number" ? e.status : null,
           code: e && typeof e.code === "string" ? e.code : null,
           causeCode: errorCauseCode(e),
@@ -170,6 +178,34 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
     if (error.code === "NETWORK_ERROR") return true;
     return transientProbeRe.test(probeErrorText(error));
   };
+  const directFetchStatusIsTransient = (status) => [408, 425, 429, 500, 502, 503, 504, 529].includes(status);
+  const directFetchErrorText = (error) => [
+    error && error.name,
+    error && error.message,
+    error && error.code,
+    errorCauseCode(error)
+  ].filter(Boolean).join(" ");
+  const isTransientDirectFetchError = (error) => transientProbeRe.test(directFetchErrorText(error));
+  async function fetchDirectWithRetry(label, input, init) {
+    const maxAttempts = 4;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await tracedFetch(input, init);
+        if (attempt < maxAttempts && directFetchStatusIsTransient(response.status)) {
+          pushHttpDebug("[direct-fetch] " + label + " transient status " + response.status + " " + attempt + "/" + maxAttempts);
+          await response.arrayBuffer().catch(() => {});
+          await sleep(1000 * attempt);
+          continue;
+        }
+        return response;
+      } catch (error) {
+        if (attempt >= maxAttempts || !isTransientDirectFetchError(error)) throw error;
+        pushHttpDebug("[direct-fetch] " + label + " transient failure " + attempt + "/" + maxAttempts + ": " + redactTextForDebug(directFetchErrorText(error)).slice(0, 180));
+        await sleep(1000 * attempt);
+      }
+    }
+    throw new Error("direct fetch retry loop exhausted");
+  }
   async function probeIdempotent(label, fn) {
     const maxAttempts = 3;
     let last = null;
@@ -334,7 +370,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         // link + fetch a presigned URL, then GET it with global fetch.
         probes.push(await probeIdempotent("link", async () => {
           const link = await outs.link({ filename: "report.txt" });
-          const resp = await fetch(link.url);
+          const resp = await fetchDirectWithRetry("link", link.url);
           const getStatus = resp.status;
           const getText = (await resp.text()).slice(0, 256);
           return { hasUrl: typeof link.url === "string" && link.url.length > 0, expiresInSeconds: link.expiresInSeconds ?? null, getStatus, getText };
@@ -588,7 +624,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         probes.push(await probeIdempotent("link_fetch_unicode", async () => {
           if (!target) return null;
           const link = await outs.link({ id: target.id });
-          const resp = await fetch(link.url);
+          const resp = await fetchDirectWithRetry("link_fetch_unicode", link.url);
           return { status: resp.status, text: (await resp.text()) };
         }));
 

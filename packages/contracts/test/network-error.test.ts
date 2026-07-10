@@ -98,6 +98,33 @@ describe("HttpClient network failures", () => {
     expect(debug.join("\n")).toContain("transient UND_ERR_CONNECT_TIMEOUT");
   });
 
+  it("retries Bun socket-open GET failures when enabled", async () => {
+    const raw = undiciFetchFailed("FailedToOpenSocket", "FailedToOpenSocket");
+    const debug: string[] = [];
+    let calls = 0;
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      apiKey: "t",
+      retryTransientGets: {
+        maxAttempts: 3,
+        baseDelayMs: 0,
+        sleep: async () => {}
+      },
+      debug: (line) => debug.push(line),
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) throw raw;
+        return new Response(JSON.stringify({ files: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+    });
+    await expect(client.request("/api/sessions/session-1/files")).resolves.toMatchObject({ files: [] });
+    expect(calls).toBe(2);
+    expect(debug.join("\n")).toContain("transient FailedToOpenSocket");
+  });
+
   it("retries transient POST failures when an Idempotency-Key makes the write safe", async () => {
     const raw = undiciFetchFailed("UND_ERR_CONNECT_TIMEOUT", "Connect Timeout Error");
     const debug: string[] = [];

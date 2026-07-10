@@ -20,6 +20,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { isPreCreateTransportFailure } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -106,6 +107,29 @@ async function runChild(
   }
 }
 
+async function runChildWithPreCreateRetry(
+  install: InstallResult,
+  scriptName: string,
+  body: string,
+  timeoutMs = 6 * 60_000
+): Promise<Record<string, unknown>> {
+  const maxAttempts = 3;
+  let last: Record<string, unknown> | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const out = await runChild(install, scriptName, body, timeoutMs);
+    last = out;
+    const sessionId = typeof out.sessionId === "string" ? out.sessionId : null;
+    const threw = typeof out.error === "string" ? out.error : null;
+    if (!isPreCreateTransportFailure({ sessionId, threw })) return out;
+    if (attempt < maxAttempts) {
+      // eslint-disable-next-line no-console
+      console.warn(`[edge-builtin-web-tools] pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${threw}`);
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+    }
+  }
+  return last!;
+}
+
 let install: InstallResult;
 beforeAll(async () => {
   install = await installAex();
@@ -140,7 +164,7 @@ describe("edge: built-in web tools work and fail honestly", () => {
         }
         console.log(JSON.stringify(out));
       `;
-      const out = await runChild(install, "web-search-probe.mjs", body);
+      const out = await runChildWithPreCreateRetry(install, "web-search-probe.mjs", body);
       const dump = JSON.stringify(out).slice(0, 1200);
       expect(out.error, `web_search session threw before returning diagnostics: ${dump}`).toBeNull();
       const searchResult = out.searchResult as { isError: boolean; text: string } | null;
@@ -175,7 +199,7 @@ describe("edge: built-in web tools work and fail honestly", () => {
         }
         console.log(JSON.stringify(out));
       `;
-      const out = await runChild(install, "web-fetch-ssrf-probe.mjs", body);
+      const out = await runChildWithPreCreateRetry(install, "web-fetch-ssrf-probe.mjs", body);
       const dump = JSON.stringify(out).slice(0, 1200);
       expect(out.error, `web_fetch session threw before returning diagnostics: ${dump}`).toBeNull();
       expect(["idle", "succeeded"], `web_fetch run did not survive cleanly: ${dump}`).toContain(out.status);

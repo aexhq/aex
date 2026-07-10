@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
+import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -96,6 +97,15 @@ function looksTransientProvider(text: string): boolean {
   return /transient-provider|assistant_message_no_public_content|provider returned no public assistant content|provider .*retry later/i.test(text);
 }
 
+function parseCliError(stderr: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(stderr.trim()) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 describe("live DEV plane via installed aex CLI — edge cases", () => {
   let install: InstallResult;
   let binPath: string;
@@ -111,6 +121,32 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
 
   async function executeCli(args: readonly string[], timeoutMs = 60_000): Promise<SessionResult> {
     return await runCommand(binPath, args, { cwd: install.installDir, timeoutMs });
+  }
+
+  async function executeCliRead(label: string, args: readonly string[], timeoutMs = 60_000): Promise<SessionResult> {
+    const readErrors = new Set(["status_failed", "events_failed", "files_failed", "download_failed"]);
+    const maxAttempts = 3;
+    let last: SessionResult | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const result = await executeCli(args, timeoutMs);
+      last = result;
+      const error = parseCliError(result.stderr);
+      const errorCode = error?.["error"];
+      const code = typeof errorCode === "string" ? errorCode : "";
+      const text = [
+        error?.["message"],
+        error?.["code"],
+        error?.["causeCode"],
+        result.stderr
+      ].filter((value): value is string => typeof value === "string").join(" ");
+      if (result.exitCode === 0 || !readErrors.has(code) || !isPreCreateTransportMessage(text) || attempt >= maxAttempts) {
+        return result;
+      }
+      // eslint-disable-next-line no-console
+      console.warn(`[edge-cli] ${label} transient read failure; retrying ${attempt + 1}/${maxAttempts}: ${text.slice(0, 240)}`);
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+    }
+    return last!;
   }
 
   const common = (): string[] => ["--api-key", apiKey, "--aex-url", apiBase];
@@ -245,7 +281,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const id = sessionId as string;
 
         // status: id + clean status
-        const status = await executeCli(["status", id, ...common()]);
+        const status = await executeCliRead("aex status", ["status", id, ...common()]);
         expect(status.exitCode, diag("aex status", status)).toBe(0);
         const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
         expect(statusDoc["id"], diag("aex status", status)).toBe(id);
@@ -253,7 +289,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         assertNoSecretLeak("status", status);
 
         // events: TURN_STARTED + clean terminal + the assistant echoed the markers
-        const events = await executeCli(["events", id, ...common()]);
+        const events = await executeCliRead("aex events", ["events", id, ...common()]);
         expect(events.exitCode, diag("aex events", events)).toBe(0);
         const eventRows = parseJsonLines(events.stdout);
         expect(eventRows.map((e) => e["type"]), diag("aex events", events)).toContain("TURN_STARTED");
@@ -267,7 +303,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         assertNoSecretLeak("events", events);
 
         // files: exit 0 (list may be empty for a pure text turn)
-        const files = await executeCli(["files", id, ...common()]);
+        const files = await executeCliRead("aex files", ["files", id, ...common()]);
         expect(files.exitCode, diag("aex files", files)).toBe(0);
         const outputRows = files.stdout.trim().length > 0 ? parseJsonLines(files.stdout) : [];
         for (const o of outputRows) expect(typeof o["id"], diag("aex files", files)).toBe("string");
@@ -275,7 +311,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
 
         // download --only events -> a real zip with events.jsonl
         const zipPath = join(install.installDir, `edge-cli-events-${id}.zip`);
-        const download = await executeCli(["download", id, "--only", "events", "--out", zipPath, ...common()]);
+        const download = await executeCliRead("aex download --only events", ["download", id, "--only", "events", "--out", zipPath, ...common()]);
         expect(download.exitCode, diag("aex download --only events", download)).toBe(0);
         expect(JSON.parse(download.stdout.trim())).toMatchObject({ sessionId: id, namespace: "events", path: zipPath });
         expect(existsSync(zipPath), diag("aex download --only events", download)).toBe(true);

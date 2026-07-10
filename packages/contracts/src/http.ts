@@ -187,6 +187,7 @@ const DEFAULT_TRANSIENT_GET_RETRY: ResolvedTransientGetRetry = {
 
 const TRANSIENT_READ_CODES = new Set([
   "ConnectionRefused",
+  "FailedToOpenSocket",
   "ECONNRESET",
   "ECONNREFUSED",
   "ETIMEDOUT",
@@ -263,7 +264,7 @@ function transientReadErrorCode(err: unknown): string | undefined {
   const code = extractErrorCode(err);
   if (code && TRANSIENT_READ_CODES.has(code)) return code;
   const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-  if (/fetch failed|socket hang up|other side closed|terminated|network.*reset/i.test(text)) return "fetch";
+  if (/FailedToOpenSocket|fetch failed|socket hang up|other side closed|terminated|network.*reset|unable to connect/i.test(text)) return "fetch";
   return undefined;
 }
 
