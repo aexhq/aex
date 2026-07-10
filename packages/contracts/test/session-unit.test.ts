@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { HttpClient } from "../src/http.js";
 import { Models } from "../src/models.js";
+import { getSessionUnit } from "../src/operations.js";
 import { normalizeSessionUnit, parseSessionUnitSubmission } from "../src/session-unit.js";
 
 describe("normalizeSessionUnit (F25 — lean managed record → type-valid SessionUnit)", () => {
@@ -80,6 +82,37 @@ describe("normalizeSessionUnit (F25 — lean managed record → type-valid Sessi
     const unit = normalizeSessionUnit(lean);
     expect(unit.submission.kind).toBe("submission");
     expect(unit.submission.submission.model).toBe("deepseek-v4-flash");
+  });
+});
+
+describe("getSessionUnit", () => {
+  it("unwraps the managed API's { session } envelope before normalizing", async () => {
+    const http = {
+      async request(path: string): Promise<unknown> {
+        expect(path).toBe("/api/sessions/ses_enveloped");
+        return {
+          session: {
+            id: "ses_enveloped",
+            workspaceId: "ws_1",
+            status: "succeeded",
+            createdAt: "2026-07-10T00:00:00.000Z",
+            updatedAt: "2026-07-10T00:01:00.000Z",
+            submission: {
+              kind: "submission",
+              submission: {
+                model: "claude-haiku-4-5",
+                prompt: ["hello"]
+              }
+            }
+          }
+        };
+      }
+    } as unknown as HttpClient;
+
+    const unit = await getSessionUnit(http, "ses_enveloped");
+    expect(unit.id).toBe("ses_enveloped");
+    expect(unit.status).toBe("succeeded");
+    expect(unit.submission.kind).toBe("submission");
   });
 });
 

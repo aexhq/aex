@@ -16,6 +16,9 @@ const SKIP_DIR_NAMES = new Set([
   ".vercel",
   "db-status-out",
   ".bun",
+  ".release-diagnostics",
+  ".release-worktrees",
+  "release-diagnostics",
   "tmp"
 ]);
 
@@ -33,7 +36,7 @@ const SOURCE_EXTENSIONS = new Set([
 
 function walk(dir: string, out: string[]): void {
   for (const entry of readdirSync(dir)) {
-    if (SKIP_DIR_NAMES.has(entry)) continue;
+    if (shouldSkipDir(entry)) continue;
     const abs = join(dir, entry);
     let stat;
     try {
@@ -50,6 +53,10 @@ function walk(dir: string, out: string[]): void {
     if (!SOURCE_EXTENSIONS.has(ext)) continue;
     out.push(abs);
   }
+}
+
+function shouldSkipDir(entry: string): boolean {
+  return SKIP_DIR_NAMES.has(entry) || entry.startsWith(".suite-diagnostics");
 }
 
 let sourceFilesCache: readonly string[] | undefined;

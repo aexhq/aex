@@ -451,7 +451,7 @@ await runOne({
 await runOne({
   provider: PROVIDER,
   model: MODEL,
-  message: "SessionFile verbatim: ${marker}",
+  message: "Reply with exactly: ${marker}. Do not add any other text.",
   includeBuiltinTools: false,
   tools: [],
   apiKeys: { [PROVIDER]: PROVIDER_KEY },

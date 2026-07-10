@@ -4,6 +4,15 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.41.3
+
+### Fixed
+
+- Unwrapped hosted `GET /api/sessions/:id` response envelopes in `session.unit()`
+  so live managed-session records keep their session id and status.
+- Tightened the no-tools live user-test prompt so it verifies zero tool calls
+  without depending on ambiguous `SessionFile` wording.
+
 ## 0.41.2
 
 ### Fixed

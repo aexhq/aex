@@ -72,7 +72,7 @@ export async function getSessionRecord(http: HttpClient, sessionId: string): Pro
   const result = await http.request<SessionRecord | { readonly session: SessionRecord }>(
     `/api/sessions/${encodeURIComponent(sessionId)}`
   );
-  return hasSessionRecord(result) ? result.session : result;
+  return hasSessionEnvelope(result) ? (result.session as SessionRecord) : result;
 }
 
 /**
@@ -91,7 +91,8 @@ export async function getSessionUnit(http: HttpClient, sessionId: string): Promi
   // returns a lean record and omits the aggregate collections (F25). The
   // aggregates default to empty (safe array/page access) — read files()/events()
   // for the authoritative per-session data on that plane.
-  return normalizeSessionUnit(await http.request<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`));
+  const result = await http.request<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  return normalizeSessionUnit(hasSessionEnvelope(result) ? result.session : result);
 }
 
 /**
@@ -1661,7 +1662,7 @@ function unwrapSkill(result: { readonly skill: SkillRecord } | SkillRecord): Ski
   return result as SkillRecord;
 }
 
-function hasSessionRecord(value: SessionRecord | { readonly session: SessionRecord }): value is { readonly session: SessionRecord } {
+function hasSessionEnvelope(value: unknown): value is { readonly session: unknown } {
   return Boolean(value && typeof value === "object" && "session" in value);
 }
 
