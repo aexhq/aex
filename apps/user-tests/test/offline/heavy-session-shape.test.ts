@@ -103,4 +103,27 @@ describe("heavy-session live assertion shape", () => {
     expect(error.message).toContain('expected event type "TOOL_CALL_RESULT" was not observed');
     expect(error.message).toContain("sessionId=session-missing-tool-result");
   });
+
+  it("includes selected-file download errors in the failure dump", () => {
+    const error = captureError(() =>
+      assertManagedShape(
+        baseResult({
+          sessionId: "session-file-download-error",
+          files: [
+            {
+              filename: "files/heavy/report-1.txt",
+              sizeBytes: 16,
+              sample: "(download error: GET /api/sessions/session-file-download-error/files/file-1/download returned 503)"
+            }
+          ],
+          outProbesFound: []
+        }),
+        SKILL_PREFIXES
+      )
+    );
+
+    expect(error.message).toContain("file files/heavy/report-1.txt failed to download");
+    expect(error.message).toContain("fileDownloadErrors:");
+    expect(error.message).toContain("returned 503");
+  });
 });

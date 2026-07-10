@@ -446,7 +446,15 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
             if (text.includes(p)) outProbesFound.add(p);
           }
         } catch (err) {
-          sample = "(download error: " + (err && err.message ? err.message : String(err)) + ")";
+          const fields = [];
+          if (err && err.name) fields.push("name=" + err.name);
+          if (err && err.code) fields.push("code=" + err.code);
+          if (err && typeof err.status === "number") fields.push("status=" + err.status);
+          if (err && err.apiCode) fields.push("apiCode=" + err.apiCode);
+          if (err && err.causeCode) fields.push("causeCode=" + err.causeCode);
+          if (err && typeof err.attempts === "number") fields.push("attempts=" + err.attempts);
+          const message = err && err.message ? err.message : String(err);
+          sample = "(download error: " + message + (fields.length > 0 ? " [" + fields.join(" ") + "]" : "") + ")";
         }
         filesCollected.push({ filename: out.filename ?? null, sizeBytes: out.sizeBytes ?? 0, sample });
       }

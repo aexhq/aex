@@ -87,6 +87,13 @@ export function dumpCase(result: CaseResult): string {
     }
   }
   lines.push(`files=${result.files.map((o) => `${o.filename}(${o.sizeBytes}B)`).join(", ")}`);
+  const downloadErrors = result.files.filter((o) => o.sample?.startsWith("(download error"));
+  if (downloadErrors.length > 0) {
+    lines.push("fileDownloadErrors:");
+    for (const o of downloadErrors) {
+      lines.push(`  - ${o.filename ?? "(unknown)"}: ${(o.sample ?? "").slice(0, 800)}`);
+    }
+  }
   for (const o of result.files) {
     if (o.filename && o.filename.startsWith(".runtime/")) {
       lines.push(`--- ${o.filename} (sample, first 256 bytes) ---`);

@@ -63,6 +63,25 @@ function rand(prefix: string): string {
   return `${prefix}-${randomBytes(6).toString("hex")}`;
 }
 
+function logCase(label: string, result: Record<string, unknown>): void {
+  const summary = {
+    label,
+    sessionId: result.sessionId ?? null,
+    status: result.status ?? null,
+    eventCount: result.eventCount ?? null,
+    fileCount: result.fileCount ?? null,
+    leaked: result.leaked ?? result.realLeaked ?? result.unusedLeaked ?? null,
+    textPreview: typeof result.text === "string" ? result.text.slice(0, 240) : null,
+    errorMessage:
+      typeof result.errorMessage === "string"
+        ? result.errorMessage.slice(0, 240)
+        : typeof result.runErr === "string"
+          ? result.runErr.slice(0, 240)
+          : null
+  };
+  console.error(`[edge-byok] ${label} ${JSON.stringify(summary)}`);
+}
+
 /**
  * SessionRecord a Bun script in the install dir with the SDK + secrets on the child env.
  * `extraEnv` carries per-test canaries/keys (generated test-side, never printed).
@@ -181,11 +200,16 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         process.stdout.write(JSON.stringify({
           sessionId, status: statusOf(sessionResult), probe, text,
           eventCount: surfaces.events.length, fileCount: surfaces.files.length,
+          recordStatus: surfaces.record && surfaces.record.status,
+          errorMessage:
+            (sessionResult && typeof sessionResult.error === "string" ? sessionResult.error : "") ||
+            (surfaces.record && typeof surfaces.record.errorMessage === "string" ? surfaces.record.errorMessage : ""),
           leaked: scan.leaked, per: scan.per
         }));
       `;
       const r = await runScript(install, "edge-a-keyleak.mjs", body, { PROBE: probe });
-      expect(r.status).toBe("succeeded");
+      logCase("A", r);
+      expect(r.status, `case A result: ${JSON.stringify(r)}`).toBe("succeeded");
       expect(dense(String(r.text))).toContain(probe);
       // The CRITICAL assertion: the raw provider key is nowhere customer-readable.
       expect(r.leaked).toBe(false);
