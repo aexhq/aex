@@ -4,6 +4,14 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.41.0
+
+### Changed
+
+- Replaced the public outputs concept with checkpoint-backed session files:
+  dashboard/API/SDK/CLI surfaces now expose `files`, and captured files describe
+  the latest complete checkpoint workspace state.
+
 ## 0.40.16
 
 ### Fixed

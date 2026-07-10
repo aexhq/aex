@@ -9,7 +9,7 @@
 - **Agent composition.** Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 - **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
-- **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
+- **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and assistant text modes.
 
 ## Install
 

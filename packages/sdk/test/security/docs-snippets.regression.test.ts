@@ -293,6 +293,7 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
 
   it("public file-capture docs and comments describe latest-checkpoint files", () => {
     const checked = [
+      "README.md",
       "packages/sdk/docs/concepts/sessions.md",
       "packages/sdk/docs/public-surface.json",
       "packages/sdk/README.md",
