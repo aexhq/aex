@@ -512,7 +512,8 @@ describe("live user-test release gate", () => {
     const end = source.indexOf("function buildIncompatibleRuntimeScript");
     const corruptedSkillScript = source.slice(start, end);
 
-    expect(corruptedSkillScript).toContain("const accepted = JSON.parse(submitBody);");
+    expect(corruptedSkillScript).toContain("const accepted = JSON.parse(submitText);");
+    expect(corruptedSkillScript).toContain('errorClass = "session-message-rejected";');
     expect(corruptedSkillScript).toContain('"/api/sessions/" + encodeURIComponent(sessionId)');
     expect(corruptedSkillScript).toContain("terminalStatuses.has(sessionStatus)");
     expect(corruptedSkillScript).toContain('"/events?limit=1000"');

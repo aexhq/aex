@@ -426,25 +426,50 @@ function buildCorruptedSkillScript(): string {
           })
         });
         submitStatus = res.status;
-        submitBody = (await res.text()).slice(0, 800);
+        const submitText = await res.text();
+        submitBody = submitText.slice(0, 800);
         submitOk = res.status >= 200 && res.status < 300;
         if (!submitOk) {
           errorClass = "session-submit-rejected";
           errorMessage = "corrupted skill bundle rejected at status " + res.status + ": " + submitBody.slice(0, 200);
         } else {
           try {
-            const accepted = JSON.parse(submitBody);
-            sessionId = typeof accepted.sessionId === "string"
-              ? accepted.sessionId
-              : typeof accepted.id === "string"
-                ? accepted.id
-                : null;
+            const accepted = JSON.parse(submitText);
+            const acceptedSession = accepted && accepted.session && typeof accepted.session === "object" ? accepted.session : {};
+            sessionId = typeof acceptedSession.sessionId === "string"
+              ? acceptedSession.sessionId
+              : typeof acceptedSession.id === "string"
+                ? acceptedSession.id
+                : typeof accepted.sessionId === "string"
+                  ? accepted.sessionId
+                  : typeof accepted.id === "string"
+                    ? accepted.id
+                    : null;
           } catch {
             sessionId = null;
           }
           if (!sessionId) {
             errorClass = "session-submit-missing-id";
             errorMessage = "corrupted skill bundle submit was accepted but returned no session id: " + submitBody.slice(0, 200);
+          }
+          if (sessionId) {
+            const messageRes = await fetch(process.env.AEX_API_URL + "/api/sessions/" + encodeURIComponent(sessionId) + "/messages", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: "Bearer " + process.env.AEX_API_KEY,
+                "Idempotency-Key": "fail-corrupt-skill-message-" + Date.now()
+              },
+              body: JSON.stringify({ input: "Hello." })
+            });
+            const messageText = await messageRes.text();
+            if (messageRes.status < 200 || messageRes.status >= 300) {
+              submitStatus = messageRes.status;
+              submitBody = messageText.slice(0, 800);
+              submitOk = false;
+              errorClass = "session-message-rejected";
+              errorMessage = "corrupted skill bundle message rejected at status " + messageRes.status + ": " + messageText.slice(0, 200);
+            }
           }
         }
       } catch (e) {
