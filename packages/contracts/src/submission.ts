@@ -766,9 +766,10 @@ export interface PlatformSubmission {
   readonly securityProfile?: RuntimeSecurityProfileName;
   readonly metadata?: Record<string, JsonValue>;
   /**
-   * File capture policy. Omit `fileCapture.allowedDirs` to capture the whole
-   * filesystem delta; provide it to narrow capture to the listed roots.
-   * `fileCapture.deniedDirs` subtracts denied roots/patterns from the allowed set.
+   * File capture policy. Omit `fileCapture.allowedDirs` to expose regular
+   * workspace files from the latest complete checkpoint; provide it to narrow
+   * capture to the listed roots. `fileCapture.deniedDirs` subtracts denied
+   * roots/patterns from the allowed set.
    */
   readonly fileCapture?: PlatformFileCaptureConfig;
   /**
@@ -822,16 +823,17 @@ export interface PlatformSubmission {
    * `systemPrompt: "default"`) keeps the injection on.
    *
    * This does not change file capture scope. Omitted
-   * `fileCapture.allowedDirs` means capture all created/modified files; explicit
-   * `fileCapture.allowedDirs` narrows it.
+   * `fileCapture.allowedDirs` means expose regular workspace files from the
+   * latest complete checkpoint; explicit `fileCapture.allowedDirs` narrows it.
    */
   readonly platform?: PlatformInjectionConfig;
 }
 
 export interface PlatformFileCaptureConfig {
   /**
-   * Allowed capture roots. Omit or pass an empty list to use the default
-   * whole-filesystem delta capture. Entries are absolute UNIX paths.
+   * Allowed capture roots. Omit or pass an empty list to expose regular
+   * workspace files from the latest complete checkpoint. Entries are absolute
+   * UNIX paths.
    */
   readonly allowedDirs?: readonly string[];
   /**

@@ -79,7 +79,7 @@
       "slug": "typed-control-surface",
       "href": "/docs/features/#typed-control-surface",
       "title": "Typed control surface",
-      "description": "Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes."
+      "description": "Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy."
     }
   ]
 }

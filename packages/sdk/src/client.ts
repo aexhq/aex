@@ -278,9 +278,9 @@ export interface SessionCreateOptions {
   readonly files?: readonly File[];
   readonly mcpServers?: readonly McpServer[];
   /**
-   * File capture policy for the session's captured files. `allowedDirs` omitted
-   * captures every regular file the session creates or modifies; the listed
-   * roots narrow capture; `deniedDirs` subtracts noise.
+   * File capture policy for the session's captured files. Omit `allowedDirs`
+   * to expose regular workspace files from the latest complete checkpoint;
+   * listed roots narrow capture, and `deniedDirs` subtracts noise.
    */
   readonly fileCapture?: {
     readonly allowedDirs?: readonly string[];

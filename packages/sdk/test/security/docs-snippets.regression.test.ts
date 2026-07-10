@@ -291,6 +291,29 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     expect(files).toMatch(/by IDENTITY/);
   });
 
+  it("public file-capture docs and comments describe latest-checkpoint files", () => {
+    const checked = [
+      "packages/sdk/docs/concepts/sessions.md",
+      "packages/sdk/docs/public-surface.json",
+      "packages/sdk/README.md",
+      "packages/sdk/src/client.ts",
+      "packages/contracts/src/submission.ts"
+    ];
+    const fictions = [
+      /filesystem delta/i,
+      /created or modified/i,
+      /capture all created\/modified files/i,
+      /output modes/i
+    ];
+    const hits = checked.flatMap((rel) => {
+      const text = readDoc(rel);
+      return fictions.filter((f) => f.test(text)).map((f) => `${rel}: ${f.source}`);
+    });
+    expect(hits).toEqual([]);
+    expect(readDoc("packages/sdk/docs/concepts/sessions.md")).toContain("durable, resumable **agent record**");
+    expect(readDoc("packages/contracts/src/submission.ts")).toContain("latest complete checkpoint");
+  });
+
   it("errors.md documents the typed hierarchy, idempotency conflict, and the empty-key throw", () => {
     const errors = readDoc("packages/sdk/docs/errors.md");
     for (const needle of [

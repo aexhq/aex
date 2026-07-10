@@ -147,7 +147,7 @@ const files = await aex.sessions.files(session.id).list();
 - **Agent composition:** skills, files, AGENTS.md, remote MCP servers, environment variables, packages, and networking controls.
 - **Subagents:** typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
 - **Models and providers:** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
-- **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
+- **Typed control surface:** strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy.
 
 ## Docs
 

@@ -29,6 +29,6 @@ Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao Chi
 
 ## Typed control surface
 
-Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, and output modes.
+Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy.
 
 For product boundaries and unsupported claims, see [Limits](/docs/guides/limits/).

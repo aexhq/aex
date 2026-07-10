@@ -257,7 +257,7 @@ Metadata still gets the full treatment. aex exposes every regular workspace file
 
 ## Mid-session download semantics
 
-Mid-session calls are **best-effort and side-effect-free**: they expose whatever checkpointed files have already been uploaded. Files written by the agent are normally uploaded after a complete checkpoint, once the runner scans the capture roots. If you need the full file set, wait for the session to park and call `session.download()` again.
+Mid-session calls are **best-effort and side-effect-free**: they expose whatever files from a complete checkpoint have already been uploaded. Files written by the agent are normally uploaded after a complete checkpoint, once the runner scans the capture roots. If you need the full file set, wait for the session to park and call `session.download()` again.
 
 ## Safety
 

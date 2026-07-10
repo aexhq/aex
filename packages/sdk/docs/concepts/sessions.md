@@ -4,8 +4,8 @@ description: The durable unit aex submits, observes, and archives.
 icon: Play
 ---
 
-A session is a durable, resumable **session**: the model, system message, composition
-primitives, assistant-text policy, file capture policy, and per-provider keys you open it with, plus every
+A session is a durable, resumable **agent record**: the model, system message, composition
+primitives, assistant text mode, file capture policy, and per-provider keys you open it with, plus every
 turn you send to it. aex snapshots the non-secret inputs, holds secrets for the
 session lifecycle, dispatches each turn through the managed runtime, and records
 status, typed events, and files. Sessions are the low-level API; `start()` is the
