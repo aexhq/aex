@@ -151,7 +151,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         const serialized = JSON.stringify({ run, events, files });
         const result = {
           sessionId: sessionId,
-          sessionStatus: session.status,
+          sessionStatus: run.status,
           probe: ${JSON.stringify(probe)},
           eventCount: events.length,
           eventKinds,

@@ -8,7 +8,7 @@
  *      install that tarball.
  *   2. Creates a fresh tempdir.
  *   3. Materializes a minimal package.json there.
- *   4. Sessions `bun install <tarball|@aexhq/sdk@version>` against it.
+ *   4. Runs `bun install <tarball|@aexhq/sdk@version>` against it.
  *   5. Returns paths for the install so scenarios can spawn child
  *      processes with cwd = installDir.
  *
@@ -23,6 +23,10 @@
  * e.g. the TS consumer scenario) must pass `{ isolated: true }` to get
  * their own clean tree. The shared tree is removed once at process exit;
  * isolated trees are the caller's responsibility (typically afterAll).
+ *
+ * Bun keeps a process-external global package cache. Registry installs are
+ * serialized across Vitest worker processes so parallel live smoke files do
+ * not race while moving the same package into that cache on Windows.
  */
 import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -91,6 +95,10 @@ const repoRoot = resolve(here, "..", "..", "..", "..");
 const packLockDir = join(
   tmpdir(),
   `aex-user-test-sdk-pack-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`
+);
+const installLockDir = join(
+  tmpdir(),
+  `aex-user-test-bun-install-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`
 );
 const generatedDistLockScript = join(repoRoot, "scripts", "with-generated-dist-lock.mjs");
 let localSdkPackPromise: Promise<string> | null = null;
@@ -209,7 +217,7 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
 
   const timeoutMs = options.timeoutMs ?? 120_000;
   try {
-    await runBun(args, { cwd: installDir }, timeoutMs);
+    await withInstallLock(async () => runBun(args, { cwd: installDir }, timeoutMs));
   } catch (error) {
     rmSync(installDir, { recursive: true, force: true });
     throw error;
@@ -326,8 +334,37 @@ async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+async function withInstallLock<T>(fn: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      mkdirSync(installLockDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(installLockDir).mtimeMs > 10 * 60_000) {
+          rmSync(installLockDir, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // Race with lock release; retry below.
+      }
+      if (Date.now() - startedAt > 4 * 60_000) {
+        throw new Error(`user-tests: timed out waiting for Bun install lock at ${installLockDir}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    rmSync(installLockDir, { recursive: true, force: true });
+  }
+}
+
 /**
- * SessionRecord a shell command. Returns { stdout, stderr, exitCode }.
+ * Run a shell command. Returns { stdout, stderr, exitCode }.
  * Rejects on timeout or spawn error; never rejects on non-zero exit
  * — the caller decides whether non-zero is a failure.
  */

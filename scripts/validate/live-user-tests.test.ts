@@ -131,6 +131,23 @@ describe("live user-test release gate", () => {
     expect(source).not.toContain("submits with run --follow");
   });
 
+  it("keeps the published DeepSeek SDK smoke status sourced from the start result", () => {
+    const source = read("apps/user-tests/test/live/live-sdk-deepseek.test.ts");
+
+    expect(source).toContain("const run = {");
+    expect(source).toContain("sessionStatus: run.status");
+    expect(source).not.toContain("sessionStatus: session.status");
+  });
+
+  it("serializes Bun installs across live-test worker processes", () => {
+    const source = read("apps/user-tests/test/_fixtures/install.ts");
+
+    expect(source).toContain("Bun keeps a process-external global package cache");
+    expect(source).toContain("aex-user-test-bun-install-");
+    expect(source).toContain("withInstallLock(async () => runBun(args, { cwd: installDir }, timeoutMs))");
+    expect(source).toContain("timed out waiting for Bun install lock");
+  });
+
   it("shards live user tests by recorded duration, not file count", () => {
     // vitest --shard splits by file count (per-file live durations vary
     // ~1s..6.5min, giving 1m42s..12m7s shard walls, and shard 12/12 once
