@@ -4,6 +4,13 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.41.2
+
+### Fixed
+
+- Re-published the release-smoke harness fix in a promotable canary after
+  `0.41.1` published before its release workflow manifest gate completed.
+
 ## 0.41.1
 
 ### Fixed
