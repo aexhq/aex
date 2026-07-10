@@ -91,6 +91,7 @@ const CHILD_PRELUDE = `
   });
   const RAW_CONNECT_TRANSIENT_CODES = new Set([
     "ConnectionRefused",
+    "FailedToOpenSocket",
     "ECONNREFUSED",
     "EAI_AGAIN",
     "ETIMEDOUT",
@@ -100,7 +101,7 @@ const CHILD_PRELUDE = `
     if (e && typeof e.code === "string") return e.code;
     if (e && e.cause && typeof e.cause.code === "string") return e.cause.code;
     const message = e && e.message ? String(e.message) : String(e);
-    const match = /\\b(ConnectionRefused|E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)\\b/.exec(message);
+    const match = /\\b(ConnectionRefused|FailedToOpenSocket|E[A-Z0-9_]+|UND_ERR_[A-Z0-9_]+)\\b/.exec(message);
     return match ? match[1] : null;
   };
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
