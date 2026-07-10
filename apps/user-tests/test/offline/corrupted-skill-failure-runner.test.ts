@@ -88,7 +88,12 @@ describe("corrupted skill failure live runner", () => {
         }
         if (method === "POST" && url.pathname === "/api/sessions") {
           await drain(req);
-          json(res, 202, { id: sessionId, sessionId });
+          json(res, 202, { session: { id: sessionId, sessionId } });
+          return;
+        }
+        if (method === "POST" && url.pathname === `/api/sessions/${sessionId}/messages`) {
+          await drain(req);
+          json(res, 202, { session: { id: sessionId, sessionId }, turn: { sessionId, turnSeq: 1 } });
           return;
         }
         if (method === "GET" && url.pathname === `/api/sessions/${sessionId}`) {
@@ -174,6 +179,7 @@ describe("corrupted skill failure live runner", () => {
       expect(result.terminalKind).toBe("TURN_ERROR");
       expect(result.terminalData?.["failureClass"]).toBe("setup_failed");
       expect(result.eventKinds).toContain("TURN_ERROR");
+      expect(requests).toContain(`POST /api/sessions/${sessionId}/messages`);
       expect(requests).toContain(`GET /api/sessions/${sessionId}`);
       expect(requests).toContain(`GET /api/sessions/${sessionId}/events?limit=1000`);
     } finally {
