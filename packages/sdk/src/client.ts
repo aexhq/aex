@@ -599,10 +599,11 @@ export class SessionHandle {
     const accepted = await this.#acceptTurn(input, idempotencyKey, options.signal);
     this.#session = accepted.session;
     const turn = accepted.turn;
+    const eventCursor = options.from ?? accepted.eventCursor ?? turn.eventCursor ?? 0;
     const events: AexEventView[] = [];
     for await (const event of streamSessionTurnEvents(this.#http, this.id, turn, {
       ...options,
-      from: options.from ?? accepted.eventCursor ?? turn.eventCursor ?? 0
+      from: eventCursor
     })) {
       events.push(event);
       yield event;
@@ -617,9 +618,10 @@ export class SessionHandle {
         ? readSession
         : (await settledSessionRecord(this.#http, this.id, readSession, options.signal)) ?? readSession;
     this.#session = withTerminalSessionStatus(settled, read);
+    const resultEvents = await hydrateEmptyAssistantTextEvents(this.#http, this.id, events, eventCursor);
     const files = await operations.listSessionFiles(this.#http, this.id).catch(() => [] as readonly SessionFile[]);
-    const messages = projectAssistantMessages(events);
-    return settledTurnResult(this.id, this.#session, turn, events, files, messages, read);
+    const messages = projectAssistantMessages(resultEvents);
+    return settledTurnResult(this.id, this.#session, turn, resultEvents, files, messages, read);
   }
 
   /**
@@ -1459,6 +1461,20 @@ function projectAssistantMessages(events: readonly AexEvent[]): readonly Message
 
 function assistantTextFromEvents(events: readonly AexEvent[]): string {
   return assistantTextEntriesFromEvents(events).map((entry) => entry.text).join("");
+}
+
+async function hydrateEmptyAssistantTextEvents(
+  http: HttpClient,
+  sessionId: string,
+  events: readonly AexEventView[],
+  from: number
+): Promise<readonly AexEventView[]> {
+  if (assistantTextFromEvents(events).length > 0) return events;
+  const listed = await operations.listSessionRecordEvents(http, sessionId).catch(() => [] as readonly AexEvent[]);
+  const turnEvents = listed
+    .filter((event) => typeof event.sequence !== "number" || event.sequence >= from)
+    .map(asAexEventView);
+  return assistantTextFromEvents(turnEvents).length > 0 ? turnEvents : events;
 }
 
 function turnTraceFromEvents(events: readonly AexEvent[]): TurnTrace {

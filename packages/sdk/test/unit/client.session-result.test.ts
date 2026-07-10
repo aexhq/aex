@@ -56,7 +56,19 @@ function settledSession(overrides: Record<string, unknown>): Record<string, unkn
   return { id: "session-1", turnSeq: 1, costUsd: 0, ...overrides };
 }
 
-function runClient(session: Record<string, unknown>): {
+function runClient(
+  session: Record<string, unknown>,
+  options?: { readonly listedEvents?: readonly AexEvent[] }
+): {
+  readonly client: Aex;
+  readonly urls: string[];
+  readonly sockets: FakeWebSocket[];
+  readonly webSocketFactory: (url: string) => FakeWebSocket;
+};
+function runClient(
+  session: Record<string, unknown>,
+  options: { readonly listedEvents?: readonly AexEvent[] } = {}
+): {
   readonly client: Aex;
   readonly urls: string[];
   readonly sockets: FakeWebSocket[];
@@ -73,6 +85,9 @@ function runClient(session: Record<string, unknown>): {
     }
     if (url.endsWith("/api/sessions/session-1/files")) {
       return json({ files: [{ id: "o1", filename: "report.txt" }] });
+    }
+    if (url.endsWith("/api/sessions/session-1/events")) {
+      return json({ events: options.listedEvents ?? [] });
     }
     if (url.endsWith("/api/sessions/session-1/messages")) {
       return json({
@@ -258,6 +273,34 @@ describe("Aex.start -> unified settled SessionResult", () => {
     expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
     expect(result.session?.status).toBe("idle");
     expect(sessionReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("hydrates text from authoritative events when the live turn stream misses assistant text", async () => {
+    const listedEvents = [
+      evt(1024, "TEXT_MESSAGE_CONTENT", { text: "snapshot ", messageId: "m1" }),
+      evt(1025, "TEXT_MESSAGE_CONTENT", { text: "text", messageId: "m1" }),
+      terminal("aex.session.idle")
+    ];
+    const { client, urls, sockets, webSocketFactory } = runClient(
+      settledSession({ status: "idle", costUsd: 0 }),
+      { listedEvents }
+    );
+    const promise = client.start(
+      { model: "claude-haiku-4-5", message: "p", apiKeys: { anthropic: "sk-ant" } },
+      { webSocketFactory }
+    );
+
+    await flush();
+    sockets[0]!.message(terminal("aex.session.idle"));
+
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.text).toBe("snapshot text");
+    expect(result.messages).toEqual([
+      expect.objectContaining({ sender: "assistant", text: "snapshot text" })
+    ]);
+    expect(result.events.map((event) => event.type)).toEqual(["TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "CUSTOM"]);
+    expect(urls).toContain("GET https://x/api/sessions/session-1/events");
   });
 
   it("await:'park' returns at the park event without waiting for settle", async () => {
