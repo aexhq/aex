@@ -5,6 +5,7 @@ import { buildPublicReleaseManifest, validatePlatformValidationManifest, validat
 describe("release manifest contract", () => {
   it("writes a first-class public candidate manifest", () => {
     const manifest = buildPublicReleaseManifest({
+      repository: "aexhq/aex",
       version: "0.40.17",
       distTag: "canary",
       sessionId: "123",
@@ -32,6 +33,7 @@ describe("release manifest contract", () => {
 
   it("rejects public manifests for the wrong repo, package, dist-tag, or head", () => {
     const manifest = buildPublicReleaseManifest({
+      repository: "aexhq/aex",
       version: "0.40.17",
       distTag: "canary",
       sessionId: "123",
