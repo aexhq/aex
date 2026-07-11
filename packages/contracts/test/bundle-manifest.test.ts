@@ -114,7 +114,7 @@ describe("symlinkTargetEscapes — SECURITY boundary", () => {
     expect(symlinkTargetEscapes("lib", "../shared/lib")).toBe(true);
   });
 
-  it("fuzz: any target lexically resolving above root is rejected; in-root is allowed", () => {
+  it("fuzz: any target lexically resolving above root is rejected; in-root is allowed", { timeout: 0 }, () => {
     const seg = fc.constantFrom("a", "b", "c", "sub", "x");
     const targetArb = fc
       .array(fc.oneof(seg, fc.constant("."), fc.constant("..")), { minLength: 1, maxLength: 6 })

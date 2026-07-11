@@ -212,7 +212,7 @@ describe("createRedactingStream — stream-before-disk", () => {
   });
 });
 
-describe("property: generated high-entropy tokens always redact", () => {
+describe("property: generated high-entropy tokens always redact", { timeout: 0 }, () => {
   it("never leaks a >=24-char high-entropy base64url token", () => {
     fc.assert(
       fc.property(

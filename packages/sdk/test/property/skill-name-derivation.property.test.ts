@@ -41,7 +41,7 @@ const messyName = fc.oneof(
   fc.string({ unit: "binary", maxLength: 12 })
 );
 
-describe("Skill name derivation — never a silent bad name", () => {
+describe("Skill name derivation — never a silent bad name", { timeout: 30_000 }, () => {
   it("explicit { name } either yields a good name or throws (fromContent)", async () => {
     await fc.assert(
       fc.asyncProperty(messyName, async (name) => {

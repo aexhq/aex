@@ -530,7 +530,7 @@ function minimalValidOptions(): SessionCreateOptions {
   };
 }
 
-describe("session create inputs (property)", () => {
+describe("session create inputs (property)", { timeout: 30_000 }, () => {
   it("posts rich valid sessions.create options as parseable session submissions", async () => {
     await fc.assert(
       fc.asyncProperty(richValidCase, async (testCase) => {

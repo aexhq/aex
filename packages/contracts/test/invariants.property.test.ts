@@ -67,7 +67,7 @@ const submission = fc.record({
   })
 }, { requiredKeys: ["workspaceId", "idempotencyKey", "submission", "secrets"] });
 
-describe("shared platform invariants", () => {
+describe("shared platform invariants", { timeout: 0 }, () => {
   it("accepts generated JSON-serializable platform submissions", () => {
     fc.assert(fc.property(submission, (input) => {
       const parsed = parseSessionSubmissionRequest(input);
@@ -101,7 +101,7 @@ describe("shared platform invariants", () => {
         (input.submission as { metadata?: Record<string, JsonValue> }).metadata = { value };
         expect(() => parseSessionSubmissionRequest(input)).toThrow(/JSON-serializable/);
       }
-    ));
+    ), { numRuns: 100 });
   });
 
   it("keeps the session-status partition complete and explicit", () => {

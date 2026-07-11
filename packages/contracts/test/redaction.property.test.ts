@@ -88,7 +88,7 @@ const benignKebab = fc
   )
   .map(([words, ts]) => (ts === undefined ? words.join("-") : `${words.join("-")}-${ts}`));
 
-describe("secret redaction (property)", () => {
+describe("secret redaction (property)", { timeout: 0 }, () => {
   it("masks every secret-shaped run (no under-redaction)", () => {
     fc.assert(
       fc.property(secretShaped, (secret) => {

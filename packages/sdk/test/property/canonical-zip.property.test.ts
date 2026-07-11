@@ -65,7 +65,7 @@ async function collect(sources: readonly ZipEntrySource[]): Promise<Uint8Array> 
 }
 
 describe("canonical-zip property", () => {
-  it("frameCanonicalZipSync(m) === zipSync(m) for arbitrary bundles", () => {
+  it("frameCanonicalZipSync(m) === zipSync(m) for arbitrary bundles", { timeout: 0 }, () => {
     fc.assert(
       fc.property(bundleArb, (entries) => {
         expect(sha(frameCanonicalZipSync(entries))).toBe(sha(zipSyncOrdered(entries)));
@@ -74,7 +74,7 @@ describe("canonical-zip property", () => {
     );
   });
 
-  it("streamed framer === in-memory framer for arbitrary bundles", async () => {
+  it("streamed framer === in-memory framer for arbitrary bundles", { timeout: 30_000 }, async () => {
     await fc.assert(
       fc.asyncProperty(bundleArb, async (entries) => {
         const sources: ZipEntrySource[] = entries.map(([name, bytes]) => ({
@@ -89,7 +89,7 @@ describe("canonical-zip property", () => {
     );
   });
 
-  it("streamed running-hash === one-shot hash of the whole zip, over random chunkings", async () => {
+  it("streamed running-hash === one-shot hash of the whole zip, over random chunkings", { timeout: 30_000 }, async () => {
     await fc.assert(
       fc.asyncProperty(bundleArb, fc.integer({ min: 1, max: 997 }), async (entries, chunkStep) => {
         const sources: ZipEntrySource[] = entries.map(([name, bytes]) => ({

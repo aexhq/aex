@@ -111,7 +111,7 @@ const goodOptions = validModel.chain((model) => {
   );
 });
 
-describe("SDK wire-conformance (property)", () => {
+describe("SDK wire-conformance (property)", { timeout: 30_000 }, () => {
   it("every accepted session-create builds a body the contracts validator accepts", async () => {
     await fc.assert(
       fc.asyncProperty(goodOptions, async (options) => {

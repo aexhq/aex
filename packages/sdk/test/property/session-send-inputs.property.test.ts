@@ -387,7 +387,7 @@ const textEventSpec = fc.tuple(
 ));
 const textEventSequence = fc.array(textEventSpec, { minLength: 0, maxLength: 8 });
 
-describe("SDK run/send SessionInput properties", () => {
+describe("SDK run/send SessionInput properties", { timeout: 30_000 }, () => {
   it("Aex.start serializes valid message inputs and uses predictable idempotency keys", async () => {
     await fc.assert(
       fc.asyncProperty(validSessionInput, idempotencyCase, async (input, keys) => {

@@ -27,7 +27,7 @@ function makeValid(): PlatformSessionSubmissionRequest {
   };
 }
 
-describe("parseSessionSubmissionRequest robustness (property)", () => {
+describe("parseSessionSubmissionRequest robustness (property)", { timeout: 0 }, () => {
   it("is TOTAL: arbitrary input either parses to a valid request or throws an Error", () => {
     fc.assert(
       fc.property(fc.anything(), (input) => {

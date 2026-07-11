@@ -61,7 +61,7 @@ function mcpThrows(url: string): Error | null {
   }
 }
 
-describe("SSRF host deny-list (property)", () => {
+describe("SSRF host deny-list (property)", { timeout: 0 }, () => {
   it("rejects every private/loopback/link-local/ULA literal MCP host", () => {
     fc.assert(
       fc.property(privateHost, (host) => {

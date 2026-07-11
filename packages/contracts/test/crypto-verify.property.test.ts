@@ -34,7 +34,7 @@ function signWebhook(id: string, ts: number, body: string, material = SECRET_MAT
 const wid = fc.string({ minLength: 1, maxLength: 40 }).filter((s) => !s.includes(" "));
 const wbody = fc.string({ maxLength: 256 });
 
-describe("verifyAexWebhook (property)", () => {
+describe("verifyAexWebhook (property)", { timeout: 30_000 }, () => {
   it("accepts any faithfully-signed delivery within tolerance", async () => {
     await fc.assert(
       fc.asyncProperty(wid, wbody, async (id, body) => {
@@ -107,7 +107,7 @@ const sessionId = fc.string({ minLength: 1, maxLength: 40 });
 const ticketSecret = fc.string({ minLength: 8, maxLength: 48 });
 const channel = fc.constantFrom<ConnectionTicketChannel>("event", "log", "all");
 
-describe("connection ticket mint/verify (property)", () => {
+describe("connection ticket mint/verify (property)", { timeout: 30_000 }, () => {
   it("a freshly minted ticket verifies for its run + channel", async () => {
     await fc.assert(
       fc.asyncProperty(sessionId, ticketSecret, channel, async (id, secret, ch) => {

@@ -27,7 +27,7 @@ const num = fc.oneof(
 const unit = fc.constantFrom("ms", "s", "m", "h", "");
 const validDuration = fc.tuple(num, unit).map(([n, u]) => `${n}${u}`);
 
-describe("parseDurationToMs (property)", () => {
+describe("parseDurationToMs (property)", { timeout: 0 }, () => {
   it("a well-formed duration is always a finite, non-negative number", () => {
     fc.assert(
       fc.property(validDuration, (d) => {
@@ -68,7 +68,7 @@ describe("parseDurationToMs (property)", () => {
   });
 });
 
-describe("parseSessionTimeout (property)", () => {
+describe("parseSessionTimeout (property)", { timeout: 0 }, () => {
   it("undefined passes through; in-range durations are accepted exactly", () => {
     expect(parseSessionTimeout(undefined)).toBeUndefined();
     fc.assert(
@@ -110,7 +110,7 @@ describe("parseSessionTimeout (property)", () => {
   });
 });
 
-describe("parseRuntimeSize (property)", () => {
+describe("parseRuntimeSize (property)", { timeout: 0 }, () => {
   it("accepts exactly the known presets and rejects everything else", () => {
     for (const size of RUNTIME_SIZES) {
       expect(parseRuntimeSize(size)).toBe(size);

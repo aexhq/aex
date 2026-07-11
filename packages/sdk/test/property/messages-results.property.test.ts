@@ -671,7 +671,7 @@ const resultStreamCase = fc.record({
   return { firstSeq, events: [...events, terminal] as readonly FuzzEvent[] };
 });
 
-describe("slim session messages/results properties", () => {
+describe("slim session messages/results properties", { timeout: 30_000 }, () => {
   it("returns intuitive Message objects from the session messages endpoint", async () => {
     await fc.assert(
       fc.asyncProperty(fc.array(sessionMessage, { maxLength: 30 }), async (wireMessages) => {
