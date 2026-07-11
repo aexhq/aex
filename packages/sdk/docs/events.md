@@ -9,13 +9,14 @@ monotonic `sequence`, real AG-UI `threadId`, and real `runId`.
 
 ```ts
 const session = await aex.sessions.open(sessionId);
-const events = await session.events.list();
-
-for (const event of events) {
+for await (const event of session.events.iterate()) {
   if (event.isTextMessage()) console.log(event.data.text);
   if (event.isToolCallStart()) console.log(event.data.name);
 }
 ```
+
+`iterate()` follows cursor pages lazily and retains at most one API page. Use
+`list()` only when the full history is known to fit comfortably in memory.
 
 ## Run lifecycle
 
@@ -45,7 +46,8 @@ const result = await run.finished();
 Message sends do not accept a historical `from` cursor. Their stream and
 finished result are scoped to the run accepted by that send, so events from an
 earlier run cannot be replayed into the current result. Use
-`session.events.list()`, `.stream({ from })`, or `.streamEnvelopes({ from })`
+`session.events.iterate()`, `.list()`, `.stream({ from })`, or
+`.streamEnvelopes({ from })`
 when intentionally reading session history.
 
 `finished()` and `aex.start()` return the same run outcome vocabulary:
@@ -69,7 +71,8 @@ for await (const event of session.events.streamEnvelopes({ from: 0 })) {
 `AexStreamEventView`, a discriminated union:
 
 - Durable events have `sequence` and are replayable. They are the only events
-  returned by `events.list()`, polling streams, archives, and finished results.
+  returned by `events.iterate()`, `events.list()`, polling streams, archives,
+  and finished results.
 - Provisional live events have `replayable: false`, a per-run `liveSequence`,
   and no durable `sequence`. They are not replayed from storage.
 
@@ -125,3 +128,10 @@ const archive = await session.events.download();
 ```
 
 The event archive uses the same redacted public events returned by the SDK.
+`archiveLink()` is a bounded convenience export. A session that exceeds the
+bulk-export limits returns a typed `413` API error; an export that cannot finish
+inside the server's request budget returns a typed `503` API error. The SDK does
+not retry either response automatically. Traverse large histories with
+`for await (const event of session.events.iterate())`; iteration follows bounded
+cursor pages without retaining the whole history. `events.list()` and
+`events.download()` are materializing convenience methods.

@@ -47,8 +47,8 @@ interface StreamResult {
   readonly streamedCustomNames: readonly string[];
   readonly snapshotTypes: readonly string[];
   readonly snapshotCustomNames: readonly string[];
+  readonly snapshotCount: number;
   readonly manifestEventCount: number;
-  readonly manifestChunks: number;
   readonly leakedKey: boolean;
   readonly terminalOutcome: string | null;
   readonly liveDeltaCount: number;
@@ -158,7 +158,8 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           runtime: "managed",
           provider: "deepseek"
         };
-        const snapshot = (await session.events.list()).filter((event) => event.runId === result.run.runId);
+        const allSnapshotEvents = await session.events.list();
+        const snapshot = allSnapshotEvents.filter((event) => event.runId === result.run.runId);
 
         // 3. The archive is part of the same consistency boundary.
         const tRes = await fetchBounded(baseUrl + "/api/sessions/" + sessionId + "/events/ticket", {
@@ -187,8 +188,8 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           streamedCustomNames: [...new Set(streamedCustomNames)],
           snapshotTypes: [...new Set(snapshot.map((e) => e.type))],
           snapshotCustomNames: [...new Set(snapshotCustomNames)],
+          snapshotCount: allSnapshotEvents.length,
           manifestEventCount: manifest ? (manifest.eventCount ?? -1) : -1,
-          manifestChunks: manifest && Array.isArray(manifest.chunks) ? manifest.chunks.length : -1,
           leakedKey: serialized.includes(deepseekKey),
           terminalOutcome: snapshot.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")?.data?.outcome ?? null,
           liveDeltaCount: liveDeltas.length,
@@ -245,9 +246,8 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
       expect(result.snapshotTypes).toContain("RUN_FINISHED");
       expect(result.terminalOutcome).toBe("succeeded");
       expect(result.leakedKey).toBe(false);
-      // Durable archive is downloadable and records the events.
-      expect(result.manifestEventCount).toBeGreaterThan(0);
-      expect(result.manifestChunks).toBeGreaterThanOrEqual(1);
+      // The O(1) durable manifest count matches the canonical list projection.
+      expect(result.manifestEventCount).toBe(result.snapshotCount);
     },
     4 * 60 * 1000
   );

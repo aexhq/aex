@@ -381,7 +381,66 @@ export async function listSessionEvents(
   http: HttpClient,
   sessionId: string
 ): Promise<readonly AexEvent[]> {
-  return listAllSessionEventPages(http, sessionId);
+  const events: AexEvent[] = [];
+  for await (const event of iterateSessionEvents(http, sessionId)) events.push(event);
+  return events;
+}
+
+export interface IterateSessionEventsOptions {
+  /** Number of events requested per API page. Default and maximum: 1000. */
+  readonly pageSize?: number;
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Lazily traverse a session's durable event history. At most one bounded API
+ * page is retained by this iterator, and breaking the loop prevents later
+ * pages from being requested.
+ */
+export async function* iterateSessionEvents(
+  http: HttpClient,
+  sessionId: string,
+  options: IterateSessionEventsOptions = {}
+): AsyncIterable<AexEvent> {
+  const pageSize = options.pageSize;
+  if (pageSize !== undefined && (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1000)) {
+    throw new SessionConfigValidationError("session event pageSize must be an integer between 1 and 1000", {
+      sessionId,
+      pageSize
+    });
+  }
+
+  const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageIndex = 0; pageIndex < LIST_EVENTS_PAGE_BUDGET; pageIndex += 1) {
+    if (options.signal?.aborted) return;
+    const query = {
+      ...(pageSize === undefined ? {} : { limit: String(pageSize) }),
+      ...(cursor === undefined ? {} : { cursor })
+    };
+    const result = await http.request<{
+      readonly events: readonly AexEvent[];
+      readonly nextCursor?: string | null;
+    }>(path, options.signal === undefined ? {} : { signal: options.signal }, query);
+    for (const event of result.events) yield event;
+    if (result.nextCursor === undefined || result.nextCursor === null) return;
+    if (typeof result.nextCursor !== "string" || result.nextCursor.length === 0) {
+      throw new SessionStateError("session events response contains an invalid nextCursor", { sessionId });
+    }
+    if (seenCursors.has(result.nextCursor)) {
+      throw new SessionStateError("session events pagination repeated a cursor", {
+        sessionId,
+        cursor: result.nextCursor
+      });
+    }
+    seenCursors.add(result.nextCursor);
+    cursor = result.nextCursor;
+  }
+  throw new SessionStateError("session events pagination exceeded its page budget", {
+    sessionId,
+    pageBudget: LIST_EVENTS_PAGE_BUDGET
+  });
 }
 
 export async function listSessionFiles(
@@ -432,41 +491,6 @@ export async function getSessionCoordinatorTicket(
 // admits up to ~1e6 events before bailing — past any real session, but bounded so a
 // server that never clears `nextCursor` can't loop forever.
 const LIST_EVENTS_PAGE_BUDGET = 1000;
-
-async function listAllSessionEventPages<T extends AexEvent>(
-  http: HttpClient,
-  sessionId: string
-): Promise<readonly T[]> {
-  const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
-  const all: T[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  for (let pageIndex = 0; pageIndex < LIST_EVENTS_PAGE_BUDGET; pageIndex += 1) {
-    const query = cursor === undefined ? {} : { cursor };
-    const result = await http.request<{ readonly events: readonly T[]; readonly nextCursor?: string | null }>(
-      path,
-      {},
-      query
-    );
-    all.push(...result.events);
-    if (result.nextCursor === undefined || result.nextCursor === null) return all;
-    if (typeof result.nextCursor !== "string" || result.nextCursor.length === 0) {
-      throw new SessionStateError("session events response contains an invalid nextCursor", { sessionId });
-    }
-    if (seenCursors.has(result.nextCursor)) {
-      throw new SessionStateError("session events pagination repeated a cursor", {
-        sessionId,
-        cursor: result.nextCursor
-      });
-    }
-    seenCursors.add(result.nextCursor);
-    cursor = result.nextCursor;
-  }
-  throw new SessionStateError("session events pagination exceeded its page budget", {
-    sessionId,
-    pageBudget: LIST_EVENTS_PAGE_BUDGET
-  });
-}
 
 /** A coordinator WS connection grant minted by the hosted API's ticket broker. */
 export interface CoordinatorTicket {

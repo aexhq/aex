@@ -35,8 +35,11 @@ The three common namespaces are stable properties:
 
 ```ts
 const messages = await session.messages.list();
-const events = await session.events.list();
 const snapshot = await session.files.list();
+
+for await (const event of session.events.iterate()) {
+  console.log(event.type);
+}
 
 console.log(snapshot.revision.checkpointId);
 console.log(snapshot.files);

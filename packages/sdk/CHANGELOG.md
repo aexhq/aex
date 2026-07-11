@@ -35,6 +35,8 @@ follows semantic versioning.
 
 ### Added
 
+- Memory-bounded `session.events.iterate()` and `child.events.iterate()` async
+  iterators for durable event histories that are too large to materialize.
 - Immutable workspace resource versions and checkpoint-aware session file
   access.
 - Automatic immutable canary publication, exact-candidate platform validation,

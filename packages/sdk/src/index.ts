@@ -22,6 +22,7 @@ export type {
   AexOptions,
   ChildSessionEvents,
   IdempotencyOptions,
+  IterateEventsOptions,
   Message,
   DownloadOptions,
   SessionFilePathMatch,

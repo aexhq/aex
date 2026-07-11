@@ -110,7 +110,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const handle = new SessionHandle({} as never, { id: "ses_regression" } as never);
     const accessorVerbs: ReadonlyArray<{ readonly group: string; readonly verbs: readonly string[] }> = [
       { group: "messages", verbs: ["send", "replayLast", "list", "last", "first"] },
-      { group: "events", verbs: ["list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
+      { group: "events", verbs: ["iterate", "list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
       { group: "files", verbs: ["list", "last", "first", "read", "find", "findOne", "link", "fetch", "download"] },
       { group: "webhooks", verbs: ["list", "redeliver"] }
     ];

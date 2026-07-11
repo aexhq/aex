@@ -419,6 +419,8 @@ export interface SessionMessages {
  * per-run `liveSequence` instead of a durable `sequence`.
  */
 export interface SessionEvents {
+  /** Lazily traverse durable history one bounded API page at a time. */
+  iterate(options?: IterateEventsOptions): AsyncIterable<AexEventView>;
   list(): Promise<readonly AexEventView[]>;
   last(): Promise<AexEventView | undefined>;
   first(): Promise<AexEventView | undefined>;
@@ -675,6 +677,7 @@ export class SessionClient {
 
 /** Child-session events accessor (list + polling stream) keyed on a session id. */
 export interface ChildSessionEvents {
+  iterate(options?: IterateEventsOptions): AsyncIterable<AexEventView>;
   list(): Promise<readonly AexEventView[]>;
   stream(options?: StreamEventsOptions): AsyncIterable<AexEventView>;
 }
@@ -731,9 +734,20 @@ export class ChildSessionHandle {
 /** Session-record events accessor (list + polling stream) used by {@link ChildSessionHandle}. */
 function childSessionEventsAccessor(http: HttpClient, ref: ChildSessionRef): ChildSessionEvents {
   return {
+    iterate: (options?: IterateEventsOptions) => iterateSessionEventViews(http, ref.id, options ?? {}),
     list: async () => (await operations.listSessionEvents(http, ref.id)).map(asAexEventView),
     stream: (options?: StreamEventsOptions) => streamChildSessionEventsPolling(http, ref, options ?? {})
   };
+}
+
+async function* iterateSessionEventViews(
+  http: HttpClient,
+  id: string,
+  options: IterateEventsOptions
+): AsyncIterable<AexEventView> {
+  for await (const event of operations.iterateSessionEvents(http, id, options)) {
+    yield asAexEventView(event);
+  }
 }
 
 /**
@@ -975,12 +989,22 @@ async function listAllSessionMessages(http: HttpClient, id: string): Promise<rea
 }
 
 function sessionEvents(http: HttpClient, id: string): SessionEvents {
+  const iterate = (options?: IterateEventsOptions): AsyncIterable<AexEventView> =>
+    iterateSessionEventViews(http, id, options ?? {});
   const list = async (): Promise<readonly AexEventView[]> =>
     (await operations.listSessionEvents(http, id)).map(asAexEventView);
   return {
+    iterate,
     list,
-    last: async () => (await list()).at(-1),
-    first: async () => (await list())[0],
+    last: async () => {
+      let last: AexEventView | undefined;
+      for await (const event of iterate()) last = event;
+      return last;
+    },
+    first: async () => {
+      for await (const event of iterate()) return event;
+      return undefined;
+    },
     stream: (options?: StreamEventsOptions) => streamSessionEventsPolling(http, id, options ?? {}),
     streamEnvelopes: (options?: StreamEnvelopesOptions) => streamSessionEnvelopes(http, id, options ?? {}),
     archiveLink: (options?: SessionFileLinkOptions) => operations.eventArchiveLink(http, id, options),
@@ -1382,6 +1406,13 @@ export interface StreamEventsOptions {
   readonly from?: number;
   /** Poll interval in ms for the event snapshot loop. Default 1000. */
   readonly intervalMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface IterateEventsOptions {
+  /** Number of durable events requested per API page. Default and maximum: 1000. */
+  readonly pageSize?: number;
+  /** Stop before requesting another page, or abort the active page request. */
   readonly signal?: AbortSignal;
 }
 
