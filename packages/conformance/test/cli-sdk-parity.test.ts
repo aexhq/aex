@@ -21,10 +21,7 @@ const SESSION_OPTION_COVERAGE = {
   provider: "--provider",
   model: "--model",
   system: "--system",
-  tools: "--tool",
-  skills: "--skill",
-  agentsMd: "--agents-md",
-  files: "--file",
+  assets: "--file|--skill|--tool|--instructions",
   mcpServers: "--mcp",
   metadata: "--metadata",
   idempotencyKey: "--idempotency-key",
@@ -36,7 +33,7 @@ const SESSION_OPTION_COVERAGE = {
   message: "--prompt",
   messageIdempotencyKey: "--idempotency-key",
   fileCapture: CLI_PARITY_NOT_SURFACED,
-  includeBuiltinTools: CLI_PARITY_NOT_SURFACED,
+  builtinTools: CLI_PARITY_NOT_SURFACED,
   outputMode: CLI_PARITY_NOT_SURFACED,
   responseFormat: CLI_PARITY_NOT_SURFACED,
   approvalGate: CLI_PARITY_NOT_SURFACED,
@@ -50,7 +47,6 @@ const FILES_COVERAGE = {
   download: "download",
   link: "link",
   find: "find",
-  search: "search",
   last: CLI_PARITY_NOT_SURFACED,
   first: CLI_PARITY_NOT_SURFACED,
   findOne: CLI_PARITY_NOT_SURFACED,
@@ -89,7 +85,9 @@ describe("CLI ↔ SDK parity manifest", () => {
   it("maps every surfaced session-option to a REGISTERED `aex start` flag", () => {
     for (const [key, flag] of Object.entries(CLI_SDK_PARITY_MANIFEST.sessionOptionFlags)) {
       if (flag === CLI_PARITY_NOT_SURFACED || flag === CLI_PARITY_PROVIDER_KEY_FLAG) continue;
-      expect(SESSION_FLAGS, `session-option "${key}" → flag "${flag}"`).toContain(flag);
+      for (const mappedFlag of flag.split("|")) {
+        expect(SESSION_FLAGS, `session-option "${key}" -> flag "${mappedFlag}"`).toContain(mappedFlag);
+      }
     }
   });
 

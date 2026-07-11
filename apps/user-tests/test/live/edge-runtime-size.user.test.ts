@@ -1,5 +1,5 @@
 /**
- * Live edge-case sweep: `runtimeSize` must be honored, validated, and visible.
+ * Live edge-case sweep: SDK `runtime` must be honored, validated, and visible.
  *
  * DEFECT PROBE — the public contract offers six runtime-size presets
  * (packages/contracts/src/runtime-sizes.ts): shared-0.06x-256mb,
@@ -10,8 +10,7 @@
  * public sizes silently fall back to the 0.25 vCPU / 1 GB default task
  * definition — a customer asking for a 4-vCPU/12 GB box gets the smallest
  * shared box with no error and no visible signal. Two observable defects:
- *   1. The session record never echoes `runtimeSize`, so the requested size is
- *      unverifiable from any public surface.
+ *   1. The SDK session record must expose the requested size as typed `runtime`.
  *   2. The server accepts a GARBAGE `runtimeSize` (raw wire, 201) instead of
  *      rejecting it — only the SDK's client-side validation catches typos.
  *
@@ -97,7 +96,7 @@ const CHILD_PRELUDE = `
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const raw = async (method, path, body) => {
     const url = process.env.AEX_API_URL + path;
-    const maxAttempts = 3;
+    const maxAttempts = ["GET", "HEAD", "OPTIONS"].includes(method) ? 3 : 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const res = await fetch(url, {
@@ -158,25 +157,28 @@ afterAll(() => {
   install?.cleanup();
 });
 
-describe("edge: runtimeSize honored, validated, and visible", () => {
+describe("edge: runtime honored, validated, and visible", () => {
   it(
-    "the session record echoes the requested public runtimeSize",
+    "the SDK session record echoes the requested public runtime",
     async () => {
       const body = `
-        const out = { created: null, recordRuntimeSize: null, rawRuntimeSize: null, error: null };
+        const out = { created: null, recordRuntime: null, leakedRuntimeSize: false, rawRuntimeSize: null, error: null };
         try {
           const session = await client.sessions.create({
             provider: PROVIDER,
             model: MODEL,
-            includeBuiltinTools: false,
+            builtinTools: "none",
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             runtime: "shared-1x-6gb"
           });
           out.created = session.id;
           const rec = (await client.sessions.open(session.id)).record;
-          out.recordRuntimeSize = rec.runtimeSize ?? null;
+          out.recordRuntime = rec.runtime ?? null;
+          out.leakedRuntimeSize = Object.prototype.hasOwnProperty.call(rec, "runtimeSize");
           const rawRec = await raw("GET", "/api/sessions/" + session.id);
-          out.rawRuntimeSize = rawRec.body && rawRec.body.runtimeSize !== undefined ? rawRec.body.runtimeSize : null;
+          out.rawRuntimeSize = rawRec.body && rawRec.body.session && rawRec.body.session.runtimeSize !== undefined
+            ? rawRec.body.session.runtimeSize
+            : null;
           const h = await client.sessions.open(session.id);
           await h.delete().catch(() => {});
         } catch (e) { out.error = errShape(e); }
@@ -185,9 +187,9 @@ describe("edge: runtimeSize honored, validated, and visible", () => {
       const result = await runChild(install, "runtime-size-echo.mjs", body);
       expect(result.error).toBeNull();
       expect(result.created).toBeTruthy();
-      // DEFECT (dev): both are null — the record never exposes runtimeSize,
-      // so a silent size downgrade is invisible to the customer.
-      expect(result.recordRuntimeSize ?? result.rawRuntimeSize).toBe("shared-1x-6gb");
+      expect(result.recordRuntime).toBe("shared-1x-6gb");
+      expect(result.leakedRuntimeSize).toBe(false);
+      expect(result.rawRuntimeSize).toBe("shared-1x-6gb");
     },
     5 * 60_000
   );
@@ -200,12 +202,12 @@ describe("edge: runtimeSize honored, validated, and visible", () => {
         const r = await raw("POST", "/api/sessions", {
           provider: PROVIDER,
           runtimeSize: "shared-99x-1tb",
-          submission: { model: MODEL, includeBuiltinTools: false },
+          submission: { model: MODEL, builtinTools: "none" },
           secrets: { apiKeys: { [PROVIDER]: PROVIDER_KEY } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
+        const admitted = r.body && r.body.session && typeof r.body.session.id === "string" ? r.body.session.id : null;
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);

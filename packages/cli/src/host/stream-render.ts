@@ -4,7 +4,7 @@
  * human-readable line.
  *
  * The stream reuses the SAME `@aexhq/contracts` primitives the SDK's
- * `session.events().streamEnvelopes()` does (`operations.getSessionCoordinatorTicket`
+ * `session.events.streamEnvelopes()` does (`operations.getSessionCoordinatorTicket`
  * + `streamCoordinatorEvents`), so reconnect / replay-from-seq / idle-watchdog /
  * ping behaviour is byte-identical to the SDK — zero drift, no `@aexhq/sdk`
  * dependency. The WebSocket is dependency-injected via `io.webSocketFactory`
@@ -14,32 +14,28 @@ import {
   AEX_EVENT_SOURCES,
   AEX_EVENT_TYPES,
   channelOf,
-  isSessionSettled,
-  operations,
   streamCoordinatorEvents,
   toAGUI,
-  type AexEvent,
+  type AexStreamEvent,
   type HttpClient
 } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import { suggest } from "./common.js";
 
 export interface OpenEnvelopeStreamOptions {
   /** Replay cursor (events with sequence >= from). Default 0 = from start. */
   readonly from?: number;
-  /**
-   * End on the post-mirror `aex.session.settled` barrier instead of TURN_FINISHED,
-   * so when the stream ends a subsequent `getSession` is guaranteed parked.
-   */
-  readonly settleConsistent?: boolean;
   readonly signal?: AbortSignal;
+  /** Stop at the durable terminal for this run rather than an earlier run. */
+  readonly runId?: string;
   /** Non-secret diagnostics sink (wired to stderr under --debug). */
   readonly debug?: (line: string) => void;
 }
 
 /**
  * Open the live envelope stream for a session. Mirrors
- * `session.events().streamEnvelopes()` (`packages/sdk/src/client.ts`) but reads
+ * `session.events.streamEnvelopes()` (`packages/sdk/src/client.ts`) but reads
  * the WS factory from {@link CliIO}. The caller MUST have verified
  * `io.webSocketFactory` is present.
  */
@@ -48,7 +44,7 @@ export async function* openEnvelopeStream(
   http: HttpClient,
   sessionId: string,
   options: OpenEnvelopeStreamOptions = {}
-): AsyncGenerator<AexEvent, void, void> {
+): AsyncGenerator<AexStreamEvent, void, void> {
   const first = await operations.getSessionCoordinatorTicket(http, sessionId);
   if (options.debug) {
     let host = "(invalid)";
@@ -64,8 +60,11 @@ export async function* openEnvelopeStream(
     wsUrl: first.wsUrl,
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, sessionId)).ticket,
+    ...(options.runId ? {
+      isTerminal: (event) =>
+        event.runId === options.runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
+    } : {}),
     ...(io.webSocketFactory ? { webSocketFactory: io.webSocketFactory } : {}),
-    ...(options.settleConsistent ? { isTerminal: isSessionSettled } : {}),
     ...(options.signal ? { signal: options.signal } : {})
   });
 }
@@ -87,7 +86,7 @@ function str(v: unknown): string {
 }
 
 /** Best-effort args preview for a TOOL_CALL_START envelope. */
-function argsPreview(e: AexEvent): string {
+function argsPreview(e: AexStreamEvent): string {
   const d = e.data as Record<string, unknown>;
   const candidate = d.input ?? d.args ?? d.arguments ?? d.params;
   if (candidate === undefined) return "";
@@ -98,11 +97,11 @@ function argsPreview(e: AexEvent): string {
  * Project one envelope to a single human line, or `null` when it renders to
  * nothing (the caller skips). ASCII / light-unicode only; diagnostics-free.
  */
-export function renderEnvelope(e: AexEvent, options: RenderOptions = {}): string | null {
+export function renderEnvelope(e: AexStreamEvent, options: RenderOptions = {}): string | null {
   if (channelOf(e) === "log" && !options.logs) return null;
   switch (e.type) {
-    case "TURN_STARTED":
-      return "▶ turn started";
+    case "RUN_STARTED":
+      return "▶ run started";
     case "TEXT_MESSAGE_CONTENT": {
       const delta = toAGUI(e).type === "TEXT_MESSAGE_CONTENT" ? (toAGUI(e) as { delta: string }).delta : "";
       return delta ? delta : null;
@@ -121,26 +120,20 @@ export function renderEnvelope(e: AexEvent, options: RenderOptions = {}): string
     }
     case "CUSTOM": {
       const label = e.message ?? str(e.data.name) ?? "custom";
-      // Surface WHY the session parked: the `aex.session.idle` custom carries a
-      // `reason` ("completed" | "cancel_requested" | …). Without it a cancelled
-      // turn renders identically to a completed one.
-      if (e.data.name === "aex.session.idle") {
-        const value = e.data.value as { reason?: unknown } | undefined;
-        const reason = value && typeof value.reason === "string" ? value.reason : "";
-        if (reason && reason !== "completed") return `[aex] ${label} (${reason})`;
-      }
       return `[aex] ${label}`;
     }
     case "LOG": {
       const level = e.level ?? "info";
       return `[${level}] ${e.message ?? str(e.data.message)}`;
     }
-    case "TURN_FINISHED":
-      return "✓ session finished";
-    case "TURN_ERROR": {
+    case "RUN_FINISHED": {
+      const outcome = str(e.data.outcome) || "succeeded";
+      return outcome === "succeeded" ? "✓ run finished" : `✓ run finished (${outcome})`;
+    }
+    case "RUN_ERROR": {
       const agui = toAGUI(e);
-      const message = agui.type === "TURN_ERROR" ? agui.message : (e.message ?? "turn error");
-      return `✗ turn error: ${message}`;
+      const message = agui.type === "RUN_ERROR" ? agui.message : (e.message ?? "run error");
+      return `✗ run error: ${message}`;
     }
     default:
       return null;
@@ -149,7 +142,7 @@ export function renderEnvelope(e: AexEvent, options: RenderOptions = {}): string
 
 export interface ParsedFilters {
   /** Membership predicate, or undefined when no `--filter` was supplied. */
-  readonly predicate?: (e: AexEvent) => boolean;
+  readonly predicate?: (e: AexStreamEvent) => boolean;
   readonly error?: string;
 }
 
@@ -178,7 +171,7 @@ export function parseFilters(tokens: readonly string[]): ParsedFilters {
       };
     }
   }
-  const predicate = (e: AexEvent): boolean =>
+  const predicate = (e: AexStreamEvent): boolean =>
     (types.size === 0 || types.has(e.type)) && (sources.size === 0 || sources.has(e.source));
   return { predicate };
 }

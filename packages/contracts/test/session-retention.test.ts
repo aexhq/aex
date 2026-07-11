@@ -11,7 +11,7 @@ import {
   createSessionDeletionManifestWriter,
   evaluateSessionDeletionCandidate,
   scanSessionRetentionPayloadForSensitiveValues
-} from "../src/index.js";
+} from "../src/internal.js";
 
 const terminalSession = {
   sessionId: "session-11111111",

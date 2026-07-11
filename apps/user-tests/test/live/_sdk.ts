@@ -2,11 +2,11 @@
  * Shared scaffolding for the config-fix USER tests (SDK-driven, customer
  * perspective). These differ from raw API probes; THESE drive the
  * installed `aex` SDK end-to-end
- * (SDK → /sessions → runtime → events), the real customer surface.
+ * (SDK → /api/sessions → runtime → events), the real customer surface.
  *
- * Each test installs the SDK (install fixture), then sessions a small Bun script
+ * Each test installs the SDK (install fixture), then runs a small Bun script
  * IN the install dir that builds a submission via the SDK's classes
- * (Aex/AgentsMd/…), submits, polls to terminal, and
+ * (Aex/Instructions/…), submits, waits for the RUN terminal, and
  * prints a standard result JSON which the test asserts on.
  *
  * They validate the FIXED behaviour and so only pass once the fixes are
@@ -88,82 +88,44 @@ export interface SdkSessionResult {
 
 /**
  * Script preamble: imports the SDK + builds the client from env. Available
- * in-script: `client`, `DEEPSEEK_KEY`, `MODEL_DEEPSEEK`, and `AgentsMd`.
+ * in-script: `client`, `DEEPSEEK_KEY`, `MODEL_DEEPSEEK`, and `Instructions`.
  */
 const PREAMBLE = `
-import { Aex, AgentsMd } from "@aexhq/sdk";
+import { Aex, Instructions } from "@aexhq/sdk";
 const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const MODEL_DEEPSEEK = process.env.MODEL_DEEPSEEK;
 `;
 
 /**
- * Read the settle-consistent SessionResult that `client.start(...)` returns
+ * Read the checkpoint-consistent SessionResult that `client.start(...)` returns
  * (events/files/text are already collected — no poll loop) + print the
  * standard result JSON.
  */
 const TAIL = `
-const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-let events = fallbackEvents;
-let listedSession = null;
-try {
-  listedSession = typeof result.sessionId === "string" && result.sessionId
-    ? await client.sessions.open(result.sessionId)
-    : null;
-  if (listedSession) {
-    const listedEvents = await listedSession.events().list();
-    if (Array.isArray(listedEvents) && listedEvents.length > 0) {
-      events = listedEvents;
-    }
-  }
-} catch {
-  events = fallbackEvents;
-}
-const fallbackFiles = Array.isArray(result.files) ? result.files : [];
-let files = fallbackFiles;
-if (listedSession) {
-  try {
-    const listedFiles = await listedSession.files().list();
-    if (Array.isArray(listedFiles)) {
-      files = listedFiles;
-    }
-  } catch {
-    files = fallbackFiles;
-  }
-}
+if (!Array.isArray(result.events)) throw new Error("start() result.events must be an array");
+if (!Array.isArray(result.files)) throw new Error("start() result.files must be an array");
+const events = result.events;
+const files = result.files;
 const text = typeof result.text === "string" ? result.text : "";
 const toolResultText = events
   .filter((e) => e.type === "TOOL_CALL_RESULT")
   .map((e) => JSON.stringify(e && e.data !== undefined ? e.data : ""))
   .join(" ");
-const SESSION_TERMINAL_NAMES = new Set([
-  "aex.session.idle",
-  "aex.session.suspended",
-  "aex.session.succeeded",
-  "aex.session.failed",
-  "aex.session.timed_out",
-  "aex.session.cancelled"
-]);
-function isSessionIdle(e) {
-  return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name);
+const terminals = events.filter((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
+if (terminals.length !== 1) throw new Error("expected exactly one RUN terminal, got " + terminals.length);
+const terminal = terminals[0];
+if (!terminal.data || typeof terminal.data !== "object") throw new Error("RUN terminal data is required");
+if (terminal.data.outcome !== result.status) throw new Error("RUN terminal outcome must match result.status");
+if (terminal.type === "RUN_ERROR" && terminal.data.outcome !== "failed") throw new Error("RUN_ERROR must carry outcome=failed");
+if (terminal.type === "RUN_FINISHED" && terminal.data.outcome === "failed") throw new Error("failed runs must use RUN_ERROR");
+if (typeof terminal.data.costUsd !== "number" || !Array.isArray(terminal.data.providerUsage)) {
+  throw new Error("RUN terminal must carry per-run costUsd and providerUsage");
 }
-function terminalKindOf(e) {
-  if (!e) return null;
-  return isSessionIdle(e) ? "TURN_FINISHED" : e.type;
+if (terminal.type === "RUN_FINISHED" && (!terminal.data.checkpoint || typeof terminal.data.checkpoint.checkpointId !== "string")) {
+  throw new Error("RUN_FINISHED must carry its committed checkpoint");
 }
-function terminalDataOf(e) {
-  if (!e) return null;
-  if (isSessionIdle(e)) {
-    const value = e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : {};
-    return { ...value, reason: value.reason === "completed" ? "complete" : value.reason };
-  }
-  return e.data;
-}
-const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
 const eventKinds = events.map((e) => e.type);
-if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) {
-  eventKinds.push("TURN_FINISHED");
-}
 const streamErrors = events
   .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
   .map((e) => {
@@ -172,18 +134,14 @@ const streamErrors = events
     }
     return e.data && typeof e.data === "object" ? e.data : { unknown: true };
   });
-// A one-shot start() parks the session cleanly on success (idle/suspended);
-// surface that as "succeeded" so callers keep the session-oriented contract.
-const status = result.ok
-  ? "succeeded"
-  : (typeof result.status === "string" && result.status ? result.status : "failed");
+const status = typeof result.status === "string" && result.status ? result.status : "failed";
 process.stdout.write(JSON.stringify({
   sessionId: result.sessionId,
   status,
   runtime: "managed",
   provider: (result.session && typeof result.session.provider === "string") ? result.session.provider : null,
-  terminalKind: terminalKindOf(terminal),
-  terminalData: terminalDataOf(terminal),
+  terminalKind: terminal.type,
+  terminalData: terminal.data,
   assistantText: text,
   toolResultText,
   eventKinds,
@@ -193,8 +151,8 @@ process.stdout.write(JSON.stringify({
 `;
 
 /**
- * Assemble a full runner script. `setup` (optional) sessions first and may
- * `await` (e.g. AgentsMd.fromContent); `run` is the object literal /
+ * Assemble a full runner script. `setup` (optional) runs first and may
+ * `await` (e.g. publishing `Instructions.fromContent`); `run` is the object literal /
  * expression passed to `client.start(...)` and must assign nothing — the helper
  * wraps it as `const result = await client.start(<run>, { timeoutMs });`. The
  * `run` object is the session/run surface: `message` (the first turn), `apiKeys`

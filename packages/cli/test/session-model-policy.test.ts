@@ -7,18 +7,18 @@ const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 function runSubmitHandler(call: { readonly url: string; readonly init: RequestInit }): Response {
   const path = new URL(call.url).pathname;
   if (path === "/api/sessions") {
-    return new Response(JSON.stringify({ id: "s1", status: "idle" }), {
-      status: 200,
+    return new Response(JSON.stringify({ session: { id: "s1", status: "idle", acceptsMessages: true } }), {
+      status: 201,
       headers: { "content-type": "application/json" }
     });
   }
   if (path === "/api/sessions/s1/messages") {
     return new Response(JSON.stringify({
-      session: { id: "s1", status: "running", turnSeq: 1, turnStatus: "launching" },
-      turn: { sessionId: "s1", turnSeq: 1 },
+      session: { id: "s1", status: "running", acceptsMessages: false },
+      run: { sessionId: "s1", runId: "run-1", turnSeq: 1, phase: "running" },
       eventCursor: 1
     }), {
-      status: 200,
+      status: 202,
       headers: { "content-type": "application/json" }
     });
   }

@@ -12,7 +12,7 @@ import {
   buildSideEffectAuditEvent,
   redactSideEffectAuditMetadata,
   scanSideEffectAuditPayloadForSensitiveValues
-} from "../src/index.js";
+} from "../src/internal.js";
 
 const actor = {
   principal: { type: "api_key", ref: "api-token-11111111" },

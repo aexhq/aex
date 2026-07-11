@@ -61,7 +61,7 @@ describe("managed-only provider surface (published package)", () => {
       const results = [];
       for (const field of fields) {
         try {
-          await client.openSession({
+          await client.sessions.create({
             provider: "anthropic",
             model: "claude-haiku-4-5",
             apiKeys: { anthropic: "sk-ant-test" },
@@ -97,7 +97,7 @@ describe("managed-only provider surface (published package)", () => {
         if (typeof body !== "string" && body) body = await new Response(body).text();
         requests.push({ url: typeof url === "string" ? url : url.toString(), method: init?.method, body });
         return new Response(JSON.stringify({
-          session: { id: "sess_test_user_e2e", status: "idle", turnSeq: 0 }
+          session: { id: "sess_test_user_e2e", status: "idle", acceptsMessages: true }
         }), { status: 201, headers: { "content-type": "application/json" } });
       };
       const client = new Aex({ apiKey: "ant_test_t0k3n", baseUrl: "https://example.invalid", fetch: fetchFake });

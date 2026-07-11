@@ -1,5 +1,5 @@
-import type { SessionControlStatus } from "./status.js";
-import { isTerminalSessionControlStatus } from "./status.js";
+import type { SessionWorkflowStatus } from "./workflow-status.js";
+import { isTerminalSessionWorkflowStatus } from "./workflow-status.js";
 
 export const SESSION_RETENTION_SCHEMA_VERSION = 1;
 export const SESSION_DELETION_MANIFEST_KIND = "aex.session_deletion_manifest.v1";
@@ -96,7 +96,7 @@ export interface SessionRetentionPolicyInput {
 export interface SessionDeletionCandidateSessionV1 {
   readonly sessionId: string;
   readonly workspaceId: string;
-  readonly status: SessionControlStatus | string;
+  readonly status: string;
   readonly createdAt?: string;
   readonly terminalAt?: string;
   readonly held?: boolean;
@@ -136,7 +136,7 @@ export interface SessionDeletionCountV1 {
 export interface SessionDeletionManifestSessionV1 {
   readonly sessionId: string;
   readonly workspaceId: string;
-  readonly status: SessionControlStatus | string;
+  readonly status: string;
   readonly createdAt?: string;
   readonly terminalAt?: string;
   readonly eligibleAt?: string;
@@ -650,7 +650,7 @@ function blocker(code: SessionDeletionBlocker, observedAt: string): SessionDelet
 }
 
 function isTerminalStatusLike(status: string): boolean {
-  return isTerminalSessionControlStatus(status as SessionControlStatus);
+  return isTerminalSessionWorkflowStatus(status as SessionWorkflowStatus);
 }
 
 function addDaysIso(timestamp: string, days: number): string {

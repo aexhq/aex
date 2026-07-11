@@ -107,7 +107,7 @@ const CHILD_PRELUDE = `
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const raw = async (method, path, body) => {
     const url = process.env.AEX_API_URL + path;
-    const maxAttempts = 3;
+    const maxAttempts = ["GET", "HEAD", "OPTIONS"].includes(method) ? 3 : 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const res = await fetch(url, {
@@ -243,21 +243,20 @@ describe("edge: session-path admission gates", () => {
         const holderPromises = [];
         try {
           for (let i = 0; i < out.cap; i += 1) {
-            const session = await client.openSession({
+            const session = await client.sessions.create({
               provider: PROVIDER,
               model: MODEL,
-              includeBuiltinTools: true,
+              builtinTools: "default",
               apiKeys: { [PROVIDER]: PROVIDER_KEY },
               idempotencyKey: "admission-holder-create-" + nonce + "-" + i
             });
             out.sessionIds.push(session.id);
             holderPromises.push(
               session
-                .send(holderMessage(i), {
-                  idempotencyKey: "admission-holder-turn-" + nonce + "-" + i,
-                  await: "park"
+                .messages.send(holderMessage(i), {
+                  idempotencyKey: "admission-holder-run-" + nonce + "-" + i
                 })
-                .done()
+                .finished()
                 .then(
                   () => ({ ok: true, sessionId: session.id }),
                   (e) => ({ ok: false, sessionId: session.id, err: errShape(e) })
@@ -272,7 +271,7 @@ describe("edge: session-path admission gates", () => {
                 {
                   provider: PROVIDER,
                   model: MODEL,
-                  includeBuiltinTools: true,
+                  builtinTools: "default",
                   apiKeys: { [PROVIDER]: PROVIDER_KEY },
                   idempotencyKey: "admission-overflow-create-" + nonce,
                   message: holderMessage("overflow")
@@ -326,12 +325,12 @@ describe("edge: session-path admission gates", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           provider: PROVIDER,
-          submission: { model: MODEL, includeBuiltinTools: false },
+          submission: { model: MODEL, builtinTools: "none" },
           secrets: { apiKeys: { [PROVIDER]: "   " } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
+        const admitted = r.body && r.body.session && typeof r.body.session.id === "string" ? r.body.session.id : null;
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);
@@ -353,12 +352,12 @@ describe("edge: session-path admission gates", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           provider: "anthropic",
-          submission: { model: MODEL, includeBuiltinTools: false },
+          submission: { model: MODEL, builtinTools: "none" },
           secrets: { apiKeys: { anthropic: "sk-ant-probe-invalid-000000000000" } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
+        const admitted = r.body && r.body.session && typeof r.body.session.id === "string" ? r.body.session.id : null;
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);

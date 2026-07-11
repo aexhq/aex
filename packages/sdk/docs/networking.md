@@ -32,7 +32,7 @@ proxy layer is planned; until it ships, treat `allowedHosts` as a strong
 default-path control and an auditable statement of intent, not a hard isolation
 boundary against adversarial code inside the session.
 
-**Default posture.** A session that does not set `environment.networking` sessions in
+**Default posture.** A session that does not set `environment.networking` runs in
 `open` mode: its own code may reach anything within the platform ceiling with
 no allowlist required. Use `environment.networking` to *narrow* that surface
 when you want a tighter, auditable egress posture. Code cannot widen the
@@ -100,7 +100,7 @@ visible at the same call site as the code that needs it.
 
 ## Open mode
 
-`open` is the default: a session that omits `environment.networking` already sessions in
+`open` is the default: a session that omits `environment.networking` already runs in
 open mode. Set `mode: "open"` explicitly when you want to be unambiguous. Open
 mode applies no per-session allowlist — the session's own code may reach anything the
 platform ceiling allows, still subject to the SSRF deny-list. Prefer `limited`
@@ -160,4 +160,4 @@ your client succeeds without extra setup.
 For credentialed HTTP calls, pass the credential as an `environment.secrets`
 entry and let your code use its normal HTTP client. For remote tool servers, see
 [MCP](mcp.md). For the full set of session-config fields, see
-[SessionRecord configuration](session-config.md).
+[Session configuration](session-config.md).

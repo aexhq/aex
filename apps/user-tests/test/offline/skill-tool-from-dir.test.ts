@@ -10,7 +10,7 @@
  * the content hash, CRLF / BOM / quoted / extra-key frontmatter, and the exact
  * 2048-char description boundary.
  *
- * Same pattern as the reference: each case sessions in a child process whose cwd is
+ * Same pattern as the reference: each case runs in a child process whose cwd is
  * the user-test install tempdir, so `import "@aexhq/sdk"` resolves the packed
  * artifact, and a fake fetch captures the exact wire request (POST
  * /api/sessions plus the presign -> PUT -> finalize asset flow and skill
@@ -81,7 +81,6 @@ async function decodeBody(body) {
 
 function makeFetch() {
   const calls = [];
-  let sessionCounter = 0;
   const fetchFake = async (input, init = {}) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -90,7 +89,7 @@ function makeFetch() {
     const body = await decodeBody(init.body);
     calls.push({ url, method, headers, body });
 
-    if (url.endsWith("/assets/presign")) {
+    if (url.endsWith("/api/assets/presign")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
       return new Response(JSON.stringify({
@@ -108,7 +107,7 @@ function makeFetch() {
       return new Response("", { status: 200 });
     }
 
-    if (url.endsWith("/assets/finalize")) {
+    if (url.endsWith("/api/assets/finalize")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
       return new Response(JSON.stringify({
@@ -120,32 +119,21 @@ function makeFetch() {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
-    if (url.includes("/api/skills/") && method === "PUT") {
-      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+    if (url.endsWith("/api/workspace/skills") && method === "POST") {
       return new Response(JSON.stringify({
-        skill: {
+        resource: {
           kind: "skill",
-          name,
+          resourceId: "wres_" + "1".repeat(32),
+          version: 1,
+          assetId: body.assetId,
           contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          name: body.name,
           description: body && typeof body.description === "string" ? body.description : "",
           sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
-          version: 1
-        },
-        updated: true
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-
-    if (url.endsWith("/api/sessions") && method === "POST") {
-      sessionCounter += 1;
-      return new Response(JSON.stringify({
-        session: {
-          id: "sess_skill_dir_" + sessionCounter,
-          workspaceId: "ws_skill_dir",
-          status: "idle",
-          turnSeq: 0,
+          contentType: body.contentType,
           createdAt: new Date(0).toISOString()
         }
-      }), { status: 201, headers: { "content-type": "application/json" } });
+      }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -156,32 +144,20 @@ function makeFetch() {
   return { calls, fetch: fetchFake };
 }
 
-function createBodies(calls) {
-  return calls
-    .filter((call) => call.method === "POST" && call.url.endsWith("/api/sessions"))
-    .map((call) => call.body);
-}
-
-function onlyCreateBody(calls) {
-  const bodies = createBodies(calls);
-  strictEqual(bodies.length, 1, "expected exactly one session-create call");
-  return bodies[0];
-}
-
 function presignCalls(calls) {
-  return calls.filter((call) => call.url.endsWith("/assets/presign"));
+  return calls.filter((call) => call.url.endsWith("/api/assets/presign"));
 }
 
 function finalizeCalls(calls) {
-  return calls.filter((call) => call.url.endsWith("/assets/finalize"));
+  return calls.filter((call) => call.url.endsWith("/api/assets/finalize"));
 }
 
 function storagePuts(calls) {
   return calls.filter((call) => call.url.includes("object-storage.example.test") && call.method === "PUT");
 }
 
-function upsertSkillCalls(calls) {
-  return calls.filter((call) => call.method === "PUT" && call.url.includes("/api/skills/"));
+function publishSkillCalls(calls) {
+  return calls.filter((call) => call.method === "POST" && call.url.endsWith("/api/workspace/skills"));
 }
 
 async function expectReject(label, fn, pattern) {
@@ -200,9 +176,6 @@ function assetIdFromHash(hash) {
   return "asset_" + hex;
 }
 
-function skillEntries(body) {
-  return body.submission.skills ?? [];
-}
 
 // A fresh, empty scratch dir under the OS temp root. Callers drop a SKILL.md
 // (plus any sibling/nested files) then hand the dir to Skill.fromDir.
@@ -285,36 +258,35 @@ ok(flat.ref.contentHash !== a.ref.contentHash, "nested files must contribute to 
 const changed = await Skill.fromDir(writeNestedSkill({ helper: "export const help = () => 43;\n" }));
 ok(changed.ref.contentHash !== a.ref.contentHash, "a one-byte nested change must diverge the hash");
 
-// 3. Wire shape: the nested skill uploads exactly ONE asset (presign/PUT/finalize
-//    once), upserts the workspace skill once, and the session carries only a
-//    name ref in submission.skills — no assetId, input_schema, entry, or file list.
+// 3. Publishing uploads exactly one asset and returns an immutable workspace ref.
 const c = makeClient();
 const nested = await Skill.fromDir(writeNestedSkill());
-await c.client.sessions.create({
-  model: "claude-haiku-4-5",
-  skills: [nested],
-  apiKeys: { anthropic: "sk-ant" }
-});
+const published = await c.client.workspace.skills.publish(nested);
 strictEqual(presignCalls(c.calls).length, 1);
 strictEqual(storagePuts(c.calls).length, 1);
 strictEqual(finalizeCalls(c.calls).length, 1);
-strictEqual(upsertSkillCalls(c.calls).length, 1);
+strictEqual(publishSkillCalls(c.calls).length, 1);
 ok(storagePuts(c.calls)[0].body && storagePuts(c.calls)[0].body.byteLength > 0, "real zip bytes uploaded");
-deepStrictEqual(upsertSkillCalls(c.calls)[0].body, {
+deepStrictEqual(publishSkillCalls(c.calls)[0].body, {
+  assetId: assetIdFromHash(nested.ref.contentHash),
   contentHash: nested.ref.contentHash,
   description: "Bundles nested files.",
-  sizeBytes: storagePuts(c.calls)[0].body.byteLength
+  sizeBytes: storagePuts(c.calls)[0].body.byteLength,
+  contentType: "application/zip",
+  name: "nested-skill"
 });
-deepStrictEqual(onlyCreateBody(c.calls).submission.tools, []);
-const entries = skillEntries(onlyCreateBody(c.calls));
-deepStrictEqual(entries, [
-  {
-    kind: "skill",
-    name: "nested-skill"
-  }
-]);
-const entryKeys = Object.keys(entries[0]).sort();
-deepStrictEqual(entryKeys, ["kind", "name"]);
+deepStrictEqual(published, {
+  kind: "skill",
+  resourceId: "wres_" + "1".repeat(32),
+  version: 1,
+  assetId: assetIdFromHash(nested.ref.contentHash),
+  contentHash: nested.ref.contentHash,
+  name: "nested-skill",
+  description: "Bundles nested files.",
+  sizeBytes: storagePuts(c.calls)[0].body.byteLength,
+  contentType: "application/zip",
+  createdAt: new Date(0).toISOString()
+});
 
 // 4. A binary (non-UTF-8) file bundles cleanly and is deterministic across builds.
 function writeBinarySkill() {
@@ -349,7 +321,7 @@ console.log(JSON.stringify({
   deterministic: a.ref.contentHash === b.ref.contentHash,
   nestedChangesHash: flat.ref.contentHash !== a.ref.contentHash,
   presign: presignCalls(c.calls).length,
-  entryKeys,
+  resourceId: published.resourceId,
   binaryDeterministic: bin1.ref.contentHash === bin2.ref.contentHash,
   dedup: dd1.ref.contentHash === dd2.ref.contentHash,
   diverged: dd1.ref.contentHash !== dd3.ref.contentHash
@@ -361,7 +333,7 @@ console.log(JSON.stringify({
       deterministic: true,
       nestedChangesHash: true,
       presign: 1,
-      entryKeys: ["kind", "name"],
+      resourceId: `wres_${"1".repeat(32)}`,
       binaryDeterministic: true,
       dedup: true,
       diverged: true
@@ -473,25 +445,18 @@ const boundarySkill = await Skill.fromDir(
 );
 strictEqual(boundarySkill.ref.description.length, 2048, "2048-char description accepted");
 
-// Wire confirmation: override + boundary skills serialize their lifted fields.
+// Publication confirmation: override + boundary skills preserve lifted fields.
 const c = makeClient();
-await c.client.sessions.create({
-  model: "claude-haiku-4-5",
-  skills: [overrideSkill, boundarySkill],
-  apiKeys: { anthropic: "sk-ant" }
-});
-const wire = skillEntries(onlyCreateBody(c.calls));
+const wire = await Promise.all([
+  c.client.workspace.skills.publish(overrideSkill),
+  c.client.workspace.skills.publish(boundarySkill)
+]);
 strictEqual(wire.length, 2);
 strictEqual(wire[0].name, "override-name");
 strictEqual(wire[1].name, "boundary-skill");
-deepStrictEqual(wire, [
-  { kind: "skill", name: "override-name" },
-  { kind: "skill", name: "boundary-skill" }
-]);
-deepStrictEqual(onlyCreateBody(c.calls).submission.tools, []);
-strictEqual(upsertSkillCalls(c.calls).length, 2);
-const boundaryUpsert = upsertSkillCalls(c.calls).find((call) => call.url.endsWith("/boundary-skill"));
-ok(boundaryUpsert, "boundary skill upsert captured");
+strictEqual(publishSkillCalls(c.calls).length, 2);
+const boundaryUpsert = publishSkillCalls(c.calls).find((call) => call.body.name === "boundary-skill");
+ok(boundaryUpsert, "boundary skill publication captured");
 strictEqual(boundaryUpsert.body.description.length, 2048);
 
 console.log(JSON.stringify({

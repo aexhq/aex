@@ -3,7 +3,7 @@
  * `start` flags, and the `files` sub-verbs. Two consumers read it:
  *
  *   1. Per-verb `--help` (`aex <verb> --help`) renders a static usage table
- *      from here BEFORE any auth-requiring handler sessions, so discovering a
+ *      from here BEFORE any auth-requiring handler runs, so discovering a
  *      verb's flags never needs an API key.
  *   2. The conformance CLI↔SDK parity manifest test asserts every SDK public
  *      capability (Aex method / session option / files accessor) maps to a verb
@@ -45,7 +45,7 @@ export const START_FLAGS: readonly string[] = [
   "--config",
   "--skill",
   "--tool",
-  "--agents-md",
+  "--instructions",
   "--file",
   "--mcp",
   "--mcp-auth",
@@ -59,7 +59,7 @@ export const START_FLAGS: readonly string[] = [
 ];
 
 /** The `aex files` sub-verbs (`aex files <id>` bare = list). */
-export const FILES_SUBVERBS: readonly string[] = ["read", "download", "link", "find", "search"];
+export const FILES_SUBVERBS: readonly string[] = ["read", "download", "link", "find"];
 
 export const CLI_VERBS: readonly CliVerbSpec[] = [
   {
@@ -70,20 +70,20 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
       "aex start --config <session.json> --<provider>-api-key K",
       "  --skill @file        Attach a workspace skill bundle (repeatable)",
       "  --tool @file.js      Attach a custom tool module (repeatable)",
-      "  --agents-md @file    Attach an AGENTS.md brief (repeatable)",
+      "  --instructions @file Publish and attach session instructions (repeatable)",
       "  --file @path         Mount a file into /workspace (repeatable)",
       "  --mcp name=url       MCP server (repeatable); --mcp-auth name=Hdr:Val for headers",
       "  --metadata key=value Submission metadata (repeatable)",
       "  --runtime-size <s>   Managed runtime preset",
       "  --session-timeout <dur>  Server-side session deadline (validated client-side by the SDK)",
-      "  --webhook <url>      Per-session terminal callback (https)",
-      "  --follow             Stream the turn's events until the session parks"
+      "  --webhook <url>      Finalized run callback (run.finished/run.error; https)",
+      "  --follow             Stream events until the run finishes"
     ],
     flags: START_FLAGS
   },
   {
     name: "status",
-    summary: "Print a session/session record (GET /api/sessions/:id).",
+    summary: "Print a session record (GET /api/sessions/:id).",
     usage: ["aex status <session-id>"]
   },
   {
@@ -93,7 +93,7 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   },
   {
     name: "wait",
-    summary: "Poll a session until it parks; exit code reflects the outcome.",
+    summary: "Poll a session until it stops progressing; exit code reflects lifecycle state.",
     usage: ["aex wait <session-id> [--timeout 8m] [--interval 2s]"],
     flags: ["--timeout", "--interval"]
   },
@@ -106,8 +106,8 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   {
     name: "tail",
     summary: "Live human-readable follow over the coordinator event stream.",
-    usage: ["aex tail <session-id> [--filter <type|source>] [--logs] [--from <seq>] [--settle] [--timeout <dur>]"],
-    flags: ["--filter", "--logs", "--from", "--settle", "--timeout"]
+    usage: ["aex tail <session-id> [--filter <type|source>] [--logs] [--from <seq>] [--timeout <dur>]"],
+    flags: ["--filter", "--logs", "--from", "--timeout"]
   },
   {
     name: "inspect",
@@ -117,14 +117,13 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   },
   {
     name: "files",
-    summary: "List a session's captured files, or read/download/link/find/search one file.",
+    summary: "List a session's captured files, or read/download/link/find one file.",
     usage: [
       "aex files <session-id>                         List captured files (NDJSON)",
       "aex files read <session-id> <path>             Read one file as capped text",
       "aex files download <session-id> <path> [--out] Download one file's raw bytes",
       "aex files link <session-id> <path>             Mint a temporary download URL",
       "aex files find <session-id> [--name S] [--ext E] [--type T]",
-      "aex files search [--query S] [--name S] [--ext E] [--session-id ID]   Cross-session"
     ],
     flags: ["--out", "--name", "--ext", "--type", "--content-type", "--query", "--session-id", "--limit", "--max-bytes"],
     subverbs: FILES_SUBVERBS
@@ -137,7 +136,7 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   },
   {
     name: "cancel",
-    summary: "Cancel a sessionning session.",
+    summary: "Cancel a running session.",
     usage: ["aex cancel <session-id>"]
   },
   {
@@ -155,12 +154,6 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     summary: "List the workspace's sessions (newest first).",
     usage: ["aex sessions [--limit N] [--since ISO]"],
     flags: ["--limit", "--since"]
-  },
-  {
-    name: "sessions",
-    summary: "List the workspace's sessions (newest first).",
-    usage: ["aex sessions [--limit N]"],
-    flags: ["--limit"]
   },
   {
     name: "whoami",
@@ -218,7 +211,7 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
   {
     name: "runtime-sizes",
     summary: "List managed runtime presets (no token needed).",
-    usage: ["aex starttime-sizes list [--json]"]
+    usage: ["aex runtime-sizes list [--json]"]
   }
 ];
 

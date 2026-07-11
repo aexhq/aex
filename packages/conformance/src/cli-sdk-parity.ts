@@ -36,10 +36,6 @@ export interface CliSdkParityManifest {
 export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
   aexMethods: {
     start: "start",
-    submit: "start",
-    batch: "start",
-    openSession: "start",
-    deleteWorkspaceAsset: "delete-asset",
     whoami: "whoami",
     billing: "billing",
     billingCheckout: "billing",
@@ -51,10 +47,7 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     provider: "--provider",
     model: "--model",
     system: "--system",
-    tools: "--tool",
-    skills: "--skill",
-    agentsMd: "--agents-md",
-    files: "--file",
+    assets: "--file|--skill|--tool|--instructions",
     mcpServers: "--mcp",
     metadata: "--metadata",
     idempotencyKey: "--idempotency-key",
@@ -67,7 +60,7 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     messageIdempotencyKey: "--idempotency-key",
     // Programmatic-only / no scriptable analogue:
     fileCapture: CLI_PARITY_NOT_SURFACED,
-    includeBuiltinTools: CLI_PARITY_NOT_SURFACED,
+    builtinTools: CLI_PARITY_NOT_SURFACED,
     outputMode: CLI_PARITY_NOT_SURFACED,
     responseFormat: CLI_PARITY_NOT_SURFACED,
     approvalGate: CLI_PARITY_NOT_SURFACED,
@@ -80,7 +73,6 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     download: "download",
     link: "link",
     find: "find",
-    search: "search",
     // Covered by the surfaced methods above (conveniences over list/find/link):
     last: CLI_PARITY_NOT_SURFACED,
     first: CLI_PARITY_NOT_SURFACED,

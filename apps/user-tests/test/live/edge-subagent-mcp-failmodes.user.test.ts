@@ -115,7 +115,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
         const parent = await client.sessions.create({
           provider: PROVIDER,
           model: MODEL,
-          includeBuiltinTools: true,
+          builtinTools: "default",
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           overrides: { maxSpendUsd: 0.10, idleTtl: "3m" }
         });
@@ -123,7 +123,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
 
         let sendResult = null, sendThrown = null;
         try {
-          const r = await parent.send(prompt, { idleTimeoutMs: 6 * 60_000 }).done();
+          const r = await parent.messages.send(prompt, { idleTimeoutMs: 6 * 60_000 }).finished();
           sendResult = { status: r.status, text: String(r.text || "").slice(0, 500) };
         } catch (e) {
           sendThrown = errShape(e);
@@ -132,7 +132,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
         let childId = null, subResults = [], subStarts = 0;
         if (parentSessionId) {
           const h = await client.sessions.open(parentSessionId);
-          const evs = await h.events().list();
+          const evs = await h.events.list();
           const subStartIds = new Set(
             evs
               .filter((e) => e.type === "TOOL_CALL_START" && e.data && e.data.name === "subagent")
@@ -215,13 +215,13 @@ describe("live DEV — subagent + MCP failure modes", () => {
         let session = null;
         try {
           session = await client.sessions.create(
-            { provider: PROVIDER, model: MODEL, includeBuiltinTools: false,
+            { provider: PROVIDER, model: MODEL, builtinTools: "none",
             mcpServers: [McpServer.remote({ name: "probe", url: "https://mcp.context7.com/mcp" })],
             apiKeys: { [PROVIDER]: PROVIDER_KEY }, overrides: { maxSpendUsd: 0.05, idleTtl: "3m" } }
           );
           out.sessionId = session.id;
           try {
-            const r = await session.send("List your MCP tools and stop.", { idleTimeoutMs: 6 * 60_000 }).done();
+            const r = await session.messages.send("List your MCP tools and stop.", { idleTimeoutMs: 6 * 60_000 }).finished();
             out.sendResult = { status: r.status, text: String(r.text || "").slice(0, 300) };
           } catch (e) {
             out.sendThrown = errShape(e);
@@ -239,7 +239,7 @@ describe("live DEV — subagent + MCP failure modes", () => {
           }
           const h = await client.sessions.open(session.id).catch(() => null);
           if (h) {
-            const evs = await h.events().list().catch(() => []);
+            const evs = await h.events.list().catch(() => []);
             out.recentEvents = evs.slice(-5).map((e) => ({
               type: e.type,
               data: e.data ? JSON.stringify(e.data).slice(0, 240) : null
@@ -264,9 +264,8 @@ describe("live DEV — subagent + MCP failure modes", () => {
       expect(record?.errorMessage ?? "", `MCP discovery still hit egress policy: ${dump}`).not.toMatch(
         /egress|denied|not allowed|407/i
       );
-      expect(["idle", "succeeded"], `MCP run did not settle cleanly: ${dump}`).toContain(
-        (out.sendResult as { status?: string } | null)?.status
-      );
+      expect((out.sendResult as { status?: string } | null)?.status, `MCP run did not finish cleanly: ${dump}`)
+        .toBe("succeeded");
     },
     10 * 60_000
   );

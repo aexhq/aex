@@ -10,7 +10,7 @@
  *   - reads `<skillDir>/SKILL.md`,
  *   - byte-caps the returned body at `HANDS_SKILL_MD_MAX_BYTES = 400_000`
  *     (appending `\n[skill SKILL.md truncated at 400000 bytes]` when it cut),
- *   - sessions it through the shape-based secret redactor before returning it.
+ *   - runs it through the shape-based secret redactor before returning it.
  *
  * Four independent live sessions, each asserting only via OBSERVABLE session evidence
  * (assistant text + the event stream, including TOOL_CALL_RESULT `data.content`
@@ -71,7 +71,7 @@ interface ScriptConfig {
   readonly message: string;
   /**
    * A JS object-literal expression (source text) computing case-specific boolean
-   * checks. Evaluated inside the child sessionner, where these vars are in scope:
+   * checks. Evaluated inside the child runner, where these vars are in scope:
    *   assistantTextJoined / assistantTextNorm  — joined TEXT_MESSAGE_CONTENT
    *   toolResultsJoined    / toolResultsNorm   — JSON of every TOOL_CALL_RESULT
    *   haystack             / haystackNorm      — JSON of all events + files
@@ -84,10 +84,10 @@ interface ScriptConfig {
 
 interface CaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly ok: boolean;
   readonly terminalKind: string | null;
-  readonly terminalReason: unknown;
+  readonly terminalOutcome: unknown;
   readonly eventKinds: readonly string[];
   readonly skillLoadedNames: readonly string[];
   readonly assistantTextExcerpt: string;
@@ -156,31 +156,21 @@ function buildScript(cfg: ScriptConfig): string {
       writeFileSync(dest, f.content);
     }
     const skill = await Skill.fromDir(skillDir, { name: ${JSON.stringify(cfg.skillName)} });
+    const skillRef = await client.workspace.skills.publish(skill);
 
     const sessionResult = await client.start({
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       system: ${JSON.stringify(cfg.system)},
       message: ${JSON.stringify(cfg.message)},
-      skills: [skill],
+      assets: { skills: [skillRef] },
       apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: ${JSON.stringify(cfg.idempotencyPrefix)} + "-" + Date.now()
     }, { timeoutMs: 8 * 60_000 });
 
-    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
-    let events = fallbackEvents;
-    let files = fallbackFiles;
-    try {
-      const session = await client.sessions.open(sessionResult.sessionId);
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedFiles = await session.files().list();
-      if (Array.isArray(listedFiles)) files = listedFiles;
-    } catch {
-      events = fallbackEvents;
-      files = fallbackFiles;
-    }
+    const session = await client.sessions.open(sessionResult.sessionId);
+    const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
+    const files = (await session.files.list()).files;
 
     // CUSTOM envelopes nest the original payload under data.value, keyed by data.name.
     function customName(e) {
@@ -189,22 +179,6 @@ function buildScript(cfg: ScriptConfig): string {
     function customValue(e) {
       const v = e && e.data ? e.data.value : null;
       return v && typeof v === "object" ? v : {};
-    }
-    const SESSION_TERMINAL_NAMES = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-    function isSessionIdle(e) {
-      return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name);
-    }
-    function terminalKindOf(e) {
-      if (!e) return null;
-      return isSessionIdle(e) ? "TURN_FINISHED" : e.type;
-    }
-    function terminalReasonOf(e) {
-      if (!e) return null;
-      if (isSessionIdle(e)) {
-        const v = customValue(e);
-        return v.reason === "completed" ? "complete" : v.reason ?? null;
-      }
-      return e.data ? e.data.reason : null;
     }
     function skillLoadedName(e) {
       const v = customValue(e);
@@ -235,9 +209,8 @@ function buildScript(cfg: ScriptConfig): string {
     const haystack = eventsJson + " " + filesJson;
     const haystackNorm = haystack.replace(/\\s+/g, "");
 
-    const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data.value === "object" && e.data.value ? e.data.value : { unknown: true }));
@@ -246,10 +219,10 @@ function buildScript(cfg: ScriptConfig): string {
 
     process.stdout.write(JSON.stringify({
       sessionId: sessionResult.sessionId,
-      sessionStatus: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      runStatus: sessionResult.status,
       ok: !!sessionResult.ok,
-      terminalKind: terminalKindOf(terminal),
-      terminalReason: terminalReasonOf(terminal),
+      terminalKind: terminal ? terminal.type : null,
+      terminalOutcome: terminal && terminal.data ? terminal.data.outcome ?? null : null,
       eventKinds,
       skillLoadedNames,
       assistantTextExcerpt: assistantTextJoined.slice(0, 1200),
@@ -284,8 +257,8 @@ async function runScenario(installDir: string, scriptName: string, cfg: ScriptCo
 
 function dump(result: CaseResult): string {
   return [
-    `sessionId=${result.sessionId} sessionStatus=${result.sessionStatus} ok=${result.ok}`,
-    `terminalKind=${result.terminalKind} terminalReason=${JSON.stringify(result.terminalReason)}`,
+    `sessionId=${result.sessionId} runStatus=${result.runStatus} ok=${result.ok}`,
+    `terminalKind=${result.terminalKind} terminalOutcome=${JSON.stringify(result.terminalOutcome)}`,
     `eventKinds=[${result.eventKinds.join(", ")}]`,
     `skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`,
     `checks=${JSON.stringify(result.checks)}`,
@@ -298,12 +271,9 @@ function dump(result: CaseResult): string {
 }
 
 function assertSessionOk(result: CaseResult): void {
-  expect(result.sessionStatus, dump(result)).toBe("succeeded");
-  expect(result.terminalKind, dump(result)).toBe("TURN_FINISHED");
-  // Both adapters populate reason="complete" on the clean success path.
-  if (result.terminalReason !== "complete") {
-    throw new Error(`terminal reason=${JSON.stringify(result.terminalReason)} (expected "complete")\n\n${dump(result)}`);
-  }
+  expect(result.runStatus, dump(result)).toBe("succeeded");
+  expect(result.terminalKind, dump(result)).toBe("RUN_FINISHED");
+  expect(result.terminalOutcome, dump(result)).toBe("succeeded");
 }
 
 let install: InstallResult;

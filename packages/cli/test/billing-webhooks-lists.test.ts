@@ -207,9 +207,9 @@ describe("aex billing upgrade", () => {
     expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({
       planKey: "pro",
       successUrl: "https://aex.dev/billing?checkout=success",
-      cancelUrl: "https://aex.dev/billing?checkout=cancel",
-      idempotencyKey: "checkout-key"
+      cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toBe("checkout-key");
   });
 
   it("supports --json and rejects free/unknown plans before network", async () => {
@@ -236,7 +236,15 @@ describe("aex billing upgrade", () => {
 describe("aex billing portal", () => {
   it("POSTs /api/billing/portal and prints the hosted URL", async () => {
     const cap = makeHostIo({
-      argv: ["billing", "portal", "--return-url", "https://aex.dev/billing", ...COMMON],
+      argv: [
+        "billing",
+        "portal",
+        "--return-url",
+        "https://aex.dev/billing",
+        "--idempotency-key",
+        "portal-key",
+        ...COMMON
+      ],
       fetchHandler: () =>
         new Response(JSON.stringify({ url: "https://billing.stripe.test/session" }), {
           status: 200,
@@ -249,6 +257,7 @@ describe("aex billing portal", () => {
     expect(cap.calls[0]!.url).toBe("https://dash.example/api/billing/portal");
     expect(cap.calls[0]!.init.method).toBe("POST");
     expect(JSON.parse(String(cap.calls[0]!.init.body))).toEqual({ returnUrl: "https://aex.dev/billing" });
+    expect(new Headers(cap.calls[0]!.init.headers).get("idempotency-key")).toBe("portal-key");
   });
 
   it("supports --json", async () => {
@@ -322,13 +331,13 @@ describe("aex webhooks secret", () => {
 describe("aex sessions", () => {
   const PAGE = {
     sessions: [
-      { id: "session-new", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.01 },
-      { id: "session-old", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
+      { id: "session-new", status: "idle", acceptsMessages: true, createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.01 },
+      { id: "session-old", status: "error", acceptsMessages: true, createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
     ],
     nextCursor: "cursor-2"
   };
 
-  it("GETs /api/sessions with limit + since and prints the page as JSON", async () => {
+  it("forwards limit + since and prints the server page unchanged", async () => {
     const cap = makeHostIo({
       argv: ["sessions", "--limit", "2", "--since", "2026-07-01T00:00:00Z", ...COMMON],
       fetchHandler: () =>
@@ -344,9 +353,7 @@ describe("aex sessions", () => {
     expect(url.searchParams.get("limit")).toBe("2");
     expect(url.searchParams.get("since")).toBe("2026-07-01T00:00:00Z");
     const printed = JSON.parse(cap.stdout) as { sessions: Array<{ id: string }>; nextCursor?: string };
-    // The deployed API ignores `since`; the CLI enforces it client-side so the
-    // flag is honest rather than a silent no-op.
-    expect(printed.sessions.map((r) => r.id)).toEqual(["session-new"]);
+    expect(printed.sessions.map((r) => r.id)).toEqual(["session-new", "session-old"]);
     expect(printed.nextCursor).toBe("cursor-2");
   });
 
@@ -378,7 +385,7 @@ describe("aex sessions", () => {
 describe("aex sessions", () => {
   it("GETs /api/sessions with the limit param and prints the page as JSON", async () => {
     const page = {
-      sessions: [{ id: "sess-1", status: "idle", createdAt: "t", updatedAt: "t" }]
+      sessions: [{ id: "sess-1", status: "idle", acceptsMessages: true, createdAt: "t", updatedAt: "t" }]
     };
     const cap = makeHostIo({
       argv: ["sessions", "--limit", "10", ...COMMON],

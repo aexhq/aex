@@ -40,7 +40,7 @@ console.log(result.sessionId, result.text);
 ```
 
 `Skill.fromDir("./vision-skill", ...)` is resolved relative to the process
-CWD. SessionRecord the script from the directory that contains `vision-skill/` (in this
+CWD. Run the script from the directory that contains `vision-skill/` (in this
 repo, `examples/`).
 
 ## Call the provider from the skill

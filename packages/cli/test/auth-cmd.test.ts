@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { executeCli } from "../src/main.js";
 import { type CliIO, type StoredCliConfig } from "../src/internal.js";
+import { canonicalWhoami } from "./canonical-whoami.js";
 
 function makeIo(opts: {
   argv: readonly string[];
@@ -44,7 +45,7 @@ function makeIo(opts: {
           headers: { "content-type": "application/json" }
         });
       }
-      return new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-9" }), {
+      return new Response(JSON.stringify(canonicalWhoami("ws-9")), {
         status: 200,
         headers: { "content-type": "application/json" }
       });

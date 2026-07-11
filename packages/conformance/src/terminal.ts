@@ -1,66 +1,68 @@
-// Canonical terminal-event matcher. Replaces every inline
-// `if (terminal) expect(terminal.data["reason"]).not.toBe("error")` etc.
-// across the live tests.
-//
-// Contract:
-//   - The events array MUST contain exactly one sessiontime_terminal.
-//   - The terminal MUST carry `reason` of the expected value (no
-//     undefined-skip — if the field can be absent, that's a different
-//     test, not a tolerance of THIS matcher).
-//   - Optionally pin `failureClass` for error-flavoured terminals.
+// Canonical committed run-terminal matcher.
 
-export type TerminalReason = "complete" | "error" | "cancelled" | "max_tokens" | "timed_out";
+export type TerminalOutcome = "succeeded" | "failed" | "timed_out" | "cancelled" | "interrupted";
 
 export interface TerminalEvent {
-  readonly type: string;
+  readonly type: "RUN_FINISHED" | "RUN_ERROR";
   readonly data: Record<string, unknown>;
 }
 
 interface ExpectTerminalOptions {
-  /** Required terminal reason. No default — be explicit at the call site. */
-  readonly reason: TerminalReason;
-  /** Required failureClass when `reason === "error"`. Optional otherwise. */
+  readonly outcome: TerminalOutcome;
   readonly failureClass?: string;
-  /** Optional context string interpolated into failure messages. */
   readonly context?: string;
 }
 
-/**
- * Assert that `events` contains a single runtime_terminal matching the
- * expected reason (and failureClass when applicable). Returns the
- * matched terminal event so the caller can drill further if needed.
- *
- * Throws a structured Error on any mismatch — never returns a "maybe".
- */
+/** Assert exactly one committed run terminal with the expected per-run data. */
 export function expectTerminalEvent(
   events: ReadonlyArray<{ type: string; data: Record<string, unknown> }>,
   options: ExpectTerminalOptions
 ): TerminalEvent {
   const ctx = options.context ? ` [${options.context}]` : "";
-  const dump = (): string => `\n  events=${events.map((e) => e.type).join(",")}`;
-
-  const terminals = events.filter((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR");
+  const dump = (): string => `\n  events=${events.map((event) => event.type).join(",")}`;
+  const terminals = events.filter(
+    (event): event is TerminalEvent => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"
+  );
   if (terminals.length === 0) {
-    throw new Error(`expectTerminalEvent${ctx}: no terminal (TURN_FINISHED|TURN_ERROR) in events${dump()}`);
+    throw new Error(`expectTerminalEvent${ctx}: no terminal (RUN_FINISHED|RUN_ERROR) in events${dump()}`);
   }
   if (terminals.length > 1) {
-    throw new Error(
-      `expectTerminalEvent${ctx}: ${terminals.length} terminal events — exactly one expected${dump()}`
-    );
+    throw new Error(`expectTerminalEvent${ctx}: ${terminals.length} terminal events; exactly one expected${dump()}`);
   }
+
   const terminal = terminals[0]!;
-  const actualReason = terminal.data["reason"];
-  if (actualReason !== options.reason) {
+  const actualOutcome = terminal.data["outcome"];
+  if (actualOutcome !== options.outcome) {
     throw new Error(
-      `expectTerminalEvent${ctx}: reason=${JSON.stringify(actualReason)} but expected ${JSON.stringify(options.reason)}${dump()}`
+      `expectTerminalEvent${ctx}: outcome=${JSON.stringify(actualOutcome)} but expected ${JSON.stringify(options.outcome)}${dump()}`
     );
   }
-  if (options.reason === "error" && options.failureClass !== undefined) {
-    const actualClass = terminal.data["failureClass"];
-    if (actualClass !== options.failureClass) {
-      throw new Error(
-        `expectTerminalEvent${ctx}: failureClass=${JSON.stringify(actualClass)} but expected ${JSON.stringify(options.failureClass)}${dump()}`
-      );
+  if (terminal.type === "RUN_ERROR" && actualOutcome !== "failed") {
+    throw new Error(`expectTerminalEvent${ctx}: RUN_ERROR must carry outcome="failed"${dump()}`);
+  }
+  if (terminal.type === "RUN_FINISHED" && actualOutcome === "failed") {
+    throw new Error(`expectTerminalEvent${ctx}: outcome="failed" must use RUN_ERROR${dump()}`);
+  }
+  if (options.failureClass !== undefined && terminal.data["failureClass"] !== options.failureClass) {
+    throw new Error(
+      `expectTerminalEvent${ctx}: failureClass=${JSON.stringify(terminal.data["failureClass"])} but expected ${JSON.stringify(options.failureClass)}${dump()}`
+    );
+  }
+  const costUsd = terminal.data["costUsd"];
+  if (typeof costUsd !== "number" || !Number.isFinite(costUsd) || costUsd < 0) {
+    throw new Error(`expectTerminalEvent${ctx}: RUN terminal has invalid per-run costUsd${dump()}`);
+  }
+  if (!Array.isArray(terminal.data["providerUsage"])) {
+    throw new Error(`expectTerminalEvent${ctx}: RUN terminal is missing per-run providerUsage${dump()}`);
+  }
+  if (terminal.type === "RUN_FINISHED") {
+    const checkpoint = terminal.data["checkpoint"];
+    if (
+      !checkpoint ||
+      typeof checkpoint !== "object" ||
+      typeof (checkpoint as Record<string, unknown>)["checkpointId"] !== "string"
+    ) {
+      throw new Error(`expectTerminalEvent${ctx}: RUN_FINISHED is missing its committed checkpoint${dump()}`);
     }
   }
   return terminal;

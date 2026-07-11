@@ -9,21 +9,21 @@
  *   1. A custom Tool that THROWS — the error must surface cleanly to the model
  *      as an `isError` tool result and the session must still finish (a tool throw
  *      is recoverable, not a session-killer).
- *   2. Builtin subset selection — `includeBuiltinTools:false` + a single
+ *   2. Builtin subset selection — `builtinTools:[...]` with a single
  *      cherry-picked `BuiltinTools.bash` gives the model exactly that one
  *      builtin, and it uses it (marker echoed).
- *   3. Custom Tool + full builtins — `includeBuiltinTools:true` alongside a
+ *   3. Custom Tool + full builtins — `builtinTools:"default"` alongside a
  *      custom Tool: the custom tool is invoked and returns its deterministic
  *      value while builtins coexist.
  *   4. Duplicate custom-tool NAME — two distinct Tools named `dup_tool` (backed
  *      by the offline wire test proving BOTH ride the wire). The collision must
  *      be handled cleanly server-side: either the session completes (dedup/shadow)
  *      or it fails with a structured error — never a silent hang / SDK crash.
- *   5. Empty tools + `includeBuiltinTools:false` — a session with zero tools still
+ *   5. Empty tools + `builtinTools:"none"` — a session with zero tools still
  *      completes cleanly and the model answers from memory (marker echoed).
  *
  * Gating mirrors the sibling live suites: `requireEnv` throws at module load
- * when a credential is missing, so the file is only collected/session with live
+ * when a credential is missing, so the file is only collected and run with live
  * creds. Required env:
  *   AEX_API_URL                live hosted API URL
  *   AEX_API_KEY              workspace API key
@@ -34,7 +34,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { isPreCreateTransportFailure } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -70,7 +69,7 @@ interface Observation {
   readonly status: string;
   readonly errorMessage: string | null;
   readonly terminalKind: string | null;
-  readonly terminalReason: unknown;
+  readonly terminalOutcome: unknown;
   readonly eventKinds: readonly string[];
   readonly toolCalls: readonly ObservedToolCall[];
   readonly toolResults: readonly ObservedToolResult[];
@@ -109,14 +108,6 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
 function eventData(e) { return e && e.data && typeof e.data === "object" ? e.data : {}; }
 function customName(e) { const d = eventData(e); return typeof d.name === "string" ? d.name : null; }
 function customValue(e) { const d = eventData(e); const v = d.value; return v && typeof v === "object" ? v : {}; }
-const SESSION_TERMINAL_NAMES = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-function isSessionIdle(e) { return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name); }
-function terminalKindOf(e) { if (!e) return null; return isSessionIdle(e) ? "TURN_FINISHED" : e.type; }
-function terminalReasonOf(e) {
-  if (!e) return null;
-  if (isSessionIdle(e)) { const v = customValue(e); return v.reason === "completed" ? "complete" : (v.reason ?? null); }
-  return eventData(e).reason ?? null;
-}
 function skillLoadedName(e) {
   const v = customValue(e);
   if (customName(e) === "aex.skill_loaded" || v.kind === "skill_loaded" || v.kind === "skill_loaded_marker") {
@@ -134,19 +125,14 @@ async function observe(result, threw) {
   if (!result) {
     return {
       threw: threw ?? "unknown", sessionId: null, status: "threw", errorMessage: threw ?? null,
-      terminalKind: null, terminalReason: null, eventKinds: [], toolCalls: [], toolResults: [],
+      terminalKind: null, terminalOutcome: null, eventKinds: [], toolCalls: [], toolResults: [],
       skillLoadedNames: [], assistantText: "", assistantTextEventCount: 0, streamErrors: [], leakedProviderKey: false
     };
   }
   const sessionId = typeof result.sessionId === "string" ? result.sessionId : null;
-  let events = Array.isArray(result.events) ? result.events : [];
-  try {
-    if (sessionId) {
-      const session = await client.sessions.open(sessionId);
-      const listed = await session.events().list();
-      if (Array.isArray(listed) && listed.length > 0) events = listed;
-    }
-  } catch { /* keep fallback events */ }
+  if (!sessionId) throw new Error("finished session result is missing sessionId");
+  const session = await client.sessions.open(sessionId);
+  const events = await session.events.list();
 
   const nameById = new Map();
   const toolCalls = events.filter((e) => e.type === "TOOL_CALL_START").map((e) => {
@@ -165,9 +151,8 @@ async function observe(result, threw) {
   const skillLoadedNames = customEvents.map(skillLoadedName).filter(Boolean);
   const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
   const assistantText = assistantTextEvents.map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : "")).join(" ");
-  const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
+  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
   const eventKinds = events.map((e) => e.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
   const streamErrors = customEvents.filter((e) => customName(e) === "aex.stream_error").map((e) => customValue(e));
   const status = result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed");
   const errorMessage =
@@ -175,17 +160,22 @@ async function observe(result, threw) {
   const serialized = JSON.stringify({ events, status, errorMessage });
   return {
     threw: null, sessionId, status, errorMessage,
-    terminalKind: terminalKindOf(terminal), terminalReason: terminalReasonOf(terminal),
+    terminalKind: terminal ? terminal.type : null,
+    terminalOutcome: terminal ? eventData(terminal).outcome ?? null : null,
     eventKinds, toolCalls, toolResults, skillLoadedNames,
     assistantText: assistantText.slice(0, 2000), assistantTextEventCount: assistantTextEvents.length,
     streamErrors, leakedProviderKey: PROVIDER_KEY.length > 0 && serialized.includes(PROVIDER_KEY)
   };
 }
 
-async function runOne(runArgs) {
+async function runOne({ toolDrafts = [], ...submission }) {
   let result = null, threw = null;
   try {
-    result = await client.start(runArgs, { timeoutMs: ${SESSION_TIMEOUT_MS} });
+    const tools = await Promise.all(toolDrafts.map((draft) => client.workspace.tools.publish(draft)));
+    result = await client.start({
+      ...submission,
+      assets: { ...(submission.assets ?? {}), tools: [...(submission.assets?.tools ?? []), ...tools] }
+    }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
   } catch (e) {
     threw = e && e.message ? e.message : String(e);
   }
@@ -205,33 +195,6 @@ async function runScenario(install: InstallResult, scriptName: string, body: str
   return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
 }
 
-async function runScenarioWithPreCreateRetry(
-  install: InstallResult,
-  scriptName: string,
-  body: string
-): Promise<{ observation: Observation; stdout: string }> {
-  const maxAttempts = 3;
-  let last: { observation: Observation; stdout: string } | null = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const result = await runScenario(install, scriptName, body);
-    last = result;
-    if (!isPreCreateTransportFailure(result.observation) || attempt === maxAttempts) {
-      return result;
-    }
-
-    // No sessionId means the submit never created a debuggable live session artifact.
-    // Retry only this transport gap; all post-create failures stay single-shot.
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[edge-skills-tools] ${scriptName} pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${result.observation.threw}`
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
-  }
-
-  return last!;
-}
-
 function tag(): string {
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 }
@@ -245,7 +208,7 @@ function diag(o: Observation): string {
   return [
     `threw=${o.threw}`,
     `sessionId=${o.sessionId} status=${o.status} errorMessage=${JSON.stringify(o.errorMessage)}`,
-    `terminalKind=${o.terminalKind} terminalReason=${JSON.stringify(o.terminalReason)}`,
+    `terminalKind=${o.terminalKind} terminalOutcome=${JSON.stringify(o.terminalOutcome)}`,
     `eventKinds=[${o.eventKinds.join(", ")}]`,
     `toolCalls=[${toolCallNames(o).join(", ")}]`,
     `toolResults=${JSON.stringify(o.toolResults).slice(0, 900)}`,
@@ -274,8 +237,8 @@ await runOne({
   model: MODEL,
   system: "Call the boom_tool tool exactly once with x set to \\"go\\". It will return an error. After that, reply in one short sentence that the tool errored, and stop. Do not retry the tool.",
   message: "Call the boom_tool tool once with x=\\"go\\".",
-  includeBuiltinTools: false,
-  tools: [await Tool.fromFiles({
+  builtinTools: "none",
+  toolDrafts: [await Tool.fromFiles({
     name: "boom_tool",
     description: "Always throws an error when called.",
     inputSchema: { type: "object", properties: { x: { type: "string" } }, required: ["x"], additionalProperties: false },
@@ -286,14 +249,14 @@ await runOne({
   idempotencyKey: "edge-throw-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-throw.mjs", body);
+      const { observation, stdout } = await runScenario(install, "edge-throw.mjs", body);
       const dump = diag(observation);
 
       // A throwing tool must NOT reject the SDK call nor kill the session.
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
-      expect(observation.terminalReason, dump).toBe("complete");
+      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalOutcome, dump).toBe("succeeded");
 
       // The model actually invoked the tool.
       expect(toolCallNames(observation), dump).toContain("boom_tool");
@@ -313,7 +276,7 @@ await runOne({
   );
 
   it(
-    "2. includeBuiltinTools:false + a single cherry-picked builtin (bash) is available and used",
+    "2. a single cherry-picked builtin (bash) is available and used",
     async () => {
       const marker = "BLTN-" + tag();
       const body = `
@@ -322,19 +285,18 @@ await runOne({
   model: MODEL,
   system: "You have exactly one tool: bash. Use it to run the requested command, then reply with the exact printed line.",
   message: "Using your bash tool, run: printf '${marker}\\\\n'  — then reply with the exact line you printed and nothing else.",
-  includeBuiltinTools: false,
-  tools: [BuiltinTools.bash],
+  builtinTools: [BuiltinTools.bash],
   apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-cherry-bash-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-cherry-bash.mjs", body);
+      const { observation, stdout } = await runScenario(install, "edge-cherry-bash.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
-      expect(observation.terminalReason, dump).toBe("complete");
+      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalOutcome, dump).toBe("succeeded");
 
       // The single cherry-picked builtin was genuinely available and invoked.
       const bashCalls = toolCallNames(observation).filter((n) => n === "bash" || n === "shell");
@@ -349,7 +311,7 @@ await runOne({
   );
 
   it(
-    "3. includeBuiltinTools:true + a custom Tool coexist; the custom tool is invoked",
+    "3. default builtins and a custom Tool coexist; the custom tool is invoked",
     async () => {
       const marker = "ECHO-" + tag();
       const indexSrc = `export default async function ({ input }) { return ${JSON.stringify("stamp:")} + String(input.v); }`;
@@ -359,8 +321,8 @@ await runOne({
   model: MODEL,
   system: "Use the echo_stamp tool for this task; do not answer from memory. After calling it, reply with its exact result on one line.",
   message: "Call the echo_stamp tool with v set to \\"${marker}\\", then reply with its exact result verbatim.",
-  includeBuiltinTools: true,
-  tools: [await Tool.fromFiles({
+  builtinTools: "default",
+  toolDrafts: [await Tool.fromFiles({
     name: "echo_stamp",
     description: "Stamp a caller-provided value and echo it back as stamp:<value>.",
     inputSchema: { type: "object", properties: { v: { type: "string" } }, required: ["v"], additionalProperties: false },
@@ -371,13 +333,13 @@ await runOne({
   idempotencyKey: "edge-custom-plus-builtins-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-custom-plus-builtins.mjs", body);
+      const { observation, stdout } = await runScenario(install, "edge-custom-plus-builtins.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
-      expect(observation.terminalReason, dump).toBe("complete");
+      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalOutcome, dump).toBe("succeeded");
 
       // The custom tool was invoked and executed cleanly, echoing stamp:<marker>.
       expect(toolCallNames(observation), dump).toContain("echo_stamp");
@@ -404,8 +366,8 @@ await runOne({
   model: MODEL,
   system: "Call the dup_tool tool once with no arguments, then reply with its exact result.",
   message: "Call the dup_tool tool once (no arguments) and reply with its exact result.",
-  includeBuiltinTools: false,
-  tools: [
+  builtinTools: "none",
+  toolDrafts: [
     await Tool.fromFiles({ name: "dup_tool", description: "Alpha variant.", inputSchema: { type: "object", properties: {} }, entry: "index.mjs", files: { "index.mjs": ${JSON.stringify(srcA)} } }),
     await Tool.fromFiles({ name: "dup_tool", description: "Bravo variant.", inputSchema: { type: "object", properties: {} }, entry: "index.mjs", files: { "index.mjs": ${JSON.stringify(srcB)} } })
   ],
@@ -413,7 +375,7 @@ await runOne({
   idempotencyKey: "edge-dup-name-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-dup-name.mjs", body);
+      const { observation, stdout } = await runScenario(install, "edge-dup-name.mjs", body);
       const dump = diag(observation);
 
       // The submission with a duplicate tool name must be handled cleanly.
@@ -426,10 +388,10 @@ await runOne({
       expect(["succeeded", "failed", "threw"], dump).toContain(outcome);
 
       // Unconditional invariant (no branch-skippable expect): the session was handled
-      // cleanly. Accepted ⇒ a REAL clean terminal (TURN_FINISHED + reason=complete),
+      // cleanly. Accepted ⇒ a REAL clean terminal (RUN_FINISHED + reason=complete),
       // not a phantom success. Rejected ⇒ carries a non-empty diagnostic (SDK throw
       // message, turn errorMessage, or a stream error) — never a silent hang.
-      const cleanTerminal = observation.terminalKind === "TURN_FINISHED" && observation.terminalReason === "complete";
+      const cleanTerminal = observation.terminalKind === "RUN_FINISHED" && observation.terminalOutcome === "succeeded";
       const diagnostic = [observation.threw ?? "", observation.errorMessage ?? "", JSON.stringify(observation.streamErrors)].join(" ").trim();
       const handledCleanly = outcome === "succeeded" ? cleanTerminal : diagnostic.length > 0;
       expect(handledCleanly, dump).toBe(true);
@@ -444,7 +406,7 @@ await runOne({
   );
 
   it(
-    "5. empty tools + includeBuiltinTools:false completes with zero tools",
+    "5. builtinTools:none completes with zero tools",
     async () => {
       const marker = "EMPTY-" + tag();
       const body = `
@@ -452,19 +414,18 @@ await runOne({
   provider: PROVIDER,
   model: MODEL,
   message: "Reply with exactly: ${marker}. Do not add any other text.",
-  includeBuiltinTools: false,
-  tools: [],
+  builtinTools: "none",
   apiKeys: { [PROVIDER]: PROVIDER_KEY },
   idempotencyKey: "edge-empty-tools-" + Date.now()
 });
 `;
-      const { observation, stdout } = await runScenarioWithPreCreateRetry(install, "edge-empty-tools.mjs", body);
+      const { observation, stdout } = await runScenario(install, "edge-empty-tools.mjs", body);
       const dump = diag(observation);
 
       expect(observation.threw, dump).toBeNull();
       expect(observation.status, dump).toBe("succeeded");
-      expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
-      expect(observation.terminalReason, dump).toBe("complete");
+      expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+      expect(observation.terminalOutcome, dump).toBe("succeeded");
       // No tools at all => the model cannot call any tool.
       expect(toolCallNames(observation), dump).toEqual([]);
       expect(norm(observation.assistantText), dump).toContain(marker);

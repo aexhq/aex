@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest, parseSessionWebhook } from "../src/index.js";
+import { parseSessionWebhook } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 function baseRequest() {
   return {
@@ -8,8 +9,8 @@ function baseRequest() {
     provider: "anthropic" as const,
     submission: {
       model: "claude-haiku-4-5",
-      prompt: ["hello"],      agentsMd: [],
-      files: [],
+      prompt: ["hello"],      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { anthropic: "sk-anthropic-test" } }

@@ -1,23 +1,23 @@
 /**
- * WS3 class-killer: the unified settled-result type has NON-optional
+ * WS3 class-killer: the unified finished-result type has non-optional
  * costUsd/usage/terminal-status, so a path that forgets to populate them fails
  * typecheck. Plus the UsageSummary projector from providerUsage.
  */
 import { describe, expect, it } from "vitest";
-import { usageFromProviderUsage, type SettledResult, type UsageSummary, type SessionCostProviderUsage } from "../src/index.js";
+import { usageFromProviderUsage, type TurnResult, type UsageSummary, type SessionCostProviderUsage } from "../src/index.js";
 
-describe("SettledResult non-optional settle fields (WS3)", () => {
-  it("[compile-time] SettledResult requires costUsd, usage, and a terminal status", () => {
-    const ok: SettledResult = { status: "succeeded", ok: true, costUsd: 0, usage: {} };
+describe("TurnResult non-optional terminal fields (WS3)", () => {
+  it("[compile-time] TurnResult requires costUsd, usage, and a terminal status", () => {
+    const ok: TurnResult = { status: "succeeded", ok: true, costUsd: 0, usage: {} };
     expect(ok.costUsd).toBe(0);
     // @ts-expect-error — omitting costUsd/usage/status fails to typecheck
-    const missing: SettledResult = { ok: true };
+    const missing: TurnResult = { ok: true };
     void missing;
   });
 
   it("[compile-time] status must be a terminal OUTCOME, not a lifecycle status", () => {
     // @ts-expect-error — 'idle' is a lifecycle status, not a SessionTerminalOutcome
-    const bad: SettledResult = { status: "idle", ok: true, costUsd: 0, usage: {} };
+    const bad: TurnResult = { status: "idle", ok: true, costUsd: 0, usage: {} };
     void bad;
   });
 });

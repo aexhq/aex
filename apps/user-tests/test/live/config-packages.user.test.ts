@@ -2,7 +2,7 @@
  * USER TEST (SDK-driven) — environment.packages pre-installs on managed sessions.
  *
  * Validates the FIX end-to-end through the installed SDK: a customer-supplied
- * `environment.packages` entries are PRE-INSTALLED before the agent sessions, so
+ * `environment.packages` entries are PRE-INSTALLED before the agent runs, so
  * the agent finds them WITHOUT installing anything itself. The managed runner
  * validates BOTH apt and pip — an unprefixed "jq" (→ apt) AND a "pip:cowsay"
  * (→ pip).
@@ -25,7 +25,7 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
   afterAll(() => install?.cleanup());
 
   it(
-    "managed deepseek pre-installs an apt package (jq) before the agent sessions",
+    "managed deepseek pre-installs an apt package (jq) before the agent runs",
     async () => {
       const script = sdkRunnerScript({
         session: `{
@@ -57,7 +57,7 @@ describe("user/SDK: environment.packages is pre-installed on managed sessions", 
   );
 
   it(
-    "managed runtime pre-installs apt (jq) AND pip (cowsay) before the agent sessions",
+    "managed runtime pre-installs apt (jq) AND pip (cowsay) before the agent runs",
     async () => {
       // apt jq (unprefixed → apt) exercises the ROOT-entrypoint apt path.
       // pip:cowsay exercises the system-wide pip path. Both must be present

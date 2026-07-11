@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import {
   SUPPORTED_MODELS,
   RUNTIME_SIZES,
-  parseSessionSubmissionRequest,
   providersForModel,
   type ModelName
 } from "@aexhq/contracts";
+import { parseSessionSubmissionRequest } from "@aexhq/contracts/internal";
 import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
 
 /**
  * SDK ⇄ API WIRE-CONFORMANCE property (the prompt-delivery wire-shape bug class).
  *
  * The invariant: for ANY fuzzed session-create options, the REAL
- * `Aex.openSession` either
+ * `aex.sessions.create` either
  *   (a) rejects synchronously with a typed error (AexError / Error), OR
  *   (b) builds a POST /api/sessions body whose non-message wire pieces the REAL
  *       contracts validator (`parseSessionSubmissionRequest`) accepts.
@@ -22,7 +22,7 @@ import { Aex, Secret, type SessionCreateOptions } from "../../src/index.js";
  * No mocks of the code under test: the SDK request-builder AND the contracts
  * validator are both the real implementations. The only seam is a capture
  * `fetch` (the network boundary) that records the outgoing body and returns a
- * synthetic session record. Inline assets (skills/tools/files/agentsMd) are
+ * synthetic session record. Inline assets are
  * intentionally NOT fuzzed so the sole network call is the session create (no
  * asset upload round-trips). The one-shot message rides a separate /messages
  * request and is out of scope here.
@@ -35,8 +35,8 @@ function captureClient(): { client: Aex; bodies: unknown[] } {
     if (url.endsWith("/api/sessions") && (init?.method ?? "GET") === "POST") {
       const raw = init?.body;
       bodies.push(typeof raw === "string" ? JSON.parse(raw) : raw);
-      return new Response(JSON.stringify({ id: "ses_test", status: "queued" }), {
-        status: 202,
+      return new Response(JSON.stringify({ session: { id: "ses_test", status: "idle", acceptsMessages: true } }), {
+        status: 201,
         headers: { "content-type": "application/json" }
       });
     }
@@ -98,7 +98,12 @@ const goodOptions = validModel.chain((model) => {
       overrides: fc.oneof(fc.constant(undefined), timeout.map((t) => (t ? { timeout: t } : {}))),
       runtime,
       outputMode,
-      includeBuiltinTools: fc.oneof(fc.constant(undefined), fc.boolean()),
+      builtinTools: fc.oneof(
+        fc.constant(undefined),
+        fc.constant("default" as const),
+        fc.constant("none" as const),
+        fc.constant(["bash"] as const)
+      ),
       idempotencyKey: fc.oneof(fc.constant(undefined), fc.string({ minLength: 1, maxLength: 20 })),
       apiKeys: fc.constant({ [provider]: "sk-ant-fuzztestkey0123456789" })
     },
@@ -112,7 +117,7 @@ describe("SDK wire-conformance (property)", () => {
       fc.asyncProperty(goodOptions, async (options) => {
         const { client, bodies } = captureClient();
         try {
-          await client.openSession(options as unknown as SessionCreateOptions);
+          await client.sessions.create(options as unknown as SessionCreateOptions);
         } catch (err) {
           // Rejection path: must be a TYPED error, never an undefined/non-Error crash.
           expect(err).toBeInstanceOf(Error);
@@ -141,7 +146,7 @@ describe("SDK wire-conformance (property)", () => {
       fc.asyncProperty(adversarial, async (options) => {
         const { client, bodies } = captureClient();
         try {
-          await client.openSession(options as unknown as SessionCreateOptions);
+          await client.sessions.create(options as unknown as SessionCreateOptions);
         } catch (err) {
           expect(err).toBeInstanceOf(Error);
           return;

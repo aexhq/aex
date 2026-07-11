@@ -1,16 +1,7 @@
-/**
- * `operations.listSessionRecords` — defensive filtering of phantom rows.
- *
- * Deployed planes have leaked settle-time marker items (spendmark /
- * webhook-delivery ledger rows) into the session-list index; those rows reach the
- * wire as `{ id, createdAt }` fragments with no `status`/`updatedAt` and
- * would otherwise surface through the SDK as duplicate, type-violating
- * `SessionRecordSummary` entries (one per settled run). The client drops anything
- * missing the fields `SessionRecordSummary` declares required.
- */
+/** `operations.listSessions` validates the public page contract without masking server defects. */
 import { describe, expect, it } from "vitest";
 import { HttpClient } from "../src/http.js";
-import { operations } from "../src/index.js";
+import { operations } from "../src/internal.js";
 
 const BASE = "https://api.test";
 
@@ -29,32 +20,27 @@ function clientFor(body: unknown, capture?: { url?: string }) {
 const WELL_FORMED = {
   id: "ses_a1",
   status: "idle",
+  acceptsMessages: true,
+  runtimeSize: "shared-1x-6gb",
   createdAt: "2026-07-04T04:21:51.650Z",
   updatedAt: "2026-07-04T04:22:44.525Z",
   costUsd: 0.0004
 };
 
-describe("operations.listSessionRecords", () => {
-  it("drops phantom rows missing required SessionRecordSummary fields, keeps the cursor", async () => {
+describe("operations.listSessions", () => {
+  it("fails closed on rows missing required SessionSummary fields", async () => {
     const client = clientFor({
       sessions: [
-        // Phantom: settle-time marker leaked into the list (id + createdAt only).
         { id: "ses_a1", createdAt: "2026-07-04T04:22:44.525Z" },
-        WELL_FORMED,
-        // Phantom variants: missing updatedAt / non-string status.
-        { id: "ses_b2", status: "idle", createdAt: "2026-07-04T03:00:00.000Z" },
-        { id: "ses_c3", status: 7, createdAt: "x", updatedAt: "y" }
+        WELL_FORMED
       ],
       nextCursor: "opaque-cursor"
     });
 
-    const page = await operations.listSessionRecords(client, { limit: 5 });
-
-    expect(page.sessions).toEqual([WELL_FORMED]);
-    expect(page.nextCursor).toBe("opaque-cursor");
+    await expect(operations.listSessions(client, { limit: 5 })).rejects.toThrow(/row 0 has an invalid status/);
   });
 
-  it("normalizes a served costUsd:null to absent (SessionRecordSummary declares costUsd?: number)", async () => {
+  it("fails closed on costUsd:null instead of silently changing the response", async () => {
     const client = clientFor({
       sessions: [
         { ...WELL_FORMED, id: "ses_null", costUsd: null },
@@ -62,23 +48,53 @@ describe("operations.listSessionRecords", () => {
       ]
     });
 
-    const page = await operations.listSessionRecords(client);
-
-    expect(page.sessions).toEqual([
-      { id: "ses_null", status: "idle", createdAt: WELL_FORMED.createdAt, updatedAt: WELL_FORMED.updatedAt },
-      WELL_FORMED
-    ]);
-    expect(Object.prototype.hasOwnProperty.call(page.sessions[0], "costUsd")).toBe(false);
+    await expect(operations.listSessions(client)).rejects.toThrow(/invalid costUsd/);
   });
+
+  it("fails closed on a run outcome used as a session status", async () => {
+    const client = clientFor({ sessions: [{ ...WELL_FORMED, status: "succeeded" }] });
+    await expect(operations.listSessions(client)).rejects.toThrow(/unknown lifecycle status/);
+  });
+
+  it.each(["sessionId", "runtime", "turnSeq", "cleanupStatus"])(
+    "fails closed on the removed top-level %s field",
+    async (field) => {
+      const client = clientFor({ sessions: [{ ...WELL_FORMED, [field]: field === "turnSeq" ? 1 : "removed" }] });
+      await expect(operations.listSessions(client)).rejects.toThrow(new RegExp(`removed ${field} field`));
+    }
+  );
 
   it("returns a clean page unchanged", async () => {
     const capture: { url?: string } = {};
     const client = clientFor({ sessions: [WELL_FORMED] }, capture);
 
-    const page = await operations.listSessionRecords(client, { limit: 3, cursor: "c1" });
+    const page = await operations.listSessions(client, { limit: 3, cursor: "c1" });
 
-    expect(page.sessions).toEqual([WELL_FORMED]);
+    expect(page.sessions).toEqual([{
+      id: WELL_FORMED.id,
+      status: WELL_FORMED.status,
+      acceptsMessages: true,
+      runtime: "shared-1x-6gb",
+      createdAt: WELL_FORMED.createdAt,
+      updatedAt: WELL_FORMED.updatedAt,
+      costUsd: WELL_FORMED.costUsd
+    }]);
     expect(page.nextCursor).toBeUndefined();
     expect(capture.url).toBe(`${BASE}/api/sessions?limit=3&cursor=c1`);
+  });
+
+  it("validates the page limit before transport", async () => {
+    const client = clientFor({ sessions: [] });
+    await expect(operations.listSessions(client, { limit: 0 })).rejects.toThrow(/between 1 and 100/);
+    await expect(operations.listSessions(client, { limit: 101 })).rejects.toThrow(/between 1 and 100/);
+    await expect(operations.listSessions(client, { limit: 1.5 })).rejects.toThrow(/between 1 and 100/);
+  });
+
+  it("validates lifecycle status and timestamp filters before transport", async () => {
+    const client = clientFor({ sessions: [] });
+    await expect(operations.listSessions(client, { status: "succeeded" as never }))
+      .rejects.toThrow(/lifecycle status/);
+    await expect(operations.listSessions(client, { since: "yesterday" }))
+      .rejects.toThrow(/ISO-8601/);
   });
 });

@@ -5,7 +5,7 @@
  * `skills` meta-tool and that its `SKILL.md` body drives the answer — not merely
  * that the bundle was staged.
  *
- *   SDK → client.start({ skills: [skill, ...] })
+ *   SDK → publish resources → client.start({ assets: { skills, tools } })
  *      → preflight uploads/upserts the skill bundle by workspace name
  *      → the skill rides in the session `skills` array
  *      → the model calls `skills({ action:"load", name })` to pull SKILL.md into context
@@ -39,7 +39,7 @@
  * phrasing) so they are robust to LLM nondeterminism.
  *
  * Gating mirrors the sibling live suites exactly: `requireEnv` throws at module
- * load when a credential is missing, so the file is only collected/session with
+ * load when a credential is missing, so the file is only collected and run with
  * live creds (the offline config excludes `test/live/**`). Required env:
  *   AEX_API_URL              live hosted API URL
  *   AEX_API_KEY            workspace API key
@@ -51,7 +51,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -125,7 +124,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 // Shared child-runner preamble. The child imports the freshly-installed SDK
-// from the install tempdir (so workspace symlinks cannot leak), sessions one live
+// from the install tempdir (so workspace symlinks cannot leak), runs one live
 // managed DeepSeek run, then reduces the raw event stream to a JSON
 // `Observation` on stdout. Raw-event iteration mirrors the proven sibling
 // harnesses (live-sdk-skill-invocation / live-sdk-tool-capability-fuzz):
@@ -155,22 +154,6 @@ function customValue(e) {
   const v = d.value;
   return v && typeof v === "object" ? v : {};
 }
-const SESSION_TERMINAL_NAMES = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-function isSessionIdle(e) {
-  return e && e.type === "CUSTOM" && e.data && SESSION_TERMINAL_NAMES.has(e.data.name);
-}
-function terminalKindOf(e) {
-  if (!e) return null;
-  return isSessionIdle(e) ? "TURN_FINISHED" : e.type;
-}
-function terminalDataOf(e) {
-  if (!e) return null;
-  if (isSessionIdle(e)) {
-    const v = customValue(e);
-    return { ...v, reason: v.reason === "completed" ? "complete" : v.reason };
-  }
-  return eventData(e);
-}
 function skillLoadedName(e) {
   const v = customValue(e);
   if (
@@ -192,15 +175,8 @@ function blockText(content) {
 }
 
 async function observe(result) {
-  const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-  let events = fallbackEvents;
-  try {
-    const session = await client.sessions.open(result.sessionId);
-    const listedEvents = await session.events().list();
-    if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-  } catch {
-    events = fallbackEvents;
-  }
+  const session = await client.sessions.open(result.sessionId);
+  const events = (await session.events.list()).filter((event) => event.runId === result.run.runId);
   const nameById = new Map();
   const toolCalls = events
     .filter((e) => e.type === "TOOL_CALL_START")
@@ -232,24 +208,17 @@ async function observe(result) {
     .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
     .join(" ");
   const finalText = typeof result.text === "string" && result.text ? result.text + " " : "";
-  const terminal = events.find((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR") ?? events.find(isSessionIdle);
+  const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
   const eventKinds = events.map((e) => e.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) {
-    eventKinds.push("TURN_FINISHED");
-  }
   const streamErrors = customEvents
     .filter((e) => customName(e) === "aex.stream_error")
     .map((e) => (customValue(e) ? customValue(e) : { unknown: true }));
   return {
     sessionId: result.sessionId,
-    status: result.ok
-      ? "succeeded"
-      : typeof result.status === "string" && result.status
-        ? result.status
-        : "failed",
+    status: result.status,
     eventKinds,
-    terminalKind: terminalKindOf(terminal),
-    terminalData: terminalDataOf(terminal),
+    terminalKind: terminal ? terminal.type : null,
+    terminalData: terminal ? eventData(terminal) : null,
     assistantText: finalText + assistantTextJoined,
     assistantTextEventCount: assistantTextEvents.length,
     toolCalls,
@@ -269,27 +238,25 @@ async function runScenario(
   scriptName: string,
   body: string
 ): Promise<{ readonly observation: Observation; readonly stdout: string }> {
-  return withPreCreateTransportRetry(`skill-tool ${scriptName}`, async () => {
-    const scriptPath = join(install.installDir, scriptName);
-    writeFileSync(scriptPath, buildScript(body));
-    const passEnv = buildPassEnv({
-      AEX_API_URL: apiUrl,
-      AEX_API_KEY: apiKey,
-      DEEPSEEK_KEY: deepseekKey,
-      MODEL_DEEPSEEK: deepseekModel
-    });
-    const child = await runCommand(getBunCommand(), [scriptPath], {
-      cwd: install.installDir,
-      timeoutMs: CHILD_TIMEOUT_MS,
-      env: passEnv
-    });
-    if (child.exitCode !== 0) {
-      throw new Error(
-        `${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-      );
-    }
-    return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
+  const scriptPath = join(install.installDir, scriptName);
+  writeFileSync(scriptPath, buildScript(body));
+  const passEnv = buildPassEnv({
+    AEX_API_URL: apiUrl,
+    AEX_API_KEY: apiKey,
+    DEEPSEEK_KEY: deepseekKey,
+    MODEL_DEEPSEEK: deepseekModel
   });
+  const child = await runCommand(getBunCommand(), [scriptPath], {
+    cwd: install.installDir,
+    timeoutMs: CHILD_TIMEOUT_MS,
+    env: passEnv
+  });
+  if (child.exitCode !== 0) {
+    throw new Error(
+      `${scriptName} exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+    );
+  }
+  return { observation: JSON.parse(child.stdout.trim()) as Observation, stdout: child.stdout };
 }
 
 // --- outer-harness helpers ------------------------------------------------
@@ -373,8 +340,8 @@ function diagnostics(o: Observation): string {
 function assertCleanTerminal(o: Observation): void {
   const dump = diagnostics(o);
   expect(o.status, dump).toBe("succeeded");
-  expect(o.terminalKind, dump).toBe("TURN_FINISHED");
-  expect(o.terminalData?.["reason"], dump).toBe("complete");
+  expect(o.terminalKind, dump).toBe("RUN_FINISHED");
+  expect(o.terminalData?.["outcome"], dump).toBe("succeeded");
   expect(o.assistantTextEventCount, dump).toBeGreaterThan(0);
 }
 
@@ -410,13 +377,14 @@ describe("live skill invocation — model loads first-class skills and follows S
 
       const body = `
 const skill = await Skill.fromContent(${JSON.stringify(md)}, { name: ${JSON.stringify(skillName)} });
+const skillRef = await client.workspace.skills.publish(skill);
 const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  skills: [skill],
+  builtinTools: "none",
+  assets: { skills: [skillRef] },
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-single-" + Date.now()
 }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -476,13 +444,15 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const body = `
 const red = await Skill.fromContent(${JSON.stringify(redMd)}, { name: ${JSON.stringify(redName)} });
 const blue = await Skill.fromContent(${JSON.stringify(blueMd)}, { name: ${JSON.stringify(blueName)} });
+const redRef = await client.workspace.skills.publish(red);
+const blueRef = await client.workspace.skills.publish(blue);
 const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  skills: [red, blue],
+  builtinTools: "none",
+  assets: { skills: [redRef, blueRef] },
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-two-" + Date.now()
 }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -550,14 +520,15 @@ const stampTool = await Tool.fromFiles({
     "index.mjs": "export default async function ({ input }) { return 'stamped:' + String(input.marker); }"
   }
 });
+const skillRef = await client.workspace.skills.publish(skill);
+const toolRef = await client.workspace.tools.publish(stampTool);
 const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   system: ${JSON.stringify(system)},
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  tools: [stampTool],
-  skills: [skill],
+  builtinTools: "none",
+  assets: { tools: [toolRef], skills: [skillRef] },
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "skill-plus-custom-" + Date.now()
 }, { timeoutMs: ${SESSION_TIMEOUT_MS} });

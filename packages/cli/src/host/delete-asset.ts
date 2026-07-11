@@ -1,11 +1,11 @@
 /**
- * `aex delete-asset <assetId|hash>` — DELETE /assets/{assetId}.
+ * `aex delete-asset <assetId|hash>` - DELETE /api/assets/{assetId}.
  *
  * Removes a workspace asset blob from the shared content-addressed store.
  * Sessions that already snapshotted the asset into their own prefix are
  * unaffected. Accepts `sha256:<hex>` or a bare 64-hex digest.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

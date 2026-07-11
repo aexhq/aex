@@ -9,10 +9,19 @@ import {
 // behavior. NOT part of the public `@aexhq/contracts` surface; do NOT add this
 // to the package `index`. Consumers reach it via the explicit
 // `@aexhq/contracts/internal` subpath.
+export * from "./connection-ticket.js";
 export * from "./models.js";
+export * as operations from "./operations.js";
 export * from "./post-hook.js";
 export * from "./retry-core.js";
+export * from "./runtime-security-profile.js";
+export * from "./session-custody.js";
+export * from "./session-retention.js";
+export * from "./side-effect-audit.js";
+export * from "./stable.js";
+export * from "./status.js";
 export * from "./submission.js";
+export * from "./workflow-status.js";
 export {
   DIRECT_UPLOAD_MAX_ATTEMPTS,
   DIRECT_UPLOAD_INITIAL_DELAY_MS,
@@ -62,6 +71,7 @@ export interface UploadedAsset {
   readonly assetId: string;
   readonly contentHash: string;
   readonly sizeBytes: number;
+  readonly contentType: string;
   /** true if identical bytes were already present (dedup hit). */
   readonly exists: boolean;
 }
@@ -80,6 +90,7 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     );
   }
   const contentHashHeader = `sha256:${actual}`;
+  const contentType = args.contentType ?? "application/zip";
 
   const presign = await args.http.request<{
     ok: boolean;
@@ -87,12 +98,13 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     assetId?: string;
     contentHash?: string;
     sizeBytes?: number;
+    contentType?: string;
     uploadUrl?: string;
     requiredHeaders?: Record<string, string>;
-  }>("/assets/presign", {
+  }>("/api/assets/presign", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
+    body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength, contentType })
   });
 
   if (presign.exists) {
@@ -101,6 +113,7 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
       assetId: presign.assetId ?? assetIdFromContentHash(contentHash),
       contentHash,
       sizeBytes: presign.sizeBytes ?? args.bytes.byteLength,
+      contentType: presign.contentType ?? contentType,
       exists: true
     };
   }
@@ -110,7 +123,7 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
 
   const doFetch = args.fetch ?? (globalThis.fetch as unknown as AssetFetch);
   const putHeaders: Record<string, string> = {
-    "content-type": args.contentType ?? "application/zip",
+    "content-type": contentType,
     ...(presign.requiredHeaders ?? {})
   };
   await putDirectUploadWithRetry(
@@ -129,7 +142,8 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     assetId?: string;
     contentHash?: string;
     sizeBytes?: number;
-  }>("/assets/finalize", {
+    contentType?: string;
+  }>("/api/assets/finalize", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
@@ -139,6 +153,7 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     assetId: fin.assetId ?? presign.assetId ?? assetIdFromContentHash(contentHash),
     contentHash,
     sizeBytes: fin.sizeBytes ?? args.bytes.byteLength,
+    contentType: fin.contentType ?? presign.contentType ?? contentType,
     exists: false
   };
 }

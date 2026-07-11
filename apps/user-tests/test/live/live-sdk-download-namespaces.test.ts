@@ -22,7 +22,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
@@ -80,7 +79,7 @@ interface ZipProbe {
 
 interface CaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly files: ReadonlyArray<{ id: string; filename: string | null }>;
   readonly download: ZipProbe;
   readonly downloadFiles: ZipProbe;
@@ -105,14 +104,14 @@ function buildScript(cell: Cell, marker: string): string {
       provider: "deepseek",
       model: ${JSON.stringify(deepseekModel)},
       message: ${JSON.stringify(prompt)},
-      includeBuiltinTools: true,
+      builtinTools: "default",
       fileCapture: { allowedDirs: ["/workspace/files/report-folder"] },
       apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT },
       idempotencyKey: "dl-namespaces-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = result.sessionId;
     const run = {
-      status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+      status: result.status,
       runtime: "managed",
       provider: "deepseek"
     };
@@ -123,13 +122,13 @@ function buildScript(cell: Cell, marker: string): string {
       magicOk: bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04
     });
 
-    const files = await session.files().list();
+    const files = (await session.files.list()).files;
     const downloadAll = await session.download();
-    const downloadOut = await session.files().download(undefined);
+    const downloadOut = await session.files.download(undefined);
 
     const payload = {
       sessionId: sessionId,
-      sessionStatus: run.status,
+      runStatus: run.status,
       files: files.map((o) => ({ id: o.id, filename: o.filename ?? null })),
       download: probe(downloadAll),
       downloadFiles: probe(downloadOut),
@@ -142,15 +141,10 @@ function buildScript(cell: Cell, marker: string): string {
 
 function dump(cell: Cell, r: CaseResult): string {
   return [
-    `cell=${cell.id} sessionId=${r.sessionId} status=${r.sessionStatus} marker=${r.marker}`,
+    `cell=${cell.id} sessionId=${r.sessionId} status=${r.runStatus} marker=${r.marker}`,
     `files=${JSON.stringify(r.files)}`,
     `zips: download=${JSON.stringify(r.download)} files=${JSON.stringify(r.downloadFiles)}`
   ].join("\n");
-}
-
-function isCreateSessionTransportFailure(err: unknown): boolean {
-  const text = err instanceof Error ? err.message : String(err);
-  return /\bPOST\b[\s\S]*\/api\/sessions\b/.test(text) && isPreCreateTransportMessage(text);
 }
 
 async function runDownloadNamespacesChild(
@@ -175,35 +169,6 @@ async function runDownloadNamespacesChild(
   return JSON.parse(child.stdout.trim()) as CaseResult;
 }
 
-async function runDownloadNamespacesChildWithPreCreateRetry(
-  install: InstallResult,
-  scriptPath: string,
-  cell: Cell
-): Promise<CaseResult> {
-  const maxAttempts = 3;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await runDownloadNamespacesChild(install, scriptPath, cell);
-    } catch (error) {
-      lastError = error;
-      if (attempt >= maxAttempts || !isCreateSessionTransportFailure(error)) {
-        throw error;
-      }
-      // No session exists when POST /api/sessions fails before ingress; retry
-      // only that shape so post-create file/download failures stay debuggable.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[download-namespaces ${cell.id}] pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
-    }
-  }
-  throw lastError;
-}
-
 describe("live: session-artifact public files + download verbs", () => {
   let install: InstallResult;
 
@@ -222,7 +187,7 @@ describe("live: session-artifact public files + download verbs", () => {
         const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
         const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
         writeFileSync(scriptPath, buildScript(cell, marker));
-        const r = await runDownloadNamespacesChildWithPreCreateRetry(install, scriptPath, cell);
+        const r = await runDownloadNamespacesChild(install, scriptPath, cell);
         const ctx = `\n\n${dump(cell, r)}`;
 
         // 1. The `files` namespace is deliverables-only — no diagnostic
@@ -247,7 +212,7 @@ describe("live: session-artifact public files + download verbs", () => {
         //    is captured in the files namespace. (Asserted unconditionally:
         //    this is the happy path, and checks 1-5 above already assume a
         //    completed run.)
-        expect(r.sessionStatus, `run did not succeed${ctx}`).toBe("succeeded");
+        expect(r.runStatus, `run did not succeed${ctx}`).toBe("succeeded");
         expect(
           r.files.some((o) => (o.filename ?? "").endsWith("report.txt")),
           `report.txt missing from files on a succeeded run${ctx}`

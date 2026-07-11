@@ -4,126 +4,61 @@ title: Retries and throttling
 
 # Retries and throttling
 
-The SDK ships with built-in transport resilience. Every request it makes to the
-aex API is automatically retried on **transient** failures with bounded
-exponential backoff and jitter, honoring the server's `Retry-After` header. You
-get this by default — no wrapper code — and it is safe to leave on because the
-billable submits carry a stable idempotency key, so a retry never creates a
-duplicate run.
+The SDK retries transport failures only when repeating the HTTP request is
+provably safe:
 
-## What gets retried
+- Safe reads (`GET`, `HEAD`, and `OPTIONS`) may retry.
+- A mutation may retry only when it carries a stable `Idempotency-Key`.
+- A `POST`, `PATCH`, `PUT`, or `DELETE` without that key is attempted once.
 
-Retried automatically:
-
-- HTTP `429` (rate limited)
-- HTTP `500`, `502`, `503`, `504` (server hiccups)
-- HTTP `529` (upstream provider overloaded)
-- Network errors (connection reset, DNS failure, timeout)
-
-Never retried — these fail fast so you see the real problem immediately:
-
-- `400` / `422` (bad request), `401` / `403` (auth), `404` (not found),
-  `409` (conflict), and every other non-transient `4xx`.
-- A request you aborted yourself (via an `AbortSignal`).
-
-## Tuning or disabling
-
-Pass a `retry` option when you construct the client:
+Eligible requests retry network failures and HTTP `429`, `500`, `502`, `503`,
+`504`, and `529` with bounded exponential backoff and jitter. `Retry-After` is
+honored. Validation, authentication, not-found, and conflict responses fail
+immediately.
 
 ```ts
-import { Aex } from "@aexhq/sdk";
-
 const aex = new Aex({
   apiKey: process.env.AEX_API_KEY!,
   retry: {
-    maxAttempts: 4,        // total tries incl. the first (default 4)
-    initialDelayMs: 500,   // base backoff, doubles per retry (default 500)
-    maxDelayMs: 20_000,    // cap on any single wait (default 20s)
-    maxElapsedMs: 120_000  // overall wall-clock budget (default 2m)
+    maxAttempts: 4,
+    initialDelayMs: 500,
+    maxDelayMs: 20_000,
+    maxElapsedMs: 120_000
   }
 });
 ```
 
-Turn it off entirely with `retry: false`, or make a single attempt with
-`retry: { maxAttempts: 1 }`.
+Use `retry: false` or `{ maxAttempts: 1 }` for one transport attempt.
 
-## Idempotent by construction
+## Application runs are not retried
 
-Retries — whether the built-in transport retry or your own re-invocation of
-`run(...)` — never double-bill. The one-shot `run(...)` and `sessions.start(...)`
-derive the turn's idempotency key from the session-create key, so re-invoking
-either with the same `idempotencyKey` de-duplicates **both** the session create
-and the billable turn server-side:
+The SDK never reruns a whole user scenario after a terminal failure. A failed
+run is the product result a user would observe. Reliability belongs below that
+boundary, in idempotent transport, checkpointing, and the hosted runtime.
+
+When your application deliberately repeats a create or message mutation, reuse
+its idempotency key:
 
 ```ts
-// A retried call with the same idempotencyKey resolves to the same run,
-// not a second billable one.
 const result = await aex.start({
-  model: "claude-haiku-4-5",
-  message: "Write a short report and save it as a file.",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
-  idempotencyKey: "report-2026-07-01"
+  model,
+  message: "Write the report.",
+  idempotencyKey: "report-2026-07-10",
+  apiKeys
 });
 ```
 
-## Replaying a throttled turn
+`Aex.start` derives a stable message key from the create key, so repeating the
+same call cannot create a second billable run. A changed request under the same
+key fails with an idempotency conflict.
 
-When a turn on a live session is interrupted by a throttle, replay the last
-message with `session.replayLast()`. It reuses the previous message's idempotency
-key by default, so if the original turn actually landed it de-duplicates instead
-of billing twice:
+For an explicit user-driven retry on an existing session, call
+`session.messages.replayLast()` after applying your own policy. It reuses the
+last message key by default.
 
-```ts
-const session = await aex.openSession({
-  model: "claude-haiku-4-5",
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
-});
+## Throttling
 
-try {
-  await session.send("Summarize the attached dataset.").done();
-} catch (err) {
-  const { isRateLimited } = await import("@aexhq/sdk");
-  if (isRateLimited(err)) {
-    // Wait out the throttle, then replay the same message.
-    await new Promise((r) => setTimeout(r, err.retryAfterMs ?? 2_000));
-    await session.replayLast().done();
-  } else {
-    throw err;
-  }
-}
-```
-
-Pass a fresh key (`session.replayLast({ idempotencyKey: "..." })`) when you
-deliberately want a brand-new turn instead of a de-duplicated replay.
-
-## The throttle error
-
-When retries are exhausted on a rate-limit / overloaded status, the SDK throws an
-`AexRateLimitError`. It extends `AexApiError`, so existing `catch` sites keep
-working, and it carries structured, non-leaky detail:
-
-```ts
-import { isRateLimited } from "@aexhq/sdk";
-
-try {
-  await aex.start({ /* … */ });
-} catch (err) {
-  if (isRateLimited(err)) {
-    err.status;         // 429 | 503 | 529
-    err.attempts;       // how many tries were made
-    err.retryAfterMs;   // suggested wait, when the server supplied one
-    err.source;         // "api" (aex plane) or "provider" (upstream model)
-    err.providerFault;  // upstream fault detail, when the model provider throttled
-  }
-}
-```
-
-The `message` is a fixed summary (e.g. `aex API rate limit reached (HTTP 429)
-after 4 attempts; retry after ~2s`) — it never echoes the raw response body,
-which stays available, redacted, on `err.body`.
-
-When the throttle originated at the upstream model provider (rather than the aex
-API plane), `err.source` is `"provider"` and `err.providerFault` describes it:
-its `kind` (`rate_limit` / `overloaded` / `quota_exceeded` / `provider_error`),
-the upstream `status`, and a suggested `retryAfterMs`. Use `parseProviderFault`
-to read the same shape off a raw fault value yourself.
+After eligible transport attempts are exhausted, the SDK throws
+`AexRateLimitError`. Use `isRateLimited(error)` and inspect `status`,
+`attempts`, `retryAfterMs`, `source`, and `providerFault`. Error bodies and
+secrets are redacted.

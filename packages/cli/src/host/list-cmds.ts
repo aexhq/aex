@@ -2,12 +2,10 @@
  * Workspace session list:
  *   - `aex sessions [--limit N] [--since ISO]` — GET /api/sessions (newest first).
  *
- * Prints the page as JSON (`{ sessions, nextCursor? }`), matching the per-session
- * read verbs. `--since` is sent to the server AND enforced client-side
- * on `createdAt` — the currently deployed API accepts but ignores the `since`
- * query on GET /api/sessions, and a silently no-op flag would mislead scripts.
+ * Prints the canonical page as JSON (`{ sessions, nextCursor? }`), matching the
+ * SDK's `aex.sessions.list(...)` response.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -48,29 +46,18 @@ export async function executeSessionsCmd(io: CliIO, argv: readonly string[]): Pr
   }
   const parsed = parseLimit(io, rawLimit);
   if (!parsed.ok) return USAGE_ERR;
-  const sinceMs = since !== undefined ? Date.parse(since) : undefined;
-  if (sinceMs !== undefined && Number.isNaN(sinceMs)) {
+  if (since !== undefined && Number.isNaN(Date.parse(since))) {
     io.stderr(`--since must be an ISO-8601 timestamp (got: ${since})\n`);
     return USAGE_ERR;
   }
 
   const http = makeHttpClient(io, common.flags);
   try {
-    const page = await operations.listSessionRecords(http, {
+    const page = await operations.listSessions(http, {
       ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
       ...(since !== undefined ? { since } : {})
     });
-    // Client-side `since` enforcement (see module header): keep only rows whose
-    // createdAt parses AND is >= the bound, so the flag filters even against a
-    // server that ignores the query param.
-    const sessions =
-      sinceMs === undefined
-        ? page.sessions
-        : page.sessions.filter((session) => {
-            const created = Date.parse(session.createdAt);
-            return !Number.isNaN(created) && created >= sinceMs;
-          });
-    io.stdout(JSON.stringify({ ...page, sessions }) + "\n");
+    io.stdout(JSON.stringify(page) + "\n");
     return SUCCESS;
   } catch (err) {
     const d = describeApiError(err);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HttpClient, SessionStateError, operations, type SessionFile } from "../src/index.js";
+import { HttpClient, SessionStateError, type SessionFile } from "../src/index.js";
+import { operations } from "../src/internal.js";
 
 const BASE = "https://api.test";
 
@@ -11,13 +12,18 @@ interface RecordedCall {
 }
 
 const files: readonly SessionFile[] = [
-  { id: "json", filename: "files/reports/summary.json", contentType: "application/json", sizeBytes: 10 },
-  { id: "txt", filename: "reports/notes.txt", contentType: "text/plain; charset=utf-8", sizeBytes: 20 },
-  { id: "deep", filename: "reports/nested/frame.png", contentType: "image/png", sizeBytes: 30 },
-  { id: "pdf", filename: "docs/spec.pdf", contentType: "application/octet-stream", sizeBytes: 40 },
-  { id: "zip", filename: "bundle.zip", contentType: "application/zip", sizeBytes: 50 },
-  { id: "video", filename: "media/clip.mp4", sizeBytes: 60 }
+  { id: "json", checkpointId: "cp_1", filename: "files/reports/summary.json", contentType: "application/json", sizeBytes: 10 },
+  { id: "txt", checkpointId: "cp_1", filename: "reports/notes.txt", contentType: "text/plain; charset=utf-8", sizeBytes: 20 },
+  { id: "deep", checkpointId: "cp_1", filename: "reports/nested/frame.png", contentType: "image/png", sizeBytes: 30 },
+  { id: "pdf", checkpointId: "cp_1", filename: "docs/spec.pdf", contentType: "application/octet-stream", sizeBytes: 40 },
+  { id: "zip", checkpointId: "cp_1", filename: "bundle.zip", contentType: "application/zip", sizeBytes: 50 },
+  { id: "video", checkpointId: "cp_1", filename: "media/clip.mp4", sizeBytes: 60 }
 ];
+
+const snapshot = (items: readonly SessionFile[]) => ({
+  revision: { checkpointId: "cp_1", runId: "run_1", turnSeq: 1, committedAt: "2026-07-10T00:00:00.000Z", throughSeq: 9 },
+  files: items
+});
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -44,25 +50,25 @@ function clientFor(routes: Record<string, (init: RequestInit | undefined) => Res
 describe("operations file discovery", () => {
   it("filters by normalized path, basename, directory, extension, content type, and high-level type", async () => {
     const { http } = clientFor({
-      "/api/sessions/session-1/files": () => json({ files })
+      "/api/sessions/session-1/files": () => json(snapshot(files))
     });
 
     await expect(operations.listSessionFiles(http, "session-1", { path: "/files/reports/summary.json" }))
-      .resolves.toEqual([files[0]]);
+      .resolves.toMatchObject({ files: [files[0]] });
     await expect(operations.listSessionFiles(http, "session-1", { filename: /^notes\.txt$/ }))
-      .resolves.toEqual([files[1]]);
+      .resolves.toMatchObject({ files: [files[1]] });
     await expect(operations.listSessionFiles(http, "session-1", { dir: "reports", recursive: false }))
-      .resolves.toEqual([files[0], files[1]]);
+      .resolves.toMatchObject({ files: [files[0], files[1]] });
     await expect(operations.listSessionFiles(http, "session-1", { dir: "reports" }))
-      .resolves.toEqual([files[0], files[1], files[2]]);
+      .resolves.toMatchObject({ files: [files[0], files[1], files[2]] });
     await expect(operations.listSessionFiles(http, "session-1", { extension: ".json" }))
-      .resolves.toEqual([files[0]]);
+      .resolves.toMatchObject({ files: [files[0]] });
     await expect(operations.listSessionFiles(http, "session-1", { contentType: "image/*" }))
-      .resolves.toEqual([files[2]]);
+      .resolves.toMatchObject({ files: [files[2]] });
     await expect(operations.listSessionFiles(http, "session-1", { type: "video" }))
-      .resolves.toEqual([files[5]]);
+      .resolves.toMatchObject({ files: [files[5]] });
     await expect(operations.listSessionFiles(http, "session-1", { type: "pdf" }))
-      .resolves.toEqual([]);
+      .resolves.toMatchObject({ files: [] });
   });
 
   it("classifies from content type first and extension second", () => {
@@ -75,7 +81,10 @@ describe("operations file discovery", () => {
   it("returns null for no match and throws SessionStateError for ambiguous single-file lookup", async () => {
     const { http } = clientFor({
       "/api/sessions/session-1/files": () =>
-        json({ files: [{ id: "a", filename: "a/report.txt" }, { id: "b", filename: "b/report.txt" }] })
+        json(snapshot([
+          { id: "a", checkpointId: "cp_1", filename: "a/report.txt" },
+          { id: "b", checkpointId: "cp_1", filename: "b/report.txt" }
+        ]))
     });
 
     await expect(operations.findSessionFile(http, "session-1", { filename: "missing.txt" })).resolves.toBeNull();
@@ -86,8 +95,8 @@ describe("operations file discovery", () => {
 describe("operations file links", () => {
   it("resolves a query, posts normalized TTL seconds, and returns resolved file metadata", async () => {
     const { http, calls } = clientFor({
-      "/api/sessions/session-1/files": () => json({ files }),
-      "/api/sessions/session-1/files/txt/link": () =>
+      "/api/sessions/session-1/files": () => json(snapshot(files)),
+      "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
         json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
     });
 
@@ -95,7 +104,7 @@ describe("operations file links", () => {
 
     expect(calls.map((call) => [call.method, call.path])).toEqual([
       ["GET", "/api/sessions/session-1/files"],
-      ["POST", "/api/sessions/session-1/files/txt/link"]
+      ["POST", "/api/sessions/session-1/files/txt/link?checkpointId=cp_1"]
     ]);
     expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 900 });
     expect(link).toMatchObject({
@@ -105,17 +114,17 @@ describe("operations file links", () => {
     });
   });
 
-  it("keeps createSessionFileLink as an id-only path without listing files first", async () => {
+  it("uses a checkpoint-pinned id without listing files first", async () => {
     const { http, calls } = clientFor({
-      "/api/sessions/session-1/files/txt/link": () => json({ url: "https://storage.example/direct.txt" })
+      "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () => json({ url: "https://storage.example/direct.txt" })
     });
 
-    const link = await operations.createSessionFileLink(http, "session-1", "txt");
+    const link = await operations.sessionFileLink(http, "session-1", { id: "txt", checkpointId: "cp_1" });
 
-    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/sessions/session-1/files/txt/link"]]);
+    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/sessions/session-1/files/txt/link?checkpointId=cp_1"]]);
     expect(JSON.parse(calls[0]!.body!)).toEqual({ expiresInSeconds: 3600 });
     expect(link.expiresInSeconds).toBe(3600);
-    expect(link.file).toEqual({ id: "txt" });
+    expect(link.file).toEqual({ id: "txt", checkpointId: "cp_1" });
   });
 
   it("posts event archive link requests with the same TTL body", async () => {
@@ -132,12 +141,12 @@ describe("operations file links", () => {
 
   it("synthesizes the documented expiresAt when the server omits it", async () => {
     const { http } = clientFor({
-      "/api/sessions/session-1/files/txt/link": () =>
+      "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
         json({ url: "https://storage.example/direct.txt", expiresInSeconds: 900 })
     });
 
     const before = Date.now();
-    const link = await operations.createSessionFileLink(http, "session-1", "txt", { expiresIn: "15m" });
+    const link = await operations.sessionFileLink(http, "session-1", { id: "txt", checkpointId: "cp_1" }, { expiresIn: "15m" });
     const after = Date.now();
 
     expect(typeof link.expiresAt).toBe("string");
@@ -148,11 +157,11 @@ describe("operations file links", () => {
 
   it("keeps a server-provided expiresAt untouched", async () => {
     const { http } = clientFor({
-      "/api/sessions/session-1/files/txt/link": () =>
+      "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
         json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
     });
 
-    const link = await operations.createSessionFileLink(http, "session-1", "txt");
+    const link = await operations.sessionFileLink(http, "session-1", { id: "txt", checkpointId: "cp_1" });
     expect(link.expiresAt).toBe("2026-06-18T12:00:00.000Z");
   });
 });

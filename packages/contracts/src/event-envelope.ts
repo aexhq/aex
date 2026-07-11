@@ -49,7 +49,7 @@ export const AEX_EVENT_SPECVERSION = "1.0" as const;
  * {@link AEX_EVENT_SPECVERSION} (the CloudEvents version) and of
  * `RUNNER_EVENT_VERSION` (the upstream wire version).
  */
-export const AEX_EVENT_MAP_VERSION = 1 as const;
+export const AEX_EVENT_MAP_VERSION = 2 as const;
 
 /**
  * Coarse origin classifier — the first axis a consumer filters on.
@@ -92,30 +92,26 @@ export type AexLogLevel = (typeof AEX_LOG_LEVELS)[number];
  * `CUSTOM`, AG-UI's reserved carrier for aex-native events.
  */
 export const AEX_EVENT_TYPES = [
-  "TURN_STARTED",
-  "TURN_FINISHED",
-  "TURN_ERROR",
+  "RUN_STARTED",
+  "RUN_FINISHED",
+  "RUN_ERROR",
   "TEXT_MESSAGE_CONTENT",
   "TOOL_CALL_START",
   "TOOL_CALL_RESULT",
   "CUSTOM",
   // The carrier type for a `channel: "log"` record. Kept out of the AG-UI
   // typed-event vocabulary on purpose: a `LOG` is never a session-lifecycle signal,
-  // so terminal detection (TURN_FINISHED/TURN_ERROR) is unaffected and an
+  // so terminal detection (RUN_FINISHED/RUN_ERROR) is unaffected and an
   // off-the-shelf AG-UI client filters logs out by `channel`.
   "LOG"
 ] as const;
 export type AexEventType = (typeof AEX_EVENT_TYPES)[number];
 
-/**
- * One event on the unified log. CloudEvents core attributes (`specversion`,
- * `id`, `source`, `type`, `subject`, `time`) plus the `sequence` extension
- * (the ordering cursor) and the typed `data`.
- */
-export interface AexEvent {
+/** Fields shared by durable events and provisional live-only stream frames. */
+export interface AexEventBase {
   /** CloudEvents specversion. Always {@link AEX_EVENT_SPECVERSION}. */
   readonly specversion: typeof AEX_EVENT_SPECVERSION;
-  /** Stable, globally-unique event id: `${sessionId}:${sequence}`. Dedupe key. */
+  /** Stable, globally unique event id. This is the stream dedupe key. */
   readonly id: string;
   /** Coarse origin classifier. */
   readonly source: AexEventSource;
@@ -123,13 +119,12 @@ export interface AexEvent {
   readonly type: AexEventType;
   /** The session this event belongs to (CloudEvents `subject`). */
   readonly subject: string;
+  /** AG-UI thread identity. Equal to {@link subject} for an aex session. */
+  readonly threadId: string;
+  /** AG-UI run identity. A new id is allocated for every session turn. */
+  readonly runId: string;
   /** ISO-8601 event time (session base + the RunnerEvent's relative `tMs`). */
   readonly time: string;
-  /**
-   * Monotonic ordering cursor within the session — the GLOBAL `seq` the coordinator
-   * assigns on arrival. This is the canonical stream order and the dedupe key.
-   */
-  readonly sequence: number;
   /**
    * Which sub-stream this record rides. Absent ⇒ `"event"` (existing typed
    * producers don't set it; the coordinator defaults it on ingest).
@@ -152,7 +147,7 @@ export interface AexEvent {
    * NOTE: some edge clocks are coarsened/frozen-at-I/O, so `receivedAt` is
    * precisely "the coordinator's last-I/O wall-clock at ingest" — that is fine
    * as the authoritative receive marker. It does NOT need to exceed `emittedAt`:
-   * the source sessions on a different host with an independent clock, so cross-host
+   * the source runs on a different host with an independent clock, so cross-host
    * drift can leave `receivedAt < emittedAt` and that is expected, not an error.
    */
   readonly receivedAt?: number;
@@ -172,11 +167,42 @@ export interface AexEvent {
   readonly data: Readonly<Record<string, JsonValue>>;
 }
 
+/**
+ * A durable, replayable event. `sequence` is the session-wide persistence and
+ * reconnect cursor used by list/archive APIs and coordinator replay.
+ */
+export interface AexEvent extends AexEventBase {
+  readonly replayable?: true;
+  readonly liveSequence?: never;
+  readonly sequence: number;
+}
+
+/**
+ * A provisional live-only frame. It is never returned by list/archive APIs and
+ * cannot advance a durable reconnect cursor. `liveSequence` orders frames only
+ * within this run's live delivery; `id` is the stable duplicate-suppression key.
+ */
+export interface AexLiveEvent extends AexEventBase {
+  readonly replayable: false;
+  readonly liveSequence: number;
+  readonly sequence?: never;
+}
+
+/** Events a live coordinator WebSocket may yield. */
+export type AexStreamEvent = AexEvent | AexLiveEvent;
+
+/** True only for a durable event carrying a replay cursor. */
+export function isReplayableEvent(event: AexStreamEvent): event is AexEvent {
+  return event.replayable !== false && typeof event.sequence === "number";
+}
+
 /** Context the mapper needs to stamp absolute identity/time onto an event. */
 export interface AexEventContext {
   readonly sessionId: string;
+  /** The real AG-UI run id for the session turn being projected. */
+  readonly runId: string;
   /**
-   * SessionRecord-start epoch ms. The RunnerEvent's `tMs` is relative to this, so
+   * Run-start epoch ms. The RunnerEvent's `tMs` is relative to this, so
    * `time = new Date(baseMs + tMs)`. Pass the session's `createdAtMs`.
    */
   readonly baseMs: number;
@@ -190,19 +216,21 @@ interface Projection {
 }
 
 /**
- * Project a {@link RunnerEvent} onto the unified envelope. Pure and total:
- * every RunnerEvent kind maps to exactly one envelope. Both runtimes feed
- * RunnerEvents through this same function, so identical logical events
- * produce identical envelopes.
+ * Project a {@link RunnerEvent} onto the unified public envelope. Internal
+ * runtime completion has no public projection: only the platform-authored
+ * RUN_FINISHED/RUN_ERROR event is a completion boundary.
  */
-export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): AexEvent {
+export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): AexEvent | null {
   const projection = project(evt);
+  if (projection === null) return null;
   return {
     specversion: AEX_EVENT_SPECVERSION,
     id: `${ctx.sessionId}:${evt.seq}`,
     source: projection.source,
     type: projection.type,
     subject: ctx.sessionId,
+    threadId: ctx.sessionId,
+    runId: ctx.runId,
     time: new Date(ctx.baseMs + evt.tMs).toISOString(),
     sequence: evt.seq,
     ...(projection.message !== undefined ? { message: projection.message } : {}),
@@ -210,11 +238,11 @@ export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): A
   };
 }
 
-function project(evt: RunnerEvent): Projection {
+function project(evt: RunnerEvent): Projection | null {
   const data = evt.data;
   switch (evt.kind) {
     case "runtime_started":
-      return { type: "TURN_STARTED", source: "runtime", message: "turn started", data: { ...data } };
+      return { type: "RUN_STARTED", source: "runtime", message: "run started", data: { ...data } };
     case "assistant_text": {
       const text = str(data.text);
       return {
@@ -247,18 +275,8 @@ function project(evt: RunnerEvent): Projection {
       return custom("aex.notification", "runtime", data, str(data.reason) || undefined);
     case "stream_error":
       return custom("aex.stream_error", "runtime", data, str(data.message) || "stream error");
-    case "runtime_terminal": {
-      const reason = str(data.reason);
-      return {
-        // The event's own reason types it (error vs finished); the
-        // authoritative session *status* is still owned by the orchestrator and
-        // is never re-derived from this event.
-        type: reason === "error" ? "TURN_ERROR" : "TURN_FINISHED",
-        source: "runtime",
-        message: reason ? `turn ${reason}` : "session finished",
-        data: { ...data }
-      };
-    }
+    case "runtime_terminal":
+      return null;
   }
 }
 
@@ -287,7 +305,7 @@ export interface AexLogLine {
  */
 export type AexInboundLog = Omit<
   AexEvent,
-  "specversion" | "id" | "subject" | "sequence" | "receivedAt"
+  "specversion" | "id" | "subject" | "threadId" | "runId" | "sequence" | "receivedAt"
 >;
 
 /**
@@ -333,89 +351,35 @@ function custom(
 // --- Honest guards over the emitted vocabulary --------------------------------
 // These match the vocabulary a consumer of the unified stream actually receives.
 
-export function isTurnStarted(e: AexEvent): boolean {
-  return e.type === "TURN_STARTED";
+export function isRunStarted(e: AexEventBase): boolean {
+  return e.type === "RUN_STARTED";
 }
-export function isTurnFinished(e: AexEvent): boolean {
-  return e.type === "TURN_FINISHED";
+export function isRunFinished(e: AexEventBase): boolean {
+  return e.type === "RUN_FINISHED";
 }
-export function isTurnError(e: AexEvent): boolean {
-  return e.type === "TURN_ERROR";
+export function isRunError(e: AexEventBase): boolean {
+  return e.type === "RUN_ERROR";
 }
 /** A terminal event of either flavour (finished or error). */
-export function isTurnTerminal(e: AexEvent): boolean {
-  return e.type === "TURN_FINISHED" || e.type === "TURN_ERROR";
+export function isRunTerminal(e: AexEventBase): boolean {
+  return e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 }
-/**
- * The CUSTOM `data.name`s the MANAGED runtime emits as a session/turn's SETTLED
- * terminal. A managed one-shot session PARKS (`session_parked.v1` → one of these)
- * rather than writing a `session_finished` → TURN_FINISHED, so these — not just
- * the AG-UI TURN_FINISHED/TURN_ERROR — are what actually end a managed session's event
- * stream. Clean-cut (WS1): the bare `aex.session.error` park is retired in favour
- * of the terminal OUTCOME vocabulary — a failed turn is `failed`, a wall-clock
- * kill `timed_out`, a cancel `cancelled`, a clean finish `succeeded`; `idle`/
- * `suspended` remain the resumable parks. Held `awaiting_approval` is NOT here:
- * it ends the TURN stream (see `isSessionTurnTerminalEvent` in the SDK) but the
- * session is not settled. Kept byte-in-sync with `@aexhq/shared` `AEX_SESSION_PARKED_NAMES`
- * and the platform journal projection (`journal-project.ts` session_parked.v1).
- */
-export const AEX_SESSION_PARKED_NAMES = [
-  "aex.session.idle",
-  "aex.session.suspended",
-  "aex.session.succeeded",
-  "aex.session.failed",
-  "aex.session.timed_out",
-  "aex.session.cancelled"
-] as const;
-/**
- * True for a managed-runtime session-park terminal (a resumable idle/suspended
- * park OR a terminal succeeded/failed/timed_out/cancelled outcome). The turn's
- * work is done and the record has reached its terminal status; a stream consumer
- * should stop here exactly as it would on TURN_FINISHED/TURN_ERROR. (Held
- * `awaiting_approval` is deliberately excluded — the session is paused, not settled.)
- */
-export function isSessionParked(e: AexEvent): boolean {
-  const name = customName(e);
-  return name !== null && (AEX_SESSION_PARKED_NAMES as readonly string[]).includes(name);
-}
-export function isTextMessage(e: AexEvent): boolean {
+export function isTextMessage(e: AexEventBase): boolean {
   return e.type === "TEXT_MESSAGE_CONTENT";
 }
-export function isToolCallStart(e: AexEvent): boolean {
+export function isToolCallStart(e: AexEventBase): boolean {
   return e.type === "TOOL_CALL_START";
 }
-export function isToolCallResult(e: AexEvent): boolean {
+export function isToolCallResult(e: AexEventBase): boolean {
   return e.type === "TOOL_CALL_RESULT";
 }
-export function isCustom(e: AexEvent): boolean {
+export function isCustom(e: AexEventBase): boolean {
   return e.type === "CUSTOM";
 }
 /** The `aex.*` name of a CUSTOM event, or null for typed events. */
-export function customName(e: AexEvent): string | null {
+export function customName(e: AexEventBase): string | null {
   return e.type === "CUSTOM" ? str(e.data.name) || null : null;
 }
-/**
- * The `data.name` of the settle-consistency barrier event. The coordinator
- * broadcasts ONE such CUSTOM event as a session's LAST stream event, after the
- * Postgres mirror lands — so observing it ⇒ a subsequent `getSessionRecord` is terminal
- * and `listSessionFiles` is complete. It is intentionally a CUSTOM event (not a
- * typed SESSION_* event): off-the-shelf AG-UI clients ignore it, while
- * `streamEnvelopes(sessionId, { settleConsistent: true })` ends the iterator on it.
- * Unlike TURN_FINISHED (the AG-UI render-complete UX signal, emitted by the
- * runner BEFORE the platform learns the outcome), this is settle-gated. The
- * platform mirrors this constant in `@aexhq/shared`.
- */
-export const AEX_SESSION_SETTLED_NAME = "aex.session.settled";
-/**
- * True for the settle-consistency barrier event (post-mirror, read-consistent).
- * Also true for a managed-runtime session-park terminal: the current plane emits
- * an `aex.session.settled` barrier after settle, but a stream may still observe the
- * park as the terminal event when no later barrier is delivered.
- */
-export function isSessionSettled(e: AexEvent): boolean {
-  return customName(e) === AEX_SESSION_SETTLED_NAME || isSessionParked(e);
-}
-
 /**
  * The CUSTOM `data.name` of the HITL write-gate park: the session has reached the
  * `awaiting_approval` state before a gated action and is holding for an
@@ -428,30 +392,30 @@ export const AEX_RESULT_DECODED_NAME = "aex.result.decoded";
 export const AEX_RESULT_REFUSED_NAME = "aex.result.refused";
 
 /** True for the HITL `awaiting_approval` gate event. */
-export function isAwaitingApproval(e: AexEvent): boolean {
+export function isAwaitingApproval(e: AexEventBase): boolean {
   return customName(e) === AEX_SESSION_AWAITING_APPROVAL_NAME;
 }
 /** True for a schema-decoded terminal result event. */
-export function isResultDecoded(e: AexEvent): boolean {
+export function isResultDecoded(e: AexEventBase): boolean {
   return customName(e) === AEX_RESULT_DECODED_NAME;
 }
 /** True for a typed decode-refusal terminal result event. */
-export function isResultRefused(e: AexEvent): boolean {
+export function isResultRefused(e: AexEventBase): boolean {
   return customName(e) === AEX_RESULT_REFUSED_NAME;
 }
-export function isFromSource(e: AexEvent, source: AexEventSource): boolean {
+export function isFromSource(e: AexEventBase, source: AexEventSource): boolean {
   return e.source === source;
 }
 /** The channel a record rides, defaulting an absent value to `"event"`. */
-export function channelOf(e: AexEvent): AexEventChannel {
+export function channelOf(e: AexEventBase): AexEventChannel {
   return e.channel ?? "event";
 }
 /** True when a record is a log line (the `log` channel / `LOG` type). */
-export function isLog(e: AexEvent): boolean {
+export function isLog(e: AexEventBase): boolean {
   return channelOf(e) === "log";
 }
 /** True when a record is a typed AG-UI event (the `event` channel). */
-export function isEventChannel(e: AexEvent): boolean {
+export function isEventChannel(e: AexEventBase): boolean {
   return channelOf(e) === "event";
 }
 
@@ -486,9 +450,9 @@ export function exceedsRowBudget(e: AexEvent, max: number = MAX_SQLITE_ROW_BYTES
  * that want it.
  */
 export type AguiEvent =
-  | { type: "TURN_STARTED"; timestamp: number; threadId: string; sessionId: string }
-  | { type: "TURN_FINISHED"; timestamp: number; threadId: string; sessionId: string }
-  | { type: "TURN_ERROR"; timestamp: number; message: string; code?: string }
+  | { type: "RUN_STARTED"; timestamp: number; threadId: string; runId: string }
+  | { type: "RUN_FINISHED"; timestamp: number; threadId: string; runId: string; result?: JsonValue }
+  | { type: "RUN_ERROR"; timestamp: number; message: string; code?: string }
   | { type: "TEXT_MESSAGE_CONTENT"; timestamp: number; messageId: string; delta: string }
   | { type: "TOOL_CALL_START"; timestamp: number; toolCallId: string; toolCallName: string }
   | { type: "TOOL_CALL_RESULT"; timestamp: number; messageId: string; toolCallId: string; content: JsonValue }
@@ -499,18 +463,26 @@ export type AguiEvent =
  * AG-UI client can consume an aex start with no glue. This is the
  * client-side projection the SDK exposes.
  */
-export function toAGUI(e: AexEvent): AguiEvent {
+export function toAGUI(e: AexEventBase): AguiEvent {
   const timestamp = Date.parse(e.time);
   const d = e.data;
   switch (e.type) {
-    case "TURN_STARTED":
-      return { type: "TURN_STARTED", timestamp, threadId: e.subject, sessionId: e.subject };
-    case "TURN_FINISHED":
-      return { type: "TURN_FINISHED", timestamp, threadId: e.subject, sessionId: e.subject };
-    case "TURN_ERROR": {
+    case "RUN_STARTED":
+      return { type: "RUN_STARTED", timestamp, threadId: e.threadId, runId: e.runId };
+    case "RUN_FINISHED": {
+      const result = d.result;
+      return {
+        type: "RUN_FINISHED",
+        timestamp,
+        threadId: e.threadId,
+        runId: e.runId,
+        ...(result !== undefined ? { result } : {})
+      };
+    }
+    case "RUN_ERROR": {
       const code = str(d.failureClass);
       return {
-        type: "TURN_ERROR",
+        type: "RUN_ERROR",
         timestamp,
         message: str(d.failureMessage) || e.message || "turn error",
         ...(code ? { code } : {})

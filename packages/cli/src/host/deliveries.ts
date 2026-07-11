@@ -2,9 +2,9 @@
  * `aex deliveries <session-id>` — list a session's webhook delivery attempts
  * via GET /api/sessions/{id}/webhook-deliveries and print them as JSON. (The
  * delivery ledger is keyed by the session id; the endpoint keeps its
- * session-namespaced path, matching the SDK's `session.webhooks().list()`.)
+ * session-namespaced path, matching the SDK's `session.webhooks.list()`.)
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

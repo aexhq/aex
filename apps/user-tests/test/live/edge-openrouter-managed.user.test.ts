@@ -88,7 +88,7 @@ async function runChild(
   writeFileSync(
     scriptPath,
     `
-    import { Aex, isTerminalSessionStatus } from "@aexhq/sdk";
+    import { Aex } from "@aexhq/sdk";
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     ${body}
     `
@@ -123,42 +123,23 @@ describe("edge: openrouter managed session fails honestly", () => {
     "an openrouter session with a bad key surfaces a provider auth failure, not a recovery crash-loop",
     async () => {
       const body = `
-        const out = { sessionId: null, status: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null, pollTrace: [] };
+        const out = { sessionId: null, sessionStatus: null, runOutcome: null, failureClass: null, errorMessage: null, error: null, elapsedMs: null };
         let sid = null;
         const t0 = Date.now();
         try {
-          const session = await client.openSession({
+          const session = await client.sessions.create({
             model: "gpt-4o-mini",
             provider: "openrouter",
             apiKeys: { openrouter: "sk-or-v1-" + "0".repeat(64) },
           });
           sid = session.id;
           out.sessionId = sid;
-          try {
-            await session.send("Reply with exactly OK.").done();
-          } catch {}
-          // Poll the record to a terminal/parked state (the crash-loop today
-          // takes ~7 minutes; an honest provider-permanent failure takes ~1-2).
-          const deadline = Date.now() + 9 * 60_000;
-          while (Date.now() < deadline) {
-            const rec = await client.sessions.get(sid);
-            out.pollTrace.push({
-              t: Date.now() - t0,
-              status: rec.status,
-              lastTurnOutcome: rec.lastTurnOutcome ?? null,
-              failureClass: rec.failureClass ?? null,
-              hasErrorMessage: Boolean(rec.errorMessage)
-            });
-            if (out.pollTrace.length > 12) out.pollTrace.shift();
-            if (isTerminalSessionStatus(rec.status)) {
-              out.status = rec.status;
-              out.lastTurnOutcome = rec.lastTurnOutcome ?? null;
-              out.failureClass = rec.failureClass ?? null;
-              out.errorMessage = (rec.errorMessage ?? "").slice(0, 300);
-              break;
-            }
-            await new Promise((r) => setTimeout(r, 10_000));
-          }
+          const result = await session.messages.send("Reply with exactly OK.").finished();
+          out.runOutcome = result.status;
+          const rec = await client.sessions.get(sid);
+          out.sessionStatus = rec.status;
+          out.failureClass = rec.failureClass ?? null;
+          out.errorMessage = (result.error ?? rec.errorMessage ?? "").slice(0, 300);
           out.elapsedMs = Date.now() - t0;
         } catch (e) {
           out.error = String(e).slice(0, 500);
@@ -170,7 +151,8 @@ describe("edge: openrouter managed session fails honestly", () => {
       const out = await runChild(install, "openrouter-badkey-probe.mjs", body, 12 * 60_000);
       const dump = JSON.stringify(out).slice(0, 1200);
       expect(out.error, `OpenRouter probe threw before terminal diagnostics: ${dump}`).toBeNull();
-      expect(out.status, `OpenRouter bad-key probe did not terminalize as failed: ${dump}`).toBe("failed");
+      expect(out.runOutcome, `OpenRouter bad-key run did not fail: ${dump}`).toBe("failed");
+      expect(out.sessionStatus, `OpenRouter bad-key session was not resumable after failure: ${dump}`).toBe("error");
       expect(out.failureClass, `OpenRouter bad-key probe did not expose provider auth failure: ${dump}`).toBe(
         "provider-permanent"
       );

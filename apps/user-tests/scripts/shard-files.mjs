@@ -15,6 +15,7 @@
 //     matrix job can never silently pass with zero coverage.
 //
 // Usage:
+//   node scripts/shard-files.mjs --matrix [--exclude-file <rel>]...
 //   node scripts/shard-files.mjs --shard <i>/<N> [--exclude-file <rel>]...
 //   node scripts/shard-files.mjs --summary <N> [--exclude-file <rel>]...
 import { readdirSync, readFileSync } from "node:fs";
@@ -27,7 +28,7 @@ const appRoot = resolve(here, "..");
 // MUST mirror the `exclude` list in vitest.config.ts (the default `test:user`
 // sweep). Heavy/fuzz/provider suites are separate explicit gates.
 const EXCLUDED = new Set([
-  // Cap-saturating by design. It sessions in a dedicated workflow lane with an
+  // Cap-saturating by design. It runs in a dedicated workflow lane with an
   // isolated low-cap workspace so it cannot starve unrelated live assertions.
   "test/live/edge-admission-gates.user.test.ts",
   "test/live/live-sdk-heavy-session.test.ts",
@@ -119,13 +120,22 @@ export function excludeFiles(files, excludedFiles) {
   return files.filter((file) => !excluded.has(file));
 }
 
+export function buildFileMatrix(files) {
+  if (files.length === 0) throw new Error("no test files collected");
+  const count = files.length;
+  return files.map((file, index) => ({ shard: index + 1, count, file }));
+}
+
 function parseArgs(argv) {
   let mode;
   let value;
   const excludedFiles = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--shard" || arg === "--summary") {
+    if (arg === "--matrix") {
+      if (mode !== undefined) throw new Error("choose only one of --matrix, --shard, or --summary");
+      mode = arg;
+    } else if (arg === "--shard" || arg === "--summary") {
       if (mode !== undefined) throw new Error("choose only one of --shard or --summary");
       mode = arg;
       value = argv[++i];
@@ -143,8 +153,12 @@ function parseArgs(argv) {
 
 function main(argv) {
   const { mode, value, excludedFiles } = parseArgs(argv);
-  const durations = loadDurations();
   const files = excludeFiles(collectTestFiles(), excludedFiles);
+  if (mode === "--matrix") {
+    process.stdout.write(`${JSON.stringify(buildFileMatrix(files))}\n`);
+    return;
+  }
+  const durations = loadDurations();
   if (mode === "--shard") {
     const match = /^([0-9]+)\/([0-9]+)$/.exec(value ?? "");
     if (!match) throw new Error(`--shard expects <i>/<N>, got: ${value}`);
@@ -163,7 +177,7 @@ function main(argv) {
     }
     return;
   }
-  throw new Error("usage: shard-files.mjs --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]...");
+  throw new Error("usage: shard-files.mjs --matrix [--exclude-file <rel>]... | --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]...");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

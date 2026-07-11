@@ -1,7 +1,7 @@
 /**
  * Asset materialization for the SDK run / session path.
  *
- * Every inline `Skill` / `Tool` / `AgentsMd` / `File` draft is materialized
+ * Every inline `Skill` / `Tool` / `Instructions` / `File` draft is materialized
  * to the hosted API's content-addressable asset store before the session
  * starts, so the wire submission carries only storage-neutral refs.
  *
@@ -9,14 +9,14 @@
  * is bounded by the object store rather than by the API's memory /
  * request-payload limits):
  *
- *   1. POST /assets/presign  → { exists } | { uploadUrl, requiredHeaders }
+ *   1. POST /api/assets/presign -> { exists } | { uploadUrl, requiredHeaders }
  *      - `exists:true` is a dedup hit; we're done.
  *      - otherwise the hosted API mints a presigned PUT scoped to the exact
  *        content-addressed key and signs `x-amz-checksum-sha256` so the object
  *        store enforces integrity server-side.
  *   2. PUT the bytes straight to `uploadUrl` with `requiredHeaders` (the signed
  *      checksum). The store rejects a byte mismatch — a 2xx proves bytes == hash.
- *   3. POST /assets/finalize → confirms the object exists (HEAD only).
+ *   3. POST /api/assets/finalize -> confirms the object exists (HEAD only).
  *
  */
 import {
@@ -100,6 +100,7 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
   // ---- Pass 1: stream → running SHA-256 + byte count ----
   const { hashHex, sizeBytes } = await hashAndSizeViaDrive(args.drive);
   const contentHashHeader = `sha256:${hashHex}`;
+  const contentType = args.contentType ?? "application/zip";
 
   // ---- Presign (multipart) — dedup short-circuits before any bytes move ----
   const presign = await args.http.request<{
@@ -108,11 +109,12 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
     assetId?: string;
     contentHash?: string;
     sizeBytes?: number;
+    contentType?: string;
     multipart?: MultipartPresign;
-  }>("/assets/presign", {
+  }>("/api/assets/presign", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ hash: contentHashHeader, sizeBytes, multipart: true, partSize })
+    body: JSON.stringify({ hash: contentHashHeader, sizeBytes, contentType, multipart: true, partSize })
   });
 
   if (presign.exists) {
@@ -121,6 +123,7 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
       assetId: presign.assetId ?? assetIdFromContentHash(contentHash),
       contentHash,
       sizeBytes: presign.sizeBytes ?? sizeBytes,
+      contentType: presign.contentType ?? contentType,
       exists: true
     };
   }
@@ -138,7 +141,7 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
 
   const refreshPartUrl = async (partNumber: number): Promise<string> => {
     const res = await args.http.request<{ partUrls?: ReadonlyArray<{ partNumber: number; url: string }> }>(
-      "/assets/mpu/presign-parts",
+      "/api/assets/mpu/presign-parts",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -158,7 +161,7 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
       doFetch,
       url,
       bytes,
-      args.contentType,
+      contentType,
       () => refreshPartUrl(partNumber),
       args.retry
     );
@@ -207,7 +210,8 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
       assetId?: string;
       contentHash?: string;
       sizeBytes?: number;
-    }>("/assets/finalize", {
+      contentType?: string;
+    }>("/api/assets/finalize", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ hash: contentHashHeader, sizeBytes, uploadId: mp.uploadId, key: mp.key, parts })
@@ -217,12 +221,13 @@ export async function uploadAssetMultipart(args: UploadAssetStreamArgs): Promise
       assetId: fin.assetId ?? assetIdFromContentHash(contentHash),
       contentHash,
       sizeBytes: fin.sizeBytes ?? sizeBytes,
+      contentType: fin.contentType ?? presign.contentType ?? contentType,
       exists: false
     };
   } catch (err) {
     // Abort so orphaned parts don't bill silently (backed by the S3 lifecycle rule too).
     await args.http
-      .request("/assets/mpu/abort", {
+      .request("/api/assets/mpu/abort", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ uploadId: mp.uploadId, key: mp.key })

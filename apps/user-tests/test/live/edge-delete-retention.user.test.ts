@@ -12,7 +12,7 @@
  *   2. The hourly retained-storage accrual bills the deleted run forever —
  *      its basis (session_cost storedBytes) is never cleared by deletion.
  *
- * This probe covers (1), the public surface: delete a settled run, then
+ * This probe covers (1), the public surface: delete a finished run, then
  * assert its file content is no longer retrievable. It FAILS until the
  * platform purges (or at least fences reads of) deleted sessions' files.
  *
@@ -142,13 +142,13 @@ describe("edge: deleting a session retires its files", () => {
           provider: PROVIDER,
           model: MODEL,
           message: "Write a file /workspace/keep.txt containing exactly this line: " + marker + " . Then reply done.",
-          includeBuiltinTools: true,
+          builtinTools: "default",
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-delete-retention-" + Date.now()
         }, { timeoutMs: 6 * 60_000 });
 
         const session = await client.sessions.open(sessionResult.sessionId);
-        const outs = session.files();
+        const outs = session.files;
         const listed = await outs.list();
         const pre = listed.find((o) => (o.filename || "").endsWith("keep.txt")) || null;
 

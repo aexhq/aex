@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   SESSION_STATUSES,
-  getSessionControlStatusKind,
-  operations,
+  isTerminalSessionStatus,
   type HttpClient,
   type SessionRetentionPolicy,
   type SessionStatus
 } from "../src/index.js";
+import { operations } from "../src/internal.js";
 
 function httpStub(): { readonly http: HttpClient; readonly calls: Array<{ readonly path: string; readonly init: RequestInit; readonly query: Record<string, string> }> } {
   const calls: Array<{ readonly path: string; readonly init: RequestInit; readonly query: Record<string, string> }> = [];
@@ -14,7 +14,7 @@ function httpStub(): { readonly http: HttpClient; readonly calls: Array<{ readon
     async request<T>(path: string, init: RequestInit = {}, query: Record<string, string> = {}): Promise<T> {
       calls.push({ path, init, query });
       if (path === "/api/sessions") {
-        return { session: { id: "sess_1", status: "idle" } } as T;
+        return { session: { id: "sess_1", status: "idle", acceptsMessages: true } } as T;
       }
       if (path.endsWith("/messages")) {
         if (init.method !== "POST") {
@@ -34,29 +34,36 @@ function httpStub(): { readonly http: HttpClient; readonly calls: Array<{ readon
           } as T;
         }
         return {
-          session: { id: "sess_1", status: "running" },
-          turn: { sessionId: "sess_1", turnSeq: 1 },
+          session: { id: "sess_1", status: "running", acceptsMessages: false },
+          run: { sessionId: "sess_1", runId: "run_1", turnSeq: 1, phase: "running" },
           eventCursor: 10
         } as T;
       }
       if (path.endsWith("/events/ticket")) {
         return { wsUrl: "wss://events.example.test/sess_1", ticket: "ticket", expiresAtMs: 1 } as T;
       }
-      return { session: { id: "sess_1", status: "idle" } } as T;
+      return { session: { id: "sess_1", status: "idle", acceptsMessages: true } } as T;
     }
   } as HttpClient;
   return { http, calls };
 }
 
 describe("session contracts", () => {
+  it("keeps create separate from platform-only and first-message fields", () => {
+    const noInput: "input" extends keyof import("../src/index.js").SessionCreateRequest ? true : false = false;
+    const noWorkspace: "workspaceId" extends keyof import("../src/index.js").SessionCreateRequest ? true : false = false;
+    const noMachine: "machine" extends keyof import("../src/index.js").SessionCreateRequest ? true : false = false;
+    expect({ noInput, noWorkspace, noMachine }).toEqual({ noInput: false, noWorkspace: false, noMachine: false });
+  });
+
   it("defines the resumable session status vocabulary separately from terminal sessions", () => {
     const statuses = new Set<SessionStatus>(SESSION_STATUSES);
     expect(statuses.has("idle")).toBe(true);
     expect(statuses.has("suspended")).toBe(true);
     expect(statuses.has("cancelling")).toBe(true);
     expect(statuses.has("deleted")).toBe(true);
-    expect(getSessionControlStatusKind("idle")).toBe("active");
-    expect(getSessionControlStatusKind("suspended")).toBe("active");
+    expect(isTerminalSessionStatus("idle")).toBe(false);
+    expect(isTerminalSessionStatus("suspended")).toBe(false);
   });
 
   it("posts session messages with an Idempotency-Key header", async () => {
@@ -75,20 +82,26 @@ describe("session contracts", () => {
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ input: "continue" });
   });
 
-  it("submit creates the session and dispatches the first turn with a derived message key", async () => {
+  it("createSessionWithMessage creates the session and dispatches the first run with a derived message key", async () => {
     const { http, calls } = httpStub();
-    const result = await operations.submit(
+    const result = await operations.createSessionWithMessage(
       http,
       {
         provider: "deepseek",
-        submission: { model: "deepseek-v4-flash", tools: [], mcpServers: [], agentsMd: [], files: [] },
-        secrets: { apiKeys: { deepseek: "sk-test" } },
-        input: "start now"
+        submission: {
+          model: "deepseek-v4-flash",
+          assets: { files: [], skills: [], tools: [], instructions: [] },
+          builtinTools: "default",
+          mcpServers: []
+        },
+        secrets: { apiKeys: { deepseek: "sk-test" } }
       },
+      "start now",
       { idempotencyKey: "idem-create" }
     );
 
-    expect(result.sessionId).toBe("sess_1");
+    expect(result.session.id).toBe("sess_1");
+    expect(result.run.sessionId).toBe("sess_1");
     expect(result.session.status).toBe("running");
     expect(calls).toHaveLength(2);
     expect(calls[0]!.path).toBe("/api/sessions");
@@ -101,16 +114,21 @@ describe("session contracts", () => {
     expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ input: "start now" });
   });
 
-  it("submit accepts an explicit first-turn idempotency key", async () => {
+  it("createSessionWithMessage accepts an explicit first-run idempotency key", async () => {
     const { http, calls } = httpStub();
-    await operations.submit(
+    await operations.createSessionWithMessage(
       http,
       {
         provider: "deepseek",
-        submission: { model: "deepseek-v4-flash", tools: [], mcpServers: [], agentsMd: [], files: [] },
-        secrets: { apiKeys: { deepseek: "sk-test" } },
-        input: "start now"
+        submission: {
+          model: "deepseek-v4-flash",
+          assets: { files: [], skills: [], tools: [], instructions: [] },
+          builtinTools: "default",
+          mcpServers: []
+        },
+        secrets: { apiKeys: { deepseek: "sk-test" } }
       },
+      "start now",
       { idempotencyKey: "idem-create", messageIdempotencyKey: "idem-turn" }
     );
 
@@ -153,14 +171,14 @@ describe("session contracts", () => {
     expect(page.nextCursor).toBe("cursor-2");
   });
 
-  it("posts session cancel with an Idempotency-Key header", async () => {
+  it("posts session cancel without claiming idempotency", async () => {
     const { http, calls } = httpStub();
-    await operations.cancelSession(http, "sess_1", { idempotencyKey: "idem-cancel" });
+    await operations.cancelSession(http, "sess_1");
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.path).toBe("/api/sessions/sess_1/cancel");
     expect(calls[0]!.init.method).toBe("POST");
-    expect(calls[0]!.init.headers).toEqual({ "Idempotency-Key": "idem-cancel" });
+    expect(calls[0]!.init.headers).toBeUndefined();
   });
 
   it("types idleTtl as the idle-to-suspend timer", () => {

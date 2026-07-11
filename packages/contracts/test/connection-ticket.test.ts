@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mintConnectionTicket, verifyConnectionTicket } from "../src/index.js";
+import { mintConnectionTicket, verifyConnectionTicket } from "../src/internal.js";
 
 const SECRET = "dev-coordinator-secret-at-least-32-chars-xx";
 const NOW = 1_700_000_000_000;

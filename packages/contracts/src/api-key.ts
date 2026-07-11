@@ -56,7 +56,7 @@ export function normalizeWorkspaceId(workspaceId: string): string {
 }
 
 /**
- * Parse a self-describing API key, or `null` for any legacy/opaque/tampered
+ * Parse a self-describing API key, or `null` for any opaque, malformed, or tampered
  * value. Validates the `aex_` prefix, the 6-part shape, a known plane and
  * region code, and the CRC over the first 5 parts.
  */

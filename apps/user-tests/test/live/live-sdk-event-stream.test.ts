@@ -5,15 +5,15 @@
  * SDK, the way a user listening to a session would:
  *
  *   1. run (DeepSeek Managed) — a one-shot session via `client.start(...)`
- *   2. LISTEN over the coordinator WebSocket via `session.events().streamEnvelopes(...)`
+ *   2. LISTEN over the coordinator WebSocket via `session.events.streamEnvelopes(...)`
  *      (ticket broker → coordinator WS, exactly-once cursor resume).
- *   3. SNAPSHOT the same log from the settle-consistent `SessionResult.events`.
+ *   3. SNAPSHOT the same log after the `RUN_FINISHED` consistency barrier.
  *   4. DOWNLOAD the durable event archive: mint a ticket and read the
  *      coordinator manifest (rolling object storage chunks + counts), proving the events
  *      are durably archived and downloadable after the session.
  *
  * Asserts the expected unified-envelope events exist (AG-UI vocabulary):
- * TURN_STARTED, ≥1 TEXT_MESSAGE_CONTENT, TURN_FINISHED — over both the live WS
+ * RUN_STARTED, ≥1 TEXT_MESSAGE_CONTENT, RUN_FINISHED — over both the live WS
  * and the snapshot — and that the archive manifest records them.
  *
  * Required env:
@@ -41,7 +41,7 @@ const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
 
 interface StreamResult {
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly streamedCount: number;
   readonly streamedTypes: readonly string[];
   readonly streamedCustomNames: readonly string[];
@@ -50,17 +50,14 @@ interface StreamResult {
   readonly manifestEventCount: number;
   readonly manifestChunks: number;
   readonly leakedKey: boolean;
-  readonly manifestAttempts: readonly ManifestAttempt[];
-}
-
-interface ManifestAttempt {
-  readonly attempt: number;
-  readonly phase: "ticket" | "manifest" | "parse";
-  readonly status?: number;
-  readonly eventCount?: number;
-  readonly chunks?: number;
-  readonly url?: string;
-  readonly error?: string;
+  readonly terminalOutcome: string | null;
+  readonly liveDeltaCount: number;
+  readonly liveSequenceOrdered: boolean;
+  readonly liveDeltasNonReplayable: boolean;
+  readonly liveDeltasHaveNoSequence: boolean;
+  readonly coalescedBeforeTerminalCount: number;
+  readonly resultCoalescedCount: number;
+  readonly resultDeltaCount: number;
 }
 
 describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + download archive", () => {
@@ -87,43 +84,41 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
         const model = process.env.MODEL;
 
         const client = new Aex({ baseUrl, apiKey });
-        const result = await client.start({
+        const session = await client.sessions.create({
           provider: "deepseek",
           model,
-          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
+          outputMode: "stream",
           idempotencyKey: "user-test-event-stream-" + Date.now(),
           apiKeys: { deepseek: deepseekKey }
-        }, { timeoutMs: 120 * 1000 });
+        });
+        const turn = session.messages.send(
+          ${JSON.stringify(`Reply with exactly these words: ${probe} alpha beta gamma delta epsilon zeta eta theta iota kappa lambda.`)},
+          { idleTimeoutMs: 120 * 1000 }
+        );
+        const streamedEvents = [];
+        for await (const ev of turn) streamedEvents.push(ev);
+        const result = await turn.finished();
         const sessionId = result.sessionId;
-        const session = await client.sessions.open(sessionId);
-
-        // 1. Listen live over the coordinator WebSocket (exactly-once,
-        //    reconnecting). Stop on the terminal envelope or the deadline.
-        //    The WS phase is RACED against a hard wall-clock timer: if the
-        //    SDK's WS path stalls internally (e.g. an eager ticket fetch that
-        //    doesn't observe \`signal\`), we abandon listening and fall through
-        //    to the snapshot/manifest tail rather than blocking to the outer
-        //    SIGKILL. \`ac.abort()\` also fires so the generator can unwind.
-        const streamed = [];
-        const streamedCustomNames = [];
-        const ac = new AbortController();
-        const listen = (async () => {
-          try {
-            for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
-              streamed.push(ev.type);
-              const name = ev && ev.data && typeof ev.data.name === "string" ? ev.data.name : null;
-              if (name) streamedCustomNames.push(name);
-              if (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR" || (typeof name === "string" && name.startsWith("aex.session."))) break;
-            }
-          } catch (e) {
-            // socket dropped past terminal / abort — tolerate; snapshot below
-            // is the source of truth for the assertions.
-          }
-        })();
-        await Promise.race([
-          listen,
-          new Promise((resolve) => setTimeout(() => { ac.abort(); resolve(); }, 80 * 1000))
-        ]);
+        const streamed = streamedEvents.map((event) => event.type);
+        const streamedCustomNames = streamedEvents
+          .filter((event) => event.type === "CUSTOM" && typeof event.data?.name === "string")
+          .map((event) => event.data.name);
+        const liveDeltas = streamedEvents.filter(
+          (event) => event.type === "TEXT_MESSAGE_CONTENT" && event.data?.delta === true
+        );
+        const terminalIndex = streamedEvents.findIndex(
+          (event) => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"
+        );
+        const coalescedBeforeTerminal = streamedEvents.filter(
+          (event, index) =>
+            index < terminalIndex &&
+            event.type === "TEXT_MESSAGE_CONTENT" &&
+            event.data?.delta !== true
+        );
+        const liveSequences = liveDeltas.map((event) => event.liveSequence);
+        const liveSequenceOrdered = liveSequences.every(
+          (value, index) => Number.isSafeInteger(value) && (index === 0 || value > liveSequences[index - 1])
+        );
 
         // \`fetch\` with a hard per-request deadline: a half-open socket to the
         // Hosted API must not ride undici's ~300s default past the outer kill, or
@@ -156,68 +151,29 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           return redacted.toString();
         }
 
-        // 2. Snapshot the same log + final status. \`client.start(...)\` already
-        //    waited for the session to park at a terminal state, so the
-        //    settle-consistent SessionResult carries the final status + events
-        //    directly — no waitForRun/getSessionRecord/listEvents round-trip needed.
+        // 2. Snapshot the same run. RUN_FINISHED means the list endpoint is
+        //    already consistent; no fallback or retry is valid here.
         const run = {
-          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          status: result.status,
           runtime: "managed",
           provider: "deepseek"
         };
-        const fallbackSnapshot = Array.isArray(result.events) ? result.events : [];
-        let snapshot = fallbackSnapshot;
-        try {
-          const listedEvents = await session.events().list();
-          if (Array.isArray(listedEvents) && listedEvents.length > 0) snapshot = listedEvents;
-        } catch {
-          snapshot = fallbackSnapshot;
-        }
+        const snapshot = (await session.events.list()).filter((event) => event.runId === result.run.runId);
 
-        // 3. Download the durable archive: ticket → coordinator manifest. The
-        //    manifest is written by a later workflow step (complete-coordinator)
-        //    after terminal, so retry briefly until it's populated.
-        let manifest = null;
-        const manifestAttempts = [];
-        for (let attempt = 0; attempt < 5 && !manifest; attempt++) {
-          if (attempt > 0) await new Promise((r) => setTimeout(r, 2000));
-          try {
-            const tRes = await fetchBounded(baseUrl + "/api/sessions/" + sessionId + "/events/ticket", {
-              method: "POST",
-              headers: { authorization: "Bearer " + apiKey }
-            }, 8000);
-            if (!tRes.ok) {
-              manifestAttempts.push({ attempt, phase: "ticket", status: tRes.status });
-              continue;
-            }
-            const grant = await tRes.json();
-            const manifestUrl = buildCoordinatorManifestUrl(grant.wsUrl, grant.ticket);
-            const redactedUrl = withoutTicket(manifestUrl);
-            const mRes = await fetchBounded(manifestUrl.toString(), undefined, 8000);
-            if (!mRes.ok) {
-              manifestAttempts.push({ attempt, phase: "manifest", status: mRes.status, url: redactedUrl });
-              continue;
-            }
-            const m = await mRes.json();
-            if (m && (m.eventCount ?? 0) > 0) {
-              manifest = m;
-            } else {
-              manifestAttempts.push({
-                attempt,
-                phase: "parse",
-                status: mRes.status,
-                eventCount: m?.eventCount,
-                chunks: Array.isArray(m?.chunks) ? m.chunks.length : undefined,
-                url: redactedUrl
-              });
-            }
-          } catch (e) {
-            manifestAttempts.push({
-              attempt,
-              phase: "manifest",
-              error: e instanceof Error ? e.message : String(e)
-            });
-          }
+        // 3. The archive is part of the same consistency boundary.
+        const tRes = await fetchBounded(baseUrl + "/api/sessions/" + sessionId + "/events/ticket", {
+          method: "POST",
+          headers: { authorization: "Bearer " + apiKey }
+        }, 8000);
+        if (!tRes.ok) throw new Error("event ticket failed with " + tRes.status);
+        const grant = await tRes.json();
+        const manifestUrl = buildCoordinatorManifestUrl(grant.wsUrl, grant.ticket);
+        const redactedUrl = withoutTicket(manifestUrl);
+        const mRes = await fetchBounded(manifestUrl.toString(), undefined, 8000);
+        if (!mRes.ok) throw new Error("event manifest " + redactedUrl + " failed with " + mRes.status);
+        const manifest = await mRes.json();
+        if (!manifest || (manifest.eventCount ?? 0) <= 0) {
+          throw new Error("event manifest was empty after RUN_FINISHED");
         }
 
         const serialized = JSON.stringify({ run, snapshot, manifest });
@@ -225,7 +181,7 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           .filter((e) => e.type === "CUSTOM" && e.data && typeof e.data.name === "string")
           .map((e) => e.data.name);
         process.stdout.write(JSON.stringify({
-          sessionStatus: run.status,
+          runStatus: run.status,
           streamedCount: streamed.length,
           streamedTypes: [...new Set(streamed)],
           streamedCustomNames: [...new Set(streamedCustomNames)],
@@ -234,11 +190,17 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
           manifestEventCount: manifest ? (manifest.eventCount ?? -1) : -1,
           manifestChunks: manifest && Array.isArray(manifest.chunks) ? manifest.chunks.length : -1,
           leakedKey: serialized.includes(deepseekKey),
-          manifestAttempts
+          terminalOutcome: snapshot.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")?.data?.outcome ?? null,
+          liveDeltaCount: liveDeltas.length,
+          liveSequenceOrdered,
+          liveDeltasNonReplayable: liveDeltas.every((event) => event.replayable === false),
+          liveDeltasHaveNoSequence: liveDeltas.every((event) => !("sequence" in event)),
+          coalescedBeforeTerminalCount: coalescedBeforeTerminal.length,
+          resultCoalescedCount: result.events.filter((event) => event.type === "TEXT_MESSAGE_CONTENT" && event.data?.delta !== true).length,
+          resultDeltaCount: result.events.filter((event) => event.type === "TEXT_MESSAGE_CONTENT" && event.data?.delta === true).length
         }));
-        // Force exit: an abandoned WS phase may leave an open socket that
-        // would otherwise keep Node alive until the outer SIGKILL. We have
-        // already written the result, so exit cleanly now.
+        // The result is complete; terminate the child without waiting on any
+        // coordinator socket close bookkeeping.
         process.exit(0);
       `;
       const scriptPath = join(install.installDir, "live-event-stream-runner.mjs");
@@ -266,22 +228,23 @@ describe("live api.aex.dev — event coordinator: listen (WS) + snapshot + downl
       }
       const result = JSON.parse(child.stdout.trim()) as StreamResult;
 
-      expect(result.sessionStatus).toBe("succeeded");
+      expect(result.runStatus).toBe("succeeded");
       // Live WS delivered the unified envelope.
       expect(result.streamedCount).toBeGreaterThan(0);
       expect(result.streamedTypes).toContain("TEXT_MESSAGE_CONTENT");
-      expect(
-        result.streamedTypes.includes("TURN_FINISHED") || result.streamedCustomNames.some((name) => name.startsWith("aex.session."))
-      ).toBe(true);
+      expect(result.streamedTypes).toContain("RUN_FINISHED");
+      expect(result.liveDeltaCount).toBeGreaterThanOrEqual(2);
+      expect(result.liveSequenceOrdered).toBe(true);
+      expect(result.liveDeltasNonReplayable).toBe(true);
+      expect(result.liveDeltasHaveNoSequence).toBe(true);
+      expect(result.coalescedBeforeTerminalCount).toBe(1);
+      expect(result.resultCoalescedCount).toBe(1);
+      expect(result.resultDeltaCount).toBe(0);
       // Snapshot agrees.
       expect(result.snapshotTypes).toContain("TEXT_MESSAGE_CONTENT");
-      expect(
-        result.snapshotTypes.includes("TURN_FINISHED") || result.snapshotCustomNames.some((name) => name.startsWith("aex.session."))
-      ).toBe(true);
+      expect(result.snapshotTypes).toContain("RUN_FINISHED");
+      expect(result.terminalOutcome).toBe("succeeded");
       expect(result.leakedKey).toBe(false);
-      if (result.manifestEventCount <= 0 || result.manifestChunks < 1) {
-        throw new Error(`event archive manifest unavailable: ${JSON.stringify(result.manifestAttempts)}`);
-      }
       // Durable archive is downloadable and records the events.
       expect(result.manifestEventCount).toBeGreaterThan(0);
       expect(result.manifestChunks).toBeGreaterThanOrEqual(1);

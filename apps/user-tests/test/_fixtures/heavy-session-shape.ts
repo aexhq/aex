@@ -1,14 +1,13 @@
 export interface Probes {
   readonly system: string;
-  readonly agentsMd: string;
+  readonly instructions: string;
   readonly prompt: string;
   readonly out: readonly [string, string, string];
 }
 
 export interface CaseResult {
   readonly sessionId: string;
-  readonly attempts: number;
-  readonly sessionStatus: string;
+  readonly runOutcome: string;
   readonly runtime: string;
   readonly provider: string;
   readonly probes: Probes;
@@ -36,31 +35,27 @@ export interface CaseResult {
   readonly outProbesFound: readonly string[];
   readonly channelProbeSources: Readonly<Record<string, readonly string[]>>;
   readonly channelProbeMisses: readonly string[];
-  readonly retryReasons: readonly string[];
   readonly leakedDeepseekKey: boolean;
-  // Full payload of every sessionner-sourced stream_error. This captures the
+  // Full payload of every runner-sourced stream_error. This captures the
   // exception message and phase when materialize / manifest fetch fails,
   // right before a runner_error terminal.
   readonly streamErrors: ReadonlyArray<Record<string, unknown>>;
 }
 
-// Required event vocabulary for a successful managed session. Legacy
-// TURN_STARTED/TURN_FINISHED frames are still accepted when present, but the
-// session event log can validly expose CUSTOM aex.session.* terminals without
-// a TURN_STARTED event.
+// Required event vocabulary for a successful managed run.
 const EXPECTED_SUCCESS_EVENT_TYPES = [
+  "RUN_STARTED",
   "TEXT_MESSAGE_CONTENT",
   "TOOL_CALL_START",
   "TOOL_CALL_RESULT",
-  "CUSTOM"
+  "CUSTOM",
+  "RUN_FINISHED"
 ] as const;
-
-const SUCCESS_TERMINAL_KINDS = ["TURN_FINISHED", "aex.session.idle", "aex.session.succeeded"] as const;
 
 export function dumpCase(result: CaseResult): string {
   const lines: string[] = [];
   lines.push(`sessionId=${result.sessionId} runtime=${result.runtime} provider=${result.provider}`);
-  lines.push(`sessionStatus=${result.sessionStatus} terminalKind=${result.terminalKind} attempts=${result.attempts}`);
+  lines.push(`runOutcome=${result.runOutcome} terminalKind=${result.terminalKind}`);
   lines.push(`terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventTypeSet=[${result.eventTypeSet.join(", ")}]`);
   lines.push(
@@ -78,7 +73,7 @@ export function dumpCase(result: CaseResult): string {
   lines.push(`notificationKinds=[${result.notificationKinds.join(", ")}]`);
   lines.push(`skillLoadedNames=[${result.skillLoadedNames.join(", ")}]`);
   lines.push(`channelProbeSources=${JSON.stringify(result.channelProbeSources)}`);
-  lines.push(`channelProbeMisses=[${result.channelProbeMisses.join(", ")}] retryReasons=[${result.retryReasons.join(", ")}]`);
+  lines.push(`channelProbeMisses=[${result.channelProbeMisses.join(", ")}]`);
   lines.push(`outProbesFound=[${result.outProbesFound.join(", ")}] of [${result.probes.out.join(", ")}]`);
   if (result.streamErrors.length > 0) {
     lines.push(`streamErrors:`);
@@ -110,34 +105,34 @@ function fail(result: CaseResult, message: string): never {
 }
 
 export function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly [string, string, string]): void {
-  if (result.sessionStatus !== "succeeded") {
-    fail(result, `expected sessionStatus "succeeded" but got "${result.sessionStatus}"`);
+  if (result.runOutcome !== "succeeded") {
+    fail(result, `expected runOutcome "succeeded" but got "${result.runOutcome}"`);
   }
-  if (!SUCCESS_TERMINAL_KINDS.some((kind) => kind === result.terminalKind)) {
-    fail(result, `expected success terminal kind but got "${result.terminalKind}"`);
+  if (result.terminalKind !== "RUN_FINISHED") {
+    fail(result, `expected terminal kind "RUN_FINISHED" but got "${result.terminalKind}"`);
   }
 
-  if (result.terminalKind === "TURN_FINISHED") {
-    if (!result.eventKinds.includes("TURN_STARTED")) {
-      fail(result, `legacy TURN_FINISHED stream did not include TURN_STARTED`);
-    }
-    if (!result.eventKinds.includes("TURN_FINISHED")) {
-      fail(result, `legacy TURN_FINISHED stream did not include TURN_FINISHED`);
-    }
-    if (result.eventKinds.indexOf("TURN_STARTED") >= result.eventKinds.lastIndexOf("TURN_FINISHED")) {
-      fail(result, `legacy TURN_FINISHED stream had TURN_STARTED after TURN_FINISHED`);
-    }
-  } else if (!result.eventKinds.includes("CUSTOM")) {
-    fail(result, `managed session terminal did not include a CUSTOM lifecycle event`);
+  if (
+    !result.eventKinds.includes("RUN_STARTED") ||
+    !result.eventKinds.includes("RUN_FINISHED") ||
+    result.eventKinds.indexOf("RUN_STARTED") >= result.eventKinds.lastIndexOf("RUN_FINISHED")
+  ) {
+    fail(result, `RUN_STARTED must precede RUN_FINISHED`);
   }
 
   const terminal = result.terminalData ?? {};
-  if (terminal["reason"] !== "complete") {
-    fail(result, `expected terminal reason "complete" but got "${terminal["reason"]}"`);
+  if (terminal["outcome"] !== "succeeded") {
+    fail(result, `expected terminal outcome "succeeded" but got "${terminal["outcome"]}"`);
   }
-  const exitCode = terminal["runtimeExitCode"];
-  if (exitCode !== undefined && exitCode !== 0) {
-    fail(result, `runtimeExitCode=${exitCode}`);
+  const checkpoint = terminal["checkpoint"];
+  if (!checkpoint || typeof checkpoint !== "object" || typeof (checkpoint as Record<string, unknown>)["checkpointId"] !== "string") {
+    fail(result, `RUN_FINISHED did not carry a committed checkpoint`);
+  }
+  if (typeof terminal["costUsd"] !== "number" || terminal["costUsd"] < 0) {
+    fail(result, `RUN_FINISHED did not carry a non-negative per-run costUsd`);
+  }
+  if (!Array.isArray(terminal["providerUsage"])) {
+    fail(result, `RUN_FINISHED did not carry per-run providerUsage`);
   }
 
   for (const type of EXPECTED_SUCCESS_EVENT_TYPES) {
@@ -172,7 +167,7 @@ export function assertManagedShape(result: CaseResult, expectedSkillPrefixes: re
   if (result.channelProbeMisses.length > 0) {
     const probeByChannel: Record<string, string> = {
       system: result.probes.system,
-      agentsMd: result.probes.agentsMd,
+      instructions: result.probes.instructions,
       prompt: result.probes.prompt
     };
     const missing = result.channelProbeMisses.map((channel) => `${channel}=${probeByChannel[channel] ?? "(unknown)"}`);

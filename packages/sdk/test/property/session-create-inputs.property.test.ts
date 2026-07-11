@@ -2,11 +2,9 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_TOOL_NAMES,
-  OUTPUT_MODES,
   SUPPORTED_MODELS,
   PROVIDERS,
   RUNTIME_SIZES,
-  parseSessionSubmissionRequest,
   providersForModel,
   type BuiltinToolName,
   type JsonValue,
@@ -15,6 +13,7 @@ import {
   type ProviderName,
   type RuntimeSize
 } from "@aexhq/contracts";
+import { parseSessionSubmissionRequest } from "@aexhq/contracts/internal";
 import {
   Aex,
   Models,
@@ -24,7 +23,7 @@ import {
 } from "../../src/index.js";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-type CreateSurface = "openSession" | "sessions.create";
+type CreateSurface = "sessions.create";
 
 interface CapturedRequest {
   readonly url: string;
@@ -50,10 +49,10 @@ interface ValidCase {
   readonly resolvedProvider: ProviderName;
 }
 
-const createSurface = fc.constantFrom<CreateSurface>("openSession", "sessions.create");
+const createSurface = fc.constant<CreateSurface>("sessions.create");
 const modelName = fc.constantFrom<ModelName>(...(SUPPORTED_MODELS as readonly ModelName[]));
 const runtimeSize = fc.constantFrom<RuntimeSize>(...(RUNTIME_SIZES as readonly RuntimeSize[]));
-const outputMode = fc.constantFrom<OutputMode>(...(OUTPUT_MODES as readonly OutputMode[]));
+const outputMode = fc.constant<OutputMode>("buffered");
 const safeToken = fc.stringMatching(/^[A-Za-z0-9_-]{1,24}$/);
 const shortText = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{1,64}$/);
 const envValue = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{0,64}$/);
@@ -214,10 +213,9 @@ const richValidCase = providerChoice.chain((choice) =>
         overrides: richOverrides,
         runtime: runtimeSize,
         outputMode,
-        includeBuiltinTools: fc.boolean(),
+        builtinTools: fc.oneof(fc.constant("default" as const), fc.constant("none" as const), nonEmptyBuiltinTools),
         webhook,
         idempotencyKey,
-        tools: nonEmptyBuiltinTools
       })
       .map((parts): ValidCase => ({
         surface: parts.surface,
@@ -231,10 +229,9 @@ const richValidCase = providerChoice.chain((choice) =>
           overrides: parts.overrides,
           runtime: parts.runtime,
           outputMode: parts.outputMode,
-          includeBuiltinTools: parts.includeBuiltinTools,
+          builtinTools: parts.builtinTools,
           webhook: parts.webhook,
           idempotencyKey: parts.idempotencyKey,
-          tools: parts.tools
         })
       }))
   )
@@ -253,10 +250,12 @@ const sparseValidCase = providerChoice.chain((choice) =>
           overrides: fc.option(sparseOverrides, { nil: undefined }),
           runtime: fc.option(runtimeSize, { nil: undefined }),
           outputMode: fc.option(outputMode, { nil: undefined }),
-          includeBuiltinTools: fc.option(fc.boolean(), { nil: undefined }),
+          builtinTools: fc.option(
+            fc.oneof(fc.constant("default" as const), fc.constant("none" as const), builtinTools),
+            { nil: undefined }
+          ),
           webhook: fc.option(webhook, { nil: undefined }),
           idempotencyKey: fc.option(idempotencyKey, { nil: undefined }),
-          tools: fc.option(builtinTools, { nil: undefined })
         },
         { requiredKeys: ["surface"] }
       )
@@ -272,10 +271,9 @@ const sparseValidCase = providerChoice.chain((choice) =>
           overrides: parts.overrides,
           runtime: parts.runtime,
           outputMode: parts.outputMode,
-          includeBuiltinTools: parts.includeBuiltinTools,
+          builtinTools: parts.builtinTools,
           webhook: parts.webhook,
           idempotencyKey: parts.idempotencyKey,
-          tools: parts.tools
         })
       }))
   )
@@ -339,8 +337,8 @@ function captureClient(): CaptureHarness {
     const body = parseBody(init?.body);
     calls.push({ url, method, headers: headersToRecord(init?.headers), body });
     if (url === "https://example.test/api/sessions" && method === "POST") {
-      return new Response(JSON.stringify({ id: "sess_property", status: "queued" }), {
-        status: 202,
+      return new Response(JSON.stringify({ session: { id: "sess_property", status: "idle", acceptsMessages: true } }), {
+        status: 201,
         headers: { "content-type": "application/json" }
       });
     }
@@ -387,7 +385,7 @@ async function createWithSurface(
   surface: CreateSurface,
   options: SessionCreateOptions
 ): Promise<unknown> {
-  if (surface === "openSession") return client.openSession(options);
+  void surface;
   return client.sessions.create(options);
 }
 
@@ -449,10 +447,9 @@ function buildSessionOptions(
     readonly overrides?: SessionCreateOptions["overrides"] | undefined;
     readonly runtime?: RuntimeSize | undefined;
     readonly outputMode?: OutputMode | undefined;
-    readonly includeBuiltinTools?: boolean | undefined;
+    readonly builtinTools?: "default" | "none" | readonly BuiltinToolName[] | undefined;
     readonly webhook?: { readonly url: string } | undefined;
     readonly idempotencyKey?: string | undefined;
-    readonly tools?: readonly BuiltinToolName[] | undefined;
   }
 ): SessionCreateOptions {
   const options: Mutable<SessionCreateOptions> = { model: choice.model };
@@ -465,10 +462,9 @@ function buildSessionOptions(
   if (parts.overrides !== undefined) options.overrides = parts.overrides;
   if (parts.runtime !== undefined) options.runtime = parts.runtime;
   if (parts.outputMode !== undefined) options.outputMode = parts.outputMode;
-  if (parts.includeBuiltinTools !== undefined) options.includeBuiltinTools = parts.includeBuiltinTools;
+  if (parts.builtinTools !== undefined) options.builtinTools = parts.builtinTools;
   if (parts.webhook !== undefined) options.webhook = parts.webhook;
   if (parts.idempotencyKey !== undefined) options.idempotencyKey = parts.idempotencyKey;
-  if (parts.tools !== undefined) options.tools = parts.tools;
   return options;
 }
 
@@ -535,7 +531,7 @@ function minimalValidOptions(): SessionCreateOptions {
 }
 
 describe("session create inputs (property)", () => {
-  it("posts rich valid openSession/sessions.create options as parseable session submissions", async () => {
+  it("posts rich valid sessions.create options as parseable session submissions", async () => {
     await fc.assert(
       fc.asyncProperty(richValidCase, async (testCase) => {
         const harness = captureClient();

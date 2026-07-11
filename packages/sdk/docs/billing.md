@@ -46,24 +46,32 @@ checkout completes and the hosted API confirms the subscription.
 
 ```ts
 const { url } = await aex.billingCheckout({
-  planKey: "pro",
+  planKey: "pro"
+}, {
   idempotencyKey: crypto.randomUUID()
 });
 console.log(url);
 ```
 
+The optional second argument identifies the mutation and is sent only as the
+`Idempotency-Key` header. When omitted, the SDK generates one before transport
+retries begin and reuses it for every attempt.
+
 `aex.billingPortal()` creates a hosted billing portal session for the workspace:
 
 ```ts
-const { url } = await aex.billingPortal({ returnUrl: "https://aex.dev/billing" });
+const { url } = await aex.billingPortal(
+  { returnUrl: "https://aex.dev/billing" },
+  { idempotencyKey: crypto.randomUUID() }
+);
 console.log(url);
 ```
 
 CLI equivalents:
 
 ```bash
-aex billing upgrade pro
-aex billing portal
+aex billing upgrade pro --idempotency-key "$KEY"
+aex billing portal --idempotency-key "$KEY"
 ```
 
 ## Read the credit ledger
@@ -88,7 +96,7 @@ aex billing ledger --limit 50   # JSON rows, newest first
 
 ## Reveal the webhook signing secret
 
-SessionRecord webhooks are signed Standard-Webhooks style with a per-workspace secret.
+Session webhooks are signed Standard-Webhooks style with a per-workspace secret.
 `aex.webhookSigningSecret()` reveals it (creating one on first use) as the
 `whsec_<base64>` string that `verifyAexWebhook` takes as `secret`:
 

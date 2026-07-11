@@ -2,7 +2,7 @@
  * `aex status <session-id>` — fetch a single session record via GET
  * /api/sessions/{id} and print it as JSON.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

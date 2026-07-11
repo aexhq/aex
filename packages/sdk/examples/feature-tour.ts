@@ -1,282 +1,124 @@
 /**
- * SDK feature tour: one managed session that uses typed model/runtime constants,
- * inline AGENTS.md guidance, uploaded files, a custom tool bundle, selected
- * built-in tools, runtime env vars/secrets, streamed events, file reads, and
- * a follow-up session turn.
- *
- * SessionRecord from the repository root after building the workspace package:
- *
- *   AEX_API_KEY=... DEEPSEEK_API_KEY=... bun packages/sdk/examples/feature-tour.ts
- *
- * Optional:
- *
- *   AEX_API_URL=https://api.aex.dev
- *   AEX_FEATURE_TOUR_DOWNLOAD=./feature-tour-session.zip
- *   AEX_DEMO_RUNTIME_SECRET=...       # mounted as a runtime secret; never printed
- *   AEX_DEMO_MCP_URL=https://...      # declares an optional remote MCP server
- *   AEX_DEMO_MCP_TOKEN=...            # optional bearer auth for that MCP server
+ * Public SDK feature tour: publish reusable resources, run a resumable session,
+ * stream one run, read its committed checkpoint, and continue the thread.
  */
 import {
-  AgentsMd,
   Aex,
   BuiltinTools,
   File,
-  isRateLimited,
-  McpServer,
+  Instructions,
   Models,
   Providers,
-  Secret,
   Sizes,
-  Tool
+  Tool,
+  isRateLimited
 } from "@aexhq/sdk";
 
 process.on("uncaughtException", handleFatal);
 process.on("unhandledRejection", handleFatal);
 
-const apiKey = required("AEX_API_KEY");
-const deepseekKey = required("DEEPSEEK_API_KEY");
-const apiUrl = process.env.AEX_API_URL;
-const demoMcpUrl = process.env.AEX_DEMO_MCP_URL;
-const demoMcpToken = process.env.AEX_DEMO_MCP_TOKEN;
-const demoRuntimeSecret = process.env.AEX_DEMO_RUNTIME_SECRET;
-const downloadPath = process.env.AEX_FEATURE_TOUR_DOWNLOAD;
-const textEncoder = new TextEncoder();
-
 const aex = new Aex({
-  apiKey,
-  ...(apiUrl ? { baseUrl: apiUrl } : {}),
-  retry: {
-    maxAttempts: 4,
-    initialDelayMs: 500,
-    maxDelayMs: 10_000,
-    maxElapsedMs: 90_000
-  }
+  apiKey: required("AEX_API_KEY"),
+  ...(process.env.AEX_API_URL ? { baseUrl: process.env.AEX_API_URL } : {})
 });
+const deepseekKey = required("DEEPSEEK_API_KEY");
 
-const metricLookup = await Tool.fromFiles({
-  name: "metric_lookup",
-  description: "Looks up normalized demo metrics for one product line.",
+const csv = [
+  "product,q2_revenue_usd",
+  "atlas,139500",
+  "beacon,104300",
+  "cinder,81000"
+].join("\n");
+
+const fileDraft = await File.fromBytes({
+  name: "quarterly-metrics.csv",
+  bytes: new TextEncoder().encode(`${csv}\n`),
+  mountPath: "/workspace/input"
+});
+const instructionDraft = await Instructions.fromContent(
+  "Read the supplied data, use exact arithmetic, and write final files under /workspace/files.",
+  { name: "feature-tour-rules" }
+);
+const toolDraft = await Tool.fromFiles({
+  name: "normalize_product",
+  description: "Normalizes a product name.",
   inputSchema: {
     type: "object",
-    additionalProperties: false,
-    properties: {
-      product: {
-        type: "string",
-        enum: ["atlas", "beacon", "cinder"],
-        description: "Product line to inspect."
-      }
-    },
+    properties: { product: { type: "string" } },
     required: ["product"]
   },
   entry: "index.js",
   files: {
-    "index.js": `
-const DATA = {
-  atlas: { customerCount: 118, activationHealthPct: 72.4, supportTickets: 11 },
-  beacon: { customerCount: 74, activationHealthPct: 65.1, supportTickets: 19 },
-  cinder: { customerCount: 43, activationHealthPct: 58.8, supportTickets: 7 }
-};
-
-export default async function ({ input }) {
-  const key = String(input.product ?? "").toLowerCase();
-  const row = DATA[key];
-  if (!row) {
-    return { content: [{ type: "text", text: \`unknown product: \${key}\` }], is_error: true };
-  }
-  return { content: [{ type: "text", text: JSON.stringify({ product: key, ...row }) }] };
-}
-`
+    "index.js": "export default async ({ input }) => ({ content: [{ type: 'text', text: String(input.product).trim().toLowerCase() }] });"
   }
 });
 
-const demoCsv = [
-  "product,region,q1_revenue_usd,q2_revenue_usd,activation_rate",
-  "atlas,na,120000,139500,0.84",
-  "beacon,emea,98000,104300,0.79",
-  "cinder,apac,67000,81000,0.91"
-].join("\n");
+const [input, rules, normalizeProduct] = await Promise.all([
+  aex.workspace.files.publish(fileDraft),
+  aex.workspace.instructions.publish(instructionDraft),
+  aex.workspace.tools.publish(toolDraft)
+]);
 
-const attachedFile = await File.fromBytes({
-  name: "quarterly-metrics.csv",
-  bytes: textEncoder.encode(`${demoCsv}\n`),
-  mountPath: "/workspace/input"
-});
-
-const runRules = await AgentsMd.fromContent(
-  [
-    "# Feature tour rules",
-    "- Use `/workspace/input/quarterly-metrics.csv` as the source table.",
-    "- Call `metric_lookup` for atlas, beacon, and cinder before writing conclusions.",
-    "- Write final artifacts under `/workspace/files`.",
-    "- Never print runtime secret values or provider keys."
-  ].join("\n"),
-  { name: "feature-tour-rules" }
-);
-
-const mcpServers = demoMcpUrl
-  ? [
-      McpServer.remote({
-        name: "demo-mcp",
-        url: demoMcpUrl,
-        ...(demoMcpToken
-          ? { headers: { Authorization: `Bearer ${demoMcpToken}` } }
-          : {})
-      })
-    ]
-  : [];
-
-const environmentSecrets = demoRuntimeSecret
-  ? { DEMO_RUNTIME_SECRET: Secret.value(demoRuntimeSecret) }
-  : undefined;
-
-console.log("creating feature-tour session...");
-console.log(`optional mcp: ${mcpServers.length > 0 ? "enabled" : "disabled"}`);
-console.log(`optional runtime secret: ${environmentSecrets ? "enabled" : "disabled"}`);
-
-const session = await aex.openSession({
+const session = await aex.sessions.create({
   provider: Providers.DEEPSEEK,
   model: Models.DEEPSEEK_V4_FLASH,
-  system: [
-    "You are a concise analytics agent.",
-    "Prefer exact calculations and write durable files for the caller."
-  ].join(" "),
-  agentsMd: [runRules],
-  files: [attachedFile],
-  includeBuiltinTools: false,
-  tools: [
-    BuiltinTools.read_file,
-    BuiltinTools.write_file,
-    BuiltinTools.bash,
-    BuiltinTools.grep,
-    BuiltinTools.code_execution,
-    metricLookup
-  ],
-  mcpServers,
-  environment: {
-    networking: { mode: "open" },
-    variables: {
-      FEATURE_TOUR: "true",
-      REPORT_DIR: "/workspace/files"
-    },
-    ...(environmentSecrets ? { secrets: environmentSecrets } : {})
+  system: "You are a concise analytics agent.",
+  assets: {
+    files: [input],
+    instructions: [rules],
+    tools: [normalizeProduct]
   },
-  fileCapture: {
-    allowedDirs: ["/workspace/files"],
-    deniedDirs: ["*.tmp"],
-    maxFiles: 10,
-    maxFileBytes: 1_000_000
-  },
-  outputMode: "stream",
+  builtinTools: [BuiltinTools.read_file, BuiltinTools.write_file, BuiltinTools.code_execution],
+  fileCapture: { allowedDirs: ["/workspace/files"], maxFiles: 10 },
   runtime: Sizes.SHARED_0_25X_1GB,
-  metadata: {
-    example: "sdk-feature-tour",
-    sdkSurface: "public"
-  },
-  overrides: {
-    idleTtl: "5m",
-    timeout: "10m",
-    maxSpendUsd: 2
-  },
+  overrides: { idleTtl: "5m", timeout: "10m", maxSpendUsd: 2 },
   apiKeys: { deepseek: deepseekKey }
 });
 
 console.log(`session: ${session.id}`);
-
-const prompt = [
-  "Analyze the attached quarterly metrics.",
-  "Call metric_lookup for atlas, beacon, and cinder.",
-  "Create /workspace/files/feature-tour-report.md with a short table, a ranking by q2_revenue_usd, and two risks.",
-  "Create /workspace/files/summary.json with keys topProduct, totalQ2RevenueUsd, highestActivationProduct, and riskCount."
-].join(" ");
-
-const firstTurn = session.send(prompt);
-const firstTurnIterator = firstTurn[Symbol.asyncIterator]();
-let result: Awaited<ReturnType<typeof firstTurn.done>> | undefined;
-for (;;) {
-  const next = await firstTurnIterator.next();
-  if (next.done) {
-    result = next.value as Awaited<ReturnType<typeof firstTurn.done>>;
-    break;
-  }
-  const event = next.value;
-  if (event.isTextMessage()) {
-    process.stdout.write(event.data.text);
-  } else if (event.isToolCallStart()) {
-    process.stdout.write(`\n[tool:start] ${event.data.name}\n`);
-  } else if (event.isToolCallResult()) {
-    process.stdout.write("[tool:result]\n");
-  }
-}
-
-if (!result) {
-  throw new Error("first turn stream ended without a result");
-}
-console.log(`\nfirst turn parked with status: ${result.status}`);
-
-const followUp = await session
-  .send("Read summary.json back and answer with one sentence confirming the top product and total Q2 revenue.")
-  .done();
-console.log(`follow-up status: ${followUp.status}`);
-if (followUp.text) {
-  console.log(`follow-up text: ${followUp.text.trim()}`);
-}
-
-const parked = await session.wait({ timeoutMs: 60_000, intervalMs: 2_000 });
-console.log(`settled session status: ${parked.status}`);
-
-const messages = await session.messages().list();
-console.log(`assistant messages: ${messages.length}`);
-
-const events = await session.events().list();
-console.log(`captured events: ${events.length}`);
-
-const files = await session.files().list();
-console.log("files:");
-for (const file of files) {
-  console.log(`- ${file.filename ?? file.id} (${file.contentType ?? "unknown"})`);
-}
-
-const summary = await session.files().read(
-  { path: "summary.json", match: "suffix" },
-  { maxBytes: 20_000 }
+const run = session.messages.send(
+  "Read /workspace/input/quarterly-metrics.csv, rank products, and write /workspace/files/report.md."
 );
-console.log("summary.json:");
-console.log(summary.text);
 
-const report = await session.files().findOne({
-  filename: "feature-tour-report.md"
-});
-if (report) {
-  const reportPreview = await session.files().read(report, {
-    maxBytes: 4_000,
-    grep: "risk"
-  });
-  console.log("report risk lines:");
-  console.log(reportPreview.text || "(no risk lines found)");
+for await (const event of run) {
+  if (event.isTextMessage()) process.stdout.write(event.data.text);
+  if (event.isToolCallStart()) process.stdout.write(`\n[tool] ${event.data.name}\n`);
 }
 
-const reopenedFiles = await aex.sessions.files(session.id).list();
-console.log(`files via aex.sessions.files(...): ${reopenedFiles.length}`);
+const first = await run.finished();
+console.log(`\noutcome: ${first.status}; cost: $${first.costUsd}`);
+console.log(`checkpoint: ${first.checkpoint?.checkpointId ?? "none"}`);
 
-if (downloadPath) {
-  const bytes = await session.download({ to: downloadPath });
-  console.log(`downloaded session archive: ${downloadPath} (${bytes.byteLength} bytes)`);
+const snapshot = await session.files.list();
+console.log(`captured files: ${snapshot.files.length}`);
+const report = await session.files.read({ path: "report.md", match: "suffix" });
+console.log(report.text);
+
+const followUp = await session.messages
+  .send("Confirm the top product in one sentence.")
+  .finished();
+console.log(`follow-up: ${followUp.status} ${followUp.text.trim()}`);
+
+const reopened = await aex.sessions.open(session.id);
+const reopenedSnapshot = await reopened.files.list();
+console.log(`reopened checkpoint: ${reopenedSnapshot.revision.checkpointId}`);
+
+if (process.env.AEX_FEATURE_TOUR_DOWNLOAD) {
+  const bytes = await reopened.download({ to: process.env.AEX_FEATURE_TOUR_DOWNLOAD });
+  console.log(`archive bytes: ${bytes.byteLength}`);
 }
 
 function required(name: string): string {
   const value = process.env[name];
-  if (!value) {
-    console.error(`Missing env var ${name}`);
-    process.exit(1);
-  }
+  if (!value) throw new Error(`Missing env var ${name}`);
   return value;
 }
 
-function handleFatal(err: unknown): void {
-  if (isRateLimited(err)) {
-    console.error(`rate limited after ${err.attempts} attempts; retry after ${err.retryAfterMs ?? "unknown"}ms`);
-    process.exit(1);
+function handleFatal(error: unknown): void {
+  if (isRateLimited(error)) {
+    console.error(`rate limited; retry after ${error.retryAfterMs ?? "unknown"}ms`);
+  } else {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   }
-  console.error(err instanceof Error ? err.stack ?? err.message : String(err));
   process.exit(1);
 }

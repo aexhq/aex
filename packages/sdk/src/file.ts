@@ -1,6 +1,5 @@
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import type { FileRef } from "@aexhq/contracts";
 import {
   DEFAULT_FILE_MOUNT_PATH,
   RESERVED_META_ENTRY,
@@ -26,7 +25,8 @@ import { zipSync } from "fflate";
  *
  *   const settings = await File.fromPath("./settings.json");
  *   const dataset = await File.fromPath("./data/");
- *   await client.start({ files: [settings, dataset], message: "..." });
+ *   const input = await client.workspace.files.publish(settings);
+ *   await client.start({ assets: { files: [input] }, message: "..." });
  *
  * `mountPath` is the absolute container directory the file unzips into; it
  * defaults to `/workspace` (the agent's default working directory), so a file
@@ -43,40 +43,26 @@ import { zipSync } from "fflate";
  * multipart flow that holds only one entry + one part in memory, lifting the
  * old ~2 GiB in-memory ceiling.
  *
- * `client.start` / `openSession` materializes the bytes to the hosted asset store
- * before the session lands; the wire ref becomes `kind:"asset"`. Repeat uploads of the
- * same bytes are deduped.
+ * Publish drafts through `aex.workspace.files.publish(file)`, then pin the
+ * returned immutable ref in `assets.files`.
  */
 export class File {
-  readonly #ref: FileRef | DraftFileRef;
+  readonly #ref: DraftFileRef;
   readonly #bytes: Uint8Array | undefined;
-  /** Large-input streaming driver — re-sessions the deterministic canonical-zip framer per pass. */
+  /** Large-input streaming driver — re-runs the deterministic canonical-zip framer per pass. */
   readonly #drive: ZipStreamDriver | undefined;
-  /** Asset id cached after the first use, so reuse skips a re-upload. */
-  #assetId: string | undefined;
-
-  constructor(ref: FileRef | DraftFileRef, bytes?: Uint8Array, drive?: ZipStreamDriver) {
+  private constructor(ref: DraftFileRef, bytes?: Uint8Array, drive?: ZipStreamDriver) {
     this.#ref = ref;
     this.#bytes = bytes;
     this.#drive = drive;
   }
 
-  get ref(): FileRef | DraftFileRef {
+  get ref(): DraftFileRef {
     return this.#ref;
   }
 
   get isDraft(): boolean {
-    return this.#ref.kind === "draft";
-  }
-
-  /** Internal: the asset id resolved on a prior use, or undefined. */
-  get _cachedAssetId(): string | undefined {
-    return this.#assetId;
-  }
-
-  /** Internal: remember the asset id resolved for this draft's bytes. */
-  _rememberAsset(assetId: string): void {
-    this.#assetId = assetId;
+    return true;
   }
 
   /**
@@ -211,8 +197,7 @@ export class File {
   }
 
   /**
-   * Internal: yield the draft's zipped bytes + metadata so
-   * `client.start` / `openSession` can upload it as an asset (single PUT).
+   * Internal: yield the draft's zipped bytes and metadata to the workspace publisher.
    * Returns undefined for a streaming (large) draft — use {@link _takeDraftStream}.
    */
   _takeDraftBundle(): {
@@ -242,14 +227,8 @@ export class File {
     return { name: this.#ref.name, mountPath: this.#ref.mountPath, drive: this.#drive };
   }
 
-  toJSON(): FileRef {
-    if (this.#ref.kind === "draft") {
-      throw new Error(
-        "File: draft Files cannot be JSON-serialised — they only become wire refs when " +
-        "aex.start / openSession uploads the bytes as an asset."
-      );
-    }
-    return this.#ref;
+  toJSON(): never {
+    throw new Error("File drafts cannot be submitted directly; publish with aex.workspace.files.publish(...)");
   }
 }
 

@@ -11,9 +11,9 @@
  *
  * Cost discipline: almost every case is a CLIENT-SIDE validation rejection or a
  * create-only (no billable turn) submit probe. Exactly ONE case sends a billable
- * turn (a tiny run at a non-default sessiontime size to prove a size actually sessions).
+ * turn (a tiny run at a non-default runtime size to prove a size actually works).
  *
- * Each case sessions a small .mjs script in the installed-SDK dir that performs the
+ * Each case runs a small .mjs script in the installed-SDK dir that performs the
  * SDK action, catches any error, and prints a structured JSON verdict the test
  * asserts on. Scripts always `process.exit(0)` with JSON so a caught rejection
  * is data, not a non-zero exit.
@@ -33,7 +33,7 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `user-tests live: required env ${name} is missing. The edge session-limits sweep sessions against a real dev API URL with a real gate-provider key.`
+      `user-tests live: required env ${name} is missing. The edge session-limits sweep runs against a real dev API URL with a real gate-provider key.`
     );
   }
   return value;
@@ -128,7 +128,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
 
   // -------------------------------------------------------------------------
   // maxSpendUsd (the one SessionLimits field the SDK exposes) — client-side gate.
-  // parseSessionLimits sessions inside #buildSessionCreateRequest BEFORE any network,
+  // parseSessionLimits runs inside #buildSessionCreateRequest BEFORE any network,
   // so these reject with zero cost and no billable session turn.
   // -------------------------------------------------------------------------
   it(
@@ -218,16 +218,11 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
         async function probeSize(size) {
           try {
             const h = await client.sessions.create({ ...BASE, runtime: size });
-            let reflect = null;
-            try {
-              const unit = await h.unit();
-              const rm = unit && unit.runtimeManifest ? unit.runtimeManifest : null;
-              reflect = {
-                recordRuntimeSize: (h.record && h.record.runtimeSize) ?? null,
-                capsSnapshot: (unit && unit.capsSnapshot) ?? null,
-                runtimeManifestResources: rm && (rm.resources ?? rm.runtime ?? rm.size ?? null)
-              };
-            } catch (e) { reflect = { unitError: String(e && e.message ? e.message : e).slice(0, 200) }; }
+            const rm = h.record.runtimeManifest ?? null;
+            const reflect = {
+              recordRuntime: h.record.runtime ?? null,
+              runtimeManifestResources: rm && (rm.resources ?? rm.runtime ?? rm.size ?? null)
+            };
             let deleted = false;
             try { await h.delete(); deleted = true; } catch {}
             return { size, thrown: false, sessionId: h.id, status: (h.record && h.record.status) ?? null, deleted, reflect };
@@ -358,11 +353,11 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
   );
 
   // -------------------------------------------------------------------------
-  // ONE billable turn: prove a non-default sessiontime size actually SESSIONS green,
+  // ONE billable turn: prove a non-default runtime size actually runs successfully,
   // and capture any server-side reflection of the size for evidence.
   // -------------------------------------------------------------------------
   it(
-    "sessions a tiny turn on a non-default sessiontime size (shared-0.5x-4gb) to terminal success",
+    "runs a tiny turn on a non-default runtime size (shared-0.5x-4gb) to terminal success",
     async () => {
       const probeMarker = "size-session-" + Math.random().toString(36).slice(2, 8);
       const result = await probe<{
@@ -378,17 +373,11 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
           message: ${JSON.stringify(`SessionFile verbatim: ${probeMarker}`)},
           idempotencyKey: "edge-size-session-" + Date.now()
         }, { timeoutMs: 8 * 60 * 1000 });
-        // Best-effort: surface any server-side reflection of the chosen size.
-        let reflect = null;
-        try {
-          const session = await client.sessions.open(sessionResult.sessionId);
-          const unit = await session.unit();
-          reflect = {
-            capsSnapshot: unit && unit.capsSnapshot ? unit.capsSnapshot : null,
-            runtimeManifestKeys: unit && unit.runtimeManifest ? Object.keys(unit.runtimeManifest) : null,
-            runtimeManifest: unit && unit.runtimeManifest ? unit.runtimeManifest : null
-          };
-        } catch (e) { reflect = { error: String(e && e.message ? e.message : e).slice(0, 300) }; }
+        const session = await client.sessions.open(sessionResult.sessionId);
+        const reflect = {
+          runtime: session.record.runtime ?? null,
+          runtimeManifest: session.record.runtimeManifest ?? null
+        };
         out({
           ok: sessionResult.ok === true,
           status: String(sessionResult.status),
@@ -400,9 +389,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
 
       expect(result.ok, `run verdict: status=${result.status} text=${JSON.stringify(result.text).slice(0, 200)}`).toBe(true);
       expect(result.text.replace(/\s+/g, "")).toContain(probeMarker);
-      // Reflection is diagnostic only — logged for the report, not asserted,
-      // because the public read shape does not guarantee the size token is
-      // echoed back.
+      expect((result.reflect as { runtime?: unknown }).runtime).toBe("shared-0.5x-4gb");
       // eslint-disable-next-line no-console
       console.log("[edge-session-limits] size reflection:", JSON.stringify(result.reflect));
     },

@@ -28,13 +28,13 @@ console.log(result.status, result.text);
 ## Session with a follow-up turn
 
 ```ts
-const session = await aex.openSession({
+const session = await aex.sessions.create({
   model: Models.CLAUDE_HAIKU_4_5,
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-await session.send("Create a short plan.").done();
-const final = await session.send("Now apply the first step.").done();
+await session.messages.send("Create a short plan.").finished();
+const final = await session.messages.send("Now apply the first step.").finished();
 console.log(final.text);
 ```
 

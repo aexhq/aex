@@ -6,7 +6,8 @@
 import { describe, expect, it } from "vitest";
 import { unzipSync } from "fflate";
 import { HttpClient } from "../src/http.js";
-import { SessionStateError, operations } from "../src/index.js";
+import { SessionStateError } from "../src/index.js";
+import { operations } from "../src/internal.js";
 
 const BASE = "https://api.test";
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -15,19 +16,34 @@ function clientFor(routes: Record<string, () => Response>) {
   const fetchImpl = async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const path = url.slice(BASE.length);
-    const handler = routes[path];
+    const handler = routes[path] ?? routes[path.replace(/\?checkpointId=[^&]+$/, "")];
     if (!handler) return new Response("not found", { status: 404 });
     return handler();
   };
   return new HttpClient({ apiKey: "tok", baseUrl: BASE, fetch: fetchImpl });
 }
 
-const json = (body: unknown) =>
-  new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+const json = (body: unknown) => {
+  const record = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : undefined;
+  const normalized = record && Array.isArray(record.files) && record.revision === undefined
+    ? {
+        ...record,
+        revision: {
+          checkpointId: "cp_1",
+          runId: "run_1",
+          turnSeq: 1,
+          committedAt: "2026-07-10T00:00:00.000Z",
+          throughSeq: 9
+        },
+        files: record.files.map((file) => ({ ...(file as object), checkpointId: "cp_1" }))
+      }
+    : body;
+  return new Response(JSON.stringify(normalized), { status: 200, headers: { "content-type": "application/json" } });
+};
 
 function runWithSessionFile() {
   return clientFor({
-    "/api/sessions/session-1": () => json({ id: "session-1", status: "succeeded" }),
+    "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
     "/api/sessions/session-1/events": () => json({ events: [{ seq: 0, kind: "a" }, { seq: 1, kind: "b" }] }),
     "/api/sessions/session-1/files": () =>
       json({ files: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] }),
@@ -72,7 +88,7 @@ describe("operations.download", () => {
 
   it("records a failed per-file fetch in manifest.errors without aborting the rest", async () => {
     const http = clientFor({
-      "/api/sessions/session-1": () => json({ id: "session-1", status: "failed" }),
+      "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "error", acceptsMessages: true } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () =>
         json({ files: [{ id: "ok", filename: "good.txt" }, { id: "bad", filename: "missing.txt" }] }),
@@ -92,7 +108,7 @@ describe("operations.download", () => {
 
   it("rejects secret-shaped JSON/text archive entries before writing the zip", async () => {
     const http = clientFor({
-      "/api/sessions/session-1": () => json({ id: "session-1", status: "failed", errorMessage: "Authorization: Bearer abcdefgh" }),
+      "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "error", acceptsMessages: true, errorMessage: "Authorization: Bearer abcdefgh" } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () => json({ files: [] })
     });
@@ -102,7 +118,7 @@ describe("operations.download", () => {
 
   it("does not scan customer file bytes for secret-shaped content", async () => {
     const http = clientFor({
-      "/api/sessions/session-1": () => json({ id: "session-1", status: "succeeded" }),
+      "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () =>
         json({ files: [{ id: "o1", filename: "report.txt", sizeBytes: 27, contentType: "text/plain" }] }),
@@ -117,7 +133,7 @@ describe("operations.download", () => {
   it("allows public opaque artifact ids in manifest rows", async () => {
     const opaqueId = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
     const http = clientFor({
-      "/api/sessions/session-1": () => json({ id: "session-1", status: "succeeded" }),
+      "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () =>
         json({ files: [{ id: opaqueId, filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] }),
@@ -190,9 +206,9 @@ describe("operations.downloadSessionFile", () => {
       "/api/sessions/session-4/files/o1/download": () => new Response("direct", { status: 200 })
     });
 
-    const result = await operations.downloadSessionFile(http, "session-4", { id: "o1" });
+    const result = await operations.downloadSessionFile(http, "session-4", { id: "o1", checkpointId: "cp_1" });
 
-    expect(result.file).toEqual({ id: "o1" });
+    expect(result.file).toEqual({ id: "o1", checkpointId: "cp_1" });
     expect(decode(result.bytes)).toBe("direct");
   });
 
@@ -203,6 +219,7 @@ describe("operations.downloadSessionFile", () => {
 
     const result = await operations.downloadSessionFile(http, "session-5", {
       id: "o1",
+      checkpointId: "cp_1",
       filename: "report.txt",
       contentType: "text/plain"
     });

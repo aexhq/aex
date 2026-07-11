@@ -10,23 +10,22 @@ const SKILL_PREFIXES = [
 function baseResult(overrides: Partial<CaseResult> = {}): CaseResult {
   return {
     sessionId: "session-heavy-managed",
-    attempts: 1,
-    sessionStatus: "succeeded",
+    runOutcome: "succeeded",
     runtime: "managed",
     provider: "deepseek",
     probes: {
       system: "REF.system",
-      agentsMd: "REF.agents",
+      instructions: "REF.instructions",
       prompt: "REF.prompt",
       out: ["REF-out-a", "REF-out-b", "REF-out-c"]
     },
-    eventCount: 5,
-    eventKinds: ["CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "CUSTOM"],
-    eventTypeSet: ["CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT"],
-    eventSource: "session.events().list",
+    eventCount: 6,
+    eventKinds: ["RUN_STARTED", "CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "RUN_FINISHED"],
+    eventTypeSet: ["RUN_STARTED", "CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "RUN_FINISHED"],
+    eventSource: "session.events.list",
     eventListError: null,
-    fallbackEventCount: 5,
-    listedEventCount: 5,
+    fallbackEventCount: 6,
+    listedEventCount: 6,
     toolCallStartCount: 1,
     toolCallResultCount: 1,
     notificationKinds: ["skill_loaded", "skill_loaded", "skill_loaded"],
@@ -37,10 +36,15 @@ function baseResult(overrides: Partial<CaseResult> = {}): CaseResult {
     ],
     assistantTextJoined: "done",
     assistantTextEventCount: 1,
-    terminalKind: "aex.session.succeeded",
-    terminalData: { reason: "complete", runtimeExitCode: 0 },
+    terminalKind: "RUN_FINISHED",
+    terminalData: {
+      outcome: "succeeded",
+      costUsd: 0.001,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp_1" }
+    },
     fileCount: 1,
-    fileSource: "session.files().list",
+    fileSource: "session.files.list",
     fileListError: null,
     fallbackFileCount: 1,
     listedFileCount: 1,
@@ -48,11 +52,10 @@ function baseResult(overrides: Partial<CaseResult> = {}): CaseResult {
     outProbesFound: ["REF-out-a"],
     channelProbeSources: {
       system: ["assistantText"],
-      agentsMd: ["toolCallStart"],
+      instructions: ["toolCallStart"],
       prompt: ["toolCallResult"]
     },
     channelProbeMisses: [],
-    retryReasons: [],
     leakedDeepseekKey: false,
     streamErrors: [],
     ...overrides
@@ -69,23 +72,23 @@ function captureError(fn: () => void): Error {
 }
 
 describe("heavy-session live assertion shape", () => {
-  it("accepts managed session terminals without legacy TURN_STARTED", () => {
+  it("accepts a checkpoint-consistent RUN_FINISHED terminal", () => {
     expect(() => assertManagedShape(baseResult(), SKILL_PREFIXES)).not.toThrow();
   });
 
-  it("still requires TURN_STARTED before legacy TURN_FINISHED terminals", () => {
+  it("requires RUN_STARTED before RUN_FINISHED", () => {
     const error = captureError(() =>
       assertManagedShape(
         baseResult({
           sessionId: "session-legacy-missing-start",
-          terminalKind: "TURN_FINISHED",
-          eventKinds: ["CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "TURN_FINISHED"]
+          terminalKind: "RUN_FINISHED",
+          eventKinds: ["CUSTOM", "TOOL_CALL_START", "TOOL_CALL_RESULT", "TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]
         }),
         SKILL_PREFIXES
       )
     );
 
-    expect(error.message).toContain("legacy TURN_FINISHED stream did not include TURN_STARTED");
+    expect(error.message).toContain("RUN_STARTED must precede RUN_FINISHED");
     expect(error.message).toContain("sessionId=session-legacy-missing-start");
   });
 
@@ -94,7 +97,7 @@ describe("heavy-session live assertion shape", () => {
       assertManagedShape(
         baseResult({
           sessionId: "session-missing-tool-result",
-          eventTypeSet: ["CUSTOM", "TOOL_CALL_START", "TEXT_MESSAGE_CONTENT"]
+          eventTypeSet: ["RUN_STARTED", "CUSTOM", "TOOL_CALL_START", "TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]
         }),
         SKILL_PREFIXES
       )

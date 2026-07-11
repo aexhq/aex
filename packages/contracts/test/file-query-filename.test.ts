@@ -1,18 +1,16 @@
 /**
- * WS6: SessionFileSearchQuery.filename and SessionFileQuery.filename are the SAME type
- * (`string | RegExp`), and one shared `toFilenameMatcher` never passes a RegExp
- * into a string-only path (the T16 crash class).
+ * Session file selectors accept `string | RegExp`, and the shared matcher never
+ * passes a RegExp into a string-only path.
  */
 import { describe, expect, it } from "vitest";
-import { operations, type SessionFileQuery, type SessionFileSearchQuery } from "../src/index.js";
+import type { SessionFileQuery } from "../src/index.js";
+import { operations } from "../src/internal.js";
 
 describe("unified filename query type (WS6)", () => {
-  it("[compile-time] SessionFileSearchQuery.filename and SessionFileQuery.filename are interchangeable", () => {
+  it("[compile-time] SessionFileQuery.filename accepts strings and regular expressions", () => {
     const re: SessionFileQuery["filename"] = /report/i;
-    const searchFromQuery: SessionFileSearchQuery["filename"] = re;
-    const queryFromSearch: SessionFileQuery["filename"] = searchFromQuery;
-    const str: SessionFileSearchQuery["filename"] = "notes.txt";
-    expect([re, searchFromQuery, queryFromSearch, str].length).toBe(4);
+    const str: SessionFileQuery["filename"] = "notes.txt";
+    expect([re, str].length).toBe(2);
   });
 
   it("toFilenameMatcher: string is a case-insensitive substring match", () => {

@@ -87,6 +87,11 @@ describe("aex --help", () => {
     expect(cap.stdout).not.toContain("proxy");
     expect(cap.stdout).not.toContain("--proxy-endpoint");
     expect(cap.stdout).not.toContain("aex debug");
+    expect(cap.stdout).not.toContain("--settle");
+    expect(cap.stdout).not.toContain("starttime-sizes");
+    expect(cap.stdout).not.toContain("session.finished");
+    expect(cap.stdout).toContain("aex runtime-sizes list");
+    expect(cap.stdout).toContain("run.finished/run.error");
   });
 
   it("advertises --aex-url as optional with the api.aex.dev default", async () => {
@@ -99,7 +104,7 @@ describe("aex --help", () => {
 
 describe("aex start provider inference (SDK parity)", () => {
   it("infers the provider from a single-provider model instead of demanding the anthropic key", async () => {
-    // Aex.openSession resolves `provider ?? providersForModel(model)[0] ?? default`;
+    // Session creation resolves `provider ?? providersForModel(model)[0] ?? default`;
     // the CLI (which advertises 1:1 SDK parity) jumped straight to the anthropic
     // default, so `aex start --model deepseek-v4-flash --deepseek-api-key K` failed
     // with "--anthropic-api-key is required". Live-observed on dev.

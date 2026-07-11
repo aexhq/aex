@@ -13,7 +13,7 @@ function makeClient(): { client: Aex; keys: (string | undefined)[] } {
     if (url.endsWith("/api/sessions") && (init?.method ?? "GET") === "POST") {
       const headers = init?.headers instanceof Headers ? init.headers : new Headers(init?.headers as HeadersInit);
       keys.push(headers.get("idempotency-key") ?? undefined);
-      return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", turnSeq: 0 } }), {
+      return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
         status: 201,
         headers: { "content-type": "application/json" }
       });
@@ -26,25 +26,25 @@ function makeClient(): { client: Aex; keys: (string | undefined)[] } {
 describe("empty idempotencyKey fail-fast (WS4)", () => {
   const base = { model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } } as const;
 
-  it("openSession/create throws synchronously on an empty key (no HTTP)", async () => {
+  it("sessions.create throws synchronously on an empty key (no HTTP)", async () => {
     const { client, keys } = makeClient();
-    await expect(client.openSession({ ...base, idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
-    await expect(client.openSession({ ...base, idempotencyKey: "   " })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    await expect(client.sessions.create({ ...base, idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    await expect(client.sessions.create({ ...base, idempotencyKey: "   " })).rejects.toBeInstanceOf(SessionConfigValidationError);
     expect(keys).toEqual([]);
   });
 
-  it("run/sessions.start throw synchronously on an empty key", async () => {
+  it("Aex.start throws synchronously on an empty key", async () => {
     const { client } = makeClient();
     await expect(client.start({ ...base, message: "hi", idempotencyKey: "" })).rejects.toBeInstanceOf(SessionConfigValidationError);
-    await expect(client.sessions.start({ ...base, message: "hi", idempotencyKey: "\t" })).rejects.toBeInstanceOf(
+    await expect(client.start({ ...base, message: "hi", idempotencyKey: "\t" })).rejects.toBeInstanceOf(
       SessionConfigValidationError
     );
   });
 
   it("a valid key ships the Idempotency-Key header; an omitted key auto-generates one", async () => {
     const { client, keys } = makeClient();
-    await client.openSession({ ...base, idempotencyKey: "my-key" });
-    await client.openSession(base);
+    await client.sessions.create({ ...base, idempotencyKey: "my-key" });
+    await client.sessions.create(base);
     expect(keys[0]).toBe("my-key");
     expect(keys[1]).toBeTruthy();
     expect(keys[1]).not.toBe("my-key");

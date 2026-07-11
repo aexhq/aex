@@ -1,508 +1,160 @@
-/**
- * Blackbox SDK session coverage through a clean installed package.
- *
- * The child scripts run from the user-test install tempdir, import
- * `@aexhq/sdk` from the packed/published artifact, and use fake fetch/WS
- * transports to assert the public wire shape without dispatching a live run.
- */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
-const CHILD_HARNESS = String.raw`
-import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+const SCRIPT = String.raw`
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { Aex } from "@aexhq/sdk";
 
-async function importSdk() {
-  const sdk = await import("@aexhq/sdk");
-  ok(!("Tools" in sdk), "legacy Tools namespace must not be exported");
-  return sdk;
-}
-
-// Skills are first-class session inputs: build one from a temp directory
-// containing a SKILL.md whose YAML frontmatter carries the skill name +
-// description, then pass it via Skill.fromDir and top-level skills.
-function makeSkillDir(name, description) {
-  const dir = mkdtempSync(join(tmpdir(), "aex-skill-"));
-  writeFileSync(
-    join(dir, "SKILL.md"),
-    "---\nname: " + name + "\ndescription: " + description + "\n---\n# " + name + "\n" + description + "\n"
-  );
-  return dir;
-}
-
-function assetIdFromHash(hash) {
-  const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
-  return "asset_" + hex;
-}
-
-function headersToObject(headers) {
-  const out = {};
-  if (!headers) return out;
-  if (headers instanceof Headers) {
-    for (const [key, value] of headers.entries()) out[key.toLowerCase()] = value;
-    return out;
+const calls = [];
+let status = "idle";
+const revision = {
+  checkpointId: "cp-1",
+  runId: "run-1",
+  turnSeq: 1,
+  committedAt: "2026-07-10T00:00:00.000Z",
+  throughSeq: 11
+};
+const json = (value, statusCode = 200) => Response.json(value, { status: statusCode });
+const fetch = async (input, init = {}) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const parsed = new URL(url);
+  const method = String(init.method ?? "GET").toUpperCase();
+  const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+  calls.push({ path: parsed.pathname, search: parsed.search, method, body, headers: new Headers(init.headers) });
+  if (parsed.pathname === "/api/sessions" && method === "POST") {
+    return json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }, 201);
   }
-  if (Array.isArray(headers)) {
-    for (const [key, value] of headers) out[String(key).toLowerCase()] = String(value);
-    return out;
+  if (parsed.pathname === "/api/sessions/session-1/messages" && method === "POST") {
+    status = "running";
+    return json({
+      session: { id: "session-1", status, acceptsMessages: false },
+      run: { sessionId: "session-1", runId: "run-1", turnSeq: 1, phase: "running", eventCursor: 10 },
+      eventCursor: 10
+    }, 202);
   }
-  for (const [key, value] of Object.entries(headers)) out[String(key).toLowerCase()] = String(value);
-  return out;
-}
-
-async function decodeBody(body) {
-  if (body === undefined || body === null) return undefined;
-  if (typeof body === "string") {
-    try { return JSON.parse(body); } catch { return body; }
+  if (parsed.pathname === "/api/sessions/session-1/events/ticket" && method === "POST") {
+    return json({ wsUrl: "wss://events.example/session-1", ticket: "ticket", expiresAtMs: Date.now() + 60_000 });
   }
-  if (body instanceof Uint8Array) return { kind: "Uint8Array", byteLength: body.byteLength };
-  try {
-    const text = await new Response(body).text();
-    try { return JSON.parse(text); } catch { return text; }
-  } catch {
-    return String(body);
+  if (parsed.pathname === "/api/sessions/session-1/files" && method === "GET") {
+    strictEqual(parsed.searchParams.get("checkpointId"), "cp-1");
+    return json({ revision, files: [{ id: "file-1", checkpointId: "cp-1", filename: "answer.txt", sizeBytes: 12 }] });
   }
-}
+  if (parsed.pathname === "/api/sessions/session-1/events" && method === "GET") {
+    return json({ events: [] });
+  }
+  if (parsed.pathname === "/api/sessions/session-1" && method === "GET") {
+    status = "idle";
+    return json({ session: {
+      id: "session-1",
+      status,
+      acceptsMessages: true,
+      lastRun: { sessionId: "session-1", runId: "run-1", turnSeq: 1, phase: "finished", outcome: "succeeded", checkpoint: revision }
+    }});
+  }
+  if (parsed.pathname === "/api/sessions/session-1/suspend" && method === "POST") {
+    status = "suspended";
+    return json({ session: { id: "session-1", status, acceptsMessages: true } });
+  }
+  if (parsed.pathname === "/api/sessions/session-1/resume" && method === "POST") {
+    status = "idle";
+    return json({ session: { id: "session-1", status, acceptsMessages: true } });
+  }
+  return json({ error: "unexpected", path: parsed.pathname, method }, 404);
+};
 
-function json(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" }
-  });
-}
+const terminal = {
+  specversion: "1.0",
+  id: "session-1:11",
+  source: "workflow",
+  type: "RUN_FINISHED",
+  subject: "session-1",
+  threadId: "session-1",
+  runId: "run-1",
+  time: "2026-07-10T00:00:00.000Z",
+  sequence: 11,
+  data: { outcome: "succeeded", checkpoint: { checkpointId: "cp-1" }, costUsd: 0.002, providerUsage: [{ inputTokens: 3, outputTokens: 2, totalTokens: 5 }] }
+};
+const text = {
+  ...terminal,
+  id: "session-1:10",
+  type: "TEXT_MESSAGE_CONTENT",
+  sequence: 10,
+  data: { text: "hello from chat", messageId: "message-1" }
+};
 
-function makeHarness() {
-  const calls = [];
-  const sockets = [];
-  let sessionCounter = 0;
-  let turnSeq = 0;
-  let sessionStatus = "idle";
-  // One-shot 409 injection: arm N message POSTs to answer session_busy so a
-  // test can reproduce the settle-lag race (turn parked idle, record still running).
-  let busyRemaining = 0;
-  let busyStatus = "running";
-
-  const fetchFake = async (input, init = {}) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const parsed = new URL(url);
-    const method = String(init.method ?? "GET").toUpperCase();
-    const headers = headersToObject(init.headers);
-    const body = await decodeBody(init.body);
-    calls.push({ url, path: parsed.pathname, search: parsed.search, method, headers, body });
-
-    if (parsed.pathname.endsWith("/assets/presign")) {
-      const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
-      const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
-      return json({
-        ok: true,
-        exists: false,
-        assetId: "asset_" + hex,
-        contentHash: hash,
-        uploadUrl: "https://object-storage.example.test/assets/" + hex,
-        requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" }
-      }, 201);
-    }
-    if (parsed.hostname === "object-storage.example.test") return new Response("", { status: 200 });
-    if (parsed.pathname.endsWith("/assets/finalize")) {
-      const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
-      const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
-      return json({ ok: true, assetId: "asset_" + hex, contentHash: hash, sizeBytes: body?.sizeBytes ?? 1 });
-    }
-
-    if (parsed.pathname.startsWith("/api/skills/") && method === "PUT") {
-      const name = decodeURIComponent(parsed.pathname.split("/api/skills/")[1] ?? "");
-      return json({
-        skill: {
-          kind: "skill",
-          name,
-          contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
-          description: body && typeof body.description === "string" ? body.description : "",
-          sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
-          version: 1
-        },
-        updated: true
-      });
-    }
-
-    if (parsed.pathname === "/api/sessions" && method === "POST") {
-      sessionCounter += 1;
-      sessionStatus = "idle";
-      turnSeq = 0;
-      return json({ session: { id: "sess_user_" + sessionCounter, status: sessionStatus, turnSeq } }, 201);
-    }
-    if (parsed.pathname === "/api/sessions" && method === "GET") {
-      return json({
-        sessions: [
-          { id: "sess_user_1", status: sessionStatus, turnSeq, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }
-        ]
-      });
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/messages" && method === "POST") {
-      if (busyRemaining > 0) {
-        busyRemaining -= 1;
-        return json({ error: "session_busy", status: busyStatus }, 409);
-      }
-      turnSeq += 1;
-      sessionStatus = "running";
-      return json({
-        session: { id: "sess_user_1", status: sessionStatus, turnSeq },
-        turn: { sessionId: "sess_user_1", turnSeq, turnId: "turn_" + turnSeq, eventCursor: 10 },
-        eventCursor: 10
-      }, 202);
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/events/ticket" && method === "POST") {
-      return json({
-        ok: true,
-        wsUrl: "wss://events.example.test/api/sessions/sess_user_1/subscribe",
-        ticket: "ticket-" + turnSeq,
-        expiresAtMs: Date.now() + 60000
-      });
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/events" && method === "GET") {
-      return json({
-        events: [
-          event(0, "TURN_STARTED", { source: "session" }),
-          event(10, "TEXT_MESSAGE_CONTENT", { text: "snapshot text" }),
-          sessionEvent(11, "aex.session.idle")
-        ]
-      });
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/files" && method === "GET") {
-      return json({ files: [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }] });
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/suspend" && method === "POST") {
-      sessionStatus = "suspended";
-      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq } }, 202);
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/cancel" && method === "POST") {
-      sessionStatus = "idle";
-      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq } }, 202);
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1/resume" && method === "POST") {
-      sessionStatus = "idle";
-      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq } });
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1" && method === "DELETE") {
-      sessionStatus = "deleted";
-      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq } });
-    }
-    if (parsed.pathname === "/api/sessions/sess_user_1" && method === "GET") {
-      if (sessionStatus === "running") sessionStatus = "idle";
-      const settled = sessionStatus === "idle" ? { costUsd: 0 } : {};
-      return json({ session: { id: "sess_user_1", status: sessionStatus, turnSeq, ...settled } });
-    }
-
-    return json({ ok: true });
-  };
-
-  class FakeWebSocket {
-    constructor(url) {
-      this.url = url;
-      this.listeners = {};
-      sockets.push(this);
-      queueMicrotask(() => this.emit("open", {}));
-      // Capture the turn this socket belongs to so the idle event's turnSeq
-      // matches — otherwise a 2nd turn's stream would not see idle as terminal.
-      const seq = turnSeq;
-      setTimeout(() => {
-        this.message(event(10, "TEXT_MESSAGE_CONTENT", { text: "hello from chat" }));
-        this.message(event(11, "CUSTOM", { name: "aex.session.idle", value: { sessionId: "sess_user_1", turnSeq: seq } }));
-        this.close();
-      }, 0);
-    }
-    addEventListener(type, cb) {
-      (this.listeners[type] ??= []).push(cb);
-    }
-    close() {
+class Socket {
+  constructor(url) {
+    this.url = url;
+    this.listeners = {};
+    queueMicrotask(() => this.emit("open", {}));
+    setTimeout(() => {
+      this.emit("message", { data: JSON.stringify(text) });
+      this.emit("message", { data: JSON.stringify(terminal) });
       this.emit("close", {});
-    }
-    message(evt) {
-      this.emit("message", { data: JSON.stringify(evt) });
-    }
-    emit(type, ev) {
-      for (const cb of this.listeners[type] ?? []) cb(ev);
-    }
+    }, 0);
   }
-
-  return {
-    calls,
-    sockets,
-    fetch: fetchFake,
-    webSocketFactory: (url) => new FakeWebSocket(url),
-    armBusy: (count, status = "running") => { busyRemaining = count; busyStatus = status; }
-  };
+  addEventListener(type, listener) { (this.listeners[type] ??= []).push(listener); }
+  removeEventListener(type, listener) { this.listeners[type] = (this.listeners[type] ?? []).filter((entry) => entry !== listener); }
+  send() {}
+  close() { this.emit("close", {}); }
+  emit(type, event) { for (const listener of this.listeners[type] ?? []) listener(event); }
 }
 
-function event(sequence, type, data) {
-  return {
-    specversion: "1.0",
-    id: "sess_user_1:" + sequence,
-    source: "agent",
-    type,
-    subject: "sess_user_1",
-    time: new Date(sequence).toISOString(),
-    sequence,
-    data
-  };
-}
+const client = new Aex({ apiKey: "aex_test", baseUrl: "https://api.example", fetch });
+const session = await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+const result = await session.messages.send(["hello", "again"], {
+  idempotencyKey: "stable-message",
+  webSocketFactory: (url) => new Socket(url)
+}).finished();
 
-function sessionEvent(sequence, name) {
-  return event(sequence, "CUSTOM", { name, value: { sessionId: "sess_user_1", turnSeq: 1 } });
-}
+strictEqual(result.status, "succeeded");
+strictEqual(result.session.status, "idle");
+strictEqual(result.run.runId, "run-1");
+strictEqual(result.text, "hello from chat");
+strictEqual(result.costUsd, 0.002);
+deepStrictEqual(result.usage, { inputTokens: 3, outputTokens: 2, totalTokens: 5 });
+strictEqual(result.checkpoint.checkpointId, "cp-1");
+strictEqual(result.files[0].checkpointId, "cp-1");
+deepStrictEqual(result.events.map((event) => event.type), ["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]);
+strictEqual(calls.find((call) => call.path.endsWith("/messages")).headers.get("idempotency-key"), "stable-message");
 
-function callsFor(calls, method, path) {
-  return calls.filter((call) => call.method === method && call.path === path);
-}
+await session.suspend();
+strictEqual(session.record.status, "suspended");
+await session.resume();
+strictEqual(session.record.status, "idle");
+ok(typeof session.messages === "object" && typeof session.events === "object" && typeof session.files === "object");
 
-function onlyCall(calls, method, path) {
-  const matches = callsFor(calls, method, path);
-  strictEqual(matches.length, 1, method + " " + path);
-  return matches[0];
-}
-
-function upsertSkillCalls(calls) {
-  return calls.filter((call) => call.method === "PUT" && call.path.startsWith("/api/skills/"));
-}
-
-async function expectReject(label, fn, pattern) {
-  try {
-    await fn();
-  } catch (err) {
-    const message = err && err.message ? err.message : String(err);
-    match(message, pattern, label + " message");
-    return;
-  }
-  throw new Error(label + " unexpectedly resolved");
-}
+process.stdout.write(JSON.stringify({
+  resultStatus: result.status,
+  sessionStatus: result.session.status,
+  eventTypes: result.events.map((event) => event.type),
+  checkpointId: result.checkpoint.checkpointId,
+  costUsd: result.costUsd
+}));
 `;
 
-describe("SDK sessions (installed package)", () => {
+describe("installed SDK resumable session", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
     install = await installAex();
   }, 240_000);
 
-  afterAll(() => {
-    install?.cleanup();
-  });
+  afterAll(() => install?.cleanup());
 
-  async function runChild(script: string, fileName: string): Promise<Record<string, unknown>> {
-    const scriptPath = join(install.installDir, fileName);
-    writeFileSync(scriptPath, script);
-    const child = await runCommand(getBunCommand(), [scriptPath], {
-      cwd: install.installDir,
-      timeoutMs: 120_000
+  it("finishes on RUN_FINISHED and reads the matching checkpoint", async () => {
+    const path = join(install.installDir, "sdk-session-run.mjs");
+    writeFileSync(path, SCRIPT);
+    const child = await runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 120_000 });
+    if (child.exitCode !== 0) throw new Error(`sdk-session-run.mjs exited ${child.exitCode}\n${child.stderr}`);
+    expect(JSON.parse(child.stdout)).toEqual({
+      resultStatus: "succeeded",
+      sessionStatus: "idle",
+      eventTypes: ["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"],
+      checkpointId: "cp-1",
+      costUsd: 0.002
     });
-    if (child.exitCode !== 0) {
-      throw new Error(
-        `${fileName} exited ${child.exitCode}\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-      );
-    }
-    return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
-  }
-
-  it("serializes openSession and session state operations on the public session routes", async () => {
-    const script = CHILD_HARNESS + String.raw`
-const { Aex, AgentsMd, File, Secret, Skill } = await importSdk();
-
-const h = makeHarness();
-const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
-const skill = await Skill.fromDir(makeSkillDir("chat-skill", "Follow instructions."), { name: "chat-skill" });
-const rules = await AgentsMd.fromContent("# Chat rules\nKeep it short.\n", { name: "chat-rules" });
-const file = await File.fromBytes({
-  name: "chat-note",
-  bytes: new TextEncoder().encode("note"),
-  mountPath: "/workspace/input/chat-note.txt"
-});
-
-const session = await client.openSession({
-  provider: "anthropic",
-  model: "claude-haiku-4-5",
-  system: "System instructions for the whole session.",
-  skills: [skill],
-  agentsMd: [rules],
-  files: [file],
-  environment: {
-    variables: { CHAT_MODE: "test" },
-    secrets: { CHAT_SECRET: Secret.value("ephemeral-chat-secret") }
-  },
-  fileCapture: { allowedDirs: ["/workspace/out"], deniedDirs: [""] },
-  includeBuiltinTools: false,
-  outputMode: "stream",
-  metadata: { suite: "chat-session-user-inputs" },
-  runtime: "shared-0.06x-256mb",
-  overrides: { timeout: "30m", idleTtl: "3m", maxSpendUsd: 2.5 },
-  apiKeys: { anthropic: "sk-ant-chat" },
-  idempotencyKey: "idem-chat-create"
-});
-
-strictEqual(session.id, "sess_user_1");
-const create = onlyCall(h.calls, "POST", "/api/sessions");
-strictEqual(create.headers["idempotency-key"], "idem-chat-create");
-strictEqual(create.body.provider, "anthropic");
-strictEqual(create.body.runtimeSize, "shared-0.06x-256mb");
-strictEqual(create.body.timeout, "30m");
-deepStrictEqual(create.body.limits, { maxSpendUsd: 2.5 });
-deepStrictEqual(create.body.retention, { idleTtl: "3m" });
-ok(!("input" in create.body));
-ok(!("webhook" in create.body));
-ok(!("postHook" in create.body));
-
-const submission = create.body.submission;
-strictEqual(submission.model, "claude-haiku-4-5");
-strictEqual(submission.system, "System instructions for the whole session.");
-ok(!("prompt" in submission));
-deepStrictEqual(submission.skills, [{ kind: "skill", name: "chat-skill" }]);
-deepStrictEqual(submission.tools, []);
-strictEqual(upsertSkillCalls(h.calls).length, 1);
-strictEqual(upsertSkillCalls(h.calls)[0].body.contentHash, skill.ref.contentHash);
-strictEqual(upsertSkillCalls(h.calls)[0].body.description, "Follow instructions.");
-strictEqual(submission.agentsMd.length, 1);
-strictEqual(submission.files.length, 1);
-strictEqual(submission.includeBuiltinTools, false);
-strictEqual(submission.outputMode, "stream");
-deepStrictEqual(submission.fileCapture, { allowedDirs: ["/workspace/out"] });
-deepStrictEqual(submission.metadata, { suite: "chat-session-user-inputs" });
-deepStrictEqual(submission.environment, { envVars: { CHAT_MODE: "test" } });
-deepStrictEqual(submission.secretEnv, { CHAT_SECRET: { ephemeral: true } });
-deepStrictEqual(create.body.secrets.apiKeys, { anthropic: "sk-ant-chat" });
-deepStrictEqual(create.body.secrets.envSecrets, { CHAT_SECRET: "ephemeral-chat-secret" });
-ok(!("proxyEndpointAuth" in create.body.secrets));
-ok(!JSON.stringify(submission).includes("ephemeral-chat-secret"));
-
-await session.suspend({ idempotencyKey: "idem-suspend" });
-await session.cancel({ idempotencyKey: "idem-cancel" });
-await session.resume({ idempotencyKey: "idem-resume" });
-await client.sessions.get(session.id);
-await client.sessions.list({ status: "idle", limit: 5 });
-await session.events().list();
-await session.files().list({ filename: "answer.txt" });
-await session.delete({ idempotencyKey: "idem-delete" });
-
-strictEqual(onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/suspend").headers["idempotency-key"], "idem-suspend");
-strictEqual(onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/cancel").headers["idempotency-key"], "idem-cancel");
-strictEqual(onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/resume").headers["idempotency-key"], "idem-resume");
-strictEqual(onlyCall(h.calls, "DELETE", "/api/sessions/sess_user_1").headers["idempotency-key"], "idem-delete");
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions" && call.search.includes("status=idle")));
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/events"));
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/files"));
-
-console.log(JSON.stringify({ ok: true, createCalls: callsFor(h.calls, "POST", "/api/sessions").length }));
-`;
-    const result = await runChild(script, "sdk-chat-create-shape.mjs");
-    expect(result).toMatchObject({ ok: true, createCalls: 1 });
-  });
-
-  it("sends a session turn over the session event stream and stops on idle", async () => {
-    const script = CHILD_HARNESS + String.raw`
-const { Aex } = await importSdk();
-
-const h = makeHarness();
-const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
-const session = await client.sessions.create({
-  model: "claude-haiku-4-5",
-  apiKeys: { anthropic: "sk-ant-chat" }
-});
-const result = await session.send(["hello", "again"], {
-  idempotencyKey: "idem-message",
-  webSocketFactory: h.webSocketFactory
-}).done();
-
-strictEqual(result.sessionId, "sess_user_1");
-strictEqual(result.status, "succeeded");
-strictEqual(result.session.status, "idle");
-strictEqual(result.turn.turnSeq, 1);
-strictEqual(result.text, "hello from chat");
-deepStrictEqual(result.files, [{ id: "out_1", filename: "answer.txt", sizeBytes: 12 }]);
-deepStrictEqual(result.events.map((event) => event.type), ["TEXT_MESSAGE_CONTENT", "CUSTOM"]);
-strictEqual(h.sockets.length, 1);
-strictEqual(h.sockets[0].url, "wss://events.example.test/api/sessions/sess_user_1/subscribe?ticket=ticket-1&from=10");
-
-const message = onlyCall(h.calls, "POST", "/api/sessions/sess_user_1/messages");
-strictEqual(message.headers["idempotency-key"], "idem-message");
-deepStrictEqual(message.body, { input: ["hello", "again"] });
-ok(h.calls.some((call) => call.method === "POST" && call.path === "/api/sessions/sess_user_1/events/ticket"));
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1"));
-ok(h.calls.some((call) => call.method === "GET" && call.path === "/api/sessions/sess_user_1/files"));
-
-console.log(JSON.stringify({ ok: true, events: result.events.length, sockets: h.sockets.length }));
-`;
-    const result = await runChild(script, "sdk-chat-send-stream.mjs");
-    expect(result).toMatchObject({ ok: true, events: 2, sockets: 1 });
-  });
-
-  it("recovers a follow-up send when the previous turn's settle lag 409s session_busy", async () => {
-    const script = CHILD_HARNESS + String.raw`
-const { Aex } = await importSdk();
-
-const h = makeHarness();
-const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
-const session = await client.sessions.create({
-  model: "claude-haiku-4-5",
-  apiKeys: { anthropic: "sk-ant-chat" }
-});
-
-// First turn parks idle.
-const first = await session.send("hello", { webSocketFactory: h.webSocketFactory }).done();
-strictEqual(first.status, "succeeded");
-strictEqual(first.session.status, "idle");
-
-// The platform is still catching up from that park: the very next send's POST is
-// rejected once with session_busy (status running). The SDK must reconcile —
-// wait for the record to leave running, then retry — not surface the 409.
-h.armBusy(1);
-const second = await session.send("again", { webSocketFactory: h.webSocketFactory }).done();
-strictEqual(second.status, "succeeded");
-strictEqual(second.session.status, "idle");
-strictEqual(second.turn.turnSeq, 2);
-
-const messagePosts = callsFor(h.calls, "POST", "/api/sessions/sess_user_1/messages").length;
-// turn 1 (1 POST) + turn 2 (the 409 + the reconciled retry = 2 POSTs).
-strictEqual(messagePosts, 3);
-
-console.log(JSON.stringify({ ok: true, status: second.status, sessionStatus: second.session.status, messagePosts }));
-`;
-    const result = await runChild(script, "sdk-chat-idle-send-reconcile.mjs");
-    expect(result).toMatchObject({ ok: true, status: "succeeded", sessionStatus: "idle", messagePosts: 3 });
-  });
-
-  it("rejects removed session options before any HTTP call", async () => {
-    const script = CHILD_HARNESS + String.raw`
-const { Aex } = await importSdk();
-const h = makeHarness();
-const client = new Aex({ apiKey: "aex_chat_token", baseUrl: "https://example.invalid", fetch: h.fetch });
-
-await expectReject("missing create options", () => client.openSession(undefined), /options is required/);
-await expectReject("removed postHook", () => client.openSession({
-  model: "claude-haiku-4-5",
-  postHook: { command: "bun test" },
-  apiKeys: { anthropic: "sk-ant" }
-}), /postHook is not a supported option/);
-await expectReject("removed runtimeSize", () => client.openSession({
-  model: "claude-haiku-4-5",
-  runtimeSize: "shared-0.06x-256mb",
-  apiKeys: { anthropic: "sk-ant" }
-}), /runtimeSize is not a supported option/);
-await expectReject("removed idleSuspendAfter override", () => client.openSession({
-  model: "claude-haiku-4-5",
-  overrides: { idleSuspendAfter: "3m" },
-  apiKeys: { anthropic: "sk-ant" }
-}), /overrides\.idleSuspendAfter is not a supported option/);
-await expectReject("provider mismatch", () => client.openSession({
-  provider: "anthropic",
-  model: "gpt-4.1",
-  apiKeys: { anthropic: "sk-ant" }
-}), /model "gpt-4\.1" is not available for provider anthropic; available: openai/);
-
-strictEqual(h.calls.length, 0);
-console.log(JSON.stringify({ ok: true, rejects: 5, calls: h.calls.length }));
-`;
-    const result = await runChild(script, "sdk-chat-invalid.mjs");
-    expect(result).toMatchObject({ ok: true, rejects: 5, calls: 0 });
   });
 });

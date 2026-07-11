@@ -190,7 +190,7 @@ export interface SessionCostProxyTelemetry {
 
 /**
  * The basis for a {@link SessionCostTelemetry.billedCostUsd}: an honest marker of
- * whether the figure is a settle-time ESTIMATE or has been RECONCILED against
+ * whether the figure is a RUN-terminal ESTIMATE or has been RECONCILED against
  * authoritative actuals. Deliberately carries NO rate-card version or unit
  * rates — the platform's public-safe convention treats `rateCard`/`margin` as
  * private tokens (session-cost.test.ts privateCostFieldPattern), so the version the

@@ -1,7 +1,7 @@
 /**
  * Property/fuzz net for the canonical zip framer — the core anti-regression proof
  * that the streaming framer never diverges from `zipSync`, and that streaming the
- * bytes through a sessionning hash equals hashing the whole buffer.
+ * bytes through a running hash equals hashing the whole buffer.
  */
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
@@ -100,7 +100,7 @@ describe("canonical-zip property", () => {
         // One-shot: hash the whole assembled buffer.
         const whole = await collect(sources);
         const oneShot = sha(whole);
-        // Streamed: feed a sessionning hash re-chunked at an arbitrary boundary.
+        // Streamed: feed a running hash re-chunked at an arbitrary boundary.
         const h = createHash("sha256");
         await streamBundleZip(sources, (c) => {
           for (let off = 0; off < c.length; off += chunkStep) {

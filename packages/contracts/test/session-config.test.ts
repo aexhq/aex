@@ -4,7 +4,6 @@ import {
   normaliseSkillBundlePath,
   normaliseSessionRequestConfig,
   parseSessionRequestConfig,
-  parseSessionSubmissionRequest,
   parseMcpServerRef,
   SKILL_BUNDLE_LIMITS,
   SKILL_ID_PATTERN,
@@ -15,6 +14,7 @@ import {
   validateSkillBundleManifest,
   type SessionRequestConfig
 } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 const goodSkillId = "skl_abcdefgh01234567";
 const goodInlineHash = `sha256:${"a".repeat(64)}`;
@@ -25,7 +25,10 @@ const baseSubmission = {
   idempotencyKey: "idem-1",
   submission: {
     model: "claude-haiku-4-5",
-    prompt: "do the thing"
+    prompt: "do the thing",
+    assets: { files: [], skills: [], tools: [], instructions: [] },
+    builtinTools: "default",
+    mcpServers: []
   },
   secrets: { apiKeys: { anthropic: "sk-ant-x" } }
 } as const;
@@ -187,7 +190,7 @@ describe("session-config — validateSkillBundleManifest", () => {
   // SKILL.md is restored as a strict precondition for skill bundles.
   // Per the May-2026 decision log in agent-context-uploads.md, a
   // bundle without SKILL.md is not a skill — it goes through the
-  // separate `AgentsMd` or `File` concepts. Skills mean Claude
+  // separate workspace instruction or file concepts. Skills mean Claude
   // Skills.
   it("requires SKILL.md at the root", () => {
     expect(() =>

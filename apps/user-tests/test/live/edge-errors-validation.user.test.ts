@@ -8,7 +8,7 @@
  *   1. Garbage apiKey → `whoami()` rejects with a typed AexApiError, status 401
  *      (or 403) — a clean auth reject, never an opaque throw or a hang.
  *   2. Valid apiKey → `whoami()` resolves to a workspace-identity object.
- *   3. Nonexistent sessionId → `sessions.open/get` and `sessions.files(id).list()`
+ *   3. Nonexistent sessionId → `sessions.open/get` and the session-handle files namespace
  *      reject with a typed AexApiError 4xx (a clean 404, never a 5xx).
  *   4. Client-side malformed session config (missing model / empty message / missing
  *      apiKeys / legacy field / provider-model mismatch) fails fast with a typed
@@ -148,7 +148,7 @@ catch (err) { malformedToken = tokenReject(err, JUNK); }
 // (1b) No bearer at all → the plain missing-credentials fallback.
 let missingBearer;
 try {
-  const res = await fetch(apiUrl.replace(/\/$/, "") + "/whoami");
+  const res = await fetch(apiUrl.replace(/\/$/, "") + "/api/whoami");
   let bodyError = null;
   let hasMessage = false;
   try {
@@ -203,7 +203,7 @@ async function capture(fn, includeStatus) {
 const missingSession = {
   open: await capture(() => client.sessions.open(bogusSession), true),
   get: await capture(() => client.sessions.get(bogusSession), true),
-  files: await capture(() => client.sessions.files(bogusSession).list(), true)
+  files: await capture(async () => (await client.sessions.open(bogusSession)).files.list(), true)
 };
 
 // (4) Client-side malformed session config → typed SessionConfigValidationError, no network.

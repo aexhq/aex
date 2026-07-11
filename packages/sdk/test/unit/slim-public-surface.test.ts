@@ -12,7 +12,17 @@ const removedRootExports = [
   "decodeToolCalls",
   "summarizeTurnTrace",
   "summarizeSessionUsage",
-  "textOf"
+  "textOf",
+  "AgentsMd",
+  "ChildSessionHandle",
+  "SessionClient",
+  "SessionHandle",
+  "SessionRunStream",
+  "WorkspaceClient",
+  "WorkspaceFilesClient",
+  "WorkspaceInstructionsClient",
+  "WorkspaceSkillsClient",
+  "WorkspaceToolsClient"
 ] as const;
 
 // The free-function event guards were replaced by `event.is*()` methods on the
@@ -22,11 +32,11 @@ const removedEventGuards = [
   "isEventChannel",
   "isFromSource",
   "isLog",
-  "isTurnError",
-  "isTurnFinished",
+  "isRunError",
+  "isRunFinished",
   "isSessionSettled",
-  "isTurnStarted",
-  "isTurnTerminal",
+  "isRunStarted",
+  "isRunTerminal",
   "isTextMessage",
   "isToolCallResult",
   "isToolCallStart"
@@ -38,6 +48,12 @@ describe("slim launch root SDK surface", () => {
     const root = sdk as Record<string, unknown>;
 
     expect(typeof root["Aex"]).toBe("function");
+    const aexPrototype = root["Aex"] instanceof Function
+      ? root["Aex"].prototype as Record<string, unknown>
+      : {};
+    for (const name of ["_uploadAsset", "_uploadAssetStream", "_createWorkspaceSecret"]) {
+      expect(aexPrototype[name], `Aex.${name} must remain private`).toBeUndefined();
+    }
     for (const name of removedRootExports) {
       expect(root[name], `${name} should not be exported from the root SDK surface`).toBeUndefined();
     }

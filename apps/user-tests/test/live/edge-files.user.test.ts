@@ -137,7 +137,7 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
   };
   // Wrap a probe so ONE failing/hanging verb never aborts the whole script:
   // record a structured {label, ok, value|error}. The SDK has its own bounded
-  // session-file transfer timeout/retry; this outer race catches anything below it.
+  // The SDK owns transfer retries; this outer race only bounds the test process.
   async function probe(label, fn) {
     try {
       const value = await Promise.race([
@@ -163,61 +163,6 @@ const PROVIDER_KEY = process.env.PROVIDER_KEY;
         }
       };
     }
-  }
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const transientProbeRe = /\\b(NETWORK_ERROR|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR|FailedToOpenSocket|fetch failed|socket|connection|timeout)\\b/i;
-  const probeErrorText = (error) => [
-    error && error.name,
-    error && error.message,
-    error && error.code,
-    error && error.causeCode
-  ].filter(Boolean).join(" ");
-  const isTransientProbeError = (error) => {
-    if (!error) return false;
-    if (typeof error.status === "number" && [408, 425, 429, 500, 502, 503, 504, 529].includes(error.status)) return true;
-    if (error.code === "NETWORK_ERROR") return true;
-    return transientProbeRe.test(probeErrorText(error));
-  };
-  const directFetchStatusIsTransient = (status) => [408, 425, 429, 500, 502, 503, 504, 529].includes(status);
-  const directFetchErrorText = (error) => [
-    error && error.name,
-    error && error.message,
-    error && error.code,
-    errorCauseCode(error)
-  ].filter(Boolean).join(" ");
-  const isTransientDirectFetchError = (error) => transientProbeRe.test(directFetchErrorText(error));
-  async function fetchDirectWithRetry(label, input, init) {
-    const maxAttempts = 4;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await tracedFetch(input, init);
-        if (attempt < maxAttempts && directFetchStatusIsTransient(response.status)) {
-          pushHttpDebug("[direct-fetch] " + label + " transient status " + response.status + " " + attempt + "/" + maxAttempts);
-          await response.arrayBuffer().catch(() => {});
-          await sleep(1000 * attempt);
-          continue;
-        }
-        return response;
-      } catch (error) {
-        if (attempt >= maxAttempts || !isTransientDirectFetchError(error)) throw error;
-        pushHttpDebug("[direct-fetch] " + label + " transient failure " + attempt + "/" + maxAttempts + ": " + redactTextForDebug(directFetchErrorText(error)).slice(0, 180));
-        await sleep(1000 * attempt);
-      }
-    }
-    throw new Error("direct fetch retry loop exhausted");
-  }
-  async function probeIdempotent(label, fn) {
-    const maxAttempts = 3;
-    let last = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const result = await probe(label, fn);
-      if (result.ok) return result;
-      last = result;
-      if (attempt >= maxAttempts || !isTransientProbeError(result.error)) return result;
-      pushHttpDebug("[probe] " + label + " transient failure " + attempt + "/" + maxAttempts + ": " + probeErrorText(result.error).slice(0, 180));
-      await sleep(1000 * attempt);
-    }
-    return last;
   }
   const zipProbe = (bytes) => {
     const magicOk = !!bytes && bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
@@ -332,7 +277,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
-          includeBuiltinTools: true,
+          builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-A-" + Date.now()
@@ -340,7 +285,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files();
+        const outs = await session.files;
 
         // list (sessions endpoint) and find({}) (sessions endpoint) — cross-check parity.
         const listed = await outs.list();
@@ -353,49 +298,49 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const exactPath = report ? report.filename : "report.txt";
 
         const probes = [];
-        probes.push(await probeIdempotent("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
-        probes.push(await probeIdempotent("read_exact", async () => await outs.read({ path: exactPath })));
-        probes.push(await probeIdempotent("read_file_obj", async () => report ? await outs.read(report) : null));
-        probes.push(await probeIdempotent("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
+        probes.push(await probe("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
+        probes.push(await probe("read_exact", async () => await outs.read({ path: exactPath })));
+        probes.push(await probe("read_file_obj", async () => report ? await outs.read(report) : null));
+        probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
         const LIVE_FILE_TRANSFER_TIMEOUT_MS = 20_000;
-        probes.push(await probeIdempotent("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }) : null));
-        probes.push(await probeIdempotent("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
-        probes.push(await probeIdempotent("find_extension", async () => (await outs.find({ extension: "txt" })).length));
-        probes.push(await probeIdempotent("find_type_text", async () => (await outs.find({ type: "text" })).length));
-        probes.push(await probeIdempotent("findOne_match", async () => { const o = await outs.findOne({ filename: "report.txt" }); return o ? { id: o.id, filename: o.filename ?? null } : null; }));
-        probes.push(await probeIdempotent("findOne_nomatch_null", async () => await outs.findOne({ filename: "does-not-exist-xyz.txt" })));
-        probes.push(await probeIdempotent("last", async () => { const o = await outs.last(); return o ? (o.filename ?? o.id) : null; }));
-        probes.push(await probeIdempotent("first", async () => { const o = await outs.first(); return o ? (o.filename ?? o.id) : null; }));
+        probes.push(await probe("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }) : null));
+        probes.push(await probe("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
+        probes.push(await probe("find_extension", async () => (await outs.find({ extension: "txt" })).length));
+        probes.push(await probe("find_type_text", async () => (await outs.find({ type: "text" })).length));
+        probes.push(await probe("findOne_match", async () => { const o = await outs.findOne({ filename: "report.txt" }); return o ? { id: o.id, filename: o.filename ?? null } : null; }));
+        probes.push(await probe("findOne_nomatch_null", async () => await outs.findOne({ filename: "does-not-exist-xyz.txt" })));
+        probes.push(await probe("last", async () => { const o = await outs.last(); return o ? (o.filename ?? o.id) : null; }));
+        probes.push(await probe("first", async () => { const o = await outs.first(); return o ? (o.filename ?? o.id) : null; }));
 
         // link + fetch a presigned URL, then GET it with global fetch.
-        probes.push(await probeIdempotent("link", async () => {
+        probes.push(await probe("link", async () => {
           const link = await outs.link({ filename: "report.txt" });
-          const resp = await fetchDirectWithRetry("link", link.url);
+          const resp = await tracedFetch(link.url);
           const getStatus = resp.status;
           const getText = (await resp.text()).slice(0, 256);
           return { hasUrl: typeof link.url === "string" && link.url.length > 0, expiresInSeconds: link.expiresInSeconds ?? null, getStatus, getText };
         }));
-        probes.push(await probeIdempotent("fetch", async () => {
+        probes.push(await probe("fetch", async () => {
           const resp = await outs.fetch({ filename: "report.txt" });
           return { status: resp.status, text: (await resp.text()).slice(0, 256) };
         }));
 
         // download one file's raw bytes (by SessionFile selector).
-        probes.push(await probeIdempotent("download_selector", async () => {
+        probes.push(await probe("download_selector", async () => {
           if (!report) return null;
           const bytes = await outs.download(report);
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
-        probes.push(await probeIdempotent("download_selector_timeout_option", async () => {
+        probes.push(await probe("download_selector_timeout_option", async () => {
           if (!report) return null;
           const bytes = await outs.download(report, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS });
           return { len: bytes.byteLength, text: dec(bytes).slice(0, 256) };
         }));
         // archive verbs.
-        probes.push(await probeIdempotent("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
-        probes.push(await probeIdempotent("download_files_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }))));
-        probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
-        probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
+        probes.push(await probe("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
+        probes.push(await probe("download_files_zip_timeout_option", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }))));
+        probes.push(await probe("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
+        probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         // Bad-selector / boundary probes — must error CLEANLY (no hang).
         probes.push(await probe("read_missing_path", async () => await outs.read({ path: "nope-" + Date.now() + ".txt", match: "suffix" })));
@@ -518,7 +463,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
-          includeBuiltinTools: true,
+          builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-B-" + Date.now()
@@ -526,24 +471,24 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files();
+        const outs = await session.files;
         const listed = await outs.list();
         const big = listed.find((o) => (o.filename || "").endsWith("big.txt")) || null;
         const sizeBytes = big ? (big.sizeBytes ?? null) : null;
 
         const probes = [];
-        probes.push(await probeIdempotent("download_full", async () => {
+        probes.push(await probe("download_full", async () => {
           if (!big) return null;
           const bytes = await outs.download(big);
           const text = dec(bytes);
           return { len: bytes.byteLength, allA: /^A+$/.test(text), first: text.slice(0, 4), last: text.slice(-4) };
         }));
-        probes.push(await probeIdempotent("read_default_cap", async () => {
+        probes.push(await probe("read_default_cap", async () => {
           if (!big) return null;
           const t = await outs.read(big);
           return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes };
         }));
-        probes.push(await probeIdempotent("read_raised_cap", async () => {
+        probes.push(await probe("read_raised_cap", async () => {
           if (!big || sizeBytes == null) return null;
           const t = await outs.read(big, { maxBytes: sizeBytes + 5000 });
           return { textLen: t.text.length, truncated: t.truncated, totalBytes: t.totalBytes, allA: /^A+$/.test(t.text) };
@@ -604,7 +549,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
           provider: PROVIDER,
           model: MODEL,
           message: ${JSON.stringify(prompt)},
-          includeBuiltinTools: true,
+          builtinTools: "default",
           fileCapture: { allowedDirs: ["/workspace/files"] },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-files-C-" + Date.now()
@@ -612,19 +557,19 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files();
+        const outs = await session.files;
         const listed = await outs.list();
         const listNames = listed.map((o) => o.filename ?? null);
         const target = listed.find((o) => (o.filename || "").endsWith("menu.txt")) || null;
 
         const probes = [];
-        probes.push(await probeIdempotent("read_suffix_unicode", async () => target ? (await outs.read({ path: "café menu.txt", match: "suffix" })).text : null));
-        probes.push(await probeIdempotent("read_by_id", async () => target ? (await outs.read({ id: target.id })).text : null));
-        probes.push(await probeIdempotent("download_by_id", async () => { if (!target) return null; const b = await outs.download(target); return { len: b.byteLength, text: dec(b) }; }));
-        probes.push(await probeIdempotent("link_fetch_unicode", async () => {
+        probes.push(await probe("read_suffix_unicode", async () => target ? (await outs.read({ path: "café menu.txt", match: "suffix" })).text : null));
+        probes.push(await probe("read_by_id", async () => target ? (await outs.read({ id: target.id })).text : null));
+        probes.push(await probe("download_by_id", async () => { if (!target) return null; const b = await outs.download(target); return { len: b.byteLength, text: dec(b) }; }));
+        probes.push(await probe("link_fetch_unicode", async () => {
           if (!target) return null;
           const link = await outs.link({ id: target.id });
-          const resp = await fetchDirectWithRetry("link_fetch_unicode", link.url);
+          const resp = await tracedFetch(link.url);
           return { status: resp.status, text: (await resp.text()) };
         }));
 
@@ -675,18 +620,18 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files();
+        const outs = await session.files;
 
         const probes = [];
-        probes.push(await probeIdempotent("list_len", async () => (await outs.list()).length));
-        probes.push(await probeIdempotent("find_all_len", async () => (await outs.find({})).length));
-        probes.push(await probeIdempotent("last_undefined", async () => (await outs.last()) === undefined));
-        probes.push(await probeIdempotent("first_undefined", async () => (await outs.first()) === undefined));
-        probes.push(await probeIdempotent("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
+        probes.push(await probe("list_len", async () => (await outs.list()).files.length));
+        probes.push(await probe("find_all_len", async () => (await outs.find({})).length));
+        probes.push(await probe("last_undefined", async () => (await outs.last()) === undefined));
+        probes.push(await probe("first_undefined", async () => (await outs.first()) === undefined));
+        probes.push(await probe("findOne_null", async () => await outs.findOne({ filename: "whatever.txt" })));
         probes.push(await probe("read_missing", async () => await outs.read({ path: "whatever.txt", match: "suffix" })));
-        probes.push(await probeIdempotent("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
-        probes.push(await probeIdempotent("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
-        probes.push(await probeIdempotent("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
+        probes.push(await probe("download_files_zip", async () => zipProbeNoTransientManifestErrors(await outs.download(undefined))));
+        probes.push(await probe("download_all_zip", async () => zipProbeNoTransientManifestErrors(await session.download())));
+        probes.push(await probe("download_metadata_zip", async () => zipProbe(await session.downloadMetadata())));
 
         process.stdout.write(JSON.stringify({ sessionId, status, probes }));
         process.exit(0);

@@ -1,4 +1,3 @@
-import type { SessionControlStatus } from "./status.js";
 import type { ProviderName } from "./submission.js";
 
 export const CUSTODY_MANIFEST_SCHEMA_VERSION = 1;
@@ -108,7 +107,7 @@ export interface CustodyManifestSessionV1 {
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly provider: ProviderName | string;
-  readonly terminalStatus: SessionControlStatus | string;
+  readonly terminalStatus: string;
   readonly createdAt?: string;
   readonly terminalAt?: string;
 }

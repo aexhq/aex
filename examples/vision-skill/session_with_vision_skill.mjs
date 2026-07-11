@@ -1,4 +1,4 @@
-// SessionRecord a session that mounts the frame-vision-gate skill and lets the agent
+// Run a session that mounts the frame-vision-gate skill and lets the agent
 // caption/verify image frames with Doubao. The Doubao key is passed as a runtime
 // secret and the skill makes a normal HTTPS call to the provider.
 //

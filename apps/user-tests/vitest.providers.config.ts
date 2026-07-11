@@ -14,7 +14,7 @@ loadLocalEnv();
  * never depends on a non-gate provider account's billing state.
  *
  * Kept separate from vitest.config.ts (which EXCLUDES test/live/providers/**)
- * so this sessions ONLY when invoked explicitly — never on every push — which is
+ * so this runs ONLY when invoked explicitly — never on every push — which is
  * what keeps the extra-provider matrix from piling live-run spend. Each
  * provider test fails fast when its key is absent, so invoking this script is a
  * hard gate for the advertised provider evidence in this suite.

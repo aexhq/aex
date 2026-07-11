@@ -21,27 +21,39 @@ bun run docs:build
 bun run pack:sdk
 ```
 
-`bun run pack:sdk` builds the SDK, sessions a Bun pack dry-run, and sessions the public
+`bun run pack:sdk` builds the SDK, runs a Bun pack dry-run, and runs the public
 boundary gate. Offline user tests install the packed SDK into a clean Bun
 project and exercise the SDK and CLI from that install tree.
 
 ## Publish
 
-The manual `.github/workflows/release.yml` workflow:
+Every push merged to `main` that passes the `CI` workflow automatically starts
+`.github/workflows/release.yml`. The automatic path derives an immutable canary
+version from the package version, release run, and source commit, then:
 
-- Installs with `bun ci`.
-- Sessions lint, unit/security, offline user tests, docs build, and `pack:sdk`.
-- Refuses to publish if `@aexhq/sdk@<package version>` already exists.
+- Reuses the successful `main` CI result instead of rerunning the same static,
+  unit, offline-user-test, docs, and package gates.
 - Packs `packages/sdk` with `bun pm pack`.
-- Sessions the publish job in the `npm-release` GitHub Environment and requires its
+- Runs the publish job in the `npm-release` GitHub Environment and requires its
   `NPM_TOKEN` secret.
-- Publishes the tarball with npm provenance to the selected dist-tag (`canary`
-  by default).
+- Publishes the tarball with npm provenance to the `canary` dist-tag.
 - Waits for npm visibility.
-- Sessions live user tests against the exact published version.
+- Runs live user tests against that exact published version.
+- Records the source commit, npm integrity, and release-run identity in a public
+  release manifest before dispatching the immutable candidate for downstream
+  validation.
 
-Publish canary first for release validation. Promote the same immutable version
-only after the downstream platform release gate is green.
+The canary version is deterministic for a release run. Restarting an interrupted
+automatic release resumes the same already-published version after verifying its
+identity; it never overwrites an npm artifact.
+
+`release.yml` also supports manual dispatch to the `canary` or `next` lane. A
+manual release reruns all package gates because it has no upstream successful
+`main` CI run to trust, and it refuses to publish an existing package version.
+Neither path may publish directly to `latest`.
+
+Each merge therefore produces a traceable prerelease. Promote that same
+immutable version only after the downstream release gate is green.
 
 ## npm credentials
 
@@ -62,10 +74,13 @@ CLI version that supports OIDC trusted publishing.
 
 ## Promote
 
-The manual `.github/workflows/promote.yml` workflow assigns an npm dist-tag to
-an already-published `@aexhq/sdk` version, usually `latest` after canary and
-platform validation. It also sessions in `npm-release`, requires `NPM_TOKEN`, and
-does not rebuild or republish the package.
+`.github/workflows/promote.yml` assigns an npm dist-tag to an already-published
+`@aexhq/sdk` version, normally `latest` after the exact canary passes downstream
+validation. Promotion is manual and fail-closed: an operator dispatches the
+workflow with the required version, release-run id, downstream validation-run
+id, source commit, npm integrity, and target dist-tag. The workflow verifies
+that complete proof before moving the tag. It runs in `npm-release`, requires
+`NPM_TOKEN`, and never rebuilds or republishes the package.
 
 ## What ships in the tarball
 

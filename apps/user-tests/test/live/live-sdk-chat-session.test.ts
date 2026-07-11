@@ -3,8 +3,8 @@
  *
  * Exercises the resumable chat/session API through a freshly installed SDK
  * against the hosted API:
- *   - create a session, send a turn over the coordinator stream, and stop on
- *     a clean `aex.session.*` turn terminal instead of `TURN_FINISHED`.
+ *   - create a session, send a run over the coordinator stream, and stop on
+ *     the canonical `RUN_FINISHED` consistency barrier.
  *   - suspend an idle session, resume it, then send a follow-up turn that uses
  *     the prior turn's conversational context.
  *   - assert raw message idempotency and busy-session rejection on the same
@@ -52,11 +52,11 @@ interface ChatSessionLiveResult {
   readonly probe: string;
   readonly idleTtl: string;
   readonly firstStatus: string;
-  readonly firstPolledStatus: string;
+  readonly firstSessionStatus: string;
   readonly suspendedStatus: string;
   readonly resumedStatus: string;
   readonly secondStatus: string;
-  readonly secondPolledStatus: string;
+  readonly secondSessionStatus: string;
   readonly listed: boolean;
   readonly firstText: string;
   readonly secondText: string;
@@ -79,6 +79,8 @@ interface RawSessionLiveResult {
   readonly finalStatus: string;
   readonly customNames: readonly string[];
   readonly turnFinishedCount: number;
+  readonly terminalKind: string;
+  readonly terminalOutcome: string;
   readonly leakedKey: boolean;
 }
 
@@ -94,7 +96,7 @@ afterAll(() => {
 
 describe("live hosted API — resumable chat sessions via installed SDK", () => {
   it(
-    "SDK chat session: idle event, suspend/resume, follow-up message, delete",
+    "SDK chat session: finished runs, suspend/resume, follow-up message, delete",
     async () => {
       const script = `
         import { Aex } from "@aexhq/sdk";
@@ -108,107 +110,69 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
         const probe = "REF.chat." + Math.random().toString(36).slice(2, 10);
         const client = new Aex({ baseUrl, apiKey, debug: aexDebug });
 
-        const CLEAN_SESSION_STATUSES = ["idle", "succeeded"];
-        const CLEAN_SESSION_TERMINAL_NAMES = ["aex.session.idle", "aex.session.succeeded"];
-
-        async function pollSession(id, wanted, timeoutMs = 240000) {
-          const deadline = Date.now() + timeoutMs;
-          let session = null;
-          while (Date.now() < deadline) {
-            session = await client.sessions.get(id);
-            if (wanted.includes(session.status)) return session;
-            await new Promise((r) => setTimeout(r, 2000));
-          }
-          throw new Error("session " + id + " did not reach " + wanted.join("/") + ": " + JSON.stringify(session));
-        }
-
-        async function listEventsSettled(session, requiredNames, timeoutMs = 90000) {
-          const deadline = Date.now() + timeoutMs;
-          const wanted = Array.isArray(requiredNames) ? requiredNames : [requiredNames];
-          let events = [];
-          while (Date.now() < deadline) {
-            events = await session.events().list();
-            const names = events
-              .filter((e) => e.type === "CUSTOM")
-              .map((e) => e.data && e.data.name)
-              .filter(Boolean);
-            if (names.some((name) => wanted.includes(name))) return events;
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-          return events;
-        }
-
-        function textOf(events) {
-          return events
-            .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
-            .map((e) => e.data && typeof e.data.text === "string" ? e.data.text : "")
-            .join(" ");
-        }
-
-        const session = await client.openSession({
+        const session = await client.sessions.create({
           provider: "deepseek",
           model,
           system:
             "You are in a multi-turn verification session. When the user asks what reference was remembered, answer with the exact reference only.",
-          includeBuiltinTools: false,
+          builtinTools: "none",
           apiKeys: { deepseek: deepseekKey },
           idempotencyKey: "chat-session-create-" + Date.now(),
           overrides: { idleTtl: "1d" }
         });
 
-        const first = await session.send(
+        const first = await session.messages.send(
           "Remember this reference for later: " + probe + ". Reply with exactly: ready " + probe,
           { idempotencyKey: "chat-session-first-" + Date.now(), idleTimeoutMs: 240000 }
-        ).done();
-        const firstIdle = await pollSession(session.id, CLEAN_SESSION_STATUSES);
+        ).finished();
+        const firstSession = first.session;
 
-        const suspended = await session.suspend({ idempotencyKey: "chat-session-suspend-" + Date.now() });
+        const suspended = await session.suspend();
         const suspendedRecord = suspended.session;
-        const suspendedEvents = await listEventsSettled(session, "aex.session.suspended");
 
-        const resumed = await session.resume({ idempotencyKey: "chat-session-resume-" + Date.now() });
+        const resumed = await session.resume();
         const resumedRecord = resumed.session;
 
-        const second = await session.send(
+        const second = await session.messages.send(
           "What reference did I ask you to remember? Reply with exactly the reference and no other words.",
           { idempotencyKey: "chat-session-second-" + Date.now(), idleTimeoutMs: 240000 }
-        ).done();
-        const secondIdle = await pollSession(session.id, CLEAN_SESSION_STATUSES);
-        const idleEvents = await listEventsSettled(session, CLEAN_SESSION_TERMINAL_NAMES);
-        // The suite sessions many shards against one shared workspace and the list is
+        ).finished();
+        const secondSession = second.session;
+        const idleTtl = secondSession.idleTtl;
+        const events = await session.events.list();
+        // The suite runs many shards against one shared workspace and the list is
         // newest-first, so with a "since" lower bound this session is the LAST
         // item in the range — concurrent shards' newer sessions fill page one.
         // Follow nextCursor pages; "since" keeps the page space small and finite.
-        const listedIn = (p) => Array.isArray(p.sessions) && p.sessions.some((s) => s.id === session.id || s.sessionId === session.id);
+        const listedIn = (p) => Array.isArray(p.sessions) && p.sessions.some((s) => s.id === session.id);
         let listed = false;
         let page;
         let cursor;
-        const listStatus = CLEAN_SESSION_STATUSES.includes(secondIdle.status) ? secondIdle.status : undefined;
+        const listStatus = secondSession.status;
         do {
           page = await client.sessions.list({ ...(listStatus ? { status: listStatus } : {}), limit: 25, since: session.record.createdAt, ...(cursor ? { cursor } : {}) });
           if (listedIn(page)) { listed = true; break; }
           cursor = page.nextCursor;
         } while (cursor);
-        await session.delete({ idempotencyKey: "chat-session-delete-" + Date.now() });
+        await session.delete();
 
-        const events = [...suspendedEvents, ...idleEvents];
-        const serialized = JSON.stringify({ first, second, firstIdle, secondIdle, events, page });
+        const serialized = JSON.stringify({ first, second, firstSession, secondSession, events, page });
         process.stdout.write(JSON.stringify({
           sessionId: session.id,
           probe,
-          idleTtl: session.record.idleTtl,
+          idleTtl,
           firstStatus: first.status,
-          firstPolledStatus: firstIdle.status,
+          firstSessionStatus: firstSession.status,
           suspendedStatus: suspendedRecord.status,
           resumedStatus: resumedRecord.status,
           secondStatus: second.status,
-          secondPolledStatus: secondIdle.status,
+          secondSessionStatus: secondSession.status,
           listed,
           firstText: first.text,
           secondText: second.text,
           snapshotTypes: [...new Set(events.map((e) => e.type))],
           customNames: [...new Set(events.filter((e) => e.type === "CUSTOM").map((e) => e.data && e.data.name).filter(Boolean))],
-          turnFinishedCount: events.filter((e) => e.type === "TURN_FINISHED").length,
+          turnFinishedCount: events.filter((e) => e.type === "RUN_FINISHED").length,
           leakedKey: serialized.includes(deepseekKey)
         }));
         process.exit(0);
@@ -231,20 +195,18 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       const result = JSON.parse(child.stdout.trim()) as ChatSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);
 
-      expect(["idle", "succeeded"], dump()).toContain(result.firstStatus);
-      expect(["idle", "succeeded"], dump()).toContain(result.firstPolledStatus);
+      expect(result.firstStatus, dump()).toBe("succeeded");
+      expect(result.firstSessionStatus, dump()).toBe("idle");
       expect(result.idleTtl, dump()).toBe("1d");
       expect(result.suspendedStatus, dump()).toBe("suspended");
-      expect(["idle", "succeeded"], dump()).toContain(result.resumedStatus);
-      expect(["idle", "succeeded"], dump()).toContain(result.secondStatus);
-      expect(["idle", "succeeded"], dump()).toContain(result.secondPolledStatus);
+      expect(result.resumedStatus, dump()).toBe("idle");
+      expect(result.secondStatus, dump()).toBe("succeeded");
+      expect(result.secondSessionStatus, dump()).toBe("idle");
       expect(result.listed, dump()).toBe(true);
       expect(result.firstText.replace(/\s+/g, ""), dump()).toContain(result.probe);
       expect(result.secondText.replace(/\s+/g, ""), dump()).toContain(result.probe);
-      expect(result.snapshotTypes, dump()).toContain("CUSTOM");
-      expect(result.customNames.some((name) => name === "aex.session.idle" || name === "aex.session.succeeded"), dump()).toBe(true);
-      expect(result.customNames, dump()).toContain("aex.session.suspended");
-      expect(result.turnFinishedCount, dump()).toBe(0);
+      expect(result.snapshotTypes, dump()).toContain("RUN_FINISHED");
+      expect(result.turnFinishedCount, dump()).toBe(2);
       expect(result.leakedKey, dump()).toBe(false);
     },
     13 * 60_000
@@ -288,35 +250,10 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           return { status: res.status, body, text };
         }
 
-        const CLEAN_SESSION_STATUSES = ["idle", "succeeded"];
-        const CLEAN_SESSION_TERMINAL_NAMES = ["aex.session.idle", "aex.session.succeeded"];
-
-        async function pollSession(id, wanted, timeoutMs = 300000) {
-          const deadline = Date.now() + timeoutMs;
-          let session = null;
-          while (Date.now() < deadline) {
-            session = await client.sessions.get(id);
-            if (wanted.includes(session.status)) return session;
-            await new Promise((r) => setTimeout(r, 2000));
-          }
-          throw new Error("session " + id + " did not reach " + wanted.join("/") + ": " + JSON.stringify(session));
-        }
-
-        async function listEventsSettled(session, timeoutMs = 90000) {
-          const deadline = Date.now() + timeoutMs;
-          let events = [];
-          while (Date.now() < deadline) {
-            events = await session.events().list();
-            if (events.some((e) => e.type === "CUSTOM" && e.data && CLEAN_SESSION_TERMINAL_NAMES.includes(e.data.name))) return events;
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-          return events;
-        }
-
-        const session = await client.openSession({
+        const session = await client.sessions.create({
           provider: "deepseek",
           model,
-          includeBuiltinTools: false,
+          builtinTools: "none",
           apiKeys: { deepseek: deepseekKey },
           idempotencyKey: "chat-raw-create-" + Date.now()
         });
@@ -345,9 +282,20 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           body: JSON.stringify({ input: "This should be rejected while the prior turn is running." })
         });
 
-        const finalSession = await pollSession(session.id, [...CLEAN_SESSION_STATUSES, "error", "failed", "timed_out", "cancelled"]);
-        const events = await listEventsSettled(session);
-        await session.delete({ idempotencyKey: "chat-raw-delete-" + Date.now() });
+        const acceptedRunId = first.body && first.body.run ? first.body.run.runId : null;
+        if (!acceptedRunId) throw new Error("message acceptance omitted run.runId");
+        let terminal = null;
+        for await (const event of session.events.stream({ from: first.body.eventCursor ?? first.body.run.eventCursor ?? 0 })) {
+          if (event.runId !== acceptedRunId) continue;
+          if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") {
+            terminal = event;
+            break;
+          }
+        }
+        if (!terminal) throw new Error("accepted run ended without a terminal event");
+        const finalSession = await session.refresh();
+        const events = await session.events.list();
+        await session.delete();
 
         const serialized = JSON.stringify({ first, replay, busy, finalSession, events });
         process.stdout.write(JSON.stringify({
@@ -358,11 +306,13 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
           conflictStatus: conflict.status,
           conflictError: conflict.body && typeof conflict.body.error === "string" ? conflict.body.error : null,
           busyStatus: busy.status,
-          firstTurnSeq: first.body && first.body.turn ? first.body.turn.turnSeq : -1,
-          replayTurnSeq: replay.body && replay.body.turn ? replay.body.turn.turnSeq : -2,
+          firstTurnSeq: first.body && first.body.run ? first.body.run.turnSeq : -1,
+          replayTurnSeq: replay.body && replay.body.run ? replay.body.run.turnSeq : -2,
           finalStatus: finalSession.status,
           customNames: [...new Set(events.filter((e) => e.type === "CUSTOM").map((e) => e.data && e.data.name).filter(Boolean))],
-          turnFinishedCount: events.filter((e) => e.type === "TURN_FINISHED").length,
+          turnFinishedCount: events.filter((e) => e.type === "RUN_FINISHED").length,
+          terminalKind: terminal.type,
+          terminalOutcome: terminal.data && terminal.data.outcome,
           leakedKey: serialized.includes(deepseekKey)
         }));
         process.exit(0);
@@ -385,7 +335,7 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       const result = JSON.parse(child.stdout.trim()) as RawSessionLiveResult;
       const dump = (): string => JSON.stringify(result, null, 2);
 
-      expect(["idle", "succeeded"], dump()).toContain(result.createStatus);
+      expect(result.createStatus, dump()).toBe("idle");
       expect(result.firstStatus, dump()).toBeGreaterThanOrEqual(200);
       expect(result.firstStatus, dump()).toBeLessThan(300);
       expect(result.replayStatus, dump()).toBeGreaterThanOrEqual(200);
@@ -395,9 +345,10 @@ describe("live hosted API — resumable chat sessions via installed SDK", () => 
       expect(result.conflictStatus, dump()).toBe(409);
       expect(result.conflictError, dump()).toBe("idempotency_conflict");
       expect(result.busyStatus, dump()).toBe(409);
-      expect(["idle", "succeeded"], dump()).toContain(result.finalStatus);
-      expect(result.customNames.some((name) => name === "aex.session.idle" || name === "aex.session.succeeded"), dump()).toBe(true);
-      expect(result.turnFinishedCount, dump()).toBe(0);
+      expect(result.finalStatus, dump()).toBe("idle");
+      expect(result.terminalKind, dump()).toBe("RUN_FINISHED");
+      expect(result.terminalOutcome, dump()).toBe("succeeded");
+      expect(result.turnFinishedCount, dump()).toBe(1);
       expect(result.leakedKey, dump()).toBe(false);
     },
     10 * 60_000

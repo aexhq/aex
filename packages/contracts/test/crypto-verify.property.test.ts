@@ -2,11 +2,13 @@ import { createHmac, randomBytes } from "node:crypto";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
+  verifyAexWebhook
+} from "../src/index.js";
+import {
   mintConnectionTicket,
   verifyConnectionTicket,
-  verifyAexWebhook,
   type ConnectionTicketChannel
-} from "../src/index.js";
+} from "../src/internal.js";
 
 /**
  * Property fuzz for the two HMAC verifiers a customer/runtime depends on:
@@ -70,9 +72,9 @@ describe("verifyAexWebhook (property)", () => {
 
   it("golden interop vector verifies (fixed id/body/secret → known signature)", async () => {
     const material = Buffer.from("0123456789abcdef0123456789abcdef", "utf8").toString("base64");
-    const id = "msg_2KWPBgLlAfxdpx2AI54pPJ85s7";
+    const id = "whd_run_42";
     const ts = 1700000000;
-    const body = '{"specversion":"1.0","type":"session.finished","subject":"ses_42"}';
+    const body = '{"specversion":"1.0","type":"run.finished","subject":"run_42"}';
     const sig = signWebhook(id, ts, body, material);
     const ok = await verifyAexWebhook({
       rawBody: body,

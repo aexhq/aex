@@ -2,32 +2,32 @@
  * Public surface of the `aex` SDK.
  *
  * `Aex` is the single SDK client. Composition primitives are `Tool`, `Skill`,
- * `McpServer`, `AgentsMd`, `File`, and `Secret`. Everything else is types,
+ * `McpServer`, `Instructions`, `File`, and `Secret`. Everything else is types,
  * errors, and event type guards re-exported from `@aexhq/contracts`.
  */
 
-export {
-  Aex,
-  AgentsMdClient,
+export { Aex } from "./client.js";
+export type {
   ChildSessionHandle,
-  FilesClient,
-  SecretsClient,
   SessionClient,
   SessionHandle,
-  SessionTurnStream,
-  SkillsClient
+  SessionRunStream,
+  WorkspaceClient,
+  WorkspaceFilesClient,
+  WorkspaceInstructionsClient,
+  WorkspaceSkillsClient,
+  WorkspaceToolsClient
 } from "./client.js";
 export type {
   AexOptions,
-  BatchOptions,
   ChildSessionEvents,
+  IdempotencyOptions,
   Message,
   DownloadOptions,
   SessionFilePathMatch,
   SessionFilePathSelector,
   SessionFileSelector,
   SessionFileLinkSelector,
-  PerSessionFileSearchQuery,
   StartSessionOptions,
   SessionFiles,
   SessionResult,
@@ -38,21 +38,16 @@ export type {
   SessionMessages,
   SessionOverrides,
   SessionStartOptions,
-  SessionStartResult,
   SessionSendOptions,
-  SessionTerminalRead,
-  SessionTurnResult,
+  SessionRunResult,
   SessionWebhooks,
-  SettleAwait,
-  StreamEventsOptions,
-  SubmitResult,
-  WaitForSessionOptions
+  StreamEventsOptions
 } from "./client.js";
 
 // Composition primitives
 export { Tool } from "./tool.js";
 export { Skill } from "./skill.js";
-export { AgentsMd } from "./agents-md.js";
+export { Instructions } from "./instructions.js";
 export { File } from "./file.js";
 export { McpServer } from "./mcp-server.js";
 export { Secret } from "./secret.js";
@@ -87,9 +82,10 @@ export {
 } from "@aexhq/contracts";
 export type { AexApiErrorCode } from "@aexhq/contracts";
 
-// Built-in transport resilience. Every BFF request is retried on transient
-// failures (429/5xx/529 + network errors) with bounded backoff + jitter,
-// honoring `Retry-After`; tune or disable via the client's `retry` option.
+// Built-in transport resilience. Safe reads and mutations carrying a stable
+// Idempotency-Key are retried on transient failures
+// (429/5xx/529 + network errors) with bounded backoff + jitter, honoring
+// `Retry-After`; tune or disable via the client's `retry` option.
 // A persistent throttle surfaces as `AexRateLimitError` (narrow with
 // `isRateLimited`), which can carry an upstream `ProviderFault`.
 export { AexRateLimitError, isRateLimited, isThrottleFault, parseProviderFault } from "./retry.js";
@@ -107,21 +103,27 @@ export {
   validateSkillBundleManifest
 } from "@aexhq/contracts";
 export type {
-  AssetRef,
-  AgentsMdRef,
-  FileRef,
   McpServerRef,
   SkillBundleEntry,
   SkillBundleManifest,
-  SkillRecord as SkillRecordWire,
-  SkillRef,
   ToolInputSchema,
-  ToolRef
+} from "@aexhq/contracts";
+
+export type {
+  AssetIdentity,
+  SubmissionAssets,
+  WorkspaceFileRecord,
+  WorkspaceFileRef,
+  WorkspaceInstructionRecord,
+  WorkspaceInstructionRef,
+  WorkspaceSkillRecord,
+  WorkspaceSkillRef,
+  WorkspaceToolRecord,
+  WorkspaceToolRef
 } from "@aexhq/contracts";
 
 // Runtime types
 export type {
-  AgentsMdRecord as AgentsMdRecordWire,
   BillingCheckoutPlanKey,
   BillingCheckoutRequest,
   BillingHostedSession,
@@ -130,27 +132,22 @@ export type {
   BillingLedgerQuery,
   BillingPortalRequest,
   BillingSummary,
-  FileRecord as FileRecordWire,
   SessionFile,
+  SessionFilesSnapshot,
+  SessionCheckpointRevision,
   SessionFileType,
   SessionFileLink,
   SessionFileLinkOptions,
   SessionFileQuery,
-  SessionFileSearchQuery,
-  SessionFileSearchHit,
-  SessionFileSearchPage,
   SessionFileText,
-  ProviderEvent,
   ReadSessionFileTextOptions,
-  SessionRecord,
   Session,
-  SessionEvent,
   SessionListPage,
   SessionListQuery,
   SessionRetentionPolicy,
   SessionStatus,
   SessionSummary,
-  SessionTurn,
+  SessionRun,
   SessionRecordArchiveFileV1,
   SessionRecordArchiveFileRoleV1,
   SessionRecordArchiveNamespaceV1,
@@ -162,6 +159,11 @@ export type {
   SessionRecordNamespaceV1,
   SessionRecordSubmissionSnapshotV1,
   SessionRecordV1,
+  SessionRunErrorWebhookPayload,
+  SessionRunFinishedWebhookPayload,
+  SessionRunWebhookData,
+  SessionRunWebhookEventType,
+  SessionRunWebhookPayload,
   SessionWebhookDelivery,
   SessionWebhookDeliveryStatus,
   RuntimeManifest,
@@ -177,7 +179,6 @@ export type {
   PlatformInlineSecrets as InlineSecrets,
   PlatformMcpServerSecret as McpServerSecret,
   PlatformEnvironment as SessionEnvironment,
-  PlatformSessionSubmissionRequest,
   SessionLimits,
   SessionWebhookSpec,
 } from "@aexhq/contracts";
@@ -186,7 +187,6 @@ export type {
 // Prefer the `Sizes` symbol const (e.g. `Sizes.SHARED_2X_8GB`)
 // so an invalid token is a compile error, not a runtime 400.
 export {
-  CUSTODY_MANIFEST_SCHEMA_VERSION,
   SESSION_RECORD_MANIFEST_SCHEMA_VERSION,
   SESSION_RECORD_SCHEMA_VERSION,
   DEFAULT_RUNTIME_SIZE,
@@ -196,9 +196,8 @@ export {
 export { RuntimeSizes as Sizes } from "@aexhq/contracts";
 export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
-// Builtin tools — the closed + default builtin tool sets. Toggle the standard
-// set with `includeBuiltinTools` on session create; cherry-pick individual tools by
-// listing their names in `tools`. Prefer the `BuiltinTools` const (e.g.
+// Builtin tools — the closed + default builtin tool sets. Select `"default"`,
+// `"none"`, or individual names with `builtinTools`. Prefer the `BuiltinTools` const (e.g.
 // `BuiltinTools.web_search`) so a typo is a compile error, not a runtime 400.
 export { BUILTIN_TOOL_NAMES, BuiltinTools, DEFAULT_BUILTIN_TOOLS, resolveBuiltinToolNames } from "@aexhq/contracts";
 export type { BuiltinToolName } from "@aexhq/contracts";
@@ -226,20 +225,17 @@ export type {
   ProviderName
 } from "@aexhq/contracts";
 
-// Unified settled-result / batch / typed-decode / lineage surface (WS3/WS8/WS10).
+// Unified run result, typed decode, and lineage surface.
 export { usageFromProviderUsage } from "@aexhq/contracts";
 export type {
-  BatchItemResult,
-  BatchResult,
   ChildSessionRef,
-  ResolvableSessionRef,
   TurnOutcome,
   TurnRefusalReason,
-  SettledResult
+  TurnResult
 } from "@aexhq/contracts";
 
-// Status vocabulary (WS1): the terminal-outcome half + guard, bound to the session
-// outcome SSoT. The bare session `error` is retired — a failed turn is `failed`.
+// Session lifecycle vocabulary and guards. Run verdicts are reported separately
+// by `lastRun.outcome` and terminal RUN events.
 export { SESSION_STATUSES, SESSION_TERMINAL_OUTCOMES, isTerminalSessionStatus } from "@aexhq/contracts";
 export type { SessionTerminalOutcome } from "@aexhq/contracts";
 
@@ -259,17 +255,23 @@ export {
 } from "@aexhq/contracts";
 export type { ApprovalGate, ResponseFormat, ResponseFormatKind, StreamableShape } from "@aexhq/contracts";
 
-// Event methods. Every event the SDK yields — the turn stream (`session.send()`),
-// `session.events().list()`, `session.events().streamEnvelopes()`, and
-// `SessionResult.events` — is an `AexEventView`: the coordinator envelope enriched
+// Event methods. Durable list/archive/result events are `AexEventView` values
+// with a replay `sequence`. Live run/coordinator streams yield
+// `AexStreamEventView`, which also admits provisional `replayable:false` events
+// with a per-run `liveSequence` and no durable sequence. Both views are enriched
 // with one type-guard METHOD per standardized event type, so a consumer branches
-// with `event.isTextMessage()` / `event.isToolCallStart()` / `event.isTurnError()`
+// with `event.isTextMessage()` / `event.isToolCallStart()` / `event.isRunError()`
 // / … instead of a free-function guard or a raw `event.type === "…"` compare.
 // `isTextMessage()` / `isToolCallStart()` / `isToolCallResult()` additionally
 // NARROW `event.data` to that type's fields (e.g. `event.data.text` is `string`).
-export { AEX_SESSION_SETTLED_NAME } from "@aexhq/contracts";
 export type {
+  AexEvent,
+  AexEventBase,
   AexEventView,
+  AexLiveEvent,
+  AexLiveEventView,
+  AexStreamEvent,
+  AexStreamEventView,
   TextMessageEventView,
   ToolCallResultEventView,
   ToolCallStartEventView

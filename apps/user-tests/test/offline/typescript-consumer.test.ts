@@ -80,8 +80,7 @@ describe("typescript consumer", () => {
         type Message,
         type SessionResult,
         type SessionCreateOptions,
-        type SessionStartOptions,
-        type SessionStartResult
+        type SessionStartOptions
       } from "@aexhq/sdk";
 
       const fetchFake: typeof fetch = async () =>
@@ -106,7 +105,7 @@ describe("typescript consumer", () => {
       } satisfies SessionStartOptions;
 
       const session = await client.sessions.open("sess_type_surface");
-      const messages: readonly Message[] = await session.messages.all();
+      const messages: readonly Message[] = await session.messages.list();
       const renderedMessages: readonly string[] = messages.map((message) => {
         const role: Message["sender"] = message.sender;
         const text: string = message.text;
@@ -114,19 +113,14 @@ describe("typescript consumer", () => {
       });
 
       const sessionResultPromise: Promise<SessionResult> = client.start(runOptions);
-      const sessionStartPromise: Promise<SessionStartResult> = client.sessions.start(runOptions);
       const directTextPromise: Promise<string | undefined> = (async () => (await sessionResultPromise).text)();
       const directStartMessagesPromise: Promise<readonly Message[]> = (async () => (await sessionResultPromise).messages)();
-      const directSessionTextPromise: Promise<string | undefined> = (async () => (await sessionStartPromise).text)();
-      const directSessionMessagesPromise: Promise<readonly Message[]> = (async () => (await sessionStartPromise).messages)();
 
       void clientWithDefaults;
       void createOptions;
       void renderedMessages;
       void directTextPromise;
       void directStartMessagesPromise;
-      void directSessionTextPromise;
-      void directSessionMessagesPromise;
     `;
     const negative = `
       import type { SessionCreateOptions, SessionStartOptions } from "@aexhq/sdk";

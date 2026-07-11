@@ -2,8 +2,8 @@
  * Live edge-case sweep: SESSION WEBHOOKS surface.
  *
  * Surface under test (public @aexhq/sdk against the dev plane):
- *   - SessionRecord `webhook: { url }` registration on submission (SessionCreateOptions.webhook).
- *   - `session.webhooks().list()` / `.redeliver(id)` (the per-session delivery ledger).
+ *   - Session `webhook: { url }` registration on submission (SessionCreateOptions.webhook).
+ *   - `session.webhooks.list()` / `.redeliver(id)` (the per-session delivery ledger).
  *   - Standard-Webhooks HMAC verification helper `verifyAexWebhook(...)`.
  *   - Webhook-URL SSRF protection (submit-time shape gate + delivery-time IP deny).
  *
@@ -151,7 +151,7 @@ describe("live hosted - session webhooks edge cases", () => {
         let emptyLedger;
         try {
           const s = await client.sessions.create({ provider: PROVIDER, model, apiKeys: { [PROVIDER]: providerKey } });
-          const ledger = await s.webhooks().list();
+          const ledger = await s.webhooks.list();
           emptyLedger = { ok: true, count: Array.isArray(ledger) ? ledger.length : -1 };
         } catch (e) {
           emptyLedger = { ok: false, message: String((e && e.message) || e).slice(0, 300) };
@@ -207,13 +207,13 @@ describe("live hosted - session webhooks edge cases", () => {
         const sessionId = sessionResult.sessionId;
         const session = await client.sessions.open(sessionId);
 
-        // Poll the ledger for a delivery row to appear + settle (delivery is an
+        // Poll the ledger until a delivery row reaches its own terminal state (delivery is an
         // async post-terminal sweep).
         let deliveries = [];
         let sawRow = false;
         const deadline = Date.now() + 150000;
         while (Date.now() < deadline) {
-          try { deliveries = await session.webhooks().list(); } catch (e) { deliveries = []; }
+          deliveries = await session.webhooks.list();
           if (Array.isArray(deliveries) && deliveries.length > 0) {
             sawRow = true;
             const d = deliveries[0];
@@ -224,25 +224,27 @@ describe("live hosted - session webhooks edge cases", () => {
 
         let redeliverReal = null;
         if (deliveries.length > 0) {
-          try { await session.webhooks().redeliver(deliveries[0].id); redeliverReal = { ok: true }; }
+          try { await session.webhooks.redeliver(deliveries[0].id); redeliverReal = { ok: true }; }
           catch (e) { redeliverReal = { ok: false, status: (e && e.status) || null, message: String((e && e.message) || e).slice(0, 300) }; }
         }
         let redeliverBogus = null;
         try {
-          await session.webhooks().redeliver("bogus-delivery-id-does-not-exist-000");
+          await session.webhooks.redeliver("bogus-delivery-id-does-not-exist-000");
           redeliverBogus = { ok: true };
         } catch (e) {
           redeliverBogus = { ok: false, status: (e && e.status) || null, message: String((e && e.message) || e).slice(0, 300) };
         }
 
         let events = [];
-        try { events = await session.events().list(); } catch (e) { events = []; }
+        try { events = await session.events.list(); } catch (e) { events = []; }
         const serialized = JSON.stringify({ deliveries, events });
         const leakedWhsec = serialized.includes("whsec_");
         const leakedProviderKey = providerKey.length > 0 && serialized.includes(providerKey);
 
         process.stdout.write(JSON.stringify({
           sessionId,
+          runId: sessionResult.run?.runId || null,
+          turnSeq: sessionResult.run?.turnSeq || null,
           ok: sessionResult.ok,
           status: sessionResult.status,
           sawRow,
@@ -257,13 +259,17 @@ describe("live hosted - session webhooks edge cases", () => {
       `;
       const out = await runScript<{
         sessionId: string;
+        runId: string | null;
+        turnSeq: number | null;
         ok: boolean;
         status: string;
         sawRow: boolean;
         deliveryCount: number;
         firstDelivery: {
           id: string;
-          eventType: string;
+          runId: string;
+          turnSeq: number;
+          eventType: "run.finished" | "run.error";
           status: string;
           attemptCount: number;
           lastStatusCode?: number;
@@ -314,7 +320,9 @@ describe("live hosted - session webhooks edge cases", () => {
       // redeliver(real) either succeeds or fails cleanly (4xx).
       expect(out.firstDelivery, "delivery row present but firstDelivery null").not.toBeNull();
       expect(typeof out.firstDelivery!.id).toBe("string");
-      expect(out.firstDelivery!.eventType.length).toBeGreaterThan(0);
+      expect(out.firstDelivery!.eventType).toBe("run.finished");
+      expect(out.firstDelivery!.runId).toBe(out.runId);
+      expect(out.firstDelivery!.turnSeq).toBe(out.turnSeq);
       expect(out.redeliverReal, "redeliverReal missing despite a delivery row").not.toBeNull();
       const rr = out.redeliverReal!;
       expect(
@@ -352,7 +360,7 @@ describe("live hosted - session webhooks edge cases", () => {
             let deliveries = [];
             const deadline = Date.now() + 130000;
             while (Date.now() < deadline) {
-              try { deliveries = await session.webhooks().list(); } catch (e) { deliveries = []; }
+              deliveries = await session.webhooks.list();
               const d = Array.isArray(deliveries) ? deliveries[0] : null;
               if (d && (d.attemptCount > 0 || ["delivered", "exhausted", "invalid"].includes(d.status))) break;
               await new Promise((r) => setTimeout(r, 5000));
@@ -456,7 +464,7 @@ describe("live hosted - session webhooks edge cases", () => {
         const secret = "whsec_" + secretB64;
         const id = "msg_" + Math.random().toString(36).slice(2, 10);
         const ts = Math.floor(Date.now() / 1000).toString();
-        const rawBody = JSON.stringify({ type: "session.finished", sessionId: "r_test", ok: true });
+        const rawBody = JSON.stringify({ type: "run.finished", subject: "run_test", data: { sessionId: "session_test", runId: "run_test", turnSeq: 1, outcome: "succeeded" } });
         const key = await crypto.subtle.importKey("raw", rawKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
         const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id + "." + ts + "." + rawBody));
         const sigB64 = Buffer.from(new Uint8Array(sigBuf)).toString("base64");

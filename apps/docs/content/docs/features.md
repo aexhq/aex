@@ -13,11 +13,11 @@ Managed autonomous sessions with filesystem read/edit, grep/glob/head/tail, open
 
 ## Durable infrastructure
 
-SessionRecord records, status, wait/cancel/delete, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
+Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
 
 ## Agent composition
 
-Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, secrets, and networking controls.
+Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls.
 
 ## Subagents
 

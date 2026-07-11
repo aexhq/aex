@@ -2,7 +2,7 @@ name: Live On-Demand Tests
 
 # Consolidated, manually-dispatched pipeline for the OPTIONAL live suites that
 # are deliberately kept out of the default Live User Tests sweep. One trigger
-# sessions them both:
+# runs them both:
 #   1. Per-provider correctness matrix (apps/user-tests/test/live/providers/) —
 #      one minimal round-trip per extra provider (doubao, future
 #      openai/gemini/mistral/openrouter); required provider keys hard-fail when

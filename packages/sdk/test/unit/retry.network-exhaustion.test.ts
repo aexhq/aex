@@ -39,7 +39,10 @@ describe("withRetry network-error exhaustion", () => {
       { maxAttempts: 3, initialDelayMs: 10 },
       { sleep: noSleep, random: () => 0.5, now: () => (t += 100) }
     );
-    const err = await rejectionOf(wrapped("https://api.example.test/api/sessions", { method: "POST" }));
+    const err = await rejectionOf(wrapped("https://api.example.test/api/sessions", {
+      method: "POST",
+      headers: { "Idempotency-Key": "stable-create" }
+    }));
     expect(calls).toBe(3);
     expect(err).toBeInstanceOf(AexNetworkError);
     expect(err.attempts).toBe(3);
@@ -106,5 +109,71 @@ describe("withRetry network-error exhaustion", () => {
       { sleep: noSleep, random: () => 0, now: Date.now }
     );
     await expect(wrapped("https://api.example.test/api/sessions")).rejects.toBe(abort);
+  });
+
+  it("does not retry a POST network failure without stable idempotency identity", async () => {
+    const raw = undiciFetchFailed();
+    let calls = 0;
+    const wrapped = withRetry(async () => {
+      calls += 1;
+      throw raw;
+    }, { maxAttempts: 4 }, { sleep: noSleep });
+
+    await expect(wrapped("https://api.example.test/api/workspace/files", { method: "POST" })).rejects.toBe(raw);
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry a POST 503 without stable idempotency identity", async () => {
+    let calls = 0;
+    const wrapped = withRetry(async () => {
+      calls += 1;
+      return new Response("unavailable", { status: 503 });
+    }, { maxAttempts: 4 }, { sleep: noSleep });
+
+    const response = await wrapped("https://api.example.test/billing/checkout", { method: "POST" });
+    expect(response.status).toBe(503);
+    expect(calls).toBe(1);
+  });
+
+  it("does not replay a DELETE after a lost response without idempotency identity", async () => {
+    const lostResponse = undiciFetchFailed("ECONNRESET");
+    let calls = 0;
+    const wrapped = withRetry(async () => {
+      calls += 1;
+      if (calls === 1) throw lostResponse;
+      return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+    }, { maxAttempts: 4 }, { sleep: noSleep });
+
+    await expect(wrapped("https://api.example.test/api/workspace/files/file-1", { method: "DELETE" }))
+      .rejects.toBe(lostResponse);
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry bare PUT or DELETE transient responses", async () => {
+    for (const method of ["PUT", "DELETE"] as const) {
+      let calls = 0;
+      const wrapped = withRetry(async () => {
+        calls += 1;
+        return new Response("unavailable", { status: 503 });
+      }, { maxAttempts: 4 }, { sleep: noSleep });
+
+      expect((await wrapped("https://api.example.test/resource", { method })).status).toBe(503);
+      expect(calls, method).toBe(1);
+    }
+  });
+
+  it("retries a mutation only when it carries stable idempotency identity", async () => {
+    let calls = 0;
+    const wrapped = withRetry(async () => {
+      calls += 1;
+      return new Response("ok", { status: calls === 1 ? 503 : 200 });
+    }, { maxAttempts: 2, initialDelayMs: 0 }, { sleep: noSleep, random: () => 0 });
+
+    const response = await wrapped("https://api.example.test/resource", {
+      method: "DELETE",
+      headers: { "Idempotency-Key": "delete-resource-1" }
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toBe(2);
   });
 });

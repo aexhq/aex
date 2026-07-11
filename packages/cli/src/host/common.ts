@@ -9,10 +9,10 @@ import {
   AexError,
   AexNetworkError,
   HttpClient,
-  TERMINAL_SESSION_CONTROL_STATUSES,
   extractErrorCode,
   redactSecrets,
-  type FetchLike
+  type FetchLike,
+  type SessionStatus
 } from "@aexhq/contracts";
 import { AEX_INDEX_PATH, type CliIO } from "../internal.js";
 
@@ -37,29 +37,21 @@ export const RUNTIME_ERR: CliExitCode = { code: 1 };
  */
 export const TIMEOUT_ERR: CliExitCode = { code: 3 };
 
-// Membership-tested against the loose `string` status the BFF returns, backed by
-// the canonical terminal set rather than a drift-prone local list.
-const TERMINAL_STATUSES = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
+const NON_PROGRESSING_SESSION_STATUSES = new Set<SessionStatus>([
+  "idle",
+  "suspended",
+  "awaiting_approval",
+  "error",
+  "deleted",
+  "expired"
+]);
 
 /**
- * A session is "parked" once its turn stops making progress — it reached one of
- * the turn-terminal statuses (`idle` / `suspended` / `error`) or a terminal run
- * status. Mirrors the SDK's `SessionHandle.wait` / stream stop condition, so
- * `aex wait` / `events --follow` / `tail` / `inspect` / `run --follow` all stop
- * on the same boundary.
+ * A session is not progressing once its thread is idle, held, recoverably
+ * errored, or removed. RUN event terminals remain the authoritative run boundary.
  */
-export function isSessionParked(status: string): boolean {
-  return status === "idle" || status === "suspended" || status === "error" || TERMINAL_STATUSES.has(status);
-}
-
-/**
- * Whether a parked session ended cleanly (exit code 0). A session parks at
- * `idle`/`suspended` on a good turn; `succeeded` covers a session that surfaces
- * a terminal session status. Everything else parked (`error`/`failed`/`timed_out`/
- * `cancelled`/`expired`/…) is a non-clean exit.
- */
-export function isSessionOk(status: string): boolean {
-  return status === "idle" || status === "suspended" || status === "succeeded";
+export function isSessionNonProgressing(status: string): boolean {
+  return NON_PROGRESSING_SESSION_STATUSES.has(status as SessionStatus);
 }
 
 export interface CommonHostFlags {
@@ -304,7 +296,7 @@ function remedyForStatus(status: number): string | undefined {
   if (status === 403) return "token lacks permission for this workspace/action";
   if (status === 404) return "no such run/resource — verify the id";
   if (status === 429) return "rate limited — retry with backoff";
-  if (status >= 500) return "server error — retry; re-session with --debug to capture the request trace";
+  if (status >= 500) return "server error — retry; rerun with --debug to capture the request trace";
   return undefined;
 }
 

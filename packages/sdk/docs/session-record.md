@@ -1,14 +1,17 @@
 ---
-title: Session record
+title: Session archives
 ---
 
-# Session record
+# Session archives
 
-The session record is the durable product primitive for one session. It is the public-safe bundle of status metadata, the non-secret submission snapshot when available, typed events, captured files, and manifest entries for custody and cost telemetry.
+`Session` is the one live state model returned by `aex.sessions.get(...)`,
+`session.refresh()`, and finished run results. A session archive is the
+public-safe downloadable bundle of that state, typed events, captured files,
+and versioned manifest metadata.
 
 ## Listing sessions
 
-`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API key, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: combine it with `aex.sessions.files(id).list()` / `.read(...)` (see [Files](files.md)) to reach any session's deliverables.
+`aex.sessions.list(query?)` enumerates the sessions in this workspace, most-recent first, one page at a time. The workspace is derived server-side from the API key, so this only ever returns your own sessions. It is the workspace-wide discovery entry point: open a row with `aex.sessions.open(id)`, then use `session.files.list()` / `.read(...)` (see [Files](files.md)) to reach that session's deliverables.
 
 ```ts
 let cursor: string | undefined;
@@ -21,9 +24,9 @@ do {
 } while (cursor);
 ```
 
-`query` fields are all optional: `status` (single session status, e.g. `"idle"`), `since` (ISO-8601 lower bound on `createdAt`), `limit` (defaults to 25, clamped to `[1, 100]`), and `cursor` (the opaque keyset cursor from a prior page's `nextCursor` — absent on the last page). Each page row is a public-safe `SessionSummary` (`id`, `status`, `createdAt`, `updatedAt`, and `costUsd` once settled); it deliberately omits the submission snapshot (model / system / env). Use `aex.sessions.get(id)` for status / timing / cost on one session, or `session.unit()` on a handle for the full self-contained record including the parsed submission.
+`query` fields are all optional: `status` (single session lifecycle status, e.g. `"idle"`), `since` (ISO-8601 lower bound on `createdAt`), `limit` (an integer from 1 through 100; default 25), and `cursor` (the opaque keyset cursor from a prior page's `nextCursor`, absent on the last page). Invalid values fail before the request. Each page row is a public-safe `SessionSummary` (`id`, `status`, `runtime`, `acceptsMessages`, `createdAt`, `updatedAt`, and `costUsd` once a RUN terminal is committed); it deliberately omits the submission snapshot (model / system / env). Use `aex.sessions.get(id)` or `session.record` for the canonical session read, and the `messages`, `events`, and `files` namespaces for authoritative run data.
 
-## Downloading a session record
+## Downloading a session archive
 
 `session.download()` and `aex download <session-id>` return a zip with this layout:
 

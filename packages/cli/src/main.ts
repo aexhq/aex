@@ -10,7 +10,7 @@
  *     - `aex deliveries <session-id>`
  *     - `aex wait <session-id> [--timeout <dur>] [--interval <dur>]`
  *     - `aex events <session-id> [--follow] [--timeout <dur>]`
- *     - `aex tail <session-id> [--json] [--filter ...] [--logs] [--settle] [--timeout <dur>]`
+ *     - `aex tail <session-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
  *     - `aex inspect <session-id> [--json] [--filter ...] [--logs] [--timeout <dur>]`
  *     - `aex files <session-id>`
  *     - `aex download <session-id> [--only files|events|metadata] [--out path]`
@@ -117,7 +117,7 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
       // One-shot full-timeline render + summary/jump-to-failure (WS stream).
       return executeInspectCmd(io, rest);
     case "files":
-      // `files sync <dirs>` is the legacy in-container internal
+      // `files sync <dirs>` is the in-container internal
       // capture walker. The bare `files <session-id>` form is the
       // host-side list verb. We
       // distinguish on the first sub-arg rather than on
@@ -184,7 +184,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex deliveries <session-id> --api-key T\n");
   io.stdout("  aex wait <session-id> [--timeout 8m] [--interval 2s] --api-key T\n");
   io.stdout("  aex events <session-id> [--follow] [--timeout 8m] --api-key T\n");
-  io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--settle] [--timeout 8m] --api-key T\n");
+  io.stdout("  aex tail <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key T\n");
   io.stdout("  aex inspect <session-id> [--json] [--filter <type|source>] [--logs] [--timeout 8m] --api-key T\n");
   io.stdout("  aex files <session-id> --api-key T\n");
   io.stdout("  aex download <session-id> [--only files|events|metadata] [--out path] --api-key T\n");
@@ -204,7 +204,7 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex models list [--json]                   List models + default provider (no token needed)\n");
   io.stdout("  aex providers list [--json]                List providers + their models (no token needed)\n");
   io.stdout("  aex tools list [--json]                    List builtin tools (all default; no token needed)\n");
-  io.stdout("  aex starttime-sizes list [--json]            List managed runtime presets (no token needed)\n");
+  io.stdout("  aex runtime-sizes list [--json]              List managed runtime presets (no token needed)\n");
   io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
   io.stdout("  --api-key <token>         REQUIRED — aex SDK API key (workspace is derived from it)\n");
@@ -225,8 +225,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --runtime-size <size>       managed runtime preset\n");
   io.stdout("  --session-timeout <dur>     Server-side session deadline (e.g. 1h, max 8h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");
-  io.stdout("  --webhook <url>             Optional per-session callback URL (https); receives the terminal session.finished event\n");
-  io.stdout("  --follow                    Poll events to stdout until the session reaches a terminal state\n");
+  io.stdout("  --webhook <url>             Optional session callback URL (https); receives each run.finished/run.error event\n");
+  io.stdout("  --follow                    Poll events to stdout until the current run finishes\n");
   io.stdout("  --timeout <dur>             With --follow: give up after this long (e.g. 8m, 30s, 500ms); exit code 3\n");
   return SUCCESS;
 }

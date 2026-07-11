@@ -4,6 +4,7 @@ import { resolve as resolvePath } from "node:path";
 import { executeCli } from "../src/main.js";
 import { parseDuration } from "../src/host/common.js";
 import type { CliIO } from "../src/internal.js";
+import { canonicalWhoami } from "./canonical-whoami.js";
 
 const CWD = "/tmp/cli-test";
 
@@ -99,7 +100,7 @@ describe("aex whoami", () => {
     const cap = makeHostIo({
       argv: ["whoami", "--api-key", "tok-1", "--aex-url", "https://dash.example/"],
       fetchHandler: () =>
-        new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-7", scopes: ["sessions.write"] }), {
+        new Response(JSON.stringify(canonicalWhoami("ws-7", ["sessions.write"])), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -125,7 +126,7 @@ describe("aex whoami", () => {
     const cap = makeHostIo({
       argv: ["whoami", "--api-key", "tok-1"],
       fetchHandler: () =>
-        new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-9", scopes: [] }), {
+        new Response(JSON.stringify(canonicalWhoami("ws-9")), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -141,7 +142,7 @@ describe("aex status", () => {
     const cap = makeHostIo({
       argv: ["status", "session-42", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "session-42", status: "idle" }), {
+        new Response(JSON.stringify({ session: { id: "session-42", status: "idle", acceptsMessages: true } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -150,7 +151,7 @@ describe("aex status", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.calls[0]!.url).toContain("/api/sessions/session-42");
     expect(cap.calls[0]!.url).not.toContain("workspaceId=");
-    expect(JSON.parse(cap.stdout)).toEqual({ id: "session-42", status: "idle" });
+    expect(JSON.parse(cap.stdout)).toEqual({ id: "session-42", status: "idle", acceptsMessages: true });
   });
 
   it("does not accept a --workspace flag (workspace is derived from the token)", async () => {
@@ -182,7 +183,9 @@ describe("aex deliveries", () => {
     const rows = [
       {
         id: "wd-1",
-        eventType: "session.finished",
+        runId: "run-1",
+        turnSeq: 1,
+        eventType: "run.finished",
         status: "delivered",
         attemptCount: 1,
         lastStatusCode: 200,
@@ -244,15 +247,16 @@ describe("aex events", () => {
         }
         if (call.url.endsWith("/events")) {
           return new Response(
-            JSON.stringify({ events: [{ id: "p1", type: "TEXT_MESSAGE_CONTENT" }] }),
+            JSON.stringify({
+              events: [
+                { id: "p1", type: "TEXT_MESSAGE_CONTENT" },
+                { id: "p2", type: "RUN_FINISHED", data: { outcome: "succeeded" } }
+              ]
+            }),
             { status: 200, headers: { "content-type": "application/json" } }
           );
         }
-        // GET session record — return terminal so the loop exits.
-        return new Response(JSON.stringify({ id: "session-poll", status: "succeeded" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
+        throw new Error(`unexpected URL ${call.url}`);
       }
     });
     await executeCli(cap.io);
@@ -261,23 +265,22 @@ describe("aex events", () => {
     expect(cap.calls.some((c) => c.url.endsWith("/events/stream"))).toBe(false);
   });
 
-  it("--follow stops on a timed_out session instead of hanging", async () => {
-    // Regression: `timed_out` is a terminal status. A prior hardcoded set
-    // omitted it, so the polling loop would never exit for a timed-out run.
+  it("--follow stops when RUN_FINISHED carries outcome=timed_out", async () => {
     const cap = makeHostIo({
       argv: ["events", "session-timeout", "--follow", ...COMMON],
       fetchHandler: (call) => {
         if (call.url.endsWith("/events")) {
           return new Response(
-            JSON.stringify({ events: [{ id: "t1", type: "TEXT_MESSAGE_CONTENT" }] }),
+            JSON.stringify({
+              events: [
+                { id: "t1", type: "TEXT_MESSAGE_CONTENT" },
+                { id: "t2", type: "RUN_FINISHED", data: { outcome: "timed_out" } }
+              ]
+            }),
             { status: 200, headers: { "content-type": "application/json" } }
           );
         }
-        // GET session record — terminal `timed_out` must exit the loop.
-        return new Response(JSON.stringify({ id: "session-timeout", status: "timed_out" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
+        throw new Error(`unexpected URL ${call.url}`);
       }
     });
     await executeCli(cap.io);
@@ -306,14 +309,14 @@ describe("parseDuration", () => {
 });
 
 describe("aex wait", () => {
-  it("polls GET /sessions/{id} until parked, prints the final session, exits 0 on idle", async () => {
+  it("polls GET /api/sessions/{id} until non-progressing, prints the final session, and exits 0 on idle", async () => {
     let polls = 0;
     const cap = makeHostIo({
       argv: ["wait", "session-w", "--interval", "1ms", ...COMMON],
       fetchHandler: () => {
         polls++;
         const status = polls < 3 ? "running" : "idle";
-        return new Response(JSON.stringify({ id: "session-w", status }), {
+        return new Response(JSON.stringify({ session: { id: "session-w", status, acceptsMessages: status === "idle" } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -327,11 +330,11 @@ describe("aex wait", () => {
     expect(printed).toMatchObject({ id: "session-w", status: "idle" });
   });
 
-  it("exits 1 (RUNTIME_ERR) when the session parks with error", async () => {
+  it("exits 1 (RUNTIME_ERR) when the session stops progressing with error", async () => {
     const cap = makeHostIo({
       argv: ["wait", "session-f", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "session-f", status: "error" }), {
+        new Response(JSON.stringify({ session: { id: "session-f", status: "error", acceptsMessages: true } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -345,7 +348,7 @@ describe("aex wait", () => {
     const cap = makeHostIo({
       argv: ["wait", "session-slow", "--timeout", "0ms", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ id: "session-slow", status: "running" }), {
+        new Response(JSON.stringify({ session: { id: "session-slow", status: "running", acceptsMessages: false } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -384,7 +387,7 @@ describe("aex events --follow --timeout", () => {
             headers: { "content-type": "application/json" }
           });
         }
-        return new Response(JSON.stringify({ id: "session-ev", status: "running" }), {
+        return new Response(JSON.stringify({ session: { id: "session-ev", status: "running", acceptsMessages: false } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -402,7 +405,16 @@ describe("aex files", () => {
       argv: ["files", "session-9", ...COMMON],
       fetchHandler: () =>
         new Response(
-          JSON.stringify({ files: [{ id: "o1", filename: "report.md" }] }),
+          JSON.stringify({
+            revision: {
+              checkpointId: "cp-1",
+              runId: "run-1",
+              turnSeq: 1,
+              committedAt: "2026-07-01T00:00:00Z",
+              throughSeq: 10
+            },
+            files: [{ id: "o1", checkpointId: "cp-1", filename: "report.md" }]
+          }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
     });
@@ -417,7 +429,7 @@ describe("aex cancel + delete", () => {
     const cap = makeHostIo({
       argv: ["cancel", "session-x", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ session: { id: "session-x", status: "cancelling" } }), {
+        new Response(JSON.stringify({ session: { id: "session-x", status: "cancelling", acceptsMessages: false } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -432,7 +444,9 @@ describe("aex cancel + delete", () => {
   it("delete DELETEs and prints the result", async () => {
     const cap = makeHostIo({
       argv: ["delete", "session-x", ...COMMON],
-      fetchHandler: () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+      fetchHandler: () => new Response(JSON.stringify({
+        session: { id: "session-x", status: "deleted", acceptsMessages: false }
+      }), { status: 200, headers: { "content-type": "application/json" } })
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
@@ -450,7 +464,7 @@ describe("aex cancel + delete", () => {
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.calls).toHaveLength(1);
-    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
+    expect(cap.calls[0]!.url).toBe(`https://dash.example/api/assets/asset_${hex}`);
     expect(cap.calls[0]!.init.method).toBe("DELETE");
     expect(JSON.parse(cap.stdout.trim())).toEqual({ hash: `sha256:${hex}`, deleted: true });
   });
@@ -477,7 +491,7 @@ describe("aex cancel + delete", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(1);
-    expect(cap.calls[0]!.url).toBe(`https://dash.example/assets/asset_${hex}`);
+    expect(cap.calls[0]!.url).toBe(`https://dash.example/api/assets/asset_${hex}`);
     const err = JSON.parse(cap.stderr.trim()) as {
       error: string;
       message: string;
@@ -498,21 +512,31 @@ describe("aex cancel + delete", () => {
 });
 
 describe("aex download", () => {
-  // Route the reads the download verbs fan out to: getSessionRecord + listEvents +
+  // Route the reads the download verbs fan out to: getSession + listEvents +
   // listSessionFiles + per-file /download.
   const json = (body: unknown) =>
     new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const wholeSessionHandler =
     (sessionId: string) =>
     ({ url }: { url: string }): Response => {
-      if (url.endsWith(`/api/sessions/${sessionId}/events`)) return json({ events: [{ seq: 0, kind: "runtime_start" }] });
-      if (url.endsWith(`/api/sessions/${sessionId}/files`)) {
-        return json({ files: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] });
+      const pathname = new URL(url).pathname;
+      if (pathname.endsWith(`/api/sessions/${sessionId}/events`)) return json({ events: [{ seq: 0, kind: "runtime_start" }] });
+      if (pathname.endsWith(`/api/sessions/${sessionId}/files`)) {
+        return json({
+          revision: {
+            checkpointId: "cp-1",
+            runId: "run-1",
+            turnSeq: 1,
+            committedAt: "2026-07-01T00:00:00Z",
+            throughSeq: 10
+          },
+          files: [{ id: "o1", checkpointId: "cp-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
+        });
       }
-      if (url.endsWith(`/api/sessions/${sessionId}/files/o1/download`)) {
+      if (pathname.endsWith(`/api/sessions/${sessionId}/files/o1/download`)) {
         return new Response(strToU8("hello").buffer, { status: 200, headers: { "content-type": "text/plain" } });
       }
-      return json({ id: sessionId, status: "succeeded" });
+      return json({ session: { id: sessionId, status: "idle", acceptsMessages: true } });
     };
 
   it("assembles the public whole-run zip client-side and writes it to --out", async () => {
@@ -524,7 +548,7 @@ describe("aex download", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    // getSessionRecord + events + files + one per-file download.
+    // getSession + events + files + one per-file download.
     expect(cap.calls).toHaveLength(4);
 
     const writtenKey = [...writes.keys()][0]!;
@@ -617,7 +641,7 @@ describe("aex download", () => {
         if (call.url.endsWith("/api/sessions/session-retry/events")) {
           eventReads += 1;
           if (eventReads === 1) throw undiciFetchFailed();
-          return json({ events: [{ id: "e1", type: "TURN_STARTED" }] });
+          return json({ events: [{ id: "e1", type: "RUN_STARTED" }] });
         }
         throw new Error(`unexpected URL ${call.url}`);
       }
@@ -645,20 +669,20 @@ describe("aex download", () => {
 // first turn to the session messages endpoint. The CLI prints the accepted
 // session record from the message response.
 function sessionStartHandler(sessionId: string, status = "running"): (call: FetchCall) => Response {
-  const ok = (body: unknown): Response =>
-    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  const json = (body: unknown, statusCode: number): Response =>
+    new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
   return (call) => {
     if (call.url.endsWith("/api/sessions")) {
-      return ok({ id: sessionId, status: "idle", turnSeq: 0, turnStatus: "idle" });
+      return json({ session: { id: sessionId, status: "idle", acceptsMessages: true } }, 201);
     }
     if (call.url.endsWith(`/api/sessions/${sessionId}/messages`)) {
-      return ok({
-        session: { id: sessionId, status, turnSeq: 1, turnStatus: "launching" },
-        turn: { sessionId, turnSeq: 1 },
+      return json({
+        session: { id: sessionId, status, acceptsMessages: status !== "running" },
+        run: { sessionId, runId: "run-1", turnSeq: 1, phase: "running" },
         eventCursor: 1
-      });
+      }, 202);
     }
-    return ok({});
+    return json({}, 200);
   };
 }
 
@@ -712,7 +736,8 @@ describe("aex start", () => {
     expect(submission.model).toBe("claude-haiku-4-5");
     // the prompt is NOT part of the create submission — it rides the create `input`.
     expect("prompt" in submission).toBe(false);
-    expect(submission.tools).toEqual([]);
+    expect(submission.assets).toEqual({ files: [], skills: [], tools: [], instructions: [] });
+    expect(submission.builtinTools).toBe("default");
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);
@@ -755,7 +780,8 @@ describe("aex start", () => {
     expect(cap.exitCode).toBe(0);
     const body = cap.calls[0]!.body as Record<string, unknown>;
     const submission = body.submission as Record<string, unknown>;
-    expect(submission.tools).toEqual([]);
+    expect(submission.assets).toEqual({ files: [], skills: [], tools: [], instructions: [] });
+    expect(submission.builtinTools).toBe("default");
     expect(submission.mcpServers).toEqual([
       { name: "github", url: "https://example.com/mcp" }
     ]);
@@ -791,19 +817,19 @@ describe("aex start", () => {
         if (call.url.endsWith("/api/sessions")) {
           creates += 1;
           if (creates === 1) throw undiciFetchFailed();
-          return new Response(JSON.stringify({ id: "sess-retry", status: "idle", turnSeq: 0, turnStatus: "idle" }), {
-            status: 200,
+          return new Response(JSON.stringify({ session: { id: "sess-retry", status: "idle", acceptsMessages: true } }), {
+            status: 201,
             headers: { "content-type": "application/json" }
           });
         }
         if (call.url.endsWith("/api/sessions/sess-retry/messages")) {
           return new Response(
             JSON.stringify({
-              session: { id: "sess-retry", status: "running", turnSeq: 1, turnStatus: "launching" },
-              turn: { sessionId: "sess-retry", turnSeq: 1 },
+              session: { id: "sess-retry", status: "running", acceptsMessages: false },
+              run: { sessionId: "sess-retry", runId: "run-1", turnSeq: 1, phase: "running" },
               eventCursor: 1
             }),
-            { status: 200, headers: { "content-type": "application/json" } }
+            { status: 202, headers: { "content-type": "application/json" } }
           );
         }
         throw new Error(`unexpected URL ${call.url}`);

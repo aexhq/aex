@@ -1,7 +1,7 @@
 /**
  * Scenario 1: install.test.ts
  *
- * Lock the published package's *shape*. A real user / AI agent who sessions
+ * Lock the published package's *shape*. A real user / AI agent who runs
  * `npm i @aexhq/sdk` should land in a tree that:
  *   - Has a sensible package.json (name, version, type, main, types,
  *     exports, bin).
@@ -24,6 +24,8 @@ type InstalledStreamEvent = {
   readonly source: string;
   readonly type: string;
   readonly subject: string;
+  readonly threadId: string;
+  readonly runId: string;
   readonly time: string;
   readonly sequence: number;
   readonly data: Record<string, unknown>;
@@ -35,6 +37,11 @@ type InstalledStreamModule = {
     readonly from?: number;
     readonly fetchTicket: () => Promise<string>;
     readonly webSocketFactory: (url: string) => InstalledFakeWebSocket;
+    readonly maxReconnects?: number;
+    readonly reconnectDelayMs?: number;
+    readonly idleTimeoutMs?: number;
+    readonly pingIntervalMs?: number;
+    readonly eventQuietRecheckMs?: number;
   }) => AsyncGenerator<InstalledStreamEvent, void, void>;
 };
 
@@ -68,12 +75,22 @@ class InstalledFakeWebSocket {
 const streamEvent = (sequence: number, type = "TEXT_MESSAGE_CONTENT"): InstalledStreamEvent => ({
   specversion: "1.0",
   id: `r:${sequence}`,
-  source: "agent",
+  source: type === "RUN_FINISHED" ? "workflow" : "agent",
   type,
   subject: "r",
+  threadId: "r",
+  runId: "run-1",
   time: new Date(sequence).toISOString(),
   sequence,
-  data: {}
+  data: type === "RUN_FINISHED"
+    ? {
+        outcome: "succeeded",
+        checkpoint: { checkpointId: "cp-1" },
+        costUsd: 0,
+        providerUsage: [],
+        result: { checkpointId: "cp-1" }
+      }
+    : {}
 });
 
 const flushTasks = async (n = 4): Promise<void> => {
@@ -206,11 +223,17 @@ describe("install shape", () => {
       wsUrl: "wss://coordinator.example/sessions/r/subscribe?region=lhr",
       from: 0,
       fetchTicket: async () => "ticket+with?chars",
-      webSocketFactory: (url) => (ws = new InstalledFakeWebSocket(url))
+      webSocketFactory: (url) => (ws = new InstalledFakeWebSocket(url)),
+      maxReconnects: 0,
+      reconnectDelayMs: 0,
+      idleTimeoutMs: 5_000,
+      pingIntervalMs: 0,
+      eventQuietRecheckMs: 0
     });
+    let received: InstalledStreamEvent | undefined;
     const consume = (async () => {
       for await (const event of gen) {
-        void event;
+        received = event;
         break;
       }
     })();
@@ -219,8 +242,15 @@ describe("install shape", () => {
     expect(ws?.url).toBe(
       "wss://coordinator.example/sessions/r/subscribe?region=lhr&ticket=ticket%2Bwith%3Fchars&from=0"
     );
-    ws?.message(streamEvent(0, "TURN_FINISHED"));
+    ws?.message(streamEvent(0, "RUN_FINISHED"));
     await consume;
+    expect(received).toMatchObject({
+      type: "RUN_FINISHED",
+      subject: "r",
+      threadId: "r",
+      runId: "run-1",
+      sequence: 0
+    });
   });
 
 });

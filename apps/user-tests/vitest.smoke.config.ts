@@ -6,14 +6,14 @@ loadLocalEnv();
 
 // The release-time PUBLISHED-ARTIFACT SMOKE gate.
 //
-// release.yml publishes the SDK to a pre-release dist-tag, then sessions this to
+// release.yml publishes the SDK to a pre-release dist-tag, then runs this to
 // prove the PUBLISHED @aexhq/sdk + CLI installs from the registry and works
 // end-to-end — a DeepSeek SDK round-trip on the managed runtime and the
 // installed CLI. Both files `bun install @aexhq/sdk@<version>` in their own
 // tempdir (AEX_USER_TEST_VERSION is set), so this exercises the real npm
 // artifact, not a local pack.
 //
-// It is DELIBERATELY not the full behavioral matrix (test/**). That sessions
+// It is DELIBERATELY not the full behavioral matrix (test/**). That runs
 // against this same published sdk_version across dev + prd in platform
 // deploy.yml (aws-suite.yml `sdk_user_tests`), which the release workflow attemptbook (§4.7)
 // requires green before promoting to `latest`. The release only needs this fast

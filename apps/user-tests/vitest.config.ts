@@ -35,7 +35,7 @@ export default defineConfig({
     // Each scenario spawns its own child processes (bun install, tsc,
     // bun) with cwd in an install tempdir and drives a live run.
     // Unbounded parallelism multiplies disk usage and piles concurrent
-    // live-run spend + managed runtime pressure, so default local sessions cap at
+    // live-run spend + managed runtime pressure, so default local runs cap at
     // 2 files at once. CI can raise AEX_USER_TEST_MAX_WORKERS after selecting
     // one artifact tarball/version for all parallel file slots.
     fileParallelism: true,

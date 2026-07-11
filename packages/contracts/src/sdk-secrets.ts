@@ -70,7 +70,7 @@ const HIGH_ENTROPY_NO_DIGIT_MIN_LEN = 40;
  * by `ses_`. The HIGH_ENTROPY_CANDIDATE class excludes `_`, so the candidate
  * candidate for a session id is the bare hex — dense enough to trip the entropy gate.
  * Masking it destroys the ONE identifier every error message needs for
- * traceability (`cancel via openSession("ses_[REDACTED]")` is useless
+ * traceability (`cancel via aex.sessions.open("ses_[REDACTED]")` is useless
  * guidance). A session id is not a credential: it grants nothing without the
  * bearer token. Mirrors the platform-side redactor's canonical-id exemption.
  */

@@ -3,7 +3,7 @@
  *
  * Drives the **published `@aexhq/sdk` SDK** against the live
  * api.aex.dev hosted API with a real Doubao (ByteDance) round-trip on the
- * managed runtime: SDK → /sessions → control-plane workflow → managed runtime →
+ * managed runtime: SDK → /api/sessions → control-plane workflow → managed runtime →
  * real managed-runtime process → BYOK provider-proxy → official Ark API →
  * stream-json events → terminal. No smoke shortcut.
  *
@@ -15,9 +15,9 @@
  * only this connectivity check, not the full scenario matrix.
  *
  * It lives under test/live/providers/ — the on-demand provider suite that is
- * EXCLUDED from the default `test:user` sweep and sessions only via
+ * EXCLUDED from the default `test:user` sweep and runs only via
  * `test:user:providers` (see vitest.providers.config.ts and the manually
- * dispatched .github/workflows/live-on-demand-tests.yml, which sessions every
+ * dispatched .github/workflows/live-on-demand-tests.yml, which runs every
  * optional suite in one trigger), so the per-provider matrix never piles spend
  * onto every push. It is also the live provider evidence for `doubao`
  * (provider-support.ts). Defaults to the cheap Seed 1.6 Flash tier and the
@@ -56,7 +56,7 @@ const provider = process.env["AEX_USER_TEST_DOUBAO_PROVIDER"] ?? "doubao";
 
 interface LiveResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly probe: string;
   readonly eventCount: number;
   readonly eventKinds: readonly string[];
@@ -122,7 +122,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         }, { timeoutMs: 8 * 60 * 1000 });
         const sessionId = result.sessionId;
         const run = {
-          status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+          status: result.status,
           runtime: "managed",
           provider
         };
@@ -133,12 +133,12 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
           .join(" ");
-        const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR"));
+        const terminal = events.find((e) => (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR"));
 
         const serialized = JSON.stringify({ run, events, files });
         const payload = {
           sessionId: sessionId,
-          sessionStatus: run.status,
+          runStatus: run.status,
           probe: ${JSON.stringify(probe)},
           eventCount: events.length,
           eventKinds: events.map((e) => e.type),
@@ -204,11 +204,11 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
       // ---- assertions ----
       const diagnostic = liveFailureDiagnostic(result);
 
-      expect(result.sessionStatus, diagnostic).toBe("succeeded");
-      expect(result.terminalKind, diagnostic).toBe("TURN_FINISHED");
-      expect(result.eventKinds, diagnostic).toContain("TURN_STARTED");
-      expect(result.eventKinds, diagnostic).toContain("TURN_FINISHED");
-      expect(result.eventKinds.indexOf("TURN_STARTED"), diagnostic).toBeLessThan(result.eventKinds.lastIndexOf("TURN_FINISHED"));
+      expect(result.runStatus, diagnostic).toBe("succeeded");
+      expect(result.terminalKind, diagnostic).toBe("RUN_FINISHED");
+      expect(result.eventKinds, diagnostic).toContain("RUN_STARTED");
+      expect(result.eventKinds, diagnostic).toContain("RUN_FINISHED");
+      expect(result.eventKinds.indexOf("RUN_STARTED"), diagnostic).toBeLessThan(result.eventKinds.lastIndexOf("RUN_FINISHED"));
       expect(result.assistantTextEventCount, diagnostic).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length, diagnostic).toBeGreaterThan(0);
       // The managed runtime stream fragments responses across content blocks,
@@ -217,7 +217,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
       expect(normalized, diagnostic).toContain(result.probe);
 
       const terminal = result.terminalData ?? {};
-      expect(terminal["reason"], diagnostic).toBe("complete");
+      expect(terminal["outcome"], diagnostic).toBe("succeeded");
 
       // The customer's Ark key MUST NOT appear anywhere in the SDK-visible
       // response surface.

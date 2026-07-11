@@ -30,7 +30,7 @@ pack checks.
    `bun run test`, `bun run test:user:offline`, `bun run docs:build`, and
    `bun run pack:sdk`.
 4. Open a PR against `main`. [`CI`](.github/workflows/ci.yml)
-   sessions the static/type/unit/offline user-test/docs/package gates after merge
+   runs the static/type/unit/offline user-test/docs/package gates after merge
    to `main` or manual dispatch.
 5. Don't force-push `main`. Force-pushing your topic branch is fine.
 
@@ -48,11 +48,13 @@ pack checks.
 | Workflow | Scope |
 | --- | --- |
 | [`CI`](.github/workflows/ci.yml) | main-push/manual lint, unit tests, offline user tests, docs build, and SDK pack/boundary check |
-| [`Release`](.github/workflows/release.yml) | manual SDK publish to npm, then live user tests against the exact published version |
+| [`Release`](.github/workflows/release.yml) | automatic immutable canary publish after green `main` CI, then published-artifact smoke tests; manual prerelease dispatch remains available |
 | [`Live User Tests`](.github/workflows/live-user-tests.yml) | manual protected hosted API user tests, with optional heavy canary |
 
-Releases are manual. Publish canaries first, validate the exact immutable
-version against the hosted service, then promote that same version to `latest`.
+Every green `main` merge automatically publishes an immutable canary. The exact
+version is validated against the hosted service and that same artifact is
+eligible for an explicit `Promote` workflow dispatch only after the downstream
+evidence gate passes.
 The public repo must not encode private deployment internals; any hosted
 deployment validation that happens between canary and promote is a separate
 operator stage. The publish and promote workflows run in the `npm-release`

@@ -7,7 +7,7 @@ import {
   createCustodyManifestWriter,
   custodyManifestObjectKey,
   scanCustodyPayloadForSensitiveValues
-} from "../src/index.js";
+} from "../src/internal.js";
 
 const baseSession = {
   sessionId: "session-11111111",

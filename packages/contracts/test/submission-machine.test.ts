@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest } from "../src/index.js";
 // `parseSessionMachine` / `SessionMachine` ride the `export * from "./submission.js"`
 // re-export (like parseSessionLimits); pin them via the internal subpath.
-import { parseSessionMachine, type SessionMachine } from "../src/internal.js";
+import { parseSessionMachine, parseSessionSubmissionRequest, type SessionMachine } from "../src/internal.js";
 
 function baseRequest(overrides: Record<string, unknown> = {}) {
   return {
@@ -12,8 +11,8 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
     submission: {
       model: "claude-haiku-4-5",
       prompt: ["hello"],
-      agentsMd: [],
-      files: [],
+      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { anthropic: "sk-anthropic-test" } },

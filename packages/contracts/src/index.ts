@@ -1,6 +1,16 @@
 export * from "./provider-support.js";
 export * from "./models.js";
-export * from "./status.js";
+export {
+  SESSION_LIFECYCLE_STATUSES,
+  SESSION_STATUSES,
+  SESSION_TERMINAL_OUTCOMES,
+  isTerminalSessionStatus
+} from "./status.js";
+export type {
+  SessionLifecycleStatus,
+  SessionStatus,
+  SessionTerminalOutcome
+} from "./status.js";
 export {
   AEX_RESERVED_ENV_PREFIX,
   BUILTIN_TOOL_NAMES,
@@ -19,7 +29,6 @@ export {
   SECRETS_KEY,
   SECRET_ENV_NAME_PATTERN,
   SECRET_HANDLE_PATTERN,
-  SKILLS_MAX,
   SKILLS_TOOL_DEFINITION,
   SKILLS_TOOL_NAME,
   STREAMABLE_SHAPES,
@@ -32,9 +41,7 @@ export {
   parseResponseFormat,
   parseSessionLimits,
   parseProviderName,
-  parseSessionSubmissionRequest,
   parseSessionWebhook,
-  parseSkills,
   parseSubmission,
   resolveBuiltinToolNames
 } from "./submission.js";
@@ -44,7 +51,6 @@ export type {
   JsonPrimitive,
   JsonValue,
   OutputMode,
-  ParseSessionSubmissionOptions,
   PlatformEnvironment,
   PlatformEnvironmentInput,
   PlatformInlineSecrets,
@@ -55,14 +61,11 @@ export type {
   PlatformPackage,
   PlatformPackageEcosystem,
   PlatformPackageInput,
-  PlatformSessionSubmissionInput,
-  PlatformSessionSubmissionRequest,
   PlatformSecretEnvEntry,
   PlatformSubmission,
   ResponseFormat,
   ResponseFormatKind,
   SessionLimits,
-  SessionMachine,
   ProviderName,
   SessionWebhookSpec,
   StreamableShape
@@ -71,9 +74,7 @@ export * from "./runtime-sizes.js";
 export * from "./runner-event.js";
 export * from "./event-envelope.js";
 export * from "./event-view.js";
-export * from "./connection-ticket.js";
 export * from "./event-stream-client.js";
-export * from "./session-unit.js";
 export type {
   AssistantTextEntry,
   TurnTrace,
@@ -81,13 +82,13 @@ export type {
   ToolCallTrace
 } from "./turn-trace.js";
 export * from "./runtime-manifest.js";
-export * from "./runtime-security-profile.js";
 export * from "./session-record.js";
 export * from "./session-cost.js";
-export * from "./session-custody.js";
-export * from "./session-retention.js";
-export * from "./side-effect-audit.js";
-export * from "./stable.js";
+export {
+  AEX_DEFAULT_BASE_URL,
+  AEX_DEV_BASE_URL,
+  PLANE_BASE_URLS
+} from "./stable.js";
 export * from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
 export * from "./session-config.js";
@@ -96,7 +97,7 @@ export * from "./runtime-types.js";
 export * from "./webhook-verify.js";
 export * from "./http.js";
 export * from "./session-artifacts.js";
-export * as operations from "./operations.js";
+export * from "./workspace-resources.js";
 export * from "./sse.js";
 // The single canonical event surface: the `is*` guards live on `AexEvent`
 // (`event-envelope.js`) and as METHODS on `AexEventView` (`event-view.js`).

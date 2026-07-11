@@ -54,17 +54,17 @@ describe("HttpClient network failures", () => {
       }
     });
     const err = await rejectionOf(
-      client.request("/assets/presign", { method: "POST", body: "{}" }, { sig: "s3cr3t-query" })
+      client.request("/api/assets/presign", { method: "POST", body: "{}" }, { sig: "s3cr3t-query" })
     );
     expect(err).toBeInstanceOf(AexNetworkError);
     expect(err).toBeInstanceOf(AexError);
     expect(err.code).toBe("NETWORK_ERROR");
     expect(err.method).toBe("POST");
     expect(err.host).toBe("api.example.test");
-    expect(err.path).toBe("/assets/presign");
+    expect(err.path).toBe("/api/assets/presign");
     expect(err.causeCode).toBe("ECONNREFUSED");
     expect(err.cause).toBe(raw);
-    expect(err.message).toContain("POST api.example.test/assets/presign failed");
+    expect(err.message).toContain("POST api.example.test/api/assets/presign failed");
     expect(err.message).toContain("ECONNREFUSED");
     // Nothing sensitive: no token, no query string.
     expect(err.message).not.toContain("secret-token-value");
@@ -87,7 +87,7 @@ describe("HttpClient network failures", () => {
       fetch: async () => {
         calls += 1;
         if (calls === 1) throw raw;
-        return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
+        return new Response(JSON.stringify({ id: "session-1", status: "idle", acceptsMessages: true }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });

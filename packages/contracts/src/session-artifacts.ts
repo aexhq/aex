@@ -167,17 +167,28 @@ export async function opaqueSessionFileId(sessionId: string, relPath: string): P
 }
 
 export interface SessionCheckpointCurrent {
-  readonly v: 1;
+  readonly v: 2;
   readonly workspaceId: string;
   readonly sessionId: string;
   readonly checkpointId: string;
+  readonly runId: string;
+  readonly turnSeq: number;
   readonly manifestKey: string;
   readonly committedAt: string;
   readonly throughSeq: number;
 }
 
+/** Public identity of one complete, immutable session-files checkpoint. */
+export interface SessionCheckpointRevision {
+  readonly checkpointId: string;
+  readonly runId: string;
+  readonly turnSeq: number;
+  readonly committedAt: string;
+  readonly throughSeq: number;
+}
+
 export interface SessionCheckpointIndex {
-  readonly v: 1;
+  readonly v: 2;
   readonly workspaceId: string;
   readonly sessionId: string;
   readonly currentCheckpointId: string;
@@ -186,6 +197,8 @@ export interface SessionCheckpointIndex {
 
 export interface SessionCheckpointIndexEntry {
   readonly checkpointId: string;
+  readonly runId: string;
+  readonly turnSeq: number;
   readonly manifestKey: string;
   readonly committedAt: string;
   readonly throughSeq: number;
@@ -194,10 +207,12 @@ export interface SessionCheckpointIndexEntry {
 }
 
 export interface SessionCheckpointManifest {
-  readonly v: 1;
+  readonly v: 2;
   readonly workspaceId: string;
   readonly sessionId: string;
   readonly checkpointId: string;
+  readonly runId: string;
+  readonly turnSeq: number;
   readonly status: "complete";
   readonly createdAt: string;
   readonly committedAt: string;
@@ -219,15 +234,17 @@ export interface SessionWorkspaceFile {
   readonly sizeBytes: number;
   readonly contentType: string;
   readonly objectKey: string;
-  readonly sha256?: string;
+  readonly sha256: string;
   readonly createdAt: string;
 }
 
 export interface SessionCheckpointWorkspaceIndex {
-  readonly v: 1;
+  readonly v: 2;
   readonly workspaceId: string;
   readonly sessionId: string;
   readonly checkpointId: string;
+  readonly runId: string;
+  readonly turnSeq: number;
   readonly fileCount: number;
   readonly totalBytes: number;
   readonly files: readonly SessionWorkspaceFile[];
@@ -274,7 +291,7 @@ export function s3ObjectRetentionTagValue(key: string): S3ObjectRetentionTagValu
   }
 
   // Current control-plane core is still read by the running container from the
-  // legacy control namespace. It is not a public files namespace and can be cut
+  // internal control namespace. It is not a public files namespace and can be cut
   // over independently after boot/journal consumers move to workspace-scoped keys.
   if (normalized.startsWith(`${SESSIONS_PREFIX}/`)) {
     const parts = normalized.split("/");

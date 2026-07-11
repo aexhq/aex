@@ -1,7 +1,6 @@
 import {
   TOOL_NAME_PATTERN,
   normaliseSkillBundlePath,
-  type AssetRef,
   type ToolInputSchema,
   type ToolRef
 } from "@aexhq/contracts";
@@ -24,32 +23,20 @@ export interface ToolManifestInput {
 }
 
 export class Tool {
-  readonly #ref: ToolRef | DraftToolRef;
-  readonly #inlineBytes: Uint8Array | undefined;
-  /** Asset id cached after the first use, so reuse skips a re-upload. */
-  #assetId: string | undefined;
+  readonly #ref: DraftToolRef;
+  readonly #inlineBytes: Uint8Array;
 
-  private constructor(ref: ToolRef | DraftToolRef, inlineBytes?: Uint8Array) {
+  private constructor(ref: DraftToolRef, inlineBytes: Uint8Array) {
     this.#ref = ref;
     this.#inlineBytes = inlineBytes;
   }
 
-  get ref(): ToolRef | DraftToolRef {
+  get ref(): DraftToolRef {
     return this.#ref;
   }
 
   get isDraft(): boolean {
-    return this.#ref.kind === "draft";
-  }
-
-  /** Internal: the asset id resolved on a prior use, or undefined. */
-  get _cachedAssetId(): string | undefined {
-    return this.#assetId;
-  }
-
-  /** Internal: remember the asset id resolved for this draft's bytes. */
-  _rememberAsset(assetId: string): void {
-    this.#assetId = assetId;
+    return true;
   }
 
   static async fromFiles(
@@ -102,14 +89,7 @@ export class Tool {
     });
   }
 
-  static fromAsset(ref: ToolRef): Tool {
-    return new Tool(normalizeToolRef("Tool.fromAsset", ref));
-  }
-
-  _takeDraftBundle(): { ref: ToolRef; contentHash: string; bytes: Uint8Array } | undefined {
-    if (this.#ref.kind !== "draft" || !this.#inlineBytes) {
-      return undefined;
-    }
+  _takeDraftBundle(): { ref: ToolRef; contentHash: string; bytes: Uint8Array } {
     const { kind: _kind, contentHash, ...ref } = this.#ref;
     return {
       ref: { kind: "asset", ...ref },
@@ -118,41 +98,15 @@ export class Tool {
     };
   }
 
-  async upload(client: ToolUploader): Promise<Tool> {
-    const bundle = this._takeDraftBundle();
-    if (!bundle) {
-      throw new Error("Tool.upload: only draft Tools can be uploaded. A Tool.fromAsset(...) is already materialized.");
-    }
-    const uploaded = await client._uploadAsset({
-      bytes: bundle.bytes,
-      hash: bundle.contentHash,
-      contentType: "application/zip"
-    });
-    return new Tool({ ...bundle.ref, assetId: uploaded.assetId });
-  }
-
-  toJSON(): ToolRef {
-    if (this.#ref.kind === "draft") {
-      throw new Error(
-        "Tool: draft Tools cannot be JSON-serialised — they only become wire refs when aex.start / openSession uploads the bytes as an asset."
-      );
-    }
-    return this.#ref;
+  toJSON(): never {
+    throw new Error("Tool drafts cannot be submitted directly; publish with aex.workspace.tools.publish(...)");
   }
 }
-
 export interface DraftToolRef extends Omit<ToolRef, "kind"> {
   readonly kind: "draft";
   readonly contentHash: string;
 }
 
-export interface ToolUploader {
-  _uploadAsset(args: {
-    readonly bytes: Uint8Array;
-    readonly hash: string;
-    readonly contentType?: string;
-  }): Promise<{ readonly assetId: string }>;
-}
 
 function normalizeToolManifest(source: string, input: ToolManifestInput, files?: SkillFiles): ToolBundleManifest {
   const name = input.name;
@@ -203,20 +157,4 @@ function assertJsModuleEntry(source: string, entry: string, rawEntry: string, fi
       `${source}: entry ${JSON.stringify(rawEntry)} is not present in files (keys: ${Object.keys(files).join(", ") || "(none)"})`
     );
   }
-}
-
-function normalizeToolRef(source: string, ref: ToolRef): ToolRef {
-  const manifest = normalizeToolManifest(source, {
-    name: ref.name,
-    description: ref.description,
-    input_schema: ref.input_schema,
-    entry: ref.entry
-  });
-  if (ref.kind !== "asset") {
-    throw new Error(`${source}: ref.kind must be "asset"`);
-  }
-  if (typeof ref.assetId !== "string" || !/^asset_[A-Za-z0-9_-]{8,128}$/.test(ref.assetId)) {
-    throw new Error(`${source}: ref.assetId must be an asset id`);
-  }
-  return { kind: "asset", assetId: ref.assetId, ...manifest };
 }

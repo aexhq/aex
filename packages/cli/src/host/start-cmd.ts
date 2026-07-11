@@ -1,12 +1,13 @@
 /**
  * `aex start` — one-shot over the session API. Host CLI parsing stays thin and
- * submits through the shared public contracts transport (`operations.submit`):
+ * creates the session and first run through the shared public contracts transport
+ * (`operations.createSessionWithMessage`):
  *   - model / provider / session-timeout are arbitrated by shared contracts (no CLI-local
  *     `SUPPORTED_MODELS` gate, no `parseDuration`-only floor check); an unknown model
  *     with an explicit `--provider` is forward-compat accepted, a typo yields a
  *     shared "did you mean?" hint.
- *   - skills / tools / agentsMd / files ATTACH via `--skill`/`--tool`/
- *     `--agents-md`/`--file`, staged through the same public asset protocol the
+ *   - skills / tools / instructions / files attach via `--skill`/`--tool`/
+ *     `--instructions`/`--file`, published through the same workspace resource API the
  *     SDK uses.
  *
  * Two input modes (mutually exclusive):
@@ -20,7 +21,7 @@
  * the common `--api-key <token>`.
  */
 import {
-  operations,
+  isReplayableEvent,
   parseSessionRequestConfig,
   parseSessionTimeout,
   providersForModel,
@@ -32,9 +33,9 @@ import {
   type PlatformEnvironment,
   type ModelName,
   type ProviderName,
-  type Session,
   type RuntimeSize
 } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import {
@@ -48,8 +49,7 @@ import {
   collectRepeatedKvList,
   describeApiError,
   emitJsonError,
-  isSessionOk,
-  isSessionParked,
+  isSessionNonProgressing,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
@@ -60,13 +60,13 @@ import {
   takeOptionFlag
 } from "./common.js";
 import {
-  buildCliAgentsMd,
+  buildCliInstructions,
   buildCliFile,
   buildCliSkill,
   buildCliTool,
   submitCliRun,
   toCliSessionEnvironment,
-  type CliAgentsMdDraft,
+  type CliInstructionsDraft,
   type CliFileDraft,
   type CliMcpServer,
   type CliSessionSubmitOptions,
@@ -77,8 +77,6 @@ import { openEnvelopeStream } from "./stream-render.js";
 
 /** Default idle window a one-shot session may sit before the platform reaps it. Mirrors the SDK. */
 const DEFAULT_SESSION_IDLE_TTL = "3m";
-const FOLLOW_SETTLE_POLL_DEADLINE_MS = 60_000;
-const FOLLOW_SETTLE_POLL_INTERVAL_MS = 750;
 
 export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedSession(io, "start")) return USAGE_ERR;
@@ -187,9 +185,9 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   const toolFlags = collectRepeated(rest, "--tool");
   if (toolFlags.error) { io.stderr(`${toolFlags.error}\n`); return USAGE_ERR; }
   rest = toolFlags.remaining;
-  const agentsMdFlags = collectRepeated(rest, "--agents-md");
-  if (agentsMdFlags.error) { io.stderr(`${agentsMdFlags.error}\n`); return USAGE_ERR; }
-  rest = agentsMdFlags.remaining;
+  const instructionsFlags = collectRepeated(rest, "--instructions");
+  if (instructionsFlags.error) { io.stderr(`${instructionsFlags.error}\n`); return USAGE_ERR; }
+  rest = instructionsFlags.remaining;
   const fileFlags = collectRepeated(rest, "--file");
   if (fileFlags.error) { io.stderr(`${fileFlags.error}\n`); return USAGE_ERR; }
   rest = fileFlags.remaining;
@@ -353,12 +351,12 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   // ---------------- Build the SDK attach primitives (T6a) ----------------------
   let skills: CliSkillDraft[];
   let tools: CliToolDraft[];
-  let agentsMd: CliAgentsMdDraft[];
+  let instructions: CliInstructionsDraft[];
   let files: CliFileDraft[];
   try {
     skills = await Promise.all(skillFlags.values.map((ref) => buildSkill(io, ref)));
     tools = await Promise.all(toolFlags.values.map((ref) => buildTool(io, ref)));
-    agentsMd = await Promise.all(agentsMdFlags.values.map((ref) => buildAgentsMd(io, ref)));
+    instructions = await Promise.all(instructionsFlags.values.map((ref) => buildInstructions(io, ref)));
     files = await Promise.all(fileFlags.values.map((ref) => buildFile(io, ref)));
   } catch (err) {
     io.stderr(`failed to attach asset: ${(err as Error).message}\n`);
@@ -376,7 +374,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     ...(system ? { system } : {}),
     ...(skills.length > 0 ? { skills } : {}),
     ...(tools.length > 0 ? { tools } : {}),
-    ...(agentsMd.length > 0 ? { agentsMd } : {}),
+    ...(instructions.length > 0 ? { instructions } : {}),
     ...(files.length > 0 ? { files } : {}),
     ...(mcpServers.length > 0 ? { mcpServers } : {}),
     ...(metadata ? { metadata } : {}),
@@ -397,7 +395,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     io.stderr(
       JSON.stringify({
         error: "websocket_unavailable",
-        message: "`aex start --follow` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or session with bun."
+        message: "`aex start --follow` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun."
       }) + "\n"
     );
     return USAGE_ERR;
@@ -405,9 +403,9 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
 
   // Fire-and-forget submit: create the session, post the first turn, then print
   // the accepted session record.
-  let session;
+  let accepted;
   try {
-    session = await submitCliRun(http, io.fetchImpl, options);
+    accepted = await submitCliRun(http, io.fetchImpl, options);
   } catch (err) {
     const d = describeApiError(err);
     return emitJsonError(io, "session_failed", d.message, {
@@ -416,11 +414,12 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     });
   }
 
+  const session = accepted.session;
   io.stdout(JSON.stringify(session) + "\n");
   if (!follow.present) return SUCCESS;
 
   // `--follow`: stream the live coordinator envelopes as NDJSON until the
-  // session parks, then print the final session record.
+  // run finishes, then print the final session record.
   const controller = new AbortController();
   let timedOut = false;
   let interrupted = false;
@@ -436,13 +435,24 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
           controller.abort();
         }, followTimeoutMs);
   let lastSeq = -1;
+  let terminalOutcome: string | undefined;
   try {
     const stream = openEnvelopeStream(io, http, session.id, {
+      runId: accepted.run.runId,
       signal: controller.signal,
       ...(common.flags.debug ? { debug: (line: string) => io.stderr(`[aex] ${line}\n`) } : {})
     });
     for await (const event of stream) {
-      lastSeq = event.sequence;
+      if (isReplayableEvent(event)) {
+        lastSeq = event.sequence;
+        if (
+          event.runId === accepted.run.runId &&
+          (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") &&
+          typeof event.data.outcome === "string"
+        ) {
+          terminalOutcome = event.data.outcome;
+        }
+      }
       io.stdout(JSON.stringify(event) + "\n");
     }
   } catch (err) {
@@ -451,7 +461,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
       emitJsonError(io, "session_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
         sessionId: session.id,
         lastSeq,
-        ...followTimeoutContext(session),
+        ...followTimeoutContext(session, accepted.run),
         hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
       });
       return TIMEOUT_ERR;
@@ -468,7 +478,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     emitJsonError(io, "session_follow_timeout", `timed out after ${followTimeoutMs}ms following session`, {
       sessionId: session.id,
       lastSeq,
-      ...followTimeoutContext(session),
+      ...followTimeoutContext(session, accepted.run),
       hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
     });
     return TIMEOUT_ERR;
@@ -479,14 +489,26 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   }
 
   try {
-    const final = await followSettledSessionRecord(http, session.id, controller.signal);
+    const final = await operations.getSession(http, session.id);
     io.stdout(JSON.stringify(final) + "\n");
-    if (isSessionOk(final.status)) return SUCCESS;
+    if (!isSessionNonProgressing(final.status)) {
+      io.stderr(
+        JSON.stringify({
+          error: "run_terminal_inconsistent",
+          sessionId: session.id,
+          status: final.status,
+          hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
+        }) + "\n"
+      );
+      return RUNTIME_ERR;
+    }
+    if (terminalOutcome === "succeeded") return SUCCESS;
     io.stderr(
       JSON.stringify({
         error: "session_not_ok",
         sessionId: session.id,
         status: final.status,
+        ...(terminalOutcome ? { outcome: terminalOutcome } : {}),
         hint: `aex status ${session.id} | aex events ${session.id} | aex download ${session.id}`
       }) + "\n"
     );
@@ -497,41 +519,6 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   }
 }
 
-async function followSettledSessionRecord(http: HttpClient, sessionId: string, signal: AbortSignal): Promise<Session> {
-  const deadline = Date.now() + FOLLOW_SETTLE_POLL_DEADLINE_MS;
-  let last = await operations.getSession(http, sessionId);
-  if (isSessionParked(last.status)) return last;
-
-  while (signal.aborted !== true && Date.now() < deadline) {
-    try {
-      await sleep(FOLLOW_SETTLE_POLL_INTERVAL_MS, signal);
-    } catch {
-      return last;
-    }
-    const next = await operations.getSession(http, sessionId).catch(() => undefined);
-    if (next === undefined) continue;
-    last = next;
-    if (isSessionParked(next.status)) return next;
-  }
-  return last;
-}
-
-async function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = (): void => signal.removeEventListener("abort", abort);
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-    const abort = (): void => {
-      clearTimeout(timer);
-      cleanup();
-      reject(new Error("aborted"));
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
 
 /* ---------- attach-primitive builders ---------- */
 
@@ -552,9 +539,9 @@ async function buildTool(io: CliIO, ref: string): Promise<CliToolDraft> {
   });
 }
 
-async function buildAgentsMd(io: CliIO, ref: string): Promise<CliAgentsMdDraft> {
+async function buildInstructions(io: CliIO, ref: string): Promise<CliInstructionsDraft> {
   const content = await readAtFile(io, ref);
-  return buildCliAgentsMd(content, deriveName(ref, 2));
+  return buildCliInstructions(content, deriveName(ref, 2));
 }
 
 async function buildFile(io: CliIO, ref: string): Promise<CliFileDraft> {
@@ -581,22 +568,20 @@ function baseName(p: string): string {
   return i >= 0 ? trimmed.slice(i + 1) : trimmed;
 }
 
-function followTimeoutContext(session: {
-  readonly status?: unknown;
-  readonly turnSeq?: unknown;
-  readonly turnStatus?: unknown;
-}): Record<string, string | number> {
+function followTimeoutContext(
+  session: { readonly status?: unknown },
+  run: { readonly turnSeq?: unknown }
+): Record<string, string | number> {
   return {
     ...(typeof session.status === "string" ? { sessionStatus: session.status } : {}),
-    ...(typeof session.turnSeq === "number" ? { turnSeq: session.turnSeq } : {}),
-    ...(typeof session.turnStatus === "string" ? { turnStatus: session.turnStatus } : {})
+    ...(typeof run.turnSeq === "number" ? { turnSeq: run.turnSeq } : {})
   };
 }
 
 /**
  * Derive a lowercase, hyphen-safe workspace/tool name from a file reference.
  * `minLen` pads short slugs so a name still satisfies the 2+-char workspace
- * pattern (agentsMd); the factory revalidates and throws on a truly bad name.
+ * pattern; the factory revalidates and throws on a truly bad name.
  */
 function deriveName(ref: string, minLen: number): string {
   const base = baseName(stripAt(ref));

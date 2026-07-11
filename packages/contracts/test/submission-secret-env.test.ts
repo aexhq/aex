@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 /**
  * `submission.secretEnv` (value-free declarations, hashed) + `secrets.envSecrets`
@@ -17,8 +17,8 @@ const base = {
   idempotencyKey: "idem-1",
   submission: {
     model: "claude-haiku-4-5",
-    prompt: ["hi"],    agentsMd: [],
-    files: [],
+    prompt: ["hi"],    assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
     mcpServers: []
   },
   secrets: { apiKeys: { anthropic: "sk-ant-test" } }

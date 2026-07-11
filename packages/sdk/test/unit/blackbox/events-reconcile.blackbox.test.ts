@@ -9,7 +9,7 @@
  *   T11a every event is a guard-BEARING view: `isTextMessage()`/`isToolCallStart()`
  *        /`isToolCallResult()` work and NARROW `data`.
  *   T11c the tool START/RESULT join key is discoverable via `toolCallId()`.
- *   WS8  a session's subagent children resolve through the session record facade with lineage.
+ *   WS8  a session's subagent children expose read-only observation handles with lineage.
  */
 import { describe, expect, it } from "vitest";
 import type { SessionStartOptions } from "../../../src/index.js";
@@ -68,8 +68,8 @@ describe("blackbox: canonical event identity + lineage", () => {
     });
 
     // Re-open the session and read the snapshot the LIST endpoint serves.
-    const handle = await platform.aex.openSession(result.sessionId);
-    const listed = await handle.events().list();
+    const handle = await platform.aex.sessions.open(result.sessionId);
+    const listed = await handle.events.list();
 
     const listIds = new Set(listed.map((e) => e.id));
     const streamIds = result.events.map((e) => e.id);
@@ -88,18 +88,20 @@ describe("blackbox: canonical event identity + lineage", () => {
     const result = await platform.start(SESSION, { text: "spawned a subagent", costUsd: 0.02 });
 
     platform.setChildren(result.sessionId, [
-      { id: "child-1", parentSessionId: result.sessionId, depth: 1, status: "succeeded" },
-      { id: "child-2", parentSessionId: result.sessionId, depth: 1, status: "failed" }
+      { id: "child-1", parentSessionId: result.sessionId, depth: 1, status: "idle" },
+      { id: "child-2", parentSessionId: result.sessionId, depth: 1, status: "error" }
     ]);
 
-    const handle = await platform.aex.openSession(result.sessionId);
+    const handle = await platform.aex.sessions.open(result.sessionId);
     const children = await handle.children();
 
     expect(children.map((c) => c.id)).toEqual(["child-1", "child-2"]);
     for (const c of children) {
-      expect(c.parentSessionId).toBe(result.sessionId); // resolvable lineage
+      expect(c.parentSessionId).toBe(result.sessionId);
       expect(c.depth).toBe(1);
+      expect("get" in c).toBe(false);
+      expect("cancel" in c).toBe(false);
     }
-    expect(children.map((c) => c.status)).toEqual(["succeeded", "failed"]);
+    expect(children.map((c) => c.status)).toEqual(["idle", "error"]);
   });
 });

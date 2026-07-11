@@ -1,17 +1,17 @@
 /**
- * Offline edge-case sweep for the AGENTS.MD + FILES/ASSETS composition surface,
+ * Offline edge-case sweep for the INSTRUCTIONS + FILES/ASSETS composition surface,
  * exercised through a clean installed `@aexhq/sdk` (blackbox, child process,
  * cwd = install tempdir so `import "@aexhq/sdk"` resolves the packed artifact).
  * No live run — every case is SDK-side validation / wire-shape / dedup.
  *
  * These target the client-side contract of the two primitives whose LIVE
- * behaviour is covered by the sibling `test/live/edge-agentsmd-files.user.test.ts`:
+ * behaviour is covered by the sibling `test/live/edge-instructions-files.user.test.ts`:
  *
- *   A. `AgentsMd.fromContent(...)` input validation + draft build: empty content,
+ *   A. `Instructions.fromContent(...)` input validation + draft build: empty content,
  *      malformed `name` (uppercase / single-char / leading-or-trailing dash /
  *      too long), large (100 KB) + unicode/markdown content accepted, dedup hash
  *      is a pure function of (content) under a fixed name, and a draft cannot be
- *      JSON-serialised.
+ *      submitted directly.
  *   B. `File.fromBytes(...)` input validation + path-traversal DEFENCE: a
  *      `../../etc/passwd` (and backslash / `.` / `..` / slash / NUL / empty /
  *      over-255) filename is REJECTED client-side; zero-byte + non-Uint8Array
@@ -21,7 +21,7 @@
  *      is documented to rebase it under the workspace — the live suite checks
  *      that it actually clamps); content-hash dedup keys on (bytes + filename).
  *   C. Wire composition + content-addressed dedup via a fake-fetch client: an
- *      `agentsMd` + `files` submission serialises both as `kind:"asset"` refs;
+ *      `instructions` + `files` submission serialises immutable, typed workspace refs;
  *      the same File instance passed twice, and two DISTINCT instances with
  *      identical bytes, both resolve to ONE `assetId` (store dedup) — no error,
  *      no duplicate upload.
@@ -83,6 +83,7 @@ function makeFetch() {
   const calls = [];
   const stored = new Set();
   let sessionCounter = 0;
+  let resourceCounter = 0;
   const fetchFake = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = String(init.method ?? "GET").toUpperCase();
@@ -91,7 +92,7 @@ function makeFetch() {
     calls.push({ url, method, headers, body });
     const j = (status, obj) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
-    if (url.endsWith("/assets/presign")) {
+    if (url.endsWith("/api/assets/presign")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice(7) : hash;
       if (stored.has(hash)) return j(200, { ok: true, exists: true, assetId: "asset_" + hex, contentHash: hash, sizeBytes: 0 });
@@ -106,14 +107,25 @@ function makeFetch() {
       if (m) stored.add("sha256:" + m[1]);
       return new Response("", { status: 200 });
     }
-    if (url.endsWith("/assets/finalize")) {
+    if (url.endsWith("/api/assets/finalize")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice(7) : hash;
-      return j(200, { ok: true, exists: false, assetId: "asset_" + hex, contentHash: hash, sizeBytes: 0 });
+      return j(200, { ok: true, exists: false, assetId: "asset_" + hex, contentHash: hash, sizeBytes: body.sizeBytes });
+    }
+    const workspace = /\/workspace\/(files|instructions)$/.exec(new URL(url).pathname);
+    if (workspace && method === "POST") {
+      resourceCounter += 1;
+      return j(200, { resource: {
+        ...body,
+        kind: workspace[1] === "files" ? "file" : "instruction",
+        resourceId: "wres_" + resourceCounter.toString(16).repeat(32),
+        version: resourceCounter,
+        createdAt: new Date(0).toISOString()
+      }});
     }
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;
-      return j(201, { session: { id: "sess_edge_" + sessionCounter, workspaceId: "ws_edge", status: "idle", turnSeq: 0, createdAt: new Date(0).toISOString() } });
+      return j(201, { session: { id: "sess_edge_" + sessionCounter, workspaceId: "ws_edge", status: "idle", acceptsMessages: true, createdAt: new Date(0).toISOString() } });
     }
     return j(200, { ok: true });
   };
@@ -127,7 +139,7 @@ function onlyCreateBody(calls) {
 }
 `;
 
-describe("edge: agents.md + files composition (offline, installed package)", () => {
+describe("edge: instructions + files composition (offline, installed package)", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
@@ -148,54 +160,43 @@ describe("edge: agents.md + files composition (offline, installed package)", () 
     return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
   }
 
-  it("A: AgentsMd.fromContent validates name/content, builds drafts, dedups by content", async () => {
+  it("A: Instructions.fromContent validates name/content, builds drafts, dedups by content", async () => {
     const script =
       CHILD_HARNESS +
       String.raw`
-const { AgentsMd } = await import("@aexhq/sdk");
+const { Instructions } = await import("@aexhq/sdk");
 
 const bad = [
-  ["empty content", () => AgentsMd.fromContent("", { name: "rules" }), /non-empty string/],
-  ["whitespace-only name miss", () => AgentsMd.fromContent("# x", { name: "  " }), /name must match/],
-  ["name uppercase", () => AgentsMd.fromContent("# x", { name: "Rules" }), /name must match/],
-  ["name single char", () => AgentsMd.fromContent("# x", { name: "a" }), /name must match/],
-  ["name leading dash", () => AgentsMd.fromContent("# x", { name: "-rules" }), /name must match/],
-  ["name trailing dash", () => AgentsMd.fromContent("# x", { name: "rules-" }), /name must match/],
-  ["name too long", () => AgentsMd.fromContent("# x", { name: "a".repeat(65) }), /name must match/],
-  ["name underscore", () => AgentsMd.fromContent("# x", { name: "my_rules" }), /name must match/]
+  ["empty content", () => Instructions.fromContent("", { name: "rules" }), /non-empty string/],
+  ["whitespace-only name miss", () => Instructions.fromContent("# x", { name: "  " }), /name must match/],
+  ["name uppercase", () => Instructions.fromContent("# x", { name: "Rules" }), /name must match/],
+  ["name leading dash", () => Instructions.fromContent("# x", { name: "-rules" }), /name must match/],
+  ["name trailing dash", () => Instructions.fromContent("# x", { name: "rules-" }), /name must match/],
+  ["name too long", () => Instructions.fromContent("# x", { name: "a".repeat(65) }), /name must match/],
+  ["name underscore", () => Instructions.fromContent("# x", { name: "my_rules" }), /name must match/]
 ];
 const msgs = {};
 for (const [label, fn, pat] of bad) msgs[label] = await expectReject(label, fn, pat);
 
 // Accept path: a valid draft.
-const good = await AgentsMd.fromContent("# Be terse\nAlways answer in one word.", { name: "rules" });
-strictEqual(good.isDraft, true, "valid agentsMd is a draft");
-strictEqual(good.ref.kind, "draft");
-strictEqual(good.ref.name, "rules");
-ok(typeof good.ref.contentHash === "string" && good.ref.contentHash.length > 0, "draft carries a contentHash");
+const good = await Instructions.fromContent("# Be terse\nAlways answer in one word.", { name: "rules" });
+strictEqual(good.name, "rules");
 
 // Large 100 KB content builds without throwing.
-const big = await AgentsMd.fromContent("# Notes\n" + "x".repeat(100 * 1024), { name: "big-rules" });
-ok(big.ref.contentHash.length > 0, "100KB agents.md builds");
+const big = await Instructions.fromContent("# Notes\n" + "x".repeat(100 * 1024), { name: "big-rules" });
+strictEqual(big.name, "big-rules");
 
 // Unicode + markdown content builds without throwing.
-const uni = await AgentsMd.fromContent("# Cafe ☕ π\n- **bold** _em_ text\n日本語 🦘", { name: "uni-rules" });
-ok(uni.ref.contentHash.length > 0, "unicode agents.md builds");
+const uni = await Instructions.fromContent("# Cafe ☕ π\n- **bold** _em_ text\n日本語 🦘", { name: "uni-rules" });
+strictEqual(uni.name, "uni-rules");
 
-// Dedup: identical content under a fixed name => identical hash; different content => different hash.
-const d1 = await AgentsMd.fromContent("# same body", { name: "rr" });
-const d2 = await AgentsMd.fromContent("# same body", { name: "rr" });
-strictEqual(d1.ref.contentHash, d2.ref.contentHash, "same content => same hash (dedup)");
-const d3 = await AgentsMd.fromContent("# different body", { name: "rr" });
-ok(d1.ref.contentHash !== d3.ref.contentHash, "different content => different hash");
+// A draft cannot be submitted directly; it must go through the workspace publisher.
+await expectReject("draft toJSON", async () => good.toJSON(), /cannot be submitted directly/);
 
-// A draft cannot be JSON-serialised (only becomes a wire ref after upload).
-await expectReject("draft toJSON", async () => good.toJSON(), /cannot be JSON-serialised/);
-
-console.log(JSON.stringify({ ok: true, rejected: Object.keys(msgs).length, goodName: good.ref.name, sample: msgs["name uppercase"] }));
+console.log(JSON.stringify({ ok: true, rejected: Object.keys(msgs).length, goodName: good.name, sample: msgs["name uppercase"] }));
 `;
-    const result = await runChild(script, "edge-agentsmd-validate.mjs");
-    expect(result).toMatchObject({ ok: true, rejected: 8, goodName: "rules" });
+    const result = await runChild(script, "edge-instructions-validate.mjs");
+    expect(result).toMatchObject({ ok: true, rejected: 7, goodName: "rules" });
   });
 
   it("B: File.fromBytes defends path traversal, validates bytes/mountPath, builds + dedups", async () => {
@@ -254,7 +255,7 @@ ok(f1.ref.contentHash !== f3.ref.contentHash, "different bytes => different hash
 const f4 = await File.fromBytes({ name: "other.bin", bytes: B("payload") });
 ok(f1.ref.contentHash !== f4.ref.contentHash, "filename participates in the content hash");
 
-await expectReject("draft toJSON", async () => f1.toJSON(), /cannot be JSON-serialised/);
+await expectReject("draft toJSON", async () => f1.toJSON(), /workspace\.files\.publish/);
 
 console.log(JSON.stringify({
   ok: true,
@@ -275,11 +276,11 @@ console.log(JSON.stringify({
     });
   });
 
-  it("C: agents.md + files serialise as asset refs and dedup to one assetId", async () => {
+  it("C: instructions + files serialise as immutable workspace refs and dedup to one assetId", async () => {
     const script =
       CHILD_HARNESS +
       String.raw`
-const { Aex, AgentsMd, File } = await import("@aexhq/sdk");
+const { Aex, Instructions, File } = await import("@aexhq/sdk");
 const B = (s) => new TextEncoder().encode(s);
 
 function makeClient() {
@@ -287,22 +288,30 @@ function makeClient() {
   return { calls, client: new Aex({ apiKey: "aex_edge_token", baseUrl: "https://example.invalid", fetch }) };
 }
 
-// 1. agents.md + the SAME File instance passed twice => both wire entries share one assetId.
+// 1. Publish instructions and a file, then submit only pinned workspace refs.
 let sameInstance;
 {
   const c = makeClient();
-  const a = await AgentsMd.fromContent("# rules\nBe terse.", { name: "rules" });
+  const a = await Instructions.fromContent("# rules\nBe terse.", { name: "rules" });
   const f = await File.fromBytes({ name: "data.txt", bytes: B("hello world"), mountPath: "/workspace/data" });
-  await c.client.sessions.create({ model: "claude-haiku-4-5", agentsMd: [a], files: [f, f], apiKeys: { anthropic: "sk-ant" } });
+  const aRef = await c.client.workspace.instructions.publish(a);
+  const fRef = await c.client.workspace.files.publish(f);
+  await c.client.sessions.create({
+    model: "claude-haiku-4-5",
+    assets: { instructions: [aRef], files: [fRef, fRef] },
+    apiKeys: { anthropic: "sk-ant" }
+  });
   const body = onlyCreateBody(c.calls);
-  strictEqual(body.submission.agentsMd.length, 1, "one agents.md ref");
-  strictEqual(body.submission.agentsMd[0].kind, "asset");
-  strictEqual(body.submission.agentsMd[0].name, "rules");
-  strictEqual(body.submission.files.length, 2, "both file entries ride the wire");
-  strictEqual(body.submission.files[0].kind, "asset");
-  strictEqual(body.submission.files[0].mountPath, "/workspace/data", "custom mountPath preserved on the wire");
-  strictEqual(body.submission.files[0].assetId, body.submission.files[1].assetId, "same instance => one assetId");
-  sameInstance = { files: body.submission.files.length, dedup: body.submission.files[0].assetId === body.submission.files[1].assetId };
+  strictEqual(body.submission.assets.instructions[0].kind, "instruction");
+  strictEqual(body.submission.assets.instructions[0].name, "rules");
+  strictEqual(body.submission.assets.files.length, 2, "both pinned refs ride the wire");
+  strictEqual(body.submission.assets.files[0].kind, "file");
+  strictEqual(body.submission.assets.files[0].mountPath, "/workspace/data");
+  strictEqual(body.submission.assets.files[0].assetId, body.submission.assets.files[1].assetId);
+  sameInstance = {
+    files: body.submission.assets.files.length,
+    dedup: body.submission.assets.files[0].assetId === body.submission.assets.files[1].assetId
+  };
 }
 
 // 2. Two DISTINCT File instances with IDENTICAL bytes+name => content-addressed store
@@ -314,13 +323,19 @@ let distinctInstances;
   const g2 = await File.fromBytes({ name: "same.txt", bytes: B("duplicate-bytes") });
   ok(g1.ref.contentHash === g2.ref.contentHash, "identical content hashes");
   ok(g1 !== g2, "distinct instances");
-  await c.client.sessions.create({ model: "claude-haiku-4-5", files: [g1, g2], apiKeys: { anthropic: "sk-ant" } });
+  const g1Ref = await c.client.workspace.files.publish(g1);
+  const g2Ref = await c.client.workspace.files.publish(g2);
+  await c.client.sessions.create({
+    model: "claude-haiku-4-5",
+    assets: { files: [g1Ref, g2Ref] },
+    apiKeys: { anthropic: "sk-ant" }
+  });
   const body = onlyCreateBody(c.calls);
-  strictEqual(body.submission.files[0].assetId, body.submission.files[1].assetId, "distinct instances, same bytes => one assetId (store dedup)");
+  strictEqual(body.submission.assets.files[0].assetId, body.submission.assets.files[1].assetId, "distinct instances, same bytes => one assetId (store dedup)");
   // Exactly one PUT to object storage (the second was a presign dedup hit).
   const puts = c.calls.filter((x) => x.method === "PUT" && x.url.includes("object-storage.example.test"));
   strictEqual(puts.length, 1, "identical bytes uploaded once, not twice");
-  distinctInstances = { dedup: body.submission.files[0].assetId === body.submission.files[1].assetId, puts: puts.length };
+  distinctInstances = { dedup: body.submission.assets.files[0].assetId === body.submission.assets.files[1].assetId, puts: puts.length };
 }
 
 console.log(JSON.stringify({ ok: true, sameInstance, distinctInstances }));

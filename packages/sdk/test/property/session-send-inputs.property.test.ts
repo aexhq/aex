@@ -101,12 +101,12 @@ function makeHarness(): Harness {
     });
 
     if (method === "POST" && url.endsWith("/api/sessions")) {
-      return json({ session: { id: SESSION_ID, status: "idle", turnSeq: 0 } });
+      return json({ session: { id: SESSION_ID, status: "idle", acceptsMessages: true } });
     }
     if (method === "POST" && url.endsWith(`/api/sessions/${SESSION_ID}/messages`)) {
       return json({
-        session: { id: SESSION_ID, status: "running", turnSeq: 1 },
-        turn: { sessionId: SESSION_ID, turnSeq: 1 },
+        session: { id: SESSION_ID, status: "running", acceptsMessages: false },
+        run: { sessionId: SESSION_ID, turnSeq: 1, runId: "run_property", phase: "running", eventCursor: TEXT_SEQUENCE_START },
         eventCursor: TEXT_SEQUENCE_START
       });
     }
@@ -117,15 +117,18 @@ function makeHarness(): Harness {
         expiresAtMs: 1
       });
     }
-    if (method === "GET" && url.endsWith(`/api/sessions/${SESSION_ID}/files`)) {
-      return json({ files: [{ id: "out_property", filename: "answer.txt" }] });
+    if (method === "GET" && url.includes(`/api/sessions/${SESSION_ID}/files?checkpointId=cp_property`)) {
+      return json({
+        revision: { checkpointId: "cp_property", runId: "run_property", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: TEXT_SEQUENCE_START },
+        files: [{ id: "out_property", checkpointId: "cp_property", filename: "answer.txt" }]
+      });
     }
     if (method === "GET" && url.endsWith(`/api/sessions/${SESSION_ID}`)) {
       return json({
         session: {
           id: SESSION_ID,
           status: "idle",
-          turnSeq: 1,
+          acceptsMessages: true,
           costTelemetry: {
             providerUsage: [{ inputTokens: 3, outputTokens: 5, totalTokens: 8 }]
           },
@@ -202,6 +205,8 @@ function textEvent(spec: TextEventSpec, sequence: number): AexEvent {
     source: "agent",
     type: "TEXT_MESSAGE_CONTENT",
     subject: SESSION_ID,
+    threadId: SESSION_ID,
+    runId: "run_property",
     time: eventTime(sequence),
     sequence,
     data
@@ -213,11 +218,18 @@ function idleEvent(sequence: number): AexEvent {
     specversion: "1.0",
     id: `${SESSION_ID}:${sequence}`,
     source: "runtime",
-    type: "CUSTOM",
+    type: "RUN_FINISHED",
     subject: SESSION_ID,
+    threadId: SESSION_ID,
+    runId: "run_property",
     time: eventTime(sequence),
     sequence,
-    data: { name: "aex.session.idle", value: { turnSeq: 1 } }
+    data: {
+      outcome: "succeeded",
+      costUsd: 0.001,
+      providerUsage: [{ inputTokens: 3, outputTokens: 5, totalTokens: 8 }],
+      checkpoint: { checkpointId: "cp_property" }
+    }
   };
 }
 
@@ -297,17 +309,13 @@ function assertTurnEventProjection(result: SessionResult, specs: readonly TextEv
   expect(result.messages).toEqual(expectedMessages(specs));
   expect(result.events.map((event) => event.type)).toEqual([
     ...specs.map(() => "TEXT_MESSAGE_CONTENT"),
-    "CUSTOM"
+    "RUN_FINISHED"
   ]);
   expect(result.trace.text).toEqual(expectedTraceText(specs));
   expect(result.trace.toolCalls).toEqual([]);
-  expect(result.files).toEqual([{ id: "out_property", filename: "answer.txt" }]);
+  expect(result.files).toEqual([{ id: "out_property", checkpointId: "cp_property", filename: "answer.txt" }]);
   expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 5, totalTokens: 8 });
   expect(result.costUsd).toBe(0.001);
-}
-
-function assertNoSessionEndpoint(harness: Harness): void {
-  expect(harness.calls.some((call) => call.url.includes("/api/sessions"))).toBe(false);
 }
 
 function isValidSessionInput(value: unknown): value is SessionInput {
@@ -384,27 +392,6 @@ describe("SDK run/send SessionInput properties", () => {
         expect(messageCalls(harness)[0]!.body).toEqual({ input });
         expectSessionKeys(harness, keys);
         expect(result.text).toBe("");
-        assertNoSessionEndpoint(harness);
-      }),
-      PROPERTY_RUNS
-    );
-  });
-
-  it("sessions.start serializes valid message inputs and uses predictable idempotency keys", async () => {
-    await fc.assert(
-      fc.asyncProperty(validSessionInput, idempotencyCase, async (input, keys) => {
-        const harness = makeHarness();
-        const promise = harness.client.sessions.start({
-          ...runOptions(input, keys),
-          stream: { webSocketFactory: harness.webSocketFactory }
-        });
-        await finishTurn(harness);
-        const result = await promise;
-
-        expect(messageCalls(harness)[0]!.body).toEqual({ input });
-        expectSessionKeys(harness, keys);
-        expect(result.text).toBe("");
-        assertNoSessionEndpoint(harness);
       }),
       PROPERTY_RUNS
     );
@@ -414,13 +401,13 @@ describe("SDK run/send SessionInput properties", () => {
     await fc.assert(
       fc.asyncProperty(validSessionInput, fc.option(keyString, { nil: undefined }), async (input, providedKey) => {
         const harness = makeHarness();
-        const session = await harness.client.openSession(SESSION_ID);
+        const session = await harness.client.sessions.open(SESSION_ID);
         harness.calls.length = 0;
 
-        const promise = session.send(input, {
+        const promise = session.messages.send(input, {
           webSocketFactory: harness.webSocketFactory,
           ...(providedKey !== undefined ? { idempotencyKey: providedKey } : {})
-        }).done();
+        }).finished();
         await finishTurn(harness);
         const result = await promise;
         const messages = messageCalls(harness);
@@ -449,28 +436,14 @@ describe("SDK run/send SessionInput properties", () => {
     );
   });
 
-  it("rejects invalid sessions.start message inputs before any HTTP request", async () => {
-    await fc.assert(
-      fc.asyncProperty(invalidSessionInput, async (input) => {
-        const harness = makeHarness();
-
-        await expect(
-          harness.client.sessions.start({ ...runOptions("fallback"), message: input } as unknown as SessionStartOptions)
-        ).rejects.toBeInstanceOf(Error);
-        expect(harness.calls).toHaveLength(0);
-      }),
-      PROPERTY_RUNS
-    );
-  });
-
   it("rejects invalid session.send inputs before sending any HTTP request", async () => {
     await fc.assert(
       fc.asyncProperty(invalidSessionInput, async (input) => {
         const harness = makeHarness();
-        const session = await harness.client.openSession(SESSION_ID);
+        const session = await harness.client.sessions.open(SESSION_ID);
         harness.calls.length = 0;
 
-        expect(() => session.send(input as SessionInput)).toThrow(Error);
+        expect(() => session.messages.send(input as SessionInput)).toThrow(Error);
         expect(harness.calls).toHaveLength(0);
       }),
       PROPERTY_RUNS
@@ -494,7 +467,6 @@ describe("SDK run/send SessionInput properties", () => {
         expect(messageCalls(harness)[0]!.body).toEqual({ input });
         expectSessionKeys(harness, { createKey: "create_key" });
         assertTurnEventProjection(result, specs);
-        assertNoSessionEndpoint(harness);
       }),
       EVENT_PROPERTY_RUNS
     );
@@ -504,17 +476,17 @@ describe("SDK run/send SessionInput properties", () => {
     await fc.assert(
       fc.asyncProperty(validSessionInput, fc.option(keyString, { nil: undefined }), async (input, providedKey) => {
         const harness = makeHarness();
-        const session = await harness.client.openSession(SESSION_ID);
+        const session = await harness.client.sessions.open(SESSION_ID);
         harness.calls.length = 0;
 
-        const first = session.send(input, {
+        const first = session.messages.send(input, {
           webSocketFactory: harness.webSocketFactory,
           ...(providedKey !== undefined ? { idempotencyKey: providedKey } : {})
-        }).done();
+        }).finished();
         await finishTurn(harness);
         await first;
 
-        const replay = session.replayLast({ webSocketFactory: harness.webSocketFactory }).done();
+        const replay = session.messages.replayLast({ webSocketFactory: harness.webSocketFactory }).finished();
         await finishTurn(harness);
         await replay;
 

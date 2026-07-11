@@ -2,8 +2,6 @@ import { strToU8, zipSync } from "fflate";
 import { randomUUID } from "node:crypto";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
-import type { SessionUnit } from "./session-unit.js";
-import { normalizeSessionUnit } from "./session-unit.js";
 import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
 import {
   assertSessionRecordArchivePublicSafeV1,
@@ -14,7 +12,6 @@ import {
 } from "./session-record.js";
 import type { SessionCostTelemetry } from "./session-cost.js";
 import type {
-  AgentsMdRecord,
   BillingCheckoutRequest,
   BillingHostedSession,
   BillingLedgerPage,
@@ -22,7 +19,6 @@ import type {
   BillingPortalRequest,
   BillingSummary,
   ChildSessionRef,
-  FileRecord,
   SessionFile,
   SessionFileLink,
   SessionFileLinkOptions,
@@ -31,15 +27,13 @@ import type {
   SessionFileSelector,
   SessionFileType,
   SessionFileQuery,
+  SessionFilesQuery,
+  SessionFilesSnapshot,
   SessionFileText,
   ReadSessionFileTextOptions,
-  SessionRecord,
-  SessionRecordListPage,
-  SessionRecordListQuery,
-  SessionRecordSummary,
   Session,
+  SessionRun,
   SessionCreateRequest,
-  SessionEvent,
   SessionListPage,
   SessionListQuery,
   SessionMessageAccepted,
@@ -49,12 +43,21 @@ import type {
   SessionStateChangeAccepted,
   SessionWebhookDelivery,
   SecretRecord,
-  SecretReveal,
-  SkillRecord,
   WebhookSigningSecret,
   WhoAmI
 } from "./runtime-types.js";
-import type { PlatformSessionSubmissionInput, PlatformSubmission } from "./submission.js";
+import type { PlatformSubmission } from "./submission.js";
+import { parseRuntimeSize } from "./runtime-sizes.js";
+import { SESSION_STATUSES } from "./status.js";
+import type { ToolInputSchema } from "./session-config.js";
+import type {
+  WorkspaceFileRecord,
+  WorkspaceInstructionRecord,
+  WorkspaceResourceListQuery,
+  WorkspaceResourcePage,
+  WorkspaceSkillRecord,
+  WorkspaceToolRecord
+} from "./workspace-resources.js";
 
 /**
  * The single source of truth for SDK<->BFF transport. The SDK class
@@ -68,85 +71,13 @@ import type { PlatformSessionSubmissionInput, PlatformSubmission } from "./submi
  * every request; callers do not pass `workspaceId`.
  */
 
-export async function getSessionRecord(http: HttpClient, sessionId: string): Promise<SessionRecord> {
-  const result = await http.request<SessionRecord | { readonly session: SessionRecord }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}`
-  );
-  return hasSessionEnvelope(result) ? (result.session as SessionRecord) : result;
-}
-
-/**
- * Strongly-typed accessor for the full self-contained session unit:
- * parsed submission inputs, attempts, indexed events (with
- * pagination cursor for large sessions), raw-event Storage manifest,
- * files, capture failures, and the proxy-call audit.
- *
- * Backed by the same `GET /api/sessions/:sessionId` endpoint that
- * `getSessionRecord` calls; this variant just narrows the return type to
- * the documented wire shape. Prefer this for new code; `getSessionRecord`
- * stays for callers that only need the loose record.
- */
-export async function getSessionUnit(http: HttpClient, sessionId: string): Promise<SessionUnit> {
-  // Normalize so the SessionUnit type contract holds at runtime: the managed plane
-  // returns a lean record and omits the aggregate collections (F25). The
-  // aggregates default to empty (safe array/page access) — read files()/events()
-  // for the authoritative per-session data on that plane.
-  const result = await http.request<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`);
-  return normalizeSessionUnit(hasSessionEnvelope(result) ? result.session : result);
-}
-
-/**
- * List the sessions in the token's workspace, most-recent first, one page at a time.
- * Backed by `GET /api/sessions` (workspace-token gated; the bare collection path, NOT
- * the session-keyed `GET /api/sessions/:sessionId`). The server clamps `limit` to [1, 100] and
- * returns an opaque `nextCursor` for the next page (absent on the last page).
- *
- * Returns public-safe {@link SessionRecordSummary} rows only — never the submission snapshot.
- * For a single page; callers wanting every session loop on `nextCursor` themselves.
- */
-export async function listSessionRecords(http: HttpClient, query?: SessionRecordListQuery): Promise<SessionRecordListPage> {
-  const params: Record<string, string> = {};
-  if (query?.status !== undefined) params.status = query.status;
-  if (query?.since !== undefined) params.since = query.since;
-  if (query?.limit !== undefined) params.limit = String(query.limit);
-  if (query?.cursor !== undefined) params.cursor = query.cursor;
-  const page = await http.request<SessionRecordListPage>("/api/sessions", {}, params);
-  // Defensive contract enforcement: some deployed planes leak non-session marker
-  // rows (settle-time ledger/spendmark items) into the session-list index. Those
-  // phantoms carry only { id, createdAt } and would surface as duplicate,
-  // status-less SessionRecordSummary entries. Drop anything missing the fields
-  // SessionRecordSummary declares required, so callers can trust the published type.
-  // The same enforcement covers `costUsd`: deployed planes serve `null` for
-  // sessions with no settled telemetry, but SessionRecordSummary declares `costUsd?: number`
-  // — normalize `null` to absent so typed callers never see it.
-  let changed = false;
-  const sessions: SessionRecordSummary[] = [];
-  for (const session of page.sessions) {
-    if (
-      typeof session.id !== "string" ||
-      typeof session.status !== "string" ||
-      typeof session.createdAt !== "string" ||
-      typeof session.updatedAt !== "string"
-    ) {
-      changed = true;
-      continue;
-    }
-    if (typeof session.costUsd !== "number" && session.costUsd !== undefined) {
-      const { costUsd: _dropped, ...rest } = session;
-      sessions.push(rest);
-      changed = true;
-      continue;
-    }
-    sessions.push(session);
-  }
-  return changed ? { ...page, sessions } : page;
-}
+const SESSION_STATUS_SET = new Set<string>(SESSION_STATUSES);
 
 export interface IdempotencyOptions {
   readonly idempotencyKey?: string;
 }
 
-export interface SubmitOptions extends IdempotencyOptions {
+export interface CreateSessionWithMessageOptions extends IdempotencyOptions {
   readonly messageIdempotencyKey?: string;
 }
 
@@ -193,7 +124,7 @@ export async function createSession(
   options?: IdempotencyOptions
 ): Promise<Session> {
   const headers = idempotencyHeaders(options);
-  const result = await http.request<Session | { readonly session: Session }>("/api/sessions", {
+  const result = await http.request<{ readonly session: Session }>("/api/sessions", {
     method: "POST",
     ...(headers ? { headers } : {}),
     body: JSON.stringify(request)
@@ -201,53 +132,32 @@ export async function createSession(
   return unwrapSession(result);
 }
 
-/** The result of a non-blocking {@link submit}: the session id + the created session. */
-export interface SubmitResult {
-  readonly sessionId: string;
-  readonly session: Session;
-}
-
-/**
- * Fire-and-forget submit — create the session and post its first turn WITHOUT
- * awaiting the turn to settle (the honest counterpart to await-settle `start()`).
- * Returns the `sessionId` immediately; observe the session via a `webhook`, the event
- * stream, or by re-opening the session. Mirrors {@link createSession}'s
- * idempotency handling.
- */
-export async function submit(
+/** Create a session and enqueue its first message without waiting for the RUN terminal. */
+export async function createSessionWithMessage(
   http: HttpClient,
   request: SessionCreateRequest,
-  options?: SubmitOptions
-): Promise<SubmitResult> {
+  input: SessionMessageRequest["input"],
+  options?: CreateSessionWithMessageOptions
+): Promise<SessionMessageAccepted> {
   const createKey = resolveIdempotencyKey(options?.idempotencyKey);
-  const messageKey =
-    options?.messageIdempotencyKey !== undefined
-      ? resolveIdempotencyKey(options.messageIdempotencyKey)
-      : `${createKey}:message`;
-  const { input, ...createRequest } = request;
-  assertSubmitInput(input);
-
-  const created = await createSession(http, createRequest, { idempotencyKey: createKey });
-  const sessionId = created.sessionId ?? created.id;
-  const accepted = await sendSessionMessage(http, sessionId, { input }, { idempotencyKey: messageKey });
-  const session = accepted.session;
-  return { sessionId: session.sessionId ?? session.id, session };
-}
-
-function assertSubmitInput(input: SessionCreateRequest["input"]): asserts input is string | readonly string[] {
-  const ok =
-    (typeof input === "string" && input.length > 0) ||
-    (Array.isArray(input) && input.length > 0 && input.every((segment) => typeof segment === "string" && segment.length > 0));
-  if (!ok) {
-    throw new SessionConfigValidationError("submit: request.input must be a non-empty string or string array", {
+  const messageKey = options?.messageIdempotencyKey !== undefined
+    ? resolveIdempotencyKey(options.messageIdempotencyKey)
+    : `${createKey}:message`;
+  if (
+    !((typeof input === "string" && input.length > 0) ||
+      (Array.isArray(input) && input.length > 0 && input.every((part) => typeof part === "string" && part.length > 0)))
+  ) {
+    throw new SessionConfigValidationError("session message must be a non-empty string or string array", {
       field: "input",
       value: input
     });
   }
+  const created = await createSession(http, request, { idempotencyKey: createKey });
+  return sendSessionMessage(http, created.id, { input }, { idempotencyKey: messageKey });
 }
 
 export async function getSession(http: HttpClient, sessionId: string): Promise<Session> {
-  const result = await http.request<Session | { readonly session: Session }>(
+  const result = await http.request<{ readonly session: Session }>(
     `/api/sessions/${encodeURIComponent(sessionId)}`
   );
   return unwrapSession(result);
@@ -257,12 +167,80 @@ export async function listSessions(
   http: HttpClient,
   query?: SessionListQuery
 ): Promise<SessionListPage> {
+  validateSessionListQuery(query);
   const params: Record<string, string> = {};
   if (query?.status !== undefined) params.status = query.status;
   if (query?.since !== undefined) params.since = query.since;
   if (query?.limit !== undefined) params.limit = String(query.limit);
   if (query?.cursor !== undefined) params.cursor = query.cursor;
-  return http.request<SessionListPage>("/api/sessions", {}, params);
+  const page = await http.request<unknown>("/api/sessions", {}, params);
+  if (!isRecord(page) || !Array.isArray(page.sessions)) {
+    throw new SessionStateError("sessions.list returned an invalid page: sessions must be an array");
+  }
+  const sessions = page.sessions.map((value, index) => {
+    if (!isRecord(value)) {
+      throw new SessionStateError(`sessions.list returned an invalid row at index ${index}`);
+    }
+    for (const field of ["id", "status", "createdAt", "updatedAt"] as const) {
+      if (typeof value[field] !== "string" || value[field].length === 0) {
+        throw new SessionStateError(`sessions.list row ${index} has an invalid ${field}`);
+      }
+    }
+    if (!SESSION_STATUS_SET.has(value.status as string)) {
+      throw new SessionStateError(`sessions.list row ${index} has an unknown lifecycle status`);
+    }
+    assertCanonicalSessionWireFields(value, `sessions.list row ${index}`);
+    if (typeof value.acceptsMessages !== "boolean") {
+      throw new SessionStateError(`sessions.list row ${index} has an invalid acceptsMessages`);
+    }
+    if (
+      value.costUsd !== undefined &&
+      (typeof value.costUsd !== "number" || !Number.isFinite(value.costUsd) || value.costUsd < 0)
+    ) {
+      throw new SessionStateError(`sessions.list row ${index} has an invalid costUsd`);
+    }
+    const currentRun = normalizeOptionalSessionRun(value.currentRun, value.id as string, `sessions.list row ${index}.currentRun`);
+    const lastRun = normalizeOptionalSessionRun(value.lastRun, value.id as string, `sessions.list row ${index}.lastRun`);
+    return {
+      ...normalizeSessionRuntime(value, `sessions.list row ${index}`),
+      ...(currentRun !== undefined ? { currentRun } : {}),
+      ...(lastRun !== undefined ? { lastRun } : {})
+    } as unknown as SessionListPage["sessions"][number];
+  });
+  if (page.nextCursor !== undefined && typeof page.nextCursor !== "string") {
+    throw new SessionStateError("sessions.list returned an invalid page: nextCursor must be a string");
+  }
+  return {
+    sessions,
+    ...(typeof page.nextCursor === "string" ? { nextCursor: page.nextCursor } : {})
+  };
+}
+
+function validateSessionListQuery(query: SessionListQuery | undefined): void {
+  if (query?.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
+    throw new SessionConfigValidationError("sessions.list limit must be an integer between 1 and 100", {
+      field: "limit",
+      value: query.limit
+    });
+  }
+  if (query?.status !== undefined && !SESSION_STATUS_SET.has(query.status)) {
+    throw new SessionConfigValidationError("sessions.list status must be a session lifecycle status", {
+      field: "status",
+      value: query.status
+    });
+  }
+  if (query?.since !== undefined && (query.since.length === 0 || !Number.isFinite(Date.parse(query.since)))) {
+    throw new SessionConfigValidationError("sessions.list since must be an ISO-8601 timestamp", {
+      field: "since",
+      value: query.since
+    });
+  }
+  if (query?.cursor !== undefined && query.cursor.length === 0) {
+    throw new SessionConfigValidationError("sessions.list cursor must be a non-empty opaque string", {
+      field: "cursor",
+      value: query.cursor
+    });
+  }
 }
 
 export async function sendSessionMessage(
@@ -272,7 +250,7 @@ export async function sendSessionMessage(
   options?: IdempotencyOptions
 ): Promise<SessionMessageAccepted> {
   const headers = idempotencyHeaders(options);
-  return http.request<SessionMessageAccepted>(
+  const accepted = await http.request<SessionMessageAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: "POST",
@@ -280,6 +258,7 @@ export async function sendSessionMessage(
       body: JSON.stringify(request)
     }
   );
+  return normalizeSessionMessageAccepted(accepted, sessionId);
 }
 
 export async function listSessionMessages(
@@ -300,38 +279,35 @@ export async function listSessionMessages(
 
 export async function suspendSession(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted>(
+  const accepted = await http.request<SessionStateChangeAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/suspend`,
-    { method: "POST", ...(headers ? { headers } : {}) }
+    { method: "POST" }
   );
+  return normalizeSessionAccepted(accepted, "session suspend response");
 }
 
 export async function cancelSession(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted>(
+  const accepted = await http.request<SessionStateChangeAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/cancel`,
-    { method: "POST", ...(headers ? { headers } : {}) }
+    { method: "POST" }
   );
+  return normalizeSessionAccepted(accepted, "session cancel response");
 }
 
 export async function resumeSession(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted>(
+  const accepted = await http.request<SessionStateChangeAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/resume`,
-    { method: "POST", ...(headers ? { headers } : {}) }
+    { method: "POST" }
   );
+  return normalizeSessionAccepted(accepted, "session resume response");
 }
 
 /**
@@ -341,84 +317,89 @@ export async function resumeSession(
  */
 export async function requestApproval(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted>(
+  const accepted = await http.request<SessionStateChangeAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/request-approval`,
-    { method: "POST", ...(headers ? { headers } : {}) }
+    { method: "POST" }
   );
+  return normalizeSessionAccepted(accepted, "session approval-request response");
 }
 
 /** Approve an `awaiting_approval` session so the held turn resumes (→ running). */
 export async function approveSession(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted>(
+  const accepted = await http.request<SessionStateChangeAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/approve`,
-    { method: "POST", ...(headers ? { headers } : {}) }
+    { method: "POST" }
   );
+  return normalizeSessionAccepted(accepted, "session approve response");
 }
 
 /** Deny an `awaiting_approval` session so the held turn is cancelled (→ cancelled). */
 export async function denySession(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted>(
+  const accepted = await http.request<SessionStateChangeAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/deny`,
-    { method: "POST", ...(headers ? { headers } : {}) }
+    { method: "POST" }
   );
+  return normalizeSessionAccepted(accepted, "session deny response");
 }
 
 export async function deleteSession(
   http: HttpClient,
-  sessionId: string,
-  options?: IdempotencyOptions
+  sessionId: string
 ): Promise<SessionStateChangeAccepted | void> {
-  const headers = idempotencyHeaders(options);
-  return http.request<SessionStateChangeAccepted | void>(
+  const accepted = await http.request<SessionStateChangeAccepted | void>(
     `/api/sessions/${encodeURIComponent(sessionId)}`,
-    { method: "DELETE", ...(headers ? { headers } : {}) }
+    { method: "DELETE" }
   );
+  return accepted === undefined ? undefined : normalizeSessionAccepted(accepted, "session delete response");
 }
 
 export async function listSessionEvents(
   http: HttpClient,
   sessionId: string
-): Promise<readonly SessionEvent[]> {
-  const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
-  const all: SessionEvent[] = [];
-  let cursor: number | undefined;
-  for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
-    const query = cursor !== undefined ? { cursor: String(cursor) } : {};
-    const result = await http.request<{ readonly events: readonly SessionEvent[]; readonly nextCursor?: number | null }>(
-      path,
-      {},
-      query
-    );
-    all.push(...result.events);
-    if (typeof result.nextCursor !== "number") break;
-    cursor = result.nextCursor;
-  }
-  return all;
+): Promise<readonly AexEvent[]> {
+  return listAllSessionEventPages(http, sessionId);
 }
 
 export async function listSessionFiles(
   http: HttpClient,
   sessionId: string,
-  query?: SessionFileQuery
-): Promise<readonly SessionFile[]> {
-  const result = await http.request<{ readonly files: readonly SessionFile[] }>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/files`
+  query?: SessionFilesQuery
+): Promise<SessionFilesSnapshot> {
+  const result = await http.request<SessionFilesSnapshot>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/files`,
+    {},
+    query?.checkpointId ? { checkpointId: query.checkpointId } : {}
   );
-  return query === undefined ? result.files : filterSessionFiles(result.files, query);
+  if (
+    !result.revision ||
+    typeof result.revision.checkpointId !== "string" ||
+    typeof result.revision.runId !== "string" ||
+    !Number.isSafeInteger(result.revision.turnSeq)
+  ) {
+    throw new SessionStateError("session files response is missing checkpoint revision metadata", { sessionId });
+  }
+  for (const file of result.files) {
+    if (file.checkpointId !== result.revision.checkpointId) {
+      throw new SessionStateError("session file is not pinned to the response checkpoint", {
+        sessionId,
+        fileId: file.id,
+        fileCheckpointId: file.checkpointId,
+        checkpointId: result.revision.checkpointId
+      });
+    }
+  }
+  return {
+    revision: result.revision,
+    files: query === undefined ? result.files : filterSessionFiles(result.files, query)
+  };
 }
 
 export async function getSessionCoordinatorTicket(
@@ -436,31 +417,39 @@ export async function getSessionCoordinatorTicket(
 // server that never clears `nextCursor` can't loop forever.
 const LIST_EVENTS_PAGE_BUDGET = 1000;
 
-/**
- * List a session's events. The read endpoint is PAGED (bounded per response so a
- * long run can't return an unbounded body); this follows `nextCursor` across
- * pages and returns the FULL accumulated list, preserving the prior single-call
- * contract for callers (download/*, CLI, streamEvents polling).
- */
-export async function listSessionRecordEvents(
+async function listAllSessionEventPages<T extends AexEvent>(
   http: HttpClient,
   sessionId: string
-): Promise<readonly AexEvent[]> {
+): Promise<readonly T[]> {
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
-  const all: AexEvent[] = [];
-  let cursor: number | undefined;
-  for (let page = 0; page < LIST_EVENTS_PAGE_BUDGET; page++) {
-    const query = cursor !== undefined ? { cursor: String(cursor) } : {};
-    const result = await http.request<{ readonly events: readonly AexEvent[]; readonly nextCursor?: number | null }>(
+  const all: T[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageIndex = 0; pageIndex < LIST_EVENTS_PAGE_BUDGET; pageIndex += 1) {
+    const query = cursor === undefined ? {} : { cursor };
+    const result = await http.request<{ readonly events: readonly T[]; readonly nextCursor?: string | null }>(
       path,
       {},
       query
     );
     all.push(...result.events);
-    if (typeof result.nextCursor !== "number") break;
+    if (result.nextCursor === undefined || result.nextCursor === null) return all;
+    if (typeof result.nextCursor !== "string" || result.nextCursor.length === 0) {
+      throw new SessionStateError("session events response contains an invalid nextCursor", { sessionId });
+    }
+    if (seenCursors.has(result.nextCursor)) {
+      throw new SessionStateError("session events pagination repeated a cursor", {
+        sessionId,
+        cursor: result.nextCursor
+      });
+    }
+    seenCursors.add(result.nextCursor);
     cursor = result.nextCursor;
   }
-  return all;
+  throw new SessionStateError("session events pagination exceeded its page budget", {
+    sessionId,
+    pageBudget: LIST_EVENTS_PAGE_BUDGET
+  });
 }
 
 /** A coordinator WS connection grant minted by the hosted API's ticket broker. */
@@ -470,31 +459,18 @@ export interface CoordinatorTicket {
   readonly expiresAtMs: number;
 }
 
-/**
- * Mint a short-lived coordinator WS ticket via the workspace-token-gated
- * broker (`/api/sessions/:id/events/ticket`). The returned `wsUrl` + `ticket`
- * open the live event stream directly against the coordinator. Throws if no
- * coordinator is configured for the deployment (HTTP 503).
- */
-export async function getCoordinatorTicket(http: HttpClient, sessionId: string): Promise<CoordinatorTicket> {
-  return http.request<CoordinatorTicket>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/events/ticket`,
-    { method: "POST" }
-  );
-}
-
 export async function findSessionFiles(
   http: HttpClient,
   sessionId: string,
-  query: SessionFileQuery
+  query: SessionFilesQuery
 ): Promise<readonly SessionFile[]> {
-  return listSessionFiles(http, sessionId, query);
+  return (await listSessionFiles(http, sessionId, query)).files;
 }
 
 export async function findSessionFile(
   http: HttpClient,
   sessionId: string,
-  query: SessionFileQuery
+  query: SessionFilesQuery
 ): Promise<SessionFile | null> {
   const matches = await findSessionFiles(http, sessionId, query);
   if (matches.length === 0) return null;
@@ -505,7 +481,7 @@ export async function findSessionFile(
   });
 }
 
-export type SessionFileLinkSelector = string | SessionFileSelector | SessionFileQuery;
+export type SessionFileLinkSelector = SessionFileSelector | SessionFilesQuery;
 
 export async function sessionFileLink(
   http: HttpClient,
@@ -513,10 +489,11 @@ export async function sessionFileLink(
   selectorOrQuery: SessionFileLinkSelector,
   options?: SessionFileLinkOptions
 ): Promise<SessionFileLink> {
-  const file = await resolveSessionFileLinkTarget(http, sessionId, selectorOrQuery);
+  const file = await resolveSessionFileLinkTarget(http, sessionId, selectorOrQuery, options?.checkpointId);
   const expiresInSeconds = normalizeSessionFileLinkExpiresIn(options?.expiresIn);
+  const checkpointId = options?.checkpointId ?? file.checkpointId;
   const result = await http.request<SessionFileLink>(
-    `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(file.id)}/link`,
+    sessionFileRoute(sessionId, file.id, "link", checkpointId),
     {
       method: "POST",
       body: JSON.stringify({ expiresInSeconds })
@@ -538,15 +515,6 @@ export async function sessionFileLink(
  */
 function syntheticExpiresAt(expiresInSeconds: number): string {
   return new Date(Date.now() + expiresInSeconds * 1000).toISOString();
-}
-
-export async function createSessionFileLink(
-  http: HttpClient,
-  sessionId: string,
-  selectorOrQuery: SessionFileLinkSelector,
-  options?: SessionFileLinkOptions
-): Promise<SessionFileLink> {
-  return sessionFileLink(http, sessionId, selectorOrQuery, options);
 }
 
 export async function eventArchiveLink(
@@ -612,11 +580,13 @@ export async function downloadSessionFile(
   selector: SessionFileSelector,
   options?: SessionFileTransferOptions
 ): Promise<SessionFileDownload> {
+  const listQuery = options?.checkpointId ? { checkpointId: options.checkpointId } : undefined;
   const file = isPathSelector(selector)
-    ? resolveSessionFileSelector(await listSessionFiles(http, sessionId), selector, sessionId)
+    ? resolveSessionFileSelector((await listSessionFiles(http, sessionId, listQuery)).files, selector, sessionId)
     : resolveSessionFileSelector([], selector, sessionId);
   const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
-  const path = `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(file.id)}/download`;
+  const checkpointId = options?.checkpointId ?? file.checkpointId;
+  const path = sessionFileRoute(sessionId, file.id, "download", checkpointId);
   return { file, bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs) };
 }
 
@@ -631,6 +601,7 @@ export const SESSION_FILE_TRANSFER_ATTEMPTS = 2;
 
 export interface SessionFileTransferOptions {
   readonly timeoutMs?: number;
+  readonly checkpointId?: string;
 }
 
 /**
@@ -649,11 +620,13 @@ export async function readSessionFileText(
   options?: ReadSessionFileTextOptions
 ): Promise<SessionFileText> {
   const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_SESSION_FILE_TEXT_DEFAULT_BYTES, READ_SESSION_FILE_TEXT_MAX_BYTES));
+  const listQuery = options?.checkpointId ? { checkpointId: options.checkpointId } : undefined;
   const file = isPathSelector(selector)
-    ? resolveSessionFileSelector(await listSessionFiles(http, sessionId), selector, sessionId)
+    ? resolveSessionFileSelector((await listSessionFiles(http, sessionId, listQuery)).files, selector, sessionId)
     : resolveSessionFileSelector([], selector, sessionId);
   const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
-  const path = `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(file.id)}/download`;
+  const checkpointId = options?.checkpointId ?? file.checkpointId;
+  const path = sessionFileRoute(sessionId, file.id, "download", checkpointId);
   const capped = await readSessionFileTextWithRetry(http, path, maxBytes, timeoutMs);
   const text = options?.grep === undefined ? capped.text : grepLines(capped.text, options.grep);
   return { file, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
@@ -716,6 +689,19 @@ async function sessionFileTransferWithRetry<T>(
     attempts: SESSION_FILE_TRANSFER_ATTEMPTS,
     elapsedMs: Date.now() - startedMs
   });
+}
+
+function sessionFileRoute(
+  sessionId: string,
+  fileId: string,
+  action: "download" | "link",
+  checkpointId: string
+): string {
+  if (!checkpointId) {
+    throw new SessionStateError("session file operations require checkpointId", { sessionId, fileId });
+  }
+  return `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(fileId)}/${action}` +
+    `?checkpointId=${encodeURIComponent(checkpointId)}`;
 }
 
 function normalizeSessionFileTransferTimeoutMs(value: number | undefined): number {
@@ -902,44 +888,74 @@ function grepLines(text: string, pattern: string | RegExp): string {
 }
 
 /**
- * List a session's subagent child sessions (`GET /sessions/:id/children`). Each row is a
- * {@link ChildSessionRef} whose `id` resolves through the session record facade (getSessionRecord /
- * events / files) — so every child the platform hands you is resolvable. An
- * empty array means the session spawned no children.
+ * List a session's subagent child sessions (`GET /api/sessions/:id/children`). Each
+ * {@link ChildSessionRef} is a read-only lineage snapshot whose id addresses
+ * events, checkpointed files, and descendants. An empty array means the session
+ * spawned no children.
  */
 export async function listSessionChildren(
   http: HttpClient,
   sessionId: string
 ): Promise<readonly ChildSessionRef[]> {
-  const result = await http.request<
-    { readonly children: readonly ChildSessionRef[] } | readonly ChildSessionRef[]
-  >(`/api/sessions/${encodeURIComponent(sessionId)}/children`);
-  return Array.isArray(result)
-    ? result
-    : (result as { readonly children: readonly ChildSessionRef[] }).children;
+  const result = await http.request<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}/children`);
+  if (!isRecord(result) || !Array.isArray(result.children)) {
+    throw new SessionStateError("session children response must contain a children array");
+  }
+  return result.children.map(parseChildSessionRef);
+}
+
+function parseChildSessionRef(value: unknown, index: number): ChildSessionRef {
+  if (!isRecord(value)) {
+    throw new SessionStateError(`session children response has an invalid row at index ${index}`);
+  }
+  for (const field of ["id", "parentSessionId", "status", "createdAt", "updatedAt"] as const) {
+    if (typeof value[field] !== "string" || value[field].length === 0) {
+      throw new SessionStateError(`session children row ${index} has an invalid ${field}`);
+    }
+  }
+  if (!SESSION_STATUS_SET.has(value.status as string)) {
+    throw new SessionStateError(`session children row ${index} has an unknown lifecycle status`);
+  }
+  assertCanonicalSessionWireFields(value, `session children row ${index}`);
+  if (value.depth !== undefined && (!Number.isSafeInteger(value.depth) || (value.depth as number) < 1)) {
+    throw new SessionStateError(`session children row ${index} has an invalid depth`);
+  }
+  if (
+    value.costUsd !== undefined &&
+    (typeof value.costUsd !== "number" || !Number.isFinite(value.costUsd) || value.costUsd < 0)
+  ) {
+    throw new SessionStateError(`session children row ${index} has an invalid costUsd`);
+  }
+  if (value.terminalAt !== undefined && value.terminalAt !== null && typeof value.terminalAt !== "string") {
+    throw new SessionStateError(`session children row ${index} has an invalid terminalAt`);
+  }
+  if (value.lastRun !== undefined && !isRecord(value.lastRun)) {
+    throw new SessionStateError(`session children row ${index} has an invalid lastRun`);
+  }
+  return value as unknown as ChildSessionRef;
 }
 
 /**
- * List a session's webhook delivery attempts (the per-session delivery ledger). Returns
- * the rows surfaced by `GET /api/sessions/:id/webhook-deliveries`; an empty array
- * means the session carried no `webhook` or has not reached a terminal state yet.
+ * List a session's run-terminal webhook deliveries. Each finalized run has its
+ * own row; an empty array means the session has no webhook or no run has
+ * finalized yet.
  */
 export async function getSessionWebhookDeliveries(
   http: HttpClient,
   sessionId: string
 ): Promise<readonly SessionWebhookDelivery[]> {
-  const result = await http.request<
-    { readonly deliveries: readonly SessionWebhookDelivery[] } | readonly SessionWebhookDelivery[]
-  >(`/api/sessions/${encodeURIComponent(sessionId)}/webhook-deliveries`);
-  return Array.isArray(result)
-    ? result
-    : (result as { readonly deliveries: readonly SessionWebhookDelivery[] }).deliveries;
+  const result = await http.request<unknown>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/webhook-deliveries`
+  );
+  if (!isRecord(result) || !Array.isArray(result.deliveries)) {
+    throw new SessionStateError("session webhook deliveries response must contain a deliveries array");
+  }
+  return result.deliveries as readonly SessionWebhookDelivery[];
 }
 
 /**
- * Manually re-trigger a session's webhook delivery: resets the row to `pending` and
- * re-sends the frozen payload with the SAME `webhook-id` so the consumer
- * dedupes. Idempotent from the caller's view.
+ * Manually re-trigger one run's webhook delivery: resets the row to `pending`
+ * and re-sends the frozen payload with the same run-scoped `webhook-id`.
  */
 export async function redeliverSessionWebhook(
   http: HttpClient,
@@ -962,11 +978,101 @@ export async function deleteWorkspaceAsset(http: HttpClient, hash: string): Prom
   const assetId = hash.startsWith("asset_")
     ? hash
     : `asset_${hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash}`;
-  await http.request<unknown>(`/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
+  await http.request<unknown>(`/api/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
 }
 
 export async function whoami(http: HttpClient): Promise<WhoAmI> {
-  return http.request<WhoAmI>("/api/whoami");
+  return parseWhoAmI(await http.request<unknown>("/api/whoami"));
+}
+
+function parseWhoAmI(value: unknown): WhoAmI {
+  if (!isRecord(value)) {
+    throw new SessionStateError("whoami response must be an object");
+  }
+  const removed = ["caps", "tokenId", "tokenName"].find((field) => Object.hasOwn(value, field));
+  if (removed !== undefined) {
+    throw new SessionStateError(`whoami response contains the removed ${removed} field`);
+  }
+  if (value.ok !== true || value.principalType !== "api_key") {
+    throw new SessionStateError("whoami response must identify an api_key principal");
+  }
+  if (typeof value.workspaceId !== "string" || value.workspaceId.length === 0) {
+    throw new SessionStateError("whoami response workspaceId must be a non-empty string");
+  }
+  if (!Array.isArray(value.scopes) || !value.scopes.every((scope) => typeof scope === "string" && scope.length > 0)) {
+    throw new SessionStateError("whoami response scopes must be an array of non-empty strings");
+  }
+  const limits = parseWhoAmILimits(value.limits);
+  return {
+    ok: true,
+    principalType: "api_key",
+    workspaceId: value.workspaceId,
+    scopes: value.scopes as string[],
+    limits
+  };
+}
+
+function parseWhoAmILimits(value: unknown): WhoAmI["limits"] {
+  if (!isRecord(value)) {
+    throw new SessionStateError("whoami response limits must be an object");
+  }
+  const requiredNumbers = [
+    "maxConcurrentSessions",
+    "submitRatePerMinute",
+    "spendCapUsd",
+    "monthSpendUsd",
+    "balanceUsd",
+    "balanceGraceFloorUsd"
+  ] as const;
+  for (const field of requiredNumbers) {
+    if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
+      throw new SessionStateError(`whoami response limits.${field} must be a finite number`);
+    }
+  }
+  if (typeof value.balanceGateActive !== "boolean") {
+    throw new SessionStateError("whoami response limits.balanceGateActive must be a boolean");
+  }
+  const paymentMethodStatus = value.paymentMethodStatus;
+  const planKey = value.planKey;
+  const accountType = value.accountType;
+  const subscriptionStatus = value.subscriptionStatus;
+  const subscriptionGate = value.subscriptionGate;
+  assertOneOf(paymentMethodStatus, ["none", "active"], "limits.paymentMethodStatus");
+  assertOneOf(planKey, ["free", "pro", "team"], "limits.planKey");
+  assertOneOf(accountType, ["standard", "internal"], "limits.accountType");
+  assertOneOf(subscriptionStatus, ["none", "active", "past_due", "canceled"], "limits.subscriptionStatus");
+  assertOneOf(subscriptionGate, ["ok", "past_due_grace", "past_due_suspended"], "limits.subscriptionGate");
+  for (const field of ["pastDueAt", "graceEndsAt"] as const) {
+    if (value[field] !== undefined && (typeof value[field] !== "string" || !Number.isFinite(Date.parse(value[field])))) {
+      throw new SessionStateError(`whoami response limits.${field} must be an ISO-8601 timestamp`);
+    }
+  }
+  return {
+    maxConcurrentSessions: value.maxConcurrentSessions as number,
+    submitRatePerMinute: value.submitRatePerMinute as number,
+    spendCapUsd: value.spendCapUsd as number,
+    monthSpendUsd: value.monthSpendUsd as number,
+    balanceUsd: value.balanceUsd as number,
+    balanceGraceFloorUsd: value.balanceGraceFloorUsd as number,
+    balanceGateActive: value.balanceGateActive,
+    paymentMethodStatus,
+    planKey,
+    accountType,
+    subscriptionStatus,
+    subscriptionGate,
+    ...(typeof value.pastDueAt === "string" ? { pastDueAt: value.pastDueAt } : {}),
+    ...(typeof value.graceEndsAt === "string" ? { graceEndsAt: value.graceEndsAt } : {})
+  };
+}
+
+function assertOneOf<const TAllowed extends readonly string[]>(
+  value: unknown,
+  allowed: TAllowed,
+  field: string
+): asserts value is TAllowed[number] {
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    throw new SessionStateError(`whoami response ${field} is invalid`);
+  }
 }
 
 /**
@@ -978,16 +1084,35 @@ export async function getBilling(http: HttpClient): Promise<BillingSummary> {
   return http.request<BillingSummary>("/api/billing");
 }
 
+function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOptions): string {
+  if (isRecord(request) && Object.prototype.hasOwnProperty.call(request, "idempotencyKey")) {
+    throw new SessionConfigValidationError(
+      "billing idempotencyKey belongs in the second options argument, not the request body",
+      { field: "idempotencyKey" }
+    );
+  }
+  const idempotencyKey = resolveIdempotencyKey(options?.idempotencyKey);
+  if (idempotencyKey.length > 255) {
+    throw new SessionConfigValidationError("billing idempotencyKey must be at most 255 characters", {
+      field: "idempotencyKey"
+    });
+  }
+  return idempotencyKey;
+}
+
 /**
  * Create a hosted checkout session for a paid plan. Returns only the hosted
  * URL; plan activation happens after checkout completes.
  */
 export async function createBillingCheckout(
   http: HttpClient,
-  request: BillingCheckoutRequest
+  request: BillingCheckoutRequest,
+  options?: IdempotencyOptions
 ): Promise<BillingHostedSession> {
+  const idempotencyKey = resolveBillingIdempotencyKey(request, options);
   return http.request<BillingHostedSession>("/api/billing/checkout", {
     method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify(request)
   });
 }
@@ -998,10 +1123,13 @@ export async function createBillingCheckout(
  */
 export async function createBillingPortal(
   http: HttpClient,
-  request: BillingPortalRequest = {}
+  request: BillingPortalRequest = {},
+  options?: IdempotencyOptions
 ): Promise<BillingHostedSession> {
+  const idempotencyKey = resolveBillingIdempotencyKey(request, options);
   return http.request<BillingHostedSession>("/api/billing/portal", {
     method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify(request)
   });
 }
@@ -1079,7 +1207,7 @@ async function collectArtifactBytes(
   for (const item of items) {
     const rel = item.filename ?? item.id;
     try {
-      const path = `/api/sessions/${encodeURIComponent(sessionId)}/${namespace}/${encodeURIComponent(item.id)}/download`;
+      const path = sessionFileRoute(sessionId, item.id, "download", item.checkpointId);
       entries.push({
         path: `${zipPrefix}${rel}`,
         bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs),
@@ -1197,14 +1325,9 @@ export function normalizeSessionFileLinkExpiresIn(input: SessionFileLinkOptions[
 async function resolveSessionFileLinkTarget(
   http: HttpClient,
   sessionId: string,
-  selectorOrQuery: SessionFileLinkSelector
+  selectorOrQuery: SessionFileLinkSelector,
+  checkpointId?: string
 ): Promise<SessionFile> {
-  if (typeof selectorOrQuery === "string") {
-    if (selectorOrQuery.length === 0) {
-      throw new SessionStateError("sessionFileLink: selector must include a file id or query", { sessionId });
-    }
-    return { id: selectorOrQuery };
-  }
   if (hasSessionFileId(selectorOrQuery)) {
     if (selectorOrQuery.id.length === 0) {
       throw new SessionStateError("sessionFileLink: selector must include a file id or query", { sessionId });
@@ -1212,9 +1335,13 @@ async function resolveSessionFileLinkTarget(
     return selectorOrQuery;
   }
   if (isPathSelector(selectorOrQuery as SessionFileSelector) && (selectorOrQuery as SessionFilePathSelector).match === "suffix") {
-    return resolveSessionFileSelector(await listSessionFiles(http, sessionId), selectorOrQuery as SessionFilePathSelector, sessionId);
+    const snapshot = await listSessionFiles(http, sessionId, checkpointId ? { checkpointId } : undefined);
+    return resolveSessionFileSelector(snapshot.files, selectorOrQuery as SessionFilePathSelector, sessionId);
   }
-  const match = await findSessionFile(http, sessionId, selectorOrQuery as SessionFileQuery);
+  const match = await findSessionFile(http, sessionId, {
+    ...(selectorOrQuery as SessionFilesQuery),
+    ...(checkpointId ? { checkpointId } : {})
+  });
   if (match) return match;
   throw new SessionStateError("sessionFileLink: file query matched no files", { sessionId });
 }
@@ -1248,8 +1375,15 @@ function sessionFileMatchesQuery(file: SessionFile, query: SessionFileQuery): bo
   return true;
 }
 
-function hasSessionFileId(value: SessionFileSelector | SessionFileQuery): value is SessionFile {
-  return Boolean(value && typeof value === "object" && "id" in value && typeof value.id === "string");
+function hasSessionFileId(value: SessionFileSelector | SessionFilesQuery): value is SessionFile {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "checkpointId" in value &&
+    typeof value.checkpointId === "string"
+  );
 }
 
 function normalizeSessionFileQueryPath(path: string): string {
@@ -1308,15 +1442,15 @@ function contentTypeMatches(actual: string | undefined, expected: string): boole
  *   manifest.json         — `SessionRecordManifestV1`.
  */
 export async function download(http: HttpClient, sessionId: string): Promise<Uint8Array> {
-  const [sessionRecord, events, files] = await Promise.all([
-    getSessionRecord(http, sessionId),
-    listSessionRecordEvents(http, sessionId),
+  const [session, events, snapshot] = await Promise.all([
+    getSession(http, sessionId),
+    listSessionEvents(http, sessionId),
     listSessionFiles(http, sessionId)
   ]);
 
-  const collectedFiles = await collectArtifactBytes(http, sessionId, files, "files/", "files");
-  const submissionSnapshot = extractSubmissionSnapshot(sessionRecord);
-  const costTelemetry = extractCostTelemetry(sessionRecord);
+  const collectedFiles = await collectArtifactBytes(http, sessionId, snapshot.files, "files/", "files");
+  const submissionSnapshot = extractSubmissionSnapshot(session);
+  const costTelemetry = extractCostTelemetry(session);
   const manifest = buildSessionRecordDownloadManifestV1({
     sessionId,
     sessionFiles: collectedFiles.captured,
@@ -1327,7 +1461,7 @@ export async function download(http: HttpClient, sessionId: string): Promise<Uin
   });
 
   return zipEntries([
-    jsonEntry("metadata/session.json", sessionRecord),
+    jsonEntry("metadata/session.json", session),
     ...(submissionSnapshot ? [jsonEntry("metadata/submission.json", submissionSnapshot)] : []),
     ...(costTelemetry ? [jsonEntry("metadata/cost.json", costTelemetry)] : []),
     jsonlEntry("events/events.jsonl", events),
@@ -1346,9 +1480,20 @@ export async function downloadSessionFiles(
   sessionId: string,
   options?: SessionFileTransferOptions
 ): Promise<Uint8Array> {
-  const files = await listSessionFiles(http, sessionId);
+  const snapshot = await listSessionFiles(
+    http,
+    sessionId,
+    options?.checkpointId ? { checkpointId: options.checkpointId } : undefined
+  );
   const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
-  const { entries, captured, errors } = await collectArtifactBytes(http, sessionId, files, "", "files", timeoutMs);
+  const { entries, captured, errors } = await collectArtifactBytes(
+    http,
+    sessionId,
+    snapshot.files,
+    "",
+    "files",
+    timeoutMs
+  );
   return zipEntries([
     ...entries,
     jsonEntry("manifest.json", { sessionId, namespace: "files", files: captured, errors })
@@ -1360,7 +1505,7 @@ export async function downloadSessionFiles(
  * typed `events.jsonl` plus `manifest.json`.
  */
 export async function downloadEvents(http: HttpClient, sessionId: string): Promise<Uint8Array> {
-  const events = await listSessionRecordEvents(http, sessionId);
+  const events = await listSessionEvents(http, sessionId);
   return zipEntries([
     jsonlEntry("events.jsonl", events),
     jsonEntry("manifest.json", {
@@ -1377,9 +1522,9 @@ export async function downloadEvents(http: HttpClient, sessionId: string): Promi
  * containing `session.json` plus `manifest.json`.
  */
 export async function downloadMetadata(http: HttpClient, sessionId: string): Promise<Uint8Array> {
-  const sessionRecord = await getSessionRecord(http, sessionId);
+  const session = await getSession(http, sessionId);
   return zipEntries([
-    jsonEntry("session.json", sessionRecord),
+    jsonEntry("session.json", session),
     jsonEntry("manifest.json", {
       sessionId,
       namespace: "metadata",
@@ -1414,8 +1559,8 @@ function jsonlEntry(path: string, events: readonly AexEvent[]): ZipEntry {
   };
 }
 
-function extractSubmissionSnapshot(sessionRecord: SessionRecord): { readonly submission: PlatformSubmission } | undefined {
-  const raw = (sessionRecord as { readonly submission?: unknown }).submission;
+function extractSubmissionSnapshot(session: Session): { readonly submission: PlatformSubmission } | undefined {
+  const raw = (session as Session & { readonly submission?: unknown }).submission;
   if (!isRecord(raw) || raw.kind !== "submission" || !isRecord(raw.submission)) {
     return undefined;
   }
@@ -1424,9 +1569,8 @@ function extractSubmissionSnapshot(sessionRecord: SessionRecord): { readonly sub
   };
 }
 
-function extractCostTelemetry(sessionRecord: SessionRecord): SessionCostTelemetry | undefined {
-  const raw = sessionRecord.costTelemetry;
-  return isRecord(raw) ? raw as SessionCostTelemetry : undefined;
+function extractCostTelemetry(session: Session): SessionCostTelemetry | undefined {
+  return session.costTelemetry;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1434,87 +1578,184 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 // ===========================================================================
-// SessionRecord submission operations (McpServer / session config composition)
+// Immutable, versioned workspace resources
 // ===========================================================================
 
-export async function startSessionRecord(
+interface WorkspacePublishBase {
+  readonly assetId: string;
+  readonly contentHash: string;
+  readonly sizeBytes: number;
+  readonly contentType: string;
+}
+
+export type PublishWorkspaceFileInput = WorkspacePublishBase & {
+  readonly name: string;
+  readonly mountPath: string;
+};
+
+export type PublishWorkspaceSkillInput = WorkspacePublishBase & {
+  readonly name: string;
+  readonly description: string;
+};
+
+export type PublishWorkspaceToolInput = WorkspacePublishBase & {
+  readonly name: string;
+  readonly description: string;
+  readonly input_schema: ToolInputSchema;
+  readonly entry: string;
+};
+
+export type PublishWorkspaceInstructionInput = WorkspacePublishBase & {
+  readonly name: string;
+};
+
+export async function publishWorkspaceFile(
   http: HttpClient,
-  request: PlatformSessionSubmissionInput
-): Promise<SessionRecord> {
-  return http.request<SessionRecord>("/api/sessions", {
+  input: PublishWorkspaceFileInput
+): Promise<WorkspaceFileRecord> {
+  return publishWorkspaceResource(http, "files", input);
+}
+
+export async function publishWorkspaceSkill(
+  http: HttpClient,
+  input: PublishWorkspaceSkillInput
+): Promise<WorkspaceSkillRecord> {
+  return publishWorkspaceResource(http, "skills", input);
+}
+
+export async function publishWorkspaceTool(
+  http: HttpClient,
+  input: PublishWorkspaceToolInput
+): Promise<WorkspaceToolRecord> {
+  return publishWorkspaceResource(http, "tools", input);
+}
+
+export async function publishWorkspaceInstruction(
+  http: HttpClient,
+  input: PublishWorkspaceInstructionInput
+): Promise<WorkspaceInstructionRecord> {
+  return publishWorkspaceResource(http, "instructions", input);
+}
+
+export function listWorkspaceFiles(
+  http: HttpClient,
+  query: WorkspaceResourceListQuery = {}
+): Promise<WorkspaceResourcePage<WorkspaceFileRecord>> {
+  return listWorkspaceResources(http, "files", query);
+}
+
+export function listWorkspaceSkills(
+  http: HttpClient,
+  query: WorkspaceResourceListQuery = {}
+): Promise<WorkspaceResourcePage<WorkspaceSkillRecord>> {
+  return listWorkspaceResources(http, "skills", query);
+}
+
+export function listWorkspaceTools(
+  http: HttpClient,
+  query: WorkspaceResourceListQuery = {}
+): Promise<WorkspaceResourcePage<WorkspaceToolRecord>> {
+  return listWorkspaceResources(http, "tools", query);
+}
+
+export function listWorkspaceInstructions(
+  http: HttpClient,
+  query: WorkspaceResourceListQuery = {}
+): Promise<WorkspaceResourcePage<WorkspaceInstructionRecord>> {
+  return listWorkspaceResources(http, "instructions", query);
+}
+
+export function getWorkspaceFile(http: HttpClient, resourceId: string, version?: number): Promise<WorkspaceFileRecord> {
+  return getWorkspaceResource(http, "files", resourceId, version);
+}
+
+export function getWorkspaceSkill(http: HttpClient, resourceId: string, version?: number): Promise<WorkspaceSkillRecord> {
+  return getWorkspaceResource(http, "skills", resourceId, version);
+}
+
+export function getWorkspaceTool(http: HttpClient, resourceId: string, version?: number): Promise<WorkspaceToolRecord> {
+  return getWorkspaceResource(http, "tools", resourceId, version);
+}
+
+export function getWorkspaceInstruction(
+  http: HttpClient,
+  resourceId: string,
+  version?: number
+): Promise<WorkspaceInstructionRecord> {
+  return getWorkspaceResource(http, "instructions", resourceId, version);
+}
+
+export function deleteWorkspaceFile(http: HttpClient, resourceId: string): Promise<void> {
+  return deleteWorkspaceResource(http, "files", resourceId);
+}
+
+export function deleteWorkspaceSkill(http: HttpClient, resourceId: string): Promise<void> {
+  return deleteWorkspaceResource(http, "skills", resourceId);
+}
+
+export function deleteWorkspaceTool(http: HttpClient, resourceId: string): Promise<void> {
+  return deleteWorkspaceResource(http, "tools", resourceId);
+}
+
+export function deleteWorkspaceInstruction(http: HttpClient, resourceId: string): Promise<void> {
+  return deleteWorkspaceResource(http, "instructions", resourceId);
+}
+
+type WorkspaceResourceKind = "files" | "skills" | "tools" | "instructions";
+
+async function publishWorkspaceResource<T>(
+  http: HttpClient,
+  kind: WorkspaceResourceKind,
+  input: object
+): Promise<T> {
+  const result = await http.request<{ readonly resource: T }>(`/api/workspace/${kind}`, {
     method: "POST",
-    body: JSON.stringify(request)
+    body: JSON.stringify(input)
   });
+  return result.resource;
 }
 
-// ===========================================================================
-// AgentsMd read/delete helpers. Launch submissions use content-addressed asset refs.
-// ===========================================================================
-
-export async function listAgentsMd(http: HttpClient): Promise<readonly AgentsMdRecord[]> {
-  const result = await http.request<
-    { readonly agentsMd: readonly AgentsMdRecord[] } | readonly AgentsMdRecord[]
-  >("/api/agentsmd");
-  if (Array.isArray(result)) {
-    return result;
+async function listWorkspaceResources<T>(
+  http: HttpClient,
+  kind: WorkspaceResourceKind,
+  query: WorkspaceResourceListQuery
+): Promise<WorkspaceResourcePage<T>> {
+  if (
+    query.limit !== undefined &&
+    (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100)
+  ) {
+    throw new Error("workspace resource list limit must be an integer from 1 through 100");
   }
-  return (result as { readonly agentsMd: readonly AgentsMdRecord[] }).agentsMd;
-}
-
-export async function getAgentsMd(http: HttpClient, agentsMdId: string): Promise<AgentsMdRecord> {
-  const result = await http.request<{ readonly agentsMd: AgentsMdRecord } | AgentsMdRecord>(
-    `/api/agentsmd/${encodeURIComponent(agentsMdId)}`
+  return http.request<WorkspaceResourcePage<T>>(
+    `/api/workspace/${kind}`,
+    {},
+    {
+      ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
+      ...(query.limit !== undefined ? { limit: String(query.limit) } : {})
+    }
   );
-  return unwrapAgentsMd(result);
 }
 
-export async function deleteAgentsMd(http: HttpClient, agentsMdId: string): Promise<void> {
-  await http.request<unknown>(`/api/agentsmd/${encodeURIComponent(agentsMdId)}`, {
-    method: "DELETE"
-  });
-}
-
-function unwrapAgentsMd(
-  result: { readonly agentsMd: AgentsMdRecord } | AgentsMdRecord
-): AgentsMdRecord {
-  if (result && typeof result === "object" && "agentsMd" in (result as object)) {
-    return (result as { readonly agentsMd: AgentsMdRecord }).agentsMd;
-  }
-  return result as AgentsMdRecord;
-}
-
-// ===========================================================================
-// File read/delete helpers. Launch submissions use content-addressed asset refs.
-// ===========================================================================
-
-export async function listFiles(http: HttpClient): Promise<readonly FileRecord[]> {
-  const result = await http.request<{ readonly files: readonly FileRecord[] } | readonly FileRecord[]>(
-    "/api/files"
+async function getWorkspaceResource<T>(
+  http: HttpClient,
+  kind: WorkspaceResourceKind,
+  resourceId: string,
+  version?: number
+): Promise<T> {
+  const result = await http.request<{ readonly resource: T }>(
+    `/api/workspace/${kind}/${encodeURIComponent(resourceId)}`,
+    {},
+    version === undefined ? {} : { version: String(version) }
   );
-  if (Array.isArray(result)) {
-    return result;
-  }
-  return (result as { readonly files: readonly FileRecord[] }).files;
+  return result.resource;
 }
 
-export async function getFile(http: HttpClient, fileId: string): Promise<FileRecord> {
-  const result = await http.request<{ readonly file: FileRecord } | FileRecord>(
-    `/api/files/${encodeURIComponent(fileId)}`
-  );
-  return unwrapFile(result);
-}
-
-export async function deleteFile(http: HttpClient, fileId: string): Promise<void> {
-  await http.request<unknown>(`/api/files/${encodeURIComponent(fileId)}`, {
-    method: "DELETE"
-  });
-}
-
-function unwrapFile(result: { readonly file: FileRecord } | FileRecord): FileRecord {
-  if (result && typeof result === "object" && "file" in (result as object)) {
-    return (result as { readonly file: FileRecord }).file;
-  }
-  return result as FileRecord;
+async function deleteWorkspaceResource(
+  http: HttpClient,
+  kind: WorkspaceResourceKind,
+  resourceId: string
+): Promise<void> {
+  await http.request<void>(`/api/workspace/${kind}/${encodeURIComponent(resourceId)}`, { method: "DELETE" });
 }
 
 // ===========================================================================
@@ -1522,8 +1763,7 @@ function unwrapFile(result: { readonly file: FileRecord } | FileRecord): FileRec
 //
 // Value-bearing requests (create/rotate) carry the value in the JSON BODY,
 // never the URL/query, so it never lands in logs or the request line. Reads
-// split by sensitivity: `getSecret`/`listSecrets` return METADATA only;
-// `getSecretValue` is the audited value read (POST so it's a logged action).
+// return metadata only; persisted secret values are write-only through this API.
 // ===========================================================================
 
 /** Create a named workspace secret. The value travels in the body. */
@@ -1531,7 +1771,7 @@ export async function createSecret(
   http: HttpClient,
   args: { readonly name: string; readonly value: string }
 ): Promise<SecretRecord> {
-  const result = await http.request<{ readonly secret: SecretRecord } | SecretRecord>("/api/secrets", {
+  const result = await http.request<{ readonly secret: SecretRecord }>("/api/secrets", {
     method: "POST",
     body: JSON.stringify({ name: args.name, value: args.value })
   });
@@ -1539,28 +1779,19 @@ export async function createSecret(
 }
 
 export async function listSecrets(http: HttpClient): Promise<readonly SecretRecord[]> {
-  const result = await http.request<
-    { readonly secrets: readonly SecretRecord[] } | readonly SecretRecord[]
-  >("/api/secrets");
-  if (Array.isArray(result)) {
-    return result;
+  const result = await http.request<unknown>("/api/secrets");
+  if (!isRecord(result) || !Array.isArray(result.secrets)) {
+    throw new SessionStateError("workspace secrets response must contain a secrets array");
   }
-  return (result as { readonly secrets: readonly SecretRecord[] }).secrets;
+  return result.secrets as readonly SecretRecord[];
 }
 
 /** Metadata for one workspace secret by name. Never returns the value. */
 export async function getSecret(http: HttpClient, name: string): Promise<SecretRecord> {
-  const result = await http.request<{ readonly secret: SecretRecord } | SecretRecord>(
+  const result = await http.request<{ readonly secret: SecretRecord }>(
     `/api/secrets/${encodeURIComponent(name)}`
   );
   return unwrapSecret(result);
-}
-
-/** Audited value read — the preferred path that returns a workspace secret value. */
-export async function getSecretValue(http: HttpClient, name: string): Promise<SecretReveal> {
-  return http.request<SecretReveal>(`/api/secrets/${encodeURIComponent(name)}/get_value`, {
-    method: "POST"
-  });
 }
 
 /** Replace the value of an existing workspace secret; bumps its version. */
@@ -1568,7 +1799,7 @@ export async function rotateSecret(
   http: HttpClient,
   args: { readonly name: string; readonly value: string }
 ): Promise<SecretRecord> {
-  const result = await http.request<{ readonly secret: SecretRecord } | SecretRecord>(
+  const result = await http.request<{ readonly secret: SecretRecord }>(
     `/api/secrets/${encodeURIComponent(args.name)}/rotate`,
     { method: "POST", body: JSON.stringify({ value: args.value }) }
   );
@@ -1581,130 +1812,169 @@ export async function deleteSecret(http: HttpClient, name: string): Promise<void
   });
 }
 
-function unwrapSecret(result: { readonly secret: SecretRecord } | SecretRecord): SecretRecord {
-  if (result && typeof result === "object" && "secret" in (result as object)) {
-    return (result as { readonly secret: SecretRecord }).secret;
+function unwrapSecret(result: { readonly secret: SecretRecord }): SecretRecord {
+  if (!isRecord(result) || !isRecord(result.secret)) {
+    throw new SessionStateError("workspace secret response must contain a secret object");
   }
-  return result as SecretRecord;
+  return result.secret as unknown as SecretRecord;
 }
 
-// ===========================================================================
-// Workspace skill registry operations
-//
-// Skills are named, mutable, by-name-bound bundles. `upsertSkill` UPSERTS one by
-// name (the bytes are staged to the content-addressed asset store BEFORE this,
-// via the presign/finalize path); the server compares `contentHash` and no-ops
-// an identical re-upload (`updated:false`). Reads return METADATA only — the
-// bytes are addressed by `contentHash`.
-// ===========================================================================
-
-/** Result of an `upsertSkill`: the stored record + whether the bytes changed. */
-export interface SkillUpsertResult {
-  readonly skill: SkillRecord;
-  readonly updated: boolean;
+function unwrapSession(result: { readonly session: Session }): Session {
+  if (!isRecord(result) || !isRecord(result.session)) {
+    throw new SessionStateError("session response must contain a session object");
+  }
+  const value = result.session;
+  if (typeof value.id !== "string" || value.id.length === 0) {
+    throw new SessionStateError("session response is missing its canonical id");
+  }
+  assertCanonicalSessionWireFields(value, "session response");
+  if (typeof value.status !== "string" || !SESSION_STATUS_SET.has(value.status)) {
+    throw new SessionStateError("session response has an unknown lifecycle status");
+  }
+  if (typeof value.acceptsMessages !== "boolean") {
+    throw new SessionStateError("session response is missing acceptsMessages");
+  }
+  const currentRun = normalizeOptionalSessionRun(value.currentRun, value.id, "session response currentRun");
+  const lastRun = normalizeOptionalSessionRun(value.lastRun, value.id, "session response lastRun");
+  return {
+    ...normalizeSessionRuntime(value, "session response"),
+    ...(currentRun !== undefined ? { currentRun } : {}),
+    ...(lastRun !== undefined ? { lastRun } : {})
+  } as unknown as Session;
 }
 
-/**
- * Upsert a workspace skill by name — `PUT /skills/{name}`. The bundle bytes must
- * already exist in the asset store (staged via presign/finalize before this
- * call); the body carries only the metadata. Identical `contentHash` is a no-op
- * (`updated:false`).
- */
-export async function upsertSkill(
-  http: HttpClient,
-  args: { readonly name: string; readonly contentHash: string; readonly description: string; readonly sizeBytes: number }
-): Promise<SkillUpsertResult> {
-  const result = await http.request<SkillUpsertResult | SkillRecord>(
-    `/api/skills/${encodeURIComponent(args.name)}`,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        contentHash: args.contentHash,
-        description: args.description,
-        sizeBytes: args.sizeBytes
-      })
+const REMOVED_SESSION_WIRE_FIELDS = ["sessionId", "runtime", "turnSeq", "cleanupStatus"] as const;
+
+function assertCanonicalSessionWireFields(value: Record<string, unknown>, context: string): void {
+  const removed = REMOVED_SESSION_WIRE_FIELDS.find((field) => Object.hasOwn(value, field));
+  if (removed !== undefined) {
+    throw new SessionStateError(`${context} contains the removed ${removed} field`);
+  }
+}
+
+function normalizeSessionAccepted<T extends { readonly session: Session }>(value: T, context: string): T {
+  if (!isRecord(value) || !isRecord(value.session)) {
+    throw new SessionStateError(`${context} must contain a session object`);
+  }
+  return {
+    ...value,
+    session: unwrapSession({ session: value.session })
+  };
+}
+
+const SESSION_RUN_PHASES = new Set(["queued", "starting", "running", "finished", "error"]);
+const SESSION_RUN_OUTCOMES = new Set(["succeeded", "failed", "timed_out", "cancelled", "interrupted"]);
+
+function normalizeSessionMessageAccepted(value: unknown, requestedSessionId: string): SessionMessageAccepted {
+  if (!isRecord(value)) {
+    throw new SessionStateError("session message response must be an object");
+  }
+  if (Object.hasOwn(value, "turn")) {
+    throw new SessionStateError("session message response contains the removed turn field; use run");
+  }
+  if (!isRecord(value.session)) {
+    throw new SessionStateError("session message response must contain a session object");
+  }
+  const session = unwrapSession({ session: value.session as unknown as Session });
+  if (session.id !== requestedSessionId) {
+    throw new SessionStateError("session message response session.id does not match the requested session", {
+      requestedSessionId,
+      sessionId: session.id
+    });
+  }
+  if (!isRecord(value.run)) {
+    throw new SessionStateError("session message response must contain a run object");
+  }
+  const run = normalizeSessionRun(value.run, session.id, "session message response run");
+  const eventCursor = value.eventCursor;
+  if (eventCursor !== undefined && (!Number.isSafeInteger(eventCursor) || (eventCursor as number) < 0)) {
+    throw new SessionStateError("session message response eventCursor must be a non-negative safe integer");
+  }
+  if (
+    eventCursor !== undefined &&
+    run.eventCursor !== undefined &&
+    eventCursor !== run.eventCursor
+  ) {
+    throw new SessionStateError("session message response eventCursor does not match run.eventCursor");
+  }
+  return {
+    ...value,
+    session,
+    run,
+    ...(typeof eventCursor === "number" ? { eventCursor } : {})
+  };
+}
+
+function normalizeOptionalSessionRun(value: unknown, sessionId: string, context: string): SessionRun | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new SessionStateError(`${context} must be an object`);
+  }
+  return normalizeSessionRun(value, sessionId, context);
+}
+
+function normalizeSessionRun(value: Record<string, unknown>, sessionId: string, context: string): SessionRun {
+  if (Object.hasOwn(value, "executionEndedAt")) {
+    throw new SessionStateError(`${context} contains the removed executionEndedAt field`);
+  }
+  if (typeof value.sessionId !== "string" || value.sessionId.length === 0) {
+    throw new SessionStateError(`${context}.sessionId must be a non-empty string`);
+  }
+  if (value.sessionId !== sessionId) {
+    throw new SessionStateError(`${context}.sessionId does not match session.id`, {
+      sessionId,
+      runSessionId: value.sessionId
+    });
+  }
+  if (typeof value.runId !== "string" || value.runId.length === 0) {
+    throw new SessionStateError(`${context}.runId must be a non-empty string`);
+  }
+  if (!Number.isSafeInteger(value.turnSeq) || (value.turnSeq as number) < 1) {
+    throw new SessionStateError(`${context}.turnSeq must be a positive safe integer`);
+  }
+  if (typeof value.phase !== "string" || !SESSION_RUN_PHASES.has(value.phase)) {
+    throw new SessionStateError(`${context}.phase is invalid`);
+  }
+  if (value.outcome !== undefined && (typeof value.outcome !== "string" || !SESSION_RUN_OUTCOMES.has(value.outcome))) {
+    throw new SessionStateError(`${context}.outcome is invalid`);
+  }
+  for (const field of ["startedAt", "finishedAt"] as const) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw new SessionStateError(`${context}.${field} must be a string`);
     }
-  );
-  if (result && typeof result === "object" && "skill" in (result as object)) {
-    const wrapped = result as SkillUpsertResult;
-    return { skill: wrapped.skill, updated: wrapped.updated === true };
   }
-  return { skill: result as SkillRecord, updated: true };
-}
-
-export async function listSkills(http: HttpClient): Promise<readonly SkillRecord[]> {
-  const result = await http.request<{ readonly skills: readonly SkillRecord[] } | readonly SkillRecord[]>(
-    "/api/skills"
-  );
-  if (Array.isArray(result)) {
-    return result;
+  if (value.eventCursor !== undefined && (!Number.isSafeInteger(value.eventCursor) || (value.eventCursor as number) < 0)) {
+    throw new SessionStateError(`${context}.eventCursor must be a non-negative safe integer`);
   }
-  return (result as { readonly skills: readonly SkillRecord[] }).skills;
-}
-
-export async function getSkill(http: HttpClient, name: string): Promise<SkillRecord> {
-  const result = await http.request<{ readonly skill: SkillRecord } | SkillRecord>(
-    `/api/skills/${encodeURIComponent(name)}`
-  );
-  return unwrapSkill(result);
-}
-
-export async function deleteSkill(http: HttpClient, name: string): Promise<void> {
-  await http.request<unknown>(`/api/skills/${encodeURIComponent(name)}`, {
-    method: "DELETE"
-  });
-}
-
-function unwrapSkill(result: { readonly skill: SkillRecord } | SkillRecord): SkillRecord {
-  if (result && typeof result === "object" && "skill" in (result as object)) {
-    return (result as { readonly skill: SkillRecord }).skill;
+  if (value.checkpoint !== undefined && !isRecord(value.checkpoint)) {
+    throw new SessionStateError(`${context}.checkpoint must be an object`);
   }
-  return result as SkillRecord;
+  return {
+    sessionId: value.sessionId,
+    turnSeq: value.turnSeq as number,
+    runId: value.runId,
+    phase: value.phase as SessionRun["phase"],
+    ...(typeof value.outcome === "string"
+      ? { outcome: value.outcome as NonNullable<SessionRun["outcome"]> }
+      : {}),
+    ...(typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
+    ...(typeof value.finishedAt === "string" ? { finishedAt: value.finishedAt } : {}),
+    ...(isRecord(value.checkpoint) ? { checkpoint: value.checkpoint as unknown as NonNullable<SessionRun["checkpoint"]> } : {}),
+    ...(typeof value.eventCursor === "number" ? { eventCursor: value.eventCursor } : {})
+  };
 }
 
-function hasSessionEnvelope(value: unknown): value is { readonly session: unknown } {
-  return Boolean(value && typeof value === "object" && "session" in value);
-}
-
-function unwrapSession(result: { readonly session: Session } | Session): Session {
-  if (result && typeof result === "object" && "session" in result) {
-    return (result as { readonly session: Session }).session;
+function normalizeSessionRuntime(value: Record<string, unknown>, context: string): Record<string, unknown> {
+  const rawRuntime = value.runtimeSize;
+  let runtime;
+  try {
+    runtime = parseRuntimeSize(rawRuntime);
+  } catch (error) {
+    throw new SessionStateError(`${context} has an invalid runtime: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return result as Session;
-}
-
-// ===========================================================================
-// Workspace asset upload
-// ===========================================================================
-
-export interface AssetUploadResult {
-  readonly assetId: string;
-  readonly contentHash: string;
-  readonly sizeBytes: number;
-  readonly exists: boolean;
-}
-
-/**
- * Upload bytes to the hosted API's content-addressable asset endpoint.
- * Returns a storage-neutral asset id suitable for `kind:"asset"` refs in a
- * later session submission.
- */
-export async function uploadWorkspaceAsset(
-  http: HttpClient,
-  input: {
-    readonly bytes: Uint8Array;
-    /** Optional `sha256:<hex>` advisory hash; the server verifies it. */
-    readonly contentHash?: string;
-    readonly contentType?: string;
-  }
-): Promise<AssetUploadResult> {
-  return http.request<AssetUploadResult>("/assets", {
-    method: "POST",
-    headers: {
-      "content-type": input.contentType ?? "application/octet-stream",
-      "content-length": String(input.bytes.byteLength),
-      ...(input.contentHash ? { "x-asset-hash": input.contentHash } : {})
-    },
-    body: input.bytes
-  });
+  const { runtimeSize: _wireRuntimeSize, ...normalized } = value;
+  return {
+    ...normalized,
+    ...(runtime !== undefined ? { runtime } : {})
+  };
 }

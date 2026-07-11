@@ -8,7 +8,7 @@
  * map as `Skill.fromDir` — so a URL-sourced skill and the identical local
  * dir produce the SAME asset and dedup against each other.
  *
- * These cases session in child processes whose cwd is the user-test install
+ * These cases run in child processes whose cwd is the user-test install
  * tempdir, so `import "@aexhq/sdk"` resolves from the packed/published
  * artifact. A fake `fetch` serves BOTH the synthetic skill archive (built in
  * the child from `bundleSkillFiles`) and the asset upload + `/api/sessions`
@@ -79,7 +79,6 @@ async function decodeBody(body) {
 function makeFetch(archives = {}) {
   const calls = [];
   const seenHashes = new Set();
-  let sessionCounter = 0;
   const fetchFake = async (input, init = {}) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -98,7 +97,7 @@ function makeFetch(archives = {}) {
       return new Response(route.bytes ?? new Uint8Array(), { status });
     }
 
-    if (url.endsWith("/assets/presign")) {
+    if (url.endsWith("/api/assets/presign")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
       if (seenHashes.has(hex)) {
@@ -127,7 +126,7 @@ function makeFetch(archives = {}) {
       return new Response("", { status: 200 });
     }
 
-    if (url.endsWith("/assets/finalize")) {
+    if (url.endsWith("/api/assets/finalize")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
       return new Response(JSON.stringify({
@@ -139,32 +138,21 @@ function makeFetch(archives = {}) {
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
-    if (url.includes("/api/skills/") && method === "PUT") {
-      const name = decodeURIComponent(url.split("/api/skills/")[1] ?? "");
+    if (url.endsWith("/api/workspace/skills") && method === "POST") {
       return new Response(JSON.stringify({
-        skill: {
+        resource: {
           kind: "skill",
-          name,
+          resourceId: "wres_" + "1".repeat(32),
+          version: 1,
+          assetId: body.assetId,
           contentHash: body && typeof body.contentHash === "string" ? body.contentHash : "sha256:" + "a".repeat(64),
+          name: body.name,
           description: body && typeof body.description === "string" ? body.description : "",
           sizeBytes: body && typeof body.sizeBytes === "number" ? body.sizeBytes : 0,
-          version: 1
-        },
-        updated: true
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-
-    if (url.endsWith("/api/sessions") && method === "POST") {
-      sessionCounter += 1;
-      return new Response(JSON.stringify({
-        session: {
-          id: "sess_skill_url_" + sessionCounter,
-          workspaceId: "ws_skill_url",
-          status: "idle",
-          turnSeq: 0,
+          contentType: body.contentType,
           createdAt: new Date(0).toISOString()
         }
-      }), { status: 201, headers: { "content-type": "application/json" } });
+      }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -175,24 +163,12 @@ function makeFetch(archives = {}) {
   return { calls, fetch: fetchFake };
 }
 
-function createBodies(calls) {
-  return calls
-    .filter((call) => call.method === "POST" && call.url.endsWith("/api/sessions"))
-    .map((call) => call.body);
-}
-
-function onlyCreateBody(calls) {
-  const bodies = createBodies(calls);
-  strictEqual(bodies.length, 1, "expected exactly one session-create call");
-  return bodies[0];
-}
-
 function presignCalls(calls) {
-  return calls.filter((call) => call.url.endsWith("/assets/presign"));
+  return calls.filter((call) => call.url.endsWith("/api/assets/presign"));
 }
 
 function finalizeCalls(calls) {
-  return calls.filter((call) => call.url.endsWith("/assets/finalize"));
+  return calls.filter((call) => call.url.endsWith("/api/assets/finalize"));
 }
 
 function storagePuts(calls) {
@@ -203,12 +179,8 @@ function archiveFetches(calls, host) {
   return calls.filter((call) => call.url.includes(host) && call.method === "GET");
 }
 
-function upsertSkillCalls(calls) {
-  return calls.filter((call) => call.method === "PUT" && call.url.includes("/api/skills/"));
-}
-
-function skillEntries(body) {
-  return body.submission.skills ?? [];
+function publishSkillCalls(calls) {
+  return calls.filter((call) => call.method === "POST" && call.url.endsWith("/api/workspace/skills"));
 }
 
 function assetIdFromHash(hash) {
@@ -291,28 +263,25 @@ strictEqual(skill.ref.kind, "draft");
 strictEqual(skill.ref.name, "alpha-skill");
 strictEqual(skill.ref.description, "Alpha.");
 strictEqual(skill.ref.contentHash, happyHash);
-// A draft skill-tool only becomes a wire ref once uploaded.
-await expectReject("draft toJSON", async () => skill.toJSON(), /draft skill cannot be JSON-serialised/);
+// A draft skill only becomes a wire ref through the workspace publisher.
+await expectReject("draft toJSON", async () => skill.toJSON(), /workspace\.skills\.publish/);
 
-await happy.client.sessions.create({
-  model: "claude-haiku-4-5",
-  skills: [skill],
-  apiKeys: { anthropic: "sk-ant" }
-});
-const happyBody = onlyCreateBody(happy.calls);
-deepStrictEqual(happyBody.submission.tools, []);
-deepStrictEqual(skillEntries(happyBody), [
-  { kind: "skill", name: "alpha-skill" }
-]);
+const happyRef = await happy.client.workspace.skills.publish(skill);
+strictEqual(happyRef.kind, "skill");
+strictEqual(happyRef.name, "alpha-skill");
+strictEqual(happyRef.version, 1);
 strictEqual(archiveFetches(happy.calls, "skills.example.test").length, 1);
 strictEqual(presignCalls(happy.calls).length, 1);
 strictEqual(storagePuts(happy.calls).length, 1);
 strictEqual(finalizeCalls(happy.calls).length, 1);
-strictEqual(upsertSkillCalls(happy.calls).length, 1);
-deepStrictEqual(upsertSkillCalls(happy.calls)[0].body, {
+strictEqual(publishSkillCalls(happy.calls).length, 1);
+deepStrictEqual(publishSkillCalls(happy.calls)[0].body, {
+  assetId: assetIdFromHash(happyHash),
   contentHash: happyHash,
   description: "Alpha.",
-  sizeBytes: storagePuts(happy.calls)[0].body.byteLength
+  sizeBytes: storagePuts(happy.calls)[0].body.byteLength,
+  contentType: "application/zip",
+  name: "alpha-skill"
 });
 
 // ---- { name } override: metadata-only, bytes (and asset) unchanged ----
@@ -322,15 +291,9 @@ const ovSkill = await Skill.fromUrl(ovUrl, { fetch: ov.fetch, name: "renamed-ski
 strictEqual(ovSkill.ref.name, "renamed-skill");
 strictEqual(ovSkill.ref.description, "Alpha.");
 strictEqual(ovSkill.ref.contentHash, happyHash, "name override does not change bundle bytes");
-await ov.client.sessions.create({
-  model: "claude-haiku-4-5",
-  skills: [ovSkill],
-  apiKeys: { anthropic: "sk-ant" }
-});
-deepStrictEqual(skillEntries(onlyCreateBody(ov.calls)), [
-  { kind: "skill", name: "renamed-skill" }
-]);
-strictEqual(upsertSkillCalls(ov.calls)[0].body.contentHash, happyHash);
+const ovRef = await ov.client.workspace.skills.publish(ovSkill);
+strictEqual(ovRef.name, "renamed-skill");
+strictEqual(publishSkillCalls(ov.calls)[0].body.contentHash, happyHash);
 
 // ---- Top-level folder strip is transparent to the canonical asset ----
 const rootFiles = { "SKILL.md": SKILL_MD, "reference.md": REF_MD };
@@ -366,17 +329,12 @@ const dirSkill = await Skill.fromDir(dir, { name: "dir-alpha-skill" });
 const urlSkill = await Skill.fromUrl(dedupUrl, { fetch: dedup.fetch, name: "url-alpha-skill" });
 strictEqual(dirSkill.ref.contentHash, dedupHash, "local dir hashes to the canonical bundle");
 strictEqual(urlSkill.ref.contentHash, dedupHash, "url skill hashes to the same canonical bundle");
-await dedup.client.sessions.create({
-  model: "claude-haiku-4-5",
-  skills: [dirSkill, urlSkill],
-  apiKeys: { anthropic: "sk-ant" }
-});
-const dedupEntries = skillEntries(onlyCreateBody(dedup.calls));
-deepStrictEqual(dedupEntries, [
-  { kind: "skill", name: "dir-alpha-skill" },
-  { kind: "skill", name: "url-alpha-skill" }
+const dedupEntries = await Promise.all([
+  dedup.client.workspace.skills.publish(dirSkill),
+  dedup.client.workspace.skills.publish(urlSkill)
 ]);
-deepStrictEqual(upsertSkillCalls(dedup.calls).map((call) => call.body.contentHash), [dedupHash, dedupHash]);
+deepStrictEqual(dedupEntries.map((entry) => entry.name), ["dir-alpha-skill", "url-alpha-skill"]);
+deepStrictEqual(publishSkillCalls(dedup.calls).map((call) => call.body.contentHash), [dedupHash, dedupHash]);
 // A single real upload despite two distinct instances: the 2nd presign is a
 // content-address dedup hit, so exactly one PUT + one finalize.
 strictEqual(storagePuts(dedup.calls).length, 1);
@@ -394,7 +352,7 @@ console.log(JSON.stringify({
   overrideName: ovSkill.ref.name,
   folderStripMatches: folderSkill.ref.contentHash === rootHash,
   rootVsFolderSameHash: folderSkill.ref.contentHash === rootSkill.ref.contentHash,
-  dedupSameHash: upsertSkillCalls(dedup.calls).every((call) => call.body.contentHash === dedupHash),
+  dedupSameHash: publishSkillCalls(dedup.calls).every((call) => call.body.contentHash === dedupHash),
   dedupPuts: storagePuts(dedup.calls).length,
   dedupFinalizes: finalizeCalls(dedup.calls).length,
   dedupPresigns
@@ -440,15 +398,9 @@ const prefixedClient = new Aex({
 });
 const prefixedSkill = await Skill.fromUrl(url, { fetch: prefixed.fetch, sha256: contentHash });
 strictEqual(prefixedSkill.ref.contentHash, contentHash);
-await prefixedClient.sessions.create({
-  model: "claude-haiku-4-5",
-  skills: [prefixedSkill],
-  apiKeys: { anthropic: "sk-ant" }
-});
-deepStrictEqual(skillEntries(onlyCreateBody(prefixed.calls)), [
-  { kind: "skill", name: "alpha-skill" }
-]);
-strictEqual(upsertSkillCalls(prefixed.calls)[0].body.contentHash, contentHash);
+const prefixedRef = await prefixedClient.workspace.skills.publish(prefixedSkill);
+strictEqual(prefixedRef.name, "alpha-skill");
+strictEqual(publishSkillCalls(prefixed.calls)[0].body.contentHash, contentHash);
 
 // Correct hash, bare-hex form -> also accepted (prefix is optional on input).
 const bare = makeFetch({ [url]: { status: 200, bytes: zip } });
@@ -487,7 +439,7 @@ strictEqual(presignCalls(tampered.calls).length, 0);
 
 console.log(JSON.stringify({
   ok: true,
-  prefixedSkillName: skillEntries(onlyCreateBody(prefixed.calls))[0].name,
+  prefixedSkillName: prefixedRef.name,
   bareHexAccepted: bareSkill.ref.contentHash === contentHash,
   wrongRejected: /integrity check failed/.test(wrongMsg),
   integrityRejectPresigns: presignCalls(wrong.calls).length + presignCalls(tampered.calls).length

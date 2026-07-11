@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
  * malformed bytes the SDK would never emit. Substrate-agnostic: the same
  * robustness invariants hold for any deployment plane behind the public contract.
  *
- * Fails fast unless AEX_API_URL + AEX_API_KEY are set. SessionRecord on demand via
+ * Fails fast unless AEX_API_URL + AEX_API_KEY are set. Run on demand via
  *   bun run --filter @aexhq/user-tests test:user:fuzz
  * (excluded from the default `test:user` sweep — see vitest.config.ts).
  *
@@ -52,7 +52,7 @@ function requireFuzzEnv(): FuzzEnv {
 
 const { base: BASE, token: TOKEN, sessions: SESSIONS } = requireFuzzEnv();
 
-// --- transport with 503/transient retry -------------------------------------
+// --- single-attempt raw transport -------------------------------------------
 
 interface Res {
   status: number;
@@ -68,25 +68,17 @@ async function call(
   const headers: Record<string, string> = { accept: "application/json" };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.body !== undefined) headers["content-type"] = opts.contentType ?? "application/json";
-  let last: Res = { status: 0, body: "" };
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const r = await fetch(`${BASE}${path}`, {
-        method,
-        headers,
-        redirect: opts.redirect ?? "follow",
-        ...(opts.body !== undefined ? { body: opts.body } : {})
-      });
-      const text = await r.text().catch(() => "");
-      last = { status: r.status, body: text };
-      // 503 = Aurora min-ACU-0 cold-resume (AWS) → retryable infra, not a finding.
-      if (r.status !== 503) return last;
-    } catch (err) {
-      last = { status: 0, body: String(err) };
-    }
-    await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      redirect: opts.redirect ?? "follow",
+      ...(opts.body !== undefined ? { body: opts.body } : {})
+    });
+    return { status: response.status, body: await response.text().catch(() => "") };
+  } catch (error) {
+    return { status: 0, body: String(error) };
   }
-  return last;
 }
 
 /** The core invariant: bad input is a structured 4xx, never a 5xx. */
@@ -161,7 +153,7 @@ describe("LIVE API adversarial fuzz", () => {
     );
   });
 
-  it("POST /sessions: malformed bodies are edge-rejected 4xx (never 5xx, never a dispatched run)", async () => {
+  it("POST /api/sessions: malformed bodies are edge-rejected 4xx (never 5xx, never a dispatched run)", async () => {
     // Only bodies GUARANTEED rejected BEFORE any run dispatch on either plane.
     const invalidJson = fc
       .string({ minLength: 0, maxLength: 60 })
@@ -176,7 +168,7 @@ describe("LIVE API adversarial fuzz", () => {
     await fc.assert(
       fc.asyncProperty(invalidJson, async (raw) => {
         const r = await call("POST", "/api/sessions", { token: TOKEN, body: raw });
-        expect4xx(`POST /sessions invalid-json`, r);
+        expect4xx(`POST /api/sessions invalid-json`, r);
       }),
       { numRuns: Math.min(SESSIONS, 40) }
     );
@@ -186,7 +178,7 @@ describe("LIVE API adversarial fuzz", () => {
       submission: { model: "claude-haiku-4-5", prompt: ["x"], mcpServers: [{ name: "s", url: "stdio://x", transport: "stdio" }] },
       secrets: {}
     });
-    expect4xx("POST /sessions stdio-mcp", await call("POST", "/api/sessions", { token: TOKEN, body: stdioBody }));
+    expect4xx("POST /api/sessions stdio-mcp", await call("POST", "/api/sessions", { token: TOKEN, body: stdioBody }));
 
     // SSRF / non-https webhook — pre-dispatch reject.
     await fc.assert(
@@ -195,19 +187,19 @@ describe("LIVE API adversarial fuzz", () => {
         async (url) => {
           const body = JSON.stringify({ submission: { model: "claude-haiku-4-5", prompt: ["x"] }, secrets: {}, webhook: { url } });
           const r = await call("POST", "/api/sessions", { token: TOKEN, body });
-          expect4xx(`POST /sessions bad-webhook ${url}`, r);
+          expect4xx(`POST /api/sessions bad-webhook ${url}`, r);
         }
       ),
       { numRuns: Math.min(SESSIONS, 12) }
     );
   });
 
-  it("POST /sessions: reject determinism — same malformed body ⇒ same status (no dup)", async () => {
+  it("POST /api/sessions: reject determinism — same malformed body ⇒ same status (no dup)", async () => {
     await fc.assert(
       fc.asyncProperty(fc.constantFrom("@@@", "[]", '"x"', "123", "{bad}"), async (raw) => {
         const a = await call("POST", "/api/sessions", { token: TOKEN, body: raw });
         const b = await call("POST", "/api/sessions", { token: TOKEN, body: raw });
-        expect4xx("POST /sessions determinism", a);
+        expect4xx("POST /api/sessions determinism", a);
         expect(b.status).toBe(a.status);
       }),
       { numRuns: 5 }
@@ -223,14 +215,14 @@ describe("LIVE API adversarial fuzz", () => {
       fc.asyncProperty(sessionId, fc.constantFrom("", "/events", "/files"), async (id, suffix) => {
         const enc = encodeURIComponent(id);
         const r = await call("GET", `/api/sessions/${enc}${suffix}`, { token: TOKEN });
-        expectNo5xx(`GET /sessions/<id>${suffix}`, r);
+        expectNo5xx(`GET /api/sessions/<id>${suffix}`, r);
         expect(r.status).toBeLessThan(500);
       }),
       { numRuns: Math.min(SESSIONS, 40) }
     );
   });
 
-  it("read endpoints: adversarial listSessionRecords / presign inputs → never 5xx", async () => {
+  it("read endpoints: adversarial session-list / presign inputs → never 5xx", async () => {
     const qp = fc.record(
       {
         limit: fc.oneof(fc.integer({ min: -9999, max: 99999 }).map(String), fc.string({ maxLength: 8 })),
@@ -243,7 +235,7 @@ describe("LIVE API adversarial fuzz", () => {
       fc.asyncProperty(qp, async (q) => {
         const search = new URLSearchParams(q as Record<string, string>).toString();
         const r = await call("GET", `/api/sessions?${search}`, { token: TOKEN });
-        expectNo5xx("GET /sessions?<query>", r);
+        expectNo5xx("GET /api/sessions?<query>", r);
       }),
       { numRuns: Math.min(SESSIONS, 30) }
     );
@@ -253,7 +245,7 @@ describe("LIVE API adversarial fuzz", () => {
         fc.oneof(fc.constant("{}"), fc.constant('{"hash":123}'), fc.constant('{"hash":"notahash"}'), fc.string({ maxLength: 30 })),
         async (raw) => {
           const r = await call("POST", "/api/assets/presign", { token: TOKEN, body: raw });
-          expectNo5xx("POST /assets/presign garbage", r);
+          expectNo5xx("POST /api/assets/presign garbage", r);
         }
       ),
       { numRuns: Math.min(SESSIONS, 20) }

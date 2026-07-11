@@ -1,14 +1,15 @@
 /**
- * `aex inspect <session-id>` (DX3) — one-shot, settle-consistent render of a
+ * `aex inspect <session-id>` (DX3) — one-shot, checkpoint-consistent render of a
  * session's FULL timeline plus a header and a footer (jump-to-failure +
  * cost/usage). Built on the same coordinator envelope stream as `aex tail`
- * (replay from seq 0 with the `aex.session.settled` barrier, so the final
+ * (replay from seq 0 through the committed RUN terminal, so the final
  * `getSession` is read-consistent).
  *
  * Human view: header → timeline → footer. `--json` emits one machine document
- * `{ session, events }`. Exit mirrors `wait`: 0 parked cleanly / 1 error park / 3 timeout.
+ * `{ session, events }`. Exit is 0 for a succeeded run, 1 otherwise, or 3 on timeout.
  */
-import { operations, type AexEvent, type Session } from "@aexhq/contracts";
+import { isReplayableEvent, type AexEvent, type AexStreamEvent, type Session } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -19,7 +20,7 @@ import {
   collectRepeated,
   describeApiError,
   emitJsonError,
-  isSessionOk,
+  isSessionNonProgressing,
   makeHttpClient,
   parseDuration,
   rejectUnknownFlags,
@@ -72,7 +73,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     io.stderr(
       JSON.stringify({
         error: "websocket_unavailable",
-        message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or session with bun.",
+        message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
         sessionId
       }) + "\n"
     );
@@ -116,17 +117,23 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
           controller.abort();
         }, timeoutMs);
 
-  const collected: AexEvent[] = [];
+  const collected: AexStreamEvent[] = [];
   let runErrorEvent: AexEvent | null = null;
+  let terminalOutcome: string | undefined;
   try {
     const stream = openEnvelopeStream(io, http, sessionId, {
       from: 0,
-      settleConsistent: true,
+      ...(header.currentRun?.runId || header.lastRun?.runId
+        ? { runId: header.currentRun?.runId ?? header.lastRun!.runId }
+        : {}),
       signal: controller.signal,
       ...(debug ? { debug } : {})
     });
     for await (const e of stream) {
-      if (e.type === "TURN_ERROR") runErrorEvent = e;
+      if (isReplayableEvent(e) && (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")) {
+        if (e.type === "RUN_ERROR") runErrorEvent = e;
+        if (typeof e.data.outcome === "string") terminalOutcome = e.data.outcome;
+      }
       if (filters.predicate && !filters.predicate(e)) continue;
       if (json) {
         if (logsFlag.present || e.channel !== "log") collected.push(e);
@@ -151,7 +158,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     return TIMEOUT_ERR;
   }
 
-  // Settle-consistent stream ended ⇒ the record is read-consistent.
+  // The committed RUN terminal is the read-consistency barrier.
   let finalSession: Session = header;
   try {
     finalSession = await operations.getSession(http, sessionId);
@@ -165,7 +172,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     // Footer: jump-to-failure + cost/usage.
     if (runErrorEvent) {
       const d = runErrorEvent.data as Record<string, unknown>;
-      const failureMessage = typeof d.failureMessage === "string" ? d.failureMessage : (runErrorEvent.message ?? "turn error");
+      const failureMessage = typeof d.failureMessage === "string" ? d.failureMessage : (runErrorEvent.message ?? "run error");
       const failureClass = typeof d.failureClass === "string" ? ` [${d.failureClass}]` : "";
       io.stdout(`\n✗ ${failureMessage}${failureClass}\n`);
     }
@@ -181,6 +188,6 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     }
   }
 
-  if (isSessionOk(finalSession.status)) return SUCCESS;
+  if (isSessionNonProgressing(finalSession.status) && terminalOutcome === "succeeded") return SUCCESS;
   return RUNTIME_ERR;
 }

@@ -1,49 +1,49 @@
 ---
 title: Sessions
-description: The durable unit aex submits, observes, and archives.
+description: Resumable threads, explicit runs, and committed checkpoints.
 icon: Play
 ---
 
-A session is a durable, resumable **agent record**: the model, system message, composition
-primitives, assistant text mode, file capture policy, and per-provider keys you open it with, plus every
-turn you send to it. aex snapshots the non-secret inputs, holds secrets for the
-session lifecycle, dispatches each turn through the managed runtime, and records
-status, typed events, and files. Sessions are the low-level API; `start()` is the
-one-shot convenience wrapper over them.
+A session is a resumable thread. Its `status` describes whether that thread can
+progress, not whether the previous run succeeded. Typical resumable states are
+`running`, `idle`, `suspended`, `awaiting_approval`, and recoverable `error`.
+The previous run verdict is available as `lastRun.outcome` and on its terminal
+RUN event.
 
 ```ts
-import { Aex, Models } from "@aexhq/sdk";
-
-const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
-
-const session = await aex.openSession({
-  provider: "anthropic",
-  model: Models.CLAUDE_HAIKU_4_5,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+const session = await aex.sessions.create({
+  model,
+  apiKeys
 });
 
-const turn = session.send("Write the report and save it as a file.");
-for await (const event of turn) {
-  console.log(event.type);
-}
-await turn.done();
+const run = session.messages.send("Write the report and save it as a file.");
+for await (const event of run) console.log(event.type);
+const result = await run.finished();
 
-await session.wait();
-await session.download({ to: "./session.zip" });
+console.log(result.status); // succeeded | failed | timed_out | cancelled | interrupted
+console.log(result.session.status); // usually idle after a successful run
 ```
 
-The same durable record backs SDK and CLI reads. From the handle use `refresh`,
-`unit`, `wait`, and `download` for lifecycle, plus the grouped read accessors —
-`messages()`, `events()`, and `files()` (each with `list()`/`last()`/`first()`,
-and `events().stream()` / `events().streamEnvelopes()` / `files().read(...)` for
-streaming and byte-capped reads) — to inspect the session live or after it parks;
-from the client, `aex.sessions.list()` / `aex.sessions.get(id)` read across the
-workspace (CLI mirrors: `aex sessions` and `aex sessions` list the workspace's
-sessions/sessions newest-first).
+`finished()` resolves only after `RUN_FINISHED` or `RUN_ERROR`. A
+`RUN_FINISHED` is the consistency barrier: session state, billing, checkpoint,
+and S3-backed files are committed before it is emitted. This release does not
+expose a separate pre-checkpoint "brain idle" wait.
 
-Use `idempotencyKey` when retrying `openSession` or `send` from your own
-workflow. aex hashes the normalized non-secret submission, so a retry with the
-same key and same body returns the existing session while a mismatched body fails
-with an idempotency conflict.
+The three common namespaces are stable properties:
 
-aex selects product placement server-side. There is no region selector.
+```ts
+const messages = await session.messages.list();
+const events = await session.events.list();
+const snapshot = await session.files.list();
+
+console.log(snapshot.revision.checkpointId);
+console.log(snapshot.files);
+```
+
+Reopen a durable session with `aex.sessions.open(id)`. Use a stable
+`idempotencyKey` for create and message mutations that your application may
+repeat. Reads and explicitly idempotent mutations receive bounded transport
+retries; a user run is never replayed as a whole by the SDK.
+
+`aex.start(...)` is the one-shot create, send, and finish convenience. It
+returns the same five-value run outcome and committed file snapshot.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 const baseSubmission = {
   workspaceId: "workspace-1",
@@ -7,8 +7,8 @@ const baseSubmission = {
   submission: {
     model: "claude-haiku-4-5",
     prompt: ["say hello"],
-    agentsMd: [],
-    files: [],
+    assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
     mcpServers: []
   },
   secrets: { apiKeys: { anthropic: "sk-ant-test" } }

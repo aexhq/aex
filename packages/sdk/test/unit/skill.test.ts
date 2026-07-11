@@ -1,8 +1,7 @@
 /**
  * Unit tests for the first-class `Skill` surface: factories, name derivation,
  * the reserved/`__`/pattern/length rejects across every factory, and the
- * `upload()` upsert (draft → asset + registry PUT; identical-bytes no-op +
- * instance-cache reuse; changed bytes overwrite; upload-on-uploaded throws).
+ * draft-only submission guard.
  */
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
@@ -45,23 +44,6 @@ function makeNamedSkillDir(basename: string, files: Record<string, string>): { d
   return { dir, cleanup: () => { try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ } } };
 }
 
-interface UpsertArgs { name: string; contentHash: string; description: string; sizeBytes: number }
-function makeUploader() {
-  const assetCalls: Array<{ hash: string; bytes: Uint8Array }> = [];
-  const upsertCalls: UpsertArgs[] = [];
-  const uploader = {
-    async _uploadAsset(a: { bytes: Uint8Array; hash: string; contentType?: string }) {
-      assetCalls.push({ hash: a.hash, bytes: a.bytes });
-      return { assetId: `asset_${a.hash.slice("sha256:".length)}` };
-    },
-    async _upsertSkill(a: UpsertArgs) {
-      upsertCalls.push(a);
-      return { updated: true };
-    }
-  };
-  return { uploader, assetCalls, upsertCalls };
-}
-
 describe("Skill — name derivation", () => {
   it("lifts name + description from SKILL.md frontmatter", async () => {
     const skill = await Skill.fromFiles({ files: { "SKILL.md": skillMd("pdf-filler", "Fills PDF forms.") } });
@@ -90,7 +72,7 @@ describe("Skill — name derivation", () => {
     const d = makeNamedSkillDir("Rép0rt__Writer!!", { "SKILL.md": skillMd(undefined, "desc") });
     try {
       const skill = await Skill.fromDir(d.dir);
-      // Non-[a-z0-9] sessions collapse to single '-', so the reserved '__' can't survive.
+      // Non-[a-z0-9] sequences collapse to a single '-', so the reserved '__' can't survive.
       expect(skill.name).toMatch(/^[a-z0-9][a-z0-9_-]{0,127}$/);
       expect(skill.name.includes("__")).toBe(false);
       expect(skill.name).toBe("r-p0rt-writer");
@@ -256,64 +238,9 @@ describe("Skill — factory equivalence + fromUrl", () => {
 });
 
 describe("Skill.toJSON", () => {
-  it("refuses to serialise an un-uploaded draft", async () => {
+  it("refuses direct submission and exposes no alternate upload API", async () => {
     const skill = await Skill.fromContent(skillMd("draft", "d"));
-    expect(() => skill.toJSON()).toThrow(/draft skill cannot be JSON-serialised/);
-  });
-
-  it("serialises an uploaded skill to a by-name ref", async () => {
-    const { uploader } = makeUploader();
-    const uploaded = await (await Skill.fromContent(skillMd("done", "d"))).upload(uploader);
-    expect(uploaded.toJSON()).toEqual({ kind: "skill", name: "done" });
-  });
-});
-
-describe("Skill.upload — workspace upsert", () => {
-  it("stages bytes then PUTs the registry entry and returns a by-name ref", async () => {
-    const { uploader, assetCalls, upsertCalls } = makeUploader();
-    const draft = await Skill.fromContent(skillMd("rules", "Keep it short."));
-    const contentHash = draft.ref.kind === "draft" ? draft.ref.contentHash : "";
-    const uploaded = await draft.upload(uploader);
-
-    expect(assetCalls).toHaveLength(1);
-    expect(assetCalls[0]!.hash).toBe(contentHash);
-    expect(upsertCalls).toHaveLength(1);
-    expect(upsertCalls[0]).toEqual({
-      name: "rules",
-      contentHash,
-      description: "Keep it short.",
-      sizeBytes: assetCalls[0]!.bytes.byteLength
-    });
-    expect(uploaded.isDraft).toBe(false);
-    expect(uploaded.ref).toEqual({ kind: "skill", name: "rules" });
-  });
-
-  it("is idempotent on the same instance: a second upload skips both round-trips (instance cache)", async () => {
-    const { uploader, assetCalls, upsertCalls } = makeUploader();
-    const draft = await Skill.fromContent(skillMd("rules", "d"));
-    await draft.upload(uploader);
-    await draft.upload(uploader);
-    expect(assetCalls).toHaveLength(1);
-    expect(upsertCalls).toHaveLength(1);
-  });
-
-  it("uploads changed bytes under the same name (overwrite path)", async () => {
-    const { uploader, assetCalls, upsertCalls } = makeUploader();
-    const a = await Skill.fromContent(skillMd("rules", "d", "body A"));
-    const b = await Skill.fromContent(skillMd("rules", "d", "body B"));
-    const hashA = a.ref.kind === "draft" ? a.ref.contentHash : "";
-    const hashB = b.ref.kind === "draft" ? b.ref.contentHash : "";
-    expect(hashA).not.toBe(hashB);
-    await a.upload(uploader);
-    await b.upload(uploader);
-    expect(assetCalls.map((c) => c.hash)).toEqual([hashA, hashB]);
-    expect(upsertCalls.map((c) => c.name)).toEqual(["rules", "rules"]);
-    expect(upsertCalls.map((c) => c.contentHash)).toEqual([hashA, hashB]);
-  });
-
-  it("throws when uploading an already-uploaded (non-draft) skill", async () => {
-    const { uploader } = makeUploader();
-    const uploaded = await (await Skill.fromContent(skillMd("rules", "d"))).upload(uploader);
-    await expect(uploaded.upload(uploader)).rejects.toThrow(/only draft skills can be uploaded/);
+    expect(() => skill.toJSON()).toThrow(/publish with aex\.workspace\.skills\.publish/);
+    expect("upload" in skill).toBe(false);
   });
 });

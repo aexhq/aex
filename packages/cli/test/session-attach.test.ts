@@ -11,7 +11,7 @@ const SKILL_MD = "---\nname: report-skill\ndescription: A test skill for attach\
 
 function attachFetch(call: FetchCall): Response {
   const url = new URL(call.url);
-  if (url.pathname === "/assets/presign") {
+  if (url.pathname === "/api/assets/presign") {
     const body = call.body as { hash: string };
     return new Response(JSON.stringify({
       exists: false,
@@ -22,7 +22,7 @@ function attachFetch(call: FetchCall): Response {
   if (url.hostname === "object-storage.example.test") {
     return new Response("", { status: 200 });
   }
-  if (url.pathname === "/assets/finalize") {
+  if (url.pathname === "/api/assets/finalize") {
     const body = call.body as { hash: string; sizeBytes: number };
     const hex = body.hash.slice("sha256:".length);
     return new Response(JSON.stringify({
@@ -31,26 +31,38 @@ function attachFetch(call: FetchCall): Response {
       sizeBytes: body.sizeBytes
     }), { status: 200, headers: { "content-type": "application/json" } });
   }
-  if (url.pathname.startsWith("/api/skills/") && call.init.method === "PUT") {
-    const name = decodeURIComponent(url.pathname.slice("/api/skills/".length));
-    return new Response(JSON.stringify({ skill: { name }, updated: true }), {
+  const workspaceMatch = /^\/api\/workspace\/(files|skills|tools|instructions)$/.exec(url.pathname);
+  if (workspaceMatch && call.init.method === "POST") {
+    const kind = workspaceMatch[1]!;
+    const body = call.body as Record<string, unknown>;
+    const suffix = { files: "1", skills: "2", tools: "3", instructions: "4" }[kind]!;
+    const singular = { files: "file", skills: "skill", tools: "tool", instructions: "instruction" }[kind]!;
+    return new Response(JSON.stringify({
+      resource: {
+        ...body,
+        kind: singular,
+        resourceId: `wres_${suffix.repeat(32)}`,
+        version: 1,
+        createdAt: "2026-07-10T00:00:00.000Z"
+      }
+    }), {
       status: 200,
       headers: { "content-type": "application/json" }
     });
   }
   if (url.pathname === "/api/sessions" && call.init.method === "POST") {
-    return new Response(JSON.stringify({ id: "s1", status: "idle", provider: "anthropic", runtime: "managed" }), {
-      status: 200,
+    return new Response(JSON.stringify({ session: { id: "s1", status: "idle", acceptsMessages: true, provider: "anthropic", runtimeSize: "shared-0.25x-1gb" } }), {
+      status: 201,
       headers: { "content-type": "application/json" }
     });
   }
   if (url.pathname === "/api/sessions/s1/messages" && call.init.method === "POST") {
     return new Response(JSON.stringify({
-      session: { id: "s1", status: "running", turnSeq: 1, turnStatus: "launching", provider: "anthropic", runtime: "managed" },
-      turn: { sessionId: "s1", turnSeq: 1 },
+      session: { id: "s1", status: "running", acceptsMessages: false, provider: "anthropic", runtimeSize: "shared-0.25x-1gb" },
+      run: { sessionId: "s1", runId: "run-1", turnSeq: 1, phase: "running" },
       eventCursor: 1
     }), {
-      status: 200,
+      status: 202,
       headers: { "content-type": "application/json" }
     });
   }
@@ -60,8 +72,8 @@ function attachFetch(call: FetchCall): Response {
   });
 }
 
-describe("aex start --skill/--tool/--agents-md/--file (T6a attach)", () => {
-  it("stages every attached asset kind and submits their public refs", async () => {
+describe("aex start workspace resource flags", () => {
+  it("publishes every attached resource and submits immutable refs", async () => {
     const cap = makeIo({
       argv: [
         "start",
@@ -69,7 +81,7 @@ describe("aex start --skill/--tool/--agents-md/--file (T6a attach)", () => {
         "--prompt", "hi",
         "--skill", "@s.md",
         "--tool", "@t.js",
-        "--agents-md", "@a.md",
+        "--instructions", "@a.md",
         "--file", "@f.txt",
         "--anthropic-api-key", "sk-ant-1",
         ...COMMON
@@ -85,10 +97,12 @@ describe("aex start --skill/--tool/--agents-md/--file (T6a attach)", () => {
 
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
-    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/assets/presign")).toHaveLength(4);
+    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/api/assets/presign")).toHaveLength(4);
     expect(cap.calls.filter((call) => new URL(call.url).hostname === "object-storage.example.test")).toHaveLength(4);
-    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/assets/finalize")).toHaveLength(4);
-    expect(cap.calls.some((call) => new URL(call.url).pathname === "/api/skills/report-skill")).toBe(true);
+    expect(cap.calls.filter((call) => new URL(call.url).pathname === "/api/assets/finalize")).toHaveLength(4);
+    for (const kind of ["files", "skills", "tools", "instructions"]) {
+      expect(cap.calls.some((call) => new URL(call.url).pathname === `/api/workspace/${kind}`)).toBe(true);
+    }
 
     const create = cap.calls.find((call) => new URL(call.url).pathname === "/api/sessions");
     expect(create).toBeDefined();
@@ -97,15 +111,17 @@ describe("aex start --skill/--tool/--agents-md/--file (T6a attach)", () => {
     const message = cap.calls.find((call) => new URL(call.url).pathname === "/api/sessions/s1/messages");
     expect(message?.body).toEqual({ input: ["hi"] });
     const submission = body.submission as {
-      skills?: unknown[];
-      tools?: Array<{ kind?: string }>;
-      agentsMd?: unknown[];
-      files?: unknown[];
+      assets: {
+        skills: Array<{ kind: string; resourceId: string; version: number }>;
+        tools: Array<{ kind: string; resourceId: string; version: number }>;
+        instructions: Array<{ kind: string; resourceId: string; version: number }>;
+        files: Array<{ kind: string; resourceId: string; version: number }>;
+      };
     };
-    expect(submission.skills).toEqual([{ kind: "skill", name: "report-skill" }]);
-    expect(submission.tools?.some((tool) => tool.kind === "asset")).toBe(true);
-    expect(submission.agentsMd).toHaveLength(1);
-    expect(submission.files).toHaveLength(1);
+    expect(submission.assets.skills[0]).toMatchObject({ kind: "skill", resourceId: `wres_${"2".repeat(32)}`, version: 1 });
+    expect(submission.assets.tools[0]).toMatchObject({ kind: "tool", resourceId: `wres_${"3".repeat(32)}`, version: 1 });
+    expect(submission.assets.instructions[0]).toMatchObject({ kind: "instruction", resourceId: `wres_${"4".repeat(32)}`, version: 1 });
+    expect(submission.assets.files[0]).toMatchObject({ kind: "file", resourceId: `wres_${"1".repeat(32)}`, version: 1 });
   });
 
   it("reports a clear error when an attached asset file is missing", async () => {

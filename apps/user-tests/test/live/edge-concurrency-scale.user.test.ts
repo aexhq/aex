@@ -388,7 +388,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
             snapshot.recordError = errShape(e);
           }
           try {
-            const events = await session.events().list();
+            const events = await session.events.list();
             snapshot.events = events.map(compactEvent).slice(-25);
           } catch (e) {
             snapshot.eventsError = errShape(e);
@@ -404,7 +404,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
                 key,
                 error: {
                   name: "SendTimeout",
-                  message: "session.send().done() did not settle within " + SEND_TIMEOUT_MS + "ms",
+                  message: "session.messages.send().finished() did not finish within " + SEND_TIMEOUT_MS + "ms",
                   status: null,
                   code: "SEND_TIMEOUT"
                 }
@@ -419,8 +419,8 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
         for (let i = 0; i < M; i++) {
           const key = "cstorm-" + STAMP + "-" + i;
           const turn = (
-            session.send("Reply with exactly this marker and no other text: S" + i + "Z" + STAMP, { idempotencyKey: key })
-              .done()
+            session.messages.send("Reply with exactly this marker and no other text: S" + i + "Z" + STAMP, { idempotencyKey: key })
+              .finished()
               .then((res) => ({ i, key, status: String(res.status), text: dense(res.text) }))
               .catch((e) => ({ i, key, error: errShape(e) }))
           );
@@ -489,7 +489,7 @@ describe("edge: larger-scale concurrency (DeepSeek)", () => {
           const t0 = Date.now();
           try {
             const s = await client.sessions.open(sessionId);
-            for await (const ev of s.events().streamEnvelopes({ from: 0, settleConsistent: true, signal: ac.signal })) {
+            for await (const ev of s.events.streamEnvelopes({ from: 0, signal: ac.signal })) {
               if (typeof ev.sequence === "number") seqs.push(ev.sequence);
               if (typeof ev.subject === "string" && ev.subject) subjects.add(ev.subject);
               if (typeof ev.type === "string") types.push(ev.type);

@@ -1,15 +1,15 @@
 /**
- * BLACKBOX — the terminal-boundary / await-settle class (WS1 H4·T1, WS3 T2·T3·T4).
+ * BLACKBOX - the committed RUN terminal boundary.
  *
  * Every assertion here is what a customer sees through the public `aex.start()` /
- * `session.send().done()` surface against a realistic platform. The findings this
+ * `session.messages.send().finished()` surface against a realistic platform. The findings this
  * pins closed:
  *   H4/T1  a cancelled or timed-out session must NOT read as a clean idle/success.
  *   T1     a clean one-shot reports the OUTCOME `succeeded`, never a bare `idle`,
  *          while the resumable session RECORD keeps its `idle` lifecycle status.
- *   T2/T3  cost is ALWAYS present at the settled boundary — even a $0 turn.
+ *   T2/T3  cost is ALWAYS present at the RUN terminal — even a $0 run.
  *   T4     usage is ALWAYS present, derived from the server's provider usage.
- *   parity done() == start(): the same settled shape from both surfaces.
+ *   parity finished() == start(): the same finished shape from both surfaces.
  */
 import { describe, expect, it } from "vitest";
 import type { SessionStartOptions } from "../../../src/index.js";
@@ -17,7 +17,7 @@ import { FakePlatform } from "./fake-platform.js";
 
 const ONE_SHOT: SessionStartOptions = { model: "claude-haiku-4-5", message: "do the thing", apiKeys: { anthropic: "sk-ant" } };
 
-describe("blackbox: await-settle terminal boundary", () => {
+describe("blackbox: committed run terminal boundary", () => {
   it("a clean one-shot reports outcome 'succeeded' with cost + usage always present", async () => {
     const platform = new FakePlatform();
     const result = await platform.start(ONE_SHOT, {
@@ -36,9 +36,10 @@ describe("blackbox: await-settle terminal boundary", () => {
     expect(result.costUsd).toBe(0.0123);
     expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 });
     expect(result.error).toBeUndefined();
+    expect(result.checkpoint?.checkpointId).toBe("cp-1");
   });
 
-  it("a $0 turn still settles with costUsd:0 and empty usage — no hang, never undefined", async () => {
+  it("a $0 run finishes with costUsd:0 and empty usage", async () => {
     const platform = new FakePlatform();
     const result = await platform.start(ONE_SHOT, { text: "cheap", outcome: "succeeded", costUsd: 0 });
     expect(result.ok).toBe(true);
@@ -69,30 +70,33 @@ describe("blackbox: await-settle terminal boundary", () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
     expect(result.error).toBe("invalid provider api key");
+    expect(result.checkpoint).toBeUndefined();
+    expect(result.files).toEqual([]);
+    expect(result.costUsd).toBe(0);
+    expect(result.usage).toEqual({});
   });
 
-  it("done() and start() return the SAME settled shape for the same terminal", async () => {
+  it("finished() and start() return the same committed shape", async () => {
     const run = new FakePlatform();
     const viaRun = await run.start(ONE_SHOT, { text: "hi", costUsd: 0.002, usage: { inputTokens: 4, outputTokens: 1 } });
 
     const send = new FakePlatform();
-    const handle = await send.aex.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
-    const viaDone = (await send.send(handle, "hi", {
+    const handle = await send.aex.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const viaFinished = (await send.send(handle, "hi", {
       text: "hi",
       costUsd: 0.002,
       usage: { inputTokens: 4, outputTokens: 1 }
     })) as { ok: boolean; status: string; costUsd: number; usage: unknown };
 
-    // The done() turn result carries the same settled fields start() reshapes from.
-    expect(viaDone.ok).toBe(viaRun.ok);
-    expect(viaDone.status).toBe(viaRun.status);
-    expect(viaDone.costUsd).toBe(viaRun.costUsd);
-    expect(viaDone.usage).toEqual(viaRun.usage);
+    expect(viaFinished.ok).toBe(viaRun.ok);
+    expect(viaFinished.status).toBe(viaRun.status);
+    expect(viaFinished.costUsd).toBe(viaRun.costUsd);
+    expect(viaFinished.usage).toEqual(viaRun.usage);
   });
 
   it("each turn of a reused session carries its OWN outcome + cost (no bleed)", async () => {
     const platform = new FakePlatform();
-    const handle = await platform.aex.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const handle = await platform.aex.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
 
     const t1 = (await platform.send(handle, "turn one", { text: "one", costUsd: 0.01, outcome: "succeeded" })) as {
       ok: boolean;
@@ -113,23 +117,14 @@ describe("blackbox: await-settle terminal boundary", () => {
     expect(t2.costUsd).toBe(0.02);
   });
 
-  it("start() AWAITS the settle commit — a lagged settle still yields cost + outcome, and it polled", async () => {
-    const platform = new FakePlatform();
-    // settleLag: the park fires with the record UNSETTLED; only a later poll
-    // returns the settled record. A caller that returned at the park (the pre-fix
-    // behavior) would read no cost/outcome — so this proves start() awaits settle.
-    const result = await platform.start(ONE_SHOT, {
-      text: "lagged",
-      costUsd: 0.005,
-      usage: { inputTokens: 3 },
-      settleLag: true
+  for (const held of ["suspended", "awaiting_approval"] as const) {
+    it(`reports ${held} as an interrupted run while preserving thread lifecycle`, async () => {
+      const platform = new FakePlatform();
+      const result = await platform.start(ONE_SHOT, { outcome: "interrupted", sessionStatus: held, costUsd: 0 });
+      expect(result.status).toBe("interrupted");
+      expect(result.session?.status).toBe(held);
+      expect(result.ok).toBe(false);
+      expect(result.checkpoint?.checkpointId).toBe("cp-1");
     });
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe("succeeded");
-    expect(result.costUsd).toBe(0.005);
-    expect(result.usage.inputTokens).toBe(3);
-    // It polled GET /api/sessions/:id until the record settled (never one-and-done).
-    const settlePolls = platform.requests.filter((r) => /^GET \/api\/sessions\/[^/?]+$/.test(r)).length;
-    expect(settlePolls).toBeGreaterThanOrEqual(2);
-  });
+  }
 });

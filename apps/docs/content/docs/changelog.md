@@ -15,6 +15,6 @@ This page tracks public developer-facing changes. Package versions remain the so
 
 ## Recently documented surfaces
 
-- SessionRecord sessions, file capture, durable events, runtime sizes, and provider/model capabilities.
+- Durable sessions, file capture, events, runtime sizes, and provider/model capabilities.
 - Workspace secrets, credentials, webhooks, retries, limits, and billing guides.
 - CLI parity for run, status, wait, events, tail, inspect, files, download, cancel, delete, auth, models, providers, tools, and runtime sizes.

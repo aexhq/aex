@@ -1,5 +1,5 @@
 /**
- * SessionRecord-request config and composition refs for the public SDK/CLI surface.
+ * Session-request config and composition refs for the public SDK/CLI surface.
  *
  * Public composition concepts:
  *
@@ -7,12 +7,6 @@
  *     `{ kind:"skill", name }`. The binding is BY NAME and mutable — the session
  *     resolves the name to the workspace skill's current bytes at submit time.
  *     It travels in `submission.skills` (NOT `submission.tools`).
- *
- *   - `ResolvedSkillRef` is the BFF-produced, boot-record-only resolution of a
- *     `SkillRef`: `{ kind:"skill", assetId, name, description }`. It never
- *     appears on the public ingress wire — the resolver fills it before
- *     persisting the boot record so the in-container re-parse can read the
- *     skill's asset + description without a DB round-trip.
  *
  *   - `McpServerRef` is the non-secret part of an MCP server declaration:
  *     `name` and `url`. Bearer / cookie / per-request headers travel in
@@ -112,7 +106,7 @@ export const SKILL_BUNDLE_LIMITS = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// SkillRef (public, by-name) + ResolvedSkillRef (boot-record only)
+// By-name SkillRef used by the standalone skill bundle helpers.
 // ---------------------------------------------------------------------------
 
 /**
@@ -124,22 +118,6 @@ export const SKILL_BUNDLE_LIMITS = {
 export interface SkillRef {
   readonly kind: "skill";
   readonly name: string; // SKILL_NAME_PATTERN, must not contain "__", not reserved
-}
-
-/**
- * BFF-produced, BOOT-RECORD-ONLY resolution of a {@link SkillRef}. The submit-time
- * resolver looks the name up in the workspace skill registry and fills in the
- * current `assetId` + `description`; this is written to the boot record's trusted
- * `submission.resolvedSkills` so the in-container re-parse and the manifest /
- * materialize layers can stage the bundle without a DB round-trip. It NEVER
- * appears on the public ingress wire (rejected by `parseSubmission` unless the
- * caller is a trusted re-parse).
- */
-export interface ResolvedSkillRef {
-  readonly kind: "skill";
-  readonly assetId: string;      // asset_<sha256hex>; the uploaded skill bundle (zip w/ SKILL.md at root)
-  readonly name: string;         // SKILL_NAME_PATTERN, must not contain "__"
-  readonly description: string;  // 1..2048 chars; lifted from SKILL.md YAML frontmatter SDK-side
 }
 
 /**
@@ -171,7 +149,7 @@ export interface ToolRef extends AssetRef {
 /** Content-hash format: `sha256:<64 lowercase hex>`. */
 export const INLINE_CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
-export function isAssetRef(ref: AgentsMdRef | FileRef): ref is AssetRef {
+export function isAssetRef(ref: FileRef): ref is AssetRef {
   return ref.kind === "asset";
 }
 
@@ -180,20 +158,6 @@ export function isAssetRef(ref: AgentsMdRef | FileRef): ref is AssetRef {
  * the content digest (`asset_<sha256hex>`), but callers must treat it as opaque.
  */
 export const ASSET_ID_PATTERN = /^asset_[A-Za-z0-9_-]{8,128}$/;
-
-// ---------------------------------------------------------------------------
-// AgentsMd refs — the second of the three SDK concepts.
-// Submitted as content-addressed `asset_<hash>` refs.
-// Attach mechanism: prepended as the first user message in the
-// session (matches Claude Code's CLAUDE.md behaviour).
-// AgentsMd is prepended as session-scoped instruction context.
-// ---------------------------------------------------------------------------
-
-export type AgentsMdRef = AssetRef;
-
-export function isAgentsMdAssetRef(ref: AgentsMdRef): ref is AssetRef {
-  return ref.kind === "asset";
-}
 
 // ---------------------------------------------------------------------------
 // File refs — third SDK concept. Uploaded assets carry the DIRECTORY the
@@ -250,7 +214,7 @@ export function assertValidMountPath(value: string, field: string): void {
 }
 
 /**
- * Common parser for any `kind: "asset"` ref (agentsMd / file / tool bundle).
+ * Common parser for any `kind: "asset"` ref (file / tool bundle).
  */
 export function parseAssetRefFields(
   record: Record<string, unknown>,
@@ -425,7 +389,7 @@ export function validateSkillBundleEntry(input: {
  *
  * In this public surface, **skill** means "Claude Skill" — bundles without
  * `SKILL.md` are not skills and must go
- * through the `AgentsMd` or `File` upload concepts instead.
+ * through workspace instructions or file uploads instead.
  *
  * Returns a canonical manifest with totals computed.
  */
@@ -465,7 +429,7 @@ export function validateSkillBundleManifest(
     throw new SkillBundleValidationError(
       "skill bundle manifest must contain a 'SKILL.md' entry at the bundle root. " +
         "If you want to upload an instructions file or generic agent context, use " +
-        "AgentsMd or File instead."
+        "workspace instructions or File instead."
     );
   }
   return { entries, totalSize, fileCount: entries.length };
@@ -782,7 +746,7 @@ function parseSessionConfigMcpServerRef(input: unknown, path: string): SessionCo
 }
 
 // ---------------------------------------------------------------------------
-// SessionRecord request config + migration aliases
+// Session request config
 // ---------------------------------------------------------------------------
 
 /**
@@ -798,13 +762,13 @@ export interface SessionRequestConfig {
   readonly environment?: PlatformEnvironment;
   /** Managed runtime size preset (see {@link RuntimeSize}). */
   readonly runtimeSize?: RuntimeSize;
-  /** SessionRecord deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 8h] server-side. */
+  /** Session deadline as a duration string (`"1h"`, `"30m"`); bounded [1m, 8h] server-side. */
   readonly timeout?: string;
   readonly metadata?: Readonly<Record<string, JsonValue>>;
 }
 
 // ---------------------------------------------------------------------------
-// SessionRecord request config parser (used by CLI to load `session.json`)
+// Session request config parser (used by CLI to load `session.json`)
 // ---------------------------------------------------------------------------
 
 /**

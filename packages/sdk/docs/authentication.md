@@ -73,13 +73,17 @@ missing scope. The customer-grantable scopes:
 
 | Scope | Grants |
 | --- | --- |
-| `sessions:read` | Read sessions/sessions, their events and event archives, and webhook delivery ledgers. |
-| `sessions:write` | Open sessions, send turns, submit sessions, suspend/resume, redeliver webhooks, reveal the webhook signing secret. |
+| `sessions:read` | Read sessions, their events and event archives, and webhook delivery ledgers. |
+| `sessions:write` | Create sessions, send messages, suspend/resume, redeliver webhooks, reveal the webhook signing secret. |
 | `sessions:cancel` | Cancel a session/run. |
-| `sessions:delete` | Delete a session/session record. |
-| `files:read` | List, read, download, and mint links for captured files. |
-| `files:write` | Upload asset bytes (files, skills, AGENTS.md) staged for a session. |
-| `files:delete` | Delete workspace asset-store entries. |
+| `sessions:delete` | Delete a session and its record. |
+| `files:read` | Read captured session files and reusable workspace-file metadata. |
+| `files:write` / `files:delete` | Publish and delete reusable workspace-file resources. |
+| `assets:write` | Upload content-addressed bytes before publishing a typed workspace resource. |
+| `assets:delete` | Delete unreferenced content-addressed bytes. |
+| `skills:read` / `skills:write` / `skills:delete` | Administer workspace skills. |
+| `tools:read` / `tools:write` / `tools:delete` | Administer workspace custom tools. |
+| `instructions:read` / `instructions:write` / `instructions:delete` | Administer workspace instructions. |
 | `secrets:read` | List workspace secrets and read their metadata (never values). |
 | `secrets:write` | Create, rotate, and delete workspace secrets. |
 | `mcp:read` | List and read workspace MCP server configurations. |
@@ -88,14 +92,8 @@ missing scope. The customer-grantable scopes:
 | `billing:read` | Read billing state and create hosted billing sessions. |
 | `workspaces:delete` | Owner self-service workspace hard-erase. |
 
-Tokens may additionally carry the reserved scopes `skills:read` /
-`skills:write` / `skills:delete`, `agentsmd:read` / `agentsmd:write` /
-`agentsmd:delete`, and `files:read`. No API route requires them today — skill
-and AGENTS.md asset uploads are covered by `files:write` — so treat them as
-inert placeholders for future per-asset-type routes.
-
 A typical automation token carries `sessions:read`, `sessions:write`, and
-`files:read`. Grant the rest only where the workload needs them — a read-only
+`files:read`, plus the resource scopes it publishes. Grant the rest only where the workload needs them — a read-only
 reporting token, for example, needs no `sessions:write`.
 
 ## Introspection: `whoami`

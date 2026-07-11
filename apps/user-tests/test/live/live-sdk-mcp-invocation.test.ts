@@ -3,7 +3,7 @@
  *
  * Matrix test — same assertion body across managed provider cells.
  * Proves the agent ACTUALLY CALLS a remote MCP tool end-to-end:
- *   SDK → POST /sessions (with mcpServers wired)
+ *   SDK → POST /api/sessions (with mcpServers wired)
  *      → dispatcher routes to the managed runtime
  *      → runtime materializes the MCP into the agent manifest
  *      → model picks the MCP tool and the runtime emits a tool_request
@@ -16,7 +16,7 @@
  * model can't reach the MCP, when the proxy mishandles auth, or when the
  * adapter drops the tool_request translation.
  *
- * This file sessions the assertion body on a single managed cell:
+ * This file runs the assertion body on a single managed cell:
  *   - (deepseek, managed)  — managed runtime + DeepSeek via provider-proxy
  *
  * Required env:
@@ -30,7 +30,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -70,7 +69,7 @@ const CELLS: readonly Cell[] = [
 
 interface CaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly eventCount: number;
@@ -145,26 +144,19 @@ function buildScript(cell: Cell): string {
       // both runtimes prefer the cheaper builtin shell + curl path and
       // the MCP — even when correctly wired — is never invoked. This
       // pins the assertion to MCP behaviour instead of model whim.
-      includeBuiltinTools: false,
+      builtinTools: "none",
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "mcp-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const run = {
-      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      status: sessionResult.status,
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    let events = fallbackEvents;
-    try {
-      const session = await client.sessions.open(sessionId);
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    } catch {
-      events = fallbackEvents;
-    }
+    const session = await client.sessions.open(sessionId);
+    const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
 
     const toolRequests = events
       .filter((e) => e.type === "TOOL_CALL_START")
@@ -182,14 +174,9 @@ function buildScript(cell: Cell): string {
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-    const terminalData = terminal && isSessionIdle(terminal)
-      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-      : terminal ? terminal.data : null;
+    const terminalData = terminal ? terminal.data : null;
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
@@ -198,7 +185,7 @@ function buildScript(cell: Cell): string {
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: run.status,
+      runStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       eventCount: events.length,
@@ -207,7 +194,7 @@ function buildScript(cell: Cell): string {
       toolResponses,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal ? terminal.type : null,
       terminalData,
       streamErrors,
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
@@ -220,7 +207,7 @@ function buildScript(cell: Cell): string {
 function dumpResult(cell: Cell, result: CaseResult): string {
   const lines: string[] = [];
   lines.push(`cell=${cell.id} sessionId=${result.sessionId}`);
-  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
   lines.push(
@@ -237,7 +224,7 @@ function dumpResult(cell: Cell, result: CaseResult): string {
   return lines.join("\n");
 }
 
-async function runCellOnce(cell: Cell, installDir: string): Promise<CaseResult> {
+async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
   const script = buildScript(cell);
   const scriptPath = join(installDir, `mcp-invocation-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
@@ -260,10 +247,6 @@ async function runCellOnce(cell: Cell, installDir: string): Promise<CaseResult> 
   return JSON.parse(child.stdout.trim()) as CaseResult;
 }
 
-async function runCell(cell: Cell, installDir: string): Promise<CaseResult> {
-  return withPreCreateTransportRetry(`mcp-invocation ${cell.id}`, () => runCellOnce(cell, installDir));
-}
-
 let install: InstallResult;
 
 beforeAll(async () => {
@@ -281,22 +264,13 @@ describe("live mcp invocation — agent actually calls a remote MCP tool", () =>
       const result = await runCell(cell, install.installDir);
       const dump = (): string => dumpResult(cell, result);
 
-      expect(result.sessionStatus, dump()).toBe("succeeded");
+      expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
 
-      // Event frame: runtime_started present + last event is runtime_terminal.
-      // (Some runtimes emit preflight notifications before runtime_started,
-      // so we don't pin position 0 — the existence of the started event is
-      // what matters.)
-      expect(result.terminalKind).toBe("TURN_FINISHED");
-      // Every clean terminal MUST carry reason="complete" — both adapters
-      // always populate reason on the success path. Tolerating `undefined`
-      // (pre-Phase-1) was masking field-loss regressions.
-      const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
-      if (terminalReason !== "complete") {
-        throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
-      }
+      // The committed public terminal is the only completion barrier.
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalData?.["outcome"], dump()).toBe("succeeded");
 
       // The agent actually selected the MCP tool. The runtime advertises MCP
       // tools under the canonical prefixed name `mcp__<serverName>__<toolName>`

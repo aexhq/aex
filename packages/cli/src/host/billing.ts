@@ -9,7 +9,7 @@
  * `aex billing upgrade pro|team` / `aex billing portal` create hosted billing
  * sessions and print the URL (or JSON with `--json`).
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -112,8 +112,7 @@ async function runBillingUpgrade(
       planKey,
       ...(successUrl !== undefined ? { successUrl } : {}),
       ...(cancelUrl !== undefined ? { cancelUrl } : {}),
-      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
-    });
+    }, idempotencyKey !== undefined ? { idempotencyKey } : undefined);
     io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
     return SUCCESS;
   } catch (err) {
@@ -131,10 +130,11 @@ async function runBillingPortal(
   flags: CommonHostFlags
 ): Promise<CliExitCode> {
   const json = flags.json;
-  const { value: returnUrl, remaining } = takeOptionFlag(argv, "--return-url");
+  const { value: returnUrl, remaining: rest } = takeOptionFlag(argv, "--return-url");
+  const { value: idempotencyKey, remaining } = takeOptionFlag(rest, "--idempotency-key");
   if (remaining.length > 0) {
     io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
-    io.stderr("usage: aex billing portal [--return-url URL] [--json] [common flags]\n");
+    io.stderr("usage: aex billing portal [--return-url URL] [--idempotency-key KEY] [--json] [common flags]\n");
     return USAGE_ERR;
   }
 
@@ -142,7 +142,8 @@ async function runBillingPortal(
   try {
     const session = await operations.createBillingPortal(
       http,
-      returnUrl !== undefined ? { returnUrl } : undefined
+      returnUrl !== undefined ? { returnUrl } : undefined,
+      idempotencyKey !== undefined ? { idempotencyKey } : undefined
     );
     io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
     return SUCCESS;

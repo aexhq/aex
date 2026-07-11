@@ -7,7 +7,7 @@ export const DEFAULT_POST_HOOK_TIMEOUT_MS = 5 * 60 * 1000;
 export const DEFAULT_POST_HOOK_MAX_TURNS = 10;
 
 /**
- * Legacy/private post-agent-run verifier input. The public SDK no longer
+ * Private post-agent-run verifier input. The public SDK does not
  * accepts this field; platform-internal paths may still normalize old wire
  * records to {@link PlatformPostHook}.
  */
@@ -27,7 +27,7 @@ export interface PlatformPostHook {
 }
 
 /**
- * Parse the legacy/private `postHook` option. An omitted hook, null hook, or hook with
+ * Parse the private `postHook` option. An omitted hook, null hook, or hook with
  * an empty/whitespace-only command is treated as omitted so callers can pre-fill
  * configs without enabling the verifier accidentally.
  */

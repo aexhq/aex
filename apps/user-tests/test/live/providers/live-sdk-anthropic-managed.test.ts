@@ -6,7 +6,7 @@
  * gate suite, swapped provider, via the BYOK provider-proxy. It lives under
  * test/live/providers/ — the on-demand provider suite EXCLUDED from the
  * default release-gating `test:user` sweep (see vitest.providers.config.ts);
- * it sessions only via `test:user:providers` (live-on-demand-tests.yml), so the
+ * it runs only via `test:user:providers` (live-on-demand-tests.yml), so the
  * release gate never depends on the Anthropic account billing state.
  *
  *   SDK → POST /api/sessions { provider: "anthropic" }
@@ -51,7 +51,7 @@ const model = process.env["AEX_USER_TEST_ANTHROPIC_MODEL"]?.trim() || "claude-ha
 
 interface LiveResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly probe: string;
@@ -119,41 +119,25 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
         }, { timeoutMs: 8 * 60 * 1000 });
         const sessionId = sessionResult.sessionId;
         const run = {
-          status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+          status: sessionResult.status,
           runtime: "managed",
           provider: "anthropic"
         };
-        const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-        const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
-        let events = fallbackEvents;
-        let files = fallbackFiles;
-        try {
-          const session = await client.sessions.open(sessionId);
-          const listedEvents = await session.events().list();
-          if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-          const listedFiles = await session.files().list();
-          if (Array.isArray(listedFiles)) files = listedFiles;
-        } catch {
-          events = fallbackEvents;
-          files = fallbackFiles;
-        }
+        const session = await client.sessions.open(sessionId);
+        const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
+        const files = (await session.files.list()).files;
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
           .join(" ");
-        const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-        const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-        const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+        const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
         const eventKinds = events.map((e) => e.type);
-        if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-        const terminalData = terminal && isSessionIdle(terminal)
-          ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-          : terminal ? terminal.data : null;
+        const terminalData = terminal ? terminal.data : null;
 
         const serialized = JSON.stringify({ run, events, files });
         const result = {
           sessionId: sessionId,
-          sessionStatus: run.status,
+          runStatus: run.status,
           runtime: run.runtime ?? "(missing)",
           provider: run.provider ?? "(missing)",
           probe: ${JSON.stringify(probe)},
@@ -161,7 +145,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
           eventKinds,
           assistantTextJoined,
           assistantTextEventCount: assistantTextEvents.length,
-          terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+          terminalKind: terminal ? terminal.type : null,
           terminalData,
           fileCount: files.length,
           files: files.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
@@ -219,11 +203,11 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
 
       expect(result.runtime, diagnostic).toBe("managed");
       expect(result.provider, diagnostic).toBe("anthropic");
-      expect(result.sessionStatus, diagnostic).toBe("succeeded");
+      expect(result.runStatus, diagnostic).toBe("succeeded");
 
       // Real managed-runtime event frame.
-      expect(result.terminalKind, diagnostic).toBe("TURN_FINISHED");
-      expect(result.eventKinds, diagnostic).toContain("TURN_FINISHED");
+      expect(result.terminalKind, diagnostic).toBe("RUN_FINISHED");
+      expect(result.eventKinds, diagnostic).toContain("RUN_FINISHED");
       expect(result.assistantTextEventCount, diagnostic).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length, diagnostic).toBeGreaterThan(0);
       // Strip whitespace before matching the probe — managed-runtime stream
@@ -231,20 +215,8 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
       // joined text may have spaces in the middle of the probe.
       expect(result.assistantTextJoined.replace(/\s+/g, ""), diagnostic).toContain(result.probe);
 
-      // Terminal carries reason: "complete". runtimeExitCode is NOT asserted
-      // here — runner.mjs emits a terminal with { runtimeExitCode } AFTER the
-      // managed-runtime process exits, but the runtime adapter's transformObject
-      // ("complete") path emits a terminal with { totalTokens } as soon as
-      // the managed runtime stdout emits the complete record, and the adapter's
-      // idempotency guard drops the second emit. The race winner is the
-      // stdout path on a clean run, so runtimeExitCode is normally absent.
-      // The previous `if (runtimeExitCode !== undefined) expect(===0)` was a
-      // silent-skip anti-pattern. Tightening the contract (defer terminal
-      // emission to the runner so BOTH signals land on the same event) is
-      // tracked as a managed-runtime refactor — until then, runtimeExitCode is
-      // observability, not contract, and not asserted.
       const terminal = result.terminalData ?? {};
-      expect(terminal["reason"], diagnostic).toBe("complete");
+      expect(terminal["outcome"], diagnostic).toBe("succeeded");
 
       expect(result.leakedProviderKey, diagnostic).toBe(false);
     },

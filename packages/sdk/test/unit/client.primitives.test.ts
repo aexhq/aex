@@ -1,9 +1,9 @@
 /**
- * WS10 new primitives (schema-decode `start<T>`, fire-and-forget `submit`, `batch`
- * rollup, HITL approval gate) + WS8 subagent `children()`.
+ * Schema decode, HITL approval gates, and subagent children.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { Aex, ChildSessionHandle, SessionHandle } from "../../src/index.js";
+import { Aex } from "../../src/index.js";
+import { ChildSessionHandle, SessionHandle } from "../../src/client.js";
 import type { AexEvent, JsonValue, WebSocketLike } from "@aexhq/contracts";
 
 function evt(sequence: number, type: AexEvent["type"], data: Record<string, JsonValue>): AexEvent {
@@ -13,6 +13,8 @@ function evt(sequence: number, type: AexEvent["type"], data: Record<string, Json
     source: type === "CUSTOM" ? "runtime" : "agent",
     type,
     subject: "session-1",
+    threadId: "session-1",
+    runId: "run-1",
     time: new Date(sequence).toISOString(),
     sequence,
     data
@@ -22,7 +24,7 @@ function evt(sequence: number, type: AexEvent["type"], data: Record<string, Json
 // Events every stubbed coordinator socket emits for a turn. Tests mutate this.
 let SOCKET_EVENTS: AexEvent[] = [
   evt(1024, "TEXT_MESSAGE_CONTENT", { text: "ok", messageId: "m1" }),
-  evt(1025, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } })
+  evt(1025, "RUN_FINISHED", { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } })
 ];
 
 class AutoWS implements WebSocketLike {
@@ -55,7 +57,7 @@ interface Env {
 
 const RealWebSocket = globalThis.WebSocket;
 
-function makeEnv(session: Record<string, unknown> = { id: "session-1", status: "idle", turnSeq: 1, costUsd: 0.001, costTelemetry: { providerUsage: [{ totalTokens: 5 }] } }): Env {
+function makeEnv(session: Record<string, unknown> = { id: "session-1", status: "idle", acceptsMessages: true, costUsd: 0.001, costTelemetry: { providerUsage: [{ totalTokens: 5 }] } }): Env {
   const bodies: Record<string, unknown>[] = [];
   const headers: Array<Record<string, string>> = [];
   const urls: string[] = [];
@@ -67,18 +69,47 @@ function makeEnv(session: Record<string, unknown> = { id: "session-1", status: "
     const json = (b: unknown, status = 200): Response =>
       new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
     if (url.endsWith("/events/ticket")) return json({ wsUrl: "wss://ev.test/session-1", ticket: "t", expiresAtMs: 1 });
-    if (/\/api\/(sessions|sessions)\/[^/]+\/files$/.test(url)) return json({ files: [] });
+    if (/\/api\/sessions\/[^/]+\/files(?:\?|$)/.test(url)) return json({
+      revision: { checkpointId: "cp-1", runId: "run-1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: 1025 },
+      files: []
+    });
     if (url.endsWith("/api/sessions/session-1/messages")) {
-      return json({ session: { id: "session-1", status: "running", turnSeq: 1 }, turn: { sessionId: "session-1", turnSeq: 1 }, eventCursor: 1024 });
+      return json({
+        session: { id: "session-1", status: "running", acceptsMessages: false },
+        run: { sessionId: "session-1", turnSeq: 1, runId: "run-1", phase: "running", eventCursor: 1024 },
+        eventCursor: 1024
+      });
     }
-    if (url.endsWith("/api/sessions/session-1/request-approval")) return json({ session: { id: "session-1", status: "awaiting_approval" } });
-    if (url.endsWith("/api/sessions/session-1/approve")) return json({ session: { id: "session-1", status: "running" } });
-    if (url.endsWith("/api/sessions/session-1/deny")) return json({ session: { id: "session-1", status: "cancelled" } });
+    if (url.endsWith("/api/sessions/session-1/request-approval")) return json({ session: { id: "session-1", status: "awaiting_approval", acceptsMessages: false } });
+    if (url.endsWith("/api/sessions/session-1/approve")) return json({ session: { id: "session-1", status: "running", acceptsMessages: false } });
+    if (url.endsWith("/api/sessions/session-1/deny")) {
+      return json({
+        session: {
+          id: "session-1",
+          status: "idle",
+          acceptsMessages: true,
+          lastRun: { sessionId: "session-1", runId: "run-1", turnSeq: 1, phase: "finished", outcome: "cancelled" }
+        }
+      });
+    }
     if (url.endsWith("/api/sessions/session-1/children")) {
-      return json({ children: [{ id: "child-1", parentSessionId: "session-1", status: "succeeded", depth: 1, costUsd: 0 }] });
+      return json({
+        children: [{
+          id: "child-1",
+          parentSessionId: "session-1",
+          status: "idle",
+          depth: 1,
+          costUsd: 0,
+          createdAt: "2026-07-10T00:00:00.000Z",
+          updatedAt: "2026-07-10T00:01:00.000Z",
+          lastRun: { sessionId: "child-1", runId: "child-run-1", turnSeq: 1, phase: "finished", outcome: "succeeded" }
+        }]
+      });
     }
+    if (url.endsWith("/api/sessions/child-1/children")) return json({ children: [] });
+    if (url.endsWith("/api/sessions/child-1/events")) return json({ events: [] });
     if (url.endsWith("/api/sessions/session-1")) return json({ session });
-    if (url.endsWith("/api/sessions")) return json({ session: { id: "session-1", status: "idle", turnSeq: 0 } }, 201);
+    if (url.endsWith("/api/sessions")) return json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }, 201);
     return json({});
   };
   return { client: new Aex({ apiKey: "tk", baseUrl: "https://x", fetch }), bodies, headers, urls };
@@ -98,7 +129,7 @@ function headersRecord(input: HeadersInit | undefined): Record<string, string> {
 beforeEach(() => {
   SOCKET_EVENTS = [
     evt(1024, "TEXT_MESSAGE_CONTENT", { text: "ok", messageId: "m1" }),
-    evt(1025, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } })
+    evt(1025, "RUN_FINISHED", { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } })
   ];
   let opened = 0;
   (globalThis as { WebSocket: unknown }).WebSocket = class extends AutoWS {
@@ -118,7 +149,7 @@ describe("start<T> — typed schema-decode outcome (WS10)", () => {
     SOCKET_EVENTS = [
       evt(1024, "TEXT_MESSAGE_CONTENT", { text: "{...}", messageId: "m1" }),
       evt(1025, "CUSTOM", { name: "aex.result.decoded", value: { value: { answer: 42 } } }),
-      evt(1026, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } })
+      evt(1026, "RUN_FINISHED", { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } })
     ];
     const { client } = makeEnv();
     const result = await client.start<{ answer: number }>({
@@ -133,7 +164,7 @@ describe("start<T> — typed schema-decode outcome (WS10)", () => {
   it("returns a typed refusal from an aex.result.refused event", async () => {
     SOCKET_EVENTS = [
       evt(1025, "CUSTOM", { name: "aex.result.refused", value: { reason: "schema_violation", detail: "bad json" } }),
-      evt(1026, "CUSTOM", { name: "aex.session.idle", value: { turnSeq: 1 } })
+      evt(1026, "RUN_FINISHED", { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } })
     ];
     const { client } = makeEnv();
     const result = await client.start({
@@ -146,37 +177,13 @@ describe("start<T> — typed schema-decode outcome (WS10)", () => {
   });
 });
 
-describe("aex.submit — fire-and-forget (WS10)", () => {
-  it("resolves with {sessionId, session} WITHOUT opening a coordinator socket", async () => {
-    const { client, bodies, headers, urls } = makeEnv();
-    const { sessionId, session } = await client.submit({
-      model: "claude-haiku-4-5",
-      message: "go",
-      idempotencyKey: "submit-key",
-      messageIdempotencyKey: "turn-key",
-      apiKeys: { anthropic: "sk-ant" }
-    });
-    expect(sessionId).toBe("session-1");
-    expect(session).toBeInstanceOf(SessionHandle);
-    expect((globalThis as { __wsOpened?: () => number }).__wsOpened!()).toBe(0);
-    expect(urls.filter((url) => url.startsWith("POST https://x/api/sessions"))).toEqual([
-      "POST https://x/api/sessions",
-      "POST https://x/api/sessions/session-1/messages"
-    ]);
-    expect("input" in bodies[0]!).toBe(false);
-    expect(bodies[1]!.input).toBe("go");
-    expect(headers[0]!["idempotency-key"]).toBe("submit-key");
-    expect(headers[1]!["idempotency-key"]).toBe("turn-key");
-  });
-});
-
-describe("sessions.get — terminal failure projection", () => {
-  it("preserves failed status, outcome, failureClass, and errorMessage", async () => {
+describe("sessions.get — failed run projection", () => {
+  it("keeps the resumable session in error and preserves the run outcome and failure", async () => {
     const { client } = makeEnv({
       id: "session-1",
-      status: "failed",
-      turnSeq: 1,
-      lastTurnOutcome: "failed",
+      status: "error",
+      acceptsMessages: true,
+      lastRun: { sessionId: "session-1", runId: "run-1", turnSeq: 1, phase: "error", outcome: "failed" },
       failureClass: "provider-permanent",
       errorMessage: "llm provider rejected the request (HTTP 401) - not retryable",
       costUsd: 0,
@@ -185,43 +192,29 @@ describe("sessions.get — terminal failure projection", () => {
 
     const session = await client.sessions.get("session-1");
 
-    expect(session.status).toBe("failed");
-    expect(session.lastTurnOutcome).toBe("failed");
+    expect(session.status).toBe("error");
+    expect(session.lastRun?.outcome).toBe("failed");
     expect(session.failureClass).toBe("provider-permanent");
     expect(session.errorMessage).toMatch(/401/);
   });
 });
 
-describe("aex.batch — real cost/usage rollup (WS10)", () => {
-  it("sums settle-stamped per-item costs and buckets failures", async () => {
-    const { client } = makeEnv();
-    const result = await client.batch(
-      [1, 2, 3].map(() => ({ model: "claude-haiku-4-5" as const, message: "hi", apiKeys: { anthropic: "sk-ant" } })),
-      { concurrency: 2 }
-    );
-    expect(result.results).toHaveLength(3);
-    expect(result.okCount).toBe(3);
-    expect(result.failed).toHaveLength(0);
-    expect(result.totalCostUsd).toBeCloseTo(0.003, 6);
-    expect(result.totalUsage.totalTokens).toBe(15);
-  });
-});
-
 describe("HITL approval gate (WS10)", () => {
-  it("requestApproval → awaiting_approval; approve → running; deny → cancelled", async () => {
+  it("requestApproval → awaiting_approval; approve → running; deny → idle with a cancelled run", async () => {
     const { client } = makeEnv();
-    const session = await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
     await session.requestApproval();
     expect(session.record.status).toBe("awaiting_approval");
     await session.approve();
     expect(session.record.status).toBe("running");
     await session.deny();
-    expect(session.record.status).toBe("cancelled");
+    expect(session.record.status).toBe("idle");
+    expect(session.record.lastRun?.outcome).toBe("cancelled");
   });
 
   it("threads a declarative approvalGate into the submission wire body", async () => {
     const { client, bodies } = makeEnv();
-    await client.openSession({
+    await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-ant" },
       approvalGate: { tools: ["delete_file"] }
@@ -232,9 +225,9 @@ describe("HITL approval gate (WS10)", () => {
 });
 
 describe("subagent children (WS8)", () => {
-  it("session.children() returns resolvable ChildSessionHandles backed by the session record facade", async () => {
+  it("session.children() returns read-only handles whose observation resources work", async () => {
     const { client } = makeEnv();
-    const session = await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+    const session = await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
     const children = await session.children();
     expect(children).toHaveLength(1);
     const child = children[0]!;
@@ -242,9 +235,16 @@ describe("subagent children (WS8)", () => {
     expect(child.id).toBe("child-1");
     expect(child.parentSessionId).toBe("session-1");
     expect(child.depth).toBe(1);
-    expect(child.status).toBe("succeeded");
-    // Resolves through the RUN facade (/sessions/:id/files), not openSession.
-    const files = await child.files().list();
-    expect(files).toEqual([]);
+    expect(child.status).toBe("idle");
+    expect(child.ref.lastRun?.outcome).toBe("succeeded");
+    expect("get" in child).toBe(false);
+    expect("cancel" in child).toBe(false);
+    const noGet: "get" extends keyof ChildSessionHandle ? true : false = false;
+    const noCancel: "cancel" extends keyof ChildSessionHandle ? true : false = false;
+    expect({ noGet, noCancel }).toEqual({ noGet: false, noCancel: false });
+    expect(await child.events.list()).toEqual([]);
+    const files = await child.files.list();
+    expect(files.files).toEqual([]);
+    expect(await child.children()).toEqual([]);
   });
 });

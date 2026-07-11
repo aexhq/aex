@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import ts from "typescript";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const baselinePath = resolve(repoRoot, "scripts", "cicd", "public-boundary-baseline.json");
@@ -57,11 +58,14 @@ function checkSdkPackageManifest() {
 }
 
 function checkContractsInlineBaseline() {
-  const contractsIndex = readFileSync(resolve(repoRoot, "packages", "contracts", "src", "index.ts"), "utf8");
-  const specifiers = [];
-  for (const line of contractsIndex.split(/\r?\n/)) {
-    const match = line.match(/^export\s+.*\s+from\s+"([^"]+)";$/);
-    if (match) specifiers.push(match[1]);
+  const indexPath = resolve(repoRoot, "packages", "contracts", "src", "index.ts");
+  const contractsIndex = readFileSync(indexPath, "utf8");
+  const source = ts.createSourceFile(indexPath, contractsIndex, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const specifiers = new Set();
+  for (const statement of source.statements) {
+    if (ts.isExportDeclaration(statement) && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)) {
+      specifiers.add(statement.moduleSpecifier.text);
+    }
   }
   expectEqual(
     "packages/contracts src barrel export specifiers",
@@ -244,7 +248,7 @@ function checkSdkBunPack() {
   if (missingBuiltFiles.length > 0) {
     failures.push(
       `SDK Bun pack is missing built file(s): ${missingBuiltFiles.join(", ")}. ` +
-        "SessionRecord bun run --filter @aexhq/sdk build before the boundary check."
+        "Run bun run --filter @aexhq/sdk build before the boundary check."
     );
     return;
   }

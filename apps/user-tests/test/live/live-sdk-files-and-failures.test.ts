@@ -11,7 +11,7 @@
  *
  * Block B — failure surfacing (single cell)
  *   Three sub-cases exercise the SDK's error contract:
- *     b1: corrupted skill zip -> submit 4xx OR session "failed" with structured
+ *     b1: corrupted skill zip -> submit 4xx OR session lifecycle `error` with structured
  *         AexError/errorMessage
  *     b2: invalid model     → same accept-both shape
  *     b3: stdio MCP         → 4xx with REMOTE_MCP_STDIO_REJECTED_MESSAGE
@@ -82,7 +82,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 
 interface FileCaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly marker: string;
@@ -115,7 +115,7 @@ function buildFileScript(cell: Cell, marker: string): string {
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
-      includeBuiltinTools: true,
+      builtinTools: "default",
       fileCapture: { allowedDirs: ["/workspace/files/report-folder"] },
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "files-${cell.id}-" + Date.now()
@@ -123,30 +123,19 @@ function buildFileScript(cell: Cell, marker: string): string {
     const sessionId = sessionResult.sessionId;
     const session = await client.sessions.open(sessionId);
     const sessionInfo = {
-      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      status: sessionResult.status,
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
-    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
-    let events = fallbackEvents;
-    let files = fallbackFiles;
-    try {
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedFiles = await session.files().list();
-      if (Array.isArray(listedFiles)) files = listedFiles;
-    } catch {
-      events = fallbackEvents;
-      files = fallbackFiles;
-    }
+    const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
+    const files = (await session.files.list()).files;
 
     const downloaded = [];
     for (const out of files) {
       let downloadedLen = 0;
       let sample = "";
       try {
-        const bytes = await session.files().download(out);
+        const bytes = await session.files.download(out);
         const text = new TextDecoder().decode(bytes);
         downloadedLen = text.length;
         sample = text.slice(0, 512);
@@ -165,21 +154,16 @@ function buildFileScript(cell: Cell, marker: string): string {
       .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
-    const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-    const terminalData = terminal && isSessionIdle(terminal)
-      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-      : terminal ? terminal.data : null;
+    const terminalData = terminal ? terminal.data : null;
     const streamErrors = events
       .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
 
     const result = {
       sessionId: sessionId,
-      sessionStatus: sessionInfo.status,
+      runStatus: sessionInfo.status,
       runtime: sessionInfo.runtime ?? "(missing)",
       provider: sessionInfo.provider ?? "(missing)",
       marker: ${JSON.stringify(marker)},
@@ -187,7 +171,7 @@ function buildFileScript(cell: Cell, marker: string): string {
       eventKinds,
       files: downloaded,
       assistantTextJoined,
-      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal ? terminal.type : null,
       terminalData,
       streamErrors
     };
@@ -199,7 +183,7 @@ function buildFileScript(cell: Cell, marker: string): string {
 function dumpFileResult(cell: Cell, result: FileCaseResult): string {
   const lines: string[] = [];
   lines.push(`cell=${cell.id} sessionId=${result.sessionId} marker=${result.marker}`);
-  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
   if (result.streamErrors.length > 0) {
@@ -300,6 +284,7 @@ function buildCorruptedSkillScript(): string {
     let errorCode = null;
     let errorMessage = null;
     let sessionId = null;
+    let acceptedRunId = null;
     let sessionStatus = null;
     let sessionPollStatus = null;
     let sessionPollAttempts = 0;
@@ -313,19 +298,19 @@ function buildCorruptedSkillScript(): string {
     // content hash to a workspace skill name. Skill.fromBytes()/fromDir would
     // build or validate a good skill bundle, so this raw setup is the only way
     // to submit a first-class skill whose bytes are malformed.
-    let corruptSkillName = null;
+    let corruptSkillRef = null;
     try {
       const hashBuf = await crypto.subtle.digest("SHA-256", corruptedZip);
       const hashHex = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
       const contentHash = "sha256:" + hashHex;
 
-      const presignRes = await fetch(process.env.AEX_API_URL + "/assets/presign", {
+      const presignRes = await fetch(process.env.AEX_API_URL + "/api/assets/presign", {
         method: "POST",
         headers: {
           "content-type": "application/json",
           authorization: "Bearer " + process.env.AEX_API_KEY
         },
-        body: JSON.stringify({ hash: contentHash, sizeBytes: corruptedZip.byteLength })
+        body: JSON.stringify({ hash: contentHash, sizeBytes: corruptedZip.byteLength, contentType: "application/zip" })
       });
       const presignText = await presignRes.text();
       submitStatus = presignRes.status;
@@ -351,7 +336,7 @@ function buildCorruptedSkillScript(): string {
           }
         }
         if (!errorClass) {
-          const finalizeRes = await fetch(process.env.AEX_API_URL + "/assets/finalize", {
+          const finalizeRes = await fetch(process.env.AEX_API_URL + "/api/assets/finalize", {
             method: "POST",
             headers: {
               "content-type": "application/json",
@@ -368,27 +353,32 @@ function buildCorruptedSkillScript(): string {
           }
         }
         if (!errorClass) {
-          const skillName = "corrupt-skill";
-          const upsertRes = await fetch(process.env.AEX_API_URL + "/api/skills/" + skillName, {
-            method: "PUT",
+          const skillName = "corrupt-skill-" + Date.now();
+          const assetId = "asset_" + hashHex;
+          const publishRes = await fetch(process.env.AEX_API_URL + "/api/workspace/skills", {
+            method: "POST",
             headers: {
               "content-type": "application/json",
               authorization: "Bearer " + process.env.AEX_API_KEY
             },
             body: JSON.stringify({
+              assetId,
               contentHash,
               description: "Corrupted skill bundle probe.",
-              sizeBytes: corruptedZip.byteLength
+              sizeBytes: corruptedZip.byteLength,
+              contentType: "application/zip",
+              name: skillName
             })
           });
-          const upsertText = await upsertRes.text();
-          submitStatus = upsertRes.status;
-          submitBody = upsertText.slice(0, 800);
-          if (upsertRes.ok) {
-            corruptSkillName = skillName;
+          const publishText = await publishRes.text();
+          submitStatus = publishRes.status;
+          submitBody = publishText.slice(0, 800);
+          if (publishRes.ok) {
+            const published = JSON.parse(publishText);
+            corruptSkillRef = published.resource;
           } else {
-            errorClass = "skill-upsert-rejected";
-            errorMessage = "skill upsert rejected at status " + upsertRes.status + ": " + submitBody.slice(0, 200);
+            errorClass = "skill-publish-rejected";
+            errorMessage = "skill publish rejected at status " + publishRes.status + ": " + submitBody.slice(0, 200);
           }
         }
       }
@@ -398,53 +388,41 @@ function buildCorruptedSkillScript(): string {
       errorMessage = e && e.message ? e.message : String(e);
     }
 
-    if (corruptSkillName) {
+    if (corruptSkillRef) {
       try {
-        // First-class skills ride submission.skills by name. The BFF resolves the
-        // registry entry to boot-record-only asset metadata, then materialization
-        // rejects the malformed bundle at submit or session time.
+        // Submit the immutable workspace skill ref. Materialization must reject
+        // the malformed archive at create or run time.
         const res = await fetch(process.env.AEX_API_URL + "/api/sessions", {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: "Bearer " + process.env.AEX_API_KEY
+            authorization: "Bearer " + process.env.AEX_API_KEY,
+            "Idempotency-Key": "fail-corrupt-skill-" + Date.now()
           },
           body: JSON.stringify({
-            workspaceId: "ws-test",
-            idempotencyKey: "fail-corrupt-skill-" + Date.now(),
             provider: "deepseek",
             submission: {
               model: ${JSON.stringify(deepseekModel)},
-              prompt: ["Hello."],
-              tools: [],
-              skills: [{ kind: "skill", name: corruptSkillName }],
-              agentsMd: [],
-              files: [],
+              assets: { files: [], skills: [corruptSkillRef], tools: [], instructions: [] },
+              builtinTools: "default",
               mcpServers: []
             },
+            retention: { idleTtl: "3m" },
             secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } }
           })
         });
         submitStatus = res.status;
         const submitText = await res.text();
         submitBody = submitText.slice(0, 800);
-        submitOk = res.status >= 200 && res.status < 300;
+        submitOk = res.status === 200 || res.status === 201;
         if (!submitOk) {
           errorClass = "session-submit-rejected";
           errorMessage = "corrupted skill bundle rejected at status " + res.status + ": " + submitBody.slice(0, 200);
         } else {
           try {
             const accepted = JSON.parse(submitText);
-            const acceptedSession = accepted && accepted.session && typeof accepted.session === "object" ? accepted.session : {};
-            sessionId = typeof acceptedSession.sessionId === "string"
-              ? acceptedSession.sessionId
-              : typeof acceptedSession.id === "string"
-                ? acceptedSession.id
-                : typeof accepted.sessionId === "string"
-                  ? accepted.sessionId
-                  : typeof accepted.id === "string"
-                    ? accepted.id
-                    : null;
+            const acceptedSession = accepted && accepted.session && typeof accepted.session === "object" ? accepted.session : null;
+            sessionId = acceptedSession && typeof acceptedSession.id === "string" ? acceptedSession.id : null;
           } catch {
             sessionId = null;
           }
@@ -463,12 +441,18 @@ function buildCorruptedSkillScript(): string {
               body: JSON.stringify({ input: "Hello." })
             });
             const messageText = await messageRes.text();
-            if (messageRes.status < 200 || messageRes.status >= 300) {
-              submitStatus = messageRes.status;
-              submitBody = messageText.slice(0, 800);
+            submitStatus = messageRes.status;
+            submitBody = messageText.slice(0, 800);
+            if (messageRes.status !== 202) {
               submitOk = false;
               errorClass = "session-message-rejected";
               errorMessage = "corrupted skill bundle message rejected at status " + messageRes.status + ": " + messageText.slice(0, 200);
+            } else {
+              const acceptedMessage = JSON.parse(messageText);
+              acceptedRunId = acceptedMessage && acceptedMessage.run && typeof acceptedMessage.run.runId === "string"
+                ? acceptedMessage.run.runId
+                : null;
+              if (!acceptedRunId) throw new Error("message acceptance omitted run.runId");
             }
           }
         }
@@ -479,49 +463,41 @@ function buildCorruptedSkillScript(): string {
       }
     }
 
-    if (submitOk && sessionId) {
-      const terminalStatuses = new Set(["succeeded", "failed", "cancelled", "canceled", "timed_out", "expired", "deleted"]);
+    if (submitOk && sessionId && acceptedRunId) {
+      let terminal = null;
+      let events = [];
       const authHeaders = { authorization: "Bearer " + process.env.AEX_API_KEY };
       const deadline = Date.now() + Number(process.env.FAILURE_WAIT_MS || "120000");
-      while (Date.now() < deadline) {
-        try {
-          sessionPollAttempts += 1;
-          const sessionRes = await fetch(process.env.AEX_API_URL + "/api/sessions/" + encodeURIComponent(sessionId), {
-            headers: authHeaders
-          });
-          sessionPollStatus = sessionRes.status;
-          if (sessionRes.ok) {
-            const sessionBody = await sessionRes.json();
-            const sessionRecord = sessionBody && sessionBody.session && typeof sessionBody.session === "object" ? sessionBody.session : sessionBody;
-            if (sessionRecord && typeof sessionRecord.status === "string") sessionStatus = sessionRecord.status;
-            if (sessionRecord && typeof sessionRecord.errorMessage === "string") sessionErrorMessage = sessionRecord.errorMessage;
-            if (sessionStatus && terminalStatuses.has(sessionStatus)) break;
-          }
-        } catch {
-          // Keep polling until the failure contract either appears or times out.
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-
-      try {
+      while (!terminal && Date.now() < deadline) {
         const eventsRes = await fetch(process.env.AEX_API_URL + "/api/sessions/" + encodeURIComponent(sessionId) + "/events?limit=1000", {
           headers: authHeaders
         });
-        if (eventsRes.ok) {
-          const eventsBody = await eventsRes.json();
-          const events = Array.isArray(eventsBody.events) ? eventsBody.events : [];
-          const terminal = events.find((event) => event && (event.type === "TURN_FINISHED" || event.type === "TURN_ERROR"));
-          eventKinds = events.map((event) => event && typeof event.type === "string" ? event.type : "UNKNOWN");
-          terminalKind = terminal && typeof terminal.type === "string" ? terminal.type : null;
-          terminalData = terminal && terminal.data && typeof terminal.data === "object" ? terminal.data : null;
-          streamErrors = events
-            .filter((event) => event && event.type === "CUSTOM" && event.data && event.data.name === "aex.stream_error")
-            .map((event) => event.data && typeof event.data.value === "object" ? event.data.value : event.data);
-        }
-      } catch {
-        // The session record is authoritative for this assertion; events enrich the
-        // failure contract when the stream endpoint is available.
+        if (!eventsRes.ok) throw new Error("event list failed with " + eventsRes.status);
+        const eventsBody = await eventsRes.json();
+        events = Array.isArray(eventsBody.events) ? eventsBody.events : [];
+        terminal = events.find((event) => event && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")) ?? null;
+        if (!terminal) await new Promise((resolve) => setTimeout(resolve, 1000));
       }
+      if (!terminal) throw new Error("corrupted skill run ended without a terminal event");
+      const sessionRes = await fetch(process.env.AEX_API_URL + "/api/sessions/" + encodeURIComponent(sessionId), {
+        headers: authHeaders
+      });
+      sessionPollStatus = sessionRes.status;
+      if (!sessionRes.ok) throw new Error("session refresh failed with " + sessionRes.status);
+      const sessionBody = await sessionRes.json();
+      if (!sessionBody || typeof sessionBody.session !== "object" || sessionBody.session === null) {
+        throw new Error("session refresh response omitted session envelope");
+      }
+      const sessionRecord = sessionBody.session;
+      sessionStatus = sessionRecord.status;
+      sessionErrorMessage = typeof sessionRecord.errorMessage === "string" ? sessionRecord.errorMessage : null;
+      sessionPollAttempts = 1;
+      eventKinds = events.map((event) => event.type);
+      terminalKind = terminal.type;
+      terminalData = terminal.data;
+      streamErrors = events
+        .filter((event) => event.type === "CUSTOM" && event.data && event.data.name === "aex.stream_error")
+        .map((event) => event.data && typeof event.data.value === "object" ? event.data.value : event.data);
     }
 
     const result = {
@@ -629,25 +605,24 @@ function buildStdioMcpScript(): string {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: "Bearer " + process.env.AEX_API_KEY
+          authorization: "Bearer " + process.env.AEX_API_KEY,
+          "Idempotency-Key": "fail-stdio-mcp-" + Date.now()
         },
         body: JSON.stringify({
-          workspaceId: "ws-test",
-          idempotencyKey: "fail-stdio-mcp-" + Date.now(),
           provider: "deepseek",
           submission: {
             model: ${JSON.stringify(deepseekModel)},
-            prompt: ["Hello."],
-            agentsMd: [],
-            files: [],
+            assets: { files: [], skills: [], tools: [], instructions: [] },
+            builtinTools: "default",
             mcpServers: [{ name: "bad-stdio", url: "stdio:///dev/null", transport: "stdio" }]
           },
+          retention: { idleTtl: "3m" },
           secrets: { apiKeys: { deepseek: process.env.DEEPSEEK_KEY_SUBMIT } }
         })
       });
       submitStatus = res.status;
       submitBody = (await res.text()).slice(0, 800);
-      submitOk = res.status >= 200 && res.status < 300;
+      submitOk = res.status === 200 || res.status === 201;
     } catch (e) {
       errorClass = e && e.constructor ? e.constructor.name : "Error";
       errorCode = e && typeof e.code === "string" ? e.code : null;
@@ -737,17 +712,11 @@ describe("live files — agent writes a known file, bytes round-trip", () => {
       const result = await startFileCell(cell, install.installDir);
       const dump = (): string => dumpFileResult(cell, result);
 
-      expect(result.sessionStatus, dump()).toBe("succeeded");
+      expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
-      expect(result.terminalKind).toBe("TURN_FINISHED");
-      // Every clean terminal MUST carry reason="complete" — both adapters
-      // always populate reason on the success path. Tolerating `undefined`
-      // (pre-Phase-1) was masking field-loss regressions.
-      const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
-      if (terminalReason !== "complete") {
-        throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
-      }
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalData?.["outcome"], dump()).toBe("succeeded");
       assertCleanFileLifecycle(cell, result);
 
       // Find the report.txt the agent wrote. Filename is relative to
@@ -781,7 +750,7 @@ describe("live files — agent writes a known file, bytes round-trip", () => {
 
 describe("live failure surfacing — SDK error contract", () => {
   it(
-    "b1 corrupted skill zip: 4xx at submit OR session status:failed with structured error",
+    "b1 corrupted skill zip: 4xx at submit OR RUN_ERROR with structured failure",
     async () => {
       const result = await runFailureCase(
         buildCorruptedSkillScript,
@@ -792,9 +761,8 @@ describe("live failure surfacing — SDK error contract", () => {
 
       // Accept either branch:
       //  - submit threw with a structured AexError (errorClass non-null)
-      //  - submit succeeded but the session reached terminal "failed" with
-      //    a populated errorMessage (or runtime_terminal carrying reason!=
-      //    "complete" + a stream_error event)
+      //  - submit succeeded but the run emitted RUN_ERROR and the resumable
+      //    session entered the `error` lifecycle state.
       if (!result.submitOk) {
         // upload or submit rejected. Either way, the error must be
         // structured — non-empty errorMessage, structured errorClass.
@@ -807,14 +775,16 @@ describe("live failure surfacing — SDK error contract", () => {
       } else {
         // submit accepted; the session must have failed terminally with a
         // reported error. The structured failure can surface as
-        // SessionRecord.errorMessage OR terminalData.failureMessage — both are
+        // Session.errorMessage OR terminalData.failureMessage — both are
         // legitimate places the API plumbs the cause; require at least
         // one to be populated so a silent failure is caught.
-        if (result.sessionStatus !== "failed") {
+        if (result.sessionStatus !== "error") {
           throw new Error(
-            `submit accepted but session did not fail (status=${result.sessionStatus})\n\n${dump()}`
+            `submit accepted but session did not enter error (status=${result.sessionStatus})\n\n${dump()}`
           );
         }
+        expect(result.terminalKind, dump()).toBe("RUN_ERROR");
+        expect(result.terminalData?.["outcome"], dump()).toBe("failed");
         const terminalFailureMsg =
           result.terminalData && typeof result.terminalData["failureMessage"] === "string"
             ? (result.terminalData["failureMessage"] as string)
@@ -824,19 +794,7 @@ describe("live failure surfacing — SDK error contract", () => {
           terminalFailureMsg.length > 0;
         if (!haveStructuredCause) {
           throw new Error(
-            `session failed but no errorMessage on SessionRecord AND no terminalData.failureMessage\n\n${dump()}`
-          );
-        }
-        // A runtime_terminal with reason!="complete" is the on-stream
-        // signal that the session did not finish cleanly. Either reason ===
-        // "error" OR a stream_error event must be present.
-        const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
-        const sawSignal =
-          (typeof terminalReason === "string" && terminalReason !== "complete") ||
-          result.streamErrors.length > 0;
-        if (!sawSignal) {
-          throw new Error(
-            `session failed but no terminal reason!=complete and no stream_error events\n\n${dump()}`
+            `session failed but no errorMessage on Session AND no terminalData.failureMessage\n\n${dump()}`
           );
         }
       }

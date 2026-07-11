@@ -11,7 +11,7 @@ belong in session config.
 Runnable examples need both `AEX_API_KEY` for aex and the matching BYOK
 provider key, such as `ANTHROPIC_API_KEY` for Claude.
 
-## Use A Provider Key For One SessionRecord
+## Use A Provider Key For One Session
 
 ### TypeScript
 
@@ -37,19 +37,21 @@ aex start \
   --prompt "Write a short report and save it as a file."
 ```
 
-## Upload An Env Secret
+## Persist An Env Secret
 
-Use `Secret.value(...).upload(...)` when you start with an ephemeral value and
-want to persist it as a named workspace secret for later sessions.
+Create durable secrets through the workspace namespace, then reference the
+stored name in later sessions.
 
 ```ts
 import { Aex, Models, Providers, Secret } from "@aexhq/sdk";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 
-const githubToken = await Secret.value(process.env.GITHUB_TOKEN!).upload(aex, {
-  name: "github-token"
+await aex.workspace.secrets.set({
+  name: "github-token",
+  value: process.env.GITHUB_TOKEN!
 });
+const githubToken = Secret.ref("github-token");
 
 await aex.start({
   provider: Providers.ANTHROPIC,
@@ -62,16 +64,16 @@ await aex.start({
 
 ## Set Or Rotate A Workspace Secret
 
-Use `client.secrets.set(...)` to create a named secret directly. Use
-`client.secrets.rotate(...)` to replace its value while keeping the same name.
+Use `client.workspace.secrets.set(...)` to create a named secret directly. Use
+`client.workspace.secrets.rotate(...)` to replace its value while keeping the same name.
 
 ```ts
-await aex.secrets.set({
+await aex.workspace.secrets.set({
   name: "serper-api-key",
   value: process.env.SERPER_API_KEY!
 });
 
-await aex.secrets.rotate({
+await aex.workspace.secrets.rotate({
   name: "serper-api-key",
   value: process.env.SERPER_API_KEY_NEXT!
 });
@@ -82,11 +84,11 @@ await aex.secrets.rotate({
 `list` and `get` return metadata only. They never return the secret value.
 
 ```ts
-const secrets = await aex.secrets.list();
-const metadata = await aex.secrets.get("serper-api-key");
+const secrets = await aex.workspace.secrets.list();
+const metadata = await aex.workspace.secrets.get("serper-api-key");
 ```
 
-## Inject A Workspace Secret Into A SessionRecord
+## Inject A Workspace Secret Into A Session
 
 Reference workspace secrets with `Secret.ref(name)`. The value resolves
 server-side and is injected as the named environment variable.
@@ -108,7 +110,7 @@ await aex.start({
 ## Delete A Workspace Secret
 
 ```ts
-await aex.secrets.delete("serper-api-key");
+await aex.workspace.secrets.delete("serper-api-key");
 ```
 
 The CLI supports per-session provider and MCP credentials. Workspace secret
@@ -120,7 +122,7 @@ Registered secret values are redacted from the session's **event stream** (both 
 output and model-authored surfaces) — a value you inject via `environment.secrets`
 is masked regardless of its shape. Two surfaces are intentionally *not* scrubbed:
 
-- **Captured session files** (`files().download()` / `read()` / the `aex download`
+- **Captured session files** (`session.files.download()` / `.read()` / the `aex download`
   zip) are returned **verbatim**. They are your session's own artifacts, so the platform
   does not rewrite their bytes — if the agent writes a secret into a deliverable file,
   that file contains it. Treat downloaded files as unredacted.

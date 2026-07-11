@@ -5,8 +5,8 @@
  * focused on the session-submission BYOK surface:
  *   - `apiKeys` map (per-provider BYOK keys)
  *   - `environment.secrets` + the `Secret` primitive (ephemeral `Secret.value`
- *     and workspace `Secret.ref` / `Secret.value(...).upload`)
- *   - `client.secrets` vault (set/list/get/rotate/delete)
+ *     and workspace `aex.workspace.secrets.set` / `Secret.ref`)
+ *   - `client.workspace.secrets` vault (set/list/get/rotate/delete)
  *
  * The overriding invariant under test is NON-LEAKAGE: a provider key or a
  * `secretEnv` value must NEVER appear in the persisted events, files, run
@@ -35,7 +35,7 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.length === 0) {
     throw new Error(
-      `edge-byok-secrets: required env ${name} is missing. SessionRecord via the live runner so AEX_API_URL / AEX_API_KEY / DEEPSEEK_API_KEY are exported.`
+      `edge-byok-secrets: required env ${name} is missing. Run via the live runner so AEX_API_URL / AEX_API_KEY / DEEPSEEK_API_KEY are exported.`
     );
   }
   return value;
@@ -83,7 +83,7 @@ function logCase(label: string, result: Record<string, unknown>): void {
 }
 
 /**
- * SessionRecord a Bun script in the install dir with the SDK + secrets on the child env.
+ * Run a Bun script in the install dir with the SDK + secrets on the child env.
  * `extraEnv` carries per-test canaries/keys (generated test-side, never printed).
  * The script must print a single JSON object to stdout.
  */
@@ -136,18 +136,12 @@ const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 async function gather(sessionId, sessionResult) {
-  let events = Array.isArray(sessionResult?.events) ? sessionResult.events : [];
-  let files = Array.isArray(sessionResult?.files) ? sessionResult.files : [];
-  let record = null, messages = [];
-  try {
-    const s = await client.sessions.open(sessionId);
-    const le = await s.events().list();
-    if (Array.isArray(le) && le.length > 0) events = le;
-    const lo = await s.files().list();
-    if (Array.isArray(lo)) files = lo;
-    try { messages = await s.messages.all(); } catch {}
-  } catch {}
-  try { record = await client.sessions.get(sessionId); } catch {}
+  const s = await client.sessions.open(sessionId);
+  const events = await s.events.list();
+  const snapshot = await s.files.list();
+  const files = snapshot.files;
+  const messages = await s.messages.list();
+  const record = await client.sessions.get(sessionId);
   return { events, files, record, messages };
 }
 function leakScan(surfaces, needle, extra) {
@@ -270,7 +264,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const body = `${PREAMBLE}
         const CANARY = process.env.CANARY;
         const PROMPT = [
-          "SessionRecord this shell command: echo \\"$SEEKRET_TOKEN\\"",
+          "Run this shell command: echo \\"$SEEKRET_TOKEN\\"",
           "Then reply with EXACTLY what that command printed, verbatim, nothing else."
         ];
         const sessionResult = await client.start({
@@ -327,9 +321,8 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         // Scan the WHOLE surface set plus every error string for the bad key.
         const scan = leakScan(surfaces, BAD_KEY, { text: text + " " + errorMessage + " " + (threw || "") });
         // Look for a stream_error / error event as an additional failure signal.
-        const errorSessionNames = new Set(["aex.session.error", "aex.session.failed"]);
         const errorEventKinds = surfaces.events
-          .filter((e) => e && (e.type === "TURN_ERROR" || (e.type === "CUSTOM" && e.data && (e.data.name === "aex.stream_error" || errorSessionNames.has(e.data.name)))))
+          .filter((e) => e && (e.type === "RUN_ERROR" || (e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")))
           .map((e) => e.type + (e.data && e.data.name ? ":" + e.data.name : ""));
         process.stdout.write(JSON.stringify({
           sessionId, status: statusOf(sessionResult), threw,
@@ -414,7 +407,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
     IT_TIMEOUT_MS
   );
 
-  // ── CASE G: workspace secret round-trip (Secret.value.upload → Secret.ref in secretEnv)
+  // ── CASE G: workspace secret round-trip (workspace set → Secret.ref in secretEnv)
   it(
     "G: a workspace secret (upload → ref) referenced via secretEnv — injection behaviour + non-leak on dev",
     async () => {
@@ -425,11 +418,9 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const body = `${PREAMBLE}
         const NAME = process.env.WS_NAME;
         const CANARY = process.env.CANARY;
-        let uploadErr = null, ref = null;
-        try { ref = await Secret.value(CANARY).upload(client, { name: NAME }); }
-        catch (e) { uploadErr = e && e.message ? e.message : String(e); }
-        let secretRecord = null;
-        try { secretRecord = await client.secrets.get(NAME); } catch (e) { secretRecord = { getError: e && e.message ? e.message : String(e) }; }
+        await client.workspace.secrets.set({ name: NAME, value: CANARY });
+        const ref = Secret.ref(NAME);
+        const secretRecord = await client.workspace.secrets.get(NAME);
         const PROMPT = [
           "Using the shell, run exactly (no trailing newline on the value):",
           "  printf '%s' \\"$WS_CANARY\\" | sha256sum",
@@ -451,16 +442,15 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const scan = leakScan(surfaces, CANARY, { text });
         // metadata read must never contain the value either
         const metaLeak = JSON.stringify(secretRecord).includes(CANARY);
-        try { await client.secrets.delete(NAME); } catch {}
+        await client.workspace.secrets.delete(NAME);
         process.stdout.write(JSON.stringify({
-          sessionId, status: statusOf(sessionResult), text, uploadErr, runErr,
+          sessionId, status: statusOf(sessionResult), text, runErr,
           secretRecord, metaLeak, leaked: scan.leaked, per: scan.per
         }));
       `;
       const r = await runScript(install, "edge-g-wsref.mjs", body, { WS_NAME: name, CANARY: canary });
       // The upload + workspace-secret create/get/delete cycle must work and the
       // stored value must never come back in metadata.
-      expect(r.uploadErr).toBeNull();
       expect(r.metaLeak).toBe(false);
       // Non-leak invariant holds regardless of whether the ref resolves.
       expect(r.leaked).toBe(false);

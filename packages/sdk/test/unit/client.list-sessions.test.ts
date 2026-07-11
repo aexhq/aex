@@ -28,12 +28,33 @@ function listClient(page: unknown): { readonly client: Aex; readonly calls: Reco
 
 describe("aex.sessions.list", () => {
   it("GETs the bare /api/sessions collection and threads query params", async () => {
-    const page = { sessions: [{ id: "sess-1", status: "idle", createdAt: "t", updatedAt: "t" }], nextCursor: "c2" };
+    const page = {
+      sessions: [{
+        id: "sess-1",
+        status: "idle",
+        runtimeSize: "shared-1x-6gb",
+        acceptsMessages: true,
+        createdAt: "t",
+        updatedAt: "t"
+      }],
+      nextCursor: "c2"
+    };
     const { client, calls } = listClient(page);
 
     const result = await client.sessions.list({ status: "idle", limit: 2, cursor: "c1" });
 
-    expect(result).toEqual(page);
+    expect(result).toEqual({
+      sessions: [{
+        id: "sess-1",
+        status: "idle",
+        runtime: "shared-1x-6gb",
+        acceptsMessages: true,
+        createdAt: "t",
+        updatedAt: "t"
+      }],
+      nextCursor: "c2"
+    });
+    expect(result.sessions[0]).not.toHaveProperty("runtimeSize");
     expect(calls).toHaveLength(1);
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/api/sessions");
@@ -49,5 +70,20 @@ describe("aex.sessions.list", () => {
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/api/sessions");
     expect(url.search).toBe("");
+  });
+
+  it("rejects a session row carrying the removed sessionId alias", async () => {
+    const { client } = listClient({
+      sessions: [{
+        id: "sess-1",
+        sessionId: "sess-1",
+        status: "idle",
+        acceptsMessages: true,
+        createdAt: "t",
+        updatedAt: "t"
+      }]
+    });
+
+    await expect(client.sessions.list()).rejects.toThrow(/removed sessionId field/);
   });
 });

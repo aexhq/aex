@@ -9,7 +9,7 @@
  *   - Subpath imports such as `@aexhq/sdk/platform` or `@aexhq/sdk/proxy`
  *     fail with ERR_PACKAGE_PATH_NOT_EXPORTED.
  *
- * Every assertion sessions in a child Bun process whose cwd is the install
+ * Every assertion runs in a child Bun process whose cwd is the install
  * tempdir, so resolution goes through the installed `node_modules/@aexhq/sdk`
  * and NOT the monorepo workspace symlink.
  */

@@ -114,7 +114,7 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
           provider: "deepseek",
           model,
           message: prompt,
-          includeBuiltinTools: true,
+          builtinTools: "default",
           apiKeys: { deepseek: deepseekKey },
           idempotencyKey: "edge-lineage-w1-" + Date.now()
         }, { timeoutMs: 8 * 60 * 1000 });
@@ -124,13 +124,8 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
         const parentStatus = parentOk ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
         const parentCostUsd = typeof sessionResult.costUsd === "number" ? sessionResult.costUsd : null;
 
-        // Prefer freshly-listed events (journal forwards async).
-        let events = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-        try {
-          const s = await client.sessions.open(parentSessionId);
-          const listed = await s.events().list();
-          if (Array.isArray(listed) && listed.length > 0) events = listed;
-        } catch {}
+        const parentSession = await client.sessions.open(parentSessionId);
+        const events = await parentSession.events.list();
 
         const parentEventKinds = events.map((e) => e.type);
 
@@ -159,12 +154,8 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
         const parentEventsStr = JSON.stringify(events);
         const childMarkerInParentEvents = parentEventsStr.includes(CHILD_MARKER);
 
-        let parentOutputCount = 0;
-        try {
-          const s = await client.sessions.open(parentSessionId);
-          const outs = await s.files().list();
-          parentOutputCount = Array.isArray(outs) ? outs.length : 0;
-        } catch {}
+        const parentSnapshot = await parentSession.files.list();
+        const parentOutputCount = parentSnapshot.files.length;
 
         // ---- child observability probes (public read surface only) ----
         let childGetResolved = false, childGetStatus = null, childGetError = null;
@@ -172,33 +163,26 @@ describe("live DEV — subagent lineage observability (Wave 1)", () => {
         let childEventKinds = [], childMarkerInChildEvents = false, childOutputCount = 0;
         let childEventsStr = "";
         if (childId) {
-          try {
-            const rec = await client.sessions.get(childId);
-            childGetResolved = true;
-            childGetStatus = rec && typeof rec.status === "string" ? rec.status : null;
-          } catch (e) { childGetError = e instanceof Error ? e.message : String(e); }
-          try {
-            const cs = await client.sessions.open(childId);
-            childOpenResolved = true;
-            const cev = await cs.events().list();
-            const cevArr = Array.isArray(cev) ? cev : [];
-            childEventKinds = cevArr.map((e) => e.type);
-            childEventsStr = JSON.stringify(cevArr);
-            childMarkerInChildEvents = childEventsStr.includes(CHILD_MARKER);
-            const cout = await cs.files().list();
-            childOutputCount = Array.isArray(cout) ? cout.length : 0;
-          } catch (e) { childOpenError = e instanceof Error ? e.message : String(e); }
+          const rec = await client.sessions.get(childId);
+          childGetResolved = true;
+          childGetStatus = rec && typeof rec.status === "string" ? rec.status : null;
+          const cs = await client.sessions.open(childId);
+          childOpenResolved = true;
+          const childEvents = await cs.events.list();
+          childEventKinds = childEvents.map((e) => e.type);
+          childEventsStr = JSON.stringify(childEvents);
+          childMarkerInChildEvents = childEventsStr.includes(CHILD_MARKER);
+          const childSnapshot = await cs.files.list();
+          childOutputCount = childSnapshot.files.length;
         }
 
         // ---- sessions.list() lineage probe ----
-        let childInSessionsList = false, parentInSessionsList = false, sessionsListCount = 0;
-        try {
-          const page = await client.sessions.list();
-          const ids = Array.isArray(page.sessions) ? page.sessions.map((s) => s.sessionId ?? s.id) : [];
-          sessionsListCount = ids.length;
-          parentInSessionsList = ids.includes(parentSessionId);
-          if (childId) childInSessionsList = ids.includes(childId);
-        } catch {}
+        let childInSessionsList = false;
+        const page = await client.sessions.list();
+        const ids = page.sessions.map((s) => s.id);
+        const sessionsListCount = ids.length;
+        const parentInSessionsList = ids.includes(parentSessionId);
+        if (childId) childInSessionsList = ids.includes(childId);
 
         const leakedKeyAnywhere = parentEventsStr.includes(deepseekKey) || childEventsStr.includes(deepseekKey);
 

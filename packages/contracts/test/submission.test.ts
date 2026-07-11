@@ -10,7 +10,6 @@ import {
   SUPPORTED_MODELS_BY_PROVIDER,
   Providers,
   PROVIDERS,
-  parseSessionSubmissionRequest,
   providerForModel,
   providersForModel,
   resolveProviderModelId,
@@ -18,6 +17,7 @@ import {
   MODEL_PROVIDER_IDS,
   type ProviderName
 } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 function assetRef(name: string, seed = 1) {
   const hex = String(seed).padStart(64, "0");
@@ -45,8 +45,8 @@ function baseRequest(
     submission: {
       model,
       prompt: ["hello"],
-      agentsMd: [],
-      files: [],
+      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { [provider]: `sk-${provider}-test` } }
@@ -165,45 +165,6 @@ describe("submission parser - removed choice fields", () => {
   );
 });
 
-describe("submission parser - skills (by name)", () => {
-  it("parses submission.skills into name-only refs", () => {
-    const req = baseRequest({ provider: "anthropic" });
-    const parsed = parseSessionSubmissionRequest({
-      ...req,
-      submission: { ...req.submission, skills: [{ kind: "skill", name: "report-writer" }] }
-    });
-    expect(parsed.submission.skills).toEqual([{ kind: "skill", name: "report-writer" }]);
-  });
-
-  it("rejects a skill ref that rides in submission.tools with a redirect message", () => {
-    const req = baseRequest({ provider: "anthropic" });
-    expect(() =>
-      parseSessionSubmissionRequest({
-        ...req,
-        submission: {
-          ...req.submission,
-          tools: [{ kind: "skill", assetId: `asset_${"a".repeat(64)}`, name: "report-writer", description: "x" }]
-        }
-      })
-    ).toThrow(/skills go in submission\.skills/);
-  });
-
-  it("rejects resolvedSkills on the public ingress path", () => {
-    const req = baseRequest({ provider: "anthropic" });
-    expect(() =>
-      parseSessionSubmissionRequest({
-        ...req,
-        submission: {
-          ...req.submission,
-          resolvedSkills: [
-            { kind: "skill", assetId: `asset_${"a".repeat(64)}`, name: "report-writer", description: "x" }
-          ]
-        }
-      })
-    ).toThrow(/platform-internal/);
-  });
-});
-
 describe("PROVIDERS exports", () => {
   it("SUPPORTED_MODELS is the public model allowlist", () => {
     expect([...SUPPORTED_MODELS]).toEqual([
@@ -279,22 +240,18 @@ describe("PROVIDERS exports", () => {
     expect([...DEFAULT_BUILTIN_TOOLS]).toEqual([...BUILTIN_TOOL_NAMES]);
   });
 
-  it("resolveBuiltinToolNames: default-on, false-off, every builtin cherry-pickable, dedupe, invalid rejected", () => {
-    // Default on ⇒ DEFAULT_BUILTIN_TOOLS.
-    expect(resolveBuiltinToolNames(undefined)).toEqual([...DEFAULT_BUILTIN_TOOLS]);
-    expect(resolveBuiltinToolNames(true)).toEqual([...DEFAULT_BUILTIN_TOOLS]);
-    // false ⇒ none, unless a valid builtin is cherry-picked.
-    expect(resolveBuiltinToolNames(false)).toEqual([]);
+  it("resolveBuiltinToolNames handles default, none, explicit selection, dedupe, and rejection", () => {
+    expect(resolveBuiltinToolNames()).toEqual([...DEFAULT_BUILTIN_TOOLS]);
+    expect(resolveBuiltinToolNames("default")).toEqual([...DEFAULT_BUILTIN_TOOLS]);
+    expect(resolveBuiltinToolNames("none")).toEqual([]);
     for (const name of BUILTIN_TOOL_NAMES) {
-      expect(resolveBuiltinToolNames(false, [name]), name).toEqual([name]);
+      expect(resolveBuiltinToolNames([name]), name).toEqual([name]);
     }
-    // Default + repeated refs stays the full set, in BUILTIN_TOOL_NAMES order.
-    expect(resolveBuiltinToolNames(undefined, [BuiltinTools.git, BuiltinTools.bash, BuiltinTools.git])).toEqual(
-      [...BUILTIN_TOOL_NAMES]
+    expect(resolveBuiltinToolNames([BuiltinTools.git, BuiltinTools.bash, BuiltinTools.git])).toEqual(
+      BUILTIN_TOOL_NAMES.filter((name) => name === BuiltinTools.bash || name === BuiltinTools.git)
     );
-    // Invalid builtin name rejected.
-    expect(() => resolveBuiltinToolNames(false, ["nope"])).toThrow(/is not a builtin tool/);
-    expect(() => resolveBuiltinToolNames(false, ["notebook_edit"])).toThrow(/is not a builtin tool/);
+    expect(() => resolveBuiltinToolNames(["nope" as never])).toThrow(/is not a builtin tool/);
+    expect(() => resolveBuiltinToolNames(["notebook_edit" as never])).toThrow(/is not a builtin tool/);
   });
 
 });
@@ -366,112 +323,48 @@ describe("assertModelNameMatchesProvider", () => {
   });
 });
 
-describe("submission parser - includeBuiltinTools + builtin tool refs", () => {
-  it("defaults includeBuiltinTools to absent (⇒ standard set ON downstream)", () => {
+describe("submission parser - builtinTools", () => {
+  it("normalizes an omitted selection to default", () => {
     const base = baseRequest();
-    const parsed = parseSessionSubmissionRequest(base);
-    expect(parsed.submission.includeBuiltinTools).toBeUndefined();
-    expect(parsed.submission.builtinTools).toBeUndefined();
+    const { builtinTools: _selection, ...submission } = base.submission;
+    const parsed = parseSessionSubmissionRequest({ ...base, submission });
+    expect(parsed.submission.builtinTools).toBe("default");
   });
 
-  it("accepts includeBuiltinTools: false (disable all builtins)", () => {
+  it("accepts none and explicit selections", () => {
     const base = baseRequest();
-    const parsed = parseSessionSubmissionRequest({
+    const none = parseSessionSubmissionRequest({
       ...base,
-      submission: { ...base.submission, includeBuiltinTools: false }
+      submission: { ...base.submission, builtinTools: "none" }
     });
-    expect(parsed.submission.includeBuiltinTools).toBe(false);
+    expect(none.submission.builtinTools).toBe("none");
+    const selected = parseSessionSubmissionRequest({
+      ...base,
+      submission: { ...base.submission, builtinTools: [BuiltinTools.wait, BuiltinTools.git] }
+    });
+    expect(selected.submission.builtinTools).toEqual(["wait", "git"]);
   });
 
-  it("rejects a non-boolean includeBuiltinTools", () => {
-    const base = baseRequest();
-    expect(() =>
-      parseSessionSubmissionRequest({
-        ...base,
-        submission: { ...base.submission, includeBuiltinTools: [] as unknown }
-      })
-    ).toThrow(/includeBuiltinTools must be a boolean/);
-  });
-
-  it("extracts bare-string builtin refs from the tools union into builtinTools", () => {
+  it("dedupes explicit selections in canonical order", () => {
     const base = baseRequest();
     const parsed = parseSessionSubmissionRequest({
       ...base,
       submission: {
         ...base.submission,
-        tools: [BuiltinTools.wait, BuiltinTools.git]
-      }
-    });
-    // builtinTools is in BUILTIN_TOOL_NAMES order, custom tools stays empty.
-    expect(parsed.submission.builtinTools).toEqual(["wait", "git"]);
-    expect(parsed.submission.tools).toEqual([]);
-  });
-
-  it.each(BUILTIN_TOOL_NAMES)(
-    "accepts %s as an individual builtin reference",
-    (name) => {
-      const base = baseRequest();
-      const parsed = parseSessionSubmissionRequest({
-        ...base,
-        submission: { ...base.submission, includeBuiltinTools: false, tools: [name] }
-      });
-      expect(parsed.submission.includeBuiltinTools).toBe(false);
-      expect(parsed.submission.builtinTools).toEqual([name]);
-      expect(parsed.submission.tools).toEqual([]);
-    }
-  );
-
-  it("dedupes repeated builtin refs in tools (BUILTIN_TOOL_NAMES order)", () => {
-    const base = baseRequest();
-    const parsed = parseSessionSubmissionRequest({
-      ...base,
-      submission: {
-        ...base.submission,
-        tools: [BuiltinTools.web_search, BuiltinTools.web_search, BuiltinTools.git]
+        builtinTools: [BuiltinTools.web_search, BuiltinTools.web_search, BuiltinTools.git]
       }
     });
     expect(parsed.submission.builtinTools).toEqual(["web_search", "git"]);
   });
 
-  it("rejects a tools string outside the closed builtin-tool set", () => {
+  it("rejects names outside the closed builtin-tool set", () => {
     const base = baseRequest();
     expect(() =>
       parseSessionSubmissionRequest({
         ...base,
-        submission: { ...base.submission, tools: ["not_a_tool"] }
+        submission: { ...base.submission, builtinTools: ["not_a_tool"] }
       })
-    ).toThrow(/is not a builtin tool name; expected one of: bash, read_file/);
-  });
-
-  it("rejects the removed notebook_edit builtin", () => {
-    const base = baseRequest();
-    expect(() =>
-      parseSessionSubmissionRequest({
-        ...base,
-        submission: { ...base.submission, tools: ["notebook_edit"] }
-      })
-    ).toThrow(/is not a builtin tool name/);
-  });
-
-  it("parses a mix of custom tool bundles and builtin refs", () => {
-    const base = baseRequest();
-    const customTool = {
-      kind: "asset" as const,
-      assetId: `asset_${"a".repeat(64)}`,
-      name: "calendar_lookup",
-      description: "Looks up calendar availability.",
-      input_schema: { type: "object", properties: {}, required: [] },
-      entry: "index.js"
-    };
-    const parsed = parseSessionSubmissionRequest({
-      ...base,
-      submission: {
-        ...base.submission,
-        tools: [BuiltinTools.git, customTool]
-      }
-    });
-    expect(parsed.submission.builtinTools).toEqual(["git"]);
-    expect(parsed.submission.tools?.map((t) => t.name)).toEqual(["calendar_lookup"]);
+    ).toThrow(/not a builtin tool/);
   });
 });
 

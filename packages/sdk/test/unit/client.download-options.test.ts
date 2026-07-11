@@ -7,7 +7,7 @@ import { Aex } from "../../src/index.js";
 function downloadClient(): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    if (url.endsWith("/api/sessions/session-1/files/abc/download")) {
+    if (url.endsWith("/api/sessions/session-1/files/abc/download?checkpointId=cp-1")) {
       return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
     }
     if (url.endsWith("/api/sessions/session-1/events")) {
@@ -17,20 +17,16 @@ function downloadClient(): Aex {
       });
     }
     if (url.endsWith("/api/sessions/session-1/files")) {
-      return new Response(JSON.stringify({ files: [] }), {
+      return new Response(JSON.stringify({
+        revision: { checkpointId: "cp-1", runId: "run-1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: 9 },
+        files: []
+      }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
     }
     if (url.endsWith("/api/sessions/session-1")) {
-      return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      });
-    }
-    // Session rehydrate (openSession).
-    if (url.endsWith("/api/sessions/session-1")) {
-      return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
+      return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -56,7 +52,7 @@ describe("SessionHandle download { to } options", () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "run.zip");
-      const session = await downloadClient().openSession("session-1");
+      const session = await downloadClient().sessions.open("session-1");
       const bytes = await session.download({ to: path });
       const written = await readFile(path);
       expect(bytes.byteLength).toBeGreaterThan(0);
@@ -70,8 +66,8 @@ describe("SessionHandle download { to } options", () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-sdk-download-"));
     try {
       const path = join(dir, "report.txt");
-      const session = await downloadClient().openSession("session-1");
-      const bytes = await session.files().download({ id: "abc" }, { to: path });
+      const session = await downloadClient().sessions.open("session-1");
+      const bytes = await session.files.download({ id: "abc", checkpointId: "cp-1" }, { to: path });
       expect(new TextDecoder().decode(bytes)).toBe("hello");
       expect(await readFile(path, "utf8")).toBe("hello");
     } finally {
@@ -84,20 +80,20 @@ describe("SessionHandle download { to } options", () => {
     const fetch: typeof globalThis.fetch = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       if (url.endsWith("/api/sessions/session-1")) {
-        return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
+        return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
       }
-      if (url.endsWith("/api/sessions/session-1/files/abc/download")) {
+      if (url.endsWith("/api/sessions/session-1/files/abc/download?checkpointId=cp-1")) {
         downloadCalls += 1;
         return downloadCalls === 1 ? stalledFileResponse() : new Response("hello", { status: 200 });
       }
       throw new Error(`No fake responder for ${url}`);
     };
-    const session = await new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }).openSession("session-1");
+    const session = await new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }).sessions.open("session-1");
 
-    const bytes = await session.files().download({ id: "abc" }, { timeoutMs: 1 });
+    const bytes = await session.files.download({ id: "abc", checkpointId: "cp-1" }, { timeoutMs: 1 });
 
     expect(new TextDecoder().decode(bytes)).toBe("hello");
     expect(downloadCalls).toBe(2);

@@ -5,10 +5,10 @@ import type { ProviderName } from "./submission.js";
  * aex places things inside the agent container, plus the merged
  * env-var bag delivered via `RUNTIME.env` / `RUNTIME.json`.
  *
- * The hosted API computes a manifest at startSessionRecord-response time
+ * The hosted API computes a manifest for the session-create response
  * from the validated submission via {@link buildRuntimeManifest} and
  * echoes it on the wire as
- * `SessionRecord.runtimeManifest`, so caller code (anyone rendering catalog markdown
+ * `Session.runtimeManifest`, so caller code (anyone rendering catalog markdown
  * pre-submission, or resolving aex's in-container path strings) doesn't
  * have to guess.
  * The managed runtime materialises the actual `RUNTIME.env` / `RUNTIME.json`
@@ -39,11 +39,11 @@ export interface RuntimeManifest {
   readonly filesRoot: string;
   /** Parent dir of non-SKILL.md asset mounts: `<assetsRoot>/<skl_id>/<rel-path>`. */
   readonly assetsRoot: string;
-  /** Absolute path of the in-container aex starttime bridge (invoke via `bun`). */
+  /** Absolute path of the in-container aex runtime bridge (invoke via `bun`). */
   readonly aexCli: string;
-  /** Absolute path of the in-container aex starttime index. */
+  /** Absolute path of the in-container aex runtime index. */
   readonly indexJson: string;
-  /** Absolute path of the always-mounted aex starttime contract README. */
+  /** Absolute path of the always-mounted aex runtime contract README. */
   readonly readme: string;
   /** Absolute path of the machine-readable manifest mirror. */
   readonly runtimeJson: string;

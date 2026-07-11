@@ -5,15 +5,15 @@ import {
   parseRuntimeSecurityProfile,
   resolveRuntimeSecurityProfile,
   serializeRuntimeSecurityProfile
-} from "../src/index.js";
+} from "../src/internal.js";
 
 const baseSubmission = {
   workspaceId: "workspace-1",
   idempotencyKey: "idem-1",
   submission: {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],    agentsMd: [],
-    files: [],
+    prompt: ["say hello"],    assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
     mcpServers: []
   },
   secrets: { apiKeys: { anthropic: "sk-ant-test" } }

@@ -53,8 +53,8 @@ describe("responseFormat through the full submission parser (WS10)", () => {
       submission: {
         model: "deepseek-v4-flash",
         prompt: ["hi"],
-        agentsMd: [],
-        files: [],
+        assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
         mcpServers: [],
         responseFormat: { kind: "json_schema", schema: { type: "object" } }
       },

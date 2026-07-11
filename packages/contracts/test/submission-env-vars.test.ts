@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 // Minimal valid submission envelope. Tests below only override the
 // `submission.environment` slice to exercise the new envVars parser.
@@ -8,8 +8,8 @@ const baseSubmission = {
   idempotencyKey: "idem-1",
   submission: {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],    agentsMd: [],
-    files: [],
+    prompt: ["say hello"],    assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
     mcpServers: []
   },
   secrets: { apiKeys: { anthropic: "sk-ant-test" } }

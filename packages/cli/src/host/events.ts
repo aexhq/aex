@@ -4,9 +4,9 @@
  * Without `--follow`: lists the session's events recorded so far and exits.
  *
  * With `--follow`: polls the session `/events` endpoint and prints new events
- * as NDJSON until the session parks.
+ * as NDJSON until the latest durable event is a run terminal.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -15,7 +15,6 @@ import {
   USAGE_ERR,
   describeApiError,
   emitJsonError,
-  isSessionParked,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
@@ -76,16 +75,19 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
   const seen = new Set<string>();
   const deadline = timeoutMs === null ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
 
-  // Follow: poll the session /events endpoint until the session parks.
+  // Follow: poll durable events. HttpClient owns bounded transport retries, so
+  // this loop never retries a failed application scenario.
   while (true) {
     let events;
     try {
       events = await operations.listSessionEvents(http, sessionId);
     } catch (err) {
-      io.stderr(`(transient) event poll failed: ${(err as Error).message}\n`);
-      if (Date.now() >= deadline) return emitTimeout(io, sessionId, timeoutMs);
-      await sleep(2000);
-      continue;
+      const d = describeApiError(err);
+      return emitJsonError(io, "events_failed", d.message, {
+        sessionId,
+        ...(d.status !== undefined ? { status: d.status } : {}),
+        ...(d.remedy ? { remedy: d.remedy } : {})
+      });
     }
     for (const event of events) {
       if (!seen.has(event.id)) {
@@ -94,14 +96,8 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
       }
     }
 
-    try {
-      const session = await operations.getSession(http, sessionId);
-      if (isSessionParked(session.status)) {
-        return SUCCESS;
-      }
-    } catch (err) {
-      io.stderr(`(transient) status poll failed: ${(err as Error).message}\n`);
-    }
+    const latest = events.at(-1);
+    if (latest?.type === "RUN_FINISHED" || latest?.type === "RUN_ERROR") return SUCCESS;
     if (Date.now() >= deadline) return emitTimeout(io, sessionId, timeoutMs);
     await sleep(2000);
   }

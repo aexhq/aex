@@ -5,18 +5,21 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   const calls: string[] = [];
   const f: typeof fetch = async (input) => {
     calls.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
+      status: 201,
+      headers: { "content-type": "application/json" }
+    });
   };
   return { fetch: f, calls };
 }
 
-describe("Aex.openSession — removed field validation", () => {
+describe("aex.sessions.create — removed field validation", () => {
   it("rejects the legacy runtimeSize field without an HTTP call", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.openSession({
+      client.sessions.create({
         runtimeSize: "shared-1x-4gb",
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" }
@@ -31,7 +34,7 @@ describe("Aex.openSession — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         secretEnv: { SERPER_API_KEY: { ref: "serper" } }
@@ -46,7 +49,7 @@ describe("Aex.openSession — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         secrets: { apiKeys: { anthropic: "sk-x" } }
       } as never)
@@ -60,7 +63,7 @@ describe("Aex.openSession — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         parentSessionId: "ses_parent"
@@ -75,7 +78,7 @@ describe("Aex.openSession — removed field validation", () => {
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
 
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         message: "hello there"
@@ -86,12 +89,12 @@ describe("Aex.openSession — removed field validation", () => {
   });
 });
 
-describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)", () => {
+describe("aex.sessions.create — submit-boundary validation (Theme A, pre-network)", () => {
   it("rejects an invalid runtime token without an HTTP call (F11)", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         runtime: "lite"
@@ -104,7 +107,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         overrides: { timeout: "banana" }
@@ -117,7 +120,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         overrides: { timeout: "10s" }
@@ -129,7 +132,7 @@ describe("Aex.openSession — submit-boundary validation (Theme A, pre-network)"
   it("accepts a valid runtime + timeout (regression: does not over-reject)", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
-    await client.openSession({
+    await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-x" },
       runtime: "shared-0.5x-4gb",

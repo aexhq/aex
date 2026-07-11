@@ -4,109 +4,122 @@ title: Quickstart
 
 # Quickstart
 
-## 1. Install
+## Install
 
 ```bash
 npm i @aexhq/sdk
 ```
 
-This installs the TypeScript SDK exports and the bundled `aex` CLI.
-
-## 2. Set credentials
-
-aex is currently in **invite-only beta**: workspaces and API keys are issued
-by the aex team — contact <support@aex.dev> for beta access. Once you have
-access, create a quickstart SDK token with `sessions:read`, `sessions:write`,
-`files:read`, and `billing:read` in the dashboard at <https://aex.dev>. The
-examples also need your BYOK provider key for the model you choose. For the
-Claude examples below:
+Set an aex workspace key and the BYOK key for your model:
 
 ```bash
 export AEX_API_KEY="<your-aex-api-key>"
 export ANTHROPIC_API_KEY="<your-anthropic-api-key>"
 ```
 
-## 3. Open a session
+The workspace key needs `sessions:read`, `sessions:write`, and `files:read` for
+this workflow. Add `billing:read` when the application also reads cost and
+billing-account resources.
+
+## Run a session
 
 ```ts
 import { Aex, Models, Sizes } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
-
-const session = await aex.openSession({
+const session = await aex.sessions.create({
   model: Models.CLAUDE_HAIKU_4_5,
   system: "You are a concise engineering assistant.",
   runtime: Sizes.SHARED_0_25X_1GB,
-  overrides: { idleTtl: "3m" },
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
-const first = await session.send("Write a short report and save it as a file.").done();
-console.log(first.status, first.costUsd, first.text);
+const run = session.messages.send("Write a short report and save it as a file.");
+for await (const event of run) {
+  console.log(event.type, event.runId);
+}
+
+const result = await run.finished();
+console.log(result.status, result.costUsd, result.text);
 ```
 
-`send().done()` (and `start()`) **await settle by default**, so the result always
-carries a terminal `status` (`succeeded` / `failed` / `timed_out` / `cancelled`
-— never a bare `idle`) plus `costUsd` and `usage`. Pass `await: 'park'` to
-return early at the render-complete park event when you don't need cost/usage.
-`costUsd` is aex starttime/storage spend and **excludes** your BYOK provider
-charges — price those from `usage` token counts against your provider's rates.
+`finished()` resolves only after `RUN_FINISHED` or `RUN_ERROR`. A
+`RUN_FINISHED` result is checkpoint-consistent: its session record, cost,
+usage, messages, and files all reflect the same committed run. A `RUN_ERROR`
+that failed before a checkpoint has `files: []` and no `checkpoint`.
 
-The session parks as `idle` between turns and automatically moves to
-`suspended` after the idle window. Keep the session id and resume later:
+Held outcomes remain explicit. `suspended` and `awaiting_approval` are not
+reported as successful runs, and `result.ok` is true only for `succeeded`.
+
+## Reopen and continue
 
 ```ts
-const resumed = await aex.openSession(session.id);
-await resumed.send("Now run the validation command and summarize the result.").done();
+const resumed = await aex.sessions.open(session.id);
+if (resumed.record.acceptsMessages) {
+  await resumed.messages.send("Validate the report and summarize the result.").finished();
+}
 ```
 
-## 4. One-shot convenience
+`record.currentRun` describes active work and `record.lastRun` describes the
+most recently completed or held run.
 
-`start()` opens a session, sends `message` as one turn, and returns the collected
-result. Its `sessionId` is the session id.
+## Publish reusable inputs
+
+Workspace resources are versioned and immutable when submitted. Publish local
+drafts first, then pass the returned pinned refs under `assets`:
+
+```ts
+import { File } from "@aexhq/sdk";
+
+const source = await aex.workspace.files.publish(
+  await File.fromPath("./input.csv", { mountPath: "/workspace/input.csv" })
+);
+
+const withInput = await aex.sessions.create({
+  model: Models.CLAUDE_HAIKU_4_5,
+  assets: { files: [source] },
+  builtinTools: "default",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+});
+```
+
+The same pattern applies to `aex.workspace.skills`, `.tools`, and
+`.instructions`. Raw uploaded bytes are assets; workspace resources add typed,
+versioned meaning to those bytes.
+
+## Read checkpointed files
+
+```ts
+const completed = await withInput.messages.send("Create output/report.md").finished();
+const snapshot = await withInput.files.list({
+  checkpointId: completed.checkpoint?.checkpointId
+});
+
+console.log(snapshot.revision, snapshot.files);
+const report = await withInput.files.findOne({ filename: "report.md" });
+if (report) {
+  console.log((await withInput.files.read(report)).text);
+}
+```
+
+Session file IDs are meaningful only with their checkpoint. File objects carry
+`checkpointId`, and ID selectors must include it.
+
+## One-shot convenience
+
+`aex.start()` is the one retained convenience for create, send, and finish:
 
 ```ts
 const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! },
-  message: "Write a short report and save it as a file."
+  message: "Summarize this repository.",
+  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 
 console.log(result.sessionId, result.status, result.text);
 ```
 
-## 5. Session control: stream, wait, download
-
-Sessions are the low-level API. The handle a session gives you can do everything
-to itself — stream its events, wait for it to park, and download its record:
-
-```ts
-const session = await aex.openSession({
-  model: Models.CLAUDE_HAIKU_4_5,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
-});
-
-// A turn streams its own events; iterate them, then collect the result.
-const turn = session.send("Write a short report and save it as a file.");
-for await (const event of turn) {
-  console.log(event.type);
-}
-await turn.done();
-
-const messages = await session.messages().list();
-console.log(messages.at(-1)?.text);
-
-// Poll the record until the session parks: a resumable `idle` / `suspended`,
-// or a terminal outcome (`succeeded` / `failed` / `timed_out` / `cancelled`).
-const record = await session.wait();
-console.log(record.status);
-
-// Download the whole session record (metadata, events, files) as a zip.
-await session.download({ to: "./session.zip" });
-```
-
-The same run from the bundled CLI (`npx aex` on a local install; or
-`npm i -g @aexhq/sdk` for a bare `aex`):
+The bundled CLI provides the same one-shot workflow:
 
 ```bash
 npx aex start \
@@ -117,10 +130,10 @@ npx aex start \
   --follow
 ```
 
-## Add capabilities
+## Next
 
-- Add files, skills, AGENTS.md, MCP servers, packages, and networking controls with [Composition](concepts/composition.md).
-- Delegate bounded sub-tasks to child sessions with [Subagents](concepts/subagents.md).
-- Get notified when a session finishes with [Webhooks](webhooks.md).
-- Narrow file capture or download individual files with [Files](files.md).
-- Check supported providers and models in the [provider/runtime capability matrix](provider-runtime-capabilities.md).
+- [Composition](concepts/composition.md)
+- [Events](events.md)
+- [Files](files.md)
+- [Webhooks](webhooks.md)
+- [Provider/runtime capabilities](provider-runtime-capabilities.md)

@@ -3,7 +3,7 @@
  *
  * Drives the **published `@aexhq/sdk` SDK** against the live
  * api.aex.dev hosted API with a real DeepSeek round-trip on the
- * managed runtime: SDK → /sessions → control-plane workflow → managed
+ * managed runtime: SDK → /api/sessions → control-plane workflow → managed
  * runtime → real managed-runtime process → BYOK provider-proxy → api.deepseek.com →
  * stream-json events → terminal. No smoke shortcut.
  *
@@ -49,7 +49,7 @@ const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v
 
 interface LiveResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly probe: string;
   readonly eventCount: number;
   readonly eventKinds: readonly string[];
@@ -93,7 +93,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         const model = process.env.MODEL;
         const apiKey = process.env.AEX_API_KEY;
 
-        // Phase 7 wired workspace-token auth on POST /sessions; the apiKey
+        // Phase 7 wired workspace-token auth on POST /api/sessions; the apiKey
         // is now a real, workspace-scoped credential. The live runner
         // gets it via env from the spawning test.
         const client = new Aex({
@@ -101,8 +101,8 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           apiKey
         });
 
-        // SessionRecord a DeepSeek agent. The SDK's start() opens a one-shot session,
-        // streams to park, and returns the collected SessionResult. Real
+        // Run a DeepSeek agent. The SDK's start() opens a one-shot session,
+        // streams through the durable run terminal, and returns the collected SessionResult. Real
         // managed-runtime sessions take a while (cold-start + image pull +
         // process startup + LLM round-trip), so give it up to 8 minutes.
         const sessionResult = await client.start({
@@ -117,47 +117,31 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         // sessionId must land in the CI log even if this script dies before emit.
         process.stderr.write("sessionId=" + sessionId + "\\n");
         const run = {
-          status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+          status: sessionResult.status,
           runtime: "managed",
           provider: "deepseek"
         };
-        const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-        const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
-        let events = fallbackEvents;
-        let files = fallbackFiles;
-        try {
-          const session = await client.sessions.open(sessionId);
-          const listedEvents = await session.events().list();
-          if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-          const listedFiles = await session.files().list();
-          if (Array.isArray(listedFiles)) files = listedFiles;
-        } catch {
-          events = fallbackEvents;
-          files = fallbackFiles;
-        }
+        const session = await client.sessions.open(sessionId);
+        const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
+        const files = (await session.files.list()).files;
         const assistantTextEvents = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT");
         const assistantTextJoined = assistantTextEvents
           .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
           .join(" ");
-        const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-        const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-        const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+        const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
         const eventKinds = events.map((e) => e.type);
-        if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-        const terminalData = terminal && isSessionIdle(terminal)
-          ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-          : terminal ? terminal.data : null;
+        const terminalData = terminal ? terminal.data : null;
 
         const serialized = JSON.stringify({ run, events, files });
         const result = {
           sessionId: sessionId,
-          sessionStatus: run.status,
+          runStatus: run.status,
           probe: ${JSON.stringify(probe)},
           eventCount: events.length,
           eventKinds,
           assistantTextJoined,
           assistantTextEventCount: assistantTextEvents.length,
-          terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+          terminalKind: terminal ? terminal.type : null,
           terminalData,
           fileCount: files.length,
           files: files.map((o) => ({ filename: o.filename, sizeBytes: o.sizeBytes })),
@@ -218,7 +202,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       // Print the sessionId as soon as we have it so the platform diagnostics
       // collector can pull this session's forensics from the CI log even when a
       // later assertion fails (same convention as live-sdk-heavy-session).
-      console.log(`sessionId=${result.sessionId} sessionStatus=${result.sessionStatus} terminalKind=${result.terminalKind}`);
+      console.log(`sessionId=${result.sessionId} runStatus=${result.runStatus} terminalKind=${result.terminalKind}`);
 
       // ---- assertions ----
 
@@ -227,15 +211,14 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
           ? (result.terminalData["failureClass"] as string)
           : null;
       expect(
-        result.sessionStatus,
+        result.runStatus,
         `sessionId=${result.sessionId} terminalKind=${result.terminalKind} failureClass=${failureClass} terminalData=${JSON.stringify(result.terminalData)}`
       ).toBe("succeeded");
 
-      // Real managed-runtime event frame: starts with runtime_started, ends
-      // with runtime_terminal, has at least one assistant_text from
-      // managed runtime's stream-json output.
-      expect(result.terminalKind).toBe("TURN_FINISHED");
-      expect(result.eventKinds).toContain("TURN_FINISHED");
+      // The committed public terminal and assistant text prove the managed run
+      // completed through the installed SDK.
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.eventKinds).toContain("RUN_FINISHED");
       expect(result.assistantTextEventCount).toBeGreaterThan(0);
       expect(result.assistantTextJoined.length).toBeGreaterThan(0);
       // The managed runtime stream fragments responses across content blocks
@@ -246,20 +229,8 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
       const normalized = result.assistantTextJoined.replace(/\s+/g, "");
       expect(normalized).toContain(result.probe);
 
-      // Terminal carries reason: "complete". runtimeExitCode is NOT asserted
-      // here — runner.mjs emits a terminal with { runtimeExitCode } AFTER the
-      // managed-runtime process exits, but the runtime adapter's transformObject
-      // ("complete") path emits a terminal with { totalTokens } as soon as
-      // the managed runtime stdout emits the complete record, and the adapter's
-      // idempotency guard drops the second emit. The race winner is the
-      // stdout path on a clean run, so runtimeExitCode is normally absent.
-      // The previous `if (runtimeExitCode !== undefined) expect(===0)` was a
-      // silent-skip anti-pattern. Tightening the contract (defer terminal
-      // emission to the runner so BOTH signals land on the same event) is
-      // tracked as a managed-runtime refactor — until then, runtimeExitCode is
-      // observability, not contract, and not asserted.
       const terminal = result.terminalData ?? {};
-      expect(terminal["reason"]).toBe("complete");
+      expect(terminal["outcome"]).toBe("succeeded");
 
       // The customer's DeepSeek key MUST NOT appear anywhere in the
       // SDK-visible response surface.

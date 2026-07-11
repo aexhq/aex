@@ -13,7 +13,7 @@ import {
  * In-memory skill bundle: a flat path -> bytes map and the
  * deterministically-zipped representation.
  *
- * The SDK sessions only the cheap, safety-critical checks here
+ * The SDK runs only the cheap, safety-critical checks here
  * (`validateSkillBundleEntry`: no `..`, no absolute paths, no Windows
  * backslashes, depth/length limits). The BFF re-canonicalises and
  * recomputes the canonical hash on receipt — SDK-side hashing is NOT
@@ -116,12 +116,12 @@ export function bundleSkillFiles(files: SkillFiles, meta?: BundleMeta): BundledS
     throw new Error(
       'Skill bundle must contain a "SKILL.md" file at the root. ' +
         "If you want to upload an instructions file or generic agent context, " +
-        "use AgentsMd.fromPath / File.fromPath instead."
+        "use Instructions.fromPath / File.fromPath instead."
     );
   }
 
   // Sort entries and pin every mtime to the epoch so the byte output is
-  // identical across machines and re-sessions (the BFF re-canonicalises and
+  // identical across machines and re-runs (the BFF re-canonicalises and
   // recomputes the canonical hash, so this is for retry-safety / debug
   // reproducibility rather than a wire-shape contract). The fidelity sidecar,
   // when present, is appended LAST so a metadata-free bundle is byte-identical.
@@ -217,7 +217,7 @@ const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 
 /**
  * Compute `sha256:<hex>` of the given canonicalised zip bytes. Used by the
- * `Skill.from*` / `File` / `AgentsMd` factories to populate the draft's
+ * `Skill.from*` / `File` / `Instructions` factories to populate the draft's
  * `contentHash` field. The hash is advisory — the BFF verifies
  * it against the uploaded zip; a mismatch is rejected. Web-Crypto-only so the
  * SDK works in Bun, Node, edge runtimes, and browsers without polyfills.

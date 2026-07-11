@@ -1,14 +1,16 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-  SESSION_CONTROL_STATUSES,
-  TERMINAL_SESSION_CONTROL_STATUSES,
-  getSessionControlStatusKind,
-  isTerminalSessionControlStatus,
-  parseSessionSubmissionRequest,
-  type JsonValue,
-  type PlatformSessionSubmissionRequest
+  type JsonValue
 } from "../src/index.js";
+import {
+  SESSION_WORKFLOW_STATUSES,
+  TERMINAL_SESSION_WORKFLOW_STATUSES,
+  getSessionWorkflowStatusKind,
+  isTerminalSessionWorkflowStatus,
+  parseSessionSubmissionRequest,
+  type PlatformSessionSubmissionRequest
+} from "../src/internal.js";
 
 const deniedSecretFields = [
   "providerApiKey",
@@ -53,8 +55,8 @@ const submission = fc.record({
     model: fc.constant("claude-haiku-4-5"),
     system: fc.option(nonEmptyString, { nil: undefined }),
     prompt: fc.array(nonEmptyString, { minLength: 1, maxLength: 5 }),
-    agentsMd: fc.constant([] as never[]),
-    files: fc.constant([] as never[]),
+    assets: fc.constant({ files: [], skills: [], tools: [], instructions: [] }),
+    builtinTools: fc.constant("default" as const),
     mcpServers: fc.constant([] as never[]),
     metadata: fc.option(jsonRecord, { nil: undefined })
   }),
@@ -103,13 +105,13 @@ describe("shared platform invariants", () => {
   });
 
   it("keeps the session-status partition complete and explicit", () => {
-    const terminal = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
-    const active = SESSION_CONTROL_STATUSES.filter((status) => !terminal.has(status));
+    const terminal = new Set<string>(TERMINAL_SESSION_WORKFLOW_STATUSES);
+    const active = SESSION_WORKFLOW_STATUSES.filter((status) => !terminal.has(status));
 
-    expect([...terminal, ...active].sort()).toEqual([...SESSION_CONTROL_STATUSES].sort());
-    for (const status of SESSION_CONTROL_STATUSES) {
-      expect(getSessionControlStatusKind(status)).toBe(terminal.has(status) ? "terminal" : "active");
-      expect(isTerminalSessionControlStatus(status)).toBe(terminal.has(status));
+    expect([...terminal, ...active].sort()).toEqual([...SESSION_WORKFLOW_STATUSES].sort());
+    for (const status of SESSION_WORKFLOW_STATUSES) {
+      expect(getSessionWorkflowStatusKind(status)).toBe(terminal.has(status) ? "terminal" : "active");
+      expect(isTerminalSessionWorkflowStatus(status)).toBe(terminal.has(status));
     }
   });
 });
@@ -122,8 +124,8 @@ function makeValidSubmission(): PlatformSessionSubmissionRequest {
     submission: {
       model: "claude-haiku-4-5",
       prompt: ["hello"],
-      agentsMd: [],
-      files: [],
+      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { anthropic: "sk-ant-test" } }

@@ -8,7 +8,7 @@ import type {
   SessionMessageSender,
   WebSocketLike
 } from "@aexhq/contracts";
-import { Aex, type Message, type SessionResult, type SessionStartResult } from "../../src/index.js";
+import { Aex, type Message, type SessionResult, type SessionRunResult } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly method: string;
@@ -86,8 +86,14 @@ function recordCall(input: string | URL | Request, init: RequestInit | undefined
   };
 }
 
-function sessionRecord(status = "idle"): { readonly id: string; readonly status: string; readonly turnSeq: number } {
-  return { id: "sess_1", status, turnSeq: 1 };
+function sessionRecord(status = "idle") {
+  return {
+    id: "sess_1",
+    status,
+    acceptsMessages: status === "idle",
+    costUsd: 0,
+    costTelemetry: { providerUsage: [] }
+  };
 }
 
 function captureMessagesClient(messages: readonly SessionMessage[]): {
@@ -99,7 +105,7 @@ function captureMessagesClient(messages: readonly SessionMessage[]): {
     const call = recordCall(input, init);
     calls.push(call);
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1") {
-      return json(sessionRecord());
+      return json({ session: sessionRecord() });
     }
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1/messages") {
       return json({ messages });
@@ -124,7 +130,7 @@ function captureMissingMessagesClient(args: {
     const call = recordCall(input, init);
     calls.push(call);
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1") {
-      return json(sessionRecord());
+      return json({ session: sessionRecord() });
     }
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1/messages") {
       return statusResponse(args.missingStatus);
@@ -133,7 +139,7 @@ function captureMissingMessagesClient(args: {
       const cursor = new URLSearchParams(call.search).get("cursor");
       const index = cursor === null ? 0 : Number(cursor);
       const events = args.eventPages[index] ?? [];
-      const nextCursor = index + 1 < args.eventPages.length ? index + 1 : undefined;
+      const nextCursor = index + 1 < args.eventPages.length ? String(index + 1) : undefined;
       return json({
         events,
         ...(nextCursor !== undefined ? { nextCursor } : {})
@@ -159,15 +165,15 @@ function captureSessionClient(firstSeq: number): {
     const call = recordCall(input, init);
     calls.push(call);
     if (call.method === "POST" && call.pathname === "/api/sessions") {
-      return json({ session: { id: "sess_1", status: "idle", turnSeq: 0 } });
+      return json({ session: { id: "sess_1", status: "idle", acceptsMessages: true } });
     }
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1") {
-      return json({ session: sessionRecord("running") });
+      return json({ session: sessionRecord("idle") });
     }
     if (call.method === "POST" && call.pathname === "/api/sessions/sess_1/messages") {
       return json({
         session: sessionRecord("running"),
-        turn: { sessionId: "sess_1", turnSeq: 1 },
+        run: { sessionId: "sess_1", turnSeq: 1, runId: "run_1", phase: "running", eventCursor: firstSeq },
         eventCursor: firstSeq
       });
     }
@@ -179,7 +185,10 @@ function captureSessionClient(firstSeq: number): {
       });
     }
     if (call.method === "GET" && call.pathname === "/api/sessions/sess_1/files") {
-      return json({ files: [] });
+      return json({
+        revision: { checkpointId: "cp_1", runId: "run_1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: firstSeq },
+        files: []
+      });
     }
     throw new Error(`unexpected SDK request: ${call.method} ${call.pathname}${call.search}`);
   };
@@ -250,6 +259,8 @@ function aexEvent(args: {
     source: args.source,
     type: args.type,
     subject: args.sessionId,
+    threadId: args.sessionId,
+    runId: "run_1",
     time: args.time,
     sequence: args.sequence,
     seq: args.sequence,
@@ -264,8 +275,8 @@ function terminalEvent(sequence: number, time: string): FuzzEvent {
     sequence,
     time,
     source: "runtime",
-    type: "CUSTOM",
-    data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
+    type: "RUN_FINISHED",
+    data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
   });
 }
 
@@ -466,14 +477,14 @@ function expectedTrace(events: readonly FuzzEvent[]): TurnTrace {
   };
 }
 
-async function collectSessionSend(events: readonly FuzzEvent[], firstSeq: number): Promise<SessionStartResult> {
+async function collectSessionSend(events: readonly FuzzEvent[], firstSeq: number): Promise<SessionRunResult> {
   const harness = captureSessionClient(firstSeq);
-  const session = await harness.client.openSession("sess_1");
-  const promise = session.send("continue", {
+  const session = await harness.client.sessions.open("sess_1");
+  const promise = session.messages.send("continue", {
     webSocketFactory: harness.webSocketFactory,
     idleTimeoutMs: 0,
     pingIntervalMs: 0
-  }).done();
+  }).finished();
   const socket = await waitForSocket(harness.sockets);
   for (const event of events) socket.message(event);
   return promise;
@@ -658,46 +669,18 @@ describe("slim session messages/results properties", () => {
     await fc.assert(
       fc.asyncProperty(fc.array(sessionMessage, { maxLength: 30 }), async (wireMessages) => {
         const { client, calls } = captureMessagesClient(wireMessages);
-        const session = await client.openSession("sess_1");
+        const session = await client.sessions.open("sess_1");
         const expected = wireMessages.map(wireMessage);
 
-        await expect(session.messages.all()).resolves.toEqual(expected);
         await expect(session.messages.list()).resolves.toEqual(expected);
         await expect(session.messages.first()).resolves.toEqual(expected[0]);
         await expect(session.messages.last()).resolves.toEqual(expected.at(-1));
-        await expect(session.messages().list()).resolves.toEqual(expected);
+        await expect(session.messages.list()).resolves.toEqual(expected);
 
         const messageCalls = calls.filter((call) => call.pathname === "/api/sessions/sess_1/messages");
-        expect(messageCalls.map((call) => call.method)).toEqual(["GET", "GET", "GET", "GET", "GET"]);
+        expect(messageCalls.map((call) => call.method)).toEqual(["GET", "GET", "GET", "GET"]);
       }),
       { numRuns: 180 }
-    );
-  });
-
-  it("falls back to assistant messages projected from events when messages are not deployed", async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.constantFrom(404, 405, 501),
-        repeatedMessageCase,
-        fc.integer({ min: 0, max: 14 }),
-        async (missingStatus, generated, splitAt) => {
-          const { client, calls } = captureMissingMessagesClient({
-            missingStatus,
-            eventPages: eventPages(generated.events, splitAt)
-          });
-          const session = await client.openSession("sess_1");
-          const expected = projectedMessages(generated.events);
-
-          await expect(session.messages.all()).resolves.toEqual(expected);
-          await expect(session.messages.list()).resolves.toEqual(expected);
-          await expect(session.messages.first()).resolves.toEqual(expected[0]);
-          await expect(session.messages.last()).resolves.toEqual(expected.at(-1));
-
-          expect(calls.filter((call) => call.pathname === "/api/sessions/sess_1/messages")).toHaveLength(4);
-          expect(calls.filter((call) => call.pathname === "/api/sessions/sess_1/events").length).toBeGreaterThanOrEqual(4);
-        }
-      ),
-      { numRuns: 160 }
     );
   });
 

@@ -1,120 +1,208 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  jobNeeds,
+  readRepoFile,
+  readWorkflow,
+  stepIndex,
+  workflowJob,
+  workflowStep,
+  workflowTriggers
+} from "./workflow-test-helpers.js";
 
-const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-
-function read(path: string): string {
-  // Normalize CRLF so multi-line assertions behave the same on Windows
-  // checkouts (autocrlf) and CI.
-  return readFileSync(resolve(repoRoot, path), "utf8").replace(/\r\n/g, "\n");
-}
+const MANUAL_GATE_JOBS = ["lint", "unit-tests", "offline-user-tests", "docs-build", "pack-sdk"] as const;
 
 describe("release pipeline gates", () => {
-  it("forbids latest as a release.yml dist-tag (no choice, guarded input)", () => {
-    const workflow = read(".github/workflows/release.yml");
+  it("runs public checks for pull requests and merge queues", () => {
+    const workflow = readWorkflow(".github/workflows/ci.yml");
+    const triggers = workflowTriggers(workflow);
+    const parity = workflowJob(workflow, "contract-parity");
+    const requireToken = workflowStep(parity, "Require platform token");
+    const parityCheck = workflowStep(parity, "Contract parity");
 
-    // The choice list offers only pre-release lanes; `latest` is assigned
-    // exclusively by promote.yml after the release workflow attempt is green.
-    expect(workflow).toContain("options:\n          - canary\n          - next");
-    expect(workflow).not.toMatch(/^\s*-\s+latest\s*$/m);
-
-    // Defense in depth: the raw input is validated before anything publishes,
-    // and the guard lives in the `version` job that `publish` needs.
-    expect(workflow).toContain("name: Forbid direct publish to latest");
-    expect(workflow).toContain('if [ "${NPM_DIST_TAG}" = "latest" ]');
-    expect(workflow.indexOf("Forbid direct publish to latest")).toBeLessThan(
-      workflow.indexOf("Publish to npm")
-    );
+    expect(triggers).toHaveProperty("pull_request");
+    expect(triggers).toHaveProperty("merge_group");
+    expect(parity.if).toContain("github.event_name != 'pull_request'");
+    expect(parity.env).toHaveProperty("HAS_PLATFORM_TOKEN");
+    expect(requireToken.run).toContain("contract parity gate cannot run");
+    expect(parityCheck.run).toContain("bun run contracts:parity:check");
   });
 
-  it("fails the ci.yml contract-parity job loudly when the platform gate is disarmed", () => {
-    const workflow = read(".github/workflows/ci.yml");
+  it("automatically publishes an immutable canary only after green main CI", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    const workflowRun = workflowTriggers(workflow).workflow_run as Record<string, unknown>;
+    const authorize = workflowJob(workflow, "authorize");
+    const version = workflowJob(workflow, "version");
+    const publish = workflowJob(workflow, "publish");
+    const manifest = workflowJob(workflow, "public-release-manifest");
+    const resolveVersion = workflowStep(version, "Resolve package version");
+    const resolvePublication = workflowStep(version, "Resolve immutable publication state");
+    const applyVersion = workflowStep(publish, "Apply immutable canary version");
+    const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
 
-    // No silent disarm: a lapsed PLATFORM_REPO_TOKEN or a failed platform
-    // checkout must fail the job, not let the parity script skip.
-    expect(workflow).not.toContain("continue-on-error");
-    expect(workflow).toContain("name: Require platform token");
-    expect(workflow).toContain("if: ${{ env.HAS_PLATFORM_TOKEN != 'true' }}");
-    expect(workflow).not.toContain("if: ${{ env.HAS_PLATFORM_TOKEN == 'true' }}");
-
-    // The parity check itself is unchanged and always sessions against the
-    // mandatory checkout.
-    expect(workflow).toContain("run: bun run contracts:parity:check");
-    expect(workflow).toContain("AEX_PLATFORM_DIR: ${{ github.workspace }}/_platform");
+    expect(workflowRun.workflows).toEqual(["CI"]);
+    expect(workflowRun.types).toEqual(["completed"]);
+    expect(workflowRun.branches).toEqual(["main"]);
+    expect(workflow.concurrency).toMatchObject({
+      group: expect.stringContaining("github.event.workflow_run.head_sha"),
+      "cancel-in-progress": false
+    });
+    expect(authorize.if).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(authorize.if).toContain("github.event.workflow_run.event == 'push'");
+    expect(resolveVersion.run).toContain("canary-version.mjs resolve");
+    expect(resolvePublication.run).toContain("already_published=true");
+    expect(applyVersion.run).toContain("canary-version.mjs apply");
+    expect(applyVersion.if).toContain("needs.version.outputs.already_published != 'true'");
+    expect(workflowStep(publish, "Publish to npm").if).toContain("needs.version.outputs.already_published != 'true'");
+    expect(jobNeeds(publish)).not.toContain("live-user-tests-preflight");
+    expect(jobNeeds(workflowJob(workflow, "live-user-tests"))).toContain("live-user-tests-preflight");
+    expect(dispatch.run).toContain('"event_type": "aex-canary-published"');
+    expect(dispatch.run).toContain('"sdk_version": "${SDK_VERSION}"');
+    expect(dispatch.run).toContain('"integrity": "${SDK_INTEGRITY}"');
   });
 
-  it("requires promote.yml to verify a green release workflow attempt published the exact version", () => {
-    const workflow = read(".github/workflows/promote.yml");
+  it("reuses green main CI gates and reruns them only for manual releases", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    for (const id of MANUAL_GATE_JOBS) {
+      expect(workflowJob(workflow, id).if, id).toBe("${{ github.event_name == 'workflow_dispatch' }}");
+    }
 
-    expect(workflow).toContain("release_session_id:");
-    expect(workflow).toContain("platform_deploy_session_id:");
-    expect(workflow).toContain("actions: read");
-    expect(workflow).toContain("name: Verify green release workflow attempt published this version");
-    expect(workflow).toContain("name: Verify public release manifest");
-    expect(workflow).toContain("name: Verify green platform deploy tested this version");
-    expect(workflow).toContain("name: Verify platform validation manifest");
-    expect(workflow).toContain("published-artifact");
-    expect(workflow).toContain("PLATFORM_REPO_TOKEN");
-
-    // The verification is fail-closed: release.yml identity, success
-    // conclusion, the npm publish timestamp inside the session's window, and a
-    // platform deploy proof artifact for the same sdk_version.
-    expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/release.yml" ]');
-    expect(workflow).toContain('[ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]');
-    expect(workflow).toContain(".time[$v] // empty");
-    expect(workflow).toContain('[ "${pub_s}" -lt "${start_s}" ] || [ "${pub_s}" -gt "${end_s}" ]');
-    expect(workflow).toContain('--name "public-release-manifest-${RELEASE_SESSION_ID}"');
-    expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs verify-public");
-    expect(workflow).toContain('if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]');
-    expect(workflow).toContain('--name "promotion-proof-${PLATFORM_DEPLOY_SESSION_ID}"');
-    expect(workflow).toContain('--name "platform-validation-manifest-${PLATFORM_DEPLOY_SESSION_ID}"');
-    expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs verify-platform");
-    expect(workflow).toContain('proof_version="$(jq -r');
-    expect(workflow).toContain('if [ "${proof_version}" != "${PACKAGE_VERSION}" ]');
-    expect(workflow).toContain("suite_dev spot_canary_dev suite_prod smoke_prod");
-    expect(workflow.indexOf("Verify green release workflow attempt published this version")).toBeLessThan(
-      workflow.indexOf("Add npm dist-tag")
-    );
-    expect(workflow.indexOf("Verify public release manifest")).toBeLessThan(
-      workflow.indexOf("Add npm dist-tag")
-    );
-    expect(workflow.indexOf("Verify green platform deploy tested this version")).toBeLessThan(
-      workflow.indexOf("Add npm dist-tag")
-    );
-    expect(workflow.indexOf("Verify platform validation manifest")).toBeLessThan(
-      workflow.indexOf("Add npm dist-tag")
-    );
+    const publish = workflowJob(workflow, "publish");
+    expect(publish.if).toContain("github.event_name == 'workflow_run'");
+    for (const id of MANUAL_GATE_JOBS) {
+      expect(jobNeeds(publish), id).toContain(id);
+      expect(publish.if, id).toContain(`needs.${id}.result == 'success'`);
+    }
   });
 
-  it("emits a public release manifest only after the published-artifact smoke gate", () => {
-    const workflow = read(".github/workflows/release.yml");
+  it("forbids latest as a release.yml dist-tag before publish", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    const workflowDispatch = workflowTriggers(workflow).workflow_dispatch as {
+      readonly inputs?: Readonly<Record<string, { readonly options?: readonly string[] }>>;
+    };
+    const version = workflowJob(workflow, "version");
+    const publish = workflowJob(workflow, "publish");
+    const guard = workflowStep(version, "Forbid direct publish to latest");
 
-    expect(workflow).toContain("public-release-manifest:");
-    expect(workflow).toContain("name: Public release manifest");
-    expect(workflow).toContain("- live-user-tests");
-    expect(workflow).toContain("bun scripts/cicd/release-manifest.mjs write-public");
-    expect(workflow).toContain("name: public-release-manifest-${{ github.run_id }}");
-    expect(workflow).toContain("path: public-release-manifest.json");
-    expect(workflow.indexOf("Published-artifact smoke")).toBeLessThan(
-      workflow.indexOf("public-release-manifest:")
-    );
+    expect(workflowDispatch.inputs?.npm_dist_tag?.options).toEqual(["canary", "next"]);
+    expect(guard.run).toContain('if [ "${NPM_DIST_TAG}" = "latest" ]');
+    expect(jobNeeds(publish)).toContain("version");
+    expect(workflowStep(publish, "Publish to npm")).toBeDefined();
+  });
+
+  it("fails the contract-parity job loudly when the platform gate is disarmed", () => {
+    const workflow = readWorkflow(".github/workflows/ci.yml");
+    const parity = workflowJob(workflow, "contract-parity");
+    const requireToken = workflowStep(parity, "Require platform token");
+    const checkout = workflowStep(parity, "Checkout platform (for contract parity)");
+    const parityCheck = workflowStep(parity, "Contract parity");
+
+    expect(parity.steps?.some((step) => step["continue-on-error"] === true)).toBe(false);
+    expect(requireToken.if).toBe("${{ env.HAS_PLATFORM_TOKEN != 'true' }}");
+    expect(checkout.if).toBeUndefined();
+    expect(parityCheck.if).toBeUndefined();
+    expect(parityCheck.run).toContain("bun run contracts:parity:check");
+    expect(parityCheck.env?.AEX_PLATFORM_DIR).toBe("${{ github.workspace }}/_platform");
+  });
+
+  it("promotes only an exact version proven by successful public and platform runs", () => {
+    const workflow = readWorkflow(".github/workflows/promote.yml");
+    const triggers = workflowTriggers(workflow);
+    const workflowDispatch = triggers.workflow_dispatch as {
+      readonly inputs?: Readonly<Record<string, { readonly required?: boolean }>>;
+    };
+    const promote = workflowJob(workflow, "promote");
+    const releaseRun = workflowStep(promote, "Verify green release workflow attempt published this version");
+    const publicManifest = workflowStep(promote, "Verify public release manifest");
+    const platformRun = workflowStep(promote, "Verify green platform deploy tested this version");
+    const platformManifest = workflowStep(promote, "Verify platform validation manifest");
+    const registry = workflowStep(promote, "Verify exact registry integrity");
+    const monotonic = workflowStep(promote, "Require current monotonic release candidate");
+    const addTag = workflowStep(promote, "Add npm dist-tag");
+
+    expect(new Set(Object.keys(triggers))).toEqual(new Set(["workflow_dispatch"]));
+    for (const input of [
+      "version",
+      "release_run_id",
+      "platform_deploy_run_id",
+      "public_sha",
+      "sdk_integrity",
+      "npm_dist_tag"
+    ]) {
+      expect(workflowDispatch.inputs?.[input]?.required, input).toBe(true);
+    }
+    expect(workflow.env).toMatchObject({
+      PACKAGE_VERSION: "${{ inputs.version }}",
+      RELEASE_RUN_ID: "${{ inputs.release_run_id }}",
+      PLATFORM_DEPLOY_RUN_ID: "${{ inputs.platform_deploy_run_id }}",
+      RELEASE_SOURCE_SHA: "${{ inputs.public_sha }}",
+      RELEASE_INTEGRITY: "${{ inputs.sdk_integrity }}",
+      NPM_DIST_TAG: "${{ inputs.npm_dist_tag }}"
+    });
+    expect(JSON.stringify(workflow.env)).not.toContain("client_payload");
+    expect(JSON.stringify(workflow.env)).not.toContain("github.event");
+    expect(workflow.permissions).toMatchObject({ actions: "read" });
+    expect(workflow.concurrency).toMatchObject({
+      group: "promote-aex",
+      "cancel-in-progress": false
+    });
+    expect(releaseRun.run).toContain('.github/workflows/release.yml');
+    expect(releaseRun.run).toContain('status}" != "completed');
+    expect(publicManifest.run).toContain("release-manifest.mjs verify-public");
+    expect(platformRun.run).toContain('.github/workflows/deploy.yml');
+    expect(platformManifest.run).toContain("release-manifest.mjs verify-platform");
+    const proofGates = /for gate in ([^;]+); do/.exec(platformRun.run ?? "")?.[1]?.trim().split(/\s+/) ?? [];
+    expect(new Set(proofGates)).toEqual(new Set(["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"]));
+    expect(publicManifest.run).toContain('--head-sha "${RELEASE_SOURCE_SHA}"');
+    expect(publicManifest.run).toContain('--integrity "${RELEASE_INTEGRITY}"');
+    expect(registry.env).toMatchObject({ RELEASE_INTEGRITY: "${{ env.RELEASE_INTEGRITY }}" });
+    expect(registry.run).toContain('registry_integrity');
+    expect(registry.run).toContain('!= "${RELEASE_INTEGRITY}"');
+    expect(monotonic.run).toContain("commits/main");
+    expect(monotonic.run).toContain('git merge-base --is-ancestor "${RELEASE_SOURCE_SHA}" "${current_main_sha}"');
+    expect(monotonic.run).toContain("--candidate-is-main-ancestor true");
+    expect(monotonic.run).toContain("dist-tags.latest");
+    expect(monotonic.run).toContain("assert-monotonic-promotion.mjs");
+    expect(stepIndex(promote, releaseRun.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+    expect(stepIndex(promote, publicManifest.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+    expect(stepIndex(promote, platformRun.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+    expect(stepIndex(promote, platformManifest.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+    expect(stepIndex(promote, registry.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+    expect(stepIndex(promote, monotonic.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
+  });
+
+  it("emits a public release manifest only after published-artifact smoke", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    const smoke = workflowJob(workflow, "live-user-tests");
+    const manifest = workflowJob(workflow, "public-release-manifest");
+    const write = workflowStep(manifest, "Write public release manifest");
+    const upload = workflowStep(manifest, "Upload public release manifest");
+
+    expect(jobNeeds(manifest)).toContain("live-user-tests");
+    expect(workflowStep(smoke, "Published-artifact smoke")).toBeDefined();
+    expect(write.run).toContain("release-manifest.mjs write-public");
+    expect(upload.with).toMatchObject({
+      name: "public-release-manifest-${{ github.run_id }}",
+      path: "public-release-manifest.json"
+    });
   });
 
   it("keeps feature-gate.yml manual, local, and non-publishing", () => {
-    const workflow = read(".github/workflows/feature-gate.yml");
-    const rootPackageJson = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+    const workflow = readWorkflow(".github/workflows/feature-gate.yml");
+    const triggers = workflowTriggers(workflow);
+    const rootPackageJson = JSON.parse(readRepoFile("package.json")) as { scripts?: Record<string, string> };
+    const commands = Object.values(workflow.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .map((step) => step.run ?? "")
+      .join("\n");
+    const serialized = JSON.stringify(workflow);
 
     expect(rootPackageJson.scripts?.["gate:feature"]).toBe("bun scripts/cicd/feature-gate.mjs");
-    expect(workflow).toContain("workflow_dispatch:");
-    expect(workflow).not.toContain("push:");
-    expect(workflow).not.toContain("pull_request:");
-    expect(workflow).toContain("bun scripts/cicd/feature-gate.mjs");
-    expect(workflow).toContain("bun run test:user:offline");
-    expect(workflow).toContain("bun run pack:sdk");
-    expect(workflow).not.toContain("npm publish");
-    expect(workflow).not.toContain("npm dist-tag");
-    expect(workflow).not.toContain("AEX_API_KEY");
+    expect(Object.keys(triggers)).toEqual(["workflow_dispatch"]);
+    expect(commands).toContain("bun scripts/cicd/feature-gate.mjs");
+    expect(commands).toContain("bun run test:user:offline");
+    expect(commands).toContain("bun run pack:sdk");
+    expect(commands).not.toContain("npm publish");
+    expect(commands).not.toContain("npm dist-tag");
+    expect(serialized).not.toContain("AEX_API_KEY");
   });
 });

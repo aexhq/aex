@@ -1,46 +1,42 @@
-/**
- * `renderEnvelope` — one-line projections. Focus: the `aex.session.idle`
- * custom must surface a non-default park reason (e.g. `cancel_requested`),
- * otherwise a cancelled turn renders identically to a completed one and
- * `aex cancel` looks like a no-op in `aex tail` / `aex inspect`.
- */
+/** `renderEnvelope` one-line projections for the canonical run lifecycle. */
 import { describe, expect, it } from "vitest";
 import type { AexEvent } from "@aexhq/contracts";
 import { renderEnvelope } from "../src/host/stream-render.js";
 
-const custom = (data: Record<string, unknown>, message?: string): AexEvent =>
-  ({
+function event(type: AexEvent["type"], data: Record<string, unknown>, message?: string): AexEvent {
+  return {
     specversion: "1.0",
     id: "session-x:6",
     source: "runtime",
-    type: "CUSTOM",
+    type,
     subject: "session-x",
+    threadId: "session-x",
+    runId: "run-1",
     time: new Date(6).toISOString(),
     sequence: 6,
     data: data as AexEvent["data"],
     ...(message !== undefined ? { message } : {})
-  }) as AexEvent;
+  };
+}
 
-describe("renderEnvelope CUSTOM aex.session.idle", () => {
-  it("appends a non-default park reason", () => {
-    const line = renderEnvelope(
-      custom(
-        { name: "aex.session.idle", value: { state: "idle", reason: "cancel_requested", turnSeq: 1 } },
-        "session idle"
-      )
-    );
-    expect(line).toBe("[aex] session idle (cancel_requested)");
+describe("renderEnvelope run terminals", () => {
+  it("renders successful completion from RUN_FINISHED", () => {
+    expect(renderEnvelope(event("RUN_FINISHED", { outcome: "succeeded" }))).toBe("✓ run finished");
   });
 
-  it("stays terse for a normal completion", () => {
-    const line = renderEnvelope(
-      custom({ name: "aex.session.idle", value: { state: "idle", reason: "completed", turnSeq: 1 } }, "session idle")
-    );
-    expect(line).toBe("[aex] session idle");
+  it("renders a non-success outcome from RUN_FINISHED", () => {
+    expect(renderEnvelope(event("RUN_FINISHED", { outcome: "cancelled" }))).toBe("✓ run finished (cancelled)");
   });
 
-  it("tolerates a missing reason", () => {
-    const line = renderEnvelope(custom({ name: "aex.session.idle", value: { state: "idle" } }, "session idle"));
-    expect(line).toBe("[aex] session idle");
+  it("renders RUN_ERROR with its public failure message", () => {
+    expect(renderEnvelope(event("RUN_ERROR", { outcome: "failed" }, "provider unavailable"))).toBe(
+      "✗ run error: provider unavailable"
+    );
+  });
+
+  it("does not treat CUSTOM events as run completion", () => {
+    expect(renderEnvelope(event("CUSTOM", { name: "aex.notification" }, "runtime notice"))).toBe(
+      "[aex] runtime notice"
+    );
   });
 });

@@ -2,7 +2,7 @@
  * Bundle fidelity sidecar — the shared source of truth for the `.aexmeta.json`
  * metadata entry that rides inside a canonical bundle zip.
  *
- * A canonical bundle (skill / tool / file / agentsMd) is a deterministic zip of
+ * A canonical bundle (skill / tool / file / instruction) is a deterministic zip of
  * regular files. fflate's `unzipSync` on the restore side is asymmetric: it
  * surfaces only entry bytes, never external attributes / os field / symlink
  * flags. So exec bits and symlinks — the metadata a local dir → zip →

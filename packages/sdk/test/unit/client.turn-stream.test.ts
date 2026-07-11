@@ -1,11 +1,11 @@
 /**
- * SessionTurnStream single-send invariant.
+ * SessionRunStream single-send invariant.
  *
  * The documented turn pattern is:
  *
- *   const turn = session.send("…");
+ *   const turn = session.messages.send("…");
  *   for await (const event of turn) { … }
- *   await turn.done();
+ *   await turn.finished();
  *
  * Every consumer of the stream — iteration, `done()`, or both — must share
  * ONE underlying send generator. A fresh generator per consumer re-POSTs the
@@ -14,12 +14,12 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AexEventView } from "@aexhq/contracts";
-import { SessionTurnStream } from "../../src/client.js";
+import { SessionRunStream } from "../../src/client.js";
 
 type Result = { readonly status: string; readonly text: string };
 
 function makeStream(events: readonly string[], result: Result, counter: { sessions: number }, failAt?: number) {
-  return new SessionTurnStream(async function* () {
+  return new SessionRunStream(async function* () {
     counter.sessions += 1;
     for (const [i, type] of events.entries()) {
       if (failAt !== undefined && i === failAt) {
@@ -31,15 +31,15 @@ function makeStream(events: readonly string[], result: Result, counter: { sessio
   });
 }
 
-describe("SessionTurnStream", () => {
-  it("iterate-then-done sessions the send exactly once and returns the result", async () => {
+describe("SessionRunStream", () => {
+  it("iterate-then-finished runs the send exactly once and returns the result", async () => {
     const counter = { sessions: 0 };
     const stream = makeStream(["A", "B", "C"], { status: "idle", text: "hi" }, counter);
     const seen: string[] = [];
     for await (const event of stream) {
       seen.push((event as { type: string }).type);
     }
-    const result = await stream.done();
+    const result = await stream.finished();
     expect(seen).toEqual(["A", "B", "C"]);
     expect(result).toEqual({ status: "idle", text: "hi" });
     expect(counter.sessions).toBe(1);
@@ -48,7 +48,7 @@ describe("SessionTurnStream", () => {
   it("done() alone still drains and resolves", async () => {
     const counter = { sessions: 0 };
     const stream = makeStream(["A"], { status: "idle", text: "solo" }, counter);
-    const result = await stream.done();
+    const result = await stream.finished();
     expect(result.text).toBe("solo");
     expect(counter.sessions).toBe(1);
   });
@@ -56,8 +56,8 @@ describe("SessionTurnStream", () => {
   it("done() twice returns the same memoized result without retrying", async () => {
     const counter = { sessions: 0 };
     const stream = makeStream(["A"], { status: "idle", text: "memo" }, counter);
-    const first = await stream.done();
-    const second = await stream.done();
+    const first = await stream.finished();
+    const second = await stream.finished();
     expect(second).toBe(first);
     expect(counter.sessions).toBe(1);
   });
@@ -69,7 +69,7 @@ describe("SessionTurnStream", () => {
       void event;
       break; // consumer bails after the first event
     }
-    const result = await stream.done();
+    const result = await stream.finished();
     expect(result.text).toBe("after-break");
     expect(counter.sessions).toBe(1);
   });
@@ -99,7 +99,7 @@ describe("SessionTurnStream", () => {
         seen.push((event as { type: string }).type);
       }
     }).rejects.toThrow("boom");
-    await expect(stream.done()).rejects.toThrow("boom");
+    await expect(stream.finished()).rejects.toThrow("boom");
     expect(seen).toEqual(["A"]);
     expect(counter.sessions).toBe(1);
   });

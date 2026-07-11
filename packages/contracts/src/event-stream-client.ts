@@ -3,10 +3,11 @@
  *
  * One mechanism for catch-up + resume + live: subscribe = read-from-cursor +
  * tail. The consumer opens a WS to the coordinator with a connection ticket,
- * replays from its cursor, and yields {@link AexEvent}s as they arrive.
+ * replays from its cursor, and yields {@link AexStreamEvent}s as they arrive.
  * On a transport drop it reconnects with backoff and resumes from the last
- * sequence it saw — `from = lastSeq + 1` — so delivery is exactly-once across
- * reconnects (no gap, no duplicate). It stops on a terminal event, on abort,
+ * durable sequence it saw — `from = lastSeq + 1`. Provisional
+ * {@link AexLiveEvent}s are deduplicated by stable `id` but never advance that
+ * replay cursor. It stops on a durable terminal event, on abort,
  * or when the caller breaks the iterator.
  *
  * A silently half-open socket (no close/error, no frames) is the dangerous
@@ -25,8 +26,7 @@
  * (Bun and Node 22+ ship it; no dependency) and tests drive a fake.
  */
 
-import type { AexEvent } from "./event-envelope.js";
-import { isSessionParked } from "./event-envelope.js";
+import { isReplayableEvent, type AexEvent, type AexStreamEvent } from "./event-envelope.js";
 
 /** The slice of the WHATWG WebSocket this client depends on. */
 export interface WebSocketLike {
@@ -53,10 +53,8 @@ export interface CoordinatorStreamOptions {
   readonly reconnectDelayMs?: number;
   /**
    * Predicate that decides which event ENDS the stream. Default: the AG-UI
-   * terminal events (TURN_FINISHED / TURN_ERROR) — the render-complete UX signal.
-   * Pass {@link isSessionSettled} for a settle-consistent stream that keeps reading
-   * PAST TURN_FINISHED until the post-mirror barrier, so the iterator only ends
-   * once a subsequent `getSessionRecord` is guaranteed terminal.
+   * terminal events (RUN_FINISHED / RUN_ERROR). A terminal is emitted only
+   * after the run's checkpoint, accounting, and session state are committed.
    */
   readonly isTerminal?: (event: AexEvent) => boolean;
   /**
@@ -84,22 +82,10 @@ export interface CoordinatorStreamOptions {
    * 90s. Set 0 to disable.
    */
   readonly eventQuietRecheckMs?: number;
-  /**
-   * A WebSocket can receive a live terminal frame before the post-open replay
-   * has backfilled lower-sequence frames. If a terminal event arrives with a
-   * sequence gap, hold it briefly so replayed content can be delivered first.
-   * Default 1s. Set 0 to disable.
-   */
-  readonly terminalDrainGraceMs?: number;
 }
 
-// The default terminal predicate ends the stream on the AG-UI terminals AND on
-// the managed runtime's CUSTOM session-park terminal (aex.session.idle/.error/
-// .suspended). A managed one-shot session parks instead of emitting TURN_FINISHED, so
-// WITHOUT the session-park arm a `streamEnvelopes()` over a finished managed session
-// never sees a terminal and hangs on the idle watchdog forever.
 const isTerminalType = (e: AexEvent): boolean =>
-  e.type === "TURN_FINISHED" || e.type === "TURN_ERROR" || isSessionParked(e);
+  e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
 
 /**
  * Keep-alive ping the client sends; the coordinator answers it with the matching
@@ -115,12 +101,10 @@ const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 const DEFAULT_PING_INTERVAL_MS = 15_000;
 /** Default event-quiet recheck window (a silent reconnect, so the cost of a false positive is small). */
 const DEFAULT_EVENT_QUIET_RECHECK_MS = 90_000;
-/** Default drain window for terminal-before-replay races. */
-const DEFAULT_TERMINAL_DRAIN_GRACE_MS = 1_000;
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
-): AsyncGenerator<AexEvent, void, void> {
+): AsyncGenerator<AexStreamEvent, void, void> {
   const makeWs =
     opts.webSocketFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
   const isTerminal = opts.isTerminal ?? isTerminalType;
@@ -129,10 +113,10 @@ export async function* streamCoordinatorEvents(
   const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
   const eventQuietRecheckMs = opts.eventQuietRecheckMs ?? DEFAULT_EVENT_QUIET_RECHECK_MS;
-  const terminalDrainGraceMs = opts.terminalDrainGraceMs ?? DEFAULT_TERMINAL_DRAIN_GRACE_MS;
   let cursor = (opts.from ?? 0) - 1;
   let attempts = 0;
   let done = false;
+  const seenEventIds = new Set<string>();
 
   while (!done && !opts.signal?.aborted) {
     const ticket = await opts.fetchTicket();
@@ -141,9 +125,7 @@ export async function* streamCoordinatorEvents(
     url.searchParams.set("from", String(cursor + 1));
     const ws = makeWs(url.toString());
 
-    const pending: AexEvent[] = [];
-    const seenSequences = new Set<number>();
-    let terminalDrainUntil = 0;
+    const pending: AexStreamEvent[] = [];
     let closed = false;
     let disconnectReason = "";
     let resolveNext: (() => void) | null = null;
@@ -169,16 +151,13 @@ export async function* streamCoordinatorEvents(
         if (typeof timeoutMs === "number") timer = setTimeout(finish, timeoutMs);
       });
     const sortPending = (): void => {
-      pending.sort((a, b) => a.sequence - b.sequence);
-    };
-    const terminalWaitMs = (): number | null => {
-      if (pending.length === 0) return null;
-      sortPending();
-      const next = pending[0]!;
-      if (!isTerminal(next) || terminalDrainUntil <= 0) return null;
-      if (next.sequence <= cursor + 1) return null;
-      const remaining = terminalDrainUntil - Date.now();
-      return remaining > 0 ? remaining : null;
+      pending.sort((a, b) => {
+        if (isReplayableEvent(a) && isReplayableEvent(b)) return a.sequence - b.sequence;
+        if (!isReplayableEvent(a) && !isReplayableEvent(b) && a.runId === b.runId) {
+          return a.liveSequence - b.liveSequence;
+        }
+        return 0;
+      });
     };
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -252,22 +231,14 @@ export async function* streamCoordinatorEvents(
       const data = typeof ev.data === "string" ? ev.data : "";
       if (!data) return;
       try {
-        const evt = JSON.parse(data) as AexEvent;
-        if (typeof evt.sequence === "number") {
-          armQuiet(); // a real event frame proves the delivery pipeline, not just the socket
-          if (evt.sequence > cursor && !seenSequences.has(evt.sequence)) {
-            if (
-              terminalDrainGraceMs > 0 &&
-              isTerminal(evt) &&
-              evt.sequence > cursor + 1
-            ) {
-              terminalDrainUntil = Math.max(terminalDrainUntil, Date.now() + terminalDrainGraceMs);
-            }
-            seenSequences.add(evt.sequence);
-            pending.push(evt);
-            wake();
-          }
-        }
+        const evt = JSON.parse(data) as unknown;
+        if (!isCoordinatorStreamEvent(evt)) return;
+        armQuiet(); // a real event frame proves the delivery pipeline, not just the socket
+        if (seenEventIds.has(evt.id)) return;
+        if (isReplayableEvent(evt) && evt.sequence <= cursor) return;
+        seenEventIds.add(evt.id);
+        pending.push(evt);
+        wake();
       } catch {
         // ignore a non-JSON frame
       }
@@ -308,21 +279,21 @@ export async function* streamCoordinatorEvents(
     try {
       while (true) {
         while (pending.length > 0) {
-          if (terminalWaitMs() !== null) break;
           sortPending();
           const evt = pending.shift()!;
-          if (evt.sequence <= cursor) continue;
-          cursor = evt.sequence;
+          if (isReplayableEvent(evt)) {
+            if (evt.sequence <= cursor) continue;
+            cursor = evt.sequence;
+          }
           yield evt;
-          if (isTerminal(evt)) done = true;
+          if (isReplayableEvent(evt) && isTerminal(evt)) done = true;
         }
         if (done || opts.signal?.aborted) {
           closeQuietly(ws);
           break;
         }
-        const waitMs = terminalWaitMs();
         if (closed) break; // transport ended → fall through to reconnect
-        await waitForWake(waitMs ?? undefined);
+        await waitForWake();
       }
     } finally {
       stopTimers();
@@ -355,6 +326,25 @@ export async function* streamCoordinatorEvents(
     }
     await sleep(reconnectDelayMs, opts.signal);
   }
+}
+
+function isCoordinatorStreamEvent(value: unknown): value is AexStreamEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  if (
+    typeof event.id !== "string" ||
+    typeof event.type !== "string" ||
+    typeof event.runId !== "string" ||
+    !event.data ||
+    typeof event.data !== "object" ||
+    Array.isArray(event.data)
+  ) {
+    return false;
+  }
+  if (event.replayable === false) {
+    return event.sequence === undefined && Number.isSafeInteger(event.liveSequence) && (event.liveSequence as number) >= 0;
+  }
+  return Number.isSafeInteger(event.sequence) && (event.sequence as number) >= 0;
 }
 
 /** Async-iterable filter — keep only events matching the predicate. */

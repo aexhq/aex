@@ -8,10 +8,11 @@
  * the expected state.
  */
 import { describe, expect, it } from "vitest";
+import type { SessionHandle } from "../../../src/index.js";
 import { FakePlatform } from "./fake-platform.js";
 
-async function openHandle(platform: FakePlatform): Promise<Awaited<ReturnType<FakePlatform["aex"]["openSession"]>>> {
-  return platform.aex.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+async function openHandle(platform: FakePlatform): Promise<SessionHandle> {
+  return platform.aex.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
 }
 
 describe("blackbox: HITL + control gates", () => {
@@ -35,13 +36,14 @@ describe("blackbox: HITL + control gates", () => {
     expect(platform.requests.some((r) => r.endsWith("/approve"))).toBe(true);
   });
 
-  it("deny cancels the held turn (→ cancelled) with the cancelled outcome", async () => {
+  it("deny returns the thread to idle and records the cancelled run outcome", async () => {
     const platform = new FakePlatform();
     const handle = await openHandle(platform);
     await handle.requestApproval();
     const accepted = await handle.deny();
-    expect(accepted.session.status).toBe("cancelled");
-    expect(handle.record.status).toBe("cancelled");
+    expect(accepted.session.status).toBe("idle");
+    expect(accepted.session.lastRun?.outcome).toBe("cancelled");
+    expect(handle.record.status).toBe("idle");
     expect(platform.requests.some((r) => r.endsWith("/deny"))).toBe(true);
   });
 
@@ -56,6 +58,6 @@ describe("blackbox: HITL + control gates", () => {
     const cancelled = await handle.cancel();
     // The cancel intent is recorded server-side — not swallowed client-side.
     expect(platform.requests.some((r) => r.endsWith("/cancel"))).toBe(true);
-    expect(cancelled.session.cancelRequested).toBe(true);
+    expect(cancelled.session.status).toBe("cancelling");
   });
 });

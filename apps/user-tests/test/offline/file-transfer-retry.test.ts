@@ -2,7 +2,7 @@
  * Blackbox coverage for session-file body transfer resilience through a clean
  * installed package. The test never imports workspace internals: a consumer
  * script imports `@aexhq/sdk`, injects a fake fetch, and observes only the
- * public `sessions.files(sessionId)` API.
+ * public `sessions.open(sessionId).files` API.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,13 +51,23 @@ function makeFetch() {
   const fetch = async (input, init = {}) => {
     const path = requestPath(input);
     calls.push({ method: String(init.method || "GET").toUpperCase(), path });
+    if (path === "/api/sessions/session-1") {
+      return jsonResponse({ session: { id: "session-1", status: "idle", acceptsMessages: true } });
+    }
     if (path === "/api/sessions/session-1/files") {
       return jsonResponse({
+        revision: {
+          checkpointId: "cp-1",
+          runId: "run-1",
+          turnSeq: 1,
+          committedAt: "2026-07-10T00:00:00.000Z",
+          throughSeq: 10
+        },
         files: [
-          { id: "file-read", filename: "read.txt", sizeBytes: 16, contentType: "text/plain" },
-          { id: "file-download", filename: "download.txt", sizeBytes: 20, contentType: "text/plain" },
-          { id: "file-archive", filename: "archive.txt", sizeBytes: 19, contentType: "text/plain" },
-          { id: "file-timeout", filename: "timeout.txt", sizeBytes: 7, contentType: "text/plain" }
+          { id: "file-read", checkpointId: "cp-1", filename: "read.txt", sizeBytes: 16, contentType: "text/plain" },
+          { id: "file-download", checkpointId: "cp-1", filename: "download.txt", sizeBytes: 20, contentType: "text/plain" },
+          { id: "file-archive", checkpointId: "cp-1", filename: "archive.txt", sizeBytes: 19, contentType: "text/plain" },
+          { id: "file-timeout", checkpointId: "cp-1", filename: "timeout.txt", sizeBytes: 7, contentType: "text/plain" }
         ]
       });
     }
@@ -109,14 +119,14 @@ const client = new Aex({
   fetch: harness.fetch,
   retry: false
 });
-const files = client.sessions.files("session-1");
+const files = (await client.sessions.open("session-1")).files;
 
-const read = await files.read({ id: "file-read" }, { timeoutMs: 1 });
+const read = await files.read({ id: "file-read", checkpointId: "cp-1" }, { timeoutMs: 1 });
 strictEqual(read.text, "file-read after retry");
 strictEqual(read.truncated, false);
 strictEqual(harness.bodyAttempts.get("file-read"), 2);
 
-const bytes = await files.download({ id: "file-download" }, { timeoutMs: 1 });
+const bytes = await files.download({ id: "file-download", checkpointId: "cp-1" }, { timeoutMs: 1 });
 strictEqual(new TextDecoder().decode(bytes), "file-download after retry");
 strictEqual(harness.bodyAttempts.get("file-download"), 2);
 
@@ -128,7 +138,7 @@ strictEqual(harness.bodyAttempts.get("file-archive"), 2);
 
 let timeoutError = null;
 try {
-  await files.read({ id: "file-timeout" }, { timeoutMs: 1 });
+  await files.read({ id: "file-timeout", checkpointId: "cp-1" }, { timeoutMs: 1 });
 } catch (err) {
   timeoutError = {
     name: err && err.name,
@@ -146,7 +156,7 @@ ok(harness.bodyAttempts.get("file-timeout") >= 2);
 
 let validationError = null;
 try {
-  await files.download({ id: "file-download" }, { timeoutMs: 0 });
+  await files.download({ id: "file-download", checkpointId: "cp-1" }, { timeoutMs: 0 });
 } catch (err) {
   validationError = { name: err && err.name, message: err && err.message };
 }

@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest } from "../src/index.js";
 // Reachability check: parseSessionLimits + SessionLimits are NOT on the public
 // index export list by name; they ride the `export * from "./submission.js"`
 // re-export and are pulled by the platform-only `@aexhq/contracts/internal`
 // subpath. Import them from there to pin that surface.
-import { parseSessionLimits, type SessionLimits } from "../src/internal.js";
+import { parseSessionLimits, parseSessionSubmissionRequest, type SessionLimits } from "../src/internal.js";
 
 function baseRequest() {
   return {
@@ -13,8 +12,8 @@ function baseRequest() {
     provider: "anthropic" as const,
     submission: {
       model: "claude-haiku-4-5",
-      prompt: ["hello"],      agentsMd: [],
-      files: [],
+      prompt: ["hello"],      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { anthropic: "sk-anthropic-test" } }

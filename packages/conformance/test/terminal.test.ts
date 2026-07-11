@@ -1,59 +1,81 @@
 import { describe, expect, it } from "vitest";
 import { expectTerminalEvent } from "../src/terminal.js";
 
+const finished = {
+  type: "RUN_FINISHED",
+  data: {
+    outcome: "succeeded",
+    checkpoint: { checkpointId: "cp_1" },
+    costUsd: 0.01,
+    providerUsage: []
+  }
+};
+
 describe("expectTerminalEvent", () => {
-  it("returns the matched terminal when reason matches", () => {
-    const events = [
-      { type: "TURN_STARTED", data: {} },
-      { type: "TEXT_MESSAGE_CONTENT", data: { text: "hi" } },
-      { type: "TURN_FINISHED", data: { reason: "complete", stopReason: "end_turn" } }
-    ];
-    const terminal = expectTerminalEvent(events, { reason: "complete" });
-    expect(terminal.data["reason"]).toBe("complete");
-  });
-
-  it("throws when no terminal is present", () => {
-    const events = [{ type: "TURN_STARTED", data: {} }];
-    expect(() => expectTerminalEvent(events, { reason: "complete" })).toThrow(
-      /no terminal/
+  it("returns a checkpoint-consistent RUN_FINISHED", () => {
+    const terminal = expectTerminalEvent(
+      [{ type: "RUN_STARTED", data: {} }, finished],
+      { outcome: "succeeded" }
     );
+    expect(terminal).toBe(finished);
   });
 
-  it("throws when more than one sessiontime_terminal is present (deduplication failure)", () => {
-    const events = [
-      { type: "TURN_FINISHED", data: { reason: "complete" } },
-      { type: "TURN_FINISHED", data: { reason: "complete" } }
-    ];
-    expect(() => expectTerminalEvent(events, { reason: "complete" })).toThrow(
-      /2 terminal events — exactly one expected/
-    );
+  it("requires per-run billing on RUN_ERROR", () => {
+    expect(() => expectTerminalEvent([
+      { type: "RUN_ERROR", data: { outcome: "failed", failureClass: "setup_failed" } }
+    ], { outcome: "failed", failureClass: "setup_failed" })).toThrow(/costUsd/);
+    expect(() => expectTerminalEvent([
+      {
+        type: "RUN_ERROR",
+        data: { outcome: "failed", failureClass: "setup_failed", costUsd: 0, providerUsage: [] }
+      }
+    ], { outcome: "failed", failureClass: "setup_failed" })).not.toThrow();
   });
 
-  it("throws when reason does NOT match", () => {
-    const events = [{ type: "TURN_FINISHED", data: { reason: "error" } }];
-    expect(() => expectTerminalEvent(events, { reason: "complete" })).toThrow(
-      /reason="error" but expected "complete"/
-    );
+  it("rejects missing or duplicate terminals", () => {
+    expect(() => expectTerminalEvent([{ type: "RUN_STARTED", data: {} }], { outcome: "succeeded" }))
+      .toThrow(/no terminal/);
+    expect(() => expectTerminalEvent([finished, finished], { outcome: "succeeded" }))
+      .toThrow(/2 terminal events/);
   });
 
-  it("checks failureClass when reason === 'error' and failureClass is given", () => {
-    const events = [
-      { type: "TURN_FINISHED", data: { reason: "error", failureClass: "session_no_idle" } }
-    ];
-    expect(() =>
-      expectTerminalEvent(events, { reason: "error", failureClass: "session_no_idle" })
-    ).not.toThrow();
-    expect(() =>
-      expectTerminalEvent(events, { reason: "error", failureClass: "internal_error" })
-    ).toThrow(/failureClass="session_no_idle" but expected "internal_error"/);
+  it("rejects outcome mismatches", () => {
+    expect(() => expectTerminalEvent([finished], { outcome: "cancelled" }))
+      .toThrow(/outcome="succeeded" but expected "cancelled"/);
   });
 
-  it("interpolates context into failure messages", () => {
-    expect(() =>
-      expectTerminalEvent([{ type: "TURN_FINISHED", data: { reason: "error" } }], {
-        reason: "complete",
-        context: "anthropic-managed:happy-path"
-      })
-    ).toThrow(/\[anthropic-managed:happy-path\]/);
+  it("enforces terminal kind and outcome pairing", () => {
+    expect(() => expectTerminalEvent([{
+      type: "RUN_ERROR",
+      data: { outcome: "cancelled", costUsd: 0, providerUsage: [] }
+    }], { outcome: "cancelled" })).toThrow(/RUN_ERROR must carry outcome="failed"/);
+    expect(() => expectTerminalEvent([{
+      type: "RUN_FINISHED",
+      data: {
+        outcome: "failed",
+        checkpoint: { checkpointId: "cp_1" },
+        costUsd: 0,
+        providerUsage: []
+      }
+    }], { outcome: "failed" })).toThrow(/must use RUN_ERROR/);
+  });
+
+  it("requires checkpoint, cost, and usage on RUN_FINISHED", () => {
+    expect(() => expectTerminalEvent([
+      { type: "RUN_FINISHED", data: { outcome: "succeeded", costUsd: 0, providerUsage: [] } }
+    ], { outcome: "succeeded" })).toThrow(/committed checkpoint/);
+    expect(() => expectTerminalEvent([
+      { type: "RUN_FINISHED", data: { outcome: "succeeded", checkpoint: { checkpointId: "cp_1" }, providerUsage: [] } }
+    ], { outcome: "succeeded" })).toThrow(/costUsd/);
+    expect(() => expectTerminalEvent([
+      { type: "RUN_FINISHED", data: { outcome: "succeeded", checkpoint: { checkpointId: "cp_1" }, costUsd: 0 } }
+    ], { outcome: "succeeded" })).toThrow(/providerUsage/);
+  });
+
+  it("interpolates context into failures", () => {
+    expect(() => expectTerminalEvent([finished], {
+      outcome: "failed",
+      context: "deepseek-managed"
+    })).toThrow(/\[deepseek-managed\]/);
   });
 });

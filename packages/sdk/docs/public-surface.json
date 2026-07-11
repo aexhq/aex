@@ -14,7 +14,7 @@
       "",
       "const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });",
       "",
-      "const session = await aex.openSession({",
+      "const session = await aex.sessions.create({",
       "  model: Models.CLAUDE_HAIKU_4_5,",
       "  system: \"You are a concise engineering assistant.\",",
       "  runtime: Sizes.SHARED_0_25X_1GB,",
@@ -22,7 +22,7 @@
       "  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }",
       "});",
       "",
-      "const result = await session.send(\"Write a short report and save it as a file.\").done();",
+      "const result = await session.messages.send(\"Write a short report and save it as a file.\").finished();",
       "console.log(result.status, result.text);"
     ],
     "cliLines": [
@@ -55,13 +55,13 @@
       "slug": "durable-infrastructure",
       "href": "/docs/features/#durable-infrastructure",
       "title": "Durable infrastructure",
-      "description": "SessionRecord records, status, wait/cancel/delete, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes."
+      "description": "Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes."
     },
     {
       "slug": "agent-composition",
       "href": "/docs/features/#agent-composition",
       "title": "Agent composition",
-      "description": "Skills, files, AGENTS.md, remote MCP servers, environment variables, packages, secrets, and networking controls."
+      "description": "Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls."
     },
     {
       "slug": "subagents",

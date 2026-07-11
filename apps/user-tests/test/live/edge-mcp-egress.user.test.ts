@@ -17,13 +17,8 @@
  *     reachable IMDS would be a CRITICAL defect.
  *   - Secret MCP headers do not leak into the session event/output log.
  *
- * OBSERVED BEHAVIOR (dev, 2026-07-02): invalid MCP refs are ACCEPTED at
- * submission (HTTP 200 — a session is created) and only rejected ~45s later as a
- * `aex.session.failed` carrying the canonical `parseMcpServerRef` deny reason.
- * Security holds (fail-closed, target never dialed, no metadata leak), but the
- * documented "SSRF guard at the parser boundary" is NOT applied synchronously
- * at the API create endpoint. These fail-closed sessions invoke no LLM (they error
- * during setup); only the egress + MCP-invocation cases spend model tokens.
+ * Invalid MCP refs may be rejected at submission or by a RUN_ERROR during setup.
+ * Both paths must fail closed without dialing the target or leaking metadata.
  *
  * Required env (wired by the live runner):
  *   AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY,
@@ -96,7 +91,8 @@ interface SubmissionCase {
   readonly label: string;
   readonly resolveMs: number;
   readonly sessionId: string | null;
-  readonly status: string | null;
+  readonly runOutcome: string | null;
+  readonly sessionStatus: string | null;
   readonly failureClass: string | null;
   readonly errorMessage: string | null;
   readonly threw: string | null;
@@ -147,7 +143,7 @@ function validationChildScript(): string {
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     async function submitBad(label, mcpServers) {
       const t0 = Date.now();
-      let sessionId = null, status = null, threw = null;
+      let sessionId = null, runOutcome = null, sessionStatus = null, threw = null;
       let failureClass = null, errorMessage = null;
       try {
         const res = await client.start({
@@ -155,31 +151,26 @@ function validationChildScript(): string {
           model: process.env.MODEL,
           message: "SessionFile verbatim: EDGE",
           mcpServers,
-          includeBuiltinTools: false,
+          builtinTools: "none",
           apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
           idempotencyKey: "edge-mcp-" + label + "-" + Date.now()
         }, { timeoutMs: 120000 });
         sessionId = res && typeof res.sessionId === "string" ? res.sessionId : null;
-        status = res && typeof res.status === "string" ? res.status : (res && res.ok ? "succeeded" : null);
+        runOutcome = res && typeof res.status === "string" ? res.status : null;
       } catch (err) {
         threw = (err && err.name ? err.name : "Error") + "/status=" + (err && err.status) + ": " + (err && err.message ? String(err.message).slice(0, 200) : String(err));
       }
       let reason = null, dialed = false, metaLeak = [];
       if (sessionId) {
-        try {
           const s = await client.sessions.open(sessionId);
-          try {
-            const rec = await client.sessions.get(sessionId);
-            status = typeof rec.status === "string" ? rec.status : status;
-            failureClass = typeof rec.failureClass === "string" ? rec.failureClass : null;
-            errorMessage = typeof rec.errorMessage === "string" ? rec.errorMessage : null;
-            if (reason === null && errorMessage !== null) reason = errorMessage;
-          } catch {}
-          const events = await s.events().list();
-          const errEvt = events.find((e) => e.type === "CUSTOM" && e.data && ["aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"].includes(String(e.data.name || "")))
-            || events.find((e) => e.type === "CUSTOM" && e.data && String(e.data.name || "").includes("error"))
-            || events.find((e) => e.type === "TURN_ERROR");
-          if (errEvt && reason === null) reason = (errEvt.data && errEvt.data.value && errEvt.data.value.reason) || JSON.stringify(errEvt.data).slice(0, 300);
+          const rec = await client.sessions.get(sessionId);
+          sessionStatus = typeof rec.status === "string" ? rec.status : null;
+          failureClass = typeof rec.failureClass === "string" ? rec.failureClass : null;
+          errorMessage = typeof rec.errorMessage === "string" ? rec.errorMessage : null;
+          if (reason === null && errorMessage !== null) reason = errorMessage;
+          const events = await s.events.list();
+          const errEvt = events.find((e) => e.type === "RUN_ERROR");
+          if (errEvt && reason === null) reason = (errEvt.data && errEvt.data.failureMessage) || JSON.stringify(errEvt.data).slice(0, 300);
           dialed = events.some((e) => e.type === "TOOL_CALL_START");
           const serialized = JSON.stringify(events);
           // Real IMDS content markers (the deny-reason text legitimately
@@ -187,9 +178,8 @@ function validationChildScript(): string {
           for (const m of ["ami-id", "instance-id", "security-credentials", "iam/", "\\"hostname\\":\\"ip-"]) {
             if (serialized.includes(m)) metaLeak.push(m);
           }
-        } catch (e) { reason = "inspect-err:" + String(e && e.message).slice(0, 120); }
       }
-      return { label, resolveMs: Date.now() - t0, sessionId, status, failureClass, errorMessage, threw, reason, dialed, metaLeak };
+      return { label, resolveMs: Date.now() - t0, sessionId, runOutcome, sessionStatus, failureClass, errorMessage, threw, reason, dialed, metaLeak };
     }
 
     const submission = await Promise.all([
@@ -210,16 +200,10 @@ function validationChildScript(): string {
 const COLLECT = `
   const sessionId = sessionResult.sessionId;
   const status = sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
-  const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-  let events = fallbackEvents;
-  let files = Array.isArray(sessionResult.files) ? sessionResult.files : [];
-  try {
-    const session = await client.sessions.open(sessionId);
-    const listedEvents = await session.events().list();
-    if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    const listedFiles = await session.files().list();
-    if (Array.isArray(listedFiles)) files = listedFiles;
-  } catch {}
+  const session = await client.sessions.open(sessionId);
+  const events = await session.events.list();
+  const snapshot = await session.files.list();
+  const files = snapshot.files;
   const eventKinds = events.map((e) => e.type);
   const assistantText = events.filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
     .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : "")).join(" ");
@@ -330,7 +314,7 @@ function mcpSecretChildScript(marker: string): string {
       model: process.env.MODEL,
       message: ${JSON.stringify(prompt)},
       mcpServers: [mcp],
-      includeBuiltinTools: false,
+      builtinTools: "none",
       apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-mcp-secret-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
@@ -364,9 +348,9 @@ function assertFailedClosed(s: SubmissionCase): void {
   expect(s.dialed, `bad MCP ref DIALED its target — SSRF breach: ${dump}`).toBe(false);
   expect(s.metaLeak, `cloud-metadata content leaked: ${dump}`).toEqual([]);
   // The session must not have succeeded on a bad ref.
-  expect(s.status === "succeeded", `bad MCP ref session SUCCEEDED (should fail closed): ${dump}`).toBe(false);
+  expect(s.runOutcome === "succeeded", `bad MCP ref run SUCCEEDED (should fail closed): ${dump}`).toBe(false);
   // It must be rejected somewhere: either a thrown API error OR an error terminal.
-  const rejected = s.threw !== null || s.status === "error" || s.status === "failed" || s.reason !== null;
+  const rejected = s.threw !== null || s.runOutcome === "failed" || s.sessionStatus === "error" || s.reason !== null;
   expect(rejected, `bad MCP ref was neither rejected nor errored: ${dump}`).toBe(true);
 }
 
@@ -455,7 +439,7 @@ describe("edge: McpServer primitive + MCP declaration + egress allowlist (securi
       const out = await runChild(install, "edge-egress.mjs", egressChildScript(), 9 * 60_000);
       const r = JSON.parse(out) as EgressResult;
       const dump = JSON.stringify({ sessionId: r.sessionId, status: r.status, eventKinds: r.eventKinds, streamErrors: r.streamErrors, evidence: r.evidence.slice(0, 800) });
-      // SessionRecord itself succeeds — platform proxy/model host is always allowed.
+      // Run itself succeeds — platform proxy/model host is always allowed.
       expect(r.status, dump).toBe("succeeded");
       // Allowed host reachable.
       expect(r.evidence, dump).toContain("ALLOWED_REACHED");

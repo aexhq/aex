@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest } from "../src/index.js";
 // `sessionBudgetLimits` is the platform-facing boot helper (it rides the
 // `export * from "./submission.js"` re-export, like parseSessionLimits). Pin it
 // through the `@aexhq/contracts/internal` subpath the private runtime consumes.
-import { sessionBudgetLimits, type SessionLimits } from "../src/internal.js";
+import { parseSessionSubmissionRequest, sessionBudgetLimits, type SessionLimits } from "../src/internal.js";
 
 function baseRequest() {
   return {
@@ -13,8 +12,8 @@ function baseRequest() {
     submission: {
       model: "claude-haiku-4-5",
       prompt: ["hello"],
-      agentsMd: [],
-      files: [],
+      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { anthropic: "sk-anthropic-test" } }

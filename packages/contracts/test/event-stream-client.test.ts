@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   filterStream,
   isFromSource,
-  isSessionSettled,
   mapStream,
   streamCoordinatorEvents,
   toAGUI,
   type AexEvent,
+  type AexLiveEvent,
+  type AexStreamEvent,
   type WebSocketLike
 } from "../src/index.js";
 
@@ -16,15 +17,33 @@ const evt = (sequence: number, type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT", 
   source,
   type,
   subject: "r",
+  threadId: "r",
+  runId: "run_r",
   time: new Date(sequence).toISOString(),
   sequence,
   data: {}
 });
 
-const sessionIdle = (sequence: number): AexEvent => ({
-  ...evt(sequence, "CUSTOM", "runtime"),
-  data: { name: "aex.session.idle", value: { state: "idle", reason: "complete" } }
+const liveEvt = (liveSequence: number, id = `r:live:${liveSequence}`): AexLiveEvent => ({
+  specversion: "1.0",
+  id,
+  source: "agent",
+  type: "TEXT_MESSAGE_CONTENT",
+  subject: "r",
+  threadId: "r",
+  runId: "run_r",
+  time: new Date(liveSequence).toISOString(),
+  replayable: false,
+  liveSequence,
+  data: { text: `delta-${liveSequence}`, delta: true }
 });
+
+function durableSequence(event: AexStreamEvent): number {
+  if (event.replayable === false || typeof event.sequence !== "number") {
+    throw new Error("expected a durable event");
+  }
+  return event.sequence;
+}
 
 class FakeWebSocket implements WebSocketLike {
   readonly url: string;
@@ -47,7 +66,7 @@ class FakeWebSocket implements WebSocketLike {
   open(): void {
     this.#emit("open", {});
   }
-  message(event: AexEvent): void {
+  message(event: AexStreamEvent): void {
     this.#emit("message", { data: JSON.stringify(event) });
   }
   /** A keep-alive pong (or any non-event frame): proves liveness, carries no sequence. */
@@ -75,160 +94,18 @@ describe("streamCoordinatorEvents — live fanout", () => {
     });
     const received: number[] = [];
     const consume = (async () => {
-      for await (const e of gen) received.push(e.sequence);
+      for await (const e of gen) received.push(durableSequence(e));
     })();
 
     await flush();
     expect(ws!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=0");
     ws!.message(evt(0));
     ws!.message(evt(1));
-    ws!.message(evt(2, "TURN_FINISHED"));
+    ws!.message(evt(2, "RUN_FINISHED"));
     await consume;
 
     expect(received).toEqual([0, 1, 2]);
     expect(ws!.closed).toBe(true);
-  });
-
-  it("stops on a managed-runtime session-park terminal (aex.session.idle) — F19 no-hang", async () => {
-    // A managed one-shot run PARKS (CUSTOM aex.session.idle) instead of emitting
-    // TURN_FINISHED. The default terminal predicate must treat that as terminal,
-    // else streamEnvelopes() over a finished managed session hangs on the watchdog.
-    const idle = sessionIdle(2);
-    let ws: FakeWebSocket | undefined;
-    const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/sessions/r/subscribe",
-      from: 0,
-      fetchTicket: async () => "tkt",
-      webSocketFactory: (url) => (ws = new FakeWebSocket(url))
-    });
-    const received: number[] = [];
-    const consume = (async () => {
-      for await (const e of gen) received.push(e.sequence);
-    })();
-
-    await flush();
-    ws!.message(evt(0));
-    ws!.message(evt(1));
-    ws!.message(idle);
-    await consume;
-
-    expect(received).toEqual([0, 1, 2]);
-    expect(ws!.closed).toBe(true);
-  });
-
-  it("drains replay backfill before yielding a gapped terminal event", async () => {
-    vi.useFakeTimers();
-    try {
-      let ws: FakeWebSocket | undefined;
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        fetchTicket: async () => "tkt",
-        webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
-        idleTimeoutMs: 0,
-        pingIntervalMs: 0,
-        eventQuietRecheckMs: 0,
-        terminalDrainGraceMs: 1000
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
-      })();
-
-      await vi.advanceTimersByTimeAsync(0);
-      ws!.message(sessionIdle(3072));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(received).toEqual([]);
-
-      ws!.message(evt(0));
-      ws!.message(evt(1024));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(received).toEqual([0, 1024]);
-
-      await vi.advanceTimersByTimeAsync(1000);
-      await consume;
-
-      expect(received).toEqual([0, 1024, 3072]);
-      expect(ws!.closed).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("holds a gapped terminal even when an earlier replay frame is already buffered", async () => {
-    vi.useFakeTimers();
-    try {
-      let ws: FakeWebSocket | undefined;
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        fetchTicket: async () => "tkt",
-        webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
-        idleTimeoutMs: 0,
-        pingIntervalMs: 0,
-        eventQuietRecheckMs: 0,
-        terminalDrainGraceMs: 1000
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
-      })();
-
-      await vi.advanceTimersByTimeAsync(0);
-      ws!.message(evt(0));
-      ws!.message(sessionIdle(3072));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(received).toEqual([0]);
-
-      ws!.message(evt(1024));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(received).toEqual([0, 1024]);
-
-      await vi.advanceTimersByTimeAsync(1000);
-      await consume;
-
-      expect(received).toEqual([0, 1024, 3072]);
-      expect(ws!.closed).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not drain a terminal once buffered predecessors make it contiguous", async () => {
-    vi.useFakeTimers();
-    try {
-      const sockets: FakeWebSocket[] = [];
-      const gen = streamCoordinatorEvents({
-        wsUrl: "wss://co/sessions/r/subscribe",
-        from: 0,
-        fetchTicket: async () => "tkt",
-        webSocketFactory: (url) => {
-          const ws = new FakeWebSocket(url);
-          sockets.push(ws);
-          return ws;
-        },
-        idleTimeoutMs: 0,
-        pingIntervalMs: 0,
-        eventQuietRecheckMs: 0,
-        terminalDrainGraceMs: 1000
-      });
-      const received: number[] = [];
-      const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
-      })();
-
-      await vi.advanceTimersByTimeAsync(0);
-      sockets[0]!.message(evt(0));
-      sockets[0]!.message(sessionIdle(1));
-      await vi.advanceTimersByTimeAsync(0);
-      await consume;
-
-      expect(received).toEqual([0, 1]);
-      expect(sockets).toHaveLength(1);
-      expect(sockets[0]!.closed).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("preserves existing WebSocket URL query parameters", async () => {
@@ -248,7 +125,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
 
     await flush();
     expect(ws!.url).toBe("wss://co/sessions/r/subscribe?region=us-west&ticket=tkt&from=0");
-    ws!.message(evt(0, "TURN_FINISHED"));
+    ws!.message(evt(0, "RUN_FINISHED"));
     await consume;
   });
 
@@ -272,7 +149,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     await flush();
     ws!.open();
     expect(ws!.sent).toEqual([JSON.stringify({ action: "replay" })]);
-    ws!.message(evt(0, "TURN_FINISHED"));
+    ws!.message(evt(0, "RUN_FINISHED"));
     await consume;
   });
 
@@ -290,7 +167,7 @@ describe("streamCoordinatorEvents — live fanout", () => {
     const received: number[] = [];
     const consume = (async () => {
       for await (const e of gen) {
-        received.push(e.sequence);
+        received.push(durableSequence(e));
         if (received.length === 2) break; // early exit mid-stream, no terminal
       }
     })();
@@ -302,40 +179,6 @@ describe("streamCoordinatorEvents — live fanout", () => {
     await consume;
 
     expect(received).toEqual([0, 1]);
-    expect(ws!.closed).toBe(true);
-  });
-});
-
-describe("streamCoordinatorEvents — settle-consistent terminal predicate", () => {
-  it("keeps reading past TURN_FINISHED until the aex.session.settled barrier", async () => {
-    let ws: FakeWebSocket | undefined;
-    const settled: AexEvent = {
-      ...evt(4, "CUSTOM", "aex"),
-      data: { name: "aex.session.settled", value: { sessionId: "r", outcome: "succeeded" } }
-    };
-    const gen = streamCoordinatorEvents({
-      wsUrl: "wss://co/sessions/r/subscribe",
-      from: 0,
-      fetchTicket: async () => "tkt",
-      isTerminal: isSessionSettled,
-      webSocketFactory: (url) => (ws = new FakeWebSocket(url))
-    });
-    const received: number[] = [];
-    const consume = (async () => {
-      for await (const e of gen) received.push(e.sequence);
-    })();
-
-    await flush();
-    ws!.message(evt(0));
-    // The AG-UI terminal must NOT end a settle-consistent stream...
-    ws!.message(evt(1, "TURN_FINISHED"));
-    // ...nor an interleaved lifecycle fact (CUSTOM without the settled name)...
-    ws!.message(evt(2, "CUSTOM", "aex"));
-    // ...only the post-mirror barrier ends it.
-    ws!.message(settled);
-    await consume;
-
-    expect(received).toEqual([0, 1, 2, 4]);
     expect(ws!.closed).toBe(true);
   });
 });
@@ -357,7 +200,7 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     });
     const received: number[] = [];
     const consume = (async () => {
-      for await (const e of gen) received.push(e.sequence);
+      for await (const e of gen) received.push(durableSequence(e));
     })();
 
     await flush();
@@ -372,7 +215,7 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=2");
     expect(fetchTicket).toHaveBeenCalledTimes(2);
     sockets[1]!.message(evt(2));
-    sockets[1]!.message(evt(3, "TURN_FINISHED"));
+    sockets[1]!.message(evt(3, "RUN_FINISHED"));
     await consume;
 
     expect(received).toEqual([0, 1, 2, 3]);
@@ -393,7 +236,7 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     });
     const received: number[] = [];
     const consume = (async () => {
-      for await (const e of gen) received.push(e.sequence);
+      for await (const e of gen) received.push(durableSequence(e));
     })();
 
     await flush();
@@ -405,10 +248,51 @@ describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
     // Coordinator re-sends seq 1 (already delivered) plus fresh ones — the
     // client must drop seq <= cursor.
     sockets[1]!.message(evt(1));
-    sockets[1]!.message(evt(2, "TURN_FINISHED"));
+    sockets[1]!.message(evt(2, "RUN_FINISHED"));
     await consume;
 
     expect(received).toEqual([0, 1, 2]);
+  });
+
+  it("yields and deduplicates live-only frames without advancing the durable reconnect cursor", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 7,
+      reconnectDelayMs: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => {
+        const socket = new FakeWebSocket(url);
+        sockets.push(socket);
+        return socket;
+      },
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0,
+      eventQuietRecheckMs: 0
+    });
+    const received: AexStreamEvent[] = [];
+    const consume = (async () => {
+      for await (const event of gen) received.push(event);
+    })();
+
+    await flush();
+    sockets[0]!.message(evt(7));
+    sockets[0]!.message(liveEvt(0));
+    sockets[0]!.message(liveEvt(0)); // same stable id: suppress on this connection
+    sockets[0]!.message(liveEvt(1));
+    await flush();
+    sockets[0]!.close();
+    await flush(8);
+
+    expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=8");
+    sockets[1]!.message(liveEvt(1)); // suppress across reconnect too
+    sockets[1]!.message(evt(8, "RUN_FINISHED"));
+    await consume;
+
+    expect(received.map((event) => event.id)).toEqual(["r:7", "r:live:0", "r:live:1", "r:8"]);
+    const live = received.filter((event): event is AexLiveEvent => event.replayable === false);
+    expect(live.map((event) => event.liveSequence)).toEqual([0, 1]);
+    expect(live.every((event) => !("sequence" in event))).toBe(true);
   });
 });
 
@@ -433,7 +317,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       });
       const received: number[] = [];
       const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
+        for await (const e of gen) received.push(durableSequence(e));
       })();
 
       await vi.advanceTimersByTimeAsync(0); // settle fetchTicket + connect
@@ -451,7 +335,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       expect(sockets[1]!.url).toBe("wss://co/sessions/r/subscribe?ticket=tkt&from=1");
       expect(fetchTicket).toHaveBeenCalledTimes(2);
 
-      sockets[1]!.message(evt(1, "TURN_FINISHED"));
+      sockets[1]!.message(evt(1, "RUN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0, 1]);
@@ -479,7 +363,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       });
       const received: number[] = [];
       const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
+        for await (const e of gen) received.push(durableSequence(e));
       })();
 
       await vi.advanceTimersByTimeAsync(0);
@@ -494,7 +378,7 @@ describe("streamCoordinatorEvents — half-open watchdog", () => {
       expect(sockets).toHaveLength(1); // never tripped the watchdog
       expect(sockets[0]!.sent.filter((s) => s === "aex:ping").length).toBeGreaterThanOrEqual(7);
 
-      sockets[0]!.message(evt(0, "TURN_FINISHED"));
+      sockets[0]!.message(evt(0, "RUN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0]);
@@ -532,7 +416,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       });
       const received: number[] = [];
       const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
+        for await (const e of gen) received.push(durableSequence(e));
       })();
 
       await vi.advanceTimersByTimeAsync(0);
@@ -555,7 +439,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       expect(fetchTicket).toHaveBeenCalledTimes(2);
 
       sockets[1]!.open();
-      sockets[1]!.message(evt(1, "TURN_FINISHED"));
+      sockets[1]!.message(evt(1, "RUN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0, 1]);
@@ -584,7 +468,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       });
       const received: number[] = [];
       const consume = (async () => {
-        for await (const e of gen) received.push(e.sequence);
+        for await (const e of gen) received.push(durableSequence(e));
       })();
 
       await vi.advanceTimersByTimeAsync(0);
@@ -596,7 +480,7 @@ describe("streamCoordinatorEvents — event-quiet recheck", () => {
       }
       expect(sockets).toHaveLength(1);
 
-      sockets[0]!.message(evt(4, "TURN_FINISHED"));
+      sockets[0]!.message(evt(4, "RUN_FINISHED"));
       await vi.advanceTimersByTimeAsync(0);
       await consume;
       expect(received).toEqual([0, 1, 2, 3, 4]);
@@ -619,9 +503,9 @@ describe("client-side filter + projection", () => {
   });
 
   it("mapStream projects to strict AG-UI", async () => {
-    const events = [evt(0, "TEXT_MESSAGE_CONTENT"), evt(1, "TURN_FINISHED")];
+    const events = [evt(0, "TEXT_MESSAGE_CONTENT"), evt(1, "RUN_FINISHED")];
     const out: string[] = [];
     for await (const a of mapStream(arr(events), toAGUI)) out.push(a.type);
-    expect(out).toEqual(["TEXT_MESSAGE_CONTENT", "TURN_FINISHED"]);
+    expect(out).toEqual(["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]);
   });
 });

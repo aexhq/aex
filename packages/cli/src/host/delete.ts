@@ -1,7 +1,7 @@
 /**
  * `aex delete <session-id>` — DELETE /api/sessions/{id}.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

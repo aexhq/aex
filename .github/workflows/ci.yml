@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+  pull_request:
+  merge_group:
   workflow_dispatch:
 
-# Main-push and manual sessions each get a session_id-scoped concurrency group, so they
+# Main-push and manual runs each get a run_id-scoped concurrency group, so they
 # run to completion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -15,6 +17,9 @@ concurrency:
 jobs:
   contract-parity:
     name: Contract parity
+    # Fork pull requests cannot read the private platform repository or its PAT.
+    # Merge-queue and main-push checks still fail closed on parity before merge/release.
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     # Secrets can't be referenced in step-level `if`; surface the platform PAT
     # presence as a job-level flag so the guard step can gate on it.
@@ -24,7 +29,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # This gate must never be silently disarmed. CI sessions only on push to
+      # This gate must never be silently disarmed. CI runs only on push to
       # main by maintainers, so a missing/expired PLATFORM_REPO_TOKEN or a
       # failed platform checkout fails this job loudly instead of letting the
       # parity script skip.
@@ -170,10 +175,11 @@ jobs:
           OFFLINE_USER_TESTS_RESULT: ${{ needs['offline-user-tests'].result }}
           DOCS_BUILD_RESULT: ${{ needs['docs-build'].result }}
           PACK_SDK_RESULT: ${{ needs['pack-sdk'].result }}
+          PARITY_REQUIRED: ${{ github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
           failed=0
-          for name in CONTRACT_PARITY LINT UNIT_TESTS OFFLINE_USER_TESTS DOCS_BUILD PACK_SDK; do
+          for name in LINT UNIT_TESTS OFFLINE_USER_TESTS DOCS_BUILD PACK_SDK; do
             var="${name}_RESULT"
             result="${!var}"
             echo "${name}: ${result}"
@@ -181,4 +187,10 @@ jobs:
               failed=1
             fi
           done
+          echo "CONTRACT_PARITY: ${CONTRACT_PARITY_RESULT} (required=${PARITY_REQUIRED})"
+          if [ "${PARITY_REQUIRED}" = "true" ] && [ "${CONTRACT_PARITY_RESULT}" != "success" ]; then
+            failed=1
+          elif [ "${PARITY_REQUIRED}" != "true" ] && [ "${CONTRACT_PARITY_RESULT}" != "skipped" ]; then
+            failed=1
+          fi
           exit "${failed}"

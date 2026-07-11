@@ -37,18 +37,21 @@ function stalledFileResponse(): Response {
 function clientFor(handler: (url: string) => Response | Promise<Response>): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    if (url.endsWith("/api/sessions/session-1")) {
+      return json({ session: { id: "session-1", status: "idle", acceptsMessages: true } });
+    }
     return handler(url);
   };
   return new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch });
 }
 
-describe("aex.sessions.files(id).read", () => {
+describe("session.files.read", () => {
   it("reads a small file fully (not truncated) by file id", async () => {
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) return fileResponse("hello world");
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) return fileResponse("hello world");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.files("session-1").read({ id: "out-1" });
+    const result = await (await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" });
     expect(result.text).toBe("hello world");
     expect(result.truncated).toBe(false);
     expect(result.totalBytes).toBe(11);
@@ -57,10 +60,10 @@ describe("aex.sessions.files(id).read", () => {
   it("caps at maxBytes and reports truncated using content-length", async () => {
     const big = "x".repeat(1000);
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) return fileResponse(big);
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) return fileResponse(big);
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.files("session-1").read({ id: "out-1" }, { maxBytes: 10 });
+    const result = await (await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" }, { maxBytes: 10 });
     expect(result.text).toBe("x".repeat(10));
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(1000);
@@ -68,10 +71,10 @@ describe("aex.sessions.files(id).read", () => {
 
   it("reports truncated when a no-content-length stream returns one chunk larger than maxBytes", async () => {
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) return streamedFileResponse(new TextEncoder().encode("x".repeat(25)));
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) return streamedFileResponse(new TextEncoder().encode("x".repeat(25)));
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.files("session-1").read({ id: "out-1" }, { maxBytes: 10 });
+    const result = await (await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" }, { maxBytes: 10 });
     expect(result.text).toBe("x".repeat(10));
     expect(result.truncated).toBe(true);
     expect(result.totalBytes).toBe(25);
@@ -80,12 +83,15 @@ describe("aex.sessions.files(id).read", () => {
   it("resolves a path selector via listSessionFiles, then downloads by id", async () => {
     const client = clientFor((url) => {
       if (url.endsWith("/api/sessions/session-1/files")) {
-        return json({ files: [{ id: "out-9", filename: "report.md" }] });
+        return json({
+          revision: { checkpointId: "cp-1", runId: "run-1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: 9 },
+          files: [{ id: "out-9", checkpointId: "cp-1", filename: "report.md" }]
+        });
       }
-      if (url.endsWith("/files/out-9/download")) return fileResponse("# Report\nbody\n");
+      if (url.includes("/files/out-9/download?checkpointId=cp-1")) return fileResponse("# Report\nbody\n");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.files("session-1").read({ path: "report.md" });
+    const result = await (await client.sessions.open("session-1")).files.read({ path: "report.md" });
     expect(result.file.id).toBe("out-9");
     expect(result.text).toContain("# Report");
   });
@@ -93,14 +99,14 @@ describe("aex.sessions.files(id).read", () => {
   it("retries an idempotent read once when the file body stalls", async () => {
     let downloadCalls = 0;
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) {
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) {
         downloadCalls += 1;
         return downloadCalls === 1 ? stalledFileResponse() : fileResponse("after retry");
       }
       throw new Error(`unexpected ${url}`);
     });
 
-    const result = await client.sessions.files("session-1").read({ id: "out-1" }, { timeoutMs: 1 });
+    const result = await (await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" }, { timeoutMs: 1 });
 
     expect(result.text).toBe("after retry");
     expect(downloadCalls).toBe(2);
@@ -109,14 +115,14 @@ describe("aex.sessions.files(id).read", () => {
   it("surfaces a structured network timeout after both read attempts stall", async () => {
     let downloadCalls = 0;
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) {
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) {
         downloadCalls += 1;
         return stalledFileResponse();
       }
       throw new Error(`unexpected ${url}`);
     });
 
-    const error = await rejectionOf(client.sessions.files("session-1").read({ id: "out-1" }, { timeoutMs: 1 }));
+    const error = await rejectionOf((await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" }, { timeoutMs: 1 }));
     expect(error).toMatchObject({
       code: "NETWORK_ERROR",
       attempts: 2,
@@ -129,14 +135,14 @@ describe("aex.sessions.files(id).read", () => {
   it("identifies download-open timeouts before a response body exists", async () => {
     let downloadCalls = 0;
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) {
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) {
         downloadCalls += 1;
         return new Promise<Response>(() => {});
       }
       throw new Error(`unexpected ${url}`);
     });
 
-    const error = await rejectionOf(client.sessions.files("session-1").read({ id: "out-1" }, { timeoutMs: 1 }));
+    const error = await rejectionOf((await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" }, { timeoutMs: 1 }));
     expect(error).toMatchObject({
       code: "NETWORK_ERROR",
       attempts: 2,
@@ -148,10 +154,10 @@ describe("aex.sessions.files(id).read", () => {
 
   it("grep keeps only matching lines of the capped text", async () => {
     const client = clientFor((url) => {
-      if (url.endsWith("/files/out-1/download")) return fileResponse("alpha\nBETA\ngamma beta\n");
+      if (url.includes("/files/out-1/download?checkpointId=cp-1")) return fileResponse("alpha\nBETA\ngamma beta\n");
       throw new Error(`unexpected ${url}`);
     });
-    const result = await client.sessions.files("session-1").read({ id: "out-1" }, { grep: "beta" });
+    const result = await (await client.sessions.open("session-1")).files.read({ id: "out-1", checkpointId: "cp-1" }, { grep: "beta" });
     expect(result.text).toBe("BETA\ngamma beta");
   });
 });

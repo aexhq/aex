@@ -1,7 +1,7 @@
 /**
  * aex files sync — IN-CONTAINER ONLY internal subcommand.
  *
- * This is NOT a user-facing verb. It is a legacy/internal directory walker:
+ * This is not a user-facing verb. It is an internal directory walker:
  * callers pass explicit absolute directories, and the command emits a
  * structured JSON line per file to stdout. Managed sessions now capture files from
  * checkpointed workspace state; there is no default file directory and no

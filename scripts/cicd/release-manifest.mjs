@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export const PUBLIC_RELEASE_MANIFEST_KIND = "aex-public-release-manifest";
 export const PLATFORM_VALIDATION_MANIFEST_KIND = "aex-platform-validation-manifest";
-export const MANIFEST_SCHEMA_VERSION = 1;
+export const MANIFEST_SCHEMA_VERSION = 3;
 export const REQUIRED_PLATFORM_GATES = ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"];
 
 export function buildPublicReleaseManifest(input) {
@@ -15,13 +15,20 @@ export function buildPublicReleaseManifest(input) {
     createdAt: now,
     repository: input.repository ?? process.env.GITHUB_REPOSITORY ?? "aexhq/aex",
     workflow: "release.yml",
-    sessionId: String(input.sessionId ?? process.env.GITHUB_RUN_ID ?? ""),
+    runId: String(input.runId ?? process.env.GITHUB_RUN_ID ?? ""),
     runAttempt: String(input.runAttempt ?? process.env.GITHUB_RUN_ATTEMPT ?? ""),
     headSha: input.headSha ?? process.env.GITHUB_SHA ?? "",
     sdk: {
       packageName: "@aexhq/sdk",
       version: input.version,
+      integrity: input.integrity,
       initialDistTag: input.distTag
+    },
+    cli: {
+      packageName: "@aexhq/sdk",
+      version: input.version,
+      integrity: input.integrity,
+      bin: "aex"
     },
     gates: [
       "lint",
@@ -45,19 +52,30 @@ export function buildPublicReleaseManifest(input) {
 export function validatePublicReleaseManifest(manifest, expected = {}) {
   const errors = [];
   if (!isRecord(manifest)) errors.push("manifest must be an object");
-  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 1");
+  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 3");
   if (manifest?.kind !== PUBLIC_RELEASE_MANIFEST_KIND) errors.push(`kind must be ${PUBLIC_RELEASE_MANIFEST_KIND}`);
   if (expected.version && manifest?.sdk?.version !== expected.version) {
     errors.push(`sdk.version must be ${expected.version}`);
   }
-  if (expected.sessionId && String(manifest?.sessionId ?? "") !== String(expected.sessionId)) {
-    errors.push(`sessionId must be ${expected.sessionId}`);
+  if (expected.runId && String(manifest?.runId ?? "") !== String(expected.runId)) {
+    errors.push(`runId must be ${expected.runId}`);
+  }
+  if (expected.headSha && manifest?.headSha !== expected.headSha) {
+    errors.push(`headSha must be ${expected.headSha}`);
+  }
+  if (expected.integrity && manifest?.sdk?.integrity !== expected.integrity) {
+    errors.push(`sdk.integrity must be ${expected.integrity}`);
   }
   if (manifest?.repository !== "aexhq/aex") errors.push("repository must be aexhq/aex");
   if (manifest?.workflow !== "release.yml") errors.push("workflow must be release.yml");
   if (!manifest?.headSha) errors.push("headSha is required");
   if (manifest?.sdk?.packageName !== "@aexhq/sdk") errors.push("sdk.packageName must be @aexhq/sdk");
+  if (!manifest?.sdk?.integrity) errors.push("sdk.integrity is required");
   if (!manifest?.sdk?.initialDistTag) errors.push("sdk.initialDistTag is required");
+  if (manifest?.cli?.packageName !== "@aexhq/sdk") errors.push("cli.packageName must be @aexhq/sdk");
+  if (manifest?.cli?.version !== manifest?.sdk?.version) errors.push("cli.version must match sdk.version");
+  if (manifest?.cli?.integrity !== manifest?.sdk?.integrity) errors.push("cli.integrity must match sdk.integrity");
+  if (manifest?.cli?.bin !== "aex") errors.push("cli.bin must be aex");
   for (const gate of ["publish", "published-artifact-smoke"]) {
     if (!Array.isArray(manifest?.gates) || !manifest.gates.includes(gate)) {
       errors.push(`missing release gate ${gate}`);
@@ -69,18 +87,25 @@ export function validatePublicReleaseManifest(manifest, expected = {}) {
 export function validatePlatformValidationManifest(manifest, expected = {}) {
   const errors = [];
   if (!isRecord(manifest)) errors.push("manifest must be an object");
-  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 1");
+  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 3");
   if (manifest?.kind !== PLATFORM_VALIDATION_MANIFEST_KIND) {
     errors.push(`kind must be ${PLATFORM_VALIDATION_MANIFEST_KIND}`);
   }
   if (expected.version && manifest?.sdk?.version !== expected.version) {
     errors.push(`sdk.version must be ${expected.version}`);
   }
-  if (expected.sessionId && String(manifest?.platform?.sessionId ?? "") !== String(expected.sessionId)) {
-    errors.push(`platform.sessionId must be ${expected.sessionId}`);
+  if (!manifest?.sdk?.integrity) errors.push("sdk.integrity is required");
+  if (expected.runId && String(manifest?.platform?.runId ?? "") !== String(expected.runId)) {
+    errors.push(`platform.runId must be ${expected.runId}`);
   }
-  if (expected.publicReleaseSessionId && String(manifest?.publicRelease?.sessionId ?? "") !== String(expected.publicReleaseSessionId)) {
-    errors.push(`publicRelease.sessionId must be ${expected.publicReleaseSessionId}`);
+  if (expected.publicReleaseRunId && String(manifest?.publicRelease?.runId ?? "") !== String(expected.publicReleaseRunId)) {
+    errors.push(`publicRelease.runId must be ${expected.publicReleaseRunId}`);
+  }
+  if (expected.publicReleaseHeadSha && manifest?.publicRelease?.headSha !== expected.publicReleaseHeadSha) {
+    errors.push(`publicRelease.headSha must be ${expected.publicReleaseHeadSha}`);
+  }
+  if (expected.integrity && manifest?.sdk?.integrity !== expected.integrity) {
+    errors.push(`sdk.integrity must be ${expected.integrity}`);
   }
   for (const gate of REQUIRED_PLATFORM_GATES) {
     if (!Array.isArray(manifest?.gates) || !manifest.gates.includes(gate)) {
@@ -127,7 +152,9 @@ export function main(argv = process.argv.slice(2)) {
   if (args.command === "write-public") {
     const manifest = buildPublicReleaseManifest({
       version: requireArg(args, "version"),
-      distTag: requireArg(args, "distTag")
+      distTag: requireArg(args, "distTag"),
+      integrity: requireArg(args, "integrity"),
+      headSha: args.headSha
     });
     writeJson(requireArg(args, "out"), manifest);
     return manifest;
@@ -135,7 +162,9 @@ export function main(argv = process.argv.slice(2)) {
   if (args.command === "verify-public") {
     const result = validatePublicReleaseManifest(readJson(requireArg(args, "manifest")), {
       version: requireArg(args, "version"),
-      sessionId: requireArg(args, "sessionId")
+      runId: requireArg(args, "runId"),
+      headSha: requireArg(args, "headSha"),
+      integrity: requireArg(args, "integrity")
     });
     if (!result.ok) throw new Error(`public release manifest invalid: ${result.errors.join("; ")}`);
     console.log("public release manifest: ok");
@@ -144,8 +173,10 @@ export function main(argv = process.argv.slice(2)) {
   if (args.command === "verify-platform") {
     const result = validatePlatformValidationManifest(readJson(requireArg(args, "manifest")), {
       version: requireArg(args, "version"),
-      sessionId: requireArg(args, "sessionId"),
-      publicReleaseSessionId: args.publicReleaseSessionId
+      runId: requireArg(args, "runId"),
+      publicReleaseRunId: requireArg(args, "publicReleaseRunId"),
+      publicReleaseHeadSha: requireArg(args, "publicReleaseHeadSha"),
+      integrity: requireArg(args, "integrity")
     });
     if (!result.ok) throw new Error(`platform validation manifest invalid: ${result.errors.join("; ")}`);
     console.log("platform validation manifest: ok");

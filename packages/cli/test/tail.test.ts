@@ -13,17 +13,26 @@ const evt = (
   type: AexEvent["type"] = "TEXT_MESSAGE_CONTENT",
   data: Record<string, unknown> = {},
   extra: Partial<AexEvent> = {}
-): AexEvent => ({
-  specversion: "1.0",
-  id: `session-x:${sequence}`,
-  source: "agent",
-  type,
-  subject: "session-x",
-  time: new Date(sequence).toISOString(),
-  sequence,
-  data: data as AexEvent["data"],
-  ...extra
-});
+): AexEvent => {
+  const terminalData = type === "RUN_FINISHED"
+    ? { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } }
+    : type === "RUN_ERROR"
+      ? { outcome: "failed", costUsd: 0, providerUsage: [] }
+      : {};
+  return {
+    specversion: "1.0",
+    id: `session-x:${sequence}`,
+    source: "agent",
+    type,
+    subject: "session-x",
+    threadId: "session-x",
+    runId: "run-1",
+    time: new Date(sequence).toISOString(),
+    sequence,
+    data: { ...terminalData, ...data } as AexEvent["data"],
+    ...extra
+  };
+};
 
 class FakeWebSocket implements WebSocketLike {
   readonly url: string;
@@ -74,7 +83,7 @@ function makeIo(opts: {
   const sockets: FakeWebSocket[] = [];
   const socketUrls: string[] = [];
   const requests: Array<{ readonly method: string; readonly path: string; readonly body: unknown }> = [];
-  const finalStatuses = opts.finalStatuses ?? [opts.sessionStatus ?? "succeeded"];
+  const finalStatuses = opts.finalStatuses ?? [opts.sessionStatus ?? "idle"];
   let finalReadCount = 0;
   let waiters: Array<() => void> = [];
   let sigint: (() => void) | undefined;
@@ -101,12 +110,15 @@ function makeIo(opts: {
       if (parsed.pathname === "/api/sessions" && method === "POST") {
         return new Response(
           JSON.stringify({
-            id: "session-x",
-            status: "running",
-            provider: "anthropic",
-            model: "claude-haiku-4-5",
-            runtime: "managed",
-            createdAt: "2026-01-01T00:00:00Z"
+            session: {
+              id: "session-x",
+              status: "running",
+              acceptsMessages: false,
+              provider: "anthropic",
+              model: "claude-haiku-4-5",
+              runtimeSize: "shared-0.25x-1gb",
+              createdAt: "2026-01-01T00:00:00Z"
+            }
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -117,14 +129,13 @@ function makeIo(opts: {
             session: {
               id: "session-x",
               status: "running",
-              turnSeq: 1,
-              turnStatus: "launching",
+              acceptsMessages: false,
               provider: "anthropic",
               model: "claude-haiku-4-5",
-              runtime: "managed",
+              runtimeSize: "shared-0.25x-1gb",
               createdAt: "2026-01-01T00:00:00Z"
             },
-            turn: { sessionId: "session-x", turnSeq: 1 },
+            run: { sessionId: "session-x", runId: "run-1", turnSeq: 1, phase: "running" },
             eventCursor: 1024
           }),
           { status: 202, headers: { "content-type": "application/json" } }
@@ -139,7 +150,7 @@ function makeIo(opts: {
       // getSession (final record read; sessionId === sessionId)
       const status = finalStatuses[Math.min(finalReadCount, finalStatuses.length - 1)]!;
       finalReadCount += 1;
-      return new Response(JSON.stringify({ id: "session-x", status, model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" }), {
+      return new Response(JSON.stringify({ session: { id: "session-x", status, acceptsMessages: status !== "running", model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" } }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -191,23 +202,23 @@ function makeIo(opts: {
 const COMMON = ["--api-key", "tok", "--aex-url", "https://dash.example"];
 
 describe("aex tail", () => {
-  it("renders pretty lines in order and exits 0 on a succeeded terminal", async () => {
-    const cap = makeIo({ argv: ["tail", "session-x", ...COMMON], sessionStatus: "succeeded" });
+  it("renders pretty lines in order and exits 0 when the thread returns idle", async () => {
+    const cap = makeIo({ argv: ["tail", "session-x", ...COMMON], sessionStatus: "idle" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_STARTED"));
+    ws.message(evt(0, "RUN_STARTED"));
     ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "hello world" }));
     ws.message(evt(2, "TOOL_CALL_START", { name: "bash", input: { cmd: "ls" } }));
     ws.message(evt(3, "TOOL_CALL_RESULT", { name: "bash", content: "file.txt" }));
-    ws.message(evt(4, "TURN_FINISHED"));
+    ws.message(evt(4, "RUN_FINISHED"));
     await done;
     expect(cap.exit()).toBe(0);
     const lines = cap.out().trim().split("\n");
-    expect(lines[0]).toContain("turn started");
+    expect(lines[0]).toContain("run started");
     expect(lines[1]).toBe("hello world");
     expect(lines[2]).toContain("tool bash");
     expect(lines[3]).toContain("← bash");
-    expect(lines[4]).toContain("session finished");
+    expect(lines[4]).toContain("run finished");
   });
 
   it("emits raw envelope NDJSON under --json", async () => {
@@ -215,7 +226,7 @@ describe("aex tail", () => {
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
     ws.message(evt(0, "TEXT_MESSAGE_CONTENT", { text: "hi" }));
-    ws.message(evt(1, "TURN_FINISHED"));
+    ws.message(evt(1, "RUN_FINISHED"));
     await done;
     expect(cap.exit()).toBe(0);
     const first = JSON.parse(cap.out().trim().split("\n")[0]!) as AexEvent;
@@ -227,15 +238,15 @@ describe("aex tail", () => {
     const cap = makeIo({ argv: ["tail", "session-x", "--filter", "TOOL_CALL_START,TOOL_CALL_RESULT", ...COMMON] });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_STARTED"));
+    ws.message(evt(0, "RUN_STARTED"));
     ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "ignored" }));
     ws.message(evt(2, "TOOL_CALL_START", { name: "bash" }));
-    ws.message(evt(3, "TURN_FINISHED"));
+    ws.message(evt(3, "RUN_FINISHED"));
     await done;
     const out = cap.out();
     expect(out).toContain("tool bash");
     expect(out).not.toContain("ignored");
-    expect(out).not.toContain("turn started");
+    expect(out).not.toContain("run started");
   });
 
   it("rejects an unknown --filter token with USAGE_ERR + did-you-mean", async () => {
@@ -246,15 +257,24 @@ describe("aex tail", () => {
     expect(cap.err()).toContain("did you mean");
   });
 
-  it("returns exit 1 when the session reaches a non-succeeded terminal", async () => {
-    const cap = makeIo({ argv: ["tail", "session-x", ...COMMON], sessionStatus: "failed" });
+  it("returns exit 1 when the resumable thread reports an error", async () => {
+    const cap = makeIo({ argv: ["tail", "session-x", ...COMMON], sessionStatus: "error" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_ERROR", { failureMessage: "boom", failureClass: "provider_error" }));
+    ws.message(evt(0, "RUN_ERROR", { failureMessage: "boom", failureClass: "provider_error" }));
     await done;
     expect(cap.exit()).toBe(1);
     // jump-to-failure line on stderr
-    expect(cap.err()).toContain("✗ turn error: boom");
+    expect(cap.err()).toContain("✗ run error: boom");
+  });
+
+  it("returns exit 1 for a cancelled run even when the session returns idle", async () => {
+    const cap = makeIo({ argv: ["tail", "session-x", ...COMMON], sessionStatus: "idle" });
+    const done = executeCli(cap.io);
+    const ws = await cap.nextSocket();
+    ws.message(evt(0, "RUN_FINISHED", { outcome: "cancelled" }));
+    await done;
+    expect(cap.exit()).toBe(1);
   });
 
   it("times out a quiet stream with exit 3", async () => {
@@ -298,7 +318,7 @@ describe("aex tail", () => {
     const ws2 = await cap.nextSocket(2);
     // second connect resumes from seq 1 (lastSeq 0 + 1)
     expect(cap.socketUrls[1]).toContain("from=1");
-    ws2.message(evt(1, "TURN_FINISHED"));
+    ws2.message(evt(1, "RUN_FINISHED"));
     await done;
     const seqs = cap.out().trim().split("\n").map((l) => (JSON.parse(l) as AexEvent).sequence);
     expect(seqs).toEqual([0, 1]);
@@ -316,13 +336,13 @@ describe("aex start --follow", () => {
         "--follow",
         ...COMMON
       ],
-      sessionStatus: "succeeded"
+      sessionStatus: "idle"
     });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_STARTED"));
+    ws.message(evt(0, "RUN_STARTED"));
     ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "live" }));
-    ws.message(evt(2, "TURN_FINISHED"));
+    ws.message(evt(2, "RUN_FINISHED"));
     await done;
 
     expect(cap.exit()).toBe(0);
@@ -335,9 +355,9 @@ describe("aex start --follow", () => {
     const secondEvent = JSON.parse(lines[2]!) as AexEvent;
     const final = JSON.parse(lines.at(-1)!) as { id: string; status: string };
     expect(accepted).toMatchObject({ id: "session-x", status: "running" });
-    expect(firstEvent.type).toBe("TURN_STARTED");
+    expect(firstEvent.type).toBe("RUN_STARTED");
     expect(secondEvent).toMatchObject({ type: "TEXT_MESSAGE_CONTENT", sequence: 1 });
-    expect(final).toMatchObject({ id: "session-x", status: "succeeded" });
+    expect(final).toMatchObject({ id: "session-x", status: "idle" });
   });
 
   it("includes the accepted session state when follow times out", async () => {
@@ -360,12 +380,11 @@ describe("aex start --follow", () => {
       error: "session_follow_timeout",
       sessionId: "session-x",
       sessionStatus: "running",
-      turnSeq: 1,
-      turnStatus: "launching"
+      turnSeq: 1
     });
   });
 
-  it("waits for the session record to park after a terminal stream event", async () => {
+  it("fails immediately when the post-terminal session read is inconsistent", async () => {
     const cap = makeIo({
       argv: [
         "start",
@@ -379,42 +398,42 @@ describe("aex start --follow", () => {
     });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_STARTED"));
+    ws.message(evt(0, "RUN_STARTED"));
     ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "live" }));
-    ws.message(evt(2, "TURN_FINISHED"));
+    ws.message(evt(2, "RUN_FINISHED"));
     await done;
 
-    expect(cap.exit()).toBe(0);
+    expect(cap.exit()).toBe(1);
     const getSessionReads = cap.requests.filter((request) => request.method === "GET" && request.path === "/api/sessions/session-x");
-    expect(getSessionReads).toHaveLength(2);
+    expect(getSessionReads).toHaveLength(1);
     const final = JSON.parse(cap.out().trim().split("\n").at(-1)!) as { id: string; status: string };
-    expect(final).toEqual({ id: "session-x", status: "idle", model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" });
+    expect(final).toMatchObject({ id: "session-x", status: "running" });
+    expect(cap.err()).toContain("run_terminal_inconsistent");
   });
 });
 
 describe("aex inspect", () => {
   it("prints a header, the full timeline, and a cost/usage footer", async () => {
-    const cap = makeIo({ argv: ["inspect", "session-x", ...COMMON], sessionStatus: "succeeded" });
+    const cap = makeIo({ argv: ["inspect", "session-x", ...COMMON], sessionStatus: "idle" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_STARTED"));
+    ws.message(evt(0, "RUN_STARTED"));
     ws.message(evt(1, "TEXT_MESSAGE_CONTENT", { text: "done" }));
-    // settle-consistent stream ends on the aex.session.settled barrier
-    ws.message(evt(2, "CUSTOM", { name: "aex.session.settled", value: { outcome: "succeeded" } }, { source: "aex" }));
+    ws.message(evt(2, "RUN_FINISHED", { outcome: "succeeded" }, { source: "aex" }));
     await done;
     expect(cap.exit()).toBe(0);
     const out = cap.out();
-    expect(out).toContain("session session-x · succeeded");
-    expect(out).toContain("turn started");
+    expect(out).toContain("session session-x · idle");
+    expect(out).toContain("run started");
     expect(out).toContain("done");
   });
 
   it("emits one machine document under --json", async () => {
-    const cap = makeIo({ argv: ["inspect", "session-x", "--json", ...COMMON], sessionStatus: "succeeded" });
+    const cap = makeIo({ argv: ["inspect", "session-x", "--json", ...COMMON], sessionStatus: "idle" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
     ws.message(evt(0, "TEXT_MESSAGE_CONTENT", { text: "x" }));
-    ws.message(evt(1, "CUSTOM", { name: "aex.session.settled", value: {} }, { source: "aex" }));
+    ws.message(evt(1, "RUN_FINISHED", { outcome: "succeeded" }, { source: "aex" }));
     await done;
     const doc = JSON.parse(cap.out().trim()) as { session: { id: string }; events: AexEvent[] };
     expect(doc.session.id).toBe("session-x");
@@ -422,11 +441,10 @@ describe("aex inspect", () => {
   });
 
   it("surfaces a jump-to-failure footer + exit 1 on a failed run", async () => {
-    const cap = makeIo({ argv: ["inspect", "session-x", ...COMMON], sessionStatus: "failed" });
+    const cap = makeIo({ argv: ["inspect", "session-x", ...COMMON], sessionStatus: "error" });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
-    ws.message(evt(0, "TURN_ERROR", { failureMessage: "kaboom", failureClass: "timeout" }));
-    ws.message(evt(1, "CUSTOM", { name: "aex.session.settled", value: {} }, { source: "aex" }));
+    ws.message(evt(0, "RUN_ERROR", { failureMessage: "kaboom", failureClass: "timeout" }));
     await done;
     expect(cap.exit()).toBe(1);
     expect(cap.out()).toContain("✗ kaboom");

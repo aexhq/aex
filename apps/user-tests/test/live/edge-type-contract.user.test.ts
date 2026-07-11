@@ -5,16 +5,16 @@
  * REGRESSION PROBES — fixed by the platform after the 2026-07-04 dev sweep:
  *
  *   1. Token usage is unavailable on EVERY public surface. `SessionResult.usage`
- *      / `SessionRecord.usage` / `Session.usage` document aggregate token counts "when
+ *      / `Session.usage` document aggregate token counts "when
  *      the deployment exposes it", but the managed plane emits no `aex.usage`
  *      events, never populates record `usage`, and the served
  *      `costTelemetry` (GET /api/sessions/:id) carries no `providerUsage` block —
  *      a customer cannot see input/output token counts for any run.
  *   2. Prompt size is unbounded at session create: a multi-MiB prompt is
  *      admitted (201) with no server-side cap (same family as the unbounded
- *      agentsMd finding — the only ceiling is the API gateway body limit).
+ *      instructions finding — the only ceiling is the API gateway body limit).
  *
- * Billing: probe 1 sessions ONE tiny billable turn (~$0.0004); probe 2 creates a
+ * Billing: probe 1 runs ONE tiny billable turn (~$0.0004); probe 2 creates a
  * born-empty idle session and deletes it (zero billable).
  *
  * Required env: AEX_API_URL, AEX_API_KEY, DEEPSEEK_API_KEY, +
@@ -90,7 +90,7 @@ const CHILD_PRELUDE = `
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const raw = async (method, path, body) => {
     const url = process.env.AEX_API_URL + path;
-    const maxAttempts = 3;
+    const maxAttempts = ["GET", "HEAD", "OPTIONS"].includes(method) ? 3 : 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         const res = await fetch(url, {
@@ -153,7 +153,7 @@ afterAll(() => {
 
 describe("edge: public type-contract gaps", () => {
   it(
-    "token usage is exposed on at least one public surface for a settled run",
+    "token usage is exposed on at least one public surface for a finished run",
     async () => {
       const body = `
         const out = { sessionId: null, resultUsage: null, sessionUsage: null, providerUsage: null, usageEvents: 0 };
@@ -161,11 +161,11 @@ describe("edge: public type-contract gaps", () => {
           {
             provider: PROVIDER,
             model: MODEL,
-            includeBuiltinTools: false,
+            builtinTools: "none",
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             message: "Reply with exactly: USAGE-PROBE-OK"
           },
-          { timeoutMs: 240000, settleConsistent: true }
+          { timeoutMs: 240000 }
         );
         out.sessionId = result.sessionId;
         out.resultUsage = result.usage ?? null;
@@ -175,8 +175,8 @@ describe("edge: public type-contract gaps", () => {
         const record = await client.sessions.get(result.sessionId);
         out.sessionUsage = record.usage ?? null;
         const unit = await raw("GET", "/api/sessions/" + result.sessionId);
-        out.providerUsage = unit.body && unit.body.costTelemetry && unit.body.costTelemetry.providerUsage
-          ? unit.body.costTelemetry.providerUsage
+        out.providerUsage = unit.body && unit.body.session && unit.body.session.costTelemetry && unit.body.session.costTelemetry.providerUsage
+          ? unit.body.session.costTelemetry.providerUsage
           : null;
         await raw("DELETE", "/api/sessions/" + result.sessionId);
         console.log(JSON.stringify(out));
@@ -200,12 +200,12 @@ describe("edge: public type-contract gaps", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           provider: PROVIDER,
-          submission: { model: MODEL, includeBuiltinTools: false, prompt: ["x".repeat(2 * 1024 * 1024)] },
+          submission: { model: MODEL, builtinTools: "none", prompt: ["x".repeat(2 * 1024 * 1024)] },
           secrets: { apiKeys: { [PROVIDER]: "sk-probe-fake-key" } }
         });
         out.status = r.status;
         out.error = r.body && typeof r.body.error === "string" ? r.body.error : null;
-        const admitted = r.body && (r.body.session?.id ?? r.body.id ?? r.body.sessionId);
+        const admitted = r.body && r.body.session && typeof r.body.session.id === "string" ? r.body.session.id : null;
         if (admitted) {
           out.admittedId = admitted;
           await raw("DELETE", "/api/sessions/" + admitted);

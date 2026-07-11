@@ -5,19 +5,15 @@ import {
   SKILL_BUNDLE_LIMITS,
   SKILL_NAME_PATTERN,
   SKILL_RESERVED_NAMES,
-  SKILLS_MAX,
   TOOL_NAME_PATTERN,
   normaliseSkillBundlePath,
-  operations,
   parseSessionLimits,
   parseSessionTimeout,
   parseSessionWebhook,
   resolveModelProvider,
   validateSkillBundleEntry,
-  type AgentsMdRef,
   type BuiltinToolName,
   type FetchLike,
-  type FileRef,
   type HttpClient,
   type JsonValue,
   type McpServerRef,
@@ -30,12 +26,16 @@ import {
   type ModelName,
   type ProviderName,
   type RuntimeSize,
-  type Session,
+  type SessionMessageAccepted,
   type SessionCreateRequest,
   type ToolInputSchema,
-  type ToolRef
+  type ToolRef,
+  type WorkspaceFileRef,
+  type WorkspaceInstructionRef,
+  type WorkspaceSkillRef,
+  type WorkspaceToolRef
 } from "@aexhq/contracts";
-import { uploadAsset as uploadHostAsset } from "@aexhq/contracts/internal";
+import { operations, uploadAsset as uploadHostAsset } from "@aexhq/contracts/internal";
 
 const TEXT = new TextEncoder();
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
@@ -53,7 +53,7 @@ export interface CliToolDraft {
   readonly bytes: Uint8Array;
 }
 
-export interface CliAgentsMdDraft {
+export interface CliInstructionsDraft {
   readonly name: string;
   readonly contentHash: string;
   readonly bytes: Uint8Array;
@@ -79,7 +79,7 @@ export interface CliSessionSubmitOptions {
   readonly system?: string;
   readonly tools?: readonly (CliToolDraft | BuiltinToolName)[];
   readonly skills?: readonly CliSkillDraft[];
-  readonly agentsMd?: readonly CliAgentsMdDraft[];
+  readonly instructions?: readonly CliInstructionsDraft[];
   readonly files?: readonly CliFileDraft[];
   readonly mcpServers?: readonly CliMcpServer[];
   readonly metadata?: Readonly<Record<string, JsonValue>>;
@@ -104,14 +104,16 @@ export async function submitCliRun(
   http: HttpClient,
   fetchImpl: FetchLike | undefined,
   options: CliSessionSubmitOptions
-): Promise<Session> {
+): Promise<SessionMessageAccepted> {
   const request = await buildSessionCreateRequest(http, fetchImpl, options);
-  const submitted = await operations.submit(
+  const input = normaliseSessionInput(options.message);
+  const submitted = await operations.createSessionWithMessage(
     http,
     request,
+    input,
     { idempotencyKey: operations.resolveIdempotencyKey(options.idempotencyKey) }
   );
-  return submitted.session;
+  return submitted;
 }
 
 export async function buildCliSkill(content: string, source: string): Promise<CliSkillDraft> {
@@ -157,12 +159,12 @@ export async function buildCliTool(args: {
   };
 }
 
-export async function buildCliAgentsMd(content: string, name: string): Promise<CliAgentsMdDraft> {
+export async function buildCliInstructions(content: string, name: string): Promise<CliInstructionsDraft> {
   if (typeof content !== "string" || content.length === 0) {
-    throw new Error("AgentsMd.fromContent: content must be a non-empty string");
+    throw new Error("Instructions.fromContent: content must be a non-empty string");
   }
   if (!/^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name)) {
-    throw new Error("AgentsMd.fromContent: name must be a lowercase workspace slug");
+    throw new Error("Instructions.fromContent: name must be a lowercase workspace slug");
   }
   const bytes = zipSync({ "AGENTS.md": [TEXT.encode(content), { mtime: ZIP_EPOCH }] }, { level: 6 });
   return { name, contentHash: await hashBytes(bytes), bytes };
@@ -201,7 +203,6 @@ async function buildSessionCreateRequest(
   fetchImpl: FetchLike | undefined,
   options: CliSessionSubmitOptions
 ): Promise<SessionCreateRequest> {
-  const input = normaliseSessionInput(options.message);
   const provider = resolveModelProvider(options.model, options.provider);
   validateApiKeys(options.apiKeys, provider);
 
@@ -217,22 +218,18 @@ async function buildSessionCreateRequest(
   if (options.overrides?.maxTurns !== undefined) limitsInput.maxTurns = options.overrides.maxTurns;
   const limits: SessionLimits | undefined = parseSessionLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
 
-  const [preparedTools, preparedSkills, preparedAgentsMd, preparedFiles] = await Promise.all([
-    prepareTools(http, fetchImpl, options.tools ?? []),
-    prepareSkills(http, fetchImpl, options.skills ?? []),
-    prepareAgentsMd(http, fetchImpl, options.agentsMd ?? []),
-    prepareFiles(http, fetchImpl, options.files ?? [])
-  ]);
+  const preparedTools = await prepareTools(http, fetchImpl, options.tools ?? []);
+  const skills = await prepareSkills(http, fetchImpl, options.skills ?? []);
+  const instructions = await prepareInstructions(http, fetchImpl, options.instructions ?? []);
+  const files = await prepareFiles(http, fetchImpl, options.files ?? []);
   const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(options.mcpServers ?? []);
   const environment = sessionEnvironmentForWire(options.environment);
 
   const submission: SessionCreateRequest["submission"] = {
     model: options.model,
     ...(options.system ? { system: options.system } : {}),
-    tools: [...preparedTools.builtinNames, ...preparedTools.refs] as unknown as readonly ToolRef[],
-    ...(preparedSkills.length > 0 ? { skills: preparedSkills } : {}),
-    agentsMd: preparedAgentsMd,
-    files: preparedFiles,
+    assets: { files, skills, tools: preparedTools.refs, instructions },
+    builtinTools: preparedTools.builtinNames.length > 0 ? preparedTools.builtinNames : "default",
     mcpServers: submissionMcpServers,
     ...(environment ? { environment: environment as NonNullable<PlatformSubmission["environment"]> } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {})
@@ -246,7 +243,6 @@ async function buildSessionCreateRequest(
   return {
     provider,
     submission,
-    input,
     ...(options.runtime ? { runtimeSize: options.runtime } : {}),
     ...(options.overrides?.timeout ? { timeout: options.overrides.timeout } : {}),
     ...(limits ? { limits } : {}),
@@ -258,15 +254,15 @@ async function buildSessionCreateRequest(
 
 function normaliseSessionInput(input: string | readonly string[]): string | readonly string[] {
   if (typeof input === "string") {
-    if (!input) throw new Error("Aex.submit: message must be a non-empty string");
+    if (!input) throw new Error("Aex.start: message must be a non-empty string");
     return input;
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new Error("Aex.submit: message must be a non-empty string or string array");
+    throw new Error("Aex.start: message must be a non-empty string or string array");
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new Error("Aex.submit: message segments must be non-empty strings");
+      throw new Error("Aex.start: message segments must be non-empty strings");
     }
   }
   return [...input];
@@ -276,7 +272,7 @@ function validateApiKeys(apiKeys: Partial<Record<ProviderName, string>> | undefi
   const key = apiKeys?.[provider];
   if (typeof key !== "string" || key.length === 0) {
     throw new Error(
-      `Aex.submit: a provider API key is required for provider ${provider}; pass apiKeys.${provider}`
+      `Aex.start: a provider API key is required for provider ${provider}; pass apiKeys.${provider}`
     );
   }
 }
@@ -285,7 +281,7 @@ async function prepareTools(
   http: HttpClient,
   fetchImpl: FetchLike | undefined,
   tools: readonly (CliToolDraft | BuiltinToolName)[]
-): Promise<{ readonly refs: readonly ToolRef[]; readonly builtinNames: readonly BuiltinToolName[] }> {
+): Promise<{ readonly refs: readonly WorkspaceToolRef[]; readonly builtinNames: readonly BuiltinToolName[] }> {
   const prepared = await mapWithConcurrency(tools, UPLOAD_CONCURRENCY, async (entry, i) => {
     if (typeof entry === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
@@ -298,11 +294,19 @@ async function prepareTools(
       hash: entry.ref.contentHash,
       contentType: "application/zip"
     });
-    const { contentHash: _contentHash, ...ref } = entry.ref;
-    void _contentHash;
-    return { kind: "ref" as const, ref: { ...ref, assetId: uploaded.assetId } };
+    const published = await operations.publishWorkspaceTool(http, {
+      assetId: uploaded.assetId,
+      contentHash: uploaded.contentHash,
+      sizeBytes: uploaded.sizeBytes,
+      contentType: "application/zip",
+      name: entry.ref.name,
+      description: entry.ref.description,
+      input_schema: entry.ref.input_schema,
+      entry: entry.ref.entry
+    });
+    return { kind: "ref" as const, ref: published };
   });
-  const refs: ToolRef[] = [];
+  const refs: WorkspaceToolRef[] = [];
   const seenBuiltins = new Set<BuiltinToolName>();
   const builtinNames: BuiltinToolName[] = [];
   for (const item of prepared) {
@@ -322,39 +326,47 @@ async function prepareSkills(
   http: HttpClient,
   fetchImpl: FetchLike | undefined,
   skills: readonly CliSkillDraft[]
-): Promise<readonly { readonly kind: "skill"; readonly name: string }[]> {
-  if (skills.length > SKILLS_MAX) {
-    throw new Error(`aex: skills exceeds the ${SKILLS_MAX}-skill limit (got ${skills.length})`);
-  }
+): Promise<readonly WorkspaceSkillRef[]> {
   const seen = new Set<string>();
   for (const skill of skills) {
     if (seen.has(skill.name)) throw new Error(`aex: skills duplicate name: ${skill.name}`);
     seen.add(skill.name);
   }
   return mapWithConcurrency(skills, UPLOAD_CONCURRENCY, async (skill) => {
-    await stageAsset(http, fetchImpl, { bytes: skill.bytes, hash: skill.contentHash, contentType: "application/zip" });
-    await operations.upsertSkill(http, {
-      name: skill.name,
-      contentHash: skill.contentHash,
-      description: skill.description,
-      sizeBytes: skill.bytes.byteLength
+    const uploaded = await stageAsset(http, fetchImpl, {
+      bytes: skill.bytes,
+      hash: skill.contentHash,
+      contentType: "application/zip"
     });
-    return { kind: "skill", name: skill.name };
+    return operations.publishWorkspaceSkill(http, {
+      assetId: uploaded.assetId,
+      contentHash: uploaded.contentHash,
+      sizeBytes: uploaded.sizeBytes,
+      contentType: "application/zip",
+      name: skill.name,
+      description: skill.description
+    });
   });
 }
 
-async function prepareAgentsMd(
+async function prepareInstructions(
   http: HttpClient,
   fetchImpl: FetchLike | undefined,
-  agentsMds: readonly CliAgentsMdDraft[]
-): Promise<readonly AgentsMdRef[]> {
-  return mapWithConcurrency(agentsMds, UPLOAD_CONCURRENCY, async (entry) => {
+  instructions: readonly CliInstructionsDraft[]
+): Promise<readonly WorkspaceInstructionRef[]> {
+  return mapWithConcurrency(instructions, UPLOAD_CONCURRENCY, async (entry) => {
     const uploaded = await stageAsset(http, fetchImpl, {
       bytes: entry.bytes,
       hash: entry.contentHash,
       contentType: "application/zip"
     });
-    return { kind: "asset", assetId: uploaded.assetId, name: entry.name };
+    return operations.publishWorkspaceInstruction(http, {
+      assetId: uploaded.assetId,
+      contentHash: uploaded.contentHash,
+      sizeBytes: uploaded.sizeBytes,
+      contentType: "application/zip",
+      name: entry.name
+    });
   });
 }
 
@@ -362,14 +374,21 @@ async function prepareFiles(
   http: HttpClient,
   fetchImpl: FetchLike | undefined,
   files: readonly CliFileDraft[]
-): Promise<readonly FileRef[]> {
+): Promise<readonly WorkspaceFileRef[]> {
   return mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (entry) => {
     const uploaded = await stageAsset(http, fetchImpl, {
       bytes: entry.bytes,
       hash: entry.contentHash,
       contentType: "application/zip"
     });
-    return { kind: "asset", assetId: uploaded.assetId, name: entry.name, mountPath: entry.mountPath };
+    return operations.publishWorkspaceFile(http, {
+      assetId: uploaded.assetId,
+      contentHash: uploaded.contentHash,
+      sizeBytes: uploaded.sizeBytes,
+      contentType: "application/zip",
+      name: entry.name,
+      mountPath: entry.mountPath
+    });
   });
 }
 

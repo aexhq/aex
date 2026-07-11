@@ -27,7 +27,7 @@
  *   - a long multi-paragraph `system` message (probe-tagged)
  *   - a multi-step `prompt` array (forces shell + multiple file WRITES +
  *                                  multiple file READS, then a probe ack)
- *   - 1 AGENTS.md               (probe-tagged project guidance)
+ *   - 1 instructions resource   (probe-tagged project guidance)
  *   - a custom `fileCapture.allowedDirs` path (proves re-rooting under workspaceRoot)
  *   - `builtins: ["developer"]`, `environment.envVars`, `metadata`
  *   - `secrets` carrying the customer provider key
@@ -38,23 +38,20 @@
  * supported developer-tool path.
  *
  * Managed cells (full assertion set — "validate all aspects"):
- *   - run reached `succeeded`; runtime/provider echo back correctly.
- *   - terminal event is observed. Legacy run streams are framed
- *     TURN_STARTED ... TURN_FINISHED; managed session turns may complete with
- *     CUSTOM `aex.session.succeeded` or park with CUSTOM `aex.session.idle`.
- *     terminal reason is "complete", runtimeExitCode 0-or-absent.
+ *   - run outcome reached `succeeded`; runtime/provider echo back correctly.
+ *   - each run is framed by RUN_STARTED ... RUN_FINISHED.
  *   - FULL EVENT VOCABULARY: the distinct event types observed are a
  *     superset of every event type required for a successful managed session:
  *     TEXT_MESSAGE_CONTENT, TOOL_CALL_START, TOOL_CALL_RESULT, CUSTOM
- *     (TURN_FINISHED may be absent on managed sessions; TURN_ERROR is
- *     failure-only and is covered by live-sdk-files-and-failures.test.ts).
+ *     RUN_ERROR is failure-only and is covered by
+ *     live-sdk-files-and-failures.test.ts.
  *     See AEX_EVENT_TYPES
  *     in packages/contracts/src/event-envelope.ts — the single source of
  *     truth this list is kept in sync with.
  *   - the agent actually used tools (TOOL_CALL_START/RESULT counts > 0).
  *   - all 3 submitted skills produced a `skill_loaded` notification (every
  *     skill materialized into the container).
- *   - system + AGENTS.md + prompt probes all appear in the SDK-visible event
+ *   - system + instructions + prompt probes all appear in the SDK-visible event
  *     transcript (assistant text, tool-call arguments, or tool results), proving
  *     composeInstructions carried all three channels into the recipe.
  *   - the FILES pipeline round-trips: every captured file downloads
@@ -77,7 +74,6 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -162,9 +158,9 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     `create session files exactly as instructed.\n\n` +
     `Your session reference for this session is ${probes.system}. When the user asks you to ` +
     `acknowledge tracking references, include this session reference verbatim in your reply.`;
-  const agentsMdText =
+  const instructionsText =
     `# Project tracking guidance\n\n` +
-    `The project tracking reference for this workspace is ${probes.agentsMd}. ` +
+    `The project tracking reference for this workspace is ${probes.instructions}. ` +
     `When a user asks you to acknowledge tracking references, include this project ` +
     `tracking reference verbatim in your reply.`;
 
@@ -183,7 +179,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
     `Step 1. FIRST, before anything else, output exactly this one-line acknowledgement, ` +
       `filling in the three tracking references from your context (your session reference, ` +
       `the project tracking reference, and the request reference given here):\n` +
-      `session=${probes.system} project=${probes.agentsMd} request=${probes.prompt}`,
+      `session=${probes.system} project=${probes.instructions} request=${probes.prompt}`,
     `Step 2. Use your shell to run \`ls -la\` in your current working directory and briefly ` +
       `note what you see.`,
     `Step 3. Create the directory ${CUSTOM_OUTPUT_DIR} (it is inside your writable ` +
@@ -196,7 +192,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
   ];
 
   return `
-    import { Aex, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { Aex, Skill, McpServer, Instructions } from "@aexhq/sdk";
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
@@ -222,86 +218,55 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       url: ${JSON.stringify(MCP_SERVER_URL)}
     });
 
-    const rules = await AgentsMd.fromContent(
-      ${JSON.stringify(agentsMdText)},
+    const rules = await Instructions.fromContent(
+      ${JSON.stringify(instructionsText)},
       { name: "heavy-rules" }
     );
+    const skillAlphaRef = await client.workspace.skills.publish(skillAlpha);
+    const skillBetaRef = await client.workspace.skills.publish(skillBeta);
+    const skillGammaRef = await client.workspace.skills.publish(skillGamma);
+    const rulesRef = await client.workspace.instructions.publish(rules);
 
     const submitOpts = {
       provider: ${JSON.stringify(spec.provider)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
       message: ${JSON.stringify(promptSteps)},
-      skills: [skillAlpha, skillBeta, skillGamma],
+      assets: {
+        skills: [skillAlphaRef, skillBetaRef, skillGammaRef],
+        instructions: [rulesRef]
+      },
       mcpServers: [mcpPrimary, mcpSecondary],
-      agentsMd: [rules],
       fileCapture: { allowedDirs: [${JSON.stringify(CUSTOM_OUTPUT_DIR)}] },
-      includeBuiltinTools: true,
+      builtinTools: "default",
       environment: { variables: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.provider}" },
       apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "heavy-${spec.provider}-" + Date.now()
     };
 
-    const maxTransientRetries = 2;
-    const maxChannelProbeRetries = 2;
-    let payload = null;
-    const retryReasons = [];
-    for (let attempt = 0; attempt <= Math.max(maxTransientRetries, maxChannelProbeRetries); attempt++) {
-      payload = await runAttempt(attempt);
-      const failureClass =
-        payload.terminalData && typeof payload.terminalData.failureClass === "string"
-          ? payload.terminalData.failureClass
-          : null;
-      const canRetryTransient =
-        payload.sessionStatus !== "succeeded" && failureClass === "transient-provider" && attempt < maxTransientRetries;
-      const channelProbeMisses = Array.isArray(payload.channelProbeMisses) ? payload.channelProbeMisses : [];
-      const canRetryChannelProbeMiss =
-        payload.sessionStatus === "succeeded" && channelProbeMisses.length > 0 && attempt < maxChannelProbeRetries;
-      if (!canRetryTransient && !canRetryChannelProbeMiss) break;
-      if (canRetryTransient) {
-        const reason = "transient-provider:" + payload.sessionId;
-        retryReasons.push(reason);
-        console.warn(
-          "[user-tests] run " + payload.sessionId + " failed (failureClass=transient-provider); " +
-            "retrying run (attempt " + (attempt + 1) + "/" + maxTransientRetries + ")"
-        );
-      } else {
-        const reason = "channel-probe-miss:" + payload.sessionId + ":" + channelProbeMisses.join(",");
-        retryReasons.push(reason);
-        console.warn(
-          "[user-tests] run " + payload.sessionId + " succeeded but missed channel probes [" +
-            channelProbeMisses.join(", ") + "]; retrying run (attempt " +
-            (attempt + 1) + "/" + maxChannelProbeRetries + ")"
-        );
-      }
-    }
-    if (payload) payload.retryReasons = retryReasons;
+    const payload = await runOnce();
 
-    async function runAttempt(attempt) {
-      const attemptSubmit = {
-        ...submitOpts,
-        idempotencyKey: submitOpts.idempotencyKey + "-try" + attempt
-      };
-      const result = await client.start(attemptSubmit, { timeoutMs: ${spec.pollDeadlineMs} });
+    async function runOnce() {
+      const result = await client.start(submitOpts, { timeoutMs: ${spec.pollDeadlineMs} });
       const sessionId = result.sessionId;
       const run = {
-        status: result.ok ? "succeeded" : (typeof result.status === "string" && result.status ? result.status : "failed"),
+        status: result.status,
         runtime: "managed",
         provider: ${JSON.stringify(spec.provider)}
       };
       const session = await client.sessions.open(sessionId);
 
-      const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-      const fallbackFiles = Array.isArray(result.files) ? result.files : [];
-      let events = fallbackEvents;
-      let files = fallbackFiles;
-      let eventSource = "fallback result.events";
-      let eventListError = null;
-      let listedEventCount = null;
-      let fileSource = "fallback result.files";
-      let fileListError = null;
-      let listedFileCount = null;
+      const resultEvents = result.events;
+      const resultFiles = result.files;
+      const events = (await session.events.list()).filter((event) => event.runId === result.run.runId);
+      const files = (await session.files.list()).files;
+      const eventSource = "session.events.list";
+      const eventListError = null;
+      const listedEventCount = events.length;
+      const fileSource = "session.files.list";
+      const fileListError = null;
+      const listedFileCount = files.length;
       // CUSTOM envelopes nest the original payload under data.value.
       function customName(e) {
         return e && e.data && typeof e.data.name === "string" ? e.data.name : null;
@@ -309,31 +274,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       function customValue(e) {
         const value = e && e.data ? e.data.value : null;
         return value && typeof value === "object" ? value : {};
-      }
-      const SESSION_TERMINAL_NAMES = new Set([
-        "aex.session.idle",
-        "aex.session.suspended",
-        "aex.session.succeeded",
-        "aex.session.failed",
-        "aex.session.timed_out",
-        "aex.session.cancelled"
-      ]);
-      function isSessionIdle(e) {
-        const name = customName(e);
-        return name !== null && SESSION_TERMINAL_NAMES.has(name);
-      }
-      function terminalKindOf(e) {
-        if (!e) return null;
-        return isSessionIdle(e) ? customName(e) : e.type;
-      }
-      function terminalDataOf(e) {
-        if (!e) return null;
-        if (!isSessionIdle(e)) return e.data ?? null;
-        const value = customValue(e);
-        return {
-          ...(e.data && typeof e.data === "object" ? e.data : {}),
-          reason: value.reason === "completed" ? "complete" : (value.reason ?? null)
-        };
       }
       function skillLoadedName(e) {
         const value = customValue(e);
@@ -347,33 +287,6 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         }
         return null;
       }
-      function hasTerminalEvent(list) {
-        return list.some((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR" || isSessionIdle(e));
-      }
-      try {
-        const listedEvents = await session.events().list();
-        listedEventCount = Array.isArray(listedEvents) ? listedEvents.length : null;
-        if (Array.isArray(listedEvents) && listedEvents.length > 0) {
-          const useListedEvents = hasTerminalEvent(listedEvents) || !hasTerminalEvent(fallbackEvents);
-          events = useListedEvents ? listedEvents : fallbackEvents;
-          eventSource = useListedEvents ? "session.events().list" : "fallback result.events";
-        }
-      } catch (err) {
-        eventListError = err && err.message ? err.message : String(err);
-        events = fallbackEvents;
-      }
-      try {
-        const listedFiles = await session.files().list();
-        listedFileCount = Array.isArray(listedFiles) ? listedFiles.length : null;
-        if (Array.isArray(listedFiles)) {
-          files = listedFiles;
-          fileSource = "session.files().list";
-        }
-      } catch (err) {
-        fileListError = err && err.message ? err.message : String(err);
-        files = fallbackFiles;
-      }
-
       const notifications = events.filter((e) => e.type === "CUSTOM");
       const notificationKinds = notifications.map((n) => customValue(n).kind || "(unknown)");
       const skillLoadedNames = notifications.map(skillLoadedName).filter(Boolean);
@@ -397,7 +310,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         const normalized = String(text ?? "").replace(/\\s+/g, "");
         for (const [channel, probe] of [
           ["system", ${JSON.stringify(probes.system)}],
-          ["agentsMd", ${JSON.stringify(probes.agentsMd)}],
+          ["instructions", ${JSON.stringify(probes.instructions)}],
           ["prompt", ${JSON.stringify(probes.prompt)}]
         ]) {
           if (!normalized.includes(probe)) continue;
@@ -420,7 +333,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         }
       }
       const channelProbeMisses = [];
-      for (const channel of ["system", "agentsMd", "prompt"]) {
+      for (const channel of ["system", "instructions", "prompt"]) {
         if (!channelProbeSources[channel] || channelProbeSources[channel].length === 0) channelProbeMisses.push(channel);
       }
 
@@ -428,7 +341,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const toolCallStartCount = events.filter((e) => e.type === "TOOL_CALL_START").length;
       const toolCallResultCount = events.filter((e) => e.type === "TOOL_CALL_RESULT").length;
 
-      const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+      const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
       const streamErrors = events
         .filter((e) => e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error")
         .map((e) => (e.data && e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
@@ -439,7 +352,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       for (const out of files.slice(0, 16)) {
         let sample = null;
         try {
-          const bytes = await session.files().download(out);
+          const bytes = await session.files.download(out);
           const text = new TextDecoder().decode(bytes);
           sample = text.slice(0, 256);
           for (const p of outProbes) {
@@ -463,8 +376,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
       return {
         sessionId: sessionId,
-        attempts: attempt + 1,
-        sessionStatus: run.status,
+        runOutcome: run.status,
         runtime: run.runtime ?? "(missing)",
         provider: run.provider ?? "(missing)",
         probes: ${JSON.stringify(probes)},
@@ -473,7 +385,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         eventTypeSet,
         eventSource,
         eventListError,
-        fallbackEventCount: fallbackEvents.length,
+        fallbackEventCount: resultEvents.length,
         listedEventCount,
         toolCallStartCount,
         toolCallResultCount,
@@ -481,18 +393,17 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
         skillLoadedNames,
         assistantTextJoined,
         assistantTextEventCount: assistantTextEvents.length,
-        terminalKind: terminalKindOf(terminal),
-        terminalData: terminalDataOf(terminal),
+        terminalKind: terminal ? terminal.type : null,
+        terminalData: terminal ? terminal.data : null,
         fileCount: files.length,
         fileSource,
         fileListError,
-        fallbackFileCount: fallbackFiles.length,
+        fallbackFileCount: resultFiles.length,
         listedFileCount,
         files: filesCollected,
         outProbesFound: Array.from(outProbesFound),
         channelProbeSources,
         channelProbeMisses,
-        retryReasons: [],
         leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv),
         streamErrors
       };
@@ -507,7 +418,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   const rand = (): string => Math.random().toString(36).slice(2, 10);
   // Channel-probe separators are dots, NOT hyphens. The stream-before-disk
   // runtime redactor masks high-entropy
-  // sessions of [A-Za-z0-9+/=-]{24,}. The model echoes these probes in a
+  // runs of [A-Za-z0-9+/=-]{24,}. The model echoes these probes in a
   // key=value shape ("session=<ref> project=<ref> request=<ref>"), and a
   // hyphen-segmented ref glued to its `session=` label forms one 24+ char
   // run that the redactor eats whole — the probe never survives into the
@@ -517,7 +428,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // go to session files, not the redacted stdout stream, so they keep hyphens.
   const probes: Probes = {
     system: "REF.verify." + rand(),
-    agentsMd: "REF.verify." + rand(),
+    instructions: "REF.verify." + rand(),
     prompt: "REF.verify." + rand(),
     out: ["REF-out-" + rand(), "REF-out-" + rand(), "REF-out-" + rand()]
   };
@@ -532,19 +443,17 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
     DEEPSEEK_KEY: deepseekKey
   });
 
-  return withPreCreateTransportRetry(`heavy-session ${spec.provider}`, async () => {
-    const child = await runCommand(getBunCommand(), [scriptPath], {
-      cwd: installDir,
-      timeoutMs: spec.timeoutMs,
-      env: passEnv
-    });
-    if (child.exitCode !== 0) {
-      throw new Error(
-        `heavy-session runner exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-      );
-    }
-    return JSON.parse(child.stdout.trim()) as CaseResult;
+  const child = await runCommand(getBunCommand(), [scriptPath], {
+    cwd: installDir,
+    timeoutMs: spec.timeoutMs,
+    env: passEnv
   });
+  if (child.exitCode !== 0) {
+    throw new Error(
+      `heavy-session runner exited non-zero (${child.exitCode}):\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+    );
+  }
+  return JSON.parse(child.stdout.trim()) as CaseResult;
 }
 
 let install: InstallResult;
@@ -575,7 +484,7 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
         install.installDir
       );
       console.info(
-        `[user-tests] heavy-session sessionId=${result.sessionId} status=${result.sessionStatus} terminalKind=${result.terminalKind ?? "(none)"}`
+        `[user-tests] heavy-session sessionId=${result.sessionId} outcome=${result.runOutcome} terminalKind=${result.terminalKind ?? "(none)"}`
       );
       assertManagedShape(result, [
         managedHeavySkillName("alpha", "deepseek"),

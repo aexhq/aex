@@ -227,7 +227,7 @@ describe("withRetry: transient handling", () => {
     const { fetch } = scriptedFetch([json({}, 429, { "retry-after": "5" }), json({ ok: true }, 200)]);
     const { deps, slept } = deterministicDeps(1); // backoff nominal = 100
     const wrapped = withRetry(fetch, { initialDelayMs: 100 }, deps);
-    await wrapped("https://x", { method: "POST" });
+    await wrapped("https://x", { method: "POST", headers: { "Idempotency-Key": "stable" } });
     // Retry-After (5s) dominates the 100ms backoff.
     expect(slept).toEqual([5000]);
   });
@@ -246,7 +246,7 @@ describe("withRetry: transient handling", () => {
       }
     });
 
-    const res = await wrapped("https://x", { method: "POST" });
+    const res = await wrapped("https://x", { method: "POST", headers: { "Idempotency-Key": "stable" } });
     expect(res.status).toBe(200);
     expect(slept).toEqual([10]);
     expect(samples).toEqual([0.9]);
@@ -258,7 +258,7 @@ describe("withRetry: transient handling", () => {
     ]);
     const { deps } = deterministicDeps(1);
     const wrapped = withRetry(fetch, { maxAttempts: 3, initialDelayMs: 1 }, deps);
-    const err = await wrapped("https://x", { method: "POST" }).catch((e: unknown) => e);
+    const err = await wrapped("https://x", { method: "POST", headers: { "Idempotency-Key": "stable" } }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AexRateLimitError);
     expect((err as AexRateLimitError).name).toBe("AexRateLimitError");
     expect((err as AexRateLimitError).status).toBe(429);
@@ -273,7 +273,7 @@ describe("withRetry: transient handling", () => {
     const { fetch } = scriptedFetch([json({ type: "overloaded_error" }, 529)]);
     const { deps } = deterministicDeps(1);
     const wrapped = withRetry(fetch, { maxAttempts: 2, initialDelayMs: 1 }, deps);
-    const err = await wrapped("https://x", { method: "POST" }).catch((e) => e);
+    const err = await wrapped("https://x", { method: "POST", headers: { "Idempotency-Key": "stable" } }).catch((e) => e);
     expect(isRateLimited(err)).toBe(true);
     expect((err as AexRateLimitError).status).toBe(529);
   });
@@ -305,7 +305,10 @@ describe("withRetry: transient handling", () => {
     const netErr = new TypeError("fetch failed");
     const okAfter = scriptedFetch([netErr, json({ ok: true }, 200)]);
     const okDeps = deterministicDeps(1);
-    const ok = await withRetry(okAfter.fetch, { initialDelayMs: 1 }, okDeps.deps)("https://x", { method: "POST" });
+    const ok = await withRetry(okAfter.fetch, { initialDelayMs: 1 }, okDeps.deps)("https://x", {
+      method: "POST",
+      headers: { "Idempotency-Key": "stable" }
+    });
     expect(ok.status).toBe(200);
     expect(okAfter.calls).toHaveLength(2);
 
@@ -313,7 +316,7 @@ describe("withRetry: transient handling", () => {
     const downDeps = deterministicDeps(1);
     const err = await withRetry(alwaysDown.fetch, { maxAttempts: 3, initialDelayMs: 1 }, downDeps.deps)(
       "https://x",
-      { method: "POST" }
+      { method: "POST", headers: { "Idempotency-Key": "stable" } }
     ).then(
       () => {
         throw new Error("expected rejection");
@@ -343,7 +346,8 @@ describe("withRetry: transient handling", () => {
     const { fetch, calls } = scriptedFetch([json({}, 429)]);
     const { deps, slept } = deterministicDeps(1);
     const wrapped = withRetry(fetch, { maxAttempts: 10, initialDelayMs: 1000, maxDelayMs: 1000, maxElapsedMs: 1500 }, deps);
-    await expect(wrapped("https://x", { method: "POST" })).rejects.toBeInstanceOf(AexRateLimitError);
+    await expect(wrapped("https://x", { method: "POST", headers: { "Idempotency-Key": "stable" } }))
+      .rejects.toBeInstanceOf(AexRateLimitError);
     expect(slept).toEqual([1000]);
     expect(calls).toHaveLength(2);
   });
@@ -361,7 +365,7 @@ describe("withRetry: transient handling", () => {
     const { fetch, calls } = scriptedFetch([json({}, 429, { "retry-after": "7" })]);
     const { deps, slept } = deterministicDeps(1);
     const wrapped = withRetry(fetch, { maxAttempts: 1 }, deps);
-    const err = await wrapped("https://x", { method: "POST" }).catch((e) => e);
+    const err = await wrapped("https://x", { method: "POST", headers: { "Idempotency-Key": "stable" } }).catch((e) => e);
     expect(isRateLimited(err)).toBe(true);
     expect((err as AexRateLimitError).attempts).toBe(1);
     expect((err as AexRateLimitError).retryAfterMs).toBe(7000);

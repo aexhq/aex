@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,8 +111,8 @@ describe("Tool.fromPath", () => {
   });
 });
 
-describe("Tool.upload", () => {
-  it("uploads a draft and returns a materialized asset-ref Tool", async () => {
+describe("Tool submission", () => {
+  it("requires the workspace publisher and exposes no alternate materialization API", async () => {
     const tool = await Tool.fromFiles({
       name: "calendar_lookup",
       description: "Looks up calendar availability.",
@@ -120,21 +120,8 @@ describe("Tool.upload", () => {
       entry: "index.js",
       files: { "index.js": "export default async function () {}\n" }
     });
-    const client = {
-      _uploadAsset: vi.fn(async (args: { hash: string }) => ({ assetId: `asset_${args.hash.slice("sha256:".length)}` }))
-    };
-
-    const uploaded = await tool.upload(client);
-    expect(client._uploadAsset).toHaveBeenCalledTimes(1);
-    expect(uploaded.toJSON()).toMatchObject({
-      kind: "asset",
-      name: "calendar_lookup",
-      description: "Looks up calendar availability.",
-      entry: "index.js"
-    });
-    // The draft is reusable (no consume): the original stays a draft and can be
-    // uploaded again (uploads are content-hash deduped).
-    expect(tool.isDraft).toBe(true);
-    await expect(tool.upload(client)).resolves.toBeInstanceOf(Tool);
+    expect(() => tool.toJSON()).toThrow(/publish with aex\.workspace\.tools\.publish/);
+    expect("upload" in tool).toBe(false);
+    expect("fromAsset" in Tool).toBe(false);
   });
 });

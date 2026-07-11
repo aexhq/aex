@@ -26,7 +26,7 @@ const digestPath = resolve(distDir, "cli.mjs.sha256");
 const result = await build({
   entryPoints: [inputPath],
   bundle: true,
-  // Bun sessions the ESM output and built-ins, so esbuild's node platform remains
+  // Bun runs the ESM output and built-ins, so esbuild's node platform remains
   // the most compatible resolver for package dependencies.
   platform: "node",
   format: "esm",

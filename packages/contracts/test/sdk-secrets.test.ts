@@ -63,7 +63,7 @@ describe("redactString — value-agnostic shapes", () => {
       "the quick brown fox jumps over the lazy dog",
       "rejects dotted event-name segments",
       "compatibility_date = 2026-05-20",
-      "https://api.aex.dev/v1/sessions",
+      "https://api.aex.dev/api/sessions",
       "session-1234-terminal",
       "local database status shows API URL http://127.0.0.1:56321",
       // Long digit-free mixed-case identifiers (stack-trace frames / API symbol
@@ -110,7 +110,7 @@ describe("value-shape precision: low-entropy NAMES survive, opaque secrets still
       expect(containsSecretLikeValue(name)).toBe(false);
     });
     it(`preserves "${name}" inside a secret_not_found error message`, () => {
-      const msg = `referenced workspace secret ${JSON.stringify(name)} does not exist; create it via POST /secrets`;
+      const msg = `referenced workspace secret ${JSON.stringify(name)} does not exist; create it via POST /api/secrets`;
       expect(redactString(msg)).toBe(msg);
     });
   }

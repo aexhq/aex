@@ -47,26 +47,26 @@ function makeHttp(opts: {
   return {
     async request<T>(path: string, init?: RequestInit): Promise<T> {
       const body = init?.body ? JSON.parse(init.body as string) : {};
-      if (path === "/assets/presign") {
+      if (path === "/api/assets/presign") {
         opts.rec.presignBodies.push(body);
         if (opts.exists) {
-          return { ok: true, exists: true, assetId: `asset_${body.hash.slice(7)}`, contentHash: body.hash, sizeBytes: body.sizeBytes } as T;
+          return { ok: true, exists: true, assetId: `asset_${body.hash.slice(7)}`, contentHash: body.hash, sizeBytes: body.sizeBytes, contentType: body.contentType } as T;
         }
         const partSize = body.partSize as number;
         const partCount = Math.max(1, Math.ceil((body.sizeBytes as number) / partSize));
         const partUrls = Array.from({ length: partCount }, (_, i) => ({ partNumber: i + 1, url: `https://s3.test/${key}?partNumber=${i + 1}` }));
         return { ok: true, exists: false, multipart: { uploadId, key, partSize, partCount, partUrls, expiresInSeconds: 300 } } as T;
       }
-      if (path === "/assets/mpu/presign-parts") {
+      if (path === "/api/assets/mpu/presign-parts") {
         opts.rec.refreshes += 1;
         const nums = body.partNumbers as number[];
         return { partUrls: nums.map((n) => ({ partNumber: n, url: `https://s3.test/${key}?partNumber=${n}&refreshed=1` })) } as T;
       }
-      if (path === "/assets/finalize") {
+      if (path === "/api/assets/finalize") {
         opts.rec.finalizeBodies.push(body);
-        return { ok: true, assetId: `asset_${body.hash.slice(7)}`, contentHash: body.hash, sizeBytes: body.sizeBytes } as T;
+        return { ok: true, assetId: `asset_${body.hash.slice(7)}`, contentHash: body.hash, sizeBytes: body.sizeBytes, contentType: "application/x-aex-bundle" } as T;
       }
-      if (path === "/assets/mpu/abort") {
+      if (path === "/api/assets/mpu/abort") {
         opts.rec.aborts += 1;
         return { ok: true } as T;
       }
@@ -127,10 +127,19 @@ describe("uploadAssetMultipart — part boundaries", () => {
       const fetch = makeFetch({ bodies, attempts: new Map() });
       const { drive, payload, hashHex } = driverOf(size);
 
-      const result = await uploadAssetMultipart({ http, drive, fetch, partSize: P, partConcurrency: 3 });
+      const result = await uploadAssetMultipart({
+        http,
+        drive,
+        fetch,
+        contentType: "application/x-aex-bundle",
+        partSize: P,
+        partConcurrency: 3
+      });
 
       expect(result.exists).toBe(false);
       expect(result.contentHash).toBe(`sha256:${hashHex}`);
+      expect(result.contentType).toBe("application/x-aex-bundle");
+      expect(rec.presignBodies[0]).toMatchObject({ contentType: "application/x-aex-bundle", multipart: true });
       // Correct part count + last-part remainder.
       const expectedParts = Math.max(1, Math.ceil(size / P));
       expect(bodies.size).toBe(expectedParts);

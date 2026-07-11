@@ -9,27 +9,14 @@ import { SECRET_ENV_NAME_PATTERN, SECRET_HANDLE_PATTERN, SecretString } from "@a
 export type SecretEnvSubmissionEntry = { readonly ref: string } | { readonly ephemeral: true };
 
 /**
- * Minimal client surface `secret.upload` needs to promote an ephemeral secret
- * into the workspace store. `Aex` satisfies it via its `secrets`
- * client; defined structurally here so `secret.ts` does not import `client.ts`
- * (which would be circular — `client.ts` imports `Secret`). Mirrors
- * {@link SkillUploader}.
- */
-export interface SecretUploader {
-  _createWorkspaceSecret(args: { readonly name: string; readonly value: string }): Promise<{ readonly name: string }>;
-}
-
-/**
- * A secret with the SAME lifecycle semantic as `File` / `AgentsMd`:
- * EPHEMERAL per-session by default, PROMOTABLE to a persisted, name-searchable
- * workspace secret you can reference and reuse.
+ * A secret with the SAME lifecycle semantic as `File` / `Instructions`:
+ * EPHEMERAL per-session by default, or a reference to a persisted workspace
+ * secret created explicitly through `aex.workspace.secrets.set(...)`.
  *
  *   - `Secret.value(v)` — EPHEMERAL per-session: the value is vaulted when the session is created and
  *     excluded from the idempotency hash; only a `{ ephemeral: true }`
  *     placeholder rides the (hashed) submission. Deleted when the session finishes.
  *     Clean, no workspace dependency. ≙ `File.fromBytes(...)` (a draft).
- *   - `secret.upload(client, { name })` — PROMOTE that value into the workspace
- *     secret store under `name`; resolves to a `Secret.ref`.
  *   - `Secret.ref(handle)` — WORKSPACE: only the handle rides the submission;
  *     the value is resolved server-side from the workspace secret store. No
  *     value ever travels.
@@ -44,11 +31,9 @@ export class Secret {
   /** Workspace handle (ref kind only); `undefined` for ephemeral values. */
   readonly handle: string | undefined;
   readonly #value: SecretString | undefined;
-  /** True once promoted via `upload` — a consumed ephemeral can't be reused. */
-  #consumed = false;
 
   /** Internal constructor. Use `Secret.value(...)` or `Secret.ref(...)`. */
-  constructor(args: { readonly kind: "value"; readonly value: SecretString } | { readonly kind: "ref"; readonly handle: string }) {
+  private constructor(args: { readonly kind: "value"; readonly value: SecretString } | { readonly kind: "ref"; readonly handle: string }) {
     if (!args || typeof args !== "object") {
       throw new Error("Secret: args is required");
     }
@@ -80,43 +65,10 @@ export class Secret {
     return new Secret({ kind: "ref", handle });
   }
 
-  /** True once this ephemeral secret has been promoted via `upload`. */
-  get isConsumed(): boolean {
-    return this.#consumed;
-  }
-
-  /**
-   * Promote this EPHEMERAL secret into the workspace secret store under `name`
-   * and return a `Secret.ref(name)` for reuse across sessions. Blocking: the store
-   * write completes before this resolves. Consumes this instance (an ephemeral
-   * value is promoted exactly once).
-   *
-   * Only valid on a `Secret.value(...)`; a `Secret.ref(...)` is already
-   * persisted.
-   */
-  async upload(client: SecretUploader, args: { readonly name: string }): Promise<Secret> {
-    if (this.kind !== "value") {
-      throw new Error("Secret.upload: only ephemeral Secret.value(...) secrets can be uploaded; a Secret.ref is already persisted");
-    }
-    if (this.#consumed) {
-      throw new Error("Secret.upload: this ephemeral secret was already consumed. Build a fresh Secret.value(...) to re-upload.");
-    }
-    if (!args || typeof args.name !== "string" || !SECRET_HANDLE_PATTERN.test(args.name)) {
-      throw new Error(`Secret.upload: name must match ${SECRET_HANDLE_PATTERN.source}`);
-    }
-    const value = this.#value!.unwrap();
-    await client._createWorkspaceSecret({ name: args.name, value });
-    this.#consumed = true;
-    return Secret.ref(args.name);
-  }
-
   /** Non-secret wire entry for `submission.secretEnv[<envName>]`. */
   toSubmissionEntry(): SecretEnvSubmissionEntry {
     if (this.kind === "ref") {
       return { ref: this.handle! };
-    }
-    if (this.#consumed) {
-      throw new Error("Secret: this ephemeral secret was consumed by upload(); reference it via the returned Secret.ref instead");
     }
     return { ephemeral: true };
   }
@@ -125,9 +77,6 @@ export class Secret {
   toSecretValue(): string | undefined {
     if (this.kind === "ref") {
       return undefined;
-    }
-    if (this.#consumed) {
-      throw new Error("Secret: this ephemeral secret was consumed by upload(); reference it via the returned Secret.ref instead");
     }
     return this.#value?.unwrap();
   }

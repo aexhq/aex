@@ -4,11 +4,11 @@ title: Cleanup
 
 # Cleanup
 
-aex schedules cleanup after a session reaches a terminal status. There is no
-opt-out for aex-owned cleanup attempts: tracked runtime resources such as
-managed runtime machines, scratch state, cached files, and session-scoped secret
-references are reclaimed when possible or surfaced through `cleanupStatus` when
-cleanup cannot complete.
+aex owns runtime cleanup after a run ends. This internal work is not a public
+session lifecycle state and is not represented by a synthetic `cleanupStatus`
+field. A terminal RUN event means the run's checkpoint, files, billing, and
+public read model are consistent; explicit session deletion remains a separate
+operation.
 
 The hosted product uses managed runtimes for all supported providers. Reusable
 provider-session retention is not a supported session option, and the removed
@@ -24,17 +24,5 @@ await aex.start({
 });
 ```
 
-## `cleanupStatus` values
-
-`cleanupStatus` reports the aggregate state of our cleanup work across the
-session's tracked resources. It is one of:
-
-- `not_started` - terminal not yet reached, or no resources to clean.
-- `pending` / `running` - cleanup is queued or in progress.
-- `succeeded` - tracked cleanup work completed for the resources aex
-  controls.
-- `failed_retryable` - a step failed in a way the cleanup task will retry.
-- `failed_terminal` - a step failed past retries; manual intervention may be
-  needed.
-- `skipped` - cleanup was not applicable for a tracked resource, or the
-  resource was already absent.
+Session sequencing is exposed only through `currentRun` and `lastRun`. Use
+`session.delete()` when the session itself should be deleted.

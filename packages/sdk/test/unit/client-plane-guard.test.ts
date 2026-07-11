@@ -10,6 +10,26 @@ import { Aex, CredentialValidationError } from "../../src/index.js";
 
 const devKey = formatApiKey({ plane: "dev", region: "eu-west-2", workspaceId: "ws123", secret: "s3cr3tvalue" });
 const prdKey = formatApiKey({ plane: "prd", region: "eu-west-2", workspaceId: "ws123", secret: "s3cr3tvalue" });
+const whoami = {
+  ok: true,
+  principalType: "api_key",
+  workspaceId: "ws123",
+  scopes: [],
+  limits: {
+    maxConcurrentSessions: 1,
+    submitRatePerMinute: 0,
+    spendCapUsd: 0,
+    monthSpendUsd: 0,
+    balanceUsd: 0,
+    balanceGraceFloorUsd: 0,
+    balanceGateActive: true,
+    paymentMethodStatus: "none",
+    planKey: "free",
+    accountType: "standard",
+    subscriptionStatus: "none",
+    subscriptionGate: "ok"
+  }
+};
 
 describe("constructor plane guard (WS11)", () => {
   it("throws on a dev key pointed at the prd host, making ZERO fetch calls", () => {
@@ -32,7 +52,7 @@ describe("constructor plane guard (WS11)", () => {
     const seen: string[] = [];
     const fetch: typeof globalThis.fetch = async (input) => {
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
-      return new Response(JSON.stringify({ workspaceId: "ws123" }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(whoami), { status: 200, headers: { "content-type": "application/json" } });
     };
     const client = new Aex(prdKey, { fetch });
     await client.whoami();
@@ -43,7 +63,7 @@ describe("constructor plane guard (WS11)", () => {
     const seen: string[] = [];
     const fetch: typeof globalThis.fetch = async (input) => {
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
-      return new Response(JSON.stringify({ workspaceId: "ws123" }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(whoami), { status: 200, headers: { "content-type": "application/json" } });
     };
     const client = new Aex(devKey, { fetch });
     await client.whoami();

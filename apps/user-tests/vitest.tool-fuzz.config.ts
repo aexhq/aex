@@ -30,7 +30,6 @@ export default defineConfig({
     include: ["test/live/live-sdk-tool-capability-fuzz.test.ts"],
     fileParallelism: false,
     maxConcurrency,
-    retry: 1,
     sequence: { concurrent: true }
   }
 });

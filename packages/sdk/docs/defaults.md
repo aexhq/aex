@@ -16,7 +16,7 @@ For the hard ceilings and who can raise them, see
 [Limits & quotas](limits-and-quotas.md). For policy boundaries, see
 [Limits](limits.md).
 
-## SessionRecord
+## Session
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
@@ -43,7 +43,7 @@ For the hard ceilings and who can raise them, see
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| SessionFile link / signed-URL TTL | 300 seconds (5 minutes) at the storage layer; `session.files().link(...)` defaults to `"1h"` | Per-call via `expiresSeconds` (storage) or `expiresIn` on `session.files().link` / `session.files().fetch`. | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
+| SessionFile link / signed-URL TTL | 300 seconds (5 minutes) at the storage layer; `session.files.link(...)` defaults to `"1h"` | Per-call via `expiresSeconds` (storage) or `expiresIn` on `session.files.link` / `session.files.fetch`. | `REQUEST_PRESIGN_URL_DEFAULT_TTL_SECONDS` |
 | Event-stream connection ticket TTL | 60 seconds | Per-mint via the `ttlMs` argument. | `REQUEST_TICKET_DEFAULT_TTL_MS` |
 
 ## Subagents
@@ -60,7 +60,7 @@ numeric entitlements; exact operational values may change as capacity evolves.
 
 | Option | Default | How to override | Source |
 | --- | --- | --- | --- |
-| SessionRecord submit rate (per minute) | 120 (`0` = disabled); past it `POST /sessions` fails with `429 workspace_submit_rate_exceeded` | Per-plane via env `AEX_WORKSPACE_SUBMIT_RATE_PER_MIN`; per-workspace via support. | — |
+| Session submit rate (per minute) | 120 (`0` = disabled); past it `POST /api/sessions` fails with `429 workspace_submit_rate_exceeded` | Per-plane via env `AEX_WORKSPACE_SUBMIT_RATE_PER_MIN`; per-workspace via support. | — |
 | Max concurrent sessions | Plan-based: 5 live root sessions (free), 50 (Pro), 200 (Team); hard ceiling 200 | Per-plan (upgrade) or per-workspace override via support, clamped to the ceiling. | `PLANS[planKey].maxConcurrentSessions` |
 | Monthly spend cap | $250 per UTC calendar month (`0` = unlimited) | Per-workspace override via support. | `WORKSPACE_DEFAULT_SPEND_CAP_USD` |
 | Per-workspace mutation rate limits (per minute) | session cancel 30, session delete 30, signed link 120, API key create 10, API key delete 30 | Per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var. | `WORKSPACE_RATE_LIMIT_DEFAULTS` |

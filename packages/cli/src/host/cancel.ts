@@ -1,7 +1,7 @@
 /**
  * `aex cancel <session-id>` — POST /api/sessions/{id}/cancel.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

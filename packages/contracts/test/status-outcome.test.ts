@@ -5,53 +5,44 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  SESSION_TURN_TERMINAL_OUTCOMES,
   SESSION_STATUSES,
   SESSION_LIFECYCLE_STATUSES,
   SESSION_TERMINAL_OUTCOMES,
   isTerminalSessionStatus,
-  type SessionTurnTerminalOutcome,
+  type SessionTerminalOutcome,
   type SessionStatus
 } from "../src/index.js";
 
-describe("session/session terminal-outcome SSoT (WS1)", () => {
-  it("SESSION_TURN_TERMINAL_OUTCOMES is a runtime subset of SESSION_STATUSES", () => {
-    for (const outcome of SESSION_TURN_TERMINAL_OUTCOMES) {
-      expect(SESSION_STATUSES as readonly string[]).toContain(outcome);
+describe("session lifecycle and run outcome vocabularies", () => {
+  it("keeps run outcomes out of resumable session statuses", () => {
+    expect(SESSION_TERMINAL_OUTCOMES).toEqual(["succeeded", "failed", "timed_out", "cancelled", "interrupted"]);
+    for (const outcome of SESSION_TERMINAL_OUTCOMES) {
+      expect(SESSION_STATUSES as readonly string[]).not.toContain(outcome);
     }
   });
 
-  it("SESSION_TERMINAL_OUTCOMES equals SESSION_TURN_TERMINAL_OUTCOMES element-for-element", () => {
-    expect([...SESSION_TERMINAL_OUTCOMES]).toEqual([...SESSION_TURN_TERMINAL_OUTCOMES]);
+  it("defines SESSION_STATUSES solely from thread lifecycle states", () => {
+    expect([...SESSION_STATUSES]).toEqual([...SESSION_LIFECYCLE_STATUSES]);
   });
 
-  it("recomposes SESSION_STATUSES = lifecycle ∪ terminal-outcomes ∪ awaiting_approval", () => {
-    expect([...SESSION_STATUSES]).toEqual([
-      ...SESSION_LIFECYCLE_STATUSES,
-      ...SESSION_TERMINAL_OUTCOMES,
-      "awaiting_approval"
-    ]);
-  });
-
-  it("replaces the bare 'error' status with 'failed' and adds awaiting_approval", () => {
-    expect(SESSION_STATUSES as readonly string[]).not.toContain("error");
-    expect(SESSION_STATUSES as readonly string[]).toContain("failed");
+  it("keeps error and approval holds resumable", () => {
+    expect(SESSION_STATUSES as readonly string[]).toContain("error");
+    expect(SESSION_STATUSES as readonly string[]).not.toContain("failed");
     expect(SESSION_STATUSES as readonly string[]).toContain("awaiting_approval");
   });
 
-  it("isTerminalSessionStatus: outcomes + deleted/expired are terminal; idle/running/awaiting_approval are not", () => {
-    for (const terminal of ["succeeded", "failed", "timed_out", "cancelled", "deleted", "expired"] as SessionStatus[]) {
+  it("treats only deleted and expired session threads as terminal", () => {
+    for (const terminal of ["deleted", "expired"] as SessionStatus[]) {
       expect(isTerminalSessionStatus(terminal)).toBe(true);
     }
-    for (const live of ["idle", "running", "suspended", "awaiting_approval"] as SessionStatus[]) {
+    for (const live of ["idle", "running", "suspended", "awaiting_approval", "error"] as SessionStatus[]) {
       expect(isTerminalSessionStatus(live)).toBe(false);
     }
   });
 
-  it("[compile-time] a non-SessionTurnTerminalOutcome member fails the satisfies constraint", () => {
-    // @ts-expect-error — "not_a_ses_outcome" is not a SessionTurnTerminalOutcome, so the
-    // `satisfies readonly SessionTurnTerminalOutcome[]` derivation fails to compile.
-    const bad = ["succeeded", "not_a_ses_outcome"] as const satisfies readonly SessionTurnTerminalOutcome[];
+  it("[compile-time] a non-SessionTerminalOutcome member fails the satisfies constraint", () => {
+    // @ts-expect-error - invalid values cannot satisfy the run outcome vocabulary.
+    const bad = ["succeeded", "not_a_ses_outcome"] as const satisfies readonly SessionTerminalOutcome[];
     expect(bad.length).toBe(2);
   });
 });

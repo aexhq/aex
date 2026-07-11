@@ -14,17 +14,18 @@ import {
   parseDurationToMs,
   parseSessionTimeout,
   parseRuntimeSize,
-  parseSessionSubmissionRequest,
   resolveSessionTimeoutMs,
   runtimeResources
 } from "../src/index.js";
+import { parseSessionSubmissionRequest } from "../src/internal.js";
 
 function baseRequest(overrides: Record<string, unknown> = {}) {
   return {
     workspaceId: "workspace-1",
     idempotencyKey: "idem-1",
     provider: "anthropic",
-    submission: { model: Models.CLAUDE_HAIKU_4_5, prompt: ["hello"], agentsMd: [], files: [], mcpServers: [] },
+    submission: { model: Models.CLAUDE_HAIKU_4_5, prompt: ["hello"], assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default", mcpServers: [] },
     secrets: { apiKeys: { anthropic: "sk-anthropic-test" } },
     ...overrides
   };

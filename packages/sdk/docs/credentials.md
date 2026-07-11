@@ -84,15 +84,10 @@ curl -sS \
 
 ## Workspace secrets
 
-> **Availability note:** workspace-secret `Secret.ref(...)` injection requires
-> the next platform deploy — on the current hosted plane the referenced
-> variable can resolve empty inside the session. Per-session `Secret.value(...)`
-> secrets are unaffected.
-
 Store reusable values once, then reference them by name:
 
 ```ts
-await aex.secrets.set({
+await aex.workspace.secrets.set({
   name: "internal-api-token",
   value: process.env.INTERNAL_API_TOKEN!
 });
@@ -121,5 +116,5 @@ the two-layer enforcement model.
 ## Explicit call-site rule
 
 There is no `defaultSecrets` and no client-held secret state. Each
-`openSession(...)` or `run(...)` call should show the provider keys, MCP auth, and
-runtime secrets needed for that call.
+`aex.sessions.create(...)` or `aex.start(...)` call should show the provider
+keys, MCP auth, and runtime secrets needed for that call.

@@ -1,18 +1,16 @@
 /**
  * `aex wait <session-id> [--timeout <dur>] [--interval <dur>]`
  *
- * Block until the session parks — reaches `idle`/`suspended`/`error` or a
- * terminal session status (the host-side mirror of the SDK's `session.wait()`),
- * then print the final `Session` record as JSON. Exits 0 when the session
- * parked cleanly (`idle`/`suspended`), RUNTIME_ERR on a non-clean park
- * (`error`/`failed`/…), and TIMEOUT_ERR when the `--timeout` deadline elapsed
- * first.
+ * Block until the session reaches a non-progressing lifecycle state, then
+ * print the final `Session` record as JSON. Exits 0 only when it is ready for a
+ * new message (`idle`), RUNTIME_ERR when it is held, errored, or removed, and
+ * TIMEOUT_ERR when the `--timeout` deadline elapses first.
  *
  * Where `events --follow` streams the event log, `wait` is the quiet
- * "tell me when it's done and what the outcome was" verb — one final
+ * "tell me when the session can stop progressing" verb with one final
  * line of JSON, script-friendly exit code.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -21,8 +19,7 @@ import {
   TIMEOUT_ERR,
   USAGE_ERR,
   emitJsonError,
-  isSessionOk,
-  isSessionParked,
+  isSessionNonProgressing,
   makeHttpClient,
   resolveCommonHostFlags,
   parseDuration,
@@ -81,7 +78,7 @@ export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promis
   // Emit the timeout JSON error body (via emitJsonError's side effect)
   // but return the dedicated TIMEOUT_ERR code rather than its RUNTIME_ERR.
   const timeout = (extra: Record<string, unknown>): CliExitCode => {
-    emitJsonError(io, "wait_timeout", `timed out after ${timeoutMs}ms waiting for session to park`, { sessionId, ...extra });
+    emitJsonError(io, "wait_timeout", `timed out after ${timeoutMs}ms waiting for a non-progressing session state`, { sessionId, ...extra });
     return TIMEOUT_ERR;
   };
 
@@ -90,17 +87,12 @@ export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promis
     try {
       session = await operations.getSession(http, sessionId);
     } catch (err) {
-      // Transient read failures are non-fatal until the deadline — a slow
-      // BFF or a brief network blip shouldn't abort a multi-minute wait.
-      io.stderr(`(transient) status poll failed: ${(err as Error).message}\n`);
-      if (Date.now() >= deadline) return timeout({});
-      await sleep(intervalMs);
-      continue;
+      return emitJsonError(io, "wait_failed", (err as Error).message, { sessionId });
     }
 
-    if (isSessionParked(session.status)) {
+    if (isSessionNonProgressing(session.status)) {
       io.stdout(JSON.stringify(session) + "\n");
-      return isSessionOk(session.status) ? SUCCESS : RUNTIME_ERR;
+      return session.status === "idle" ? SUCCESS : RUNTIME_ERR;
     }
 
     if (Date.now() >= deadline) return timeout({ lastStatus: session.status });

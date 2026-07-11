@@ -2,30 +2,47 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error JS helper is validated directly.
 import { buildPublicReleaseManifest, validatePlatformValidationManifest, validatePublicReleaseManifest } from "../cicd/release-manifest.mjs";
 
+const PUBLIC_SHA = "a".repeat(40);
+const OTHER_PUBLIC_SHA = "b".repeat(40);
+const SDK_INTEGRITY = "sha512-dGVzdA==";
+const OTHER_SDK_INTEGRITY = "sha512-b3RoZXI=";
+
 describe("release manifest contract", () => {
   it("writes a first-class public candidate manifest", () => {
     const manifest = buildPublicReleaseManifest({
       repository: "aexhq/aex",
       version: "0.40.17",
       distTag: "canary",
-      sessionId: "123",
+      runId: "123",
       runAttempt: "1",
-      headSha: "abc",
+      headSha: PUBLIC_SHA,
+      integrity: SDK_INTEGRITY,
       createdAt: "2026-07-09T00:00:00.000Z"
     });
 
     expect(manifest).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 3,
       kind: "aex-public-release-manifest",
       workflow: "release.yml",
-      sessionId: "123",
-      sdk: { packageName: "@aexhq/sdk", version: "0.40.17", initialDistTag: "canary" },
+      runId: "123",
+      sdk: {
+        packageName: "@aexhq/sdk",
+        version: "0.40.17",
+        integrity: SDK_INTEGRITY,
+        initialDistTag: "canary"
+      },
+      cli: { packageName: "@aexhq/sdk", version: "0.40.17", bin: "aex", integrity: SDK_INTEGRITY },
       promotion: { status: "candidate" }
     });
     expect(manifest.gates).toEqual(
       expect.arrayContaining(["publish", "published-artifact-smoke", "live-user-tests-preflight"])
     );
-    expect(validatePublicReleaseManifest(manifest, { version: "0.40.17", sessionId: "123" })).toEqual({
+    expect(validatePublicReleaseManifest(manifest, {
+      version: "0.40.17",
+      runId: "123",
+      headSha: PUBLIC_SHA,
+      integrity: SDK_INTEGRITY
+    })).toEqual({
       ok: true,
       errors: []
     });
@@ -36,8 +53,9 @@ describe("release manifest contract", () => {
       repository: "aexhq/aex",
       version: "0.40.17",
       distTag: "canary",
-      sessionId: "123",
-      headSha: "abc"
+      runId: "123",
+      headSha: PUBLIC_SHA,
+      integrity: SDK_INTEGRITY
     });
 
     expect(validatePublicReleaseManifest({ ...manifest, repository: "aexhq/aex-platform" }).errors).toContain(
@@ -50,25 +68,74 @@ describe("release manifest contract", () => {
     expect(validatePublicReleaseManifest({ ...manifest, sdk: { ...manifest.sdk, initialDistTag: "" } }).errors).toContain(
       "sdk.initialDistTag is required"
     );
+    expect(validatePublicReleaseManifest({ ...manifest, sdk: { ...manifest.sdk, integrity: "" } }).errors).toContain(
+      "sdk.integrity is required"
+    );
+    expect(validatePublicReleaseManifest({ ...manifest, cli: { ...manifest.cli, version: "0.40.18" } }).errors).toContain(
+      "cli.version must match sdk.version"
+    );
+  });
+
+  it("rejects public manifests whose source SHA or integrity differs from the promoted candidate", () => {
+    const manifest = buildPublicReleaseManifest({
+      repository: "aexhq/aex",
+      version: "0.40.17",
+      distTag: "canary",
+      runId: "123",
+      headSha: PUBLIC_SHA,
+      integrity: SDK_INTEGRITY
+    });
+
+    expect(validatePublicReleaseManifest(manifest, { headSha: OTHER_PUBLIC_SHA }).errors).toContain(
+      `headSha must be ${OTHER_PUBLIC_SHA}`
+    );
+    expect(validatePublicReleaseManifest(manifest, { integrity: OTHER_SDK_INTEGRITY }).errors).toContain(
+      `sdk.integrity must be ${OTHER_SDK_INTEGRITY}`
+    );
   });
 
   it("fails platform validation manifests that do not prove every release gate", () => {
     const result = validatePlatformValidationManifest(
       {
-        schemaVersion: 1,
+        schemaVersion: 3,
         kind: "aex-platform-validation-manifest",
-        platform: { sessionId: "456" },
-        publicRelease: { sessionId: "123" },
-        sdk: { version: "0.40.17" },
+        platform: { runId: "456" },
+        publicRelease: { runId: "123", headSha: PUBLIC_SHA },
+        sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
         gates: ["suite_dev"],
         images: { brain: { tag: "sha-a" }, egress: { tag: "sha-b" }, byok: { tag: "sha-c" } }
       },
-      { version: "0.40.17", sessionId: "456", publicReleaseSessionId: "123" }
+      {
+        version: "0.40.17",
+        runId: "456",
+        publicReleaseRunId: "123",
+        publicReleaseHeadSha: PUBLIC_SHA,
+        integrity: SDK_INTEGRITY
+      }
     );
 
     expect(result.ok).toBe(false);
     expect(result.errors).toEqual(
       expect.arrayContaining(["missing platform gate spot_canary_dev", "missing platform gate suite_prod", "missing platform gate smoke_prod"])
+    );
+  });
+
+  it("rejects platform evidence bound to a different public SHA or package integrity", () => {
+    const manifest = {
+      schemaVersion: 3,
+      kind: "aex-platform-validation-manifest",
+      platform: { runId: "456" },
+      publicRelease: { runId: "123", headSha: PUBLIC_SHA },
+      sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
+      gates: ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"],
+      images: { brain: { tag: "sha-a" }, egress: { tag: "sha-b" }, byok: { tag: "sha-c" } }
+    };
+
+    expect(validatePlatformValidationManifest(manifest, { publicReleaseHeadSha: OTHER_PUBLIC_SHA }).errors).toContain(
+      `publicRelease.headSha must be ${OTHER_PUBLIC_SHA}`
+    );
+    expect(validatePlatformValidationManifest(manifest, { integrity: OTHER_SDK_INTEGRITY }).errors).toContain(
+      `sdk.integrity must be ${OTHER_SDK_INTEGRITY}`
     );
   });
 });

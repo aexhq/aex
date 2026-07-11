@@ -130,7 +130,7 @@ describe("secret redaction (property)", () => {
     fc.assert(
       fc.property(sessionIdHex, (hex) => {
         const sessionId = `ses_${hex}`;
-        const msg = `timed out waiting for run ${sessionId} to park; cancel via openSession("${sessionId}")`;
+        const msg = `timed out waiting for run ${sessionId}; cancel via aex.sessions.open("${sessionId}")`;
         expect(redactString(msg)).toBe(msg);
         expect(containsSecretLikeValue(msg)).toBe(false);
         // the exemption is POSITION-BOUND: the same hex WITHOUT the session_ prefix

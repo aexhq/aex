@@ -4,7 +4,7 @@
  * Always emits JSON; `--json` is a globally-recognized no-op flag (consumed by
  * the common-flags parser) so `aex whoami --json` never errors.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

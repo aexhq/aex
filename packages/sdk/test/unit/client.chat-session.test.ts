@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Aex, type SessionStartResult } from "../../src/index.js";
+import { Aex, type SessionResult } from "../../src/index.js";
 import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
 
 interface CapturedRequest {
@@ -16,6 +16,8 @@ function event(sequence: number, patch: Partial<AexEvent> = {}): AexEvent {
     source: "agent",
     type: "TEXT_MESSAGE_CONTENT",
     subject: "sess_1",
+    threadId: "sess_1",
+    runId: "run_1",
     time: new Date(sequence).toISOString(),
     sequence,
     data: { text: "hello" },
@@ -84,25 +86,34 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
     calls.push({ url, method: (init?.method ?? "GET").toString(), headers, body });
 
     if (url.endsWith("/api/sessions")) {
-      return json({ session: { id: "sess_1", status: "idle", turnSeq: 0 } });
+      return json({ session: { id: "sess_1", status: "idle", acceptsMessages: true } });
     }
     if (url.endsWith("/api/sessions/sess_1/messages")) {
       return json({
-        session: { id: "sess_1", status: "running", turnSeq: 1 },
-        turn: { sessionId: "sess_1", turnSeq: 1 },
+        session: { id: "sess_1", status: "running", acceptsMessages: false },
+        run: { sessionId: "sess_1", turnSeq: 1, runId: "run_1", phase: "running", eventCursor: 4096 },
         eventCursor: 4096
       });
     }
     if (url.endsWith("/api/sessions/sess_1/events/ticket")) {
       return json({ wsUrl: "wss://events.example.test/sessions/sess_1", ticket: "ticket", expiresAtMs: 1 });
     }
-    if (url.endsWith("/api/sessions/sess_1/files")) {
-      return json({ files: [{ id: "out_1", filename: "answer.txt" }] });
+    if (url.includes("/api/sessions/sess_1/files?checkpointId=cp_1")) {
+      return json({
+        revision: { checkpointId: "cp_1", runId: "run_1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: 4097 },
+        files: [{ id: "out_1", checkpointId: "cp_1", filename: "answer.txt" }]
+      });
     }
     if (url.endsWith("/api/sessions/sess_1")) {
-      // Settle-stamped (costUsd present) so the default await-settle resolves on
-      // the first read; a `running` override stays unsettled to exercise the lag.
-      return json({ session: { id: "sess_1", status: options.getSessionStatus ?? "idle", turnSeq: 1, costUsd: 0 } });
+      // Terminal billing is committed on the first read; a `running` override
+      // deliberately exercises an inconsistent post-terminal response.
+      return json({ session: {
+        id: "sess_1",
+        status: options.getSessionStatus ?? "idle",
+        acceptsMessages: options.getSessionStatus !== "running",
+        costUsd: 0,
+        costTelemetry: { providerUsage: [] }
+      } });
     }
     return json({});
   };
@@ -116,9 +127,9 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
 }
 
 describe("Aex sessions", () => {
-  it("sessions.start creates a session, sends one message, and stops on a session idle event", async () => {
+  it("start creates a session, sends one message, and stops at RUN_FINISHED", async () => {
     const { client, calls, sockets, webSocketFactory } = makeClient();
-    const promise = client.sessions.start({
+    const promise = client.start({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
@@ -131,65 +142,61 @@ describe("Aex sessions", () => {
     sockets[0]!.message(event(4096));
     sockets[0]!.message(event(4097, {
       source: "runtime",
-      type: "CUSTOM",
-      data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
+      type: "RUN_FINISHED",
+      data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
     }));
 
-    const result: SessionStartResult = await promise;
+    const result: SessionResult = await promise;
     expect(result.sessionId).toBe("sess_1");
     // The RESULT status is the terminal OUTCOME (a clean park ⇒ succeeded); the
     // resumable lifecycle `idle` stays on the session record.
     expect(result.status).toBe("succeeded");
-    expect(result.session.status).toBe("idle");
+    expect(result.session?.status).toBe("idle");
     expect(result.text).toBe("hello");
     expect(result.events.map((evt) => evt.sequence)).toEqual([4096, 4097]);
-    expect(result.files).toEqual([{ id: "out_1", filename: "answer.txt" }]);
+    expect(result.files).toEqual([{ id: "out_1", checkpointId: "cp_1", filename: "answer.txt" }]);
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
       "POST https://api.example.test/api/sessions/sess_1/messages"
     );
     const create = calls.find((call) => call.method === "POST" && call.url.endsWith("/api/sessions"));
     expect((create!.body as Record<string, unknown>).retention).toEqual({ idleTtl: "3m" });
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
-      "GET https://api.example.test/api/sessions/sess_1/files"
+      "GET https://api.example.test/api/sessions/sess_1/files?checkpointId=cp_1"
     );
   });
 
-  it("patches a stale (running) post-stream record from the terminal event (await:'park')", async () => {
+  it("fails closed when RUN_FINISHED is visible before the session state is committed", async () => {
     const { client, sockets, webSocketFactory } = makeClient({ getSessionStatus: "running" });
-    const promise = client.sessions.start({
+    const promise = client.start({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
-      // 'park' skips the settle-poll (the record here never settles) so the
-      // terminal-event → record patch is what we exercise.
-      stream: { webSocketFactory, await: "park" }
+      stream: { webSocketFactory }
     });
 
     await flush();
     sockets[0]!.message(event(4096));
     sockets[0]!.message(event(4097, {
       source: "runtime",
-      type: "CUSTOM",
-      data: { name: "aex.session.idle", value: { sessionId: "sess_1", turnSeq: 1 } }
+      type: "RUN_FINISHED",
+      data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
     }));
 
-    const result = await promise;
-    // Outcome status is succeeded; the stale `running` record is patched to the
-    // carried `idle` park.
-    expect(result.status).toBe("succeeded");
-    expect(result.session.status).toBe("idle");
+    await expect(promise).rejects.toThrow(/before the session state was committed/);
   });
 
   it("session.send can be consumed as an async event stream", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
-    const session = await client.openSession({
+    const session = await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-ant" }
     });
     const seen: number[] = [];
     const consume = (async () => {
-      for await (const evt of session.send("continue", { webSocketFactory })) {
-        seen.push(evt.sequence);
+      for await (const evt of session.messages.send("continue", { webSocketFactory })) {
+        if (evt.replayable !== false) {
+          seen.push(evt.sequence);
+        }
       }
     })();
 
@@ -197,8 +204,8 @@ describe("Aex sessions", () => {
     sockets[0]!.message(event(4096));
     sockets[0]!.message(event(4097, {
       source: "runtime",
-      type: "CUSTOM",
-      data: { name: "aex.session.idle", value: { turnSeq: 1 } }
+      type: "RUN_FINISHED",
+      data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
     }));
     await consume;
 
@@ -207,22 +214,22 @@ describe("Aex sessions", () => {
 
   it("yields events carrying the is*() type-guard methods, and narrows in the branch", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
-    const session = await client.openSession({
+    const session = await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-ant" }
     });
     const texts: string[] = [];
     const toolNames: string[] = [];
-    let sawSettled = false;
+    let sawFinished = false;
     const consume = (async () => {
-      for await (const evt of session.send("continue", { webSocketFactory })) {
+      for await (const evt of session.messages.send("continue", { webSocketFactory })) {
         if (evt.isTextMessage()) {
           // `evt.data.text` is narrowed to `string` — no cast needed.
           texts.push(evt.data.text);
         } else if (evt.isToolCallStart()) {
           toolNames.push(evt.data.name);
         }
-        if (evt.isSessionSettled()) sawSettled = true;
+        if (evt.isRunFinished()) sawFinished = true;
         // The lifecycle discriminants are mutually exclusive on a text event.
         // eslint-disable-next-line aex/no-conditional-expect -- per-event-type check over a stream the harness guarantees yields text events; asserts discriminant mutual-exclusivity for each text event.
         if (evt.isTextMessage()) {
@@ -245,20 +252,20 @@ describe("Aex sessions", () => {
     sockets[0]!.message(
       event(4098, {
         source: "runtime",
-        type: "CUSTOM",
-        data: { name: "aex.session.idle", value: { turnSeq: 1 } }
+        type: "RUN_FINISHED",
+        data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
       })
     );
     await consume;
 
     expect(texts).toEqual(["hello"]);
     expect(toolNames).toEqual(["read_file"]);
-    expect(sawSettled).toBe(true);
+    expect(sawFinished).toBe(true);
   });
 
   it("collected result.events carry the is*() methods too", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
-    const promise = client.sessions.start({
+    const promise = client.start({
       model: "claude-haiku-4-5",
       message: "say hello",
       apiKeys: { anthropic: "sk-ant" },
@@ -270,20 +277,19 @@ describe("Aex sessions", () => {
     sockets[0]!.message(
       event(4097, {
         source: "runtime",
-        type: "CUSTOM",
-        data: { name: "aex.session.idle", value: { turnSeq: 1 } }
+        type: "RUN_FINISHED",
+        data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
       })
     );
 
     const result = await promise;
     expect(result.events[0]!.isTextMessage()).toBe(true);
-    expect(result.events[1]!.isCustom()).toBe(true);
-    expect(result.events[1]!.isSessionSettled()).toBe(true);
+    expect(result.events[1]!.isRunFinished()).toBe(true);
   });
 
-  it("openSession rehydrates an existing session handle", async () => {
+  it("sessions.open rehydrates an existing session handle", async () => {
     const { client, calls } = makeClient();
-    const session = await client.openSession("sess_1");
+    const session = await client.sessions.open("sess_1");
 
     expect(session.id).toBe("sess_1");
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
@@ -294,16 +300,16 @@ describe("Aex sessions", () => {
   it("sessions.delete deletes an id-addressed session", async () => {
     const { client, calls } = makeClient();
 
-    await client.sessions.delete("sess_1", { idempotencyKey: "delete-key-1" });
+    await client.sessions.delete("sess_1");
 
     const req = calls.find((call) => call.method === "DELETE" && call.url.endsWith("/api/sessions/sess_1"));
     expect(req).toBeTruthy();
-    expect(req!.headers["Idempotency-Key"] ?? req!.headers["idempotency-key"]).toBe("delete-key-1");
+    expect(req!.headers["Idempotency-Key"] ?? req!.headers["idempotency-key"]).toBeUndefined();
   });
 
-  it("openSession lets callers override the idle-to-suspend TTL", async () => {
+  it("sessions.create lets callers override the idle-to-suspend TTL", async () => {
     const { client, calls } = makeClient();
-    await client.openSession({
+    await client.sessions.create({
       model: "claude-haiku-4-5",
       overrides: { idleTtl: "10m" },
       apiKeys: { anthropic: "sk-ant" }
@@ -318,7 +324,7 @@ describe("Aex sessions", () => {
   it("rejects the old idleSuspendAfter override", async () => {
     const { client } = makeClient();
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         overrides: { idleSuspendAfter: "10m" } as never,
         apiKeys: { anthropic: "sk-ant" }
@@ -336,13 +342,6 @@ describe("Aex sessions", () => {
         apiKeys: { anthropic: "sk-ant" }
       } as never)
     ).rejects.toThrow(/Aex\.start: prompt is not a supported option; use message/);
-    await expect(
-      client.sessions.start({
-        model: "claude-haiku-4-5",
-        prompt: "legacy one-shot input",
-        apiKeys: { anthropic: "sk-ant" }
-      } as never)
-    ).rejects.toThrow(/Aex\.sessions\.start: prompt is not a supported option; use message/);
     expect(calls).toHaveLength(0);
   });
 
@@ -355,46 +354,44 @@ describe("Aex sessions", () => {
         apiKeys: { anthropic: "sk-ant" }
       } as never)
     ).rejects.toThrow(/Aex\.start: message must be a non-empty string or string array/);
+    await expect(client.start({
+      model: "claude-haiku-4-5",
+      message: "",
+      apiKeys: { anthropic: "sk-ant" }
+    })).rejects.toThrow(/Aex\.start: message must be a non-empty string/);
     await expect(
-      client.sessions.start({
-        model: "claude-haiku-4-5",
-        message: "",
-        apiKeys: { anthropic: "sk-ant" }
-      })
-    ).rejects.toThrow(/Aex\.sessions\.start: message must be a non-empty string/);
-    await expect(
-      client.sessions.start({
+      client.start({
         model: "claude-haiku-4-5",
         message: ["ok", ""] as never,
         apiKeys: { anthropic: "sk-ant" }
       })
-    ).rejects.toThrow(/Aex\.sessions\.start: message segments must be non-empty strings/);
+    ).rejects.toThrow(/Aex\.start: message segments must be non-empty strings/);
     expect(calls).toHaveLength(0);
   });
 
   it("rejects invalid session.send input before sending a message request", async () => {
     const { client, calls } = makeClient();
-    const session = await client.openSession({
+    const session = await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-ant" }
     });
     calls.length = 0;
 
-    expect(() => session.send("")).toThrow(/SessionHandle\.send: input must be a non-empty string/);
-    expect(() => session.send([] as never)).toThrow(/SessionHandle\.send: input must be a non-empty string or string array/);
-    expect(() => session.send(["ok", ""] as never)).toThrow(/SessionHandle\.send: input segments must be non-empty strings/);
+    expect(() => session.messages.send("")).toThrow(/session\.messages\.send: input must be a non-empty string/);
+    expect(() => session.messages.send([] as never)).toThrow(/session\.messages\.send: input must be a non-empty string or string array/);
+    expect(() => session.messages.send(["ok", ""] as never)).toThrow(/session\.messages\.send: input segments must be non-empty strings/);
     expect(calls).toHaveLength(0);
   });
 
   it("rejects public AbortSignal controls on the session API", async () => {
     const { client } = makeClient();
     const signal = new AbortController().signal;
-    const session = await client.openSession({
+    const session = await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-ant" }
     });
 
-    expect(() => session.send("continue", { signal } as never)).toThrow(/signal is not a supported option/);
+    expect(() => session.messages.send("continue", { signal } as never)).toThrow(/signal is not a supported option/);
     await expect(
       client.start({
         model: "claude-haiku-4-5",

@@ -69,7 +69,7 @@ export function parseRuntimeSize(input: unknown): RuntimeSize | undefined {
 }
 
 // ===========================================================================
-// SessionRecord timeout
+// Session timeout
 // ===========================================================================
 
 /** Default session deadline when `timeout` is omitted (8 hours). */

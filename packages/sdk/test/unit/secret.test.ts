@@ -1,9 +1,9 @@
 /**
  * SDK shape tests for Secret — the per-session/workspace secret reference builder.
  *
- * Secrets share the lifecycle SEMANTIC of Skill / File / AgentsMd: per-session by
- * default (vaulted at submit, gone when the session finishes), and PROMOTABLE to a
- * persisted, name-searchable workspace secret you can reference and reuse.
+ * Secrets share the lifecycle SEMANTIC of Skill / File / Instructions: per-session by
+ * default (vaulted at submit, gone when the session finishes), or an explicit
+ * reference to a secret persisted through `aex.workspace.secrets`.
  *
  *   - Secret.value("sk-...")  = EPHEMERAL per-session value. Wire { ephemeral: true }
  *                               (value-free placeholder) + the value split into
@@ -11,8 +11,6 @@
  *                               idempotency hash — exactly how McpServer splits
  *                               headers into secrets.mcpServers. Deleted at the
  *                               session's terminal (no workspace dependency).
- *   - secret.upload(client,…) = PROMOTE that value into the workspace secret
- *                               store under a name; returns a Secret.ref.
  *   - Secret.ref("serper")    = WORKSPACE handle ref; wire { ref: "serper" }.
  *                               Value resolved server-side; NO value travels.
  *
@@ -63,51 +61,25 @@ describe("Secret.ref (workspace handle — persisted, searchable by name)", () =
   });
 });
 
-describe("secret.upload (promote ephemeral → persisted workspace ref)", () => {
-  function makeUploader(): {
-    uploader: { _createWorkspaceSecret(a: { name: string; value: string }): Promise<{ name: string }> };
-    created: Array<{ name: string; value: string }>;
-  } {
-    const created: Array<{ name: string; value: string }> = [];
-    const uploader = {
-      async _createWorkspaceSecret(a: { name: string; value: string }) {
-        created.push(a);
-        return { name: a.name };
-      }
-    };
-    return { uploader, created };
-  }
-
-  it("uploads the value under a name and returns a Secret.ref to reuse", async () => {
-    const { uploader, created } = makeUploader();
-    const ref = await Secret.value("sk-live-XYZ").upload(uploader, { name: "serper" });
-    expect(created).toEqual([{ name: "serper", value: "sk-live-XYZ" }]);
-    expect(ref.kind).toBe("ref");
-    expect(ref.handle).toBe("serper");
-    expect(ref.toSubmissionEntry()).toEqual({ ref: "serper" });
-    // After promotion the value lives in the workspace store, not on the ref.
-    expect(ref.toSecretValue()).toBeUndefined();
-  });
-
-  it("consumes the ephemeral secret so it can't also be submitted inline", async () => {
-    const { uploader } = makeUploader();
-    const s = Secret.value("sk-live-XYZ");
-    await s.upload(uploader, { name: "serper" });
-    expect(s.isConsumed).toBe(true);
-    expect(() => s.toSecretValue()).toThrow();
-    await expect(s.upload(uploader, { name: "serper" })).rejects.toThrow();
-  });
-
-  it("rejects uploading a workspace ref (only ephemeral secrets are uploadable)", async () => {
-    const { uploader } = makeUploader();
-    await expect(Secret.ref("serper").upload(uploader, { name: "x" })).rejects.toThrow();
-  });
-
-  it("validates the workspace name", async () => {
-    const { uploader } = makeUploader();
-    await expect(Secret.value("v").upload(uploader, { name: "bad name!" })).rejects.toThrow();
+describe("Secret persistence boundary", () => {
+  it("does not make a submission value responsible for workspace writes", () => {
+    const secret = Secret.value("sk-live-XYZ");
+    expect("upload" in secret).toBe(false);
+    expect("isConsumed" in secret).toBe(false);
   });
 });
+
+function compileTimeSecretHasNoUpload(secret: Secret): void {
+  // @ts-expect-error Workspace persistence belongs to aex.workspace.secrets.set.
+  void secret.upload;
+}
+void compileTimeSecretHasNoUpload;
+
+function compileTimeSecretUsesNamedBuilders(): void {
+  // @ts-expect-error Callers choose Secret.value(...) or Secret.ref(...).
+  new Secret({ kind: "ref", handle: "serper" });
+}
+void compileTimeSecretUsesNamedBuilders;
 
 describe("Secret split invariant (the leak-safety property)", () => {
   it("ref: the handle is hashable, the value is absent (resolved server-side)", () => {

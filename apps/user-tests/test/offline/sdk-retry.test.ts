@@ -8,7 +8,7 @@
  *   - every retry re-issues the SAME Idempotency-Key (no duplicate billable session turn),
  *   - a persistent throttle surfaces a structured `AexRateLimitError`,
  *   - non-retryable 4xx fail fast, and `retry:false` disables the layer,
- *   - `session.replayLast(...)` exists for replaying a throttled turn.
+ *   - `session.messages.replayLast(...)` exists for replaying a throttled turn.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -53,7 +53,7 @@ function makeFetch(outcomes) {
           headers: { "content-type": "application/json", "retry-after": "0" }
         });
       }
-      return new Response(JSON.stringify({ session: { id: "sess_retry", status: "idle", turnSeq: 0 } }), {
+      return new Response(JSON.stringify({ session: { id: "sess_retry", status: "idle", acceptsMessages: true } }), {
         status: 201,
         headers: { "content-type": "application/json" }
       });
@@ -167,8 +167,8 @@ strictEqual(raw instanceof AexApiError, true);
 
 // 6) A handle exposes replayLast for replaying a throttled turn.
 const f = makeFetch([201]);
-const handle = await client(f.fetch).openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
-strictEqual(typeof handle.replayLast, "function");
+const handle = await client(f.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+strictEqual(typeof handle.messages.replayLast, "function");
 
 console.log(JSON.stringify({
   ok: true,
@@ -177,7 +177,7 @@ console.log(JSON.stringify({
   throttleAttempts: throttle.attempts,
   failFastAttempts: d.attempts.length,
   disabledAttempts: e.attempts.length,
-  hasReplayLast: typeof handle.replayLast === "function"
+  hasReplayLast: typeof handle.messages.replayLast === "function"
 }));
 `;
     const result = await runChild(script, "sdk-retry-behaviors.mjs", 120_000);

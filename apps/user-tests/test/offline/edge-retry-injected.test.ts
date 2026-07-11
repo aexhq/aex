@@ -10,9 +10,9 @@
  *   - a malformed / oversized error body never crashes the SDK — it still throws a
  *     typed `AexApiError` with a string message and captured body;
  *   - `parseProviderFault` / `isThrottleFault` parse raw upstream fault shapes;
- *   - `session.replayLast()` before any send throws a typed `SessionStateError`.
+ *   - `session.messages.replayLast()` before any send throws a typed `SessionStateError`.
  *
- * SessionRecord offline (no dev network):
+ * Run offline (no dev network):
  *   cd aex/apps/user-tests
  *   bun run vitest run --config vitest.offline.config.ts test/offline/edge-retry-injected.test.ts
  */
@@ -51,7 +51,7 @@ function makeFetch(outcomes) {
           : JSON.stringify({ error: "slow down" });
         return new Response(body, { status, headers });
       }
-      return new Response(JSON.stringify({ session: { id: "sess_edge", status: "idle", turnSeq: 0 } }), {
+      return new Response(JSON.stringify({ session: { id: "sess_edge", status: "idle", acceptsMessages: true } }), {
         status: 201,
         headers: { "content-type": "application/json" }
       });
@@ -185,9 +185,9 @@ const faultChecks = {
 
 // (6) replayLast() before any send is a typed SessionStateError (not a bare throw).
 const ok201 = makeFetch([201]);
-const handle = await client(ok201.fetch).openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
+const handle = await client(ok201.fetch).sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-ant" } });
 let replayErr;
-try { handle.replayLast(); } catch (err) { replayErr = err; }
+try { handle.messages.replayLast(); } catch (err) { replayErr = err; }
 const replayCheck = {
   isSessionStateError: replayErr instanceof SessionStateError,
   name: replayErr && replayErr.name,

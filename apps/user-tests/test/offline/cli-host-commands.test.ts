@@ -75,13 +75,27 @@ async function startFakeApi(): Promise<FakeApi> {
 
     // --- session endpoints (run/status/events/wait/cancel speak these) ---
     if (req.method === "POST" && url.pathname === "/api/sessions") {
-      json(res, 200, { id: "session-cli-1", status: "idle", provider: "deepseek", runtime: "managed" });
+      json(res, 201, {
+        session: {
+          id: "session-cli-1",
+          status: "idle",
+          acceptsMessages: true,
+          provider: "deepseek",
+          runtimeSize: "shared-0.25x-1gb"
+        }
+      });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/sessions/session-cli-1/messages") {
-      json(res, 200, {
-        session: { id: "session-cli-1", status: "running", provider: "deepseek", runtime: "managed" },
-        turn: { sessionId: "session-cli-1", turnSeq: 1 },
+      json(res, 202, {
+        session: {
+          id: "session-cli-1",
+          status: "running",
+          acceptsMessages: false,
+          provider: "deepseek",
+          runtimeSize: "shared-0.25x-1gb"
+        },
+        run: { sessionId: "session-cli-1", runId: "run-1", turnSeq: 1, phase: "running" },
         eventCursor: 1
       });
       return;
@@ -89,29 +103,54 @@ async function startFakeApi(): Promise<FakeApi> {
     if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1") {
       statusPolls += 1;
       json(res, 200, {
-        id: "session-cli-1",
-        status: statusPolls > 1 ? "idle" : "running",
-        provider: "deepseek",
-        runtime: "managed"
+        session: {
+          id: "session-cli-1",
+          status: statusPolls > 1 ? "idle" : "running",
+          acceptsMessages: statusPolls > 1,
+          provider: "deepseek",
+          runtimeSize: "shared-0.25x-1gb"
+        }
       });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/events") {
       json(res, 200, {
         events: [
-          { id: "evt-1", type: "TURN_STARTED", data: { phase: "start" } },
-          { id: "evt-2", type: "TURN_FINISHED", data: { reason: "complete" } }
+          {
+            specversion: "1.0",
+            id: "evt-1",
+            source: "runtime",
+            type: "RUN_STARTED",
+            subject: "session-cli-1",
+            threadId: "session-cli-1",
+            runId: "run-1",
+            time: "2026-07-10T00:00:00.000Z",
+            sequence: 0,
+            data: { phase: "start" }
+          },
+          {
+            specversion: "1.0",
+            id: "evt-2",
+            source: "workflow",
+            type: "RUN_FINISHED",
+            subject: "session-cli-1",
+            threadId: "session-cli-1",
+            runId: "run-1",
+            time: "2026-07-10T00:00:01.000Z",
+            sequence: 1,
+            data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } }
+          }
         ]
       });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/sessions/session-cli-1/cancel") {
-      json(res, 200, { session: { id: "session-cli-1", status: "cancelling" } });
+      json(res, 200, { session: { id: "session-cli-1", status: "cancelling", acceptsMessages: false } });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/sessions") {
       json(res, 200, {
-        sessions: [{ id: "session-cli-1", status: "idle", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z" }]
+        sessions: [{ id: "session-cli-1", status: "idle", acceptsMessages: true, createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z" }]
       });
       return;
     }
@@ -149,33 +188,17 @@ async function startFakeApi(): Promise<FakeApi> {
       return;
     }
 
-    // --- run endpoints (download assembles the public zip client-side from
-    // these; the session id doubles as the session id) ---
-    if (req.method === "GET" && url.pathname === "/api/sessions") {
-      json(res, 200, {
-        sessions: [
-          { id: "session-cli-1", status: "succeeded", createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z", costUsd: 0.02 },
-          { id: "session-cli-0", status: "failed", createdAt: "2026-06-01T00:00:00Z", updatedAt: "2026-06-01T00:01:00Z" }
-        ]
-      });
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1") {
-      json(res, 200, { id: "session-cli-1", status: "succeeded", provider: "deepseek", runtime: "managed" });
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/events") {
-      json(res, 200, {
-        events: [
-          { id: "evt-1", type: "TURN_STARTED", data: { phase: "start" } },
-          { id: "evt-2", type: "TURN_FINISHED", data: { reason: "complete" } }
-        ]
-      });
-      return;
-    }
+    // Download assembles the public zip client-side from the session read endpoints.
     if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/files") {
       json(res, 200, {
-        files: [{ id: "out-1", filename: "report.txt", sizeBytes: 11, contentType: "text/plain" }]
+        revision: {
+          checkpointId: "cp-1",
+          runId: "run-1",
+          turnSeq: 1,
+          committedAt: "2026-07-10T00:00:00.000Z",
+          throughSeq: 2
+        },
+        files: [{ id: "out-1", checkpointId: "cp-1", filename: "report.txt", sizeBytes: 11, contentType: "text/plain" }]
       });
       return;
     }
@@ -242,8 +265,9 @@ describe("installed CLI host commands", () => {
     expect(JSON.parse(run.stdout.trim())).toEqual({
       id: "session-cli-1",
       status: "running",
+      acceptsMessages: false,
       provider: "deepseek",
-      runtime: "managed"
+      runtime: "shared-0.25x-1gb"
     });
 
     const status = await runCommand(binPath, ["status", "session-cli-1", ...common], {
@@ -255,7 +279,7 @@ describe("installed CLI host commands", () => {
       id: "session-cli-1",
       status: "running",
       provider: "deepseek",
-      runtime: "managed"
+      runtime: "shared-0.25x-1gb"
     });
 
     const events = await runCommand(binPath, ["events", "session-cli-1", ...common], {
@@ -275,8 +299,9 @@ describe("installed CLI host commands", () => {
     expect(JSON.parse(wait.stdout.trim())).toEqual({
       id: "session-cli-1",
       status: "idle",
+      acceptsMessages: true,
       provider: "deepseek",
-      runtime: "managed"
+      runtime: "shared-0.25x-1gb"
     });
 
     const outPath = join(install.installDir, "installed-cli-run.zip");
@@ -322,7 +347,7 @@ describe("installed CLI host commands", () => {
         "GET /api/sessions/session-cli-1",
         "GET /api/sessions/session-cli-1/events",
         "GET /api/sessions/session-cli-1/files",
-        "GET /api/sessions/session-cli-1/files/out-1/download"
+        "GET /api/sessions/session-cli-1/files/out-1/download?checkpointId=cp-1"
       ])
     );
 

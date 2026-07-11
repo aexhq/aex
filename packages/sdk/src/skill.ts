@@ -1,8 +1,7 @@
 import {
   SKILL_NAME_PATTERN,
   SKILL_RESERVED_NAMES,
-  type FetchLike,
-  type SkillRef
+  type FetchLike
 } from "@aexhq/contracts";
 import { bundleSkillFiles, hashSkillBundle, type BundleMeta, type SkillFiles } from "./bundle.js";
 import { fetchSkillArchive } from "./fetch-archive.js";
@@ -11,51 +10,35 @@ import type { IgnoreOptions } from "./node-walk.js";
 import { unzipSync } from "fflate";
 
 /**
- * A Skill is a FIRST-CLASS, workspace-scoped, by-name bundle of instructional /
+ * A Skill is a draft workspace bundle of instructional /
  * executable content (`SKILL.md` at the bundle root plus any supporting files).
- * It is DISTINCT from a {@link Tool}: skills are passed on the session's separate
- * `skills:` input, not `tools:`, and a session gets a single `skills` meta-tool
+ * It is distinct from a {@link Tool}: a session gets a single `skills` meta-tool
  * (list/load) rather than one load-tool per skill.
  *
- * Lifecycle mirrors `Secret` promotion, but keyed to a workspace name:
- *   - The `Skill.from*` factories read a bundle, lift `name` + `description` from
- *     the `SKILL.md` YAML frontmatter (an explicit `{ name }` overrides), and
- *     canonically zip + hash the bytes → a DRAFT skill.
- *   - `skill.upload(client)` UPSERTS the workspace skill by name: it stages the
- *     bytes to the content-addressed asset store (presign/finalize) and PUTs the
- *     registry entry. Identical bytes are a no-op. Returns an uploaded `Skill`
- *     whose wire ref is `{ kind:"skill", name }` (BY NAME — no assetId, no hash).
- *   - Passing a DRAFT skill in `skills:` auto-upserts it on submit (same
- *     ergonomic as a draft `Tool` / `File`).
- *
- * Binding is by name and mutable: a re-upload under the same name changes what
- * every future run referencing that name sees.
+ * Factories read, canonically bundle, and hash local content. Publish the draft
+ * with `aex.workspace.skills.publish(skill)`, then pin the returned immutable
+ * resource ref in `assets.skills`.
  */
 export class Skill {
-  #ref: SkillRef | DraftSkillRef;
+  readonly #ref: DraftSkillRef;
   readonly #description: string;
-  readonly #bundleBytes: Uint8Array | undefined;
-  /** Set once this instance has upserted its bytes, so reuse skips the round-trip. */
-  #uploadedName: string | undefined;
+  readonly #bundleBytes: Uint8Array;
 
   /** Internal constructor. Use the `Skill.from*` factories. */
-  private constructor(ref: SkillRef | DraftSkillRef, description: string, bundleBytes?: Uint8Array) {
+  private constructor(ref: DraftSkillRef, description: string, bundleBytes: Uint8Array) {
     this.#ref = ref;
     this.#description = description;
     this.#bundleBytes = bundleBytes;
-    if (ref.kind === "skill") {
-      this.#uploadedName = ref.name;
-    }
   }
 
-  /** The wire ref: `{ kind:"skill", name }` once uploaded, or the draft shape before. */
-  get ref(): SkillRef | DraftSkillRef {
+  /** Draft identity and canonical content hash. */
+  get ref(): DraftSkillRef {
     return this.#ref;
   }
 
   /** True for a local-bytes skill that has not been upserted to the workspace yet. */
   get isDraft(): boolean {
-    return this.#ref.kind === "draft";
+    return true;
   }
 
   get name(): string {
@@ -66,17 +49,7 @@ export class Skill {
     return this.#description;
   }
 
-  /** Internal: the workspace name this instance already upserted, or undefined. */
-  get _cachedName(): string | undefined {
-    return this.#uploadedName;
-  }
-
-  /** Internal: remember that this instance's bytes were upserted under `name`. */
-  _rememberUpload(name: string): void {
-    this.#uploadedName = name;
-  }
-
-  // --- factories (source symmetry with File / AgentsMd / Tool) --------------
+  // --- factories (source symmetry with File / Instructions / Tool) --------------
 
   /**
    * Read a local skill directory. It must contain `SKILL.md` at its root, whose
@@ -175,52 +148,10 @@ export class Skill {
     return Skill.#fromFiles("Skill.fromBytes", files, args.name, undefined);
   }
 
-  // --- workspace upsert -----------------------------------------------------
-
   /**
-   * UPSERT this skill into the workspace registry by name and return an uploaded
-   * `Skill` whose ref is `{ kind:"skill", name }`. Two steps: stage the bytes to
-   * the content-addressed asset store (dedup makes identical bytes a no-op PUT),
-   * then PUT the registry entry (identical `contentHash` ⇒ server no-op). Reusing
-   * the SAME instance across submits skips both round-trips.
-   *
-   * Throws on an already-uploaded (non-draft) skill, mirroring `Tool.upload`.
+   * Internal: yield the draft bytes and metadata to the workspace publisher.
    */
-  async upload(client: SkillUploader): Promise<Skill> {
-    const bundle = this._takeDraftBundle();
-    if (!bundle) {
-      throw new Error(
-        "Skill.upload: only draft skills can be uploaded. This skill is already a workspace ref " +
-          "({ kind:'skill', name }); reference it by name in skills:[...]."
-      );
-    }
-    if (this.#uploadedName === undefined) {
-      await client._uploadAsset({
-        bytes: bundle.bytes,
-        hash: bundle.contentHash,
-        contentType: "application/zip"
-      });
-      await client._upsertSkill({
-        name: bundle.name,
-        contentHash: bundle.contentHash,
-        description: bundle.description,
-        sizeBytes: bundle.bytes.byteLength
-      });
-      this.#uploadedName = bundle.name;
-    }
-    return new Skill({ kind: "skill", name: bundle.name }, bundle.description);
-  }
-
-  /**
-   * Internal: yield the draft's bytes + metadata so `client.start` / `openSession`
-   * can auto-upsert it. Non-consuming: a Skill is reusable across sessions — the
-   * first use caches the resolved name so later uses skip the round-trip. Returns
-   * undefined for an already-uploaded skill.
-   */
-  _takeDraftBundle(): { name: string; description: string; contentHash: string; bytes: Uint8Array } | undefined {
-    if (this.#ref.kind !== "draft" || !this.#bundleBytes) {
-      return undefined;
-    }
+  _takeDraftBundle(): { name: string; description: string; contentHash: string; bytes: Uint8Array } {
     return {
       name: this.#ref.name,
       description: this.#ref.description,
@@ -229,14 +160,8 @@ export class Skill {
     };
   }
 
-  toJSON(): SkillRef {
-    if (this.#ref.kind === "draft") {
-      throw new Error(
-        "Skill: a draft skill cannot be JSON-serialised — it only becomes a by-name wire ref once " +
-          "skill.upload(client) upserts it (or run / openSession auto-upserts it from skills:[...])."
-      );
-    }
-    return this.#ref;
+  toJSON(): never {
+    throw new Error("Skill drafts cannot be submitted directly; publish with aex.workspace.skills.publish(...)");
   }
 
   static async #fromFiles(
@@ -265,34 +190,13 @@ export class Skill {
 }
 
 /**
- * SDK-internal draft marker. Never reaches the wire; `skill.upload` /
- * `run` / `openSession` converts it to a by-name {@link SkillRef} once the bytes
- * are upserted.
+ * SDK-internal draft marker. It never reaches the session wire directly.
  */
 export interface DraftSkillRef {
   readonly kind: "draft";
   readonly name: string;
   readonly description: string;
   readonly contentHash: string;
-}
-
-/**
- * Minimal client surface `skill.upload` needs to upsert a workspace skill.
- * `Aex` satisfies it; defined structurally here so `skill.ts` does not import
- * `client.ts` (which would be circular — `client.ts` imports `Skill`).
- */
-export interface SkillUploader {
-  _uploadAsset(args: {
-    readonly bytes: Uint8Array;
-    readonly hash: string;
-    readonly contentType?: string;
-  }): Promise<{ readonly assetId: string }>;
-  _upsertSkill(args: {
-    readonly name: string;
-    readonly contentHash: string;
-    readonly description: string;
-    readonly sizeBytes: number;
-  }): Promise<{ readonly updated: boolean }>;
 }
 
 /**
@@ -334,7 +238,7 @@ function deriveSkillName(
   return name;
 }
 
-/** Lowercase, collapse non-`[a-z0-9]` sessions to `-`, trim leading/trailing `-`. */
+/** Lowercase, collapse non-`[a-z0-9]` runs to `-`, trim leading/trailing `-`. */
 function slugifyName(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }

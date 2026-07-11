@@ -4,9 +4,11 @@ title: Webhooks
 
 # Webhooks
 
-aex can notify your endpoint when a session finishes. Webhooks are **per-session**: you
-pass a callback URL with the submission, and the platform delivers exactly one
-`session.finished` event to it when the session reaches its terminal state.
+aex can notify your endpoint whenever a run finishes. Register the callback on a
+session and the platform delivers one run-scoped event after each run finalizes:
+`run.finished` for AG-UI `RUN_FINISHED`, or `run.error` for `RUN_ERROR`. Sending
+another message on the same session produces another independently identifiable
+delivery.
 
 ## Register a callback
 
@@ -15,7 +17,7 @@ import { Aex, Models } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_API_KEY!);
 
-const session = await aex.openSession({
+const session = await aex.sessions.create({
   model: Models.CLAUDE_HAIKU_4_5,
   webhook: { url: "https://hooks.example.com/aex" },
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
@@ -37,23 +39,34 @@ idempotency key but a different callback URL never conflicts.
 
 ## What gets delivered
 
-One POST carrying the terminal `session.finished` event, sent at the
-settle-consistent barrier — when you receive it, the session record is already
-terminal and its files are complete and readable. The body is built once at
-settle, frozen, and re-sent byte-identical on every retry or manual redelivery:
+Each finalized run produces one frozen CloudEvents envelope. A successful
+`run.finished` delivery is sent only after its checkpoint and session-file
+revision are committed and the session read model is consistent. A `run.error`
+delivery represents the corresponding finalized `RUN_ERROR`; `checkpoint` is
+present only when that run committed one. Retries and manual redelivery resend
+the same bytes and `webhook-id`.
 
 ```json
 {
   "specversion": "1.0",
-  "id": "<delivery id — matches the webhook-id header>",
+  "id": "whd_run_01J...",
   "source": "aex",
-  "type": "session.finished",
-  "subject": "<the session id>",
+  "type": "run.finished",
+  "subject": "run_01J...",
   "time": "2026-07-02T12:34:56.000Z",
   "data": {
-    "sessionId": "<the session id>",
-    "status": "succeeded",
+    "sessionId": "session_01J...",
+    "runId": "run_01J...",
+    "turnSeq": 3,
+    "outcome": "succeeded",
     "terminalAt": "2026-07-02T12:34:56.000Z",
+    "checkpoint": {
+      "checkpointId": "checkpoint_01J...",
+      "runId": "run_01J...",
+      "turnSeq": 3,
+      "committedAt": "2026-07-02T12:34:55.900Z",
+      "throughSeq": 4097
+    },
     "reason": null,
     "failureClass": null,
     "costTelemetry": { "billedCostUsd": 0.42 }
@@ -61,14 +74,16 @@ settle, frozen, and re-sent byte-identical on every retry or manual redelivery:
 }
 ```
 
-`reason` / `failureClass` carry the failure detail on non-success terminals;
-`costTelemetry` is present when the billed cost is known.
+`subject` and `data.runId` identify the run; `data.sessionId` identifies the
+resumable thread. `outcome` is the terminal run outcome. `reason` and
+`failureClass` carry failure detail for `run.error`; `checkpoint` and
+`costTelemetry` are included when available.
 
 ## Verify deliveries
 
 Deliveries are signed [Standard Webhooks](https://www.standardwebhooks.com/)
 style: HMAC-SHA256 over `` `${webhook-id}.${webhook-timestamp}.${rawBody}` ``,
-sent in three headers — `webhook-id` (stable across retries; your dedupe key),
+sent in three headers — `webhook-id` (stable for that run across retries; your dedupe key),
 `webhook-timestamp` (unix seconds), and `webhook-signature` (a space-delimited
 list of `v1,<base64>` entries).
 
@@ -108,21 +123,23 @@ is compromised, contact <support@aex.dev>.
 
 ## Delivery ledger and redelivery
 
-Each session keeps a delivery ledger — attempts, last status code, and last error:
+Each session keeps a ledger with one row per finalized run, including its
+`runId`, `turnSeq`, event type, attempts, last status code, and last error:
 
 ```ts
-const deliveries = await session.webhooks().list();
-await session.webhooks().redeliver(deliveries[0]!.id);
+const deliveries = await session.webhooks.list();
+await session.webhooks.redeliver(deliveries[0]!.id);
 ```
 
 ```bash
 aex deliveries <session-id> --api-key "$AEX_API_KEY"
 ```
 
-Redelivery re-sends the frozen payload with the **same** `webhook-id`, so a
-consumer that dedupes on `webhook-id` handles retries, redeliveries, and
-at-least-once delivery uniformly. An empty ledger means the session carried no
-`webhook` or has not reached a terminal state yet.
+Redelivery re-sends that run's frozen payload with the **same** `webhook-id`, so
+a consumer that dedupes on `webhook-id` handles retries, redeliveries, and
+at-least-once delivery uniformly. Different runs have different delivery IDs.
+An empty ledger means the session carried no `webhook` or no run has finalized
+yet.
 
 For the terminal-event mechanics behind delivery timing, see
 [Events](events.md).

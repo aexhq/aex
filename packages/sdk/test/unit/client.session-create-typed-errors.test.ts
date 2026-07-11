@@ -1,5 +1,5 @@
 /**
- * DX4a: every `openSession` / `run` offline validation rejects with a TYPED,
+ * DX4a: every `sessions.create` / `Aex.start` offline validation rejects with a typed,
  * code-carrying `AexError` subclass (not a bare `Error`), so callers can `catch`
  * by `err.code` / `instanceof SessionConfigValidationError`.
  */
@@ -33,17 +33,17 @@ function makeClient(fetchImpl: typeof fetch): Aex {
 
 const unknownModel = "totally-unknown-model-xyz" as unknown as ModelName;
 
-describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => {
+describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", () => {
   it("throws SessionConfigValidationError with code SESSION_CONFIG_INVALID for a missing options object", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
       // deliberately pass an invalid value
-      (client.openSession as unknown as (o: unknown) => Promise<unknown>)(undefined)
+      (client.sessions.create as unknown as (o: unknown) => Promise<unknown>)(undefined)
     ).rejects.toMatchObject({
       name: "SessionConfigValidationError",
       code: "SESSION_CONFIG_INVALID",
-      message: "Aex.openSession: options is required"
+      message: "aex.sessions.create: options is required"
     });
     expect(calls).toBe(0);
   });
@@ -53,7 +53,7 @@ describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => 
     const client = makeClient(fetch);
     let caught: unknown;
     try {
-      await client.openSession({
+      await client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "" }
       });
@@ -86,12 +86,11 @@ describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => 
     const { fetch } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
-      client.openSession({ model: "claude-haiku-4-5" })
+      client.sessions.create({ model: "claude-haiku-4-5" })
     ).rejects.toMatchObject({ code: "SESSION_CONFIG_INVALID" });
-    // The historic regex still matches on the new surface.
     await expect(
-      client.openSession({ model: "claude-haiku-4-5" })
-    ).rejects.toThrow(/Aex\.openSession: a provider API key is required/);
+      client.sessions.create({ model: "claude-haiku-4-5" })
+    ).rejects.toThrow(/aex\.sessions\.create: a provider API key is required/);
   });
 
   it("names the unknown model (not a missing default-provider key) when provider cannot be inferred", async () => {
@@ -101,7 +100,7 @@ describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => 
     // behavior fell back to the default provider and complained about a
     // missing apiKeys["anthropic"], pointing at the wrong problem.
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: unknownModel,
         apiKeys: { deepseek: "sk-x" }
       })
@@ -119,7 +118,7 @@ describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => 
     // Explicit provider + key: client-side validation must NOT hard-reject the
     // unknown model (server owns that) — the request reaches the fetch stub.
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: unknownModel,
         provider: "deepseek",
         apiKeys: { deepseek: "sk-x" }
@@ -131,7 +130,7 @@ describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => 
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "gpt-4.1",
         provider: "anthropic",
         apiKeys: { anthropic: "sk-x" }
@@ -147,12 +146,12 @@ describe("Aex.openSession — typed SessionConfigValidationError (DX4a)", () => 
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         // not a builtin tool name
         tools: ["definitely_not_a_builtin"] as unknown as never
-      })
+      } as never)
     ).rejects.toMatchObject({ code: "SESSION_CONFIG_INVALID" });
     expect(calls).toBe(0);
   });

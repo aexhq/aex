@@ -46,7 +46,7 @@ describe("user/SDK: postHook is rejected at the public boundary", () => {
           provider: "deepseek",
           model: "deepseek-v4-flash",
           message: "This should never be submitted.",
-          includeBuiltinTools: false,
+          builtinTools: "none",
           postHook: { command: "bun test" },
           apiKeys: { deepseek: "sk-deepseek-user-test" },
           idempotencyKey: "removed-posthook"

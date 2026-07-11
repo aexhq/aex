@@ -1,38 +1,50 @@
 import { describe, expect, it } from "vitest";
+import * as publicContracts from "../src/index.js";
 import {
-  getSessionControlStatusKind,
-  parseSessionSubmissionRequest,
-  isTerminalSessionControlStatus,
   packageInstallString,
-  SESSION_TURN_TERMINAL_OUTCOMES,
-  TERMINAL_SESSION_CONTROL_STATUSES
+  SESSION_TERMINAL_OUTCOMES
 } from "../src/index.js";
+import {
+  getSessionWorkflowStatusKind,
+  isTerminalSessionWorkflowStatus,
+  parseSessionSubmissionRequest,
+  TERMINAL_SESSION_WORKFLOW_STATUSES
+} from "../src/internal.js";
+// @ts-expect-error The platform parser input is available only from the internal entrypoint.
+import type { PlatformSessionSubmissionInput } from "../src/index.js";
+void (undefined as unknown as PlatformSessionSubmissionInput);
 
 describe("platform status contracts", () => {
-  it("classifies terminal and active session statuses", () => {
-    expect(isTerminalSessionControlStatus("succeeded")).toBe(true);
-    expect(isTerminalSessionControlStatus("cleanup_failed")).toBe(true);
-    expect(isTerminalSessionControlStatus("provider_running")).toBe(false);
-    expect(getSessionControlStatusKind("queued")).toBe("active");
-    expect(getSessionControlStatusKind("cleanup_failed")).toBe("terminal");
+  it("keeps orchestration workflow states out of the public entrypoint", () => {
+    expect(publicContracts).not.toHaveProperty("SESSION_WORKFLOW_STATUSES");
+    expect(publicContracts).not.toHaveProperty("TERMINAL_SESSION_WORKFLOW_STATUSES");
+    expect(publicContracts).not.toHaveProperty("getSessionWorkflowStatusKind");
   });
 
-  it("SESSION_TURN_TERMINAL_OUTCOMES is exactly the four funnel write-outcomes", () => {
-    expect(new Set(SESSION_TURN_TERMINAL_OUTCOMES)).toEqual(
-      new Set(["succeeded", "failed", "timed_out", "cancelled"])
+  it("classifies terminal and active session statuses", () => {
+    expect(isTerminalSessionWorkflowStatus("succeeded")).toBe(true);
+    expect(isTerminalSessionWorkflowStatus("cleanup_failed")).toBe(true);
+    expect(isTerminalSessionWorkflowStatus("provider_running")).toBe(false);
+    expect(getSessionWorkflowStatusKind("queued")).toBe("active");
+    expect(getSessionWorkflowStatusKind("cleanup_failed")).toBe("terminal");
+  });
+
+  it("SESSION_TERMINAL_OUTCOMES is exactly the five run outcomes", () => {
+    expect(new Set(SESSION_TERMINAL_OUTCOMES)).toEqual(
+      new Set(["succeeded", "failed", "timed_out", "cancelled", "interrupted"])
     );
   });
 
-  it("SESSION_TURN_TERMINAL_OUTCOMES is a STRICT subset of the read-terminal set", () => {
-    const readTerminal = new Set<string>(TERMINAL_SESSION_CONTROL_STATUSES);
-    for (const o of SESSION_TURN_TERMINAL_OUTCOMES) {
+  it("run outcomes are a strict subset of the read-terminal set", () => {
+    const readTerminal = new Set<string>(TERMINAL_SESSION_WORKFLOW_STATUSES);
+    for (const o of SESSION_TERMINAL_OUTCOMES) {
       expect(readTerminal.has(o)).toBe(true);
     }
     // The read-terminal set additionally carries the post-terminal
     // housekeeping states the funnel never writes as an outcome.
-    expect(TERMINAL_SESSION_CONTROL_STATUSES.length).toBeGreaterThan(SESSION_TURN_TERMINAL_OUTCOMES.length);
+    expect(TERMINAL_SESSION_WORKFLOW_STATUSES.length).toBeGreaterThan(SESSION_TERMINAL_OUTCOMES.length);
     expect(readTerminal.has("cleanup_failed")).toBe(true);
-    expect(new Set<string>(SESSION_TURN_TERMINAL_OUTCOMES).has("cleanup_failed")).toBe(false);
+    expect(new Set<string>(SESSION_TERMINAL_OUTCOMES).has("cleanup_failed")).toBe(false);
   });
 });
 
@@ -40,8 +52,9 @@ describe("platform session submission schema", () => {
   const baseSecrets = { apiKeys: { anthropic: "sk-ant-test" } } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],    agentsMd: [],
-    files: [],
+    prompt: ["say hello"],
+    assets: { files: [], skills: [], tools: [], instructions: [] },
+    builtinTools: "default",
     mcpServers: []
   } as const;
 
@@ -160,48 +173,36 @@ describe("platform session submission schema", () => {
     expect(parsed.secrets.mcpServers?.[0]?.url).toBe("https://mcp.example.test");
   });
 
-  it("accepts user tools as value-free asset refs", () => {
+  it("accepts custom tools as version-pinned workspace resources", () => {
+    const tool = {
+      kind: "tool" as const,
+      resourceId: `wres_${"1".repeat(32)}`,
+      version: 1,
+      assetId: `asset_${"a".repeat(64)}`,
+      contentHash: `sha256:${"a".repeat(64)}`,
+      name: "calendar_lookup",
+      description: "Looks up calendar availability.",
+      input_schema: {
+        type: "object",
+        properties: { start: { type: "string" } },
+        required: ["start"]
+      },
+      entry: "index.js"
+    };
     const parsed = parseSessionSubmissionRequest({
       workspaceId: "ws_123",
       idempotencyKey: "idem-tool",
       submission: {
         model: "claude-haiku-4-5",
         prompt: "use the lookup tool",
-        agentsMd: [],
-        files: [],
-        tools: [
-          {
-            kind: "asset",
-            assetId: `asset_${"a".repeat(64)}`,
-            name: "calendar_lookup",
-            description: "Looks up calendar availability.",
-            input_schema: {
-              type: "object",
-              properties: { start: { type: "string" } },
-              required: ["start"]
-            },
-            entry: "index.js"
-          }
-        ],
+        assets: { files: [], skills: [], tools: [tool], instructions: [] },
+        builtinTools: "default",
         mcpServers: []
       },
       secrets: baseSecrets
     });
 
-    expect(parsed.submission.tools).toEqual([
-      {
-        kind: "asset",
-        assetId: `asset_${"a".repeat(64)}`,
-        name: "calendar_lookup",
-        description: "Looks up calendar availability.",
-        input_schema: {
-          type: "object",
-          properties: { start: { type: "string" } },
-          required: ["start"]
-        },
-        entry: "index.js"
-      }
-    ]);
+    expect(parsed.submission.assets.tools).toEqual([tool]);
   });
 
   it("rejects user tool names that collide with MCP namespace routing", () => {
@@ -212,23 +213,25 @@ describe("platform session submission schema", () => {
         submission: {
           model: "claude-haiku-4-5",
           prompt: "use the lookup tool",
-          agentsMd: [],
-          files: [],
-          tools: [
+          assets: { files: [], skills: [], instructions: [], tools: [
             {
-              kind: "asset",
+              kind: "tool",
+              resourceId: `wres_${"1".repeat(32)}`,
+              version: 1,
               assetId: `asset_${"a".repeat(64)}`,
+              contentHash: `sha256:${"a".repeat(64)}`,
               name: "calendar__lookup",
               description: "Looks up calendar availability.",
               input_schema: { type: "object", properties: {}, required: [] },
               entry: "index.js"
             }
-          ],
+          ] },
+          builtinTools: "default",
           mcpServers: []
         },
         secrets: baseSecrets
       })
-    ).toThrow(/must not contain "__"/);
+    ).toThrow(/non-reserved tool name/);
   });
 
   it("rejects stdio-shaped MCP servers with the canonical remote-only error", () => {
@@ -302,8 +305,8 @@ describe("environment.packages ecosystem parsing", () => {
   } as const;
   const baseSubmission = {
     model: "claude-haiku-4-5",
-    prompt: ["say hello"],    agentsMd: [],
-    files: [],
+    prompt: ["say hello"],    assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
     mcpServers: []
   } as const;
 

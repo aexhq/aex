@@ -17,7 +17,6 @@ import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getAexBinPath, installAex, runCommand, type InstallResult, type SessionResult } from "../_fixtures/install.js";
-import { isPreCreateTransportMessage, withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 interface LiveCliEnv {
   readonly apiBase: string;
@@ -49,10 +48,9 @@ function requireLiveCliEnv(): LiveCliEnv {
 
 const env = requireLiveCliEnv();
 
-// `aex start` opens a session; a completed one-shot turn parks the session
-// cleanly (idle/suspended), or surfaces a terminal session status when the
-// deployment projects one. Any of these is a clean, exit-0 outcome.
-const SESSION_PARKED_OK = ["idle", "suspended", "succeeded"];
+// RUN_FINISHED is a consistency barrier: the session is immediately idle and
+// ready for another message on every subsequent read.
+const SESSION_READY = ["idle"];
 
 function redactSecrets(text: string): string {
   return text.split(env.apiKey).join("[REDACTED_AEX_API_KEY]").split(env.deepseekKey).join("[REDACTED_DEEPSEEK_API_KEY]");
@@ -72,18 +70,6 @@ function parseJsonLines(stdout: string): Record<string, unknown>[] {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-function firstSessionId(stdout: string): string | null {
-  try {
-    for (const line of parseJsonLines(stdout)) {
-      const id = line["id"];
-      if (typeof id === "string" && id.length > 0) return id;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function eventText(events: readonly Record<string, unknown>[]): string {
   return events
     .filter((event) => event["type"] === "TEXT_MESSAGE_CONTENT")
@@ -96,25 +82,9 @@ function eventText(events: readonly Record<string, unknown>[]): string {
     .join("");
 }
 
-function customNames(events: readonly Record<string, unknown>[]): string[] {
-  return events
-    .filter((event) => event["type"] === "CUSTOM")
-    .map((event) => {
-      const data = event["data"];
-      if (!data || typeof data !== "object" || Array.isArray(data)) return "";
-      const name = (data as Record<string, unknown>)["name"];
-      return typeof name === "string" ? name : "";
-    })
-    .filter(Boolean);
-}
-
 function hasCleanTerminal(events: readonly Record<string, unknown>[]): boolean {
   const kinds = events.map((event) => event["type"]);
-  return kinds.includes("TURN_FINISHED") || customNames(events).some((name) => name.startsWith("aex.session."));
-}
-
-function looksTransientProvider(text: string): boolean {
-  return /transient-provider|assistant_message_no_public_content|provider returned no public assistant content|provider .*retry later/i.test(text);
+  return kinds.includes("RUN_FINISHED");
 }
 
 describe("live hosted API via installed CLI", () => {
@@ -141,23 +111,13 @@ describe("live hosted API via installed CLI", () => {
     return ["--api-key", env.apiKey, "--aex-url", env.apiBase];
   }
 
-  async function runCliCreateWithPreCreateRetry(args: readonly string[], timeoutMs: number): Promise<SessionResult> {
-    return await withPreCreateTransportRetry("live-cli-installed start --follow", async () => {
-      const result = await executeCli(args, timeoutMs);
-      const diag = commandDiagnostic("aex start --follow", result);
-      if (result.exitCode !== 0 && firstSessionId(result.stdout) === null && isPreCreateTransportMessage(diag)) {
-        throw new Error(diag);
-      }
-      return result;
-    });
+  async function runCliCreate(args: readonly string[], timeoutMs: number): Promise<SessionResult> {
+    return executeCli(args, timeoutMs);
   }
 
   it("submits with start --follow, then reads status/events/files/wait/download through the installed binary", async () => {
-    const diagnostics: string[] = [];
-    const maxAttempts = 3;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const marker = `CLI-LIVE-${Date.now().toString(36)}-${attempt}-${Math.random().toString(36).slice(2, 8)}`;
-      const run = await runCliCreateWithPreCreateRetry(
+      const marker = `CLI-LIVE-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const run = await runCliCreate(
         [
           "start",
           "--provider",
@@ -178,46 +138,35 @@ describe("live hosted API via installed CLI", () => {
         10 * 60_000
       );
       const runDiag = commandDiagnostic("aex start --follow", run);
-      if (run.exitCode !== 0) {
-        diagnostics.push(`attempt ${attempt}: ${runDiag}`);
-        if (attempt < maxAttempts && looksTransientProvider(runDiag)) continue;
-      }
-      expect(run.exitCode, `${runDiag}\n\nprior attempts:\n${diagnostics.join("\n\n")}`).toBe(0);
+      expect(run.exitCode, runDiag).toBe(0);
 
       const runLines = parseJsonLines(run.stdout);
       const initial = runLines[0]!;
       const sessionId = initial["id"];
       expect(typeof sessionId, runDiag).toBe("string");
       const finalFromFollow = [...runLines].reverse().find((line) => line["id"] === sessionId && typeof line["status"] === "string");
-      expect(SESSION_PARKED_OK, runDiag).toContain(finalFromFollow?.["status"]);
+      expect(SESSION_READY, runDiag).toContain(finalFromFollow?.["status"]);
 
       const status = await executeCli(["status", sessionId as string, ...commonArgs()]);
       expect(status.exitCode, commandDiagnostic("aex status", status)).toBe(0);
       const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
       expect(statusDoc["id"], commandDiagnostic("aex status", status)).toBe(sessionId);
-      expect(SESSION_PARKED_OK, commandDiagnostic("aex status", status)).toContain(statusDoc["status"]);
+      expect(SESSION_READY, commandDiagnostic("aex status", status)).toContain(statusDoc["status"]);
 
       const wait = await executeCli(["wait", sessionId as string, "--timeout", "1m", "--interval", "1s", ...commonArgs()], 90_000);
       expect(wait.exitCode, commandDiagnostic("aex wait", wait)).toBe(0);
       const waitDoc = JSON.parse(wait.stdout.trim()) as Record<string, unknown>;
       expect(waitDoc["id"], commandDiagnostic("aex wait", wait)).toBe(sessionId);
-      expect(SESSION_PARKED_OK, commandDiagnostic("aex wait", wait)).toContain(waitDoc["status"]);
+      expect(SESSION_READY, commandDiagnostic("aex wait", wait)).toContain(waitDoc["status"]);
 
       const events = await executeCli(["events", sessionId as string, ...commonArgs()]);
       expect(events.exitCode, commandDiagnostic("aex events", events)).toBe(0);
       const eventRows = parseJsonLines(events.stdout);
       const eventKinds = eventRows.map((event) => event["type"]);
-      expect(eventKinds, commandDiagnostic("aex events", events)).toContain("TURN_STARTED");
+      expect(eventKinds, commandDiagnostic("aex events", events)).toContain("RUN_STARTED");
       expect(hasCleanTerminal(eventRows), commandDiagnostic("aex events", events)).toBe(true);
       const visibleText = eventText(eventRows).replace(/\s+/g, "");
-      if (!visibleText.includes(marker) && attempt < maxAttempts) {
-        diagnostics.push(
-          `attempt ${attempt}: clean terminal ${String(statusDoc["status"])} but no visible assistant text for ${String(sessionId)}\n` +
-            commandDiagnostic("aex events", events)
-        );
-        continue;
-      }
-      expect(visibleText, `${commandDiagnostic("aex events", events)}\n\nprior attempts:\n${diagnostics.join("\n\n")}`).toContain(marker);
+      expect(visibleText, commandDiagnostic("aex events", events)).toContain(marker);
 
       const files = await executeCli(["files", sessionId as string, ...commonArgs()]);
       expect(files.exitCode, commandDiagnostic("aex files", files)).toBe(0);
@@ -239,8 +188,5 @@ describe("live hosted API via installed CLI", () => {
       expect(Object.keys(entries).sort()).toEqual(["events.jsonl", "manifest.json"]);
       const archivedEvents = parseJsonLines(new TextDecoder().decode(entries["events.jsonl"]!));
       expect(hasCleanTerminal(archivedEvents)).toBe(true);
-      return;
-    }
-    throw new Error(`live-cli-installed failed after ${maxAttempts} attempts:\n${diagnostics.join("\n\n")}`);
   }, 35 * 60_000);
 });

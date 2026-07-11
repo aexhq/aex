@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { executeCli } from "../src/main.js";
 import { AEX_INDEX_PATH, type CliIO, type StoredCliConfig } from "../src/internal.js";
+import { canonicalWhoami } from "./canonical-whoami.js";
 
 function makeIo(opts: {
   argv: readonly string[];
@@ -40,7 +41,7 @@ function makeIo(opts: {
     cwd: () => "/tmp",
     fetchImpl: async (url) => {
       calls.push({ url: String(url) });
-      return new Response(JSON.stringify({ principalType: "api_key", workspaceId: "ws-1" }), {
+      return new Response(JSON.stringify(canonicalWhoami("ws-1")), {
         status: 200,
         headers: { "content-type": "application/json" }
       });

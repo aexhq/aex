@@ -7,12 +7,20 @@ on:
         description: Published @aexhq/sdk version to promote.
         required: true
         type: string
-      release_session_id:
-        description: SessionRecord ID of the green release.yml run that published this version.
+      release_run_id:
+        description: GitHub Actions run ID of the green release.yml run that published this version.
         required: true
         type: string
-      platform_deploy_session_id:
-        description: SessionRecord ID of the green aex-platform deploy.yml run that tested this SDK version.
+      platform_deploy_run_id:
+        description: GitHub Actions run ID of the green aex-platform deploy.yml run that tested this SDK version.
+        required: true
+        type: string
+      public_sha:
+        description: Exact aex source SHA recorded by the release manifest.
+        required: true
+        type: string
+      sdk_integrity:
+        description: Exact npm dist.integrity recorded by the release manifest.
         required: true
         type: string
       npm_dist_tag:
@@ -31,8 +39,16 @@ concurrency:
 
 permissions:
   contents: read
-  # Needed to read the release.yml run named by release_session_id.
+  # Needed to read the release.yml run named by release_run_id.
   actions: read
+
+env:
+  PACKAGE_VERSION: ${{ inputs.version }}
+  RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+  PLATFORM_DEPLOY_RUN_ID: ${{ inputs.platform_deploy_run_id }}
+  RELEASE_SOURCE_SHA: ${{ inputs.public_sha }}
+  RELEASE_INTEGRITY: ${{ inputs.sdk_integrity }}
+  NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
 
 jobs:
   promote:
@@ -42,6 +58,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SOURCE_SHA }}
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -54,44 +73,44 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      # Fail-closed release proof: promotion requires the session ID of the
+      # Fail-closed release proof: promotion requires the run ID of the
       # release.yml run that shipped this exact version. Via the GitHub API
       # (GITHUB_TOKEN) we verify that the run (a) is .github/workflows/
       # release.yml in THIS repo — the API path is repo-scoped, so a foreign
-      # session id 404s; (b) completed with conclusion=success, which release.yml
+      # run id 404s; (b) completed with conclusion=success, which release.yml
       # only reaches after static gates, publish, and the published-artifact
       # smoke pass;
       # and (c) published THIS version — the npm registry publish timestamp
-      # (`time[version]`) must fall inside that session's created_at..updated_at
+      # (`time[version]`) must fall inside that run's created_at..updated_at
       # window (created_at, not workflow_started_at, so retry attempts of flaky
       # live shards don't move the window past the publish time). Any check
       # that cannot be evaluated fails the promotion.
       - name: Verify green release workflow attempt published this version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SESSION_ID: ${{ inputs.release_session_id }}
-          PACKAGE_VERSION: ${{ inputs.version }}
+          RELEASE_RUN_ID: ${{ env.RELEASE_RUN_ID }}
+          PACKAGE_VERSION: ${{ env.PACKAGE_VERSION }}
         shell: bash
         run: |
           set -euo pipefail
-          case "${RELEASE_SESSION_ID}" in
+          case "${RELEASE_RUN_ID}" in
             ''|*[!0-9]*)
-              echo "::error::release_session_id must be a numeric workflow session id (got '${RELEASE_SESSION_ID}')."
+              echo "::error::release_run_id must be a numeric workflow run id (got '${RELEASE_RUN_ID}')."
               exit 1
               ;;
           esac
-          workflow_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_SESSION_ID}")"
+          workflow_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}")"
           workflow_path="$(jq -r '.path' <<<"${workflow_json}")"
           status="$(jq -r '.status' <<<"${workflow_json}")"
           conclusion="$(jq -r '.conclusion' <<<"${workflow_json}")"
           workflow_created_at="$(jq -r '.created_at' <<<"${workflow_json}")"
           workflow_updated_at="$(jq -r '.updated_at' <<<"${workflow_json}")"
           if [ "${workflow_path}" != ".github/workflows/release.yml" ]; then
-            echo "::error::SessionRecord ${RELEASE_SESSION_ID} is '${workflow_path}', not .github/workflows/release.yml."
+            echo "::error::Workflow run ${RELEASE_RUN_ID} is '${workflow_path}', not .github/workflows/release.yml."
             exit 1
           fi
           if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
-            echo "::error::Release run ${RELEASE_SESSION_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green release workflow attempt (published-artifact smoke included)."
+            echo "::error::Release run ${RELEASE_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green release workflow attempt (published-artifact smoke included)."
             exit 1
           fi
           published_at="$(curl -fsSL "https://registry.npmjs.org/@aexhq%2Fsdk" | jq -r --arg v "${PACKAGE_VERSION}" '.time[$v] // empty')"
@@ -103,34 +122,38 @@ jobs:
           end_s="$(date -u -d "${workflow_updated_at}" +%s)"
           pub_s="$(date -u -d "${published_at}" +%s)"
           if [ "${pub_s}" -lt "${start_s}" ] || [ "${pub_s}" -gt "${end_s}" ]; then
-            echo "::error::@aexhq/sdk@${PACKAGE_VERSION} was published at ${published_at}, outside release workflow attempt ${RELEASE_SESSION_ID}'s window (${workflow_created_at}..${workflow_updated_at}); that session did not publish this version."
+            echo "::error::@aexhq/sdk@${PACKAGE_VERSION} was published at ${published_at}, outside release workflow attempt ${RELEASE_RUN_ID}'s window (${workflow_created_at}..${workflow_updated_at}); that run did not publish this version."
             exit 1
           fi
-          echo "Verified: green release workflow attempt ${RELEASE_SESSION_ID} published @aexhq/sdk@${PACKAGE_VERSION} at ${published_at}."
+          echo "Verified: green release workflow attempt ${RELEASE_RUN_ID} published @aexhq/sdk@${PACKAGE_VERSION} at ${published_at}."
 
       - name: Verify public release manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SESSION_ID: ${{ inputs.release_session_id }}
-          PACKAGE_VERSION: ${{ inputs.version }}
+          RELEASE_RUN_ID: ${{ env.RELEASE_RUN_ID }}
+          PACKAGE_VERSION: ${{ env.PACKAGE_VERSION }}
+          RELEASE_SOURCE_SHA: ${{ env.RELEASE_SOURCE_SHA }}
+          RELEASE_INTEGRITY: ${{ env.RELEASE_INTEGRITY }}
         shell: bash
         run: |
           set -euo pipefail
           rm -rf public-release-manifest
           mkdir public-release-manifest
-          gh run download "${RELEASE_SESSION_ID}" \
+          gh run download "${RELEASE_RUN_ID}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --name "public-release-manifest-${RELEASE_SESSION_ID}" \
+            --name "public-release-manifest-${RELEASE_RUN_ID}" \
             --dir public-release-manifest
           manifest_file="$(find public-release-manifest -name public-release-manifest.json -print -quit)"
           if [ -z "${manifest_file}" ]; then
-            echo "::error::Release run ${RELEASE_SESSION_ID} did not include public-release-manifest.json."
+            echo "::error::Release run ${RELEASE_RUN_ID} did not include public-release-manifest.json."
             exit 1
           fi
           bun scripts/cicd/release-manifest.mjs verify-public \
             --manifest "${manifest_file}" \
             --version "${PACKAGE_VERSION}" \
-            --session-id "${RELEASE_SESSION_ID}"
+            --run-id "${RELEASE_RUN_ID}" \
+            --head-sha "${RELEASE_SOURCE_SHA}" \
+            --integrity "${RELEASE_INTEGRITY}"
 
       # Fail-closed platform proof: promotion also requires a private
       # aex-platform deploy.yml run whose final Promotion proof job uploaded an
@@ -139,8 +162,8 @@ jobs:
       - name: Verify green platform deploy tested this version
         env:
           GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          PLATFORM_DEPLOY_SESSION_ID: ${{ inputs.platform_deploy_session_id }}
-          PACKAGE_VERSION: ${{ inputs.version }}
+          PLATFORM_DEPLOY_RUN_ID: ${{ env.PLATFORM_DEPLOY_RUN_ID }}
+          PACKAGE_VERSION: ${{ env.PACKAGE_VERSION }}
         shell: bash
         run: |
           set -euo pipefail
@@ -148,40 +171,40 @@ jobs:
             echo "::error::PLATFORM_REPO_TOKEN is required to verify the private aex-platform deploy proof before promotion."
             exit 1
           fi
-          case "${PLATFORM_DEPLOY_SESSION_ID}" in
+          case "${PLATFORM_DEPLOY_RUN_ID}" in
             ''|*[!0-9]*)
-              echo "::error::platform_deploy_session_id must be a numeric workflow session id (got '${PLATFORM_DEPLOY_SESSION_ID}')."
+              echo "::error::platform_deploy_run_id must be a numeric workflow run id (got '${PLATFORM_DEPLOY_RUN_ID}')."
               exit 1
               ;;
           esac
-          workflow_json="$(gh api "repos/aexhq/aex-platform/actions/runs/${PLATFORM_DEPLOY_SESSION_ID}")"
+          workflow_json="$(gh api "repos/aexhq/aex-platform/actions/runs/${PLATFORM_DEPLOY_RUN_ID}")"
           workflow_path="$(jq -r '.path' <<<"${workflow_json}")"
           status="$(jq -r '.status' <<<"${workflow_json}")"
           conclusion="$(jq -r '.conclusion' <<<"${workflow_json}")"
           if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]; then
-            echo "::error::Platform run ${PLATFORM_DEPLOY_SESSION_ID} is '${workflow_path}', not .github/workflows/deploy.yml."
+            echo "::error::Platform run ${PLATFORM_DEPLOY_RUN_ID} is '${workflow_path}', not .github/workflows/deploy.yml."
             exit 1
           fi
           if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
-            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_SESSION_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green deploy workflow attempt."
+            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green deploy workflow attempt."
             exit 1
           fi
           rm -rf platform-proof
           mkdir platform-proof
-          gh run download "${PLATFORM_DEPLOY_SESSION_ID}" \
+          gh run download "${PLATFORM_DEPLOY_RUN_ID}" \
             --repo aexhq/aex-platform \
-            --name "promotion-proof-${PLATFORM_DEPLOY_SESSION_ID}" \
+            --name "promotion-proof-${PLATFORM_DEPLOY_RUN_ID}" \
             --dir platform-proof
           proof_file="$(find platform-proof -name promotion-proof.json -print -quit)"
           if [ -z "${proof_file}" ]; then
-            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_SESSION_ID} did not include promotion-proof.json."
+            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} did not include promotion-proof.json."
             exit 1
           fi
           proof_workflow="$(jq -r '.workflow // empty' "${proof_file}")"
-          proof_session_id="$(jq -r '.sessionId // empty' "${proof_file}")"
+          proof_run_id="$(jq -r '.runId // empty' "${proof_file}")"
           proof_version="$(jq -r '.sdkVersion // empty' "${proof_file}")"
-          if [ "${proof_workflow}" != "deploy.yml" ] || [ "${proof_session_id}" != "${PLATFORM_DEPLOY_SESSION_ID}" ]; then
-            echo "::error::Platform promotion proof does not match deploy workflow attempt ${PLATFORM_DEPLOY_SESSION_ID}."
+          if [ "${proof_workflow}" != "deploy.yml" ] || [ "${proof_run_id}" != "${PLATFORM_DEPLOY_RUN_ID}" ]; then
+            echo "::error::Platform promotion proof does not match deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID}."
             exit 1
           fi
           if [ "${proof_version}" != "${PACKAGE_VERSION}" ]; then
@@ -194,44 +217,79 @@ jobs:
               exit 1
             fi
           done
-          echo "Verified: green aex-platform deploy workflow attempt ${PLATFORM_DEPLOY_SESSION_ID} tested @aexhq/sdk@${PACKAGE_VERSION}."
+          echo "Verified: green aex-platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} tested @aexhq/sdk@${PACKAGE_VERSION}."
 
       - name: Verify platform validation manifest
         env:
           GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          PLATFORM_DEPLOY_SESSION_ID: ${{ inputs.platform_deploy_session_id }}
-          RELEASE_SESSION_ID: ${{ inputs.release_session_id }}
-          PACKAGE_VERSION: ${{ inputs.version }}
+          PLATFORM_DEPLOY_RUN_ID: ${{ env.PLATFORM_DEPLOY_RUN_ID }}
+          RELEASE_RUN_ID: ${{ env.RELEASE_RUN_ID }}
+          PACKAGE_VERSION: ${{ env.PACKAGE_VERSION }}
+          RELEASE_SOURCE_SHA: ${{ env.RELEASE_SOURCE_SHA }}
+          RELEASE_INTEGRITY: ${{ env.RELEASE_INTEGRITY }}
         shell: bash
         run: |
           set -euo pipefail
           rm -rf platform-validation-manifest
           mkdir platform-validation-manifest
-          gh run download "${PLATFORM_DEPLOY_SESSION_ID}" \
+          gh run download "${PLATFORM_DEPLOY_RUN_ID}" \
             --repo aexhq/aex-platform \
-            --name "platform-validation-manifest-${PLATFORM_DEPLOY_SESSION_ID}" \
+            --name "platform-validation-manifest-${PLATFORM_DEPLOY_RUN_ID}" \
             --dir platform-validation-manifest
           manifest_file="$(find platform-validation-manifest -name platform-validation-manifest.json -print -quit)"
           if [ -z "${manifest_file}" ]; then
-            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_SESSION_ID} did not include platform-validation-manifest.json."
+            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} did not include platform-validation-manifest.json."
             exit 1
           fi
           bun scripts/cicd/release-manifest.mjs verify-platform \
             --manifest "${manifest_file}" \
             --version "${PACKAGE_VERSION}" \
-            --session-id "${PLATFORM_DEPLOY_SESSION_ID}" \
-            --public-release-session-id "${RELEASE_SESSION_ID}"
+            --run-id "${PLATFORM_DEPLOY_RUN_ID}" \
+            --public-release-run-id "${RELEASE_RUN_ID}" \
+            --public-release-head-sha "${RELEASE_SOURCE_SHA}" \
+            --integrity "${RELEASE_INTEGRITY}"
 
       - name: Assert version exists on npm
-        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ inputs.version }}"
+        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ env.PACKAGE_VERSION }}"
+
+      - name: Verify exact registry integrity
+        env:
+          RELEASE_INTEGRITY: ${{ env.RELEASE_INTEGRITY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry_integrity="$(npm view "@aexhq/sdk@${PACKAGE_VERSION}" dist.integrity --registry https://registry.npmjs.org)"
+          if [ "${registry_integrity}" != "${RELEASE_INTEGRITY}" ]; then
+            echo "::error::Registry integrity '${registry_integrity}' does not match validated release integrity '${RELEASE_INTEGRITY}'."
+            exit 1
+          fi
 
       - name: Assert version installs with Bun
-        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ inputs.version }}"
+        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ env.PACKAGE_VERSION }}"
+
+      - name: Require current monotonic release candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
+          if ! git merge-base --is-ancestor "${RELEASE_SOURCE_SHA}" "${current_main_sha}"; then
+            echo "::error::Candidate source ${RELEASE_SOURCE_SHA} is not an ancestor of current main ${current_main_sha}."
+            exit 1
+          fi
+          current_latest_version="$(npm view @aexhq/sdk dist-tags.latest --json --registry https://registry.npmjs.org | jq -er 'if type == "string" and length > 0 then . else error("missing latest dist-tag") end')"
+          bun scripts/cicd/assert-monotonic-promotion.mjs \
+            --candidate-version "${PACKAGE_VERSION}" \
+            --candidate-sha "${RELEASE_SOURCE_SHA}" \
+            --current-main-sha "${current_main_sha}" \
+            --candidate-is-main-ancestor true \
+            --current-latest-version "${current_latest_version}"
 
       - name: Add npm dist-tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+          NPM_DIST_TAG: ${{ env.NPM_DIST_TAG }}
         shell: bash
         run: |
           set -euo pipefail
@@ -240,5 +298,5 @@ jobs:
             exit 1
           fi
           printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
-          npm dist-tag add "@aexhq/sdk@${{ inputs.version }}" "${NPM_DIST_TAG}" --registry https://registry.npmjs.org
+          npm dist-tag add "@aexhq/sdk@${PACKAGE_VERSION}" "${NPM_DIST_TAG}" --registry https://registry.npmjs.org
           npm dist-tag ls @aexhq/sdk --registry https://registry.npmjs.org

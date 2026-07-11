@@ -22,7 +22,7 @@
  * out, so public-only CI and forks without the platform PAT still pass; it
  * only enforces when both trees are present.
  *
- * SessionRecord `bun scripts/cicd/check-contract-parity.mjs --update` after an
+ * Run `bun scripts/cicd/check-contract-parity.mjs --update` after an
  * intentional, reviewed divergence to refresh the baseline.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

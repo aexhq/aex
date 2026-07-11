@@ -7,7 +7,7 @@
  * billing state (2026-07-03: the shared BYOK ANTHROPIC_API_KEY ran out of
  * credit and killed multiple gating shards while DeepSeek + managed-key tests
  * passed). Per-provider correctness coverage (Anthropic BYOK, doubao, …)
- * lives in test/live/providers/ and sessions only via the non-gating, dispatch-only
+ * lives in test/live/providers/ and runs only via the non-gating, dispatch-only
  * `test:user:providers` suite (live-on-demand-tests.yml).
  */
 

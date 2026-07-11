@@ -2,16 +2,15 @@
  * Built-in transport resilience for the aex SDK.
  *
  * Every BFF-bound request the SDK makes goes through one {@link FetchLike}. This
- * module wraps that fetch so a transient failure — an HTTP 429 (rate limited),
+ * module retries eligible requests after a transient failure — an HTTP 429 (rate limited),
  * a 500/502/503/504 (server hiccup), a 529 (upstream overloaded), or a network
  * error — is retried with BOUNDED exponential backoff + full jitter, honoring
  * the server's `Retry-After` header when present. Non-retryable 4xx responses
  * (400/401/403/404/…) fail fast — retrying them only wastes the caller's time.
  *
- * Retries are SAFE to enable by default because the billable submits
- * (`createSession` / `sendSessionMessage`) carry a stable `Idempotency-Key`
- * header: re-sending the identical request de-duplicates server-side, so a retry
- * never creates a duplicate billable turn.
+ * Safe reads (GET/HEAD/OPTIONS) are eligible directly. Any mutation is eligible
+ * only when it carries a stable `Idempotency-Key`; all other mutations get
+ * exactly one transport attempt.
  *
  * When retries are exhausted on a rate-limit / overloaded status the wrapper
  * surfaces an {@link AexRateLimitError} — a structured, non-leaky throttle error
@@ -43,9 +42,7 @@ import {
 export { isRateLimited };
 
 /**
- * HTTP statuses that are transient and worth retrying. The billable submits
- * carry an idempotency key, so re-issuing them is safe. Everything not in this
- * set (400/401/403/404/409/422/…) is a definitive client error and fails fast.
+ * HTTP statuses that are transient and worth retrying for an eligible request.
  */
 export const RETRYABLE_STATUS: readonly number[] = RETRYABLE_HTTP_STATUS;
 
@@ -345,7 +342,7 @@ function requestUrl(input: string | URL | Request): URL | undefined {
   }
 }
 
-/** Hooks the retry loop needs, injectable so tests session without real timers. */
+/** Hooks the retry loop needs, injectable so tests run without real timers. */
 export interface RetryDeps {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly random?: () => number;
@@ -402,6 +399,9 @@ export function withRetry(
   const now = deps.now ?? Date.now;
 
   return async (input, init) => {
+    if (!isRetryEligibleRequest(input, init)) {
+      return fetchImpl(input, init);
+    }
     const startedAt = now();
     const signal = init?.signal ?? undefined;
     let attempt = 0;
@@ -459,6 +459,17 @@ export function withRetry(
       return response;
     }
   };
+}
+
+const SAFE_READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function isRetryEligibleRequest(input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]): boolean {
+  const request = typeof Request !== "undefined" && input instanceof Request ? input : undefined;
+  const method = (init?.method ?? request?.method ?? "GET").toUpperCase();
+  if (SAFE_READ_METHODS.has(method)) return true;
+  const headers = new Headers(init?.headers ?? request?.headers);
+  const idempotencyKey = headers.get("idempotency-key");
+  return typeof idempotencyKey === "string" && idempotencyKey.trim().length > 0;
 }
 
 function withResponseRequestId(body: unknown, headers: Headers): unknown {

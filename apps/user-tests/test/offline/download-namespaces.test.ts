@@ -6,7 +6,7 @@
  *
  *   - `SessionHandle` exposes the whole-run verb `download` and the metadata
  *     verb `downloadMetadata` flat, plus the per-namespace download verbs via
- *     its `files().download()` / `events().download()` accessors.
+ *     its `files.download()` / `events.download()` accessors.
  *   - The installed SDK assembles a public session archive from metadata, events,
  *     and files only; it must not call the removed logs namespace or event
  *     channel opt-in routes.
@@ -15,7 +15,7 @@
  *     documented "must be one of" usage error, and the bare-usage banner
  *     advertises the flag.
  *
- * Every assertion sessions against `node_modules/@aexhq/sdk` in a fresh install
+ * Every assertion runs against `node_modules/@aexhq/sdk` in a fresh install
  * tempdir, so it exercises the published shape, not the monorepo symlink.
  */
 import { existsSync, writeFileSync } from "node:fs";
@@ -43,7 +43,7 @@ describe("download namespaces surface (offline)", () => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url);
         if (parsed.pathname === "/api/sessions/sess-1") {
-          return new Response(JSON.stringify({ session: { id: "sess-1", status: "idle" } }), {
+          return new Response(JSON.stringify({ session: { id: "sess-1", status: "idle", acceptsMessages: true } }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
@@ -56,8 +56,8 @@ describe("download namespaces surface (offline)", () => {
         session: {
           download: typeof session.download,
           downloadMetadata: typeof session.downloadMetadata,
-          filesDownload: typeof session.files().download,
-          eventsDownload: typeof session.events().download
+          filesDownload: typeof session.files.download,
+          eventsDownload: typeof session.events.download
         },
         // The whole download surface moved off the client onto the session handle.
         client: {
@@ -65,7 +65,7 @@ describe("download namespaces surface (offline)", () => {
           downloadMetadata: typeof c.downloadMetadata
         }
       };
-      // The old flat per-namespace verbs folded into the files()/events()
+      // The old flat per-namespace verbs folded into the files/events
       // accessors; the removed logs verbs stay gone everywhere.
       for (const removed of ["downloadFiles", "downloadEvents", "downloadLogs", "getLegacyDebugLogs", "debugLogs"]) {
         result.session[removed] = typeof session[removed];
@@ -105,14 +105,14 @@ describe("download namespaces surface (offline)", () => {
         // Opening the session handle reads the session record; keep it out of
         // the asserted archive-assembly call set.
         if (key === "/api/sessions/session-1") {
-          return new Response(JSON.stringify({ session: { id: "session-1", status: "succeeded" } }), {
+          return new Response(JSON.stringify({ session: { id: "session-1", status: "idle", acceptsMessages: true } }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
         calls.push(key);
         if (key === "/api/sessions/session-1") {
-          return new Response(JSON.stringify({ id: "session-1", status: "succeeded" }), {
+          return new Response(JSON.stringify({ id: "session-1", status: "idle", acceptsMessages: true }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
@@ -125,13 +125,20 @@ describe("download namespaces surface (offline)", () => {
         }
         if (key === "/api/sessions/session-1/files") {
           return new Response(JSON.stringify({
-            files: [{ id: "out-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
+            revision: {
+              checkpointId: "cp-1",
+              runId: "run-1",
+              turnSeq: 1,
+              committedAt: "2026-07-10T00:00:00.000Z",
+              throughSeq: 2
+            },
+            files: [{ id: "out-1", checkpointId: "cp-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
           }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
-        if (key === "/api/sessions/session-1/files/out-1/download") {
+        if (key.startsWith("/api/sessions/session-1/files/out-1/download?checkpointId=cp-1")) {
           return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
         }
         throw new Error("unexpected route: " + key);
@@ -163,7 +170,7 @@ describe("download namespaces surface (offline)", () => {
     expect([...result.calls].sort()).toEqual([
       "/api/sessions/session-1/events",
       "/api/sessions/session-1/files",
-      "/api/sessions/session-1/files/out-1/download"
+      "/api/sessions/session-1/files/out-1/download?checkpointId=cp-1"
     ].sort());
     expect(result.entries).toEqual([
       "events/events.jsonl",

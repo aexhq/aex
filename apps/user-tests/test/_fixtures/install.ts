@@ -4,7 +4,7 @@
  * Each scenario calls {@link installAex} which:
  *   1. Reads AEX_USER_TEST_TARBALL or AEX_USER_TEST_VERSION
  *      (explicit overrides stay mutually exclusive). When neither is
- *      set, local/offline sessions pack the current workspace SDK once and
+ *      set, local/offline runs pack the current workspace SDK once and
  *      install that tarball.
  *   2. Creates a fresh tempdir.
  *   3. Materializes a minimal package.json there.
@@ -48,7 +48,7 @@ export interface InstallResult {
   readonly installSpec: string;
   /** Source kind for diagnostics. */
   readonly source: "tarball" | "registry" | "local-pack";
-  /** SessionRecord cleanup: removes installDir recursively. Safe to call twice. */
+  /** Run cleanup: removes installDir recursively. Safe to call twice. */
   readonly cleanup: () => void;
 }
 

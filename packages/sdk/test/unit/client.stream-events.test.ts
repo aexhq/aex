@@ -1,7 +1,7 @@
 /**
  * SDK-level coverage for `SessionHandle.streamEvents` (the loose `TurnEvent`
  * snapshot poll loop). It polls the coordinator-backed `/events` endpoint,
- * dedupes by event id, and stops once the session parks (or on an abort). The
+ * dedupes by event id, and stops at a RUN terminal (or on an abort). The
  * low-latency live envelope stream is covered separately (streamEnvelopes →
  * coordinator WS, shared event-stream-client tests).
  */
@@ -36,9 +36,21 @@ function evt(sequence: number, type: AexEvent["type"], data: Record<string, Json
     source: type === "CUSTOM" ? "runtime" : "agent",
     type,
     subject: "session-abc",
+    threadId: "session-abc",
+    runId: "run-1",
     time: new Date(sequence).toISOString(),
     sequence,
     data
+  };
+}
+
+function childEvt(sequence: number, type: AexEvent["type"], data: Record<string, JsonValue> = {}): AexEvent {
+  return {
+    ...evt(sequence, type, data),
+    id: `child-abc:${sequence}`,
+    subject: "child-abc",
+    threadId: "child-abc",
+    runId: sequence < 10 ? "child-old" : "child-current"
   };
 }
 
@@ -80,19 +92,19 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 1500): Promise<void
 };
 
 describe("SessionHandle.streamEvents — polling the coordinator-backed /events", () => {
-  it("yields events, dedupes by id across polls, and stops when the session parks", async () => {
+  it("yields events, dedupes by id across polls, and stops at RUN_FINISHED", async () => {
     let listCount = 0;
-    let getCount = 0;
     const { fetch: f, calls } = makeFetch([
       {
         match: /\/events$/,
         respond: () => {
           listCount++;
-          const byCall: Record<number, ReadonlyArray<{ id: string; type: string }>> = {
-            1: [{ id: "e1", type: "TEXT_MESSAGE_CONTENT" }],
+          const byCall: Record<number, readonly AexEvent[]> = {
+            1: [evt(1, "TEXT_MESSAGE_CONTENT", { text: "one", messageId: "m1" })],
             2: [
-              { id: "e1", type: "TEXT_MESSAGE_CONTENT" },
-              { id: "e2", type: "TEXT_MESSAGE_CONTENT" }
+              evt(1, "TEXT_MESSAGE_CONTENT", { text: "one", messageId: "m1" }),
+              evt(2, "TEXT_MESSAGE_CONTENT", { text: "two", messageId: "m1" }),
+              evt(3, "RUN_FINISHED", { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } })
             ]
           };
           return jsonResponse({ events: byCall[listCount] ?? [] });
@@ -101,21 +113,18 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
       {
         match: /\/sessions\/session-abc$/,
         respond: () => {
-          getCount++;
-          // getCount 1 = openSession rehydrate; the poll loop reads status on
-          // 2 (running) and 3 (succeeded → parked).
-          return jsonResponse({ id: "session-abc", status: getCount >= 3 ? "succeeded" : "running" });
+          return jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } });
         }
       }
     ]);
 
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-    const session = await client.openSession("session-abc");
+    const session = await client.sessions.open("session-abc");
     const events: string[] = [];
-    for await (const ev of session.events().stream({ intervalMs: 1 })) {
+    for await (const ev of session.events.stream({ intervalMs: 1 })) {
       events.push(ev.id);
     }
-    expect(events).toEqual(["e1", "e2"]);
+    expect(events).toEqual(["session-abc:1", "session-abc:2", "session-abc:3"]);
     // No SSE endpoint is ever touched.
     expect(calls.some((u) => u.endsWith("/events/stream"))).toBe(false);
   });
@@ -123,20 +132,146 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
   it("stops promptly when the signal aborts", async () => {
     const { fetch: f, calls } = makeFetch([
       { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
-      { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ id: "session-abc", status: "running" }) }
+      { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } }) }
     ]);
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-    const session = await client.openSession("session-abc");
+    const session = await client.sessions.open("session-abc");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 5);
     const events: string[] = [];
-    for await (const ev of session.events().stream({ signal: controller.signal, intervalMs: 1 })) {
+    for await (const ev of session.events.stream({ signal: controller.signal, intervalMs: 1 })) {
       events.push(ev.id);
     }
     expect(events).toEqual([]);
     // The loop was provably live (polling started) before the abort stopped it.
     expect(calls.length).toBeGreaterThan(0);
   });
+
+  it("applies from before yield and terminal detection", async () => {
+    let listCount = 0;
+    const oldTerminal = evt(4, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-old" }
+    });
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/events$/,
+        respond: () => {
+          listCount += 1;
+          return jsonResponse({
+            events: listCount === 1
+              ? [evt(3, "TEXT_MESSAGE_CONTENT", { text: "old", messageId: "old" }), oldTerminal]
+              : [
+                  evt(3, "TEXT_MESSAGE_CONTENT", { text: "old", messageId: "old" }),
+                  oldTerminal,
+                  evt(10, "TEXT_MESSAGE_CONTENT", { text: "current", messageId: "current" }),
+                  evt(11, "RUN_FINISHED", {
+                    outcome: "succeeded",
+                    costUsd: 0,
+                    providerUsage: [],
+                    checkpoint: { checkpointId: "cp-current" }
+                  })
+                ]
+          });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } })
+      }
+    ]);
+
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
+    const session = await client.sessions.open("session-abc");
+    const sequences: number[] = [];
+    for await (const event of session.events.stream({ from: 10, intervalMs: 1 })) {
+      sequences.push(event.sequence);
+    }
+
+    expect(listCount).toBe(2);
+    expect(sequences).toEqual([10, 11]);
+  });
+
+  it("applies the same from boundary to read-only child polling", async () => {
+    let listCount = 0;
+    const oldTerminal = childEvt(4, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-old" }
+    });
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/sessions\/session-abc\/children$/,
+        respond: () => jsonResponse({
+          children: [{
+            id: "child-abc",
+            parentSessionId: "session-abc",
+            status: "running",
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:01:00.000Z"
+          }]
+        })
+      },
+      {
+        match: /\/sessions\/child-abc\/events$/,
+        respond: () => {
+          listCount += 1;
+          return jsonResponse({
+            events: listCount === 1
+              ? [childEvt(3, "TEXT_MESSAGE_CONTENT", { text: "old", messageId: "old" }), oldTerminal]
+              : [
+                  childEvt(3, "TEXT_MESSAGE_CONTENT", { text: "old", messageId: "old" }),
+                  oldTerminal,
+                  childEvt(10, "TEXT_MESSAGE_CONTENT", { text: "current", messageId: "current" }),
+                  childEvt(11, "RUN_ERROR", {
+                    outcome: "failed",
+                    failureMessage: "current failed",
+                    costUsd: 0,
+                    providerUsage: []
+                  })
+                ]
+          });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } })
+      }
+    ]);
+
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
+    const parent = await client.sessions.open("session-abc");
+    const child = (await parent.children())[0]!;
+    const sequences: number[] = [];
+    for await (const event of child.events.stream({ from: 10, intervalMs: 1 })) {
+      sequences.push(event.sequence);
+    }
+
+    expect(listCount).toBe(2);
+    expect(sequences).toEqual([10, 11]);
+  });
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects an invalid polling cursor %s",
+    async (from) => {
+      const { fetch: f, calls } = makeFetch([
+        { match: /\/events$/, respond: () => jsonResponse({ events: [] }) },
+        {
+          match: /\/sessions\/session-abc$/,
+          respond: () => jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } })
+        }
+      ]);
+      const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
+      const session = await client.sessions.open("session-abc");
+      const iterator = session.events.stream({ from })[Symbol.asyncIterator]();
+
+      await expect(iterator.next()).rejects.toThrow(/from must be a non-negative safe integer/);
+      expect(calls.filter((url) => url.endsWith("/events"))).toEqual([]);
+    }
+  );
 });
 
 describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handling", () => {
@@ -154,11 +289,11 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
     try {
       const { fetch: f } = makeFetch([
         { match: /\/sessions\/session-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/session-abc", ticket: "ticket" }) },
-        { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ id: "session-abc", status: "succeeded" }) }
+        { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ session: { id: "session-abc", status: "idle", acceptsMessages: true } }) }
       ]);
       const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-      const session = await client.openSession("session-abc");
-      const iterator = session.events().streamEnvelopes({ from: 0 })[Symbol.asyncIterator]();
+      const session = await client.sessions.open("session-abc");
+      const iterator = session.events.streamEnvelopes({ from: 0 })[Symbol.asyncIterator]();
 
       const first = iterator.next();
       await flush();
@@ -167,8 +302,8 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
 
       const second = iterator.next();
       await flush();
-      sockets[0]!.message(evt(2, "CUSTOM", { name: "aex.session.succeeded", value: { turnSeq: 1, reason: "completed" } }));
-      await expect(second).resolves.toMatchObject({ done: false, value: { type: "CUSTOM" } });
+      sockets[0]!.message(evt(2, "RUN_FINISHED", { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp-1" } }));
+      await expect(second).resolves.toMatchObject({ done: false, value: { type: "RUN_FINISHED" } });
 
       await expect(iterator.next()).resolves.toMatchObject({ done: true });
     } finally {
@@ -190,19 +325,18 @@ describe("SessionEvents.streamEnvelopes — coordinator WebSocket terminal handl
     try {
       const { fetch: f } = makeFetch([
         { match: /\/sessions\/session-abc\/events\/ticket$/, respond: () => jsonResponse({ wsUrl: "wss://events.test/session-abc", ticket: "ticket" }) },
-        { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ id: "session-abc", status: "succeeded" }) }
+        { match: /\/sessions\/session-abc$/, respond: () => jsonResponse({ session: { id: "session-abc", status: "idle", acceptsMessages: true } }) }
       ]);
       const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f });
-      const session = await client.openSession("session-abc");
+      const session = await client.sessions.open("session-abc");
       const controller = new AbortController();
       const consume = (async () => {
-        for await (const event of session.events().streamEnvelopes({
+        for await (const event of session.events.streamEnvelopes({
           from: 0,
           signal: controller.signal,
           idleTimeoutMs: 0,
           pingIntervalMs: 0,
-          eventQuietRecheckMs: 20,
-          terminalDrainGraceMs: 20
+          eventQuietRecheckMs: 20
         })) {
           void event;
           // This test only needs the reconnect side effect.

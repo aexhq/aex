@@ -13,7 +13,7 @@
  * recognized and rejected with an actionable message rather than silently
  * revealing, so a caller expecting rotation is never misled.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
@@ -46,7 +46,7 @@ export async function sessionWebhooksCmd(io: CliIO, argv: readonly string[]): Pr
   if (rotate) {
     io.stderr(
       "--rotate is not supported: the hosted API reveals (or creates on first use) the workspace " +
-        "webhook signing secret but does not rotate it. SessionRecord `aex webhooks secret` to reveal the current value.\n"
+        "webhook signing secret but does not rotate it. Run `aex webhooks secret` to reveal the current value.\n"
     );
     return USAGE_ERR;
   }

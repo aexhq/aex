@@ -17,8 +17,8 @@
  *      map, and path traversal in the entry or a file key. Plus the accept path
  *      (snake_case `input_schema` alias).
  *   C. Builtin selection + custom-tool wire semantics via a fake-fetch client —
- *      `tools: []` serialises to `[]`; `includeBuiltinTools:false` +
- *      `[BuiltinTools.bash]` cherry-picks exactly `["bash"]`; an unknown builtin
+ *      `builtinTools:"none"` serialises explicitly; `[BuiltinTools.bash]`
+ *      cherry-picks exactly `["bash"]`; an unknown builtin
  *      name string is rejected before any HTTP; duplicate builtin names dedup;
  *      two DISTINCT custom Tools with the SAME name are NOT deduped client-side
  *      (both ride the wire — the collision is the server's to resolve).
@@ -80,6 +80,7 @@ function makeFetch() {
   const calls = [];
   const stored = new Set();
   let sessionCounter = 0;
+  let resourceCounter = 0;
   const fetchFake = async (input, init = {}) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = String(init.method ?? "GET").toUpperCase();
@@ -88,7 +89,7 @@ function makeFetch() {
     calls.push({ url, method, headers, body });
     const j = (status, obj) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
-    if (url.endsWith("/assets/presign")) {
+    if (url.endsWith("/api/assets/presign")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice(7) : hash;
       if (stored.has(hash)) return j(200, { ok: true, exists: true, assetId: "asset_" + hex, contentHash: hash, sizeBytes: 0 });
@@ -103,14 +104,24 @@ function makeFetch() {
       if (m) stored.add("sha256:" + m[1]);
       return new Response("", { status: 200 });
     }
-    if (url.endsWith("/assets/finalize")) {
+    if (url.endsWith("/api/assets/finalize")) {
       const hash = body && typeof body.hash === "string" ? body.hash : "sha256:" + "a".repeat(64);
       const hex = hash.startsWith("sha256:") ? hash.slice(7) : hash;
-      return j(200, { ok: true, exists: false, assetId: "asset_" + hex, contentHash: hash, sizeBytes: 0 });
+      return j(200, { ok: true, exists: false, assetId: "asset_" + hex, contentHash: hash, sizeBytes: body.sizeBytes });
+    }
+    if (url.endsWith("/api/workspace/tools") && method === "POST") {
+      resourceCounter += 1;
+      return j(200, { resource: {
+        ...body,
+        kind: "tool",
+        resourceId: "wres_" + resourceCounter.toString(16).repeat(32),
+        version: resourceCounter,
+        createdAt: new Date(0).toISOString()
+      }});
     }
     if (url.endsWith("/api/sessions") && method === "POST") {
       sessionCounter += 1;
-      return j(201, { session: { id: "sess_edge_" + sessionCounter, workspaceId: "ws_edge", status: "idle", turnSeq: 0, createdAt: new Date(0).toISOString() } });
+      return j(201, { session: { id: "sess_edge_" + sessionCounter, workspaceId: "ws_edge", status: "idle", acceptsMessages: true, createdAt: new Date(0).toISOString() } });
     }
     return j(200, { ok: true });
   };
@@ -266,29 +277,29 @@ function makeClient() {
   return { calls, client: new Aex({ apiKey: "aex_edge_token", baseUrl: "https://example.invalid", fetch }) };
 }
 
-// 1. tools: [] serialises to an empty tools array (no throw, no builtins injected client-side).
+// 1. Explicitly disabling builtins leaves custom assets empty.
 {
   const c = makeClient();
-  await c.client.sessions.create({ model: "claude-haiku-4-5", tools: [], apiKeys: { anthropic: "sk-ant" } });
-  deepStrictEqual(onlyCreateBody(c.calls).submission.tools, []);
+  await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: "none", apiKeys: { anthropic: "sk-ant" } });
+  deepStrictEqual(onlyCreateBody(c.calls).submission.assets.tools, []);
+  strictEqual(onlyCreateBody(c.calls).submission.builtinTools, "none");
 }
 
-// 2. includeBuiltinTools:false + a single cherry-picked builtin => exactly ["bash"].
+// 2. A cherry-picked builtin is separate from uploaded custom-tool assets.
 let cherry;
 {
   const c = makeClient();
-  await c.client.sessions.create({ model: "claude-haiku-4-5", includeBuiltinTools: false, tools: [BuiltinTools.bash], apiKeys: { anthropic: "sk-ant" } });
+  await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: [BuiltinTools.bash], apiKeys: { anthropic: "sk-ant" } });
   const body = onlyCreateBody(c.calls);
-  strictEqual(body.submission.includeBuiltinTools, false);
-  deepStrictEqual(body.submission.tools, ["bash"]);
-  cherry = body.submission.tools;
+  deepStrictEqual(body.submission.builtinTools, ["bash"]);
+  cherry = body.submission.builtinTools;
 }
 
 // 3. Duplicate builtin names dedup to one, in first-seen order.
 {
   const c = makeClient();
-  await c.client.sessions.create({ model: "claude-haiku-4-5", tools: [BuiltinTools.bash, BuiltinTools.bash, BuiltinTools.grep, BuiltinTools.bash], apiKeys: { anthropic: "sk-ant" } });
-  deepStrictEqual(onlyCreateBody(c.calls).submission.tools, ["bash", "grep"]);
+  await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: [BuiltinTools.bash, BuiltinTools.bash, BuiltinTools.grep, BuiltinTools.bash], apiKeys: { anthropic: "sk-ant" } });
+  deepStrictEqual(onlyCreateBody(c.calls).submission.builtinTools, ["bash", "grep"]);
 }
 
 // 4. An unknown builtin name string is rejected BEFORE any HTTP.
@@ -297,8 +308,8 @@ let unknownMsg;
   const c = makeClient();
   unknownMsg = await expectReject(
     "unknown builtin",
-    async () => c.client.sessions.create({ model: "claude-haiku-4-5", tools: ["definitely_not_a_builtin"], apiKeys: { anthropic: "sk-ant" } }),
-    /is not a builtin tool name/
+    async () => c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: ["definitely_not_a_builtin"], apiKeys: { anthropic: "sk-ant" } }),
+    /is not a builtin tool/
   );
   strictEqual(c.calls.length, 0, "no HTTP on invalid tool name");
 }
@@ -313,8 +324,15 @@ let dupWire;
   const tA = await Tool.fromFiles({ name: "dup_tool", description: "Alpha.", inputSchema: okSchema, entry: "index.js", files: { "index.js": "export default async () => 'A';\n" } });
   const tB = await Tool.fromFiles({ name: "dup_tool", description: "Bravo.", inputSchema: okSchema, entry: "index.js", files: { "index.js": "export default async () => 'B';\n" } });
   ok(tA.ref.contentHash !== tB.ref.contentHash, "different bytes hash differently");
-  await c.client.sessions.create({ model: "claude-haiku-4-5", includeBuiltinTools: false, tools: [tA, tB], apiKeys: { anthropic: "sk-ant" } });
-  const entries = onlyCreateBody(c.calls).submission.tools.filter((e) => e && typeof e === "object" && e.kind === "asset");
+  const tARef = await c.client.workspace.tools.publish(tA);
+  const tBRef = await c.client.workspace.tools.publish(tB);
+  await c.client.sessions.create({
+    model: "claude-haiku-4-5",
+    builtinTools: "none",
+    assets: { tools: [tARef, tBRef] },
+    apiKeys: { anthropic: "sk-ant" }
+  });
+  const entries = onlyCreateBody(c.calls).submission.assets.tools;
   strictEqual(entries.length, 2, "both same-named custom tools ride the wire");
   strictEqual(entries[0].name, "dup_tool");
   strictEqual(entries[1].name, "dup_tool");
@@ -322,7 +340,7 @@ let dupWire;
   dupWire = { count: entries.length, distinctAssets: entries[0].assetId !== entries[1].assetId };
 }
 
-console.log(JSON.stringify({ ok: true, cherry, unknownRejected: /is not a builtin tool name/.test(unknownMsg), dupWire }));
+console.log(JSON.stringify({ ok: true, cherry, unknownRejected: /is not a builtin tool/.test(unknownMsg), dupWire }));
 `;
     const result = await runChild(script, "edge-builtin-wire.mjs");
     expect(result).toMatchObject({

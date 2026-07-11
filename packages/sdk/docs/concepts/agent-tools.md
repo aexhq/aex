@@ -1,66 +1,48 @@
 ---
 title: Agent tools
-description: The default builtin tools available inside managed sessions.
+description: Select builtin capabilities and attach published custom tools.
 icon: TerminalSquare
 ---
 
-Managed sessions inject the complete builtin tool set into the agent by default:
+`builtinTools` controls platform-provided capabilities:
 
-- `bash`, `code_execution` — run shell commands / model-written snippets
-- `read_file`, `write_file`, `edit_file` — file read/create/patch
-- `grep`, `glob` — search file contents and paths
-- `head`, `tail` — read bounded file slices
-- `ls`, `stat`, `wc` — list a directory, inspect path metadata, count lines/words/bytes
-- `web_fetch`, `web_search` — fetch a URL / managed web search
-- `todo_write` — maintain a todo list
-- `subagent`, `subagent_result` — delegate to and read back from child sessions (see [Subagents](subagents.md))
-- `bash_output`, `bash_kill` — manage background bash jobs
-- `wait`, `git` — bounded idle-yield and first-class git
+- `"default"` enables the standard set and is the default.
+- `"none"` disables all builtin tools.
+- An array such as `[BuiltinTools.bash, BuiltinTools.read_file]` selects an
+  explicit subset.
 
-## Toggling builtins
-
-Set `includeBuiltinTools: false` to inject NO builtins — useful for a pure-MCP
-or pure-custom run where every tool comes from `mcpServers` or `tools`.
-
-`includeBuiltinTools` defaults to `true`.
-
-## Cherry-picking builtins
-
-The `tools` list accepts both custom tool bundles and BUILTIN tool references
-(bare name strings, preferably `BuiltinTools.<name>`). Use builtin references
-to pick a narrow subset alongside `includeBuiltinTools: false`.
-
-The final tool list is ordered: resolved builtin tools, then custom tools, then
-MCP tools.
-
-## Custom tools
-
-Attach your own tool in `tools` as a bundle built with `Tool.fromFiles(...)` (an
-explicit `{ entry, files }`) or `Tool.fromPath(dir)` (a directory with a
-`tool.json` at its root). The bundle's **entry must be a JS module** — a
-`.js`/`.mjs`/`.cjs` file present in the bundle that **default-exports a function
-or an object with an `execute` method**. This is validated at authoring time, so
-a non-JS entry (e.g. a `run.sh`) is rejected right where you build the tool, not
-opaquely mid-session when the runtime's module loader would fail to import it.
-
-Networking is open by default within the platform's managed egress ceiling and
-a fixed SSRF deny-list. `web_fetch` and `web_search` reach the network over a
-managed, SSRF-guarded path that is **not** governed by `environment.networking`,
-so their hosts never need to be listed in a `limited` allowlist. Setting
-`environment.networking.mode` to `limited` restricts only the agent's own
-arbitrary egress (e.g. a `curl` in `bash`); the built-in web tools keep working.
-See [Networking](../networking.md) for the full two-layer model.
-
-## Disable builtins
+Custom tools are workspace resources. Build and publish them, then attach the
+returned ref under `assets.tools`.
 
 ```ts
-import { Models } from "@aexhq/sdk";
+import { BuiltinTools, Tool } from "@aexhq/sdk";
+
+const draft = await Tool.fromFiles({
+  name: "lookup_metric",
+  description: "Looks up one metric.",
+  inputSchema: {
+    type: "object",
+    properties: { name: { type: "string" } },
+    required: ["name"]
+  },
+  entry: "index.js",
+  files: {
+    "index.js": "export default async ({ input }) => ({ content: [{ type: 'text', text: input.name }] });"
+  }
+});
+const lookup = await aex.workspace.tools.publish(draft);
 
 await aex.start({
-  model: Models.CLAUDE_HAIKU_4_5,
-  message: "Use only the declared MCP tools.",
-  mcpServers,
-  includeBuiltinTools: false,
-  apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
+  model,
+  message: "Look up revenue and save the result.",
+  builtinTools: [BuiltinTools.write_file],
+  assets: { tools: [lookup] },
+  apiKeys
 });
 ```
+
+Tool entries must be `.js`, `.mjs`, or `.cjs` modules present in the bundle.
+The SDK validates the manifest before any network request.
+
+Use `mcpServers` for remote MCP tools. The final runtime tool set consists of
+the selected builtins, pinned custom tools, and declared MCP tools.

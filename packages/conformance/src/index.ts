@@ -21,7 +21,7 @@
 
 export {
   expectTerminalEvent,
-  type TerminalReason,
+  type TerminalOutcome,
   type TerminalEvent
 } from "./terminal.js";
 export { expectEventStream, type EventStreamShape } from "./event-stream.js";

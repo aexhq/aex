@@ -1,9 +1,9 @@
 /**
- * `aex.secrets` — the workspace secret MANAGEMENT client, mirroring
- * `aex.files` / `aex.agentsMd`.
+ * `aex.workspace.secrets` — the workspace secret MANAGEMENT client, mirroring
+ * the other workspace resource namespaces.
  *
  * Lifecycle parity with assets: a `Secret.value(...)` is per-session and
- * gone at terminal; promoting it (or `aex.secrets.set`) persists a named,
+ * gone at terminal; `aex.workspace.secrets.set` persists a named,
  * searchable workspace secret you can `get` (metadata), `rotate`, `list`, and
  * `delete`.
  *
@@ -61,10 +61,10 @@ function client(routes: (req: CapturedRequest) => Response) {
   return { client: new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch }), calls };
 }
 
-describe("aex.secrets management client", () => {
+describe("aex.workspace.secrets management client", () => {
   it("set: creates a named workspace secret (value in body, not URL)", async () => {
     const { client: c, calls } = client(() => json({ secret: REC }));
-    const rec = await c.secrets.set({ name: "serper", value: "sk-live-XYZ" });
+    const rec = await c.workspace.secrets.set({ name: "serper", value: "sk-live-XYZ" });
     expect(rec.name).toBe("serper");
     expect(rec.version).toBe(1);
     const call = calls[0]!;
@@ -75,15 +75,23 @@ describe("aex.secrets management client", () => {
 
   it("list: returns workspace secret metadata (searchable by name)", async () => {
     const { client: c, calls } = client(() => json({ secrets: [REC] }));
-    const list = await c.secrets.list();
+    const list = await c.workspace.secrets.list();
     expect(list.map((s) => s.name)).toEqual(["serper"]);
     expect(calls[0]!.method).toBe("GET");
     expect(calls[0]!.url).toBe("https://x/api/secrets");
   });
 
+  it("rejects legacy flat secret responses", async () => {
+    const flatRecord = client(() => json(REC));
+    await expect(flatRecord.client.workspace.secrets.get("serper")).rejects.toThrow(/must contain a secret object/);
+
+    const bareList = client(() => json([REC]));
+    await expect(bareList.client.workspace.secrets.list()).rejects.toThrow(/must contain a secrets array/);
+  });
+
   it("get: returns METADATA only — no value field on the wire", async () => {
     const { client: c, calls } = client(() => json({ secret: REC }));
-    const rec = await c.secrets.get("serper");
+    const rec = await c.workspace.secrets.get("serper");
     expect(rec.name).toBe("serper");
     expect("value" in rec).toBe(false);
     expect(calls[0]!.method).toBe("GET");
@@ -92,7 +100,7 @@ describe("aex.secrets management client", () => {
 
   it("rotate: replaces the value (value in body)", async () => {
     const { client: c, calls } = client(() => json({ secret: { ...REC, version: 2 } }));
-    const rec = await c.secrets.rotate({ name: "serper", value: "sk-new-1" });
+    const rec = await c.workspace.secrets.rotate({ name: "serper", value: "sk-new-1" });
     expect(rec.version).toBe(2);
     expect(calls[0]!.method).toBe("POST");
     expect(calls[0]!.url).toBe("https://x/api/secrets/serper/rotate");
@@ -101,16 +109,16 @@ describe("aex.secrets management client", () => {
 
   it("delete: removes a workspace secret by name", async () => {
     const { client: c, calls } = client(() => new Response(null, { status: 204 }));
-    await c.secrets.delete("serper");
+    await c.workspace.secrets.delete("serper");
     expect(calls[0]!.method).toBe("DELETE");
     expect(calls[0]!.url).toBe("https://x/api/secrets/serper");
   });
 
   it("never puts a secret value in a URL or query string", async () => {
     const { client: c, calls } = client(() => json({ secret: REC }));
-    await c.secrets.set({ name: "serper", value: "sk-live-XYZ" });
-    await c.secrets.rotate({ name: "serper", value: "sk-new-1" });
-    await c.secrets.get("serper");
+    await c.workspace.secrets.set({ name: "serper", value: "sk-live-XYZ" });
+    await c.workspace.secrets.rotate({ name: "serper", value: "sk-new-1" });
+    await c.workspace.secrets.get("serper");
     for (const call of calls) {
       expect(call.url).not.toContain("sk-live-XYZ");
       expect(call.url).not.toContain("sk-new-1");
@@ -118,14 +126,14 @@ describe("aex.secrets management client", () => {
   });
 });
 
-describe("secret.upload routes through aex.secrets", () => {
-  it("promotes an ephemeral Secret.value into the workspace store and yields a reusable ref", async () => {
+describe("workspace secret reference flow", () => {
+  it("persists through the workspace namespace and references the returned name", async () => {
     const { client: c, calls } = client(() => json({ secret: REC }));
-    const ref = await Secret.value("sk-live-XYZ").upload(c, { name: "serper" });
+    const record = await c.workspace.secrets.set({ name: "serper", value: "sk-live-XYZ" });
+    const ref = Secret.ref(record.name);
     expect(ref.kind).toBe("ref");
     expect(ref.handle).toBe("serper");
     expect(ref.toSubmissionEntry()).toEqual({ ref: "serper" });
-    // The upload posted the value to the workspace store (in the body, not the URL).
     const post = calls.find((call) => call.method === "POST")!;
     expect(post.url).toBe("https://x/api/secrets");
     expect(post.body).toEqual({ name: "serper", value: "sk-live-XYZ" });

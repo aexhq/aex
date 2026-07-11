@@ -1,7 +1,7 @@
 # @aexhq/user-tests
 
 Layer-4 test workspace. Exercises a clean install of the current **packed
-tarball** (local/offline default, CI, and manual live workflow sessions) or the
+tarball** (local/offline default, CI, and manual live workflow runs) or the
 exact **published artifact** selected by release workflows, the way a real user
 or AI agent would on day one of `npm i @aexhq/sdk`.
 
@@ -16,7 +16,7 @@ published-artifact behavior.
 
 ## Running
 
-For local/offline sessions, no artifact env is required: when neither env below is
+For local/offline runs, no artifact env is required: when neither env below is
 set, the fixture packs the current workspace SDK once into a tempdir and
 installs that tarball.
 
@@ -44,17 +44,17 @@ bun run test:user:providers
 bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 ```
 
-Offline sessions use `vitest.offline.config.ts` and default to 4 parallel test files.
+Offline runs use `vitest.offline.config.ts` and default to 4 parallel test files.
 Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
 uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
-SDK artifact, splits the live sweep into 50 non-empty shards, and sessions 1 test
+SDK artifact, splits the live sweep into 50 non-empty shards, and runs one test
 file at a time per shard so the hosted-plane pressure stays bounded while the
 shard tail gets shorter.
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
 `test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
 workspace-recursive runner that invokes every package's `test:unit`
-script; because these are named `test:user*`, that gate never sessions them
+script; because these are named `test:user*`, that gate never runs them
 by default. That matters: they fail loudly when the artifact-under-test
 env is unset (by design), so pulling them into the default gate would
 break it for everyone. They run only via explicit invocation here and
@@ -75,12 +75,12 @@ published SDK candidate when present and npm `latest` otherwise.
 
 ## CI prerequisites
 
-CI sessions the offline scenarios after the unit gate. The release workflow sessions the
+CI runs the offline scenarios after the unit gate. The release workflow runs the
 offline scenarios before publish and the live scenarios against the exact
 published version after npm visibility. The offline path needs no provider key.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
-the configured hosted API. The workflow sessions the default sweep as 50 shards.
+the configured hosted API. The workflow runs the default sweep as 50 shards.
 They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
@@ -95,11 +95,11 @@ They require:
 
 The `test/live/live-sdk-*.test.ts` files exercise the packed tarball
 end-to-end against the configured hosted API. All gating live
-coverage sessions DeepSeek-managed (the gate provider); Anthropic-managed is a
+coverage runs DeepSeek-managed (the gate provider); Anthropic-managed is a
 per-provider correctness round-trip in `test/live/providers/` (non-gating).
 
-Each test installs the packed tarball into a tempdir, opens a session or sessions a
-one-shot `run({ message, apiKeys, ... })`, reads through the session accessors,
+Each test installs the packed tarball into a tempdir, opens a session or runs a
+one-shot `aex.start({ message, apiKeys, ... })`, reads through the session accessors,
 and asserts the user's probe string round-trips through a real upstream LLM call.
 
 Required env:
@@ -140,7 +140,7 @@ Scope: one DeepSeek-managed cell using the configured
 `AEX_USER_TEST_DEEPSEEK_MODEL` or the default `deepseek-v4-flash`.
 
 It is **excluded** from the default `test:user` sweep (see
-`vitest.config.ts`) and sessions only via its own entrypoint + config:
+`vitest.config.ts`) and runs only via its own entrypoint + config:
 
 ```bash
 bun run --filter @aexhq/user-tests test:user:heavy   # or: bun run test:user:heavy
@@ -151,7 +151,7 @@ Required env is identical to the comprehensive scenario
 `AEX_USER_TEST_VERSION`, and `DEEPSEEK_API_KEY`); model override is
 `AEX_USER_TEST_DEEPSEEK_MODEL`.
 
-CI: it sessions via the consolidated on-demand pipeline (see below), not the
+CI: it runs via the consolidated on-demand pipeline (see below), not the
 default sweep.
 
 ## Tool capability fuzz gate
@@ -164,7 +164,7 @@ custom tool bundle upload/execution.
 
 It also covers custom tool schemas, structured arguments, environment and secret
 access, result forms, expected tool failures, and redaction. It is **excluded**
-from the default `test:user` sweep, sessions in the platform deploy suite via
+from the default `test:user` sweep, runs in the platform deploy suite via
 `aex-platform/.github/workflows/aws-suite.yml`, and remains directly invokable
 for reproduction:
 
@@ -195,7 +195,7 @@ matrix, so the release gate never depends on its account's billing state.
 
 Each file hard-fails when its provider key is absent (e.g. `ANTHROPIC_API_KEY`, `DOUBAO_API_KEY`);
 run the suite only in an environment provisioned for the provider matrix. The suite is **excluded**
-from the default `test:user` sweep (see `vitest.config.ts`) and sessions via its
+from the default `test:user` sweep (see `vitest.config.ts`) and runs via its
 own config:
 
 ```bash
@@ -205,10 +205,10 @@ bun run --filter @aexhq/user-tests test:user:providers
 ## Consolidated on-demand pipeline
 
 The optional suites above — the per-provider correctness matrix and the heavy
-full-feature session — are kept out of the default sweep and session together from a
+full-feature session — are kept out of the default sweep and run together from a
 single manual trigger:
 `.github/workflows/live-on-demand-tests.yml`. One dispatch prepares the selected
-SDK artifact once, then sessions `test:user:providers` and `test:user:heavy` as
+SDK artifact once, then runs `test:user:providers` and `test:user:heavy` as
 independent jobs so you get the full optional signal from one trigger.
 `test:user:tool-fuzz` belongs to the platform deploy suite instead, because it
 is a deterministic paid gate rather than a non-gating on-demand probe. The

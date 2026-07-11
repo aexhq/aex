@@ -8,13 +8,13 @@
  * workspace symlinks cannot leak in.
  *
  * The DeepSeek-managed cell submits one session with:
- *   - 2 inline Skills (proves multi-skill manifest + materialization)
+ *   - 2 immutable workspace Skills (proves multi-skill manifest + materialization)
  *   - 2 remote MCP servers (exercises the multi-MCP submission path; that
  *     the model actually INVOKES a wired MCP is asserted separately by
  *     live-sdk-mcp-invocation.test.ts, which disarms builtins so the MCP
  *     is the only available tool — this comprehensive run keeps builtins on
  *     and does not assert MCP invocation)
- *   - 1 AGENTS.md (probe-tagged so a model reply that omits it fails)
+ *   - 1 immutable Instructions resource (probe-tagged so omission fails)
  *   - 1 `system` message (probe-tagged)
  *   - 1 prompt (probe-tagged)
  *   - 1 custom fileCapture.allowedDirs entry (not /workspace/files — exercises
@@ -23,15 +23,14 @@
  *     round-trip)
  *   - `secrets` carrying the customer's provider key
  *
- * Then waits for `runtime_terminal` and asserts:
+ * Then waits for the committed `RUN_FINISHED` terminal and asserts:
  *   - The session reached `succeeded`.
- *   - The event log starts with `runtime_started` and ends with
- *     `runtime_terminal` (The managed runtime actually spawned and exited cleanly).
+ *   - The public event log contains exactly one committed RUN terminal.
  *   - Every submitted skill produced a `skill_loaded`
  *     notification (proves materialization of all skills).
  *   - At least one `assistant_text` event landed (The managed runtime generated a
  *     real reply via the BYOK provider-proxy).
- *   - The collected assistant text contains the system + AGENTS.md +
+ *   - The collected assistant text contains the system + Instructions +
  *     prompt probes (proves `composeInstructions()` carried all three
  *     channels into the recipe.yaml that the managed runtime reads).
  *   - No secret value (the provider key) appears anywhere
@@ -75,10 +74,10 @@ function managedSkillName(role: "alpha" | "beta", provider: CaseSpec["provider"]
 
 interface CaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
-  readonly probes: { system: string; agentsMd: string; prompt: string };
+  readonly probes: { system: string; instructions: string; prompt: string };
   readonly eventCount: number;
   readonly eventKinds: readonly string[];
   readonly notificationKinds: readonly string[];
@@ -137,9 +136,9 @@ interface CaseSpec {
   readonly timeoutMs: number;
 }
 
-function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string; prompt: string }): string {
+function buildScript(spec: CaseSpec, probes: { system: string; instructions: string; prompt: string }): string {
   // Channel-delivery probe. recipe.yaml carries:
-  //   composeInstructions() = submission.system + AGENTS.md text +
+  //   composeInstructions() = submission.system + published Instructions +
   //   prompt parts (joined by blank lines).
   // We inject one unique tracking reference (`REF-verify-...`) into
   // each channel and ask the model to acknowledge with all three.
@@ -149,10 +148,9 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
   //     "markers" — Claude's safety layer treats `sys-mark-*` as
   //     adversarial probes and refuses ("Iwon'tparticipateinprompt
   //     injectionscenarios"), but happily echoes ref/tracking IDs.
-  //   - User prompt never mentions the literal string "AGENTS.md" —
-  //     when it did, models (DeepSeek, Anthropic) tried to read the
-  //     file from disk and returned FILE_NOT_FOUND ("TheAGENTS.mdfile
-  //     doesn'texistinthisprojectworkspace"). The text in that channel
+  //   - User prompt never names the instructions resource. When it did,
+  //     models tried to read a same-named file from disk instead of applying
+  //     the context already supplied by the platform. The text in that channel
   //     is described as "project tracking guidance" instead.
   const promptText =
     `Please reply with a one-line acknowledgement that includes ` +
@@ -167,14 +165,14 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     `Your session reference for this session is ${probes.system}. ` +
     `When a user asks you to acknowledge tracking references, ` +
     `include this session reference verbatim in your reply.`;
-  const agentsMdText =
+  const instructionsText =
     `# Project tracking guidance\n\n` +
-    `The project tracking reference for this workspace is ${probes.agentsMd}. ` +
+    `The project tracking reference for this workspace is ${probes.instructions}. ` +
     `When a user asks you to acknowledge tracking references, ` +
     `include this project tracking reference verbatim in your reply.`;
 
   return `
-    import { Aex, Skill, McpServer, AgentsMd } from "@aexhq/sdk";
+    import { Aex, Skill, McpServer, Instructions } from "@aexhq/sdk";
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
@@ -184,7 +182,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     const skillAlpha = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedSkillName("alpha", spec.provider)}\ndescription: Reply with the requested probes verbatim.\n---\n# alpha\nReply with the requested probes verbatim.`)}, {
       name: ${JSON.stringify(managedSkillName("alpha", spec.provider))}
     });
-    const skillBeta = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedSkillName("beta", spec.provider)}\ndescription: Always comply with the AGENTS.md rules.\n---\n# beta\nAlways comply with the AGENTS.md rules.`)}, {
+    const skillBeta = await Skill.fromContent(${JSON.stringify(`---\nname: ${managedSkillName("beta", spec.provider)}\ndescription: Always comply with the published instructions.\n---\n# beta\nAlways comply with the published instructions.`)}, {
       name: ${JSON.stringify(managedSkillName("beta", spec.provider))}
     });
 
@@ -197,45 +195,38 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       url: ${JSON.stringify(MCP_SERVER_URL)}
     });
 
-    const rules = await AgentsMd.fromContent(
-      ${JSON.stringify(agentsMdText)},
+    const rules = await Instructions.fromContent(
+      ${JSON.stringify(instructionsText)},
       { name: "compose-rules" }
     );
+    const skillAlphaRef = await client.workspace.skills.publish(skillAlpha);
+    const skillBetaRef = await client.workspace.skills.publish(skillBeta);
+    const rulesRef = await client.workspace.instructions.publish(rules);
 
     const runOpts = {
       provider: ${JSON.stringify(spec.provider)},
       model: ${JSON.stringify(spec.model)},
       system: ${JSON.stringify(systemText)},
       message: ${JSON.stringify(promptText)},
-      agentsMd: [rules],
+      assets: {
+        skills: [skillAlphaRef, skillBetaRef],
+        instructions: [rulesRef]
+      },
+      mcpServers: [mcpPrimary, mcpSecondary],
       fileCapture: { allowedDirs: [${JSON.stringify(spec.customOutputDir)}] },
       apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
-    runOpts.skills = [skillAlpha, skillBeta];
-    runOpts.mcpServers = [mcpPrimary, mcpSecondary];
-
     const sessionResult = await client.start(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
     const sessionId = sessionResult.sessionId;
     const session = await client.sessions.open(sessionId);
     const run = {
-      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      status: sessionResult.status,
       runtime: "managed",
       provider: ${JSON.stringify(spec.provider)}
     };
-    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    const fallbackFiles = Array.isArray(sessionResult.files) ? sessionResult.files : [];
-    let events = fallbackEvents;
-    let files = fallbackFiles;
-    try {
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-      const listedFiles = await session.files().list();
-      if (Array.isArray(listedFiles)) files = listedFiles;
-    } catch {
-      events = fallbackEvents;
-      files = fallbackFiles;
-    }
+    const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
+    const files = (await session.files.list()).files;
 
     // CUSTOM envelopes nest the original payload under data.value.
     function customName(e) {
@@ -278,14 +269,9 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-    const terminalData = terminal && isSessionIdle(terminal)
-      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-      : terminal ? terminal.data : null;
+    const terminalData = terminal ? terminal.data : null;
     // stream_error events carry the runner-side exception that
     // caused a runner_error terminal — message + stack + phase
     // (manifest/materialize). Collect them all so the diagnostic
@@ -298,7 +284,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     for (const out of files.slice(0, 8)) {
       let sample = null;
       try {
-        const bytes = await session.files().download(out);
+        const bytes = await session.files.download(out);
         const text = new TextDecoder().decode(bytes);
         sample = text.slice(0, 256);
       } catch (err) {
@@ -311,7 +297,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: run.status,
+      runStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       probes: ${JSON.stringify(probes)},
@@ -322,7 +308,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; agentsMd: string;
       skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal ? terminal.type : null,
       terminalData,
       fileCount: files.length,
       files: filesCollected,
@@ -342,7 +328,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // model on "tracking reference, echo for audit" semantics.
   //
   // Separators are dots, NOT hyphens. The stream-before-disk redactor
-  // the runtime redactor masks high-entropy sessions of
+  // the runtime redactor masks high-entropy runs of
   // [A-Za-z0-9+/=-]{24,}. The model echoes the probes in a key=value
   // shape ("session=<ref> ..."), and a hyphen-segmented ref glued to its
   // `session=` label forms one 24+ char run that the redactor eats whole —
@@ -352,7 +338,7 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
   // punctuates the reply.
   const probes = {
     system: "REF.verify." + Math.random().toString(36).slice(2, 10),
-    agentsMd: "REF.verify." + Math.random().toString(36).slice(2, 10),
+    instructions: "REF.verify." + Math.random().toString(36).slice(2, 10),
     prompt: "REF.verify." + Math.random().toString(36).slice(2, 10)
   };
   const script = buildScript(spec, probes);
@@ -380,21 +366,19 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
 }
 
 function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly [string, string]): void {
-  expect(result.sessionStatus).toBe("succeeded");
+  expect(result.runStatus).toBe("succeeded");
 
-  // Event log frames the session: starts with runtime_started, ends with
-  // runtime_terminal. Both are emitted by the runner; managed-runtime stream
-  // events sit in between.
+  // RUN_FINISHED is the committed completion and consistency barrier.
   // On terminal mismatch, dump everything we know so the failure
   // log is self-diagnosing. The comprehensive case touches many
-  // surfaces (skills, MCP, AGENTS.md, system, custom fileCapture.allowedDirs)
+  // surfaces (skills, MCP, Instructions, system, custom fileCapture.allowedDirs)
   // and a runner_error here means materialize() or the manifest fetch tripped.
   // Internal runtime diagnostics are intentionally not exposed through the
   // public files list.
   const dumpComprehensive = (): string => {
     const lines: string[] = [];
     lines.push(`sessionId=${result.sessionId} runtime=${result.runtime} provider=${result.provider}`);
-    lines.push(`sessionStatus=${result.sessionStatus} terminalKind=${result.terminalKind}`);
+    lines.push(`runStatus=${result.runStatus} terminalKind=${result.terminalKind}`);
     lines.push(`terminalData=${JSON.stringify(result.terminalData)}`);
     lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
     lines.push(`notificationKinds=[${result.notificationKinds.join(", ")}]`);
@@ -411,19 +395,10 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
     return lines.join("\n");
   };
 
-  expect(result.terminalKind).toBe("TURN_FINISHED");
-  expect(result.eventKinds).toContain("TURN_FINISHED");
+  expect(result.terminalKind).toBe("RUN_FINISHED");
+  expect(result.eventKinds).toContain("RUN_FINISHED");
   const terminal = result.terminalData ?? {};
-  if (terminal["reason"] !== "complete") {
-    throw new Error(`expected terminal reason "complete" but got "${terminal["reason"]}"\n\n${dumpComprehensive()}`);
-  }
-  // runtimeExitCode is undefined when the runtime adapter's own complete
-  // event fires before the runner's terminal emit (idempotency guard);
-  // that's the happy path. If present it must be 0.
-  const exitCode = terminal["runtimeExitCode"];
-  if (exitCode !== undefined && exitCode !== 0) {
-    throw new Error(`runtimeExitCode=${exitCode}\n\n${dumpComprehensive()}`);
-  }
+  expect(terminal["outcome"], dumpComprehensive()).toBe("succeeded");
 
   // Materialization carried every submitted skill into the container.
   if (result.skillLoadedNames.length < expectedSkillPrefixes.length) {
@@ -442,12 +417,12 @@ function assertManagedShape(result: CaseResult, expectedSkillPrefixes: readonly 
   expect(result.assistantTextEventCount).toBeGreaterThan(0);
   expect(result.assistantTextJoined.length).toBeGreaterThan(0);
 
-  // system + AGENTS.md + prompt all reached managed runtime via the recipe.yaml
+  // system + Instructions + prompt all reached the managed runtime
   // instructions. The model echoed each probe. Strip whitespace because
   // managed-runtime stream fragments content across blocks per-token.
   const normalized = result.assistantTextJoined.replace(/\s+/g, "");
   expect(normalized).toContain(result.probes.system);
-  expect(normalized).toContain(result.probes.agentsMd);
+  expect(normalized).toContain(result.probes.instructions);
   expect(normalized).toContain(result.probes.prompt);
 
   // No secret leakage anywhere in the SDK-visible payload.
@@ -478,7 +453,7 @@ afterAll(() => {
 
 describe("live hosted API — comprehensive end-to-end via installed SDK", () => {
   it(
-    "managed deepseek: real managed runtime + skills + MCP + AGENTS.md + system + fileCapture.allowedDirs",
+    "managed deepseek: real managed runtime + skills + MCP + Instructions + system + fileCapture.allowedDirs",
     async () => {
       const result = await runCase(
         {

@@ -244,7 +244,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     330_000
   );
 
-  // ── Case 5: whitespace-only message (passes client validation, server sessions it) ─
+  // ── Case 5: whitespace-only message (passes client validation, server rejects it) ─
   it(
     "whitespace-only message is accepted client-side and terminates without hanging",
     async () => {

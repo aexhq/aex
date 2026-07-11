@@ -9,7 +9,7 @@
  * These are host-only and require `io.configStore` (wired by `cli.ts`); they
  * read no env and are unavailable inside a managed session container.
  */
-import { operations } from "@aexhq/contracts";
+import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,

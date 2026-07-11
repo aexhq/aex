@@ -9,12 +9,10 @@ import {
   isEventChannel,
   isFromSource,
   isLog,
-  isTurnError,
-  isTurnFinished,
-  isSessionSettled,
-  isTurnStarted,
-  isTurnTerminal,
-  isSessionParked,
+  isRunError,
+  isRunFinished,
+  isRunStarted,
+  isRunTerminal,
   isTextMessage,
   isToolCallResult,
   isToolCallStart,
@@ -26,9 +24,13 @@ import {
   type RunnerEvent
 } from "../src/index.js";
 
-const ctx = { sessionId: "ses_env", baseMs: 1_000_000 };
+const ctx = { sessionId: "ses_env", runId: "run_env", baseMs: 1_000_000 };
 
-const map = (evt: RunnerEvent) => runnerEventToAexEvent(evt, ctx);
+const map = (evt: RunnerEvent): AexEvent => {
+  const event = runnerEventToAexEvent(evt, ctx);
+  if (event === null) throw new Error(`expected a public projection for ${evt.kind}`);
+  return event;
+};
 const ev = (seq: number, kind: RunnerEvent["kind"], data: RunnerEvent["data"] = {}): RunnerEvent => ({
   seq,
   tMs: seq,
@@ -49,10 +51,10 @@ describe("runnerEventToAexEvent — CloudEvents framing", () => {
 });
 
 describe("runnerEventToAexEvent — per-kind projection (type + source)", () => {
-  it("runtime_started → TURN_STARTED / runtime", () => {
+  it("runtime_started → RUN_STARTED / runtime", () => {
     const out = map(ev(0, "runtime_started", { source: "managed-runtime" }));
-    expect([out.type, out.source]).toEqual(["TURN_STARTED", "runtime"]);
-    expect(isTurnStarted(out)).toBe(true);
+    expect([out.type, out.source]).toEqual(["RUN_STARTED", "runtime"]);
+    expect(isRunStarted(out)).toBe(true);
   });
 
   it("assistant_text → TEXT_MESSAGE_CONTENT / agent, with a clipped message", () => {
@@ -90,7 +92,7 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
     expect(customName(file)).toBe("aex.file_uploaded");
   });
 
-  it("notification → CUSTOM / runtime; stream_error → CUSTOM / runtime (non-fatal, not TURN_ERROR)", () => {
+  it("notification → CUSTOM / runtime; stream_error → CUSTOM / runtime (non-fatal, not RUN_ERROR)", () => {
     const note = map(ev(7, "notification", { source: "anthropic", reason: "model_request_end" }));
     expect([note.type, note.source]).toEqual(["CUSTOM", "runtime"]);
     expect(customName(note)).toBe("aex.notification");
@@ -98,61 +100,16 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
     const err = map(ev(8, "stream_error", { source: "runtime", message: "echo timed out" }));
     expect([err.type, err.source]).toEqual(["CUSTOM", "runtime"]);
     expect(customName(err)).toBe("aex.stream_error");
-    // A non-fatal stream error must NOT masquerade as the terminal TURN_ERROR.
-    expect(isTurnError(err)).toBe(false);
-    expect(isTurnTerminal(err)).toBe(false);
-    // ...but a session-park CUSTOM is a managed-runtime terminal (F19).
-    expect(isSessionParked(err)).toBe(false);
+    // A non-fatal stream error must NOT masquerade as the terminal RUN_ERROR.
+    expect(isRunError(err)).toBe(false);
+    expect(isRunTerminal(err)).toBe(false);
   });
 
-  it("isSessionParked / isSessionSettled recognize the managed session-park terminals (F19)", () => {
-    const parked = (name: string): AexEvent => ({
-      specversion: AEX_EVENT_SPECVERSION,
-      id: "ses_env:0",
-      source: "runtime",
-      type: "CUSTOM",
-      subject: "ses_env",
-      time: new Date().toISOString(),
-      sequence: 0,
-      data: { name, value: {} }
-    });
-    // WS1 clean-cut: the settled park vocabulary is the resumable parks plus the
-    // terminal outcomes; bare `aex.session.error` is retired (→ `failed`).
-    for (const name of [
-      "aex.session.idle",
-      "aex.session.suspended",
-      "aex.session.succeeded",
-      "aex.session.failed",
-      "aex.session.timed_out",
-      "aex.session.cancelled"
-    ]) {
-      expect(isSessionParked(parked(name))).toBe(true);
-      // settleConsistent may terminate at the park if no later aex.session.settled
-      // barrier is delivered to this stream.
-      expect(isSessionSettled(parked(name))).toBe(true);
-    }
-    // The retired bare `error` park is no longer recognized (→ `failed`).
-    expect(isSessionParked(parked("aex.session.error"))).toBe(false);
-    // A HELD approval gate ends the turn but the RUN is NOT settled.
-    expect(isSessionSettled(parked("aex.session.awaiting_approval"))).toBe(false);
-    // A non-park CUSTOM (e.g. skill_loaded) is neither.
-    expect(isSessionParked(parked("aex.skill_loaded"))).toBe(false);
-    expect(isSessionSettled(parked("aex.skill_loaded"))).toBe(false);
-    // A plain typed event is not a session park.
-    expect(isSessionParked(map(ev(11, "runtime_terminal", { reason: "complete" })))).toBe(false);
-  });
-
-  it("runtime_terminal → TURN_FINISHED normally, TURN_ERROR when the reason is error", () => {
-    const done = map(ev(9, "runtime_terminal", { reason: "complete", totalTokens: 10 }));
-    expect(done.type).toBe("TURN_FINISHED");
-    expect(isTurnTerminal(done)).toBe(true);
-
-    const cancelled = map(ev(10, "runtime_terminal", { reason: "cancelled" }));
-    expect(cancelled.type).toBe("TURN_FINISHED"); // the orchestrator owns the cancelled *status*
-
-    const failed = map(ev(11, "runtime_terminal", { reason: "error", failureClass: "session_failed", failureMessage: "boom" }));
-    expect(failed.type).toBe("TURN_ERROR");
-    expect(isTurnError(failed)).toBe(true);
+  it("runtime_terminal has no public projection", () => {
+    expect(runnerEventToAexEvent(
+      ev(9, "runtime_terminal", { reason: "complete", totalTokens: 10 }),
+      ctx
+    )).toBeNull();
   });
 });
 
@@ -166,12 +123,11 @@ describe("honest guards close the Phase-0 gap", () => {
       "skill_loaded",
       "file_uploaded",
       "notification",
-      "stream_error",
-      "runtime_terminal"
+      "stream_error"
     ];
-    const guards = [isTurnStarted, isTurnFinished, isTurnError, isTextMessage, isToolCallStart, isToolCallResult, isCustom];
+    const guards = [isRunStarted, isRunFinished, isRunError, isTextMessage, isToolCallStart, isToolCallResult, isCustom];
     for (const kind of kinds) {
-      const out = map(ev(0, kind, kind === "runtime_terminal" ? { reason: "complete" } : {}));
+      const out = map(ev(0, kind));
       expect(guards.some((g) => g(out))).toBe(true);
     }
   });
@@ -188,9 +144,14 @@ describe("toAGUI — strict AG-UI projection", () => {
     expect(out).toEqual({ type: "TOOL_CALL_START", timestamp: ctx.baseMs + 2, toolCallId: "tc1", toolCallName: "read_file" });
   });
 
-  it("TURN_ERROR carries message + code from the failure fields", () => {
-    const out = toAGUI(map(ev(3, "runtime_terminal", { reason: "error", failureClass: "session_failed", failureMessage: "boom" })));
-    expect(out).toEqual({ type: "TURN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "session_failed" });
+  it("RUN_ERROR carries message + code from the failure fields", () => {
+    const out = toAGUI({
+      ...map(ev(3, "stream_error", {})),
+      type: "RUN_ERROR",
+      message: "boom",
+      data: { failureClass: "session_failed", failureMessage: "boom" }
+    });
+    expect(out).toEqual({ type: "RUN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "session_failed" });
   });
 
   it("CUSTOM round-trips name + value", () => {
@@ -277,14 +238,14 @@ describe("log channel — logToInbound + guards (unified stream)", () => {
     expect(channelOf(typed)).toBe("event");
     expect(isEventChannel(typed)).toBe(true);
     expect(isLog(typed)).toBe(false);
-    const log = { ...logToInbound("api", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
+    const log = { ...logToInbound("api", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", threadId: "r", runId: "run_r", sequence: 0 } as const;
     expect(channelOf(log)).toBe("log");
     expect(isLog(log)).toBe(true);
     expect(isEventChannel(log)).toBe(false);
   });
 
   it("toAGUI carries a LOG under the reserved CUSTOM as aex.log", () => {
-    const log = { ...logToInbound("api", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", sequence: 0 } as const;
+    const log = { ...logToInbound("api", line), specversion: AEX_EVENT_SPECVERSION, id: "r:0", subject: "r", threadId: "r", runId: "run_r", sequence: 0 } as const;
     const agui = toAGUI(log);
     expect(agui.type).toBe("CUSTOM");
     expect(agui).toMatchObject({ name: "aex.log" });

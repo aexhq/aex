@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { parseSessionSubmissionRequest, type PlatformSessionSubmissionRequest } from "../src/index.js";
+import { parseSessionSubmissionRequest, type PlatformSessionSubmissionRequest } from "../src/internal.js";
 
 /**
  * Robustness/totality fuzz for the top-level submission validator. Complements
@@ -19,8 +19,8 @@ function makeValid(): PlatformSessionSubmissionRequest {
     submission: {
       model: "claude-haiku-4-5",
       prompt: ["hello"],
-      agentsMd: [],
-      files: [],
+      assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
       mcpServers: []
     },
     secrets: { apiKeys: { anthropic: "sk-ant-test" } }

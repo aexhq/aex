@@ -4,11 +4,35 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.42.0
+
+### Changed
+
+- Replaced legacy top-level SDK resource clients with the canonical hierarchy:
+  `aex.workspace.files`, `aex.workspace.skills`, `aex.workspace.tools`,
+  `aex.workspace.instructions`, `aex.workspace.secrets`, and `aex.sessions`.
+- Made session-owned messages, events, files, and webhooks available from the
+  session handle, with version-pinned workspace resources submitted under
+  `assets`.
+- Defined AG-UI `RUN_FINISHED` and `RUN_ERROR` as final consistency barriers:
+  checkpointing, file synchronization, billing, and terminal state are durable
+  before the terminal event is visible.
+- Removed legacy bare HTTP aliases and standardized public traffic on `/api/*`.
+- Limited automatic retries to safe reads and mutations replayed with the same
+  idempotency identity; live user scenarios now fail on whole-scenario errors.
+
+### Added
+
+- Immutable workspace resource versions and checkpoint-aware session file
+  access.
+- Automatic immutable canary publication, exact-candidate platform validation,
+  and evidence-backed monotonic promotion to npm `latest`.
+
 ## 0.41.3
 
 ### Fixed
 
-- Unwrapped hosted `GET /api/sessions/:id` response envelopes in `session.unit()`
+- Unwrapped hosted `GET /api/sessions/:id` response envelopes in canonical session reads
   so live managed-session records keep their session id and status.
 - Tightened the no-tools live user-test prompt so it verifies zero tool calls
   without depending on ambiguous `SessionFile` wording.
@@ -262,7 +286,7 @@ follows semantic versioning.
   (`send`, `suspend`, `resume`, `cancel`, `delete`, `refresh`, `wait`, `unit`,
   `download` / `downloadMetadata`) and groups its reads/streams/downloads into
   accessor sub-resources: `session.messages()`, `session.events()`,
-  `session.outputs()`, and `session.webhooks()`. Each read accessor exposes
+  `session.outputs()`, and `session.webhooks`. Each read accessor exposes
   `list()` / `last()` / `first()`, with `events()` adding `stream()` /
   `streamEnvelopes()` / `archiveLink()` / `download()`, `outputs()` adding
   `read()` / `find()` / `findOne()` / `link()` / `fetch()` / `download()`, and
@@ -279,8 +303,8 @@ follows semantic versioning.
   `secretEnv` becomes `environment.secrets`; `runtimeSize` becomes `runtime`;
   `timeout` becomes `overrides.timeout`.
 - Moved webhooks onto sessions: pass `webhook: { url }` to `openSession` / `run`
-  and inspect delivery with `session.webhooks().list()` /
-  `session.webhooks().redeliver(id)`. Verify inbound deliveries with
+  and inspect delivery with `session.webhooks.list()` /
+  `session.webhooks.redeliver(id)`. Verify inbound deliveries with
   `verifyAexWebhook`.
 - Renamed the data-source chat tools to session vocabulary: `list_sessions` →
   `list_sessions`, `get_run` → `get_session`, and their `session_id` argument →
@@ -422,7 +446,7 @@ follows semantic versioning.
   persisted server-side. The consumer now:
   - sends a lightweight keep-alive ping the coordinator auto-responds to
     (without forcing an extra server-side wake), and
-  - sessions an idle watchdog (default 45s) that, on no inbound frame, treats the
+  - runs an idle watchdog (default 45s) that, on no inbound frame, treats the
     socket as dead and reconnects — resuming from the last cursor, which replays
     the terminal exactly-once.
   Tunable via the internal stream options `idleTimeoutMs` / `pingIntervalMs`;
@@ -474,7 +498,7 @@ follows semantic versioning.
 ### Added
 
 - SessionRecord Webhooks: submit a per-session `webhook: { url }` to receive the terminal
-  `session.finished` event (signed Standard-Webhooks style). New delivery APIs
+  per-run `run.finished` / `run.error` events (signed Standard-Webhooks style). New delivery APIs
   `getSessionWebhookDeliveries(sessionId)` and `redeliverSessionWebhook(sessionId, deliveryId)`,
   plus the `verifyAexWebhook(...)` helper to verify inbound deliveries with no
   extra dependency.

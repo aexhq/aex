@@ -2,10 +2,10 @@
  * EDGE-CASE SWEEP — SDK event-stream surface (customer perspective).
  *
  * Surface under test:
- *   - `session.send(...)` live async-iteration over the coordinator WebSocket.
- *   - `session.events().streamEnvelopes({ from, signal, settleConsistent })`
+ *   - `session.messages.send(...)` live async-iteration over the coordinator WebSocket.
+ *   - `session.events.streamEnvelopes({ from, signal })`
  *     (live AexEvent WS, exactly-once cursor resume).
- *   - `session.events().stream({ intervalMs, signal })` (TurnEvent HTTP polling).
+ *   - `session.events.stream({ intervalMs, signal })` (TurnEvent HTTP polling).
  *   - Reconnect / replay-from-seq (the key reliability property): forced
  *     mid-turn socket drops must resume with NO duplicates and NO lost events.
  *   - `idleTimeoutMs` / `pingIntervalMs` keep-alive on a live turn.
@@ -25,7 +25,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -113,18 +112,6 @@ function customNamesOf(events) {
   }
   return [...s];
 }
-const SESSION_TERMINAL_NAMES = new Set([
-  "aex.session.idle",
-  "aex.session.suspended",
-  "aex.session.succeeded",
-  "aex.session.failed",
-  "aex.session.timed_out",
-  "aex.session.cancelled"
-]);
-function isSessionTerminalName(name) {
-  return SESSION_TERMINAL_NAMES.has(name);
-}
-
 // Wraps the real WebSocket. Counts connects; optionally force-closes the socket
 // after 'dropAfterFrames' delivered frames, up to 'maxDrops' times total (across
 // all reconnections), so we can prove the SDK resumes exactly-once from cursor.
@@ -234,32 +221,12 @@ function childFailureDiagnostic(scriptName: string, failure: ChildFailure): stri
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isPreCreateChildFailure(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error);
-  return /"sessionId":\s*null/.test(text) && isPreCreateTransportMessage(text);
-}
-
 async function spawnScript<T>(
   scriptName: string,
   body: string,
   opts: { readonly extraEnv?: Record<string, string>; readonly timeoutMs?: number } = {}
 ): Promise<T> {
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await spawnScriptOnce<T>(scriptName, body, opts);
-    } catch (error) {
-      if (attempt >= maxAttempts || !isPreCreateChildFailure(error)) throw error;
-      // eslint-disable-next-line no-console
-      console.warn(`[edge-event-stream ${scriptName}] pre-create child transport failure; retrying ${attempt + 1}/${maxAttempts}`);
-      await sleep(1_500 * attempt);
-    }
-  }
-  throw new Error("unreachable edge-event-stream spawn retry loop");
+  return spawnScriptOnce<T>(scriptName, body, opts);
 }
 
 async function spawnScriptOnce<T>(
@@ -352,7 +319,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const events = [];
       const seqs = [];
       let text = "";
-      for await (const ev of session.send("Write three short sentences about the ocean. Keep each under 12 words.")) {
+      for await (const ev of session.messages.send("Write three short sentences about the ocean. Keep each under 12 words.")) {
         events.push(ev);
         if (typeof ev.sequence === "number") seqs.push(ev.sequence);
         if (ev.type === "TEXT_MESSAGE_CONTENT" && ev.data && typeof ev.data.text === "string") text += ev.data.text;
@@ -387,8 +354,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     // (content present) and record the actual count for the report.
     expect(base.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThanOrEqual(1);
     expect(base.textDenseLen).toBeGreaterThan(0);
-    // Session-turn terminal is CUSTOM aex.session.* (there is NO TURN_FINISHED).
-    expect(base.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
+    expect(base.typeCounts["RUN_FINISHED"] ?? 0).toBe(1);
     // Strict ordering: monotonic increasing, no duplicates (sequences are sparse,
     // so contiguity is NOT expected — only no-dupe + monotonic).
     expect(base.analyze.monotonic).toBe(true);
@@ -397,7 +363,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(base.streamErrors.length).toBe(0);
   });
 
-  it("case B — streamEnvelopes({from:0}) replays a finished session in order and terminates on session-idle; polling stream() agrees", async () => {
+  it("case B — streamEnvelopes({from:0}) replays through RUN_FINISHED; polling stream() agrees", async () => {
     const r = await spawnScript<{
       readonly sessionId: string;
       readonly envTypes: Record<string, number>;
@@ -407,15 +373,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       readonly envSeqs: readonly number[];
       readonly endedNaturally: boolean;
       readonly rfPresent: boolean;
-      readonly settleEndedNaturally: boolean;
-      readonly settleHasBarrier: boolean;
-      readonly settleTypes: Record<string, number>;
-      readonly settleCustomNames: readonly string[];
-      readonly settleCount: number;
-      readonly settleSeqs: readonly number[];
-      readonly settleAnalyze: Analyze;
-      readonly settleErr: string | null;
-      readonly settleMs: number;
       readonly pollTypes: Record<string, number>;
       readonly pollCount: number;
       readonly pollErr: string | null;
@@ -425,15 +382,13 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       `
       __childSessionId = SESSION_ID;
       const session = await client.sessions.open(SESSION_ID);
-      // 1. streamEnvelopes({from:0}) on a FINISHED session run. Session turns emit
-      //    CUSTOM aex.session.* rather than TURN_FINISHED; the SDK treats that
-      //    custom event as terminal so replay ends naturally.
+      // 1. Replay the finished run through its committed RUN terminal.
       const envEvents = [];
       const envSeqs = [];
       const ac = new AbortController();
       const start = Date.now();
       const guard = setTimeout(() => ac.abort(), 30000);
-      for await (const ev of session.events().streamEnvelopes({
+      for await (const ev of session.events.streamEnvelopes({
         from: 0,
         signal: ac.signal,
         idleTimeoutMs: 6000,
@@ -442,45 +397,11 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       })) {
         envEvents.push(ev);
         envSeqs.push(ev.sequence);
-        // safety: if a session-level terminal ever appears, stop too.
-        if (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR") break;
+        if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
       }
       clearTimeout(guard);
       const endedNaturally = !ac.signal.aborted;
-      const rfPresent = envEvents.some((e) => e.type === "TURN_FINISHED" || e.type === "TURN_ERROR");
-
-      // 1b. settleConsistent:true is documented to end on the aex.session.settled
-      //     barrier. Does that barrier arrive? Guard 30s.
-      let settleEndedNaturally = false;
-      let settleHasBarrier = false;
-      let settleErr = null;
-      let settleMs = 0;
-      const settleEvents = [];
-      const settleSeqs = [];
-      {
-        const ac2 = new AbortController();
-        const settleStart = Date.now();
-        const g2 = setTimeout(() => ac2.abort(), 30000);
-        try {
-          for await (const ev of session.events().streamEnvelopes({
-            from: 0,
-            signal: ac2.signal,
-            settleConsistent: true,
-            idleTimeoutMs: 6000,
-            pingIntervalMs: 1000,
-            eventQuietRecheckMs: 2000
-          })) {
-            settleEvents.push(ev);
-            settleSeqs.push(ev.sequence);
-            if (ev.type === "CUSTOM" && ev.data && ev.data.name === "aex.session.settled") settleHasBarrier = true;
-          }
-        } catch (e) {
-          settleErr = String(e);
-        }
-        settleMs = Date.now() - settleStart;
-        settleEndedNaturally = !ac2.signal.aborted;
-        clearTimeout(g2);
-      }
+      const rfPresent = envEvents.some((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
 
       // 2. Polling TurnEvent stream() over the same finished run — one pass, then it
       //    returns because the session is parked. Consistency: same core types.
@@ -491,7 +412,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         const ac3 = new AbortController();
         const guard3 = setTimeout(() => ac3.abort(), 30000);
         const seen = {};
-        for await (const ev of session.events().stream({ intervalMs: 800, signal: ac3.signal })) {
+        for await (const ev of session.events.stream({ intervalMs: 800, signal: ac3.signal })) {
           seen[ev.type] = (seen[ev.type] || 0) + 1;
           pollCount++;
           if (pollCount > 1000) break;
@@ -511,15 +432,6 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         envSeqs,
         endedNaturally,
         rfPresent,
-        settleEndedNaturally,
-        settleHasBarrier,
-        settleTypes: typeCounts(settleEvents),
-        settleCustomNames: customNamesOf(settleEvents),
-        settleCount: settleEvents.length,
-        settleSeqs,
-        settleAnalyze: analyze(settleSeqs),
-        settleErr,
-        settleMs,
         pollTypes,
         pollCount,
         pollErr
@@ -541,21 +453,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         envSeqs: r.envSeqs,
         envAnalyze: r.envAnalyze,
         endedNaturally: r.endedNaturally,
-        settleTypes: r.settleTypes,
-        settleCustomNames: r.settleCustomNames,
-        settleCount: r.settleCount,
-        settleSeqs: r.settleSeqs,
-        settleAnalyze: r.settleAnalyze,
-        settleErr: r.settleErr,
-        settleMs: r.settleMs,
         pollTypes: r.pollTypes,
         pollCount: r.pollCount,
         pollErr: r.pollErr
       })}`
     ).toBeGreaterThan(0);
     expect(
-      r.envCustomNames.some((name) => name.startsWith("aex.session.")),
-      `streamEnvelopes({from:0}) did not replay a session terminal: ${JSON.stringify({
+      r.envTypes["RUN_FINISHED"] ?? 0,
+      `streamEnvelopes({from:0}) did not replay RUN_FINISHED: ${JSON.stringify({
         sessionId: r.sessionId,
         envTypes: r.envTypes,
         envCustomNames: r.envCustomNames,
@@ -563,13 +468,11 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         envSeqs: r.envSeqs,
         envAnalyze: r.envAnalyze
       })}`
-    ).toBe(true);
+    ).toBe(1);
     expect(r.envAnalyze.monotonic).toBe(true);
     expect(r.envAnalyze.dupCount).toBe(0);
 
-    // The default session-envelope stream terminates on CUSTOM aex.session.*,
-    // even though session sessions still do not emit session-level TURN_FINISHED/TURN_ERROR.
-    expect(r.rfPresent).toBe(false);
+    expect(r.rfPresent).toBe(true);
     expect(
       r.endedNaturally,
       `streamEnvelopes({from:0}) replay did not end naturally (30s guard aborted): ${JSON.stringify({
@@ -582,44 +485,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         pollErr: r.pollErr
       })}`
     ).toBe(true);
-    // settleConsistent waits for the post-mirror aex.session.settled barrier when
-    // the stream receives it; session park remains the terminal fallback.
-    expect(
-      r.settleCustomNames.some((name) => name.startsWith("aex.session.")) || r.settleHasBarrier,
-      `settleConsistent replay saw neither session park nor settle barrier: ${JSON.stringify({
-        sessionId: r.sessionId,
-        settleTypes: r.settleTypes,
-        settleCustomNames: r.settleCustomNames,
-        settleCount: r.settleCount,
-        settleSeqs: r.settleSeqs,
-        settleAnalyze: r.settleAnalyze,
-        settleErr: r.settleErr,
-        settleMs: r.settleMs
-      })}`
-    ).toBe(true);
-    expect(
-      r.settleEndedNaturally,
-      `streamEnvelopes({from:0, settleConsistent:true}) replay did not end naturally (30s guard aborted): ${JSON.stringify({
-        sessionId: r.sessionId,
-        envTypes: r.envTypes,
-        envCustomNames: r.envCustomNames,
-        envAnalyze: r.envAnalyze,
-        settleTypes: r.settleTypes,
-        settleCustomNames: r.settleCustomNames,
-        settleCount: r.settleCount,
-        settleSeqs: r.settleSeqs,
-        settleAnalyze: r.settleAnalyze,
-        settleHasBarrier: r.settleHasBarrier,
-        settleErr: r.settleErr,
-        settleMs: r.settleMs,
-        pollTypes: r.pollTypes,
-        pollCount: r.pollCount,
-        pollErr: r.pollErr
-      })}`
-    ).toBe(true);
-
-    // Polling stream() (TurnEvent path) self-terminates on the parked session
-    // (unlike streamEnvelopes) and agrees on the presence of assistant text.
+    // Polling stream() agrees on the presence of assistant text.
     expect(r.pollErr).toBeNull();
     expect(r.pollTypes["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
   });
@@ -653,7 +519,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         const ac = new AbortController();
         const g = setTimeout(() => ac.abort(), guardMs);
         try {
-          for await (const ev of session.events().streamEnvelopes({
+          for await (const ev of session.events.streamEnvelopes({
             idleTimeoutMs: 6000,
             pingIntervalMs: 1000,
             eventQuietRecheckMs: 2000,
@@ -662,9 +528,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
           })) {
             events.push(ev);
             seqs.push(ev.sequence);
-            const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
-            // Session sessions have no TURN_FINISHED; the true terminal is aex.session.*.
-            if (stopOnTerminal && (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR" || isSessionTerminalName(nm))) break;
+            if (stopOnTerminal && (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR")) break;
           }
         } finally {
           clearTimeout(g);
@@ -683,10 +547,9 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const midMatchesTail = JSON.stringify(mid) === JSON.stringify(expectedTail);
 
       // Edge: subscribe from a cursor BEYOND the finished session's durable tail. The
-      // projected sequence space is sparse (raw row seq * 1024 + subslot), and
-      // settle may append a barrier after the render terminal, so compute the real
-      // max from the snapshot instead of guessing terminal+1000.
-      const snapshotEvents = await session.events().list();
+      // projected sequence space is sparse (raw row seq * 1024 + subslot), so
+      // compute the real max from the snapshot instead of guessing.
+      const snapshotEvents = await session.events.list();
       const snapshotSeqs = snapshotEvents.map((e) => e.sequence).filter((s) => typeof s === "number");
       const snapshotMaxSeq = Math.max(...full, ...snapshotSeqs);
       const beyondFrom = snapshotMaxSeq + 1;
@@ -727,14 +590,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       })}`
     ).toBeGreaterThan(0);
     expect(
-      r.fullCustomNames.some((name) => name.startsWith("aex.session.")),
-      `full replay did not include a session terminal: ${JSON.stringify({
+      r.fullTypes["RUN_FINISHED"] ?? 0,
+      `full replay did not include RUN_FINISHED: ${JSON.stringify({
         sessionId: r.sessionId,
         fullTypes: r.fullTypes,
         fullCustomNames: r.fullCustomNames,
         fullSeqs: r.fullSeqs
       })}`
-    ).toBe(true);
+    ).toBe(1);
     // The key reliability property: resume-from-cursor is exactly the tail.
     expect(r.midMatchesTail).toBe(true);
     expect(r.midFirstSeq).toBeGreaterThanOrEqual(r.midSeq);
@@ -773,7 +636,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const collected = [];
       let threw = null;
       try {
-        for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
+        for await (const ev of session.events.streamEnvelopes({ from: 0, signal: ac.signal })) {
           collected.push(ev.sequence);
           if (collected.length >= 2) { ac.abort(); break; }
         }
@@ -831,18 +694,16 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
         const session = await client.sessions.open(result.sessionId);
         const ac = new AbortController();
         const g = setTimeout(() => ac.abort(), 40000);
-        for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
+        for await (const ev of session.events.streamEnvelopes({ from: 0, signal: ac.signal })) {
           replaySeqs.push(ev.sequence);
-          const nm = ev.type === "CUSTOM" && ev.data && typeof ev.data.name === "string" ? ev.data.name : "";
-          // A session run has no TURN_FINISHED; stop on the aex.session.* terminal.
-          if (ev.type === "TURN_FINISHED" || ev.type === "TURN_ERROR" || isSessionTerminalName(nm)) break;
+          if (ev.type === "RUN_FINISHED" || ev.type === "RUN_ERROR") break;
         }
         clearTimeout(g);
       } catch (e) {}
 
       // The chaos stream comes from send(), which starts at the TURN cursor, while
       // the clean replay starts at 0 (it includes pre-turn events like
-      // TURN_STARTED@0). Compare only within the chaos-covered range: every clean
+      // RUN_STARTED@0). Compare only within the chaos-covered range: every clean
       // seq >= the chaos stream's min must be present in the chaos set (no loss).
       const chaosSet = new Set(seqs);
       const chaosMin = seqs.length ? Math.min(...seqs) : 0;
@@ -878,7 +739,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.missingCount).toBe(0);
     // Content + terminal survived the drops.
     expect(r.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
-    expect(r.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
+    expect(r.typeCounts["RUN_FINISHED"] ?? 0).toBe(1);
   });
 
   it("case F — keep-alive: short idleTimeoutMs with pings holds a live turn open (exactly-once, terminal reached)", async () => {
@@ -926,7 +787,7 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
     expect(r.analyze.dupCount).toBe(0);
     expect(r.analyze.monotonic).toBe(true);
     expect(r.typeCounts["TEXT_MESSAGE_CONTENT"] ?? 0).toBeGreaterThan(0);
-    expect(r.customNames.some((name) => name.startsWith("aex.session."))).toBe(true);
+    expect(r.typeCounts["RUN_FINISHED"] ?? 0).toBe(1);
     // connects is reported: 1 => pings prevented a false disconnect; >1 => a
     // reconnect happened but recovered exactly-once. At least one connect.
     expect(r.connects).toBeGreaterThanOrEqual(1);
@@ -952,8 +813,8 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       // Kick the turn live in the background (its own WS); we abort a SEPARATE
       // streamEnvelopes subscription with a signal while the session is producing.
       const bg = session
-        .send("Write six short sentences about deserts. Keep each under 14 words.")
-        .done()
+        .messages.send("Write six short sentences about deserts. Keep each under 14 words.")
+        .finished()
         .then(() => "done")
         .catch((e) => "error:" + String(e));
       await new Promise((r) => setTimeout(r, 600));
@@ -962,14 +823,14 @@ describe("edge — SDK event stream (streamEnvelopes / stream / reconnect / keep
       const collected = [];
       let threw = null;
       try {
-        for await (const ev of session.events().streamEnvelopes({ from: 0, signal: ac.signal })) {
+        for await (const ev of session.events.streamEnvelopes({ from: 0, signal: ac.signal })) {
           collected.push(ev.sequence);
           if (collected.length >= 2) { ac.abort(); break; }
         }
       } catch (e) {
         threw = String(e);
       }
-      // Let the background turn settle so the process exits clean.
+      // Let the background run finish so the process exits clean.
       const bgres = await Promise.race([
         bg,
         new Promise((r) => setTimeout(() => r("timeout"), 100000))

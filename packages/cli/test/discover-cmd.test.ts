@@ -126,7 +126,7 @@ describe("aex tools list", () => {
   });
 });
 
-describe("aex starttime-sizes list", () => {
+describe("aex runtime-sizes list", () => {
   it("lists presets and marks the default tier", async () => {
     const cap = makeIo(["runtime-sizes", "list", "--json"]);
     await executeCli(cap.io);

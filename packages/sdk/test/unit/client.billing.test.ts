@@ -4,6 +4,7 @@ import { Aex } from "../../src/index.js";
 interface RecordedCall {
   readonly url: string;
   readonly method: string;
+  readonly headers: Headers;
   readonly body?: string;
 }
 
@@ -22,6 +23,7 @@ function billingClient(body: unknown): { readonly client: Aex; readonly calls: R
     calls.push({
       url,
       method: (init?.method ?? "GET").toString(),
+      headers: new Headers(init?.headers),
       ...(requestBody !== undefined ? { body: requestBody } : {})
     });
     return json(body);
@@ -82,9 +84,8 @@ describe("aex.billingCheckout", () => {
     const result = await client.billingCheckout({
       planKey: "pro",
       successUrl: "https://aex.dev/billing?checkout=success",
-      cancelUrl: "https://aex.dev/billing?checkout=cancel",
-      idempotencyKey: "checkout-key"
-    });
+      cancelUrl: "https://aex.dev/billing?checkout=cancel"
+    }, { idempotencyKey: "checkout-key" });
 
     expect(result).toEqual({ url: "https://checkout.stripe.test/session" });
     expect(calls).toHaveLength(1);
@@ -94,9 +95,39 @@ describe("aex.billingCheckout", () => {
     expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({
       planKey: "pro",
       successUrl: "https://aex.dev/billing?checkout=success",
-      cancelUrl: "https://aex.dev/billing?checkout=cancel",
-      idempotencyKey: "checkout-key"
+      cancelUrl: "https://aex.dev/billing?checkout=cancel"
     });
+    expect(calls[0]!.headers.get("idempotency-key")).toBe("checkout-key");
+  });
+
+  it("reuses one generated identity across transport retries", async () => {
+    const identities: string[] = [];
+    const bodies: unknown[] = [];
+    let attempt = 0;
+    const client = new Aex({
+      apiKey: "tkn",
+      baseUrl: "https://example.test",
+      retry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1, maxElapsedMs: 1_000 },
+      fetch: async (_input, init) => {
+        identities.push(new Headers(init?.headers).get("idempotency-key") ?? "");
+        bodies.push(JSON.parse(String(init?.body ?? "{}")));
+        attempt += 1;
+        if (attempt === 1) {
+          return new Response(JSON.stringify({ error: "temporarily_unavailable" }), {
+            status: 503,
+            headers: { "content-type": "application/json", "retry-after": "0" }
+          });
+        }
+        return json({ url: "https://checkout.stripe.test/session" });
+      }
+    });
+
+    await client.billingCheckout({ planKey: "team" });
+
+    expect(identities).toHaveLength(2);
+    expect(identities[0]).toMatch(/^aex-idem-/);
+    expect(identities[1]).toBe(identities[0]);
+    expect(bodies).toEqual([{ planKey: "team" }, { planKey: "team" }]);
   });
 });
 
@@ -104,13 +135,17 @@ describe("aex.billingPortal", () => {
   it("POSTs /api/billing/portal and returns the hosted URL", async () => {
     const { client, calls } = billingClient({ url: "https://billing.stripe.test/session" });
 
-    const result = await client.billingPortal({ returnUrl: "https://aex.dev/billing" });
+    const result = await client.billingPortal(
+      { returnUrl: "https://aex.dev/billing" },
+      { idempotencyKey: "portal-key" }
+    );
 
     expect(result).toEqual({ url: "https://billing.stripe.test/session" });
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/api/billing/portal");
     expect(calls[0]!.method).toBe("POST");
     expect(JSON.parse(calls[0]!.body ?? "{}")).toEqual({ returnUrl: "https://aex.dev/billing" });
+    expect(calls[0]!.headers.get("idempotency-key")).toBe("portal-key");
   });
 });
 

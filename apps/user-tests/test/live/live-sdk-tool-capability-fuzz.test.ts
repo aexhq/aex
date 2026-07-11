@@ -196,32 +196,6 @@ function eventData(event) {
   return event && event.data && typeof event.data === "object" ? event.data : {};
 }
 
-const SESSION_TERMINAL_NAMES = new Set([
-  "aex.session.idle",
-  "aex.session.suspended",
-  "aex.session.succeeded",
-  "aex.session.failed",
-  "aex.session.timed_out",
-  "aex.session.cancelled"
-]);
-function isSessionIdle(event) {
-  return event && event.type === "CUSTOM" && event.data && SESSION_TERMINAL_NAMES.has(event.data.name);
-}
-
-function terminalKindOf(event) {
-  if (!event) return null;
-  return isSessionIdle(event) ? "TURN_FINISHED" : event.type;
-}
-
-function terminalDataOf(event) {
-  if (!event) return null;
-  if (isSessionIdle(event)) {
-    const value = event.data && event.data.value && typeof event.data.value === "object" ? event.data.value : {};
-    return { ...value, reason: value.reason === "completed" ? "complete" : value.reason };
-  }
-  return eventData(event);
-}
-
 function blockText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -234,20 +208,9 @@ function blockText(content) {
 }
 
 async function observe(result) {
-  const fallbackEvents = Array.isArray(result.events) ? result.events : [];
-  const fallbackFiles = Array.isArray(result.files) ? result.files : [];
   const session = await client.sessions.open(result.sessionId);
-  let events = fallbackEvents;
-  let files = fallbackFiles;
-  try {
-    const listedEvents = await session.events().list();
-    if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    const listedFiles = await session.files().list();
-    if (Array.isArray(listedFiles)) files = listedFiles;
-  } catch {
-    events = fallbackEvents;
-    files = fallbackFiles;
-  }
+  const events = (await session.events.list()).filter((event) => event.runId === result.run.runId);
+  const files = (await session.files.list()).files;
   const starts = events.filter((event) => event.type === "TOOL_CALL_START");
   const nameById = new Map();
   const toolCalls = starts.map((event) => {
@@ -274,17 +237,14 @@ async function observe(result) {
       };
     });
   const terminal = events.find(
-    (event) => event.type === "TURN_FINISHED" || event.type === "TURN_ERROR"
-  ) ?? events.find(isSessionIdle);
+    (event) => event.type === "RUN_FINISHED" || event.type === "RUN_ERROR"
+  );
   const eventKinds = events.map((event) => event.type);
-  if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) {
-    eventKinds.push("TURN_FINISHED");
-  }
   const outputSamples = [];
   for (const output of files.slice(0, 24)) {
     let text = null;
     try {
-      const bytes = await session.files().download(output);
+      const bytes = await session.files.download(output);
       text = new TextDecoder().decode(bytes).slice(0, 16_384);
     } catch (error) {
       text = "(download failed: " + (error && error.message ? error.message : String(error)) + ")";
@@ -297,12 +257,10 @@ async function observe(result) {
   }
   return {
     sessionId: result.sessionId,
-    status: result.ok
-      ? "succeeded"
-      : (typeof result.status === "string" && result.status ? result.status : "failed"),
+    status: result.status,
     eventKinds,
-    terminalKind: terminalKindOf(terminal),
-    terminalData: terminalDataOf(terminal),
+    terminalKind: terminal ? terminal.type : null,
+    terminalData: terminal ? eventData(terminal) : null,
     assistantText: typeof result.text === "string" ? result.text : "",
     toolCalls,
     toolResults,
@@ -407,8 +365,8 @@ function assertToolSurface(
 ): void {
   const dump = diagnostics(observation);
   expect(observation.status, dump).toBe("succeeded");
-  expect(observation.terminalKind, dump).toBe("TURN_FINISHED");
-  expect(observation.terminalData?.["reason"], dump).toBe("complete");
+  expect(observation.terminalKind, dump).toBe("RUN_FINISHED");
+  expect(observation.terminalData?.["outcome"], dump).toBe("succeeded");
   const called = names(observation);
   for (const expected of expectedNames) {
     if (!called.includes(expected)) {
@@ -471,13 +429,14 @@ const other = await File.fromBytes({
   bytes: new TextEncoder().encode("distractor only\\n"),
   mountPath: "/fuzz"
 });
+const sourceRef = await client.workspace.files.publish(source);
+const otherRef = await client.workspace.files.publish(other);
 const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
-  files: [source, other],
-  includeBuiltinTools: false,
-  tools: [
+  assets: { files: [sourceRef, otherRef] },
+  builtinTools: [
     BuiltinTools.read_file,
     BuiltinTools.write_file,
     BuiltinTools.edit_file,
@@ -542,8 +501,7 @@ const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  tools: [
+  builtinTools: [
     BuiltinTools.bash,
     BuiltinTools.code_execution,
     BuiltinTools.todo_write,
@@ -600,8 +558,7 @@ const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  tools: [BuiltinTools.bash, BuiltinTools.bash_output, BuiltinTools.bash_kill],
+  builtinTools: [BuiltinTools.bash, BuiltinTools.bash_output, BuiltinTools.bash_kill],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-bg-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
@@ -639,8 +596,7 @@ const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  tools: [BuiltinTools.web_fetch, BuiltinTools.web_search],
+  builtinTools: [BuiltinTools.web_fetch, BuiltinTools.web_search],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-web-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
@@ -677,7 +633,7 @@ process.stdout.write(JSON.stringify(await observe(result)));
       ].join(" ");
       const prompt = [
         "Use only the named tools.",
-        `1. Call subagent exactly once with model=${deepseekModel}, includeBuiltinTools=false,`,
+        `1. Call subagent exactly once with model=${deepseekModel}, builtinTools=none,`,
         `   tools=["write_file"], and prompt=${JSON.stringify(childPrompt)}.`,
         "2. Take the returned child session id and call subagent_result.",
         "3. If terminal is false, call subagent_result again with the same id until terminal is true.",
@@ -689,8 +645,7 @@ const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  tools: [BuiltinTools.subagent, BuiltinTools.subagent_result],
+  builtinTools: [BuiltinTools.subagent, BuiltinTools.subagent_result],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-subagent-${testCase.id}-" + Date.now()
 }, { timeoutMs: ${LIVE_TIMEOUT_MS} });
@@ -804,12 +759,15 @@ const failure = await Tool.fromFiles({
     ].join("\\n")
   }
 });
+const transformRef = await client.workspace.tools.publish(transform);
+const contextRef = await client.workspace.tools.publish(context);
+const failureRef = await client.workspace.tools.publish(failure);
 const result = await client.start({
   provider: "deepseek",
   model: MODEL,
   message: ${JSON.stringify(prompt)},
-  includeBuiltinTools: false,
-  tools: [transform, context, failure],
+  builtinTools: "none",
+  assets: { tools: [transformRef, contextRef, failureRef] },
   environment: {
     variables: { APP_MODE: ${JSON.stringify(testCase.appMode)} },
     secrets: { CUSTOM_SECRET: Secret.value(process.env.CUSTOM_SECRET) }

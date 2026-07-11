@@ -10,7 +10,7 @@ const outRoot = resolve(scriptDir, "..", "out");
 const SUPPORT_MAILTO = "mailto:support@aex.dev";
 
 if (!existsSync(outRoot)) {
-  console.error(`[support-footer] missing export directory: ${outRoot}. SessionRecord \`next build\` first.`);
+  console.error(`[support-footer] missing export directory: ${outRoot}. Run \`next build\` first.`);
   process.exit(1);
 }
 

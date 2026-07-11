@@ -21,7 +21,7 @@ Each row is tagged with its **source**:
 
 And whether you can **raise** it: per-session option, per-plan, or no.
 
-## SessionRecord scope
+## Session scope
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
@@ -95,7 +95,7 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
   [`packages/contracts/src/runtime-sizes.ts`](https://github.com/aexhq/aex/blob/main/packages/contracts/src/runtime-sizes.ts);
   see [Defaults](defaults.md).
 - **The agent loop is bounded** by `maxTurns` (default 20, ceiling 200) — a
-  documented, per-session-overridable limit (see the SessionRecord scope table above and
+  documented, per-session-overridable limit (see the Session scope table above and
   `overrides.maxTurns`), not a silent cutoff.
 
 ## Workspace scope
@@ -114,8 +114,8 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
 
 ### Rate limits (per workspace, per minute)
 
-SessionRecord submission has its own platform-enforced velocity cap: **120 submits per
-minute** per workspace by default (`0` = disabled). Past it, `POST /sessions` fails
+Session submission has its own platform-enforced velocity cap: **120 submits per
+minute** per workspace by default (`0` = disabled). Past it, `POST /api/sessions` fails
 with `429 workspace_submit_rate_exceeded` (see [Errors](errors.md)). It is
 overridable per-plane via `AEX_WORKSPACE_SUBMIT_RATE_PER_MIN` or per-workspace
 via support.
@@ -125,8 +125,8 @@ per-plane via the matching `AEX_RATE_LIMIT_<ACTION>_PER_MINUTE` env var.
 
 | Action | Default per minute | Source | Constant |
 | --- | --- | --- | --- |
-| SessionRecord cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
-| SessionRecord delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| Session cancel | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
+| Session delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | Signed file link | 120 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API key create | 10 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |
 | API key delete | 30 | Workspace default | `WORKSPACE_RATE_LIMIT_DEFAULTS` |

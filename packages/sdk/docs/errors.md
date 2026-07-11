@@ -191,6 +191,8 @@ The SDK retries transient failures automatically: HTTP `429`, `5xx`, `529`, and
 network errors get bounded exponential backoff with full jitter, honoring any
 `Retry-After` header. Tune or disable this with the client `retry` option; use
 `isRateLimited(err)` / `AexRateLimitError` to handle persistent throttling
-without parsing raw bodies. Idempotent submit retries are safe — the SDK
-attaches a stable idempotency key to billable session create/send requests, so
-a retried request never double-submits.
+without parsing raw bodies. Automatic retries are limited to reads and other
+idempotent HTTP methods, or mutations carrying a stable `Idempotency-Key`.
+Session create/send requests always carry one stable key across transport
+attempts, so a retried request cannot create a second billable run. The SDK
+never retries an entire user scenario or a failed application run.

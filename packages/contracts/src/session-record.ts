@@ -5,7 +5,7 @@ import {
   type CustodyRedactionFinding
 } from "./session-custody.js";
 import type { AexEvent } from "./event-envelope.js";
-import type { SessionRecord, SessionFile } from "./runtime-types.js";
+import type { Session, SessionFile } from "./runtime-types.js";
 import type { PlatformSubmission } from "./submission.js";
 
 export const SESSION_RECORD_SCHEMA_VERSION = "aex.session-record.v1" as const;
@@ -40,7 +40,7 @@ export interface SessionRecordCostV1 {
 }
 
 export interface SessionRecordMetadataV1 {
-  readonly session: SessionRecord;
+  readonly session: Session;
   readonly submission?: SessionRecordSubmissionSnapshotV1;
   readonly cost?: SessionRecordCostV1;
   readonly custody?: CustodyManifestV1;
@@ -160,7 +160,7 @@ export function buildSessionRecordDownloadManifestV1(
     sessionRecordSchemaVersion: SESSION_RECORD_SCHEMA_VERSION,
     sessionId: input.sessionId,
     namespaces: Object.freeze([
-      namespace("metadata", "SessionRecord metadata, submission snapshot, custody, and cost files."),
+      namespace("metadata", "Session record metadata, submission snapshot, custody, and cost files."),
       namespace("events", "Typed event-channel exports."),
       namespace("files", "Captured files produced by the session.")
     ]),

@@ -40,8 +40,8 @@ describe("streaming capability gate (WS9)", () => {
         submission: {
           model: "gemini-2.5-flash",
           prompt: ["hi"],
-          agentsMd: [],
-          files: [],
+          assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
           mcpServers: [],
           outputMode: "stream"
         },
@@ -58,8 +58,8 @@ describe("streaming capability gate (WS9)", () => {
       submission: {
         model: "deepseek-v4-flash",
         prompt: ["hi"],
-        agentsMd: [],
-        files: [],
+        assets: { files: [], skills: [], tools: [], instructions: [] },
+      builtinTools: "default",
         mcpServers: [],
         outputMode: "stream"
       },

@@ -1,5 +1,5 @@
 /**
- * openSession splits `environment.secrets: Record<envName, Secret>` exactly like
+ * sessions.create splits `environment.secrets: Record<envName, Secret>` exactly like
  * other value-free declarations: `submission.secretEnv` is hashed while
  * ephemeral values live in `secrets.envSecrets` (vaulted, hash-excluded).
  */
@@ -26,8 +26,8 @@ function makeStubFetch(): { fetch: typeof fetch; calls: CapturedRequest[] } {
       }
     }
     calls.push({ url, method: (init?.method ?? "GET").toString(), body });
-    return new Response(JSON.stringify({ id: "ses_test", status: "queued" }), {
-      status: 200,
+    return new Response(JSON.stringify({ session: { id: "ses_test", status: "idle", acceptsMessages: true } }), {
+      status: 201,
       headers: { "content-type": "application/json" }
     });
   });
@@ -41,7 +41,7 @@ function openWith(secrets: Record<string, Secret>) {
     client,
     calls,
     run: () =>
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         environment: { secrets }
@@ -49,7 +49,7 @@ function openWith(secrets: Record<string, Secret>) {
   };
 }
 
-describe("openSession environment.secrets split", () => {
+describe("sessions.create environment.secrets split", () => {
   it("workspace ref → submission.secretEnv {ref}; no value travels", async () => {
     const { calls, run } = openWith({ SERPER_API_KEY: Secret.ref("serper") });
     await run();
@@ -97,7 +97,7 @@ describe("openSession environment.secrets split", () => {
   it("omits both fields when environment.secrets is not provided", async () => {
     const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
-    await client.openSession({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-x" } });
+    await client.sessions.create({ model: "claude-haiku-4-5", apiKeys: { anthropic: "sk-x" } });
     const body = calls[0]!.body as Record<string, unknown>;
     expect("secretEnv" in (body.submission as object)).toBe(false);
     expect("envSecrets" in (body.secrets as object)).toBe(false);
@@ -112,7 +112,7 @@ describe("openSession environment.secrets split", () => {
     const { fetch } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
     await expect(
-      client.openSession({
+      client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         environment: { secrets: { SERPER_API_KEY: "sk-x" as unknown as Secret } }

@@ -5,7 +5,7 @@
  * Proves the agent ACTUALLY FOLLOWS skill content end-to-end, not just
  * that the skill bundle was materialized:
  *
- *   SDK → POST /sessions (with inline skills wired)
+ *   SDK → POST /api/sessions (with inline skills wired)
  *      → preflight uploads skill to object storage
  *      → manifest mounts the skill so the model sees its SKILL.md
  *      → user prompt contains the skill's trigger token (SHIBBOLETH)
@@ -16,7 +16,7 @@
  * but skill *content* is dropped, and the failure mode where ALL skills
  * collapse into one (model would echo distractor text too).
  *
- * The assertion body sessions on a single managed cell:
+ * The assertion body runs on a single managed cell:
  *   - (deepseek, managed)  — managed runtime (object storage download)
  *
  * Required env:
@@ -30,7 +30,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -59,7 +58,7 @@ const CELLS: readonly Cell[] = [
 
 interface CaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly uniqueToken: string;
@@ -163,32 +162,27 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     const beta = await Skill.fromContent(${JSON.stringify(betaSkill)}, {
       name: ${JSON.stringify(betaName)}
     });
+    const alphaRef = await client.workspace.skills.publish(alpha);
+    const betaRef = await client.workspace.skills.publish(beta);
 
     const sessionResult = await client.start({
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       system: ${JSON.stringify(system)},
       message: ${JSON.stringify(prompt)},
-      skills: [alpha, beta],
+      assets: { skills: [alphaRef, betaRef] },
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "skill-invocation-${cell.id}-" + Date.now()
     }, { timeoutMs: 6 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const run = {
-      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      status: sessionResult.status,
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    let events = fallbackEvents;
-    try {
-      const session = await client.sessions.open(sessionId);
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    } catch {
-      events = fallbackEvents;
-    }
+    const session = await client.sessions.open(sessionId);
+    const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
 
     // CUSTOM envelopes nest the original payload under data.value, keyed by
     // data.name (aex.notification / aex.skill_loaded / aex.stream_error).
@@ -231,14 +225,9 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-    const terminalData = terminal && isSessionIdle(terminal)
-      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-      : terminal ? terminal.data : null;
+    const terminalData = terminal ? terminal.data : null;
     const streamErrors = customEvents
       .filter((e) => e.data && e.data.name === "aex.stream_error")
       .map((e) => (e.data.value && typeof e.data.value === "object" ? e.data.value : { unknown: true }));
@@ -247,7 +236,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: run.status,
+      runStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       uniqueToken: ${JSON.stringify(uniqueToken)},
@@ -257,7 +246,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
       skillLoadedEventSummaries,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal ? terminal.type : null,
       terminalData,
       streamErrors,
       leakedDeepseekKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
@@ -270,7 +259,7 @@ function buildScript(cell: Cell, uniqueToken: string): string {
 function dumpResult(cell: Cell, result: CaseResult): string {
   const lines: string[] = [];
   lines.push(`cell=${cell.id} sessionId=${result.sessionId}`);
-  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`uniqueToken=${result.uniqueToken}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
@@ -286,7 +275,7 @@ function dumpResult(cell: Cell, result: CaseResult): string {
   return lines.join("\n");
 }
 
-async function runCellOnce(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
+async function runCell(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
   const script = buildScript(cell, uniqueToken);
   const scriptPath = join(installDir, `skill-invocation-${cell.id}.mjs`);
   writeFileSync(scriptPath, script);
@@ -307,10 +296,6 @@ async function runCellOnce(cell: Cell, installDir: string, uniqueToken: string):
     );
   }
   return JSON.parse(child.stdout.trim()) as CaseResult;
-}
-
-async function runCell(cell: Cell, installDir: string, uniqueToken: string): Promise<CaseResult> {
-  return withPreCreateTransportRetry(`skill-invocation ${cell.id}`, () => runCellOnce(cell, installDir, uniqueToken));
 }
 
 let install: InstallResult;
@@ -335,21 +320,13 @@ describe("live skill invocation — agent actually follows skill content", () =>
       const nameSuffix = uniqueToken.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
       const expectedSkillPrefixes = [`ack-alpha-${nameSuffix}`, "weather-beta-control"];
 
-      expect(result.sessionStatus, dump()).toBe("succeeded");
+      expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
       expect(result.provider).toBe(cell.provider);
 
-      // Event frame: runtime_started present + last event is
-      // runtime_terminal. (Some runtimes emit preflight notifications
-      // before runtime_started; we only require its presence.)
-      expect(result.terminalKind).toBe("TURN_FINISHED");
-      // Every clean terminal MUST carry reason="complete" — both adapters
-      // always populate reason on the success path. Tolerating `undefined`
-      // (pre-Phase-1) was masking field-loss regressions.
-      const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
-      if (terminalReason !== "complete") {
-        throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
-      }
+      // The committed public terminal is the only completion barrier.
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalData?.["outcome"], dump()).toBe("succeeded");
 
       expect(result.skillLoadedNames.length, dump()).toBeGreaterThanOrEqual(2);
       for (const prefix of expectedSkillPrefixes) {

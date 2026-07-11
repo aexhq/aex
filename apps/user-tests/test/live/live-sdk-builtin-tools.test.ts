@@ -21,7 +21,6 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { withPreCreateTransportRetry } from "../_fixtures/pre-create-transport.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -54,7 +53,7 @@ const CELLS: readonly Cell[] = [
 
 interface CaseResult {
   readonly sessionId: string;
-  readonly sessionStatus: string;
+  readonly runStatus: string;
   readonly runtime: string;
   readonly provider: string;
   readonly mode: "positive" | "negative";
@@ -98,7 +97,7 @@ function buildPassEnv(extras: Record<string, string>): Record<string, string> {
 }
 
 function buildScript(cell: Cell, mode: "positive" | "negative", marker: string): string {
-  const includeBuiltinToolsLiteral = mode === "positive" ? "true" : "false";
+  const builtinToolsLiteral = mode === "positive" ? '"default"' : '"none"';
   const prompt =
     mode === "positive"
       ? `Using your shell tool, run \`printf '${marker}\\n'\` and then reply with the exact line you printed.`
@@ -117,26 +116,19 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       provider: ${JSON.stringify(cell.provider)},
       model: ${JSON.stringify(cell.model)},
       message: ${JSON.stringify(prompt)},
-      includeBuiltinTools: ${includeBuiltinToolsLiteral},
+      builtinTools: ${builtinToolsLiteral},
       apiKeys: { [${JSON.stringify(cell.provider)}]: process.env.${cell.keyEnvName} },
       idempotencyKey: "builtins-${cell.id}-${mode}-" + Date.now()
     }, { timeoutMs: 5 * 60_000 });
     const sessionId = sessionResult.sessionId;
     const run = {
-      status: sessionResult.ok ? "succeeded" : (typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed"),
+      status: sessionResult.status,
       runtime: "managed",
       provider: ${JSON.stringify(cell.provider)}
     };
 
-    const fallbackEvents = Array.isArray(sessionResult.events) ? sessionResult.events : [];
-    let events = fallbackEvents;
-    try {
-      const session = await client.sessions.open(sessionId);
-      const listedEvents = await session.events().list();
-      if (Array.isArray(listedEvents) && listedEvents.length > 0) events = listedEvents;
-    } catch {
-      events = fallbackEvents;
-    }
+    const session = await client.sessions.open(sessionId);
+    const events = (await session.events.list()).filter((event) => event.runId === sessionResult.run.runId);
 
     const toolRequestNames = events
       .filter((e) => e.type === "TOOL_CALL_START")
@@ -148,14 +140,9 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       .map((e) => (e.data && typeof e.data.text === "string" ? e.data.text : ""))
       .join(" ");
 
-    const sessionTerminalNames = new Set(["aex.session.idle", "aex.session.suspended", "aex.session.succeeded", "aex.session.failed", "aex.session.timed_out", "aex.session.cancelled"]);
-    const isSessionIdle = (e) => e && e.type === "CUSTOM" && e.data && sessionTerminalNames.has(e.data.name);
-    const terminal = events.find((e) => (e.type === "TURN_FINISHED" || e.type === "TURN_ERROR")) ?? events.find(isSessionIdle);
+    const terminal = events.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR");
     const eventKinds = events.map((e) => e.type);
-    if (terminal && isSessionIdle(terminal) && !eventKinds.includes("TURN_FINISHED")) eventKinds.push("TURN_FINISHED");
-    const terminalData = terminal && isSessionIdle(terminal)
-      ? { ...terminal.data.value, reason: terminal.data.value?.reason === "completed" ? "complete" : terminal.data.value?.reason }
-      : terminal ? terminal.data : null;
+    const terminalData = terminal ? terminal.data : null;
     const streamErrors = events
       .filter((e) => e.type === "stream_error")
       .map((e) => (e.data && typeof e.data === "object" ? e.data : { unknown: true }));
@@ -164,7 +151,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
     const deepseekEnv = process.env.DEEPSEEK_KEY ?? "";
     const result = {
       sessionId: sessionId,
-      sessionStatus: run.status,
+      runStatus: run.status,
       runtime: run.runtime ?? "(missing)",
       provider: run.provider ?? "(missing)",
       mode: ${JSON.stringify(mode)},
@@ -174,7 +161,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
       toolRequestNames,
       assistantTextJoined,
       assistantTextEventCount: assistantTextEvents.length,
-      terminalKind: terminal && isSessionIdle(terminal) ? "TURN_FINISHED" : terminal ? terminal.type : null,
+      terminalKind: terminal ? terminal.type : null,
       terminalData,
       streamErrors,
       leakedProviderKey: deepseekEnv.length > 0 && serialized.includes(deepseekEnv)
@@ -187,7 +174,7 @@ function buildScript(cell: Cell, mode: "positive" | "negative", marker: string):
 function dumpResult(cell: Cell, result: CaseResult): string {
   const lines: string[] = [];
   lines.push(`cell=${cell.id} mode=${result.mode} sessionId=${result.sessionId}`);
-  lines.push(`sessionStatus=${result.sessionStatus} runtime=${result.runtime} provider=${result.provider}`);
+  lines.push(`runStatus=${result.runStatus} runtime=${result.runtime} provider=${result.provider}`);
   lines.push(`marker=${result.marker}`);
   lines.push(`terminalKind=${result.terminalKind} terminalData=${JSON.stringify(result.terminalData)}`);
   lines.push(`eventKinds=[${result.eventKinds.join(", ")}]`);
@@ -202,7 +189,7 @@ function dumpResult(cell: Cell, result: CaseResult): string {
   return lines.join("\n");
 }
 
-async function runCellOnce(cell: Cell, mode: "positive" | "negative", installDir: string): Promise<CaseResult> {
+async function runCell(cell: Cell, mode: "positive" | "negative", installDir: string): Promise<CaseResult> {
   const marker = `BUILTIN-OK-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
   const script = buildScript(cell, mode, marker);
   const scriptPath = join(installDir, `builtins-${cell.id}-${mode}.mjs`);
@@ -226,10 +213,6 @@ async function runCellOnce(cell: Cell, mode: "positive" | "negative", installDir
   return JSON.parse(child.stdout.trim()) as CaseResult;
 }
 
-async function runCell(cell: Cell, mode: "positive" | "negative", installDir: string): Promise<CaseResult> {
-  return withPreCreateTransportRetry(`builtins ${cell.id} ${mode}`, () => runCellOnce(cell, mode, installDir));
-}
-
 let install: InstallResult;
 
 beforeAll(async () => {
@@ -247,17 +230,10 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
       const result = await runCell(cell, "positive", install.installDir);
       const dump = (): string => dumpResult(cell, result);
 
-      expect(result.sessionStatus, dump()).toBe("succeeded");
+      expect(result.runStatus, dump()).toBe("succeeded");
       expect(result.runtime).toBe("managed");
-      expect(result.terminalKind).toBe("TURN_FINISHED");
-      // Every clean terminal MUST carry reason="complete" — both adapters
-      // (managed DeepSeek runtime) always populate reason on the success
-      // path. Tolerating `undefined` (the pre-Phase-1 pattern) was masking
-      // a regression where the field could go missing entirely.
-      const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
-      if (terminalReason !== "complete") {
-        throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
-      }
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalData?.["outcome"], dump()).toBe("succeeded");
 
       // The agent reached for the shell. The managed runtime surfaces "shell"; older event
       // payloads may surface "bash". Accept either.
@@ -288,16 +264,9 @@ describe("live built-in tools — agent uses (and can be denied) shell-family to
 
       // The session must still complete cleanly — disarming tools does not
       // crash the runtime; the agent answers without tool use.
-      expect(result.sessionStatus, dump()).toBe("succeeded");
-      expect(result.terminalKind).toBe("TURN_FINISHED");
-      // Every clean terminal MUST carry reason="complete" — both adapters
-      // (managed DeepSeek runtime) always populate reason on the success
-      // path. Tolerating `undefined` (the pre-Phase-1 pattern) was masking
-      // a regression where the field could go missing entirely.
-      const terminalReason = result.terminalData ? result.terminalData["reason"] : undefined;
-      if (terminalReason !== "complete") {
-        throw new Error(`terminal reason=${terminalReason} (expected "complete")\n\n${dump()}`);
-      }
+      expect(result.runStatus, dump()).toBe("succeeded");
+      expect(result.terminalKind).toBe("RUN_FINISHED");
+      expect(result.terminalData?.["outcome"], dump()).toBe("succeeded");
 
       // The only proof the empty allowlist actually disarmed tooling.
       const shellCalls = result.toolRequestNames.filter((n) => SHELL_FAMILY.has(n));

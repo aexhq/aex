@@ -14,6 +14,26 @@ import { formatApiKey } from "@aexhq/contracts";
 
 const WORKSPACE_ID = "0f9a1b2c-3d4e-5f60-7182-93a4b5c6d7e8";
 const SECRET = "deadbeefcafef00dfeedface00c0ffee11223344556677";
+const whoami = {
+  ok: true,
+  principalType: "api_key",
+  workspaceId: WORKSPACE_ID,
+  scopes: [],
+  limits: {
+    maxConcurrentSessions: 1,
+    submitRatePerMinute: 0,
+    spendCapUsd: 0,
+    monthSpendUsd: 0,
+    balanceUsd: 0,
+    balanceGraceFloorUsd: 0,
+    balanceGateActive: true,
+    paymentMethodStatus: "none",
+    planKey: "free",
+    accountType: "standard",
+    subscriptionStatus: "none",
+    subscriptionGate: "ok"
+  }
+};
 
 describe("blackbox: plane routing guard (constructor, zero-network)", () => {
   it("routes a dev key with no baseUrl to dev-api.aex.dev", async () => {
@@ -22,7 +42,7 @@ describe("blackbox: plane routing guard (constructor, zero-network)", () => {
     const spyFetch: typeof globalThis.fetch = async (...args) => {
       const [input] = args;
       seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
-      return new Response(JSON.stringify({ workspaceId: WORKSPACE_ID }), {
+      return new Response(JSON.stringify(whoami), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -45,7 +65,7 @@ describe("blackbox: tool entry validated at authoring", () => {
     await expect(
       Tool.fromFiles({
         name: "shell-tool",
-        description: "sessions a shell script",
+        description: "runs a shell script",
         inputSchema: { type: "object" },
         entry: "run.sh",
         files: { "run.sh": "#!/bin/sh\necho hi" }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { executeCli } from "../src/main.js";
 import { makeIo } from "./support.js";
+import { canonicalWhoami } from "./canonical-whoami.js";
 
 const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
@@ -9,7 +10,7 @@ describe("aex whoami --json + per-verb --help (T6e/T6f)", () => {
     const cap = makeIo({
       argv: ["whoami", "--json", ...COMMON],
       fetchHandler: () =>
-        new Response(JSON.stringify({ workspaceId: "ws-7", scopes: ["sessions.write"] }), {
+        new Response(JSON.stringify(canonicalWhoami("ws-7", ["sessions.write"])), {
           status: 200,
           headers: { "content-type": "application/json" }
         })
@@ -44,7 +45,7 @@ describe("aex whoami --json + per-verb --help (T6e/T6f)", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("aex files");
     expect(cap.stdout).toContain("read");
-    expect(cap.stdout).toContain("search");
+    expect(cap.stdout).toContain("find");
     expect(cap.calls).toHaveLength(0);
   });
 });

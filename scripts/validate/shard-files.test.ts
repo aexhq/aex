@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { collectTestFiles, excludeFiles, loadDurations, lptPartition } from "../../apps/user-tests/scripts/shard-files.mjs";
+import { buildFileMatrix, collectTestFiles, excludeFiles, loadDurations, lptPartition } from "../../apps/user-tests/scripts/shard-files.mjs";
 import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -18,6 +18,17 @@ function expectBin(bins: ShardBin[], index: number): ShardBin {
 }
 
 describe("shard-files duration-balanced bin packing", () => {
+  it("builds one complete, unique matrix entry per collected file", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const matrix = buildFileMatrix(files);
+
+    expect(matrix).toHaveLength(files.length);
+    expect(matrix.map((entry) => entry.file)).toEqual(files);
+    expect(new Set(matrix.map((entry) => entry.file)).size).toBe(files.length);
+    expect(matrix.map((entry) => entry.shard)).toEqual(files.map((_, index) => index + 1));
+    expect(matrix.every((entry) => entry.count === files.length)).toBe(true);
+  });
+
   it("partitions the real collected suite completely and deterministically", () => {
     const files = collectTestFiles(userTestsRoot);
     const durations = loadDurations();

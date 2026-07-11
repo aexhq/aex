@@ -4,18 +4,22 @@ import { makeIo, type FetchCall } from "./support.js";
 
 const COMMON = ["--api-key", "tok-1", "--aex-url", "https://dash.example/"];
 
-const FILES = [{ id: "o1", filename: "data.json", sizeBytes: 8, contentType: "application/json" }];
+const REVISION = {
+  checkpointId: "cp-1",
+  runId: "run-1",
+  turnSeq: 1,
+  committedAt: "2026-07-01T00:00:01Z",
+  throughSeq: 10
+};
+const FILES = [{ id: "o1", checkpointId: "cp-1", filename: "data.json", sizeBytes: 8, contentType: "application/json" }];
 
 function filesFetch(call: FetchCall): Response {
   const url = new URL(call.url);
   if (url.pathname === "/api/sessions") {
-    return json({ sessions: [{ id: "s1", status: "idle", createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:01Z" }] });
+    return json({ sessions: [{ id: "s1", status: "idle", acceptsMessages: true, createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:01Z" }] });
   }
   if (url.pathname === "/api/sessions/s1/files") {
-    return json({ files: FILES });
-  }
-  if (url.pathname === "/api/sessions/s1/files") {
-    return json({ files: FILES });
+    return json({ revision: REVISION, files: FILES });
   }
   if (url.pathname === "/api/sessions/s1/files/o1/download") {
     return new Response("{\"ok\":1}", {
@@ -66,16 +70,6 @@ describe("aex files single-file sub-verbs (T6b)", () => {
     expect(cap.exitCode).toBe(0);
     expect(cap.calls.map((call) => new URL(call.url).pathname)).toContain("/api/sessions/s1/files");
     expect(JSON.parse(cap.stdout.trim())).toMatchObject({ id: "o1" });
-  });
-
-  it("`files search --query` searches recent session file metadata", async () => {
-    const cap = makeIo({ argv: ["files", "search", "--query", "data", ...COMMON], fetchHandler: filesFetch });
-    await executeCli(cap.io);
-    expect(cap.exitCode).toBe(0);
-    expect(cap.calls.map((call) => new URL(call.url).pathname)).toEqual(["/api/sessions", "/api/sessions/s1/files"]);
-    expect(JSON.parse(cap.stdout.trim()).hits).toEqual([
-      expect.objectContaining({ sessionId: "s1", fileId: "o1", filename: "data.json" })
-    ]);
   });
 
   it("`files <id>` (bare) still lists via the accessor", async () => {

@@ -26,12 +26,11 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import {
   Aex,
-  SessionClient,
-  SessionHandle,
-  AgentsMd,
+  Instructions,
   Sizes,
   File as AexFile
 } from "../../src/index.js";
+import { SessionClient, SessionHandle } from "../../src/client.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
@@ -82,34 +81,24 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     const missing: string[] = [];
 
     // Client-level operations the docs call as `aex.<method>(...)`.
-    for (const key of ["openSession", "start", "whoami", "deleteWorkspaceAsset"]) {
+    for (const key of ["start", "whoami"]) {
       if (!isFn(Aex.prototype, key)) missing.push(`Aex.prototype.${key}`);
     }
     // Workspace/session admin the docs call as `aex.sessions.<method>(...)`.
-    // `files(id)` returns the SAME accessor as `session.files()` (shape
-    // checked below), so id-addressed reads use `sessions.files(id).read(...)`.
-    // Cross-session file search lives at `aex.files.search()`; the old
-    // `sessions.searchFiles` is gone.
-    for (const key of ["create", "open", "get", "list", "files", "start"]) {
+    for (const key of ["create", "open", "get", "list", "delete"]) {
       if (!isFn(SessionClient.prototype, key)) missing.push(`SessionClient.prototype.${key}`);
     }
     // The lifecycle verbs a `session` handle keeps FLAT in the docs. The read /
     // stream / download surface was regrouped into accessor sub-resources
-    // (`session.messages()/events()/files()/webhooks()`), checked below.
+    // (`session.messages/events/files/webhooks`), checked below.
     for (const key of [
-      "send",
       "refresh",
-      "wait",
-      "unit",
       "suspend",
       "cancel",
       "resume",
       "delete",
       "download",
-      "downloadMetadata",
-      "events",
-      "files",
-      "webhooks"
+      "downloadMetadata"
     ]) {
       if (!isFn(SessionHandle.prototype, key)) missing.push(`SessionHandle.prototype.${key}`);
     }
@@ -120,18 +109,17 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     // client is enough to assert the shape.
     const handle = new SessionHandle({} as never, { id: "ses_regression" } as never);
     const accessorVerbs: ReadonlyArray<{ readonly group: string; readonly verbs: readonly string[] }> = [
-      { group: "messages", verbs: ["all", "list", "last", "first"] },
+      { group: "messages", verbs: ["send", "replayLast", "list", "last", "first"] },
       { group: "events", verbs: ["list", "last", "first", "stream", "streamEnvelopes", "archiveLink", "download"] },
-      { group: "files", verbs: ["list", "last", "first", "read", "find", "findOne", "search", "link", "fetch", "download"] },
+      { group: "files", verbs: ["list", "last", "first", "read", "find", "findOne", "link", "fetch", "download"] },
       { group: "webhooks", verbs: ["list", "redeliver"] }
     ];
     for (const { group, verbs } of accessorVerbs) {
-      const factory = (handle as unknown as Record<string, (() => object) | undefined>)[group];
-      if (typeof factory !== "function") {
+      const accessor = (handle as unknown as Record<string, object | undefined>)[group];
+      if (accessor === undefined) {
         missing.push(`session.${group}`);
         continue;
       }
-      const accessor = factory.call(handle);
       for (const verb of verbs) {
         if (!isFn(accessor, verb)) missing.push(`session.${group}.${verb}`);
       }
@@ -144,18 +132,18 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
     expect(typeof Sizes.SHARED_0_25X_1GB).toBe("string");
   });
 
-  it("AgentsMd.fromPath and File.fromPath actually exist when referenced in public docs", () => {
-    // Smoke check the AgentsMd / File static factories used by the public
+  it("Instructions.fromPath and File.fromPath exist when referenced in public docs", () => {
+    // Smoke check the Instructions / File static factories used by public
     // composition docs. If they don't exist, every copy-paste throws TypeError.
     const hasStatic = (cls: object, key: string): boolean =>
       typeof (cls as unknown as Record<string, unknown>)[key] === "function";
     expect(hasStatic(AexFile, "fromPath")).toBe(true);
-    expect(hasStatic(AgentsMd, "fromPath")).toBe(true);
+    expect(hasStatic(Instructions, "fromPath")).toBe(true);
     // Sanity: published docs still reference at least one of them (so this
     // file remains relevant).
     const docs = publishedDocFiles();
     expect(
-      docs.some((doc) => /File\.fromPath\(/.test(doc.content) || /AgentsMd\.fromPath\(/.test(doc.content))
+      docs.some((doc) => /File\.fromPath\(/.test(doc.content) || /Instructions\.fromPath\(/.test(doc.content))
     ).toBe(true);
   });
 
@@ -166,6 +154,7 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       { name: "client .submit(...)", needle: /\.submit\s*\(/ },
       { name: "client .getSessionRecord(...)", needle: /\.getSessionRecord\s*\(/ },
       { name: "client .getSessionUnit(...)", needle: /\.getSessionUnit\s*\(/ },
+      { name: "manufactured session.unit() aggregate", needle: /\bsession\.unit\s*\(/ },
       { name: "client .getUnit(...)", needle: /\.getUnit\s*\(/ },
       { name: "client .listSessionRecords(...)", needle: /\.listSessionRecords\s*\(/ },
       { name: "client .readSessionFileText(...)", needle: /\.readSessionFileText\s*\(/ },
@@ -182,18 +171,28 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
       { name: "runAndCollect alias", needle: /\brunAndCollect\b/ },
       { name: "secrets.get_value plaintext read", needle: /\.secrets\.get_value\s*\(/ },
       {
+        name: "legacy root workspace resource namespace",
+        needle: /\baex\.(?:files|skills|tools|instructions|secrets)\b/
+      },
+      {
+        name: "callable session resource namespace",
+        needle: /\bsession\.(?:messages|events|files|webhooks)\s*\(/
+      },
+      { name: "internal run-finalization event", needle: /\baex\.run\.finalizing\b/ },
+      { name: "removed Secret.upload promotion", needle: /\bSecret\.value\([^\n]*\)\.upload\s*\(/ },
+      {
         name: "ref method",
         needle: /\bref\.(?:get|getUnit|events|stream|streamEnvelopes|wait|files|download|downloadSessionFile|downloadFiles|downloadEvents|downloadMetadata|cancel|delete)\s*\(/
       },
       // The session read/stream/download surface moved from flat handle methods
-      // onto accessor sub-resources (`session.events().list()`,
-      // `session.files().read(...)`, `session.messages().last()`, …). The docs
+      // onto accessor sub-resources (`session.events.list()`,
+      // `session.files.read(...)`, `session.messages.last()`, …). The docs
       // must not resurrect the removed flat form invoked directly on a handle.
       // `session.download(...)` / `session.downloadMetadata(...)` stay flat, and
-      // `session.events().streamEnvelopes(...)` (accessor form) is allowed —
+      // `session.events.streamEnvelopes(...)` (accessor form) is allowed —
       // only the direct `session.streamEnvelopes(...)` is forbidden.
       {
-        name: "flat session-handle read/stream/download verb (now under messages()/events()/files()/webhooks())",
+        name: "flat session-handle read/stream/download verb (now under messages/events/files/webhooks)",
         needle:
           /\b(?:session|resumed|handle)\.(?:listEvents|streamEvents|streamEnvelopes|eventArchiveLink|downloadEvents|listFiles|readSessionFile|findFiles|findSessionFile|sessionFileLink|fetchSessionFile|downloadFiles|downloadSessionFile|webhookDeliveries|redeliverWebhook)\s*\(/
       }
@@ -287,8 +286,8 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     ];
     const hits = fictions.filter((f) => f.test(files)).map((f) => f.source);
     expect(hits).toEqual([]);
-    // …and it still teaches the honest identity-based exclusion.
-    expect(files).toMatch(/by IDENTITY/);
+    // It still teaches that a file identity is bound to one checkpoint.
+    expect(files).toMatch(/file IDs?[^.]*checkpoint|ID selectors?[^.]*checkpoint/i);
   });
 
   it("public file-capture docs and comments describe latest-checkpoint files", () => {
@@ -311,7 +310,7 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
       return fictions.filter((f) => f.test(text)).map((f) => `${rel}: ${f.source}`);
     });
     expect(hits).toEqual([]);
-    expect(readDoc("packages/sdk/docs/concepts/sessions.md")).toContain("durable, resumable **agent record**");
+    expect(readDoc("packages/sdk/docs/concepts/sessions.md")).toMatch(/session is a resumable thread/i);
     expect(readDoc("packages/contracts/src/submission.ts")).toContain("latest complete checkpoint");
   });
 
@@ -333,14 +332,14 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
   it("events.md documents capability-honest streaming (typed reject, not silent downgrade)", () => {
     const events = readDoc("packages/sdk/docs/events.md");
     expect(events).toContain("outputMode");
-    expect(events).toMatch(/streamable/);
-    expect(events).toMatch(/typed rejection|fail-closed|silent downgrade/i);
+    expect(events).toMatch(/streamable|providers that do not support/i);
+    expect(events).toMatch(/typed rejection|fail-closed|silent(?:ly)? downgrade(?:d)?/i);
   });
 
   it("the custom-tool entry rule and sandbox notes are documented", () => {
     const tools = readDoc("packages/sdk/docs/concepts/agent-tools.md");
     expect(tools).toMatch(/\.mjs/);
-    expect(tools).toMatch(/default-export/i);
+    expect(tools).toMatch(/default-export|export default/i);
 
     const limits = readDoc("packages/sdk/docs/limits-and-quotas.md");
     expect(limits).toContain("maxTurns");
