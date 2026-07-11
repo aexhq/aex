@@ -184,12 +184,15 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
   it(
     "A: apiKeys{gate provider} run — raw provider key appears in NO event/output/record/message",
     async () => {
-      const probe = rand("keyleak-probe");
+      const probe = rand("byok-echo");
       const body = `${PREAMBLE}
         const probe = process.env.PROBE;
         const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
-          message: "SessionFile verbatim: " + probe,
+          message: "Reply with exactly this text and nothing else: " + probe,
+          includeBuiltinTools: false,
+          tools: [],
+          overrides: { maxTurns: 3 },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-keyleak-" + Date.now()
         }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -306,7 +309,10 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         try {
           sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
-            message: "SessionFile verbatim: hello",
+            message: "Reply with exactly this text and nothing else: hello",
+            includeBuiltinTools: false,
+            tools: [],
+            overrides: { maxTurns: 3 },
             apiKeys: { [PROVIDER]: BAD_KEY },
             idempotencyKey: "edge-badkey-" + Date.now()
           }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -382,7 +388,10 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const UNUSED_KEY = process.env.UNUSED_KEY;
         const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
-          message: "SessionFile verbatim: " + probe,
+          message: "Reply with exactly this text and nothing else: " + probe,
+          includeBuiltinTools: false,
+          tools: [],
+          overrides: { maxTurns: 3 },
           apiKeys: { [PROVIDER]: PROVIDER_KEY, anthropic: UNUSED_KEY },
           idempotencyKey: "edge-multiprov-" + Date.now()
         }, { timeoutMs: ${SESSION_TIMEOUT_MS} });
@@ -483,7 +492,10 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         try {
           sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
-            message: "SessionFile verbatim: " + probe,
+            message: "Reply with exactly this text and nothing else: " + probe,
+            includeBuiltinTools: false,
+            tools: [],
+            overrides: { maxTurns: 3 },
             environment: { secrets: { GHOST_VAR: Secret.ref(GHOST) } },
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
             idempotencyKey: "edge-ghost-" + Date.now()

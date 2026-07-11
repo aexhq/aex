@@ -169,6 +169,18 @@ describe("live user-test release gate", () => {
     expect(source).not.toContain("SessionFile verbatim");
   });
 
+  it("keeps BYOK leak probes as no-tool exact-reply turns", () => {
+    const source = read("apps/user-tests/test/live/edge-byok-secrets.user.test.ts");
+
+    expect(source).toContain('const probe = rand("byok-echo");');
+    expect(source).toContain('message: "Reply with exactly this text and nothing else: " + probe');
+    expect(source).not.toContain("SessionFile verbatim");
+    expect(source).not.toContain("keyleak-probe");
+    expect(source.match(/includeBuiltinTools: false/g) ?? []).toHaveLength(4);
+    expect(source.match(/tools: \[\]/g) ?? []).toHaveLength(4);
+    expect(source.match(/overrides: \{ maxTurns: 3 \}/g) ?? []).toHaveLength(4);
+  });
+
   it("serializes Bun installs across live-test worker processes", () => {
     const source = read("apps/user-tests/test/_fixtures/install.ts");
 

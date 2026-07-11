@@ -245,7 +245,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         // file-read + JSON transmission path for multi-byte content.
         const unicodeMarker = "日本語 café";
         const promptPath = join(install.installDir, `edge-cli-prompt-${asciiId}.txt`);
-        writeFileSync(promptPath, `SessionFile verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
+        writeFileSync(promptPath, `Reply verbatim, exactly, with no extra words: ${asciiId} ${unicodeMarker}`, "utf8");
 
         const run = await executeCli(
           [
@@ -288,7 +288,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         expect(SESSION_PARKED_OK, diag("aex status", status)).toContain(statusDoc["status"]);
         assertNoSecretLeak("status", status);
 
-        // events: TURN_STARTED + clean terminal + the assistant echoed the markers
+        // events: TURN_STARTED + clean terminal + the assistant echoed the markers.
         const events = await executeCliRead("aex events", ["events", id, ...common()]);
         expect(events.exitCode, diag("aex events", events)).toBe(0);
         const eventRows = parseJsonLines(events.stdout);

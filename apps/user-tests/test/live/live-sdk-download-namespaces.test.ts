@@ -22,6 +22,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { isPreCreateTransportMessage } from "../_fixtures/pre-create-transport.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 
 function requireEnv(name: string): string {
@@ -147,6 +148,62 @@ function dump(cell: Cell, r: CaseResult): string {
   ].join("\n");
 }
 
+function isCreateSessionTransportFailure(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  return /\bPOST\b[\s\S]*\/api\/sessions\b/.test(text) && isPreCreateTransportMessage(text);
+}
+
+async function runDownloadNamespacesChild(
+  install: InstallResult,
+  scriptPath: string,
+  cell: Cell
+): Promise<CaseResult> {
+  const child = await runCommand(getBunCommand(), [scriptPath], {
+    cwd: install.installDir,
+    timeoutMs: 8 * 60_000,
+    env: buildPassEnv({
+      AEX_API_URL: apiUrl,
+      AEX_API_KEY: apiKey,
+      DEEPSEEK_KEY_SUBMIT: deepseekKey
+    })
+  });
+  if (child.exitCode !== 0) {
+    throw new Error(
+      `download-namespaces runner (${cell.id}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+    );
+  }
+  return JSON.parse(child.stdout.trim()) as CaseResult;
+}
+
+async function runDownloadNamespacesChildWithPreCreateRetry(
+  install: InstallResult,
+  scriptPath: string,
+  cell: Cell
+): Promise<CaseResult> {
+  const maxAttempts = 3;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await runDownloadNamespacesChild(install, scriptPath, cell);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isCreateSessionTransportFailure(error)) {
+        throw error;
+      }
+      // No session exists when POST /api/sessions fails before ingress; retry
+      // only that shape so post-create file/download failures stay debuggable.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[download-namespaces ${cell.id}] pre-create transport failure; retrying ${attempt + 1}/${maxAttempts}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 describe("live: session-artifact public files + download verbs", () => {
   let install: InstallResult;
 
@@ -165,21 +222,7 @@ describe("live: session-artifact public files + download verbs", () => {
         const marker = `DLNS-${Math.random().toString(36).slice(2, 10).toUpperCase()}-EOF`;
         const scriptPath = join(install.installDir, `dl-namespaces-${cell.id}.mjs`);
         writeFileSync(scriptPath, buildScript(cell, marker));
-        const child = await runCommand(getBunCommand(), [scriptPath], {
-          cwd: install.installDir,
-          timeoutMs: 8 * 60_000,
-          env: buildPassEnv({
-            AEX_API_URL: apiUrl,
-            AEX_API_KEY: apiKey,
-            DEEPSEEK_KEY_SUBMIT: deepseekKey
-          })
-        });
-        if (child.exitCode !== 0) {
-          throw new Error(
-            `download-namespaces runner (${cell.id}) exited ${child.exitCode}:\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
-          );
-        }
-        const r = JSON.parse(child.stdout.trim()) as CaseResult;
+        const r = await runDownloadNamespacesChildWithPreCreateRetry(install, scriptPath, cell);
         const ctx = `\n\n${dump(cell, r)}`;
 
         // 1. The `files` namespace is deliverables-only — no diagnostic
