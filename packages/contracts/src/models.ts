@@ -33,19 +33,13 @@ export const MODEL_PROVIDER_IDS = {
   "gemini-2.5-flash": { gemini: "gemini-2.5-flash" },
   "mistral-large-latest": { mistral: "mistral-large-latest" },
   "mistral-small-latest": { mistral: "mistral-small-latest" },
-  // Doubao (ByteDance) via the official Ark API. Served by both the
-  // international BytePlus ModelArk gateway (`doubao`, the default) and the
-  // China Volcengine Ark gateway (`doubao-cn`). Ark accepts the API-format
-  // model NAME directly in the chat-completions `model` field (no `ep-…`
-  // inference-endpoint id). The native strings are the same Ark catalog ids on
-  // both gateways.
+  // Doubao (ByteDance) via the official international BytePlus ModelArk API.
+  // Ark accepts the API-format model NAME directly in the chat-completions
+  // `model` field (no `ep-…` inference-endpoint id).
   //   pro   — Doubao Seed 1.8 (flagship, 256K context).
   //   flash — Doubao Seed 1.6 Flash (fast/cheap, 256K context).
-  "doubao-seed-pro": { doubao: "doubao-seed-1-8-251228", "doubao-cn": "doubao-seed-1-8-251228" },
-  "doubao-seed-flash": {
-    doubao: "doubao-seed-1-6-flash-250828",
-    "doubao-cn": "doubao-seed-1-6-flash-250828"
-  }
+  "doubao-seed-pro": { doubao: "doubao-seed-1-8-251228" },
+  "doubao-seed-flash": { doubao: "doubao-seed-1-6-flash-250828" }
 } as const satisfies Readonly<Record<string, Partial<Record<ProviderName, string>>>>;
 
 /**
@@ -93,15 +87,11 @@ export const Models = {
   /** Mistral Small (latest) — Mistral. */
   MISTRAL_SMALL_LATEST: "mistral-small-latest",
   /**
-   * Doubao Seed 1.8 — ByteDance, via the official Ark API. Default routes
-   * through the international BytePlus gateway (`Providers.DOUBAO`); pair with
-   * `Providers.DOUBAO_CN` for the China Volcengine gateway.
+   * Doubao Seed 1.8 — ByteDance, via the international BytePlus gateway.
    */
   DOUBAO_SEED_PRO: "doubao-seed-pro",
   /**
-   * Doubao Seed 1.6 Flash — ByteDance, via the official Ark API (fast/cheap).
-   * Default `Providers.DOUBAO` (international); pair with `Providers.DOUBAO_CN`
-   * for China.
+   * Doubao Seed 1.6 Flash — ByteDance, via BytePlus (fast/cheap).
    */
   DOUBAO_SEED_FLASH: "doubao-seed-flash"
 } as const satisfies Readonly<Record<string, ModelName>>;

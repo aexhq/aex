@@ -184,8 +184,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
           message: "Reply with exactly this text and nothing else: " + probe,
-          includeBuiltinTools: false,
-          tools: [],
+          builtinTools: "none",
           overrides: { maxTurns: 3 },
           apiKeys: { [PROVIDER]: PROVIDER_KEY },
           idempotencyKey: "edge-keyleak-" + Date.now()
@@ -304,8 +303,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
             message: "Reply with exactly this text and nothing else: hello",
-            includeBuiltinTools: false,
-            tools: [],
+            builtinTools: "none",
             overrides: { maxTurns: 3 },
             apiKeys: { [PROVIDER]: BAD_KEY },
             idempotencyKey: "edge-badkey-" + Date.now()
@@ -382,8 +380,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         const sessionResult = await client.start({
           provider: PROVIDER, model: MODEL,
           message: "Reply with exactly this text and nothing else: " + probe,
-          includeBuiltinTools: false,
-          tools: [],
+          builtinTools: "none",
           overrides: { maxTurns: 3 },
           apiKeys: { [PROVIDER]: PROVIDER_KEY, anthropic: UNUSED_KEY },
           idempotencyKey: "edge-multiprov-" + Date.now()
@@ -483,8 +480,7 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
           sessionResult = await client.start({
             provider: PROVIDER, model: MODEL,
             message: "Reply with exactly this text and nothing else: " + probe,
-            includeBuiltinTools: false,
-            tools: [],
+            builtinTools: "none",
             overrides: { maxTurns: 3 },
             environment: { secrets: { GHOST_VAR: Secret.ref(GHOST) } },
             apiKeys: { [PROVIDER]: PROVIDER_KEY },

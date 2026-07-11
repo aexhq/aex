@@ -40,6 +40,46 @@ export const ENTRY_RAM_CAP = 512 * 1024 * 1024;
 /** Pinned push size for Canonical B's streaming deflate. LOAD-BEARING for determinism. */
 export const CANONICAL_B_PUSH_BYTES = 1024 * 1024;
 
+const CLASSIC_ZIP_MAX_U16 = 0xffff;
+const CLASSIC_ZIP_MAX_U32 = 0xffffffff;
+
+function classicZipLimitError(detail: string): Error {
+  return new Error(`canonical-zip: ${detail}; ZIP64 is not supported`);
+}
+
+/** Reject inputs that cannot be represented by the classic ZIP fields we emit. */
+function assertClassicZipInputs(entries: readonly ZipEntrySource[]): void {
+  if (entries.length > CLASSIC_ZIP_MAX_U16) {
+    throw classicZipLimitError("archive exceeds the 65,535-entry classic ZIP limit");
+  }
+
+  let declaredBytes = 0;
+  let directoryBytes = 0;
+  for (const entry of entries) {
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0) {
+      throw new Error(`canonical-zip: entry ${JSON.stringify(entry.name)} has invalid size ${entry.size}`);
+    }
+    if (entry.size > CLASSIC_ZIP_MAX_U32) {
+      throw classicZipLimitError(`entry ${JSON.stringify(entry.name)} exceeds the 4 GiB classic ZIP limit`);
+    }
+    const nameBytes = strToU8(entry.name).length;
+    if (nameBytes > CLASSIC_ZIP_MAX_U16) {
+      throw classicZipLimitError(`entry ${JSON.stringify(entry.name)} has a filename longer than 65,535 bytes`);
+    }
+    declaredBytes += entry.size;
+    directoryBytes += 46 + nameBytes;
+    if (declaredBytes > CLASSIC_ZIP_MAX_U32 || directoryBytes > CLASSIC_ZIP_MAX_U32) {
+      throw classicZipLimitError("archive exceeds the 4 GiB classic ZIP limit");
+    }
+  }
+}
+
+function assertClassicZipU32(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > CLASSIC_ZIP_MAX_U32) {
+    throw classicZipLimitError(`${field} exceeds the 4 GiB classic ZIP limit`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CRC-32 (IEEE, poly 0xEDB88320) — matches zlib/fflate, verified byte-identical.
 // ---------------------------------------------------------------------------
@@ -143,6 +183,9 @@ function frameEntryA(name: string, raw: Uint8Array, offset: number): FramedEntry
   // edge unicode (lone surrogates etc.) where TextEncoder would diverge.
   const nameBytes = strToU8(name);
   const payload = deflateSync(raw, { level: 6 });
+  assertClassicZipU32(raw.length, `entry ${JSON.stringify(name)} uncompressed size`);
+  assertClassicZipU32(payload.length, `entry ${JSON.stringify(name)} compressed size`);
+  assertClassicZipU32(offset, `entry ${JSON.stringify(name)} local-header offset`);
   const crc = crc32(raw);
   // GP flag: low byte = dbf(level 6) << 1 = 0; high byte = 0x08 (bit 11, UTF-8)
   // when the name is non-ASCII — fflate sets it iff the encoded byte length
@@ -217,13 +260,21 @@ async function streamBundleZipA(entries: readonly ZipEntrySource[], sink: ByteSi
   let offset = 0;
   for (const entry of entries) {
     const raw = await entry.read();
+    if (raw.length !== entry.size) {
+      throw new Error(
+        `canonical-zip: entry ${JSON.stringify(entry.name)} changed while being archived ` +
+        `(expected ${entry.size} bytes, read ${raw.length})`
+      );
+    }
     const framed = frameEntryA(entry.name, raw, offset);
     await sink(framed.local);
     centrals.push(framed.central);
     offset += framed.length;
+    assertClassicZipU32(offset, "central-directory offset");
   }
   let cdSize = 0;
   for (const c of centrals) cdSize += c.length;
+  assertClassicZipU32(cdSize, "central-directory size");
   for (const c of centrals) await sink(c);
   await sink(eocd(centrals.length, cdSize, offset));
 }
@@ -315,6 +366,7 @@ async function streamBundleZipB(entries: readonly ZipEntrySource[], sink: ByteSi
  */
 export async function streamBundleZip(entries: readonly ZipEntrySource[], sink: ByteSink): Promise<void> {
   const ordered = canonicalOrder(entries);
+  assertClassicZipInputs(ordered);
   return bundleNeedsCanonicalB(ordered) ? streamBundleZipB(ordered, sink) : streamBundleZipA(ordered, sink);
 }
 
@@ -325,6 +377,7 @@ export async function streamBundleZip(entries: readonly ZipEntrySource[], sink: 
  */
 export function frameCanonicalZipSync(entries: ReadonlyArray<readonly [string, Uint8Array]>): Uint8Array {
   const ordered = canonicalOrder(entries.map(([name, bytes]) => ({ name, bytes })));
+  assertClassicZipInputs(ordered.map(({ name, bytes }) => ({ name, size: bytes.length, read: () => bytes })));
   const chunks: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
   let offset = 0;
@@ -333,12 +386,14 @@ export function frameCanonicalZipSync(entries: ReadonlyArray<readonly [string, U
     chunks.push(framed.local);
     centrals.push(framed.central);
     offset += framed.length;
+    assertClassicZipU32(offset, "central-directory offset");
   }
   let cdSize = 0;
   for (const c of centrals) {
     cdSize += c.length;
     chunks.push(c);
   }
+  assertClassicZipU32(cdSize, "central-directory size");
   chunks.push(eocd(centrals.length, cdSize, offset));
   let total = 0;
   for (const c of chunks) total += c.length;

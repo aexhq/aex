@@ -62,6 +62,21 @@ describe("SessionRunStream", () => {
     expect(counter.sessions).toBe(1);
   });
 
+  it("lets finished() and iteration consume concurrently without stealing events", async () => {
+    const counter = { sessions: 0 };
+    const stream = makeStream(["A", "B", "C", "D"], { status: "idle", text: "complete" }, counter);
+    const done = stream.finished();
+    const seen: string[] = [];
+
+    for await (const event of stream) {
+      seen.push((event as { type: string }).type);
+    }
+
+    await expect(done).resolves.toEqual({ status: "idle", text: "complete" });
+    expect(seen).toEqual(["A", "B", "C", "D"]);
+    expect(counter.sessions).toBe(1);
+  });
+
   it("breaking out of iteration does not close the turn; done() drains the rest", async () => {
     const counter = { sessions: 0 };
     const stream = makeStream(["A", "B", "C"], { status: "idle", text: "after-break" }, counter);

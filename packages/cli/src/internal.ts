@@ -27,6 +27,8 @@ export const AEX_INDEX_PATH = "/mnt/session/uploads/aex/index.json";
  */
 export interface CliIO {
   readonly readFile: (path: string) => Promise<string>;
+  /** Read exact bytes for opaque file attachments. Required by `start --file`. */
+  readonly readFileBytes?: (path: string) => Promise<Uint8Array>;
   readonly writeFile: (path: string, data: Uint8Array) => Promise<void>;
   readonly fetchImpl: typeof fetch;
   readonly stdout: (chunk: string) => void;

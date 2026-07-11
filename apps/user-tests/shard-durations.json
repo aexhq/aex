@@ -1,6 +1,5 @@
 {
   "$comment": "Per-test-file wall-clock seconds for duration-balanced CI sharding (scripts/shard-files.mjs). Measured from aexhq/aex-platform run 28666442107 and aexhq/aex start 28657317192 (2026-07-03, max of both). Files absent from this map get the median of recorded values. Refresh occasionally from recent CI vitest per-file times; exactness does not matter, only relative weight.",
-  "test/_fixtures/install.test.ts": 2,
   "test/live/config-instructions.user.test.ts": 27,
   "test/live/config-envvars.user.test.ts": 25,
   "test/live/config-networking.user.test.ts": 32,
@@ -32,23 +31,5 @@
   "test/live/live-sdk-files-and-failures.test.ts": 29,
   "test/live/live-sdk-skill-invocation.test.ts": 26,
   "test/live/live-skill-tool-invocation.test.ts": 83,
-  "test/live/live-skill-tool-staging.test.ts": 107,
-  "test/offline/cli-bin.test.ts": 1,
-  "test/offline/cli-host-commands.test.ts": 1,
-  "test/offline/download-namespaces.test.ts": 1,
-  "test/offline/edge-instructions-files.test.ts": 1,
-  "test/offline/edge-cli.test.ts": 2,
-  "test/offline/edge-retry-injected.test.ts": 2,
-  "test/offline/edge-skills-tools.test.ts": 1,
-  "test/offline/install.test.ts": 1,
-  "test/offline/live-diagnostics.test.ts": 1,
-  "test/offline/runtime-and-providers.test.ts": 1,
-  "test/offline/sdk-chat-session-user-inputs.test.ts": 1,
-  "test/offline/sdk-imports.test.ts": 1,
-  "test/offline/sdk-retry.test.ts": 1,
-  "test/offline/sdk-session-inputs.test.ts": 1,
-  "test/offline/skill-tool-from-dir.test.ts": 1,
-  "test/offline/skill-tool-from-url.test.ts": 1,
-  "test/offline/skill-tool-wire-and-dedup.test.ts": 1,
-  "test/offline/typescript-consumer.test.ts": 7
+  "test/live/live-skill-tool-staging.test.ts": 107
 }

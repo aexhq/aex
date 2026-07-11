@@ -90,9 +90,14 @@ async function readIgnoreFile(rootDir: string, name: string): Promise<string[]> 
   try {
     const raw = await readFile(join(rootDir, name), "utf8");
     return raw.replace(/\r\n/g, "\n").split("\n");
-  } catch {
-    return [];
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return [];
+    throw error;
   }
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === code;
 }
 
 /** Build the layered ignore matcher (last layer wins, git semantics). */

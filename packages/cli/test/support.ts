@@ -22,11 +22,13 @@ export function makeIo(opts: {
   argv: readonly string[];
   fetchHandler?: (call: FetchCall) => Response;
   files?: Record<string, string>;
+  binaryFiles?: Record<string, Uint8Array>;
   writes?: Map<string, Uint8Array>;
   cwd?: string;
 }): Cap {
   const state = { stdout: "", stderr: "", exitCode: null as number | null, calls: [] as FetchCall[] };
   const files = opts.files ?? {};
+  const binaryFiles = opts.binaryFiles ?? {};
   const writes = opts.writes ?? new Map<string, Uint8Array>();
   const cwd = opts.cwd ?? "/tmp/cli-test";
 
@@ -37,6 +39,11 @@ export function makeIo(opts: {
         throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
       }
       return files[path]!;
+    },
+    readFileBytes: async (path) => {
+      if (path in binaryFiles) return binaryFiles[path]!;
+      if (path in files) return new TextEncoder().encode(files[path]!);
+      throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
     },
     writeFile: async (path, data) => {
       writes.set(path, data);

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { strToU8, unzipSync } from "fflate";
 import { resolve as resolvePath } from "node:path";
 import { executeCli } from "../src/main.js";
-import { parseDuration } from "../src/host/common.js";
+import { parseDuration, takeOptionFlag } from "../src/host/common.js";
 import type { CliIO } from "../src/internal.js";
 import { canonicalWhoami } from "./canonical-whoami.js";
 
@@ -308,6 +308,21 @@ describe("parseDuration", () => {
   });
 });
 
+describe("takeOptionFlag", () => {
+  it("distinguishes an absent option from a present option missing its value", () => {
+    expect(takeOptionFlag(["session-1"], "--timeout")).toEqual({
+      value: undefined,
+      remaining: ["session-1"],
+      error: null
+    });
+    expect(takeOptionFlag(["session-1", "--timeout"], "--timeout")).toEqual({
+      value: undefined,
+      remaining: ["session-1"],
+      error: "--timeout requires a value"
+    });
+  });
+});
+
 describe("aex wait", () => {
   it("polls GET /api/sessions/{id} until non-progressing, prints the final session, and exits 0 on idle", async () => {
     let polls = 0;
@@ -366,6 +381,14 @@ describe("aex wait", () => {
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
     expect(cap.stderr).toContain("--timeout");
+  });
+
+  it("rejects a trailing --timeout instead of silently disabling the deadline", async () => {
+    const cap = makeHostIo({ argv: ["wait", "session-x", ...COMMON, "--timeout"] });
+    await executeCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("--timeout requires a value");
+    expect(cap.calls).toHaveLength(0);
   });
 
   it("requires exactly one session-id positional", async () => {
@@ -656,6 +679,17 @@ describe("aex download", () => {
   it("rejects an unknown --only namespace with a usage error", async () => {
     const cap = makeHostIo({
       argv: ["download", "session-1", "--only", "bogus", ...COMMON],
+      fetchHandler: wholeSessionHandler("session-1")
+    });
+    await executeCli(cap.io);
+    expect(cap.exitCode).toBe(2);
+    expect(cap.stderr).toContain("--only must be one of");
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("rejects Object.prototype names as --only namespaces", async () => {
+    const cap = makeHostIo({
+      argv: ["download", "session-1", "--only", "toString", ...COMMON],
       fetchHandler: wholeSessionHandler("session-1")
     });
     await executeCli(cap.io);

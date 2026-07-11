@@ -15,7 +15,6 @@ aex exposes one submission shape across supported providers:
 | Mistral | `Providers.MISTRAL` |
 | OpenRouter | `Providers.OPENROUTER` |
 | Doubao | `Providers.DOUBAO` |
-| Doubao China | `Providers.DOUBAO_CN` |
 
 All submissions run on the managed runtime. The optional `runtime` option picks
 a managed machine-size preset — use `Sizes.*` in TypeScript (e.g.

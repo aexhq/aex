@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolve as resolvePath } from "node:path";
+import { unzipSync } from "fflate";
 import { executeCli } from "../src/main.js";
 import { makeIo, type FetchCall } from "./support.js";
 
@@ -73,6 +74,34 @@ function attachFetch(call: FetchCall): Response {
 }
 
 describe("aex start workspace resource flags", () => {
+  it("preserves arbitrary bytes supplied through --file", async () => {
+    const original = new Uint8Array([0, 0xff, 0xfe, 0x80, 0x41, 0xc3, 0x28]);
+    let uploaded: Uint8Array | undefined;
+    const cap = makeIo({
+      argv: [
+        "start",
+        "--model", "claude-haiku-4-5",
+        "--prompt", "hi",
+        "--file", "@binary.dat",
+        "--anthropic-api-key", "sk-ant-1",
+        ...COMMON
+      ],
+      binaryFiles: { [abs("binary.dat")]: original },
+      fetchHandler: (call) => {
+        if (new URL(call.url).hostname === "object-storage.example.test") {
+          uploaded = call.init.body as Uint8Array;
+        }
+        return attachFetch(call);
+      }
+    });
+
+    await executeCli(cap.io);
+
+    expect(cap.exitCode).toBe(0);
+    expect(uploaded).toBeDefined();
+    expect(unzipSync(uploaded!)["binary.dat"]).toEqual(original);
+  });
+
   it("publishes every attached resource and submits immutable refs", async () => {
     const cap = makeIo({
       argv: [

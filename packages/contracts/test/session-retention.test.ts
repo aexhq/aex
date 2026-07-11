@@ -133,6 +133,23 @@ describe("session retention and deletion contract", () => {
     });
   });
 
+  it("blocks automatic GC when terminalAt is missing", () => {
+    const { terminalAt: _missing, ...withoutTerminalAt } = terminalSession;
+    const candidate = evaluateSessionDeletionCandidate({
+      session: withoutTerminalAt,
+      reason: "retention_gc",
+      policy: buildSessionRetentionPolicy({ automaticDeletion: true, retentionDays: 7 }),
+      now: "2026-07-01T10:00:00.000Z"
+    });
+
+    expect(candidate).toMatchObject({
+      status: "blocked",
+      reason: "retention_gc",
+      blockers: [{ code: "missing_terminal_at" }]
+    });
+    expect(candidate.eligibleAt).toBeUndefined();
+  });
+
   it("records blockers for non-terminal, held, exempt, and unresolved sessions", () => {
     const candidate = evaluateSessionDeletionCandidate({
       session: {

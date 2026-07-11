@@ -271,7 +271,7 @@ jobs:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           # This gate starts exactly two smoke files in parallel. The full
-          # 50-way matrix has its own preflight in live-user-tests.yml.
+          # live matrix preflights declared session-slot demand separately.
           LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 2
           LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,files:read
         run: bun scripts/cicd/preflight-live-user-tests.mjs
@@ -353,6 +353,10 @@ jobs:
         if: ${{ env.RELEASE_MODE == 'automatic-canary' && needs.version.outputs.already_published != 'true' }}
         run: bun scripts/cicd/canary-version.mjs apply --version "${{ needs.version.outputs.version }}"
 
+      - name: Bind package to release source
+        if: ${{ needs.version.outputs.already_published != 'true' }}
+        run: bun scripts/cicd/release-source.mjs apply --sha "${RELEASE_HEAD_SHA}"
+
       - name: Pack publish tarball
         id: pack
         if: ${{ needs.version.outputs.already_published != 'true' }}
@@ -400,9 +404,15 @@ jobs:
           SDK_VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          integrity="$(npm view "@aexhq/sdk@${SDK_VERSION}" dist.integrity --json | jq -r '.')"
+          package_spec="@aexhq/sdk@${SDK_VERSION}"
+          integrity="$(npm view "${package_spec}" dist.integrity --json --registry https://registry.npmjs.org | jq -r '.')"
           if ! [[ "${integrity}" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]; then
-            echo "::error::npm returned invalid dist.integrity for @aexhq/sdk@${SDK_VERSION}"
+            echo "::error::npm returned invalid dist.integrity for ${package_spec}"
+            exit 1
+          fi
+          source_sha="$(npm view "${package_spec}" aexRelease.sourceSha --json --registry https://registry.npmjs.org | jq -r 'select(type == "string")')"
+          if [ "${source_sha}" != "${RELEASE_HEAD_SHA}" ]; then
+            echo "::error::Registry source attestation '${source_sha:-missing}' does not match release source '${RELEASE_HEAD_SHA}'."
             exit 1
           fi
           echo "integrity=${integrity}" >> "$GITHUB_OUTPUT"
@@ -412,11 +422,11 @@ jobs:
     # publishes to a pre-release dist-tag, then this proves the PUBLISHED
     # @aexhq/sdk + CLI install from npm and run end-to-end: a DeepSeek SDK
     # round-trip on the managed runtime and the installed CLI
-    # (apps/user-tests/vitest.smoke.config.ts). The full test/live/** matrix
-    # runs against this same published sdk_version across dev + prd in platform
-    # deploy.yml (aws-suite.yml sdk_user_tests), which the release runbook requires
-    # green before promoting to `latest`, so retrying the whole
-    # suite here was redundant with that deploy gate.
+    # (apps/user-tests/vitest.smoke.config.ts). The platform deploy gate then
+    # runs its complete release suite against this same published sdk_version
+    # across dev + prd: every discovered gating SDK file plus the isolated
+    # admission, heavy-session, and tool-fuzz lanes. Promotion requires both
+    # planes to pass; release.yml does not rerun those scenarios.
     name: Published-artifact smoke
     needs:
       - publish
@@ -460,8 +470,16 @@ jobs:
           # Smoke-only: install the PUBLISHED @aexhq/sdk@<version> from npm and
           # exercise the SDK + CLI end-to-end. The full behavioral matrix is the
           # deploy.yml gate (see the job comment above).
-          bun run test:user:smoke -- --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"
-          node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"
+          set +e
+          bun run test:user:smoke -- --reporter=default --reporter=json --outputFile.json="$REPORT" > "$RAW_LOG" 2>&1
+          test_status=$?
+          node scripts/cicd/assert-no-skips.mjs "$REPORT" >> "$RAW_LOG" 2>&1
+          assertion_status=$?
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            exit "$test_status"
+          fi
+          exit "$assertion_status"
 
       - name: Redact smoke log
         if: ${{ always() }}
@@ -517,6 +535,7 @@ jobs:
               );
           }
           NODE
+          cat "$REDACTED_LOG"
 
       - name: Upload redacted smoke log
         if: ${{ always() }}
@@ -526,6 +545,7 @@ jobs:
           path: .suite-diagnostics/redacted
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
 
   public-release-manifest:
     name: Public release manifest
@@ -566,6 +586,7 @@ jobs:
           path: public-release-manifest.json
           if-no-files-found: error
           retention-days: 30
+          overwrite: true
 
       - name: Dispatch exact candidate to platform
         env:

@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { loadLocalEnv } from "./test/env-local";
+import { PUBLISHED_ARTIFACT_SMOKE_FILES } from "./test/_fixtures/smoke-suite.js";
 import { workerCountFromEnv } from "./vitest.worker-count";
 
 loadLocalEnv();
@@ -13,12 +14,11 @@ loadLocalEnv();
 // tempdir (AEX_USER_TEST_VERSION is set), so this exercises the real npm
 // artifact, not a local pack.
 //
-// It is DELIBERATELY not the full behavioral matrix (test/**). That runs
-// against this same published sdk_version across dev + prd in platform
-// deploy.yml (aws-suite.yml `sdk_user_tests`), which the release workflow attemptbook (§4.7)
-// requires green before promoting to `latest`. The release only needs this fast
-// published-artifact self-check; retrying the whole suite here was redundant
-// with that deploy gate.
+// It is deliberately not the complete release matrix. Platform deploy.yml
+// installs this same sdk_version in dev + prd for every discovered gating SDK
+// file and the isolated admission, heavy-session, and tool-fuzz lanes. Both
+// planes must pass before promotion; this workflow owns only the fast registry
+// artifact self-check.
 const maxWorkers = workerCountFromEnv("AEX_USER_TEST_MAX_WORKERS", 2);
 
 export default defineConfig({
@@ -28,7 +28,7 @@ export default defineConfig({
     // Installing the packed SDK + CLI bundle can take a while on a cold runner.
     testTimeout: 180_000,
     hookTimeout: 180_000,
-    include: ["test/live/live-sdk-deepseek.test.ts", "test/live/live-cli-installed.test.ts"],
+    include: Object.values(PUBLISHED_ARTIFACT_SMOKE_FILES),
     exclude: ["**/node_modules/**"],
     fileParallelism: true,
     maxWorkers,

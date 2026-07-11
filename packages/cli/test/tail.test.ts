@@ -68,6 +68,7 @@ function makeIo(opts: {
   argv: readonly string[];
   finalStatuses?: readonly string[];
   sessionStatus?: string;
+  runless?: boolean;
   noWs?: boolean;
 }): {
   io: CliIO;
@@ -150,7 +151,21 @@ function makeIo(opts: {
       // getSession (final record read; sessionId === sessionId)
       const status = finalStatuses[Math.min(finalReadCount, finalStatuses.length - 1)]!;
       finalReadCount += 1;
-      return new Response(JSON.stringify({ session: { id: "session-x", status, acceptsMessages: status !== "running", model: "claude-haiku-4-5", createdAt: "2026-01-01T00:00:00Z" } }), {
+      const run = {
+        sessionId: "session-x",
+        runId: "run-1",
+        turnSeq: 1,
+        phase: status === "running" ? "running" : "finished",
+        ...(status === "running" ? {} : { outcome: "succeeded" })
+      };
+      return new Response(JSON.stringify({ session: {
+        id: "session-x",
+        status,
+        acceptsMessages: status !== "running",
+        model: "claude-haiku-4-5",
+        createdAt: "2026-01-01T00:00:00Z",
+        ...(opts.runless ? {} : status === "running" ? { currentRun: run } : { lastRun: run })
+      } }), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -287,7 +302,7 @@ describe("aex tail", () => {
     expect(cap.err()).toContain("tail_timeout");
   });
 
-  it("exits 0 with an (interrupted) note on SIGINT before terminal", async () => {
+  it("exits 130 with an (interrupted) note on SIGINT before terminal", async () => {
     const cap = makeIo({ argv: ["tail", "session-x", ...COMMON] });
     const done = executeCli(cap.io);
     const ws = await cap.nextSocket();
@@ -295,7 +310,7 @@ describe("aex tail", () => {
     await flush();
     cap.fireSigint();
     await done;
-    expect(cap.exit()).toBe(0);
+    expect(cap.exit()).toBe(130);
     expect(cap.err()).toContain("(interrupted)");
   });
 
@@ -326,6 +341,29 @@ describe("aex tail", () => {
 });
 
 describe("aex start --follow", () => {
+  it("exits 130 when SIGINT interrupts a run before its terminal", async () => {
+    const cap = makeIo({
+      argv: [
+        "start",
+        "--model", "claude-haiku-4-5",
+        "--prompt", "hi",
+        "--anthropic-api-key", "sk-ant-test",
+        "--follow",
+        ...COMMON
+      ],
+      sessionStatus: "running"
+    });
+    const done = executeCli(cap.io);
+    const ws = await cap.nextSocket();
+    ws.message(evt(0, "TEXT_MESSAGE_CONTENT", { text: "partial" }));
+    await flush();
+    cap.fireSigint();
+    await done;
+
+    expect(cap.exit()).toBe(130);
+    expect(cap.err()).toContain("(interrupted)");
+  });
+
   it("streams live coordinator envelopes as NDJSON after submit", async () => {
     const cap = makeIo({
       argv: [
@@ -413,6 +451,18 @@ describe("aex start --follow", () => {
 });
 
 describe("aex inspect", () => {
+  it("returns a bounded empty timeline for an idle session with no runs", async () => {
+    const cap = makeIo({ argv: ["inspect", "session-x", "--json", ...COMMON], sessionStatus: "idle", runless: true });
+
+    await executeCli(cap.io);
+
+    expect(cap.exit()).toBe(0);
+    expect(cap.socketUrls).toEqual([]);
+    expect(JSON.parse(cap.out().trim())).toMatchObject({
+      session: { id: "session-x", status: "idle" },
+      events: []
+    });
+  });
   it("prints a header, the full timeline, and a cost/usage footer", async () => {
     const cap = makeIo({ argv: ["inspect", "session-x", ...COMMON], sessionStatus: "idle" });
     const done = executeCli(cap.io);

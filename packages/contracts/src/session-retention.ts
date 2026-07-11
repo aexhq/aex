@@ -19,6 +19,7 @@ export type SessionDeletionCandidateStatus = (typeof SESSION_DELETION_CANDIDATE_
 export const SESSION_DELETION_BLOCKERS = [
   "non_terminal",
   "retention_policy_disabled",
+  "missing_terminal_at",
   "unexpired",
   "held",
   "retention_exempt",
@@ -384,7 +385,9 @@ export function evaluateSessionDeletionCandidate(input: SessionDeletionCandidate
   if (input.reason === "retention_gc") {
     if (policy.mode !== "delete_after_days" || policy.retentionDays === undefined) {
       blockers.push(blocker("retention_policy_disabled", now));
-    } else if (session.terminalAt) {
+    } else if (!session.terminalAt) {
+      blockers.push(blocker("missing_terminal_at", now));
+    } else {
       eligibleAt = addDaysIso(session.terminalAt, policy.retentionDays);
       if (Date.parse(now) < Date.parse(eligibleAt)) {
         blockers.push(blocker("unexpired", now));

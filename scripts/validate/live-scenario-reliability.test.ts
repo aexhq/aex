@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,20 +14,20 @@ import {
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
-function retryProperties(path: string): readonly string[] {
-  const source = ts.createSourceFile(path, readRepoFile(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const found: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (
-      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
-      node.name.getText(source).replace(/["']/g, "") === "retry"
-    ) {
-      found.push(`${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`);
+function liveScenarioFiles(): readonly string[] {
+  const root = resolve(repoRoot, "apps/user-tests/test/live");
+  const files: string[] = [];
+  const visit = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        files.push(relative(repoRoot, path).replaceAll("\\", "/"));
+      }
     }
-    ts.forEachChild(node, visit);
   };
-  visit(source);
-  return found;
+  visit(root);
+  return files.sort();
 }
 
 function templateSource(node: ts.TemplateLiteral): string {
@@ -62,17 +63,47 @@ function suppressedSessionReads(path: string): readonly string[] {
 }
 
 describe("live scenario reliability", () => {
-  it("does not configure Vitest to rerun live scenarios", () => {
-    const configDir = resolve(repoRoot, "apps/user-tests");
-    for (const name of readdirSync(configDir).filter((entry) => /^vitest\..*\.config\.ts$/.test(entry))) {
-      const path = `apps/user-tests/${name}`;
-      expect(retryProperties(path), path).toEqual([]);
+  it("resolves every live user-test entrypoint with whole-scenario retries disabled", () => {
+    const packageJson = JSON.parse(readRepoFile("apps/user-tests/package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const configs = new Set(
+      Object.entries(packageJson.scripts ?? {})
+        .filter(([name]) => name.startsWith("test:user") && name !== "test:user:offline")
+        .map(([, command]) => /--config\s+(vitest(?:\.[\w-]+)?\.config\.ts)/.exec(command)?.[1])
+        .filter((name): name is string => name !== undefined)
+    );
+
+    expect(configs.size).toBeGreaterThan(0);
+    const names = [...configs];
+    const configUrls = names.map((name) => pathToFileURL(resolve(repoRoot, "apps/user-tests", name)).href);
+    const output = execFileSync(
+      "bun",
+      [
+        "-e",
+        "const urls=JSON.parse(process.env.AEX_LIVE_CONFIG_URLS);const values=[];for(const url of urls){const m=await import(url);values.push(m.default.test?.retry??0)};console.log(JSON.stringify(values))"
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, AEX_LIVE_CONFIG_URLS: JSON.stringify(configUrls) }
+      }
+    );
+    const retries = JSON.parse(output) as number[];
+    for (const [index, retry] of retries.entries()) {
+      expect(retry, names[index]).toBe(0);
     }
   });
 
   it("does not keep the removed whole-scenario transport retry fixture", () => {
     expect(existsSync(resolve(repoRoot, "apps/user-tests/test/_fixtures/pre-create-transport.ts"))).toBe(false);
     expect(existsSync(resolve(repoRoot, "apps/user-tests/test/_fixtures/pre-create-transport.test.ts"))).toBe(false);
+  });
+
+  it("does not neutralize live-test predicates with an always-true fallback", () => {
+    for (const path of liveScenarioFiles()) {
+      const source = readRepoFile(path);
+      expect(source, path).not.toMatch(/\.filter\([^;\n]*\|\|\s*true\b/);
+    }
   });
 
   it("does not suppress post-finish session reads", () => {

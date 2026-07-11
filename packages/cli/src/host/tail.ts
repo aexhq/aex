@@ -6,13 +6,14 @@
  * jump-to-failure line.
  *
  * stdout carries the event/JSON stream (clean for piping); all diagnostics go to
- * stderr. Exit: 0 after a successful run / 1 after error (or transport give-up) / 3 timeout.
+ * stderr. Exit: 0 success / 1 error (or transport give-up) / 3 timeout / 130 SIGINT.
  */
 import { isReplayableEvent } from "@aexhq/contracts";
 import { operations } from "@aexhq/contracts/internal";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
+  INTERRUPTED_ERR,
   RUNTIME_ERR,
   SUCCESS,
   TIMEOUT_ERR,
@@ -50,6 +51,7 @@ export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promis
     return USAGE_ERR;
   }
   const fromFlag = takeOptionFlag(filterFlag.remaining, "--from");
+  if (fromFlag.error) { io.stderr(`${fromFlag.error}\n`); return USAGE_ERR; }
   let from = 0;
   if (fromFlag.value !== undefined) {
     const n = Number(fromFlag.value);
@@ -60,6 +62,7 @@ export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promis
     from = n;
   }
   const timeoutFlag = takeOptionFlag(fromFlag.remaining, "--timeout");
+  if (timeoutFlag.error) { io.stderr(`${timeoutFlag.error}\n`); return USAGE_ERR; }
   let timeoutMs: number | null = null;
   if (timeoutFlag.value !== undefined) {
     const parsed = parseDuration(timeoutFlag.value);
@@ -184,7 +187,7 @@ export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promis
   }
   if (interrupted) {
     io.stderr(`(interrupted) tailed ${eventCount} event(s) up to seq ${lastSeq}\n`);
-    return SUCCESS;
+    return INTERRUPTED_ERR;
   }
   if (runErrorLine) io.stderr(runErrorLine + "\n");
 

@@ -1,5 +1,5 @@
 import { strToU8, zipSync } from "fflate";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
 import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
@@ -81,6 +81,9 @@ export interface CreateSessionWithMessageOptions extends IdempotencyOptions {
   readonly messageIdempotencyKey?: string;
 }
 
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
+const MESSAGE_IDEMPOTENCY_SUFFIX = ":message";
+
 /**
  * Resolve a caller-supplied idempotency key to the value that ships on the
  * request. FAIL-FAST: an empty or whitespace-only key THROWS
@@ -99,7 +102,26 @@ export function resolveIdempotencyKey(key?: string): string {
       value: key
     });
   }
+  if (key.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+    throw new SessionConfigValidationError(
+      `idempotencyKey must be at most ${IDEMPOTENCY_KEY_MAX_LENGTH} characters`,
+      { field: "idempotencyKey" }
+    );
+  }
   return key;
+}
+
+/**
+ * Derive the first-message identity from a session-create identity without
+ * crossing the hosted 255-character header limit. Short keys retain the
+ * readable `<createKey>:message` form; long keys use a deterministic digest.
+ */
+export function deriveMessageIdempotencyKey(createKey: string): string {
+  const validated = resolveIdempotencyKey(createKey);
+  const readable = `${validated}${MESSAGE_IDEMPOTENCY_SUFFIX}`;
+  if (readable.length <= IDEMPOTENCY_KEY_MAX_LENGTH) return readable;
+  const digest = createHash("sha256").update(validated, "utf8").digest("hex");
+  return `aex-message-sha256-${digest}`;
 }
 
 /**
@@ -109,13 +131,7 @@ export function resolveIdempotencyKey(key?: string): string {
  */
 function idempotencyHeaders(options?: IdempotencyOptions): HeadersInit | undefined {
   if (options?.idempotencyKey === undefined) return undefined;
-  if (typeof options.idempotencyKey !== "string" || options.idempotencyKey.trim().length === 0) {
-    throw new SessionConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
-      field: "idempotencyKey",
-      value: options.idempotencyKey
-    });
-  }
-  return { "Idempotency-Key": options.idempotencyKey };
+  return { "Idempotency-Key": resolveIdempotencyKey(options.idempotencyKey) };
 }
 
 export async function createSession(
@@ -142,7 +158,7 @@ export async function createSessionWithMessage(
   const createKey = resolveIdempotencyKey(options?.idempotencyKey);
   const messageKey = options?.messageIdempotencyKey !== undefined
     ? resolveIdempotencyKey(options.messageIdempotencyKey)
-    : `${createKey}:message`;
+    : deriveMessageIdempotencyKey(createKey);
   if (
     !((typeof input === "string" && input.length > 0) ||
       (Array.isArray(input) && input.length > 0 && input.every((part) => typeof part === "string" && part.length > 0)))
@@ -1092,11 +1108,6 @@ function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOpt
     );
   }
   const idempotencyKey = resolveIdempotencyKey(options?.idempotencyKey);
-  if (idempotencyKey.length > 255) {
-    throw new SessionConfigValidationError("billing idempotencyKey must be at most 255 characters", {
-      field: "idempotencyKey"
-    });
-  }
   return idempotencyKey;
 }
 

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   GATE_PROVIDER,
   gateModel
 } from "../../apps/user-tests/test/_fixtures/provider.js";
+import { PUBLISHED_ARTIFACT_SMOKE_FILES } from "../../apps/user-tests/test/_fixtures/smoke-suite.js";
 import {
   jobNeeds,
   readWorkflow,
@@ -41,6 +42,18 @@ function usesStep(job: WorkflowJob, action: string): WorkflowStep {
 }
 
 describe("live user-test release gate", () => {
+  it("keeps every required published-artifact smoke capability backed by a test file", () => {
+    expect(Object.keys(PUBLISHED_ARTIFACT_SMOKE_FILES).sort()).toEqual([
+      "installedCliRoundTrip",
+      "managedSdkRoundTrip"
+    ]);
+    const files = Object.values(PUBLISHED_ARTIFACT_SMOKE_FILES);
+    expect(new Set(files).size).toBe(files.length);
+    for (const file of files) {
+      expect(existsSync(resolve(repoRoot, "apps/user-tests", file)), file).toBe(true);
+    }
+  });
+
   it("uploads only a redacted live-test log artifact", () => {
     const workflow = readWorkflow(".github/workflows/live-user-tests.yml");
     const job = workflowJob(workflow, "live-user-tests");
@@ -57,16 +70,49 @@ describe("live user-test release gate", () => {
     });
     expect(live.run).toContain('--outputFile.json="$REPORT"');
     expect(live.run).toContain('assert-no-skips.mjs "$REPORT"');
+    expect(live.run).toContain('> "$RAW_LOG" 2>&1');
+    expect(live.run).not.toContain("tee");
+    expect(live.run).toContain("test_status=$?");
+    expect(live.run).toContain('exit "$test_status"');
     expect(redact.env).toMatchObject({
       REDACTED_LOG: "${{ github.workspace }}/.suite-diagnostics/redacted/live-user-tests-shard-${{ matrix.shard }}.log"
     });
     expect(redact.run).toContain('["AEX_API_KEY", "DEEPSEEK_API_KEY"]');
     expect(redact.run).toContain("text.split(value).join(`[REDACTED:${name}]`)");
+    expect(redact.run).toContain('cat "$REDACTED_LOG"');
     expect(upload.with).toMatchObject({
       path: ".suite-diagnostics/redacted",
       "retention-days": 7
     });
     expect(JSON.stringify(upload.with)).not.toContain(".suite-diagnostics/raw");
+  });
+
+  it("never writes raw hosted-test output to public Actions logs", () => {
+    const cases = [
+      {
+        job: workflowJob(readWorkflow(".github/workflows/live-user-tests.yml"), "live-user-tests"),
+        command: "bun run test:user:files",
+        redaction: "Redact live user test log"
+      },
+      {
+        job: workflowJob(readWorkflow(".github/workflows/release.yml"), "live-user-tests"),
+        command: "bun run test:user:smoke",
+        redaction: "Redact smoke log"
+      }
+    ];
+
+    for (const { job, command, redaction } of cases) {
+      const live = runStep(job, command);
+      const redact = job.steps?.find((step) => step.name === redaction);
+      expect(redact, redaction).toBeDefined();
+      expect(live.run).toContain('> "$RAW_LOG" 2>&1');
+      expect(live.run).not.toContain("tee");
+      expect(live.run).toContain("test_status=$?");
+      expect(live.run).toContain('exit "$test_status"');
+      expect(redact?.if).toBe("${{ always() }}");
+      expect(redact?.run).toContain('cat "$REDACTED_LOG"');
+      expect(redact?.run).not.toContain('cat "$RAW_LOG"');
+    }
   });
 
   it("redacts signed object-storage URLs from live-test artifacts", () => {
@@ -117,7 +163,7 @@ describe("live user-test release gate", () => {
     const liveCapacity = runStep(workflowJob(live, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
       .env?.LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS;
     const liveWorkers = runStep(liveJob, "test:user:files").env?.AEX_USER_TEST_MAX_WORKERS;
-    expect(liveCapacity).toBe("${{ needs.prepare-artifact.outputs.test_count }}");
+    expect(liveCapacity).toBe("${{ needs.prepare-artifact.outputs.peak_session_slots }}");
     expect(liveWorkers).toBe(1);
     expect(jobNeeds(workflowJob(live, "live-user-tests-preflight"))).toContain("prepare-artifact");
     expect(runStep(workflowJob(live, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
@@ -137,7 +183,9 @@ describe("live user-test release gate", () => {
 
     const matrixStep = runStep(prepare, "shard-files.mjs --matrix");
     expect(matrixStep.run).toContain('echo "matrix=$matrix" >> "$GITHUB_OUTPUT"');
-    expect(matrixStep.run).toContain('echo "count=$count" >> "$GITHUB_OUTPUT"');
+    expect(matrixStep.run).toContain('echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"');
+    expect(matrixStep.run).toContain("entry.sessionSlots");
+    expect(prepare.outputs).not.toHaveProperty("test_count");
     expect(live.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-artifact.outputs.test_matrix) }}");
     expect(live.strategy?.["max-parallel"]).toBeUndefined();
     expect(liveRun.env?.AEX_USER_TEST_MAX_WORKERS).toBe(1);
@@ -150,16 +198,15 @@ describe("live user-test release gate", () => {
     expect(usesStep(release, "actions/upload-artifact@").with?.name).toBe("release-smoke-redacted-log");
   });
 
-  it("keeps BYOK leak probes as no-tool exact-reply turns", () => {
+  it("keeps BYOK leak probes on the canonical no-tool API", () => {
     const source = read("apps/user-tests/test/live/edge-byok-secrets.user.test.ts");
 
     expect(source).toContain('const probe = rand("byok-echo");');
     expect(source).toContain('message: "Reply with exactly this text and nothing else: " + probe');
     expect(source).not.toContain("SessionFile verbatim");
     expect(source).not.toContain("keyleak-probe");
-    expect(source.match(/includeBuiltinTools: false/g) ?? []).toHaveLength(4);
-    expect(source.match(/tools: \[\]/g) ?? []).toHaveLength(4);
-    expect(source.match(/overrides: \{ maxTurns: 3 \}/g) ?? []).toHaveLength(4);
+    expect(source).not.toContain("includeBuiltinTools:");
+    expect(source).toContain('builtinTools: "none"');
   });
 
   it("serializes Bun installs across live-test worker processes", () => {

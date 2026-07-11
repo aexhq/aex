@@ -15,7 +15,7 @@ Open durable agent sessions, send turns, stream events, capture files, and compo
 - **Durable infrastructure.** Resumable session lifecycle, explicit run outcomes, committed checkpoints, idempotency, typed events, file capture, downloads, timeouts, and runtime sizes.
 - **Agent composition.** Version-pinned skills, files, custom tools, instructions, remote MCP servers, environment variables, secrets, and networking controls.
 - **Subagents.** Typed parent/child lineage for async child sessions, file handoff, and bounded agent delegation.
-- **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
+- **Models and providers.** Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao behind one submission shape.
 - **Typed control surface.** Strongly typed SDK inputs, CLI parity, BYOK provider keys, workspace secrets, redaction, assistant text modes, and file capture policy.
 
 ## First run

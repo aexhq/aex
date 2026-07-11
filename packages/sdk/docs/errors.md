@@ -21,7 +21,7 @@ factory dispatches to a subclass by code/status:
 | `AexIdempotencyConflictError` | `409` `idempotency_conflict` | — |
 | `AexNotFoundError` | `404` `not_found` | — |
 | `AexRateLimitError` | `429` (rate_limited, workspace_concurrency_exceeded, workspace_submit_rate_exceeded) | `retryAfterMs` (when advertised) |
-| `AexApiError` (base) | every other stable code (session_busy, session_not_terminal, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
+| `AexApiError` (base) | every other stable code (session_busy, session_not_terminal, session_terminal, workspace_inactive, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
 
 Branch with the exported guards instead of parsing bodies or matching status
 codes: `isAuthError`, `isInsufficientScope`, `isIdempotencyConflict`,
@@ -44,8 +44,8 @@ try {
 The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
 `forbidden`, `insufficient_scope`, `token_invalid`, `token_revoked`,
 `token_expired`, `malformed_token`, `not_found`, `idempotency_conflict`,
-`session_busy`, `session_not_terminal`, `unknown_workspace`,
-`workspace_concurrency_exceeded`, `workspace_submit_rate_exceeded`,
+`session_busy`, `session_not_terminal`, `session_terminal`, `unknown_workspace`,
+`workspace_inactive`, `workspace_concurrency_exceeded`, `workspace_submit_rate_exceeded`,
 `workspace_spend_cap_exceeded`, `insufficient_balance`, `rate_limited`,
 `upstream_error`, `internal_error`. A code outside this set (e.g. a validation
 `error` a route reports) still surfaces as an `AexApiError` with the `status` and
@@ -168,17 +168,27 @@ gates enforce. See [Limits & quotas](limits-and-quotas.md).
 does not distinguish the two). The SDK raises `AexNotFoundError` (guard:
 `isNotFound(err)`).
 
-## 409 — idempotency conflict
+## 409 — conflicts and inactive workspaces
 
-`idempotency_conflict`: the `idempotencyKey` was already used with a **different**
-request body. The SDK raises `AexIdempotencyConflictError` (guard:
-`isIdempotencyConflict(err)`).
+| Code | Meaning |
+| --- | --- |
+| `idempotency_conflict` | The `idempotencyKey` was already used with a different request body. The SDK raises `AexIdempotencyConflictError` (guard: `isIdempotencyConflict(err)`). |
+| `session_busy` | The session is handling another turn or lifecycle transition. Wait for its current operation to finish. |
+| `session_not_terminal` | The requested operation requires a terminal session state. |
+| `session_terminal` | The session has ended and cannot perform the requested action. |
+| `workspace_inactive` | A workspace deletion fence won the admission race, so the workspace no longer accepts new session work. The body carries `workspaceStatus` (normally `deleting`). Use an active workspace. |
 
-**Remedy:** use a fresh idempotency key for a genuinely new request, or resubmit
+For `idempotency_conflict`, use a fresh idempotency key for a genuinely new request, or resubmit
 the byte-identical body to replay the original result (a matching retry returns
 the existing session rather than conflicting). Note that the SDK validates the
 key client-side first: an empty or whitespace-only `idempotencyKey` throws
-`SessionConfigValidationError` before the request is sent — never pass `""`.
+`SessionConfigValidationError` before the request is sent, as does a key longer
+than 255 characters. Never pass `""`.
+
+`workspace_inactive` is not an idempotency conflict and is not transient for
+that workspace. It remains a base `AexApiError`; branch on
+`err.apiCode === "workspace_inactive"` and inspect `err.body.workspaceStatus`
+when the current lifecycle state matters.
 
 ## 5xx — server errors
 

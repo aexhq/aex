@@ -195,6 +195,31 @@ describe("uploadAssetMultipart — dedup + retry + abort", () => {
     expect(rec.aborts).toBe(0);
   });
 
+  it("does not refresh or retry an expired part URL when maxAttempts is one", async () => {
+    const rec: Recorder = { presignBodies: [], finalizeBodies: [], aborts: 0, refreshes: 0 };
+    const http = makeHttp({ rec });
+    const attempts = new Map<number, number>();
+    const fetch = makeFetch({
+      bodies: new Map(),
+      attempts,
+      fault: () => ({ status: 403 })
+    });
+    const { drive } = driverOf(1024);
+
+    await expect(uploadAssetMultipart({
+      http,
+      drive,
+      fetch,
+      partSize: 1024,
+      partConcurrency: 1,
+      retry: { maxAttempts: 1 }
+    })).rejects.toThrow();
+
+    expect(attempts.get(1)).toBe(1);
+    expect(rec.refreshes).toBe(0);
+    expect(rec.aborts).toBe(1);
+  });
+
   it("aborts the multipart upload on a non-retryable part failure", async () => {
     const rec: Recorder = { presignBodies: [], finalizeBodies: [], aborts: 0, refreshes: 0 };
     const http = makeHttp({ rec });

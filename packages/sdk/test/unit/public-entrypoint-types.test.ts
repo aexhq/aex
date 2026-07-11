@@ -5,6 +5,7 @@ import type {
   SessionClient,
   SessionHandle,
   SessionRunStream,
+  SessionSendOptions,
   WorkspaceClient,
   WorkspaceFilesClient,
   WorkspaceInstructionsClient,
@@ -57,13 +58,15 @@ const sessionResultRequiresRun: {} extends Pick<SessionResult, "run"> ? false : 
 const aexHasNoRawUploadMethod: "_uploadAsset" extends keyof Aex ? false : true = true;
 const aexHasNoRawStreamUploadMethod: "_uploadAssetStream" extends keyof Aex ? false : true = true;
 const aexHasNoSecretPromotionMethod: "_createWorkspaceSecret" extends keyof Aex ? false : true = true;
+const sessionSendHasNoReplayCursor: "from" extends keyof SessionSendOptions ? false : true = true;
 void [
   sessionResultHasNoRecord,
   sessionResultRequiresSession,
   sessionResultRequiresRun,
   aexHasNoRawUploadMethod,
   aexHasNoRawStreamUploadMethod,
-  aexHasNoSecretPromotionMethod
+  aexHasNoSecretPromotionMethod,
+  sessionSendHasNoReplayCursor
 ];
 
 describe("SDK root type boundary", () => {

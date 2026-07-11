@@ -8,6 +8,8 @@ import {
   apiErrorFromResponse,
   apiErrorKindForCode,
   AEX_API_ERROR_CODES,
+  AEX_API_ERROR_MESSAGES,
+  AEX_API_ERROR_REMEDIES,
   AexApiError,
   AexAuthError,
   AexIdempotencyConflictError,
@@ -64,6 +66,18 @@ describe("apiErrorFromResponse (WS4)", () => {
     expect((err as AexRateLimitError).retryAfterMs).toBe(2000);
   });
 
+  it("maps workspace_inactive to a generic 409 with stable guidance and status context", () => {
+    const body = { error: "workspace_inactive", workspaceStatus: "deleting" };
+    const err = apiErrorFromResponse({ status: 409, body });
+
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(err).not.toBeInstanceOf(AexIdempotencyConflictError);
+    expect(err.apiCode).toBe("workspace_inactive");
+    expect(err.body).toEqual(body);
+    expect(err.message).toBe(AEX_API_ERROR_MESSAGES.workspace_inactive);
+    expect(AEX_API_ERROR_REMEDIES.workspace_inactive).toMatch(/active workspace/i);
+  });
+
   it("uses the precomputed message and threads cause", () => {
     const cause = new Error("boom");
     const err = apiErrorFromResponse({
@@ -110,7 +124,9 @@ describe("apiErrorFromResponse (WS4)", () => {
           return "rate_limit";
         case "session_busy":
         case "session_not_terminal":
+        case "session_terminal":
         case "unknown_workspace":
+        case "workspace_inactive":
         case "workspace_spend_cap_exceeded":
         case "insufficient_balance":
         case "upstream_error":

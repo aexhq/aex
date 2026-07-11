@@ -1,57 +1,163 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error JS release helper is validated directly.
-import { assertMonotonicPromotion } from "../cicd/assert-monotonic-promotion.mjs";
+import { assertMonotonicPromotion, assertPromotionInRepository } from "../cicd/assert-monotonic-promotion.mjs";
 
-const mainSha = "0123456789abcdef0123456789abcdef01234567";
+const candidateSha = "0123456789abcdef0123456789abcdef01234567";
+const mainSha = "f".repeat(40);
+const latestSha = "1".repeat(40);
+const canarySha = "2".repeat(40);
+
+function attestedTags(overrides: Record<string, unknown> = {}) {
+  return [
+    {
+      tag: "latest",
+      version: "0.42.0-canary.80.g111111111111",
+      sourceSha: latestSha,
+      sourceIsCandidateAncestor: true
+    },
+    {
+      tag: "canary",
+      version: "0.42.0-canary.81.g222222222222",
+      sourceSha: canarySha,
+      sourceIsCandidateAncestor: true
+    }
+  ].map((tagged) => ({ ...tagged, ...overrides }));
+}
 
 describe("monotonic promotion guard", () => {
-  it("accepts a tested main ancestor when its version advances latest", () => {
+  it("accepts a tested main descendant of the current latest and canary sources", () => {
     expect(assertMonotonicPromotion({
-      candidateVersion: "0.14.0-canary.82.g0123456789ab",
-      candidateSha: mainSha,
-      currentMainSha: "f".repeat(40),
+      candidateVersion: "0.42.0-canary.82.g0123456789ab",
+      candidateSha,
+      currentMainSha: mainSha,
       candidateIsMainAncestor: true,
-      currentLatestVersion: "0.13.9"
+      taggedReleases: attestedTags()
     })).toMatchObject({
-      candidateVersion: "0.14.0-canary.82.g0123456789ab",
-      candidateSha: mainSha
+      candidateVersion: "0.42.0-canary.82.g0123456789ab",
+      candidateSha,
+      currentMainSha: mainSha
     });
   });
 
   it("rejects a candidate that is not in current main history", () => {
     expect(() => assertMonotonicPromotion({
-      candidateVersion: "0.14.0-canary.82.g0123456789ab",
-      candidateSha: mainSha,
-      currentMainSha: "f".repeat(40),
+      candidateVersion: "0.42.0-canary.82.g0123456789ab",
+      candidateSha,
+      currentMainSha: mainSha,
       candidateIsMainAncestor: false,
-      currentLatestVersion: "0.13.9"
+      taggedReleases: attestedTags()
     })).toThrow(/not an ancestor/);
   });
 
-  it("rejects promotion that would move latest backwards", () => {
+  it("rejects source rollback even when candidate semver advances", () => {
     expect(() => assertMonotonicPromotion({
-      candidateVersion: "0.13.9-canary.82.g0123456789ab",
-      candidateSha: mainSha,
+      candidateVersion: "0.43.0-canary.90.g0123456789ab",
+      candidateSha,
       currentMainSha: mainSha,
       candidateIsMainAncestor: true,
-      currentLatestVersion: "0.13.9"
-    })).toThrow(/older than current latest/);
+      taggedReleases: attestedTags({ sourceIsCandidateAncestor: false })
+    })).toThrow(/source .* behind the candidate/);
   });
 
-  it("fails closed on malformed registry or source data", () => {
+  it("rejects promotion behind either current registry tag", () => {
     expect(() => assertMonotonicPromotion({
-      candidateVersion: "next",
-      candidateSha: mainSha,
+      candidateVersion: "0.42.0-canary.81.g0123456789ab",
+      candidateSha,
       currentMainSha: mainSha,
       candidateIsMainAncestor: true,
-      currentLatestVersion: "0.13.9"
-    })).toThrow(/invalid candidate version/);
-    expect(() => assertMonotonicPromotion({
-      candidateVersion: "0.14.0",
-      candidateSha: mainSha,
+      taggedReleases: attestedTags()
+    })).toThrow(/older than current canary/);
+  });
+
+  it("permits only the explicit pre-attestation migration window", () => {
+    expect(assertMonotonicPromotion({
+      candidateVersion: "0.42.0-canary.82.g0123456789ab",
+      candidateSha,
       currentMainSha: mainSha,
       candidateIsMainAncestor: true,
-      currentLatestVersion: ""
-    })).toThrow(/invalid current latest version/);
+      taggedReleases: [
+        { tag: "latest", version: "0.41.5", sourceSha: "" },
+        { tag: "canary", version: "0.41.5", sourceSha: "" }
+      ]
+    }).taggedReleases).toEqual([
+      expect.objectContaining({ tag: "latest", sourceProof: "legacy-unattested" }),
+      expect.objectContaining({ tag: "canary", sourceProof: "legacy-unattested" })
+    ]);
+
+    expect(() => assertMonotonicPromotion({
+      candidateVersion: "0.43.0-canary.90.g0123456789ab",
+      candidateSha,
+      currentMainSha: mainSha,
+      candidateIsMainAncestor: true,
+      taggedReleases: [
+        { tag: "latest", version: "0.42.0-canary.82.g0123456789ab", sourceSha: "" },
+        { tag: "canary", version: "0.42.0-canary.82.g0123456789ab", sourceSha: candidateSha }
+      ]
+    })).toThrow(/missing source attestation/);
+  });
+
+  it("fails closed on malformed or contradictory registry source data", () => {
+    expect(() => assertMonotonicPromotion({
+      candidateVersion: "0.42.0-canary.82.g0123456789ab",
+      candidateSha,
+      currentMainSha: mainSha,
+      candidateIsMainAncestor: true,
+      taggedReleases: attestedTags({ sourceSha: "not-a-sha" })
+    })).toThrow(/invalid .* source SHA/);
+
+    expect(() => assertMonotonicPromotion({
+      candidateVersion: "0.42.0-canary.82.g0123456789ab",
+      candidateSha,
+      currentMainSha: mainSha,
+      candidateIsMainAncestor: true,
+      taggedReleases: attestedTags({ sourceSha: "3".repeat(40) })
+    })).toThrow(/does not match source attestation/);
+  });
+
+  it("checks real Git ancestry rather than trusting a caller-provided version order", () => {
+    const repository = mkdtempSync(join(tmpdir(), "aex-promotion-ancestry-"));
+    execFileSync("git", ["init", "--quiet"], { cwd: repository });
+    execFileSync("git", ["config", "user.email", "release-test@aex.dev"], { cwd: repository });
+    execFileSync("git", ["config", "user.name", "aex release test"], { cwd: repository });
+
+    const commit = (content: string): string => {
+      writeFileSync(join(repository, "source.txt"), content);
+      execFileSync("git", ["add", "source.txt"], { cwd: repository });
+      execFileSync("git", ["commit", "--quiet", "-m", content], { cwd: repository });
+      return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
+    };
+
+    const first = commit("first");
+    const second = commit("second");
+    execFileSync("git", ["branch", "candidate"], { cwd: repository });
+    const newer = commit("newer");
+    execFileSync("git", ["checkout", "--quiet", "candidate"], { cwd: repository });
+    const divergent = commit("divergent");
+
+    expect(() => assertPromotionInRepository({
+      repository,
+      candidateVersion: "0.43.0-canary.99.g000000000000",
+      candidateSha: divergent,
+      currentMainSha: newer,
+      taggedReleases: [
+        { tag: "latest", version: "0.42.0", sourceSha: first },
+        { tag: "canary", version: "0.42.1-canary.98.g" + newer.slice(0, 12), sourceSha: newer }
+      ]
+    })).toThrow(/current main|current canary/);
+
+    expect(assertPromotionInRepository({
+      repository,
+      candidateVersion: "0.42.1-canary.99.g" + newer.slice(0, 12),
+      candidateSha: newer,
+      currentMainSha: newer,
+      taggedReleases: [
+        { tag: "latest", version: "0.42.0", sourceSha: first },
+        { tag: "canary", version: "0.42.1-canary.98.g" + second.slice(0, 12), sourceSha: second }
+      ]
+    }).candidateSha).toBe(newer);
   });
 });

@@ -163,8 +163,7 @@ export const PROVIDERS = [
   "gemini",
   "mistral",
   "openrouter",
-  "doubao",
-  "doubao-cn"
+  "doubao"
 ] as const;
 export type ProviderName = (typeof PROVIDERS)[number];
 export const DEFAULT_PROVIDER: ProviderName = "anthropic";
@@ -195,9 +194,7 @@ export const Providers = {
   /** OpenRouter — OpenAI-compatible aggregator routing to many upstream models. */
   OPENROUTER: "openrouter",
   /** Doubao (ByteDance) via the official international BytePlus ModelArk gateway. */
-  DOUBAO: "doubao",
-  /** Doubao (ByteDance) via the official China Volcengine Ark gateway. */
-  DOUBAO_CN: "doubao-cn"
+  DOUBAO: "doubao"
 } as const satisfies Readonly<Record<string, ProviderName>>;
 
 export interface PlatformMcpServerSecret {
@@ -1477,8 +1474,7 @@ const PROVIDER_STREAM_SHAPE = {
   gemini: null,
   mistral: "openai_chat",
   openrouter: "openai_chat",
-  doubao: "openai_chat",
-  "doubao-cn": "openai_chat"
+  doubao: "openai_chat"
 } as const satisfies Readonly<Record<ProviderName, StreamableShape | null>>;
 
 /** True when a provider has a streaming producer wired (a {@link STREAMABLE_SHAPES} shape). */

@@ -20,9 +20,8 @@
  * dispatched .github/workflows/live-on-demand-tests.yml, which runs every
  * optional suite in one trigger), so the per-provider matrix never piles spend
  * onto every push. It is also the live provider evidence for `doubao`
- * (provider-support.ts). Defaults to the cheap Seed 1.6 Flash tier and the
- * international BytePlus gateway; set AEX_USER_TEST_DOUBAO_PROVIDER=doubao-cn to
- * exercise the China Volcengine gateway instead.
+ * (provider-support.ts). It uses the cheap Seed 1.6 Flash tier through the
+ * international BytePlus gateway.
  *
  * Required env:
  *   AEX_API_URL              live api.aex.dev URL
@@ -33,7 +32,6 @@
  *
  * Optional:
  *   AEX_USER_TEST_DOUBAO_MODEL      default "doubao-seed-flash"
- *   AEX_USER_TEST_DOUBAO_PROVIDER   default "doubao" (or "doubao-cn")
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,7 +50,7 @@ function requireEnv(name: string): string {
 
 const doubaoKey = requireEnv("DOUBAO_API_KEY");
 const model = process.env["AEX_USER_TEST_DOUBAO_MODEL"] ?? "doubao-seed-flash";
-const provider = process.env["AEX_USER_TEST_DOUBAO_PROVIDER"] ?? "doubao";
+const provider = "doubao";
 
 interface LiveResult {
   readonly sessionId: string;

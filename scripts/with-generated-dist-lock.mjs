@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,11 +12,13 @@ const tmpRoot = resolve(tmpdir());
 const lockId = createHash("sha256").update(repoRoot).digest("hex").slice(0, 16);
 const lockDir = resolve(tmpRoot, `aex-generated-dist-${lockId}.lock`);
 const ownerPath = join(lockDir, "owner.json");
+const breakerDir = `${lockDir}.breaker`;
 const heldEnv = "AEX_GENERATED_DIST_LOCK_HELD";
 const timeoutMs = Number(process.env.AEX_GENERATED_DIST_LOCK_TIMEOUT_MS ?? 20 * 60_000);
 const staleMs = Number(process.env.AEX_GENERATED_DIST_LOCK_STALE_MS ?? 10 * 60_000);
 const pollMs = 250;
 const token = createHash("sha256").update(lockDir).digest("hex");
+const ownerId = randomUUID();
 
 const tmpRel = relative(tmpRoot, lockDir);
 if (tmpRel.startsWith("..") || isAbsolute(tmpRel)) {
@@ -36,14 +38,14 @@ if (process.env[heldEnv] === token) {
 } else {
   await acquireLock();
   const heartbeat = setInterval(() => {
-    void writeOwnerFile();
+    void refreshOwnedLock().catch(() => {});
   }, 30_000);
   heartbeat.unref?.();
   try {
     process.exitCode = await runCommand(args, { ...process.env, [heldEnv]: token });
   } finally {
     clearInterval(heartbeat);
-    await rm(lockDir, { recursive: true, force: true });
+    await releaseOwnedLock();
   }
 }
 
@@ -52,12 +54,16 @@ async function acquireLock() {
   while (true) {
     try {
       await mkdir(lockDir);
-      await writeOwnerFile();
+      try {
+        await writeOwnerFile();
+      } catch (error) {
+        await rm(lockDir, { recursive: true, force: true });
+        throw error;
+      }
       return;
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
-      if (await isStaleLock()) {
-        await rm(lockDir, { recursive: true, force: true });
+      if (await breakStaleLock()) {
         continue;
       }
       if (Date.now() - startedAt > timeoutMs) {
@@ -68,13 +74,66 @@ async function acquireLock() {
   }
 }
 
+async function breakStaleLock() {
+  try {
+    await mkdir(breakerDir);
+  } catch (error) {
+    if (error?.code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    if (!(await isStaleLock())) return false;
+    await rm(lockDir, { recursive: true, force: true });
+    return true;
+  } finally {
+    await rm(breakerDir, { recursive: true, force: true });
+  }
+}
+
 async function isStaleLock() {
   try {
     const lockStat = await stat(ownerPath).catch(() => stat(lockDir));
-    return Date.now() - lockStat.mtimeMs > staleMs;
+    if (Date.now() - lockStat.mtimeMs <= staleMs) return false;
+    const owner = await readOwner();
+    return owner?.pid === undefined || !isProcessAlive(owner.pid);
   } catch {
     return false;
   }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function readOwner() {
+  try {
+    const parsed = JSON.parse(await readFile(ownerPath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return undefined;
+    return {
+      ownerId: typeof parsed.ownerId === "string" ? parsed.ownerId : undefined,
+      pid: Number.isSafeInteger(parsed.pid) ? parsed.pid : undefined
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function refreshOwnedLock() {
+  const owner = await readOwner();
+  if (owner?.ownerId !== ownerId) return;
+  await writeOwnerFile();
+}
+
+async function releaseOwnedLock() {
+  const owner = await readOwner();
+  if (owner?.ownerId !== ownerId) return;
+  await rm(lockDir, { recursive: true, force: true });
 }
 
 async function writeOwnerFile() {
@@ -82,6 +141,7 @@ async function writeOwnerFile() {
     ownerPath,
     JSON.stringify(
       {
+        ownerId,
         pid: process.pid,
         repoRoot,
         updatedAt: new Date().toISOString()

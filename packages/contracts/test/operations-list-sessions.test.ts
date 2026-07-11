@@ -83,6 +83,11 @@ describe("operations.listSessions", () => {
     expect(capture.url).toBe(`${BASE}/api/sessions?limit=3&cursor=c1`);
   });
 
+  it("rejects a legacy internal runtime token instead of exposing it publicly", async () => {
+    const client = clientFor({ sessions: [{ ...WELL_FORMED, runtimeSize: "standard" }] });
+    await expect(operations.listSessions(client)).rejects.toThrow(/invalid runtime/);
+  });
+
   it("validates the page limit before transport", async () => {
     const client = clientFor({ sessions: [] });
     await expect(operations.listSessions(client, { limit: 0 })).rejects.toThrow(/between 1 and 100/);

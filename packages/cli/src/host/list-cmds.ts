@@ -37,8 +37,12 @@ export async function executeSessionsCmd(io: CliIO, argv: readonly string[]): Pr
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
   }
-  const { value: rawLimit, remaining: afterLimit } = takeOptionFlag(common.rest, "--limit");
-  const { value: since, remaining } = takeOptionFlag(afterLimit, "--since");
+  const limitFlag = takeOptionFlag(common.rest, "--limit");
+  const sinceFlag = takeOptionFlag(limitFlag.remaining, "--since");
+  const optionError = limitFlag.error ?? sinceFlag.error;
+  if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
+  const { value: rawLimit } = limitFlag;
+  const { value: since, remaining } = sinceFlag;
   if (remaining.length > 0) {
     io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
     io.stderr("usage: aex sessions [--limit N] [--since ISO-8601] [common flags]\n");

@@ -101,14 +101,6 @@ export const PROVIDER_PUBLIC_SUPPORT = {
     docs: COMMON_DOCS,
     evidence: COMMON_EVIDENCE,
     managedEvidence: COMMON_EVIDENCE
-  },
-  // Doubao (ByteDance) via the official Ark API — China Volcengine gateway.
-  "doubao-cn": {
-    displayName: "Doubao (China)",
-    docsAnchor: "doubao-cn",
-    docs: COMMON_DOCS,
-    evidence: COMMON_EVIDENCE,
-    managedEvidence: COMMON_EVIDENCE
   }
 } as const satisfies Readonly<Record<ProviderName, ProviderPublicSupport>>;
 

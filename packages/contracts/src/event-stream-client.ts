@@ -101,6 +101,8 @@ const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 const DEFAULT_PING_INTERVAL_MS = 15_000;
 /** Default event-quiet recheck window (a silent reconnect, so the cost of a false positive is small). */
 const DEFAULT_EVENT_QUIET_RECHECK_MS = 90_000;
+/** Recent best-effort frames retained across reconnects for duplicate suppression. */
+const MAX_SEEN_LIVE_IDS = 4096;
 
 export async function* streamCoordinatorEvents(
   opts: CoordinatorStreamOptions
@@ -116,7 +118,21 @@ export async function* streamCoordinatorEvents(
   let cursor = (opts.from ?? 0) - 1;
   let attempts = 0;
   let done = false;
-  const seenEventIds = new Set<string>();
+  // Live frames have no replay cursor. Retain a bounded reconnect window of
+  // stable ids; durable frames remain exactly deduplicated by their cursor.
+  const seenLiveIds = new Map<string, true>();
+  const rememberLiveId = (id: string): boolean => {
+    if (seenLiveIds.delete(id)) {
+      seenLiveIds.set(id, true);
+      return false;
+    }
+    seenLiveIds.set(id, true);
+    if (seenLiveIds.size > MAX_SEEN_LIVE_IDS) {
+      const oldest = seenLiveIds.keys().next().value as string | undefined;
+      if (oldest !== undefined) seenLiveIds.delete(oldest);
+    }
+    return true;
+  };
 
   while (!done && !opts.signal?.aborted) {
     const ticket = await opts.fetchTicket();
@@ -126,6 +142,7 @@ export async function* streamCoordinatorEvents(
     const ws = makeWs(url.toString());
 
     const pending: AexStreamEvent[] = [];
+    const seenSequences = new Set<number>();
     let closed = false;
     let disconnectReason = "";
     let resolveNext: (() => void) | null = null;
@@ -150,14 +167,28 @@ export async function* streamCoordinatorEvents(
         resolveNext = finish;
         if (typeof timeoutMs === "number") timer = setTimeout(finish, timeoutMs);
       });
-    const sortPending = (): void => {
-      pending.sort((a, b) => {
-        if (isReplayableEvent(a) && isReplayableEvent(b)) return a.sequence - b.sequence;
-        if (!isReplayableEvent(a) && !isReplayableEvent(b) && a.runId === b.runId) {
-          return a.liveSequence - b.liveSequence;
+    const takeNextPending = (): AexStreamEvent => {
+      const first = pending[0]!;
+      if (!isReplayableEvent(first)) return pending.shift()!;
+
+      // A live frame does not participate in the durable cursor. Select the
+      // lowest durable sequence for this durable slot without moving live
+      // frames, so a higher sequence cannot advance the cursor past a pending
+      // lower sequence merely because a live frame separated their arrival.
+      let lowestIndex = 0;
+      let lowestSequence = first.sequence;
+      for (let index = 1; index < pending.length; index += 1) {
+        const candidate = pending[index]!;
+        if (isReplayableEvent(candidate) && candidate.sequence < lowestSequence) {
+          lowestIndex = index;
+          lowestSequence = candidate.sequence;
         }
-        return 0;
-      });
+      }
+      if (lowestIndex > 0) {
+        pending[0] = pending[lowestIndex]!;
+        pending[lowestIndex] = first;
+      }
+      return pending.shift()!;
     };
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -234,9 +265,12 @@ export async function* streamCoordinatorEvents(
         const evt = JSON.parse(data) as unknown;
         if (!isCoordinatorStreamEvent(evt)) return;
         armQuiet(); // a real event frame proves the delivery pipeline, not just the socket
-        if (seenEventIds.has(evt.id)) return;
-        if (isReplayableEvent(evt) && evt.sequence <= cursor) return;
-        seenEventIds.add(evt.id);
+        if (isReplayableEvent(evt)) {
+          if (evt.sequence <= cursor || seenSequences.has(evt.sequence)) return;
+          seenSequences.add(evt.sequence);
+        } else if (!rememberLiveId(evt.id)) {
+          return;
+        }
         pending.push(evt);
         wake();
       } catch {
@@ -279,9 +313,9 @@ export async function* streamCoordinatorEvents(
     try {
       while (true) {
         while (pending.length > 0) {
-          sortPending();
-          const evt = pending.shift()!;
+          const evt = takeNextPending();
           if (isReplayableEvent(evt)) {
+            seenSequences.delete(evt.sequence);
             if (evt.sequence <= cursor) continue;
             cursor = evt.sequence;
           }
@@ -377,14 +411,14 @@ function closeQuietly(ws: WebSocketLike): void {
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true }
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }

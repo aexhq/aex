@@ -97,9 +97,14 @@ async function runBillingUpgrade(
   flags: CommonHostFlags
 ): Promise<CliExitCode> {
   const json = flags.json;
-  const { value: successUrl, remaining: rest2 } = takeOptionFlag(argv, "--success-url");
-  const { value: cancelUrl, remaining: rest3 } = takeOptionFlag(rest2, "--cancel-url");
-  const { value: idempotencyKey, remaining } = takeOptionFlag(rest3, "--idempotency-key");
+  const successFlag = takeOptionFlag(argv, "--success-url");
+  const cancelFlag = takeOptionFlag(successFlag.remaining, "--cancel-url");
+  const idempotencyFlag = takeOptionFlag(cancelFlag.remaining, "--idempotency-key");
+  const optionError = successFlag.error ?? cancelFlag.error ?? idempotencyFlag.error;
+  if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
+  const { value: successUrl } = successFlag;
+  const { value: cancelUrl } = cancelFlag;
+  const { value: idempotencyKey, remaining } = idempotencyFlag;
   const planKey = remaining[0];
   if (!isPaidPlanKey(planKey) || remaining.length !== 1) {
     io.stderr("usage: aex billing upgrade pro|team [--success-url URL] [--cancel-url URL] [--idempotency-key KEY] [--json] [common flags]\n");
@@ -130,8 +135,12 @@ async function runBillingPortal(
   flags: CommonHostFlags
 ): Promise<CliExitCode> {
   const json = flags.json;
-  const { value: returnUrl, remaining: rest } = takeOptionFlag(argv, "--return-url");
-  const { value: idempotencyKey, remaining } = takeOptionFlag(rest, "--idempotency-key");
+  const returnFlag = takeOptionFlag(argv, "--return-url");
+  const idempotencyFlag = takeOptionFlag(returnFlag.remaining, "--idempotency-key");
+  const optionError = returnFlag.error ?? idempotencyFlag.error;
+  if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
+  const { value: returnUrl } = returnFlag;
+  const { value: idempotencyKey, remaining } = idempotencyFlag;
   if (remaining.length > 0) {
     io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
     io.stderr("usage: aex billing portal [--return-url URL] [--idempotency-key KEY] [--json] [common flags]\n");
@@ -161,7 +170,9 @@ async function runBillingLedger(
   argv: readonly string[],
   flags: CommonHostFlags
 ): Promise<CliExitCode> {
-  const { value: rawLimit, remaining } = takeOptionFlag(argv, "--limit");
+  const limitFlag = takeOptionFlag(argv, "--limit");
+  if (limitFlag.error) { io.stderr(`${limitFlag.error}\n`); return USAGE_ERR; }
+  const { value: rawLimit, remaining } = limitFlag;
   if (remaining.length > 0) {
     io.stderr(`unexpected arguments: ${remaining.join(" ")}\n`);
     io.stderr("usage: aex billing ledger [--limit N] [common flags]\n");

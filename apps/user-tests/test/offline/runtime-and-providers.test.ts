@@ -39,7 +39,7 @@ describe("managed-only provider surface (published package)", () => {
     const { exitCode, stdout, stderr } = await runChild(script, "provider-exports.mjs");
     expect(exitCode, stderr).toBe(0);
     expect(JSON.parse(stdout.trim())).toEqual({
-      providers: ["anthropic", "deepseek", "openai", "gemini", "mistral", "openrouter", "doubao", "doubao-cn"],
+      providers: ["anthropic", "deepseek", "openai", "gemini", "mistral", "openrouter", "doubao"],
       defaultProvider: "anthropic",
       hasRuntimeKinds: false,
       hasRegions: false,

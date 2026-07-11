@@ -135,6 +135,54 @@ describe("session contracts", () => {
     expect(calls[1]!.init.headers).toEqual({ "Idempotency-Key": "idem-turn" });
   });
 
+  it("derives a bounded deterministic first-message key from a 255-character create key", async () => {
+    const { http, calls } = httpStub();
+    const createKey = "k".repeat(255);
+    await operations.createSessionWithMessage(
+      http,
+      {
+        provider: "deepseek",
+        submission: {
+          model: "deepseek-v4-flash",
+          assets: { files: [], skills: [], tools: [], instructions: [] },
+          builtinTools: "default",
+          mcpServers: []
+        },
+        secrets: { apiKeys: { deepseek: "sk-test" } }
+      },
+      "start now",
+      { idempotencyKey: createKey }
+    );
+
+    const messageKey = (calls[1]!.init.headers as Record<string, string>)["Idempotency-Key"]!;
+    const derivedAgain = operations.deriveMessageIdempotencyKey(createKey);
+    expect((calls[0]!.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(createKey);
+    expect(messageKey.length).toBeLessThanOrEqual(255);
+    expect(messageKey).toBe(derivedAgain);
+    expect(operations.deriveMessageIdempotencyKey("j".repeat(255))).not.toBe(derivedAgain);
+    expect(messageKey).not.toBe(`${createKey}:message`);
+  });
+
+  it("rejects an oversized explicit first-message key before creating the session", async () => {
+    const { http, calls } = httpStub();
+    await expect(operations.createSessionWithMessage(
+      http,
+      {
+        provider: "deepseek",
+        submission: {
+          model: "deepseek-v4-flash",
+          assets: { files: [], skills: [], tools: [], instructions: [] },
+          builtinTools: "default",
+          mcpServers: []
+        },
+        secrets: { apiKeys: { deepseek: "sk-test" } }
+      },
+      "start now",
+      { idempotencyKey: "create", messageIdempotencyKey: "m".repeat(256) }
+    )).rejects.toThrow(/at most 255 characters/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("uses the session event ticket route", async () => {
     const { http, calls } = httpStub();
     const ticket = await operations.getSessionCoordinatorTicket(http, "sess_1");

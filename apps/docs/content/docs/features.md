@@ -25,7 +25,7 @@ Typed parent/child lineage for async child sessions, file handoff, and bounded a
 
 ## Models and providers
 
-Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape.
+Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao behind one submission shape.
 
 ## Typed control surface
 

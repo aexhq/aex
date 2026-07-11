@@ -9,7 +9,7 @@
 // same bundle in-container at /aex/aex.
 //
 // This script is invoked from the SDK's `build` script (which itself
-// sessions `@aexhq/cli`'s build first), so by the time we run here, the
+// runs `@aexhq/cli`'s build first), so by the time we run here, the
 // source bundle is guaranteed to exist. If it does not we throw with a
 // clear message so a misconfigured publish never silently ships an
 // empty `bin`.

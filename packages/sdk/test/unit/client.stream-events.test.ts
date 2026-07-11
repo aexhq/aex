@@ -194,6 +194,76 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
     expect(sequences).toEqual([10, 11]);
   });
 
+  it("does not let an older run terminal end a current-run stream", async () => {
+    let listCount = 0;
+    const oldTerminal = { ...evt(4, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-old" }
+    }), runId: "run-old" };
+    const currentText = { ...evt(10, "TEXT_MESSAGE_CONTENT", { text: "current", messageId: "current" }), runId: "run-current" };
+    const currentTerminal = { ...evt(11, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-current" }
+    }), runId: "run-current" };
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/events$/,
+        respond: () => jsonResponse({ events: ++listCount === 1 ? [oldTerminal] : [oldTerminal, currentText, currentTerminal] })
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({
+          session: {
+            id: "session-abc",
+            status: "running",
+            acceptsMessages: false,
+            currentRun: { sessionId: "session-abc", runId: "run-current", turnSeq: 2, phase: "running" }
+          }
+        })
+      }
+    ]);
+
+    const session = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+    const runIds: string[] = [];
+    for await (const event of session.events.stream({ intervalMs: 1 })) runIds.push(event.runId);
+
+    expect(listCount).toBe(2);
+    expect(runIds).toEqual(["run-old", "run-current", "run-current"]);
+  });
+
+  it("returns after one snapshot when an idle run terminal is before from", async () => {
+    let listCount = 0;
+    const terminal = evt(4, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-last" }
+    });
+    const { fetch: f } = makeFetch([
+      { match: /\/events$/, respond: () => { listCount += 1; return jsonResponse({ events: [terminal] }); } },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({
+          session: {
+            id: "session-abc",
+            status: "idle",
+            acceptsMessages: true,
+            lastRun: { sessionId: "session-abc", runId: "run-1", turnSeq: 1, phase: "finished", outcome: "succeeded" }
+          }
+        })
+      }
+    ]);
+    const session = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+    const events: AexEvent[] = [];
+    for await (const event of session.events.stream({ from: 5, intervalMs: 1 })) events.push(event);
+    expect(events).toEqual([]);
+    expect(listCount).toBe(1);
+  });
+
   it("applies the same from boundary to read-only child polling", async () => {
     let listCount = 0;
     const oldTerminal = childEvt(4, "RUN_FINISHED", {
@@ -252,6 +322,51 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
 
     expect(listCount).toBe(2);
     expect(sequences).toEqual([10, 11]);
+  });
+
+  it("does not let a child's last-run terminal end its currently progressing stream", async () => {
+    let listCount = 0;
+    const oldTerminal = { ...childEvt(4, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-old" }
+    }), runId: "child-old" };
+    const currentTerminal = { ...childEvt(11, "RUN_FINISHED", {
+      outcome: "succeeded",
+      costUsd: 0,
+      providerUsage: [],
+      checkpoint: { checkpointId: "cp-current" }
+    }), runId: "child-current" };
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/sessions\/session-abc\/children$/,
+        respond: () => jsonResponse({
+          children: [{
+            id: "child-abc",
+            parentSessionId: "session-abc",
+            status: "running",
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:01:00.000Z",
+            lastRun: { sessionId: "child-abc", runId: "child-old", turnSeq: 1, phase: "finished", outcome: "succeeded" }
+          }]
+        })
+      },
+      {
+        match: /\/sessions\/child-abc\/events$/,
+        respond: () => jsonResponse({ events: ++listCount === 1 ? [oldTerminal] : [oldTerminal, currentTerminal] })
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } })
+      }
+    ]);
+    const parent = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+    const child = (await parent.children())[0]!;
+    const runIds: string[] = [];
+    for await (const event of child.events.stream({ intervalMs: 1 })) runIds.push(event.runId);
+    expect(listCount).toBe(2);
+    expect(runIds).toEqual(["child-old", "child-current"]);
   });
 
   it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(

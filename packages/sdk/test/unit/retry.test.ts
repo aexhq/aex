@@ -145,6 +145,14 @@ describe("retry: parseProviderFault", () => {
     expect(
       parseProviderFault({ provider: "anthropic", kind: "rate_limit", status: 429, retryAfterMs: 2000, message: "slow down" })
     ).toEqual({ provider: "anthropic", kind: "rate_limit", status: 429, retryAfterMs: 2000, message: "slow down" });
+    expect(parseProviderFault({ kind: "rate_limit", retryAfterMs: 250 })).toEqual({
+      kind: "rate_limit",
+      retryAfterMs: 250
+    });
+    expect(parseProviderFault({ kind: "rate_limit", retry_after_ms: "750" })).toEqual({
+      kind: "rate_limit",
+      retryAfterMs: 750
+    });
   });
 
   it("unwraps a nested providerFault", () => {
@@ -161,6 +169,14 @@ describe("retry: parseProviderFault", () => {
       message: "rate limited"
     });
     expect(parseProviderFault({ type: "overloaded_error" })).toEqual({ kind: "overloaded" });
+    expect(parseProviderFault({ type: "rate_limit_error", retry_after: 3600 })).toEqual({
+      kind: "rate_limit",
+      retryAfterMs: 3_600_000
+    });
+    expect(parseProviderFault({ type: "rate_limit_error", retryAfter: "1800" })).toEqual({
+      kind: "rate_limit",
+      retryAfterMs: 1_800_000
+    });
   });
 
   it("returns undefined for non-faults", () => {

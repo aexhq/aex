@@ -31,7 +31,7 @@ jobs:
       version: ${{ steps.artifact.outputs.version }}
       tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
       test_matrix: ${{ steps.test-matrix.outputs.matrix }}
-      test_count: ${{ steps.test-matrix.outputs.count }}
+      peak_session_slots: ${{ steps.test-matrix.outputs.peak_session_slots }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -47,13 +47,14 @@ jobs:
         run: |
           set -euo pipefail
           matrix="$(node apps/user-tests/scripts/shard-files.mjs --matrix)"
-          count="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$matrix")"
-          if [ "$count" -lt 1 ]; then
-            echo "No live user-test files were collected." >&2
-            exit 1
-          fi
+          peak_session_slots="$(node -e '
+            const entries = JSON.parse(process.argv[1]);
+            const peak = entries.reduce((total, entry) => total + entry.sessionSlots, 0);
+            if (!Number.isSafeInteger(peak) || peak < 1) throw new Error("invalid live-test session-slot declaration");
+            process.stdout.write(String(peak));
+          ' "$matrix")"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"
 
       - name: Install
         if: ${{ inputs.artifact_source == 'pack-current' }}
@@ -114,7 +115,7 @@ jobs:
           AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: ${{ needs.prepare-artifact.outputs.test_count }}
+          LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: ${{ needs.prepare-artifact.outputs.peak_session_slots }}
           LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,sessions:cancel,sessions:delete,files:read,files:write,assets:write,skills:write,tools:write,instructions:write,secrets:read,secrets:write
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
@@ -128,8 +129,8 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      # Full file-level fan-out with no max-parallel cap. The preflight derives
-      # the required workspace concurrency from this exact discovered matrix.
+      # Full file-level fanout with no max-parallel cap. The preflight sums each
+      # file's declared peak session-slot demand from this discovered matrix.
       matrix:
         include: ${{ fromJSON(needs.prepare-artifact.outputs.test_matrix) }}
     steps:
@@ -187,8 +188,16 @@ jobs:
             echo "Matrix entry did not provide a test file." >&2
             exit 1
           fi
-          bun run test:user:files -- "$TEST_FILE" --reporter=default --reporter=json --outputFile.json="$REPORT" 2>&1 | tee "$RAW_LOG"
-          node scripts/cicd/assert-no-skips.mjs "$REPORT" 2>&1 | tee -a "$RAW_LOG"
+          set +e
+          bun run test:user:files -- "$TEST_FILE" --reporter=default --reporter=json --outputFile.json="$REPORT" > "$RAW_LOG" 2>&1
+          test_status=$?
+          node scripts/cicd/assert-no-skips.mjs "$REPORT" >> "$RAW_LOG" 2>&1
+          assertion_status=$?
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            exit "$test_status"
+          fi
+          exit "$assertion_status"
 
       - name: Redact live user test log
         if: ${{ always() }}
@@ -244,6 +253,7 @@ jobs:
               );
           }
           NODE
+          cat "$REDACTED_LOG"
 
       - name: Upload redacted live user test log
         if: ${{ always() }}

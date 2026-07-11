@@ -57,7 +57,7 @@ export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Pr
     io.stderr(`${onlyFlag.error}\n`);
     return USAGE_ERR;
   }
-  if (onlyFlag.value !== null && !(onlyFlag.value in NAMESPACE_DOWNLOADERS)) {
+  if (onlyFlag.value !== null && !Object.hasOwn(NAMESPACE_DOWNLOADERS, onlyFlag.value)) {
     io.stderr(`--only must be one of: ${Object.keys(NAMESPACE_DOWNLOADERS).join(", ")}\n`);
     return USAGE_ERR;
   }

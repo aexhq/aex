@@ -28,6 +28,8 @@ export interface CliExitCode {
 export const SUCCESS: CliExitCode = { code: 0 };
 export const USAGE_ERR: CliExitCode = { code: 2 };
 export const RUNTIME_ERR: CliExitCode = { code: 1 };
+/** Conventional shell exit status for a process interrupted by SIGINT. */
+export const INTERRUPTED_ERR: CliExitCode = { code: 130 };
 /**
  * Distinct exit code for "the wait/follow deadline elapsed before the
  * run reached a terminal status". Separated from RUNTIME_ERR (1) so a
@@ -532,14 +534,14 @@ export function takeBooleanFlag(rest: readonly string[], flag: string): {
 
 /**
  * Take an option flag in either `--flag value` or `--flag=value` form.
- * Returns the trailing value (or undefined when the flag is absent)
- * plus the remaining args. Unlike `takeFlagValue`, this is permissive
- * about the `=` form which CLI users frequently expect.
+ * Returns the trailing value (or undefined when the flag is absent), the
+ * remaining args, and an explicit error when a present flag has no value.
+ * Unlike `takeFlagValue`, this accepts the `=` form users frequently expect.
  */
 export function takeOptionFlag(
   rest: readonly string[],
   flag: string
-): { readonly value: string | undefined; readonly remaining: readonly string[] } {
+): { readonly value: string | undefined; readonly remaining: readonly string[]; readonly error: string | null } {
   const remaining: string[] = [];
   let value: string | undefined;
   const prefix = `${flag}=`;
@@ -547,7 +549,8 @@ export function takeOptionFlag(
     const arg = rest[i]!;
     if (arg === flag) {
       const next = rest[++i];
-      if (next !== undefined) value = next;
+      if (next === undefined) return { value, remaining, error: `${flag} requires a value` };
+      value = next;
       continue;
     }
     if (arg.startsWith(prefix)) {
@@ -556,5 +559,5 @@ export function takeOptionFlag(
     }
     remaining.push(arg);
   }
-  return { value, remaining };
+  return { value, remaining, error: null };
 }

@@ -42,6 +42,12 @@ for await (const event of run) {
 const result = await run.finished();
 ```
 
+Message sends do not accept a historical `from` cursor. Their stream and
+finished result are scoped to the run accepted by that send, so events from an
+earlier run cannot be replayed into the current result. Use
+`session.events.list()`, `.stream({ from })`, or `.streamEnvelopes({ from })`
+when intentionally reading session history.
+
 `finished()` and `aex.start()` return the same run outcome vocabulary:
 `succeeded`, `failed`, `timed_out`, `cancelled`, or `interrupted`. A run held by
 suspension or approval is `interrupted`; the session lifecycle separately says
@@ -74,9 +80,11 @@ transport watchdogs with `idleTimeoutMs`, `pingIntervalMs`, and
 `eventQuietRecheckMs`; these reconnect the event transport and never retry an
 application run.
 
-For a polling snapshot stream, use `session.events.stream()`. It accepts the
-same inclusive `from` cursor (`sequence >= from`), so an earlier run terminal
-cannot end a later-run poll:
+For a polling snapshot stream, use `session.events.stream()`. At invocation it
+targets the session's current run, or its last completed run when idle. Older
+run terminals cannot end that poll. The inclusive `from` cursor
+(`sequence >= from`) filters yielded history without hiding the target run's
+completion boundary:
 
 ```ts
 for await (const event of session.events.stream({ from: 1024 })) {
@@ -84,8 +92,9 @@ for await (const event of session.events.stream({ from: 1024 })) {
 }
 ```
 
-The cursor must be a non-negative safe integer. For a bounded read, use
-`session.events.list()`.
+The cursor must be a non-negative safe integer. A session with no runs returns
+one bounded snapshot instead of waiting for a terminal that cannot exist. For
+an explicitly bounded read, use `session.events.list()`.
 
 ## Assistant messages
 

@@ -41,6 +41,8 @@ export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promis
 
   const timeoutFlag = takeOptionFlag(common.rest, "--timeout");
   const intervalFlag = takeOptionFlag(timeoutFlag.remaining, "--interval");
+  const optionError = timeoutFlag.error ?? intervalFlag.error;
+  if (optionError) { io.stderr(`${optionError}\n`); return USAGE_ERR; }
 
   let timeoutMs: number | null = null;
   if (timeoutFlag.value !== undefined) {

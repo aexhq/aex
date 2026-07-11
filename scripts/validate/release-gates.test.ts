@@ -37,6 +37,8 @@ describe("release pipeline gates", () => {
     const resolveVersion = workflowStep(version, "Resolve package version");
     const resolvePublication = workflowStep(version, "Resolve immutable publication state");
     const applyVersion = workflowStep(publish, "Apply immutable canary version");
+    const bindSource = workflowStep(publish, "Bind package to release source");
+    const registryEvidence = workflowStep(publish, "Resolve immutable registry evidence");
     const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
 
     expect(workflowRun.workflows).toEqual(["CI"]);
@@ -52,6 +54,13 @@ describe("release pipeline gates", () => {
     expect(resolvePublication.run).toContain("already_published=true");
     expect(applyVersion.run).toContain("canary-version.mjs apply");
     expect(applyVersion.if).toContain("needs.version.outputs.already_published != 'true'");
+    expect(bindSource.run).toContain('release-source.mjs apply --sha "${RELEASE_HEAD_SHA}"');
+    expect(bindSource.if).toContain("needs.version.outputs.already_published != 'true'");
+    expect(stepIndex(publish, bindSource.name!)).toBeLessThan(
+      stepIndex(publish, workflowStep(publish, "Pack publish tarball").name!)
+    );
+    expect(registryEvidence.run).toContain("aexRelease.sourceSha");
+    expect(registryEvidence.run).toContain('!= "${RELEASE_HEAD_SHA}"');
     expect(workflowStep(publish, "Publish to npm").if).toContain("needs.version.outputs.already_published != 'true'");
     expect(jobNeeds(publish)).not.toContain("live-user-tests-preflight");
     expect(jobNeeds(workflowJob(workflow, "live-user-tests"))).toContain("live-user-tests-preflight");
@@ -149,19 +158,31 @@ describe("release pipeline gates", () => {
     expect(releaseRun.run).toContain('status}" != "completed');
     expect(publicManifest.run).toContain("release-manifest.mjs verify-public");
     expect(platformRun.run).toContain('.github/workflows/deploy.yml');
+    expect(platformRun.run).toContain('proof_schema}" != "2"');
+    expect(platformRun.run).toContain("aex-platform-promotion-proof");
     expect(platformManifest.run).toContain("release-manifest.mjs verify-platform");
     const proofGates = /for gate in ([^;]+); do/.exec(platformRun.run ?? "")?.[1]?.trim().split(/\s+/) ?? [];
     expect(new Set(proofGates)).toEqual(new Set(["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"]));
+    expect(platformRun.run).toContain("for image in brain egress byok; do");
+    expect(platformRun.run).toContain("$e.prd.digest == $e.dev.digest");
+    expect(platformRun.run).toContain('test("^sha256:[0-9a-f]{64}$")');
     expect(publicManifest.run).toContain('--head-sha "${RELEASE_SOURCE_SHA}"');
     expect(publicManifest.run).toContain('--integrity "${RELEASE_INTEGRITY}"');
     expect(registry.env).toMatchObject({ RELEASE_INTEGRITY: "${{ env.RELEASE_INTEGRITY }}" });
     expect(registry.run).toContain('registry_integrity');
     expect(registry.run).toContain('!= "${RELEASE_INTEGRITY}"');
     expect(monotonic.run).toContain("commits/main");
-    expect(monotonic.run).toContain('git merge-base --is-ancestor "${RELEASE_SOURCE_SHA}" "${current_main_sha}"');
-    expect(monotonic.run).toContain("--candidate-is-main-ancestor true");
-    expect(monotonic.run).toContain("dist-tags.latest");
+    expect(monotonic.run).toContain("dist-tags --json");
+    expect(monotonic.run).toContain("aexRelease.sourceSha");
+    expect(monotonic.run).toContain("--current-latest-version");
+    expect(monotonic.run).toContain("--current-latest-sha");
+    expect(monotonic.run).toContain("--current-canary-version");
+    expect(monotonic.run).toContain("--current-canary-sha");
     expect(monotonic.run).toContain("assert-monotonic-promotion.mjs");
+    expect(workflowStep(promote, "Checkout").with).toMatchObject({
+      ref: "${{ env.RELEASE_SOURCE_SHA }}",
+      "fetch-depth": 0
+    });
     expect(stepIndex(promote, releaseRun.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
     expect(stepIndex(promote, publicManifest.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
     expect(stepIndex(promote, platformRun.name!)).toBeLessThan(stepIndex(promote, addTag.name!));
@@ -182,8 +203,22 @@ describe("release pipeline gates", () => {
     expect(write.run).toContain("release-manifest.mjs write-public");
     expect(upload.with).toMatchObject({
       name: "public-release-manifest-${{ github.run_id }}",
-      path: "public-release-manifest.json"
+      path: "public-release-manifest.json",
+      overwrite: true
     });
+  });
+
+  it("overwrites reusable release artifacts when a workflow run is rerun", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    const reusableUploads = Object.values(workflow.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .filter((step) => step.uses?.startsWith("actions/upload-artifact@"))
+      .filter((step) => !String(step.with?.name ?? "").includes("github.run_attempt"));
+
+    expect(reusableUploads.length).toBeGreaterThan(0);
+    for (const upload of reusableUploads) {
+      expect(upload.with?.overwrite, upload.name).toBe(true);
+    }
   });
 
   it("keeps feature-gate.yml manual, local, and non-publishing", () => {

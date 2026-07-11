@@ -35,8 +35,7 @@ function baseRequest(
     gemini: Models.GEMINI_2_5_FLASH,
     mistral: Models.MISTRAL_LARGE_LATEST,
     openrouter: Models.GPT_4O_MINI,
-    doubao: Models.DOUBAO_SEED_PRO,
-    "doubao-cn": Models.DOUBAO_SEED_FLASH
+    doubao: Models.DOUBAO_SEED_PRO
   }[provider];
   return {
     workspaceId: "workspace-1",
@@ -194,8 +193,7 @@ describe("PROVIDERS exports", () => {
       "gemini",
       "mistral",
       "openrouter",
-      "doubao",
-      "doubao-cn"
+      "doubao"
     ]);
   });
 
@@ -284,9 +282,9 @@ describe("providerForModel / providersForModel", () => {
     expect(providerForModel(Models.DEEPSEEK_V4_PRO)).toBe("deepseek");
   });
 
-  it("serves Doubao models from both Ark gateways (international default)", () => {
-    expect(providersForModel(Models.DOUBAO_SEED_PRO)).toEqual(["doubao", "doubao-cn"]);
-    expect(providersForModel(Models.DOUBAO_SEED_FLASH)).toEqual(["doubao", "doubao-cn"]);
+  it("serves Doubao models through the international BytePlus gateway", () => {
+    expect(providersForModel(Models.DOUBAO_SEED_PRO)).toEqual(["doubao"]);
+    expect(providersForModel(Models.DOUBAO_SEED_FLASH)).toEqual(["doubao"]);
     expect(providerForModel(Models.DOUBAO_SEED_PRO)).toBe("doubao");
   });
 
@@ -303,7 +301,7 @@ describe("resolveProviderModelId", () => {
     expect(resolveProviderModelId(Models.GEMINI_2_0_FLASH, "openrouter")).toBe("google/gemini-2.0-flash-001");
     expect(resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "anthropic")).toBe("claude-haiku-4-5");
     expect(resolveProviderModelId(Models.DOUBAO_SEED_PRO, "doubao")).toBe("doubao-seed-1-8-251228");
-    expect(resolveProviderModelId(Models.DOUBAO_SEED_FLASH, "doubao-cn")).toBe("doubao-seed-1-6-flash-250828");
+    expect(() => resolveProviderModelId(Models.DOUBAO_SEED_FLASH, "doubao-cn" as never)).toThrow(/not available/);
   });
 
   it("throws when the provider does not serve the model", () => {

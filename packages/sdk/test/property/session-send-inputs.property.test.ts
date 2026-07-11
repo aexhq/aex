@@ -129,6 +129,13 @@ function makeHarness(): Harness {
           id: SESSION_ID,
           status: "idle",
           acceptsMessages: true,
+          lastRun: {
+            sessionId: SESSION_ID,
+            runId: "run_property",
+            turnSeq: 1,
+            phase: "finished",
+            outcome: "succeeded"
+          },
           costTelemetry: {
             providerUsage: [{ inputTokens: 3, outputTokens: 5, totalTokens: 8 }]
           },

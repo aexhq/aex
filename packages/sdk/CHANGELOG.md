@@ -20,6 +20,18 @@ follows semantic versioning.
 - Removed legacy bare HTTP aliases and standardized public traffic on `/api/*`.
 - Limited automatic retries to safe reads and mutations replayed with the same
   idempotency identity; live user scenarios now fail on whole-scenario errors.
+- Scoped message streams and finished results to their accepted run, requiring
+  the committed `lastRun` projection to identify that run exactly.
+- Matched the hosted 255-character idempotency-key limit and kept derived first
+  message keys within it, including for maximum-length create keys.
+- Applied the client retry policy to direct workspace-asset uploads as well as
+  hosted API transport.
+- Removed the unavailable `doubao-cn` route; Doubao uses the supported
+  international BytePlus gateway.
+- Made run-stream iteration safe alongside a concurrent `finished()` call and
+  bound polling termination to the current or last run.
+- Tightened archive/ignore handling and CLI validation so unsafe local inputs
+  fail closed instead of being silently accepted.
 
 ### Added
 
@@ -27,6 +39,8 @@ follows semantic versioning.
   access.
 - Automatic immutable canary publication, exact-candidate platform validation,
   and evidence-backed monotonic promotion to npm `latest`.
+- Stable `workspace_inactive` errors for session work rejected after a
+  workspace deletion fence, including the current `workspaceStatus` context.
 
 ## 0.41.3
 

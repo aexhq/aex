@@ -60,8 +60,12 @@ function runScenario(scenario: string): ChildResult {
         ...(scenario === "allowPrivateUrl" ? { AEX_API_URL: "https://127.0.0.1:8787", LIVE_USER_TEST_ALLOW_PRIVATE_API_URL: "true" } : {}),
         ...(scenario === "nonHttps" ? { AEX_API_URL: "http://dev-api.aex.dev" } : {}),
         ...(scenario === "wrongHost" ? { AEX_EXPECTED_API_HOST: "api.aex.dev" } : {}),
-        ...(scenario === "capCeiling" ? { LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS: "20" } : {})
+        ...(scenario === "capCeiling" ? { LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS: "20" } : {}),
+        ...(scenario === "blankCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "" } : {}),
+        ...(scenario === "garbageCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "12slots" } : {}),
+        ...(scenario === "zeroCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "0" } : {})
       };
+      if (scenario === "missingCapacity") delete env.LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS;
       const result = await mod.checkLiveUserTestsPreflight({
         env,
         fetchImpl,
@@ -133,6 +137,24 @@ describe("live user-test preflight", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("maxConcurrentSessions=49");
+  });
+
+  it.each(["blankCapacity", "garbageCapacity", "zeroCapacity"])(
+    "rejects a present but invalid capacity floor (%s)",
+    (scenario) => {
+      const result = runScenario(scenario);
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS");
+      expect(result.calls).toBe(0);
+    }
+  );
+
+  it("uses the default capacity floor only when the setting is absent", () => {
+    const result = runScenario("missingCapacity");
+
+    expect(result.ok).toBe(true);
+    expect(result.calls).toBe(1);
   });
 
   it("requires the write/read/file scopes used by live smoke tests", () => {

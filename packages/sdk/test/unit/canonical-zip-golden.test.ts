@@ -67,6 +67,26 @@ async function collectStream(sources: readonly ZipEntrySource[]): Promise<Uint8A
 }
 
 describe("canonical A — byte-identical to zipSync", () => {
+  it("fails before reading when classic ZIP entry-count or size fields would overflow", async () => {
+    const neverRead = (): Uint8Array => {
+      throw new Error("overflow validation must run before reading entry bytes");
+    };
+
+    const tooMany = Array.from({ length: 0x10000 }, (_, index): ZipEntrySource => ({
+      name: `entry-${index}`,
+      size: 0,
+      read: neverRead
+    }));
+    await expect(streamBundleZip(tooMany, () => {})).rejects.toThrow(/65,535-entry classic ZIP limit/);
+
+    await expect(streamBundleZip([{
+      name: "oversize.bin",
+      size: 0x1_0000_0000,
+      read: neverRead,
+      openStream: async function* () {}
+    }], () => {})).rejects.toThrow(/4 GiB classic ZIP limit/);
+  });
+
   it("sync framer == zipSync, byte-for-byte, and matches the pinned golden hash", () => {
     const framed = frameCanonicalZipSync(FIXTURE_A);
     const ref = zipSyncOrdered(FIXTURE_A);

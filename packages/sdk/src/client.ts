@@ -89,7 +89,7 @@ import {
   type WebSocketFactory,
   type WhoAmI
 } from "@aexhq/contracts";
-import { operations } from "@aexhq/contracts/internal";
+import { operations, type AssetUploadRetryOptions } from "@aexhq/contracts/internal";
 import { Instructions } from "./instructions.js";
 import { uploadAsset, uploadAssetMultipart, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
 import { File, type ZipStreamDriver } from "./file.js";
@@ -98,6 +98,7 @@ import {
   AexRateLimitError,
   isThrottleFault,
   parseProviderFault,
+  resolveRetryConfig,
   withRetry,
   type ProviderFault,
   type RetryOptions
@@ -124,10 +125,10 @@ export interface AexOptions {
    */
   readonly debug?: boolean | DebugSink;
   /**
-   * Built-in transport retry policy. Reads, idempotent HTTP methods, and
-   * mutations carrying a stable Idempotency-Key are retried on transient
-   * failures with bounded exponential backoff + jitter. Unsafe mutations are
-   * attempted once.
+   * Built-in transport retry policy for hosted API requests and direct asset
+   * uploads. Reads, idempotent HTTP methods, and mutations carrying a stable
+   * Idempotency-Key are retried on transient failures with bounded exponential
+   * backoff + jitter. Unsafe mutations are attempted once.
    *
    * Omit for sensible defaults (4 attempts, ~2 min budget); pass an object to
    * tune `maxAttempts` / delays / `maxElapsedMs`; pass `false` to disable.
@@ -269,7 +270,6 @@ export interface SessionCreateOptions extends IdempotencyOptions {
 }
 
 export interface SessionSendOptions extends IdempotencyOptions {
-  readonly from?: number;
   readonly webSocketFactory?: WebSocketFactory;
   readonly idleTimeoutMs?: number;
   readonly pingIntervalMs?: number;
@@ -277,6 +277,10 @@ export interface SessionSendOptions extends IdempotencyOptions {
 
 interface InternalSessionSendOptions extends SessionSendOptions {
   readonly signal?: AbortSignal;
+}
+
+interface InternalSessionRunStreamOptions extends InternalSessionSendOptions {
+  readonly from: number;
 }
 
 export interface SessionStartOptions extends SessionCreateOptions {
@@ -308,77 +312,74 @@ export interface SessionRunResult<T = unknown> extends TurnResult {
 
 export class SessionRunStream implements AsyncIterable<AexStreamEventView> {
   readonly #stream: () => AsyncGenerator<AexStreamEventView, SessionRunResult, void>;
-  #generator: AsyncGenerator<AexStreamEventView, SessionRunResult, void> | undefined;
+  readonly #events: AexStreamEventView[] = [];
+  readonly #waiters = new Set<() => void>();
   #outcome:
     | { readonly ok: true; readonly value: SessionRunResult }
     | { readonly ok: false; readonly error: unknown }
     | undefined;
-  #finished: Promise<SessionRunResult> | undefined;
+  #pump: Promise<SessionRunResult> | undefined;
+  #hasIterator = false;
 
   constructor(stream: () => AsyncGenerator<AexStreamEventView, SessionRunResult, void>) {
     this.#stream = stream;
   }
 
-  /**
-   * ONE underlying send per turn: iterating the stream and calling `finished()`
-   * (the documented `for await … ; await turn.finished()` pattern) must share a
-   * single generator — a fresh generator per consumer would re-POST the
-   * message as a second billable turn (or 409 `session_busy` mid-turn).
-   */
-  #shared(): AsyncGenerator<AexStreamEventView, SessionRunResult, void> {
-    this.#generator ??= this.#capture(this.#stream());
-    return this.#generator;
+  #start(): Promise<SessionRunResult> {
+    this.#pump ??= this.#drain();
+    return this.#pump;
   }
 
-  async *#capture(
-    generator: AsyncGenerator<AexStreamEventView, SessionRunResult, void>
-  ): AsyncGenerator<AexStreamEventView, SessionRunResult, void> {
+  async #drain(): Promise<SessionRunResult> {
+    const generator = this.#stream();
     try {
       let next = await generator.next();
       while (!next.done) {
-        yield next.value;
+        this.#events.push(next.value);
+        this.#notify();
         next = await generator.next();
       }
       this.#outcome = { ok: true, value: next.value };
+      this.#notify();
       return next.value;
     } catch (error) {
       this.#outcome = { ok: false, error };
+      this.#notify();
       throw error;
     }
   }
 
+  #notify(): void {
+    for (const resolve of this.#waiters) resolve();
+    this.#waiters.clear();
+  }
+
   [Symbol.asyncIterator](): AsyncIterator<AexStreamEventView> {
-    const generator = this.#shared();
+    let cursor = this.#hasIterator ? this.#events.length : 0;
+    this.#hasIterator = true;
+    void this.#start().catch(() => {});
     // Deliberately do NOT forward `return()`: `break`-ing out of a
     // `for await` loop must not close the in-flight turn — `finished()` can
     // still drain it to completion afterwards.
     return {
-      next: () => generator.next(),
+      next: async () => {
+        while (true) {
+          if (cursor < this.#events.length) {
+            return { done: false as const, value: this.#events[cursor++]! };
+          }
+          if (this.#outcome !== undefined) {
+            if (!this.#outcome.ok) throw this.#outcome.error;
+            return { done: true as const, value: undefined };
+          }
+          await new Promise<void>((resolve) => this.#waiters.add(resolve));
+        }
+      },
       return: async () => ({ done: true as const, value: undefined })
     };
   }
 
   finished(): Promise<SessionRunResult> {
-    this.#finished ??= (async () => {
-      const generator = this.#shared();
-      let next = await generator.next();
-      while (!next.done) {
-        next = await generator.next();
-      }
-      // A prior consumer may have drained the generator already: its return
-      // value is then gone from `next.value`, so replay the captured outcome.
-      if (next.value !== undefined) {
-        return next.value;
-      }
-      if (this.#outcome !== undefined) {
-        if (this.#outcome.ok) {
-          return this.#outcome.value;
-        }
-        throw this.#outcome.error;
-      }
-      return next.value;
-    })();
-    return this.#finished;
+    return this.#start();
   }
 }
 
@@ -473,11 +474,11 @@ export class SessionHandle {
       http,
       id,
       (input, options = {}) => {
-        assertNoSessionSendSignal(options, "session.messages.send");
+        assertSupportedSessionSendOptions(options, "session.messages.send");
         return sendSessionInternal(this, input, options);
       },
       (options = {}) => {
-        assertNoSessionSendSignal(options, "session.messages.replayLast");
+        assertSupportedSessionSendOptions(options, "session.messages.replayLast");
         const last = this.#lastSend;
         if (last === undefined) {
           throw new SessionStateError("session.messages.replayLast: no message has been sent on this session yet");
@@ -511,7 +512,7 @@ export class SessionHandle {
     const accepted = await operations.sendSessionMessage(this.#http, this.id, { input }, { idempotencyKey });
     this.#session = accepted.session;
     const run = accepted.run;
-    const eventCursor = options.from ?? accepted.eventCursor ?? run.eventCursor ?? 0;
+    const eventCursor = accepted.eventCursor ?? run.eventCursor ?? 0;
     const streamEvents: AexStreamEventView[] = [];
     for await (const event of streamSessionRunEvents(this.#http, this.id, run, {
       ...options,
@@ -695,7 +696,7 @@ export class ChildSessionHandle {
     this.#http = http;
     this.#ref = ref;
     this.#fetch = fetch;
-    this.events = childSessionEventsAccessor(http, ref.id);
+    this.events = childSessionEventsAccessor(http, ref);
     this.files = sessionFiles(http, ref.id, fetch);
   }
 
@@ -728,10 +729,10 @@ export class ChildSessionHandle {
 }
 
 /** Session-record events accessor (list + polling stream) used by {@link ChildSessionHandle}. */
-function childSessionEventsAccessor(http: HttpClient, id: string): ChildSessionEvents {
+function childSessionEventsAccessor(http: HttpClient, ref: ChildSessionRef): ChildSessionEvents {
   return {
-    list: async () => (await operations.listSessionEvents(http, id)).map(asAexEventView),
-    stream: (options?: StreamEventsOptions) => streamChildSessionEventsPolling(http, id, options ?? {})
+    list: async () => (await operations.listSessionEvents(http, ref.id)).map(asAexEventView),
+    stream: (options?: StreamEventsOptions) => streamChildSessionEventsPolling(http, ref, options ?? {})
   };
 }
 
@@ -741,26 +742,37 @@ function childSessionEventsAccessor(http: HttpClient, id: string): ChildSessionE
  */
 async function* streamChildSessionEventsPolling(
   http: HttpClient,
-  id: string,
+  ref: ChildSessionRef,
   options: StreamEventsOptions
 ): AsyncIterable<AexEventView> {
+  const id = ref.id;
   const from = validateStreamEventsFrom(options.from);
   if (options.signal?.aborted) return;
   const seenIds = new Set<string>();
   const intervalMs = options.intervalMs ?? 1_000;
   const signal = options.signal;
+  const progressing = PROGRESSING_SESSION_STATUSES.has(ref.status);
+  const targetRunId = progressing ? undefined : ref.lastRun?.runId;
+  const priorRunId = progressing ? ref.lastRun?.runId : undefined;
+  const boundedRunlessSnapshot = !progressing && targetRunId === undefined;
   while (!signal?.aborted) {
     const events = await operations.listSessionEvents(http, id);
     let terminalSeen = false;
     for (const event of events) {
-      if (event.sequence < from) continue;
-      if (!seenIds.has(event.id)) {
+      if (event.sequence >= from && !seenIds.has(event.id)) {
         seenIds.add(event.id);
         yield asAexEventView(event);
       }
-      if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") terminalSeen = true;
+      if (
+        (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") &&
+        (targetRunId !== undefined
+          ? event.runId === targetRunId
+          : event.sequence >= from && event.runId !== priorRunId)
+      ) {
+        terminalSeen = true;
+      }
     }
-    if (terminalSeen) return;
+    if (terminalSeen || boundedRunlessSnapshot) return;
     try {
       await sleep(intervalMs, signal);
     } catch {
@@ -773,7 +785,7 @@ async function* streamSessionRunEvents(
   http: HttpClient,
   sessionId: string,
   run: SessionRun,
-  options: InternalSessionSendOptions
+  options: InternalSessionRunStreamOptions
 ): AsyncGenerator<AexStreamEventView, void, void> {
   const first = await operations.getSessionCoordinatorTicket(http, sessionId);
   for await (const event of streamCoordinatorEvents({
@@ -786,6 +798,7 @@ async function* streamSessionRunEvents(
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {})
   })) {
+    if (event.runId !== run.runId) continue;
     yield asAexStreamEventView(event);
   }
 }
@@ -811,18 +824,25 @@ async function* streamSessionEventsPolling(
   const seenIds = new Set<string>();
   const intervalMs = options.intervalMs ?? 1_000;
   const signal = options.signal;
+  const initial = await operations.getSession(http, id);
+  const targetRunId = initial.currentRun?.runId ?? initial.lastRun?.runId;
+  const boundedRunlessSnapshot = targetRunId === undefined && !PROGRESSING_SESSION_STATUSES.has(initial.status);
   while (!signal?.aborted) {
     const events = await operations.listSessionEvents(http, id);
     let terminalSeen = false;
     for (const event of events) {
-      if (event.sequence < from) continue;
-      if (!seenIds.has(event.id)) {
+      if (event.sequence >= from && !seenIds.has(event.id)) {
         seenIds.add(event.id);
         yield asAexEventView(event);
       }
-      if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") terminalSeen = true;
+      if (
+        (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") &&
+        (targetRunId === undefined ? event.sequence >= from : event.runId === targetRunId)
+      ) {
+        terminalSeen = true;
+      }
     }
-    if (terminalSeen) return;
+    if (terminalSeen || boundedRunlessSnapshot) return;
     // `sleep` rejects on abort — treat that as a graceful stop.
     try {
       await sleep(intervalMs, signal);
@@ -1233,11 +1253,11 @@ function assertSessionCommittedAfterRun(
       status: session.status
     });
   }
-  if (session.lastRun !== undefined && session.lastRun.runId !== run.runId) {
+  if (session.lastRun?.runId !== run.runId) {
     throw new SessionStateError("RUN terminal does not match the session's lastRun", {
       sessionId: session.id,
       runId: run.runId,
-      lastRunId: session.lastRun.runId
+      lastRunId: session.lastRun?.runId
     });
   }
   if (outcome === "succeeded" && (session.status !== "idle" || session.acceptsMessages !== true)) {
@@ -1530,6 +1550,7 @@ export class Aex {
   readonly #http: HttpClient;
   /** The same fetch the HttpClient uses, threaded into direct asset uploads. */
   readonly #fetch: FetchLike | undefined;
+  readonly #assetRetry: AssetUploadRetryOptions;
   readonly workspace: WorkspaceClient;
   readonly sessions: SessionClient;
 
@@ -1551,10 +1572,14 @@ export class Aex {
     const baseUrl = resolveBaseUrlForKey(apiKey, resolved.baseUrl);
     // Wrap the transport fetch (the caller's override, or global `fetch`) with
     // the bounded-retry layer so every BFF request gets default resilience.
-    // The raw `#fetch` below stays unwrapped for the direct-to-storage asset PUT
-    // and presigned output GETs, which target object storage, not the API plane.
+    // The raw `#fetch` below stays unwrapped for object-storage traffic. Asset
+    // uploads apply the resolved client policy in their transfer helper;
+    // `session.files.fetch()` intentionally returns the raw one-shot response.
     const baseFetch: FetchLike = resolved.fetch ?? ((input: Parameters<FetchLike>[0], init: Parameters<FetchLike>[1]) => fetch(input, init));
     const retryingFetch = withRetry(baseFetch, resolved.retry);
+    this.#assetRetry = resolved.retry === false
+      ? { maxAttempts: 1 }
+      : resolveRetryConfig(resolved.retry);
     this.#http = new HttpClient({
       ...(baseUrl ? { baseUrl } : {}),
       apiKey,
@@ -1592,6 +1617,7 @@ export class Aex {
       bytes: args.bytes,
       hash: args.hash,
       ...(args.contentType ? { contentType: args.contentType } : {}),
+      retry: this.#assetRetry,
       ...(this.#fetch ? { fetch: this.#fetch as unknown as AssetFetch } : {})
     });
   }
@@ -1611,6 +1637,7 @@ export class Aex {
       http: this.#http,
       drive: args.drive,
       ...(args.contentType ? { contentType: args.contentType } : {}),
+      retry: this.#assetRetry,
       ...(this.#fetch ? { fetch: this.#fetch as unknown as AssetFetch } : {})
     });
   }
@@ -1628,7 +1655,7 @@ export class Aex {
       const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
       assertSupportedSessionFields(options, "Aex.start", true);
       const input = normaliseSessionInput(message, "Aex.start", "message");
-      assertNoSessionSendSignal(stream, "Aex.start stream");
+      assertSupportedSessionSendOptions(stream, "Aex.start stream", false);
       const sendOptions: InternalSessionSendOptions = {
         ...(stream ?? {}),
         ...(scopedSignal?.signal ? { signal: scopedSignal.signal } : {}),
@@ -1641,7 +1668,9 @@ export class Aex {
       // billable turn server-side — never a duplicate billable session turn (sdk-dx-3).
       const createKey = operations.resolveIdempotencyKey(createOptions.idempotencyKey);
       const messageKey =
-        messageIdempotencyKey !== undefined ? operations.resolveIdempotencyKey(messageIdempotencyKey) : deriveMessageKey(createKey);
+        messageIdempotencyKey !== undefined
+          ? operations.resolveIdempotencyKey(messageIdempotencyKey)
+          : operations.deriveMessageIdempotencyKey(createKey);
       const session = await this.sessions.create({ ...createOptions, idempotencyKey: createKey });
       // One terminal boundary: RUN_FINISHED/RUN_ERROR carries the run outcome,
       // cost, and usage. `start()` only reshapes the same finished result.
@@ -1965,15 +1994,6 @@ function configError(surface: string, field: string, message: string, value?: un
 }
 
 /**
- * Derive the message idempotency key from the session-create key. Mirrors the
- * CLI (`<createKey>:message`) so a retried `Aex.start` that reuses
- * one `idempotencyKey` de-duplicates BOTH the create and the billable turn.
- */
-function deriveMessageKey(createKey: string): string {
-  return `${createKey}:message`;
-}
-
-/**
  * Extract a throttle-class {@link ProviderFault} from a failed session record.
  * Reads a structured `providerFault` / `error` field first (the shape the
  * runtime is expected to emit on a throttled turn), then falls back to a
@@ -2062,10 +2082,29 @@ function assertSupportedSessionFields(
   }
 }
 
-function assertNoSessionSendSignal(options: unknown, surface: string): void {
+function assertSupportedSessionSendOptions(
+  options: unknown,
+  surface: string,
+  allowIdempotencyKey = true
+): void {
   const record = options as Record<string, unknown> | undefined;
-  if (record && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, "signal")) {
-    throw new SessionConfigValidationError(`${surface}: signal is not a supported option; use session.cancel() / session.suspend() for remote control.`);
+  if (!record || typeof record !== "object") return;
+  const allowed = new Set([
+    "webSocketFactory",
+    "idleTimeoutMs",
+    "pingIntervalMs",
+    ...(allowIdempotencyKey ? ["idempotencyKey"] : [])
+  ]);
+  for (const field of Object.keys(record)) {
+    if (allowed.has(field)) continue;
+    const guidance = field === "from"
+      ? "use session.events.list(), stream(), or streamEnvelopes() for replay"
+      : field === "signal"
+        ? "use session.cancel() / session.suspend() for remote control"
+        : undefined;
+    throw new SessionConfigValidationError(
+      `${surface}: ${field} is not a supported option${guidance === undefined ? "" : `; ${guidance}`}`
+    );
   }
 }
 

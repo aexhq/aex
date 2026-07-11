@@ -40,6 +40,7 @@ import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import {
   type CliExitCode,
+  INTERRUPTED_ERR,
   RUNTIME_ERR,
   SUCCESS,
   TIMEOUT_ERR,
@@ -151,6 +152,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   const follow = takeBooleanFlag(rest, "--follow");
   rest = follow.remaining;
   const timeoutFlag = takeOptionFlag(rest, "--timeout");
+  if (timeoutFlag.error) { io.stderr(`${timeoutFlag.error}\n`); return USAGE_ERR; }
   rest = timeoutFlag.remaining;
   let followTimeoutMs: number | null = null;
   if (timeoutFlag.value !== undefined) {
@@ -468,7 +470,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     }
     if (interrupted) {
       io.stderr(`(interrupted) followed up to seq ${lastSeq}\n`);
-      return SUCCESS;
+      return INTERRUPTED_ERR;
     }
     io.stderr(`(transient) event stream failed: ${(err as Error).message}\n`);
   }
@@ -485,7 +487,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   }
   if (interrupted) {
     io.stderr(`(interrupted) followed up to seq ${lastSeq}\n`);
-    return SUCCESS;
+    return INTERRUPTED_ERR;
   }
 
   try {
@@ -545,9 +547,12 @@ async function buildInstructions(io: CliIO, ref: string): Promise<CliInstruction
 }
 
 async function buildFile(io: CliIO, ref: string): Promise<CliFileDraft> {
-  const content = await readAtFile(io, ref);
+  if (!io.readFileBytes) {
+    throw new Error("binary file reads are unavailable in this CLI host");
+  }
+  const bytes = await io.readFileBytes(resolvePath(io.cwd(), stripAt(ref)));
   const name = baseName(stripAt(ref));
-  return buildCliFile({ name, content });
+  return buildCliFile({ name, bytes });
 }
 
 /* ---------- helpers ---------- */

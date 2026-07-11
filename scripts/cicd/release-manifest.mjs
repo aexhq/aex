@@ -4,13 +4,19 @@ import { fileURLToPath } from "node:url";
 
 export const PUBLIC_RELEASE_MANIFEST_KIND = "aex-public-release-manifest";
 export const PLATFORM_VALIDATION_MANIFEST_KIND = "aex-platform-validation-manifest";
-export const MANIFEST_SCHEMA_VERSION = 3;
+export const PUBLIC_MANIFEST_SCHEMA_VERSION = 3;
+export const PLATFORM_MANIFEST_SCHEMA_VERSION = 4;
+export const MANIFEST_SCHEMA_VERSION = PUBLIC_MANIFEST_SCHEMA_VERSION;
 export const REQUIRED_PLATFORM_GATES = ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"];
+const IMAGE_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+const BRAIN_TAG_RE = /^sha-[0-9a-f]{12}-pub-([0-9a-f]{12})$/;
+const SIDECAR_TAG_RE = /^sha-[0-9a-f]{12}$/;
+const AWS_REGION = "eu-west-2";
 
 export function buildPublicReleaseManifest(input) {
   const now = input.createdAt ?? new Date().toISOString();
   return {
-    schemaVersion: MANIFEST_SCHEMA_VERSION,
+    schemaVersion: PUBLIC_MANIFEST_SCHEMA_VERSION,
     kind: PUBLIC_RELEASE_MANIFEST_KIND,
     createdAt: now,
     repository: input.repository ?? process.env.GITHUB_REPOSITORY ?? "aexhq/aex",
@@ -52,7 +58,7 @@ export function buildPublicReleaseManifest(input) {
 export function validatePublicReleaseManifest(manifest, expected = {}) {
   const errors = [];
   if (!isRecord(manifest)) errors.push("manifest must be an object");
-  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 3");
+  if (manifest?.schemaVersion !== PUBLIC_MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 3");
   if (manifest?.kind !== PUBLIC_RELEASE_MANIFEST_KIND) errors.push(`kind must be ${PUBLIC_RELEASE_MANIFEST_KIND}`);
   if (expected.version && manifest?.sdk?.version !== expected.version) {
     errors.push(`sdk.version must be ${expected.version}`);
@@ -87,7 +93,7 @@ export function validatePublicReleaseManifest(manifest, expected = {}) {
 export function validatePlatformValidationManifest(manifest, expected = {}) {
   const errors = [];
   if (!isRecord(manifest)) errors.push("manifest must be an object");
-  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 3");
+  if (manifest?.schemaVersion !== PLATFORM_MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 4");
   if (manifest?.kind !== PLATFORM_VALIDATION_MANIFEST_KIND) {
     errors.push(`kind must be ${PLATFORM_VALIDATION_MANIFEST_KIND}`);
   }
@@ -112,8 +118,33 @@ export function validatePlatformValidationManifest(manifest, expected = {}) {
       errors.push(`missing platform gate ${gate}`);
     }
   }
-  for (const image of ["brain", "egress", "byok"]) {
-    if (!manifest?.images?.[image]?.tag) errors.push(`images.${image}.tag is required`);
+  const publicSha = String(manifest?.publicRelease?.headSha ?? "");
+  for (const [image, repositoryKind] of [["brain", "brain"], ["egress", "egress-proxy"], ["byok", "byok-inject"]]) {
+    const evidence = manifest?.images?.[image];
+    const tag = String(evidence?.tag ?? "");
+    if (!tag) {
+      errors.push(`images.${image}.tag is required`);
+    } else if (image === "brain") {
+      const match = BRAIN_TAG_RE.exec(tag);
+      if (!match) errors.push("images.brain.tag must match sha-<platform12>-pub-<public12>");
+      else if (/^[0-9a-f]{40}$/.test(publicSha) && match[1] !== publicSha.slice(0, 12)) {
+        errors.push("images.brain.tag public source must match publicRelease.headSha");
+      }
+    } else if (!SIDECAR_TAG_RE.test(tag)) {
+      errors.push(`images.${image}.tag must match sha-<12hex>`);
+    }
+    for (const plane of ["dev", "prd"]) {
+      const expectedRepository = `aex-${plane}-${AWS_REGION}-${repositoryKind}`;
+      if (evidence?.[plane]?.repository !== expectedRepository) {
+        errors.push(`images.${image}.${plane}.repository must be ${expectedRepository}`);
+      }
+      if (!IMAGE_DIGEST_RE.test(String(evidence?.[plane]?.digest ?? ""))) {
+        errors.push(`images.${image}.${plane}.digest must be a sha256 image digest`);
+      }
+    }
+    if (evidence?.dev?.digest !== evidence?.prd?.digest) {
+      errors.push(`images.${image} prd digest must match the dev-tested digest`);
+    }
   }
   return { ok: errors.length === 0, errors };
 }

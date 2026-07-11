@@ -63,7 +63,10 @@ function json(body: unknown): Response {
   });
 }
 
-function makeClient(options: { readonly getSessionStatus?: string } = {}): {
+function makeClient(options: {
+  readonly getSessionStatus?: string;
+  readonly committedLastRun?: "matching" | "missing" | "stale";
+} = {}): {
   readonly client: Aex;
   readonly calls: CapturedRequest[];
   readonly sockets: FakeWebSocket[];
@@ -107,10 +110,20 @@ function makeClient(options: { readonly getSessionStatus?: string } = {}): {
     if (url.endsWith("/api/sessions/sess_1")) {
       // Terminal billing is committed on the first read; a `running` override
       // deliberately exercises an inconsistent post-terminal response.
+      const lastRun = options.committedLastRun === "missing"
+        ? undefined
+        : {
+            sessionId: "sess_1",
+            runId: options.committedLastRun === "stale" ? "run_0" : "run_1",
+            turnSeq: 1,
+            phase: "finished",
+            outcome: "succeeded"
+          };
       return json({ session: {
         id: "sess_1",
         status: options.getSessionStatus ?? "idle",
         acceptsMessages: options.getSessionStatus !== "running",
+        ...(lastRun === undefined ? {} : { lastRun }),
         costUsd: 0,
         costTelemetry: { providerUsage: [] }
       } });
@@ -185,6 +198,28 @@ describe("Aex sessions", () => {
     await expect(promise).rejects.toThrow(/before the session state was committed/);
   });
 
+  it.each(["missing", "stale"] as const)(
+    "fails closed when RUN_FINISHED is followed by a %s lastRun projection",
+    async (committedLastRun) => {
+      const { client, sockets, webSocketFactory } = makeClient({ committedLastRun });
+      const promise = client.start({
+        model: "claude-haiku-4-5",
+        message: "say hello",
+        apiKeys: { anthropic: "sk-ant" },
+        stream: { webSocketFactory }
+      });
+
+      await flush();
+      sockets[0]!.message(event(4097, {
+        source: "runtime",
+        type: "RUN_FINISHED",
+        data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
+      }));
+
+      await expect(promise).rejects.toThrow(/lastRun/);
+    }
+  );
+
   it("session.send can be consumed as an async event stream", async () => {
     const { client, sockets, webSocketFactory } = makeClient();
     const session = await client.sessions.create({
@@ -210,6 +245,34 @@ describe("Aex sessions", () => {
     await consume;
 
     expect(seen).toEqual([4096, 4097]);
+  });
+
+  it("excludes replayed events from earlier runs from the accepted run stream and result", async () => {
+    const { client, sockets, webSocketFactory } = makeClient();
+    const session = await client.sessions.create({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-ant" }
+    });
+    const turn = session.messages.send("continue", { webSocketFactory });
+    const seenRunIds: string[] = [];
+    const consume = (async () => {
+      for await (const evt of turn) seenRunIds.push(evt.runId);
+    })();
+
+    await flush();
+    sockets[0]!.message(event(4095, { runId: "run_0", data: { text: "old answer" } }));
+    sockets[0]!.message(event(4096, { data: { text: "new answer" } }));
+    sockets[0]!.message(event(4097, {
+      source: "runtime",
+      type: "RUN_FINISHED",
+      data: { outcome: "succeeded", costUsd: 0, providerUsage: [], checkpoint: { checkpointId: "cp_1" } }
+    }));
+
+    await consume;
+    const result = await turn.finished();
+    expect(seenRunIds).toEqual(["run_1", "run_1"]);
+    expect(result.text).toBe("new answer");
+    expect(result.events.map((evt) => evt.runId)).toEqual(["run_1", "run_1"]);
   });
 
   it("yields events carrying the is*() type-guard methods, and narrows in the branch", async () => {
@@ -400,5 +463,19 @@ describe("Aex sessions", () => {
         stream: { signal } as never
       })
     ).rejects.toThrow(/signal is not a supported option/);
+  });
+
+  it("keeps replay cursors on session.events instead of message sends", async () => {
+    const { client, calls } = makeClient();
+    const session = await client.sessions.create({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-ant" }
+    });
+    calls.length = 0;
+
+    expect(() => session.messages.send("continue", { from: 0 } as never)).toThrow(
+      /from is not a supported option; use session\.events/
+    );
+    expect(calls).toHaveLength(0);
   });
 });

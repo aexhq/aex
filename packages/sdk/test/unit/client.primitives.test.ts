@@ -57,7 +57,14 @@ interface Env {
 
 const RealWebSocket = globalThis.WebSocket;
 
-function makeEnv(session: Record<string, unknown> = { id: "session-1", status: "idle", acceptsMessages: true, costUsd: 0.001, costTelemetry: { providerUsage: [{ totalTokens: 5 }] } }): Env {
+function makeEnv(session: Record<string, unknown> = {
+  id: "session-1",
+  status: "idle",
+  acceptsMessages: true,
+  lastRun: { sessionId: "session-1", runId: "run-1", turnSeq: 1, phase: "finished", outcome: "succeeded" },
+  costUsd: 0.001,
+  costTelemetry: { providerUsage: [{ totalTokens: 5 }] }
+}): Env {
   const bodies: Record<string, unknown>[] = [];
   const headers: Array<Record<string, string>> = [];
   const urls: string[] = [];

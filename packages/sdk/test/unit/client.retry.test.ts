@@ -159,7 +159,20 @@ function harness(
     }
     if (url.endsWith("/api/sessions/session-1")) {
       // Terminal billing is already committed, so the first read is authoritative.
-      return json({ session: { acceptsMessages: true, costUsd: 0, costTelemetry: { providerUsage: [] }, ...finalSession } });
+      const failed = finalSession.status === "error";
+      return json({ session: {
+        acceptsMessages: true,
+        costUsd: 0,
+        costTelemetry: { providerUsage: [] },
+        lastRun: {
+          sessionId: "session-1",
+          runId: "run-1",
+          turnSeq: 1,
+          phase: failed ? "error" : "finished",
+          outcome: failed ? "failed" : "succeeded"
+        },
+        ...finalSession
+      } });
     }
     if (url.endsWith("/api/sessions")) {
       const status = createStatuses[Math.min(createCount, createStatuses.length - 1)] ?? 201;
@@ -244,6 +257,26 @@ describe("Aex idempotency (sdk-dx-3)", () => {
     await promise;
     expect(h.idempotencyKeys("/api/sessions")).toEqual(["session-key"]);
     expect(h.idempotencyKeys("/api/sessions/session-1/messages")).toEqual(["session-key:message"]);
+  });
+
+  it("keeps the first-message key within 255 characters for a maximum-length create key", async () => {
+    const h = harness();
+    const createKey = "k".repeat(255);
+    const promise = h.client.start({
+      model: "claude-haiku-4-5",
+      message: "hello",
+      apiKeys: { anthropic: "sk-ant" },
+      idempotencyKey: createKey,
+      stream: { webSocketFactory: h.webSocketFactory }
+    });
+    await waitForSocket(h.sockets, 1);
+    h.sockets[0]!.message(idleEvent());
+    await promise;
+
+    const messageKey = h.idempotencyKeys("/api/sessions/session-1/messages")[0]!;
+    expect(h.idempotencyKeys("/api/sessions")).toEqual([createKey]);
+    expect(messageKey).toMatch(/^aex-message-sha256-[a-f0-9]{64}$/);
+    expect(messageKey.length).toBeLessThanOrEqual(255);
   });
 });
 

@@ -77,7 +77,7 @@ export async function checkLiveUserTestsPreflight(options = {}) {
   const timeoutMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 120_000);
   const baseDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS", DEFAULT_BASE_DELAY_MS, 60_000);
   const maxDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_MAX_MS", DEFAULT_MAX_DELAY_MS, 120_000);
-  const minMaxConcurrentSessions = envInt(
+  const minMaxConcurrentSessions = strictEnvPositiveInt(
     env,
     "LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS",
     DEFAULT_MIN_MAX_CONCURRENT_SESSIONS,
@@ -196,6 +196,17 @@ function responseRequestId(res) {
 
 function envInt(env, name, fallback, max) {
   return positiveInt(env[name], fallback, max);
+}
+
+function strictEnvPositiveInt(env, name, fallback, max) {
+  const value = env[name];
+  if (value === undefined) return fallback;
+  const raw = String(value).trim();
+  const parsed = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
+    throw new PreflightFatalError(`${name} must be an integer between 1 and ${max}.`);
+  }
+  return parsed;
 }
 
 function optionalPositiveInt(value, max) {

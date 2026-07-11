@@ -39,8 +39,7 @@ describe("provider/runtime capability matrix generation", () => {
       "gemini",
       "mistral",
       "openrouter",
-      "doubao",
-      "doubao-cn"
+      "doubao"
     ]);
     expect(rendered).toContain(
       "| [Anthropic](#anthropic) | `anthropic` | `claude-haiku-4-5`, `claude-3-5-haiku-latest`, `claude-3-5-sonnet-latest`, `claude-sonnet-4-6` | [Secrets](secrets.md); [Events](events.md) |"

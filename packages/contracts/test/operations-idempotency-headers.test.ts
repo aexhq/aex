@@ -42,6 +42,11 @@ describe("idempotency key fail-closed (WS4)", () => {
     expect(operations.resolveIdempotencyKey().startsWith("aex-idem-")).toBe(true);
   });
 
+  it("matches the hosted 255-character idempotency-key limit", () => {
+    expect(operations.resolveIdempotencyKey("k".repeat(255))).toBe("k".repeat(255));
+    expect(() => operations.resolveIdempotencyKey("k".repeat(256))).toThrow(SessionConfigValidationError);
+  });
+
   it("idempotencyHeaders fails closed on an empty create key before any fetch", async () => {
     await expect(
       operations.createSession(http, createRequest, { idempotencyKey: "" })

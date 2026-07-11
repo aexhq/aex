@@ -108,6 +108,61 @@ describe("streamCoordinatorEvents — live fanout", () => {
     expect(ws!.closed).toBe(true);
   });
 
+  it("orders durable frames across interleaved live slots before advancing the cursor", async () => {
+    let ws: FakeWebSocket | undefined;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url))
+    });
+    const received: string[] = [];
+    const consume = (async () => {
+      for await (const event of gen) {
+        received.push(event.replayable === false ? `live:${event.liveSequence}` : `durable:${event.sequence}`);
+      }
+    })();
+
+    await flush();
+    ws!.message(evt(10));
+    ws!.message(liveEvt(0));
+    ws!.message(evt(2));
+    ws!.message(evt(11, "RUN_FINISHED"));
+    await consume;
+
+    expect(received).toEqual(["durable:2", "live:0", "durable:10", "durable:11"]);
+  });
+
+  it("bounds live-id dedup while retaining the most recent reconnect window", async () => {
+    let ws: FakeWebSocket | undefined;
+    const gen = streamCoordinatorEvents({
+      wsUrl: "wss://co/sessions/r/subscribe",
+      from: 0,
+      fetchTicket: async () => "tkt",
+      webSocketFactory: (url) => (ws = new FakeWebSocket(url)),
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0,
+      eventQuietRecheckMs: 0
+    });
+    const received: string[] = [];
+    const consume = (async () => {
+      for await (const event of gen) {
+        if (event.replayable === false) received.push(event.id);
+      }
+    })();
+
+    await flush();
+    for (let index = 0; index < 4_100; index += 1) ws!.message(liveEvt(index, `live-${index}`));
+    ws!.message(liveEvt(0, "live-0"));
+    ws!.message(liveEvt(4_099, "live-4099"));
+    ws!.message(evt(0, "RUN_FINISHED"));
+    await consume;
+
+    expect(received).toHaveLength(4_101);
+    expect(received.at(-1)).toBe("live-0");
+    expect(received.filter((id) => id === "live-4099")).toHaveLength(1);
+  });
+
   it("preserves existing WebSocket URL query parameters", async () => {
     let ws: FakeWebSocket | undefined;
     const gen = streamCoordinatorEvents({
@@ -184,6 +239,44 @@ describe("streamCoordinatorEvents — live fanout", () => {
 });
 
 describe("streamCoordinatorEvents — reconnect resumes exactly once", () => {
+  it("removes the reconnect-delay abort listener after the timer wins", async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const controller = new AbortController();
+      const add = vi.spyOn(controller.signal, "addEventListener");
+      const remove = vi.spyOn(controller.signal, "removeEventListener");
+      const gen = streamCoordinatorEvents({
+        wsUrl: "wss://co/sessions/r/subscribe",
+        from: 0,
+        reconnectDelayMs: 10,
+        signal: controller.signal,
+        fetchTicket: async () => "tkt",
+        webSocketFactory: (url) => {
+          const socket = new FakeWebSocket(url);
+          sockets.push(socket);
+          return socket;
+        }
+      });
+      const consume = (async () => {
+        for await (const event of gen) void event;
+      })();
+
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0]!.close();
+      await vi.advanceTimersByTimeAsync(20);
+      sockets[1]!.message(evt(0, "RUN_FINISHED"));
+      await vi.advanceTimersByTimeAsync(0);
+      await consume;
+
+      const abortAdds = add.mock.calls.filter(([type]) => type === "abort").length;
+      const abortRemoves = remove.mock.calls.filter(([type]) => type === "abort").length;
+      expect(abortRemoves).toBe(abortAdds);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reconnects from lastSeq+1 with no gap and no duplicate", async () => {
     const sockets: FakeWebSocket[] = [];
     const fetchTicket = vi.fn(async () => "tkt");

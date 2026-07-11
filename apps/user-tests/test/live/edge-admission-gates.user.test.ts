@@ -276,7 +276,7 @@ describe("edge: session-path admission gates", () => {
                   idempotencyKey: "admission-overflow-create-" + nonce,
                   message: holderMessage("overflow")
                 },
-                { timeoutMs: 180000, await: "park" }
+                { timeoutMs: 180000 }
               )
               .then(
                 (r) => ({ ok: true, sessionId: r.sessionId }),

@@ -47,9 +47,10 @@ bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 Offline runs use `vitest.offline.config.ts` and default to 4 parallel test files.
 Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
 uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
-SDK artifact, splits the live sweep into 50 non-empty shards, and runs one test
-file at a time per shard so the hosted-plane pressure stays bounded while the
-shard tail gets shorter.
+SDK artifact, discovers the gating files under `test/live`, and runs one test
+file per matrix job. The preflight sums each file's declared peak session-slot
+demand, including scenarios that deliberately open concurrent sessions, before
+the uncapped file-level fanout starts.
 
 The scenarios live under `test:user` / `test:user:offline`, NOT
 `test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
@@ -76,18 +77,24 @@ published SDK candidate when present and npm `latest` otherwise.
 ## CI prerequisites
 
 CI runs the offline scenarios after the unit gate. The release workflow runs the
-offline scenarios before publish and the live scenarios against the exact
-published version after npm visibility. The offline path needs no provider key.
+offline scenarios before publish, then runs the two-file SDK/CLI smoke against
+the exact published version after npm visibility. The downstream platform
+deploy installs that same version in dev and prd for every discovered gating
+SDK file plus the isolated admission, heavy-session, and tool-fuzz lanes. That
+complete two-plane suite, not just the public smoke, is required before npm
+promotion. The offline path needs no provider key.
 
 Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
-the configured hosted API. The workflow runs the default sweep as 50 shards.
+the configured hosted API. The workflow creates one job per discovered gating
+live-test file; offline tests, fixtures, provider-specific suites, and dedicated
+heavy/fuzz gates are not part of that matrix.
 They require:
 
 - **Variable `AEX_API_URL`** — hosted API URL.
 - **Secret `AEX_API_KEY`** — workspace API key for the selected API URL.
 - **Secret `DEEPSEEK_API_KEY`** — customer DeepSeek key. DeepSeek is the
   single RELEASE-GATING provider (SSoT `test/_fixtures/provider.ts`): gating
-  shards must never depend on another provider account's billing state.
+  gating jobs must never depend on another provider account's billing state.
   `ANTHROPIC_API_KEY` is needed only by the non-gating providers suite
   (`live-on-demand-tests.yml`).
 

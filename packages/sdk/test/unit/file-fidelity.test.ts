@@ -143,6 +143,14 @@ describe("File.fromPath — symlinks (capability-gated)", () => {
 });
 
 describe("File.fromPath — .aexignore + defaults", () => {
+  it("fails closed when an existing .aexignore cannot be read as a file", async () => {
+    const d = await makeDir();
+    await mkdir(join(d, ".aexignore"));
+    await writeFile(join(d, "secret.env"), "must-not-upload");
+
+    await expect(File.fromPath(d)).rejects.toThrow();
+  });
+
   it("prunes node_modules/ and .git/ by default and honors .aexignore", async () => {
     const d = await makeDir();
     await writeFile(join(d, "keep.txt"), "k");

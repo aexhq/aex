@@ -8,7 +8,7 @@ Generated from `packages/contracts/src/provider-support.ts` and `packages/contra
 
 Regenerate with `bun run capabilities:generate`; check with `bun run capabilities:check`.
 
-Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`), [Doubao (China)](#doubao-cn) (`doubao-cn`).
+Providers: [Anthropic](#anthropic) (`anthropic`), [DeepSeek](#deepseek) (`deepseek`), [OpenAI](#openai) (`openai`), [Gemini](#gemini) (`gemini`), [Mistral](#mistral) (`mistral`), [OpenRouter](#openrouter) (`openrouter`), [Doubao](#doubao) (`doubao`).
 
 All new submissions run on the managed runtime. Public support is expressed as supported providers and supported model ids.
 
@@ -23,7 +23,6 @@ All new submissions run on the managed runtime. Public support is expressed as s
 | [Mistral](#mistral) | `mistral` | `mistral-large-latest`, `mistral-small-latest` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | [OpenRouter](#openrouter) | `openrouter` | `gpt-4o-mini`, `gpt-4o`, `gemini-2.0-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | [Doubao](#doubao) | `doubao` | `doubao-seed-pro`, `doubao-seed-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| [Doubao (China)](#doubao-cn) | `doubao-cn` | `doubao-seed-pro`, `doubao-seed-flash` | [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/) | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 
 ## Managed evidence
 
@@ -36,7 +35,6 @@ All new submissions run on the managed runtime. Public support is expressed as s
 | `mistral` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | `openrouter` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 | `doubao` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
-| `doubao-cn` | submission parser + managed execution | [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts) |
 
 ## Skills
 
@@ -94,13 +92,6 @@ Notes:
 ### Doubao
 
 - Wire provider: `doubao`
-- Supported models: `doubao-seed-pro`, `doubao-seed-flash`
-- Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
-- Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)
-
-### Doubao (China)
-
-- Wire provider: `doubao-cn`
 - Supported models: `doubao-seed-pro`, `doubao-seed-flash`
 - Docs: [Secrets](/docs/guides/secrets/); [Events](/docs/guides/events/)
 - Evidence: [Submission parser and routing parity](https://github.com/aexhq/aex/blob/main/packages/contracts/test/submission.test.ts); [Generated matrix freshness](https://github.com/aexhq/aex/blob/main/scripts/validate/capability-matrix.test.ts)

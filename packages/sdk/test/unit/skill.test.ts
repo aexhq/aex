@@ -230,10 +230,44 @@ describe("Skill — factory equivalence + fromUrl", () => {
       }) as Response;
 
     await expect(Skill.fromUrl("https://x/too-big.zip", { name: "too-big", fetch })).rejects.toThrow(
-      new RegExp(`exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`)
+      /exceeding the \d+-byte compressed cap/
     );
     expect(reads).toBe(1);
     expect(cancelled).toBe(true);
+  });
+
+  it("rejects a declared skill archive far below the generic 10 GiB asset cap", async () => {
+    let bodyRead = false;
+    const declared = SKILL_BUNDLE_LIMITS.maxDecompressedBytes + 10 * 1024 * 1024;
+    const fetch = async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": String(declared) }),
+      body: {
+        getReader() {
+          bodyRead = true;
+          throw new Error("oversized response body must not be read");
+        }
+      }
+    }) as unknown as Response;
+
+    await expect(Skill.fromUrl("https://x/declared-too-big.zip", { name: "too-big", fetch }))
+      .rejects.toThrow(/declares .* exceeding the .* compressed cap/);
+    expect(bodyRead).toBe(false);
+  });
+
+  it("rejects a zip-bomb declaration before inflating the entry", async () => {
+    const archive = makeZip({ "SKILL.md": skillMd("bomb", "Bomb guard") });
+    const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+    for (let offset = 0; offset <= archive.byteLength - 4; offset += 1) {
+      if (view.getUint32(offset, true) === 0x02014b50) {
+        view.setUint32(offset + 24, SKILL_BUNDLE_LIMITS.maxDecompressedBytes + 1, true);
+        break;
+      }
+    }
+
+    await expect(Skill.fromUrl("https://x/bomb.zip", { name: "bomb", fetch: fetchReturning(archive) }))
+      .rejects.toThrow(/declares more than .* decompressed bytes/);
   });
 });
 

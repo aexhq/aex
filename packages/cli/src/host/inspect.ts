@@ -49,6 +49,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     return USAGE_ERR;
   }
   const timeoutFlag = takeOptionFlag(filterFlag.remaining, "--timeout");
+  if (timeoutFlag.error) { io.stderr(`${timeoutFlag.error}\n`); return USAGE_ERR; }
   let timeoutMs: number | null = null;
   if (timeoutFlag.value !== undefined) {
     const parsed = parseDuration(timeoutFlag.value);
@@ -68,17 +69,6 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     return USAGE_ERR;
   }
   const sessionId = positional[0]!;
-
-  if (!io.webSocketFactory) {
-    io.stderr(
-      JSON.stringify({
-        error: "websocket_unavailable",
-        message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
-        sessionId
-      }) + "\n"
-    );
-    return USAGE_ERR;
-  }
 
   const filters = parseFilters(filterFlag.values);
   if (filters.error) {
@@ -107,6 +97,23 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     io.stdout(`session ${sessionId} · ${header.status}${model}${created}\n`);
   }
 
+  const targetRunId = header.currentRun?.runId ?? header.lastRun?.runId;
+  if (targetRunId === undefined) {
+    if (json) io.stdout(JSON.stringify({ session: header, events: [] }) + "\n");
+    return header.status === "idle" && header.acceptsMessages ? SUCCESS : RUNTIME_ERR;
+  }
+
+  if (!io.webSocketFactory) {
+    io.stderr(
+      JSON.stringify({
+        error: "websocket_unavailable",
+        message: "`aex inspect` needs a global WebSocket (Bun or Node >= 22). Upgrade Node or run with bun.",
+        sessionId
+      }) + "\n"
+    );
+    return USAGE_ERR;
+  }
+
   const controller = new AbortController();
   let timedOut = false;
   const timer =
@@ -123,9 +130,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
   try {
     const stream = openEnvelopeStream(io, http, sessionId, {
       from: 0,
-      ...(header.currentRun?.runId || header.lastRun?.runId
-        ? { runId: header.currentRun?.runId ?? header.lastRun!.runId }
-        : {}),
+      runId: targetRunId,
       signal: controller.signal,
       ...(debug ? { debug } : {})
     });

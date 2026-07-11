@@ -49,4 +49,23 @@ describe("empty idempotencyKey fail-fast (WS4)", () => {
     expect(keys[1]).toBeTruthy();
     expect(keys[1]).not.toBe("my-key");
   });
+
+  it("accepts 255 characters and rejects 256 before HTTP", async () => {
+    const { client, keys } = makeClient();
+    await client.sessions.create({ ...base, idempotencyKey: "k".repeat(255) });
+    await expect(client.sessions.create({ ...base, idempotencyKey: "k".repeat(256) }))
+      .rejects.toBeInstanceOf(SessionConfigValidationError);
+    expect(keys).toEqual(["k".repeat(255)]);
+  });
+
+  it("rejects an oversized Aex.start message key before creating a session", async () => {
+    const { client, keys } = makeClient();
+    await expect(client.start({
+      ...base,
+      message: "hello",
+      idempotencyKey: "create-key",
+      messageIdempotencyKey: "m".repeat(256)
+    })).rejects.toBeInstanceOf(SessionConfigValidationError);
+    expect(keys).toEqual([]);
+  });
 });

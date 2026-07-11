@@ -34,6 +34,7 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
   }
   const followResult = takeBooleanFlag(common.rest, "--follow");
   const timeoutFlag = takeOptionFlag(followResult.remaining, "--timeout");
+  if (timeoutFlag.error) { io.stderr(`${timeoutFlag.error}\n`); return USAGE_ERR; }
   let timeoutMs: number | null = null;
   if (timeoutFlag.value !== undefined) {
     const parsed = parseDuration(timeoutFlag.value);

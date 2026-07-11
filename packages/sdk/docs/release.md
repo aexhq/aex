@@ -34,18 +34,31 @@ version from the package version, release run, and source commit, then:
 - Reuses the successful `main` CI result instead of rerunning the same static,
   unit, offline-user-test, docs, and package gates.
 - Packs `packages/sdk` with `bun pm pack`.
+- Binds the tarball manifest to the exact 40-character release commit under
+  `aexRelease.sourceSha`.
 - Runs the publish job in the `npm-release` GitHub Environment and requires its
   `NPM_TOKEN` secret.
 - Publishes the tarball with npm provenance to the `canary` dist-tag.
 - Waits for npm visibility.
-- Runs live user tests against that exact published version.
+- Runs the focused published SDK/CLI smoke against that exact version.
+- Captures hosted-test output privately on the runner, then prints and uploads
+  only the credential- and signed-URL-redacted log.
 - Records the source commit, npm integrity, and release-run identity in a public
   release manifest before dispatching the immutable candidate for downstream
   validation.
 
+The downstream platform deploy is the complete release gate. It installs that
+same immutable npm version in both dev and prd, then runs every discovered
+gating SDK user-test file plus the isolated admission, heavy-session, and
+tool-fuzz lanes. Provider-specific probes remain on-demand and are not part of
+promotion. Neither the public smoke nor the platform suite retries a failed
+user scenario.
+
 The canary version is deterministic for a release run. Restarting an interrupted
 automatic release resumes the same already-published version after verifying its
-identity; it never overwrites an npm artifact.
+identity; it never overwrites an npm artifact. Same-run workflow artifacts use
+stable names and are replaced on rerun so a resumed attempt cannot collide with
+an earlier attempt's diagnostics or manifest.
 
 `release.yml` also supports manual dispatch to the `canary` or `next` lane. A
 manual release reruns all package gates because it has no upstream successful
@@ -79,8 +92,13 @@ CLI version that supports OIDC trusted publishing.
 validation. Promotion is manual and fail-closed: an operator dispatches the
 workflow with the required version, release-run id, downstream validation-run
 id, source commit, npm integrity, and target dist-tag. The workflow verifies
-that complete proof before moving the tag. It runs in `npm-release`, requires
-`NPM_TOKEN`, and never rebuilds or republishes the package.
+that complete proof before moving the tag. It also requires the source commits
+currently attested by both `latest` and `canary` to be ancestors of the
+candidate, so a higher version cannot move a tag to older or divergent code.
+Versions before `0.42.0` predate the registry source field and are the only
+explicit migration exception; missing source proof fails closed from `0.42.0`
+onward. Promotion runs in `npm-release`, requires `NPM_TOKEN`, and never
+rebuilds or republishes the package.
 
 ## What ships in the tarball
 

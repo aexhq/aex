@@ -28,7 +28,16 @@ const aex = new Aex({
 });
 ```
 
-Use `retry: false` or `{ maxAttempts: 1 }` for one transport attempt.
+Use `retry: false` or `{ maxAttempts: 1 }` for one general transport attempt.
+The client policy applies both to hosted API requests and to direct
+object-storage PUTs performed while publishing file, skill, tool, and
+instruction assets.
+
+`session.files.fetch()` is deliberately lower level: it returns the raw
+`Response` from a signed file URL and does not retry that transfer. The bounded
+`session.files.read()` and `session.files.download()` helpers may repeat a safe
+file GET once only when their per-attempt transfer timeout expires. None of
+these transfer policies repeat an agent run.
 
 ## Application runs are not retried
 
@@ -50,7 +59,10 @@ const result = await aex.start({
 
 `Aex.start` derives a stable message key from the create key, so repeating the
 same call cannot create a second billable run. A changed request under the same
-key fails with an idempotency conflict.
+key fails with an idempotency conflict. Explicit keys may contain at most 255
+characters. For a create key short enough to append `:message`, the derived key
+is readable as `<createKey>:message`; longer valid keys use a deterministic
+SHA-256-derived message key that remains within the same limit.
 
 For an explicit user-driven retry on an existing session, call
 `session.messages.replayLast()` after applying your own policy. It reuses the

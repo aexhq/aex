@@ -252,7 +252,14 @@ export function parseProviderFault(value: unknown): ProviderFault | undefined {
 
   const provider = typeof record.provider === "string" ? record.provider : undefined;
   const status = coerceStatus(record.status ?? record.statusCode ?? record.httpStatus);
-  const retryAfterMs = coerceRetryAfterMs(record.retryAfterMs ?? record.retry_after_ms ?? record.retryAfter ?? record.retry_after);
+  const retryAfterMs =
+    record.retryAfterMs !== undefined
+      ? coerceRetryDelay(record.retryAfterMs, 1)
+      : record.retry_after_ms !== undefined
+        ? coerceRetryDelay(record.retry_after_ms, 1)
+        : record.retryAfter !== undefined
+          ? coerceRetryDelay(record.retryAfter, 1000)
+          : coerceRetryDelay(record.retry_after, 1000);
   const message = typeof record.message === "string" ? record.message : undefined;
 
   return {
@@ -282,18 +289,17 @@ function coerceStatus(raw: unknown): number | undefined {
   return undefined;
 }
 
-/** Accept a ms number, a `<digits>` string, or seconds under a `retry_after` alias. */
-function coerceRetryAfterMs(raw: unknown): number | undefined {
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    // Heuristic: small integers are seconds (the upstream convention), large
-    // ones are already milliseconds.
-    return raw > 0 && raw < 1000 ? raw * 1000 : raw;
-  }
-  if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
-    const n = Number(raw.trim());
-    return n > 0 && n < 1000 ? n * 1000 : n;
-  }
-  return undefined;
+/** Coerce a numeric delay using the unit declared by its field name. */
+function coerceRetryDelay(raw: unknown, multiplier: 1 | 1000): number | undefined {
+  const value =
+    typeof raw === "number" && Number.isFinite(raw)
+      ? raw
+      : typeof raw === "string" && /^\d+$/.test(raw.trim())
+        ? Number(raw.trim())
+        : undefined;
+  if (value === undefined || value < 0) return undefined;
+  const milliseconds = value * multiplier;
+  return Number.isSafeInteger(milliseconds) ? milliseconds : undefined;
 }
 
 /**

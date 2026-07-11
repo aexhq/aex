@@ -1,12 +1,13 @@
-// Duration-balanced CI test sharding for the live user-test suite.
+// CI file discovery and duration-balanced sharding for the live user-test suite.
 //
 // Vitest's built-in `--shard=i/N` splits by FILE COUNT, but per-file wall
 // times here span ~1s to ~6.5min (live tests wait on remote sessions), so
 // count-based shards were observed at 1m42s..12m7s. This script instead
 // LPT bin-packs the files vitest would collect using recorded durations
 // (shard-durations.json; unknown files get the median) and prints the file
-// list for shard i of N. Workflows run `test:user:files -- <files...>`
-// instead of `--shard`.
+// list for shard i of N. The hosted workflow uses `--matrix` for full
+// one-file-per-job fanout; the duration-balanced modes remain useful when a
+// caller intentionally chooses fewer jobs.
 //
 // Guarantees:
 //   - deterministic: same files + same durations => same partition;
@@ -37,6 +38,13 @@ const EXCLUDED = new Set([
 ]);
 const EXCLUDED_DIRS = new Set(["node_modules", "providers"]);
 
+// Most live files run at most one active session at a time. This scenario
+// deliberately starts ten sessions concurrently inside one test, so a
+// one-file-per-job matrix consumes more workspace slots than its job count.
+const SESSION_SLOT_OVERRIDES = new Map([
+  ["test/live/edge-concurrency-scale.user.test.ts", 10]
+]);
+
 export function collectTestFiles(root = appRoot) {
   const out = [];
   const walk = (rel) => {
@@ -49,8 +57,16 @@ export function collectTestFiles(root = appRoot) {
       }
     }
   };
-  walk("test");
+  walk("test/live");
   return out.sort();
+}
+
+export function sessionSlotsForFile(file) {
+  return SESSION_SLOT_OVERRIDES.get(file) ?? 1;
+}
+
+export function declaredPeakSessionSlots(files) {
+  return files.reduce((total, file) => total + sessionSlotsForFile(file), 0);
 }
 
 export function loadDurations(path = join(appRoot, "shard-durations.json")) {
@@ -123,7 +139,12 @@ export function excludeFiles(files, excludedFiles) {
 export function buildFileMatrix(files) {
   if (files.length === 0) throw new Error("no test files collected");
   const count = files.length;
-  return files.map((file, index) => ({ shard: index + 1, count, file }));
+  return files.map((file, index) => ({
+    shard: index + 1,
+    count,
+    file,
+    sessionSlots: sessionSlotsForFile(file)
+  }));
 }
 
 function parseArgs(argv) {

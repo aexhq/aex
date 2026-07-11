@@ -17,6 +17,13 @@ import type { SkillFiles } from "./bundle.js";
  */
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// A valid skill cannot contain more than maxDecompressedBytes of payload.
+// Reserve deterministic ZIP header/path overhead for maxFiles entries without
+// inheriting the 10 GiB direct-file upload ceiling.
+const MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES =
+  SKILL_BUNDLE_LIMITS.maxDecompressedBytes +
+  SKILL_BUNDLE_LIMITS.maxFiles * (2 * SKILL_BUNDLE_LIMITS.maxPathLength + 256) +
+  64 * 1024;
 
 class SkillArchiveDownloadError extends Error {}
 
@@ -73,10 +80,10 @@ async function download(url: string, fetchImpl: FetchLike, timeoutMs: number): P
     // we buffer it. The authoritative caps are re-checked by bundleSkillFiles.
     const declaredRaw = res.headers.get("content-length");
     const declared = declaredRaw !== null && /^\d+$/.test(declaredRaw) ? Number(declaredRaw) : undefined;
-    if (declared !== undefined && declared > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
+    if (declared !== undefined && declared > MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES) {
       throw new SkillArchiveDownloadError(
         `Skill.fromUrl: archive at ${redactUrl(url)} declares ${declared} bytes, ` +
-          `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
+          `exceeding the ${MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES}-byte compressed cap`
       );
     }
     const bytes = await readResponseBytes(res, url, controller.signal);
@@ -118,10 +125,10 @@ async function readResponseBytes(res: Response, url: string, signal: AbortSignal
 }
 
 function ensureWithinCompressedCap(bytes: number, url: string): void {
-  if (bytes > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
+  if (bytes > MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES) {
     throw new SkillArchiveDownloadError(
       `Skill.fromUrl: archive at ${redactUrl(url)} is ${bytes} bytes, ` +
-        `exceeding the ${SKILL_BUNDLE_LIMITS.maxCompressedBytes}-byte compressed cap`
+        `exceeding the ${MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES}-byte compressed cap`
     );
   }
 }
@@ -177,9 +184,30 @@ async function verifySha256(bytes: Uint8Array, expected: string, url: string): P
 // ---------------------------------------------------------------------------
 
 function unzip(bytes: Uint8Array, url: string): Record<string, Uint8Array> {
+  let fileCount = 0;
+  let declaredTotal = 0;
   try {
-    return unzipSync(bytes);
+    return unzipSync(bytes, {
+      filter: (file) => {
+        if (/[\\/]$/.test(file.name)) return false;
+        fileCount += 1;
+        if (fileCount > SKILL_BUNDLE_LIMITS.maxFiles) {
+          throw new SkillArchiveDownloadError(
+            `Skill.fromUrl: archive at ${redactUrl(url)} exceeds the ${SKILL_BUNDLE_LIMITS.maxFiles}-file cap`
+          );
+        }
+        declaredTotal += file.originalSize;
+        if (declaredTotal > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
+          throw new SkillArchiveDownloadError(
+            `Skill.fromUrl: archive at ${redactUrl(url)} declares more than ` +
+              `${SKILL_BUNDLE_LIMITS.maxDecompressedBytes} decompressed bytes`
+          );
+        }
+        return true;
+      }
+    });
   } catch (err) {
+    if (err instanceof SkillArchiveDownloadError) throw err;
     throw new Error(
       `Skill.fromUrl: could not unzip the archive at ${redactUrl(url)} ` +
         `(expected a .zip): ${errMessage(err)}`

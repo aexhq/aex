@@ -58,7 +58,9 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
       return "rate_limit";
     case "session_busy":
     case "session_not_terminal":
+    case "session_terminal":
     case "unknown_workspace":
+    case "workspace_inactive":
     case "workspace_spend_cap_exceeded":
     case "insufficient_balance":
     case "upstream_error":

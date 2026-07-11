@@ -117,11 +117,13 @@ const webSocketFactory: CliIO["webSocketFactory"] =
 
 const io: CliIO = {
   readFile: (path) => readFile(path, "utf8"),
+  readFileBytes: async (path) => new Uint8Array(await readFile(path)),
   writeFile: (path, data) => writeFile(path, data),
   fetchImpl: fetch,
   stdout: (chunk) => process.stdout.write(chunk),
   stderr: (chunk) => process.stderr.write(chunk),
-  exit: (code) => process.exit(code),
+  // Let stdout/stderr pipes drain naturally before the event loop exits.
+  exit: (code) => { process.exitCode = code; },
   argv: process.argv,
   cwd: () => process.cwd(),
   walkDirectory,

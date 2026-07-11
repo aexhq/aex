@@ -328,7 +328,7 @@ async function putPartWithRetry(
       return etag.replace(/"/g, "");
     }
     // A 403 mid-upload is a presign-expiry; refresh the URL once and retry.
-    if (response.status === 403 && !refreshed) {
+    if (response.status === 403 && !refreshed && attempt < retryConfig.maxAttempts) {
       refreshed = true;
       await response.text().catch(() => "");
       currentUrl = await refreshUrl();

@@ -41,8 +41,7 @@
     { "id": "gemini", "name": "Gemini" },
     { "id": "mistral", "name": "Mistral" },
     { "id": "openrouter", "name": "OpenRouter" },
-    { "id": "doubao", "name": "Doubao" },
-    { "id": "doubao-cn", "name": "Doubao China" }
+    { "id": "doubao", "name": "Doubao" }
   ],
   "featureAreas": [
     {
@@ -73,7 +72,7 @@
       "slug": "models-and-providers",
       "href": "/docs/features/#models-and-providers",
       "title": "Models and providers",
-      "description": "Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, Doubao, and Doubao China behind one submission shape."
+      "description": "Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao behind one submission shape."
     },
     {
       "slug": "typed-control-surface",

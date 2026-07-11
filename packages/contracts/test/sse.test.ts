@@ -73,6 +73,14 @@ describe("SseParser", () => {
     expect(cr).toEqual([{ event: "b", data: "2" }]);
   });
 
+  it("holds a trailing CR until the next chunk resolves a split CRLF", () => {
+    const parser = new SseParser();
+    expect(parser.pushText("data: hello\r")).toEqual([]);
+    expect(parser.pushText("\ndata: world\r\n\r\n")).toEqual([
+      { event: "message", data: "hello\nworld" }
+    ]);
+  });
+
   it("buffers a partial trailing frame until the next chunk", () => {
     const parser = new SseParser();
     const first = parser.pushText("event: x\ndata: par");

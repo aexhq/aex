@@ -4,8 +4,32 @@ import { buildPublicReleaseManifest, validatePlatformValidationManifest, validat
 
 const PUBLIC_SHA = "a".repeat(40);
 const OTHER_PUBLIC_SHA = "b".repeat(40);
+const PLATFORM_SHA = "c".repeat(40);
 const SDK_INTEGRITY = "sha512-dGVzdA==";
 const OTHER_SDK_INTEGRITY = "sha512-b3RoZXI=";
+const BRAIN_DIGEST = `sha256:${"1".repeat(64)}`;
+const EGRESS_DIGEST = `sha256:${"2".repeat(64)}`;
+const BYOK_DIGEST = `sha256:${"3".repeat(64)}`;
+
+function imageEvidence() {
+  return {
+    brain: {
+      tag: `sha-${PLATFORM_SHA.slice(0, 12)}-pub-${PUBLIC_SHA.slice(0, 12)}`,
+      dev: { repository: "aex-dev-eu-west-2-brain", digest: BRAIN_DIGEST },
+      prd: { repository: "aex-prd-eu-west-2-brain", digest: BRAIN_DIGEST }
+    },
+    egress: {
+      tag: `sha-${"d".repeat(12)}`,
+      dev: { repository: "aex-dev-eu-west-2-egress-proxy", digest: EGRESS_DIGEST },
+      prd: { repository: "aex-prd-eu-west-2-egress-proxy", digest: EGRESS_DIGEST }
+    },
+    byok: {
+      tag: `sha-${"e".repeat(12)}`,
+      dev: { repository: "aex-dev-eu-west-2-byok-inject", digest: BYOK_DIGEST },
+      prd: { repository: "aex-prd-eu-west-2-byok-inject", digest: BYOK_DIGEST }
+    }
+  };
+}
 
 describe("release manifest contract", () => {
   it("writes a first-class public candidate manifest", () => {
@@ -97,13 +121,13 @@ describe("release manifest contract", () => {
   it("fails platform validation manifests that do not prove every release gate", () => {
     const result = validatePlatformValidationManifest(
       {
-        schemaVersion: 3,
+        schemaVersion: 4,
         kind: "aex-platform-validation-manifest",
-        platform: { runId: "456" },
+        platform: { runId: "456", headSha: PLATFORM_SHA },
         publicRelease: { runId: "123", headSha: PUBLIC_SHA },
         sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
         gates: ["suite_dev"],
-        images: { brain: { tag: "sha-a" }, egress: { tag: "sha-b" }, byok: { tag: "sha-c" } }
+        images: imageEvidence()
       },
       {
         version: "0.40.17",
@@ -122,13 +146,13 @@ describe("release manifest contract", () => {
 
   it("rejects platform evidence bound to a different public SHA or package integrity", () => {
     const manifest = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: "aex-platform-validation-manifest",
-      platform: { runId: "456" },
+      platform: { runId: "456", headSha: PLATFORM_SHA },
       publicRelease: { runId: "123", headSha: PUBLIC_SHA },
       sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
       gates: ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"],
-      images: { brain: { tag: "sha-a" }, egress: { tag: "sha-b" }, byok: { tag: "sha-c" } }
+      images: imageEvidence()
     };
 
     expect(validatePlatformValidationManifest(manifest, { publicReleaseHeadSha: OTHER_PUBLIC_SHA }).errors).toContain(
@@ -137,5 +161,21 @@ describe("release manifest contract", () => {
     expect(validatePlatformValidationManifest(manifest, { integrity: OTHER_SDK_INTEGRITY }).errors).toContain(
       `sdk.integrity must be ${OTHER_SDK_INTEGRITY}`
     );
+  });
+
+  it("rejects platform proof whose prd image digest differs from the dev-tested artifact", () => {
+    const images = imageEvidence();
+    images.brain.prd.digest = `sha256:${"9".repeat(64)}`;
+    const result = validatePlatformValidationManifest({
+      schemaVersion: 4,
+      kind: "aex-platform-validation-manifest",
+      platform: { runId: "456", headSha: PLATFORM_SHA },
+      publicRelease: { runId: "123", headSha: PUBLIC_SHA },
+      sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
+      gates: ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"],
+      images
+    });
+
+    expect(result.errors).toContain("images.brain prd digest must match the dev-tested digest");
   });
 });

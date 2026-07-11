@@ -68,11 +68,6 @@ const CHILD_PRELUDE = `
   const PROVIDER = process.env.PROVIDER;
   const PROVIDER_KEY = process.env.PROVIDER_KEY;
   const MODEL = process.env.MODEL;
-  const toolResults = (events, name) =>
-    events
-      .filter((e) => e.type === "TOOL_CALL_RESULT")
-      .map((e) => e.data ?? {})
-      .filter((d) => JSON.stringify(d).includes(name) || true);
 `;
 
 async function runChild(

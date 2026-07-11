@@ -170,12 +170,12 @@ export async function buildCliInstructions(content: string, name: string): Promi
   return { name, contentHash: await hashBytes(bytes), bytes };
 }
 
-export async function buildCliFile(args: { readonly name: string; readonly content: string }): Promise<CliFileDraft> {
+export async function buildCliFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<CliFileDraft> {
   const filename = sanitiseFilename(args.name);
   if (filename === undefined) {
     throw new Error(`File.fromBytes: name ${JSON.stringify(args.name)} is not a valid filename`);
   }
-  const bytes = TEXT.encode(args.content);
+  const bytes = args.bytes;
   if (bytes.byteLength === 0) {
     throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
   }

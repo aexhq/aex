@@ -82,8 +82,8 @@ jobs:
       # smoke pass;
       # and (c) published THIS version — the npm registry publish timestamp
       # (`time[version]`) must fall inside that run's created_at..updated_at
-      # window (created_at, not workflow_started_at, so retry attempts of flaky
-      # live shards don't move the window past the publish time). Any check
+      # window (created_at, not workflow_started_at, so a rerun does not move
+      # the window past the publish time). Any check
       # that cannot be evaluated fails the promotion.
       - name: Verify green release workflow attempt published this version
         env:
@@ -203,7 +203,10 @@ jobs:
           proof_workflow="$(jq -r '.workflow // empty' "${proof_file}")"
           proof_run_id="$(jq -r '.runId // empty' "${proof_file}")"
           proof_version="$(jq -r '.sdkVersion // empty' "${proof_file}")"
-          if [ "${proof_workflow}" != "deploy.yml" ] || [ "${proof_run_id}" != "${PLATFORM_DEPLOY_RUN_ID}" ]; then
+          proof_schema="$(jq -r '.schemaVersion // empty' "${proof_file}")"
+          proof_kind="$(jq -r '.kind // empty' "${proof_file}")"
+          if [ "${proof_schema}" != "2" ] || [ "${proof_kind}" != "aex-platform-promotion-proof" ] || \
+             [ "${proof_workflow}" != "deploy.yml" ] || [ "${proof_run_id}" != "${PLATFORM_DEPLOY_RUN_ID}" ]; then
             echo "::error::Platform promotion proof does not match deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID}."
             exit 1
           fi
@@ -214,6 +217,19 @@ jobs:
           for gate in suite_dev spot_canary_dev suite_prod smoke_prod; do
             if ! jq -e --arg gate "${gate}" '.gates | index($gate)' "${proof_file}" >/dev/null; then
               echo "::error::Platform promotion proof is missing gate '${gate}'."
+              exit 1
+            fi
+          done
+          for image in brain egress byok; do
+            if ! jq -e --arg image "${image}" '
+              .images[$image] as $e
+              | ($e.tag | type == "string" and length > 0)
+                and ($e.dev.repository | type == "string" and startswith("aex-dev-eu-west-2-"))
+                and ($e.prd.repository | type == "string" and startswith("aex-prd-eu-west-2-"))
+                and ($e.dev.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+                and ($e.prd.digest == $e.dev.digest)
+            ' "${proof_file}" >/dev/null; then
+              echo "::error::Platform promotion proof does not establish dev/prd digest identity for image '${image}'."
               exit 1
             fi
           done
@@ -274,17 +290,19 @@ jobs:
         run: |
           set -euo pipefail
           current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
-          if ! git merge-base --is-ancestor "${RELEASE_SOURCE_SHA}" "${current_main_sha}"; then
-            echo "::error::Candidate source ${RELEASE_SOURCE_SHA} is not an ancestor of current main ${current_main_sha}."
-            exit 1
-          fi
-          current_latest_version="$(npm view @aexhq/sdk dist-tags.latest --json --registry https://registry.npmjs.org | jq -er 'if type == "string" and length > 0 then . else error("missing latest dist-tag") end')"
+          dist_tags="$(npm view @aexhq/sdk dist-tags --json --registry https://registry.npmjs.org)"
+          current_latest_version="$(jq -er '.latest | if type == "string" and length > 0 then . else error("missing latest dist-tag") end' <<<"${dist_tags}")"
+          current_canary_version="$(jq -er '.canary | if type == "string" and length > 0 then . else error("missing canary dist-tag") end' <<<"${dist_tags}")"
+          current_latest_sha="$(npm view "@aexhq/sdk@${current_latest_version}" aexRelease.sourceSha --json --registry https://registry.npmjs.org | jq -r 'select(type == "string")')"
+          current_canary_sha="$(npm view "@aexhq/sdk@${current_canary_version}" aexRelease.sourceSha --json --registry https://registry.npmjs.org | jq -r 'select(type == "string")')"
           bun scripts/cicd/assert-monotonic-promotion.mjs \
             --candidate-version "${PACKAGE_VERSION}" \
             --candidate-sha "${RELEASE_SOURCE_SHA}" \
             --current-main-sha "${current_main_sha}" \
-            --candidate-is-main-ancestor true \
-            --current-latest-version "${current_latest_version}"
+            --current-latest-version "${current_latest_version}" \
+            --current-latest-sha "${current_latest_sha}" \
+            --current-canary-version "${current_canary_version}" \
+            --current-canary-sha "${current_canary_sha}"
 
       - name: Add npm dist-tag
         env:

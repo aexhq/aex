@@ -1,11 +1,11 @@
 /**
  * Single source of truth for the RELEASE-GATING live-test provider.
  *
- * Gating suites (release.yml smoke plus the 50 live-user-tests.yml shards) test
+ * Gating suites (release.yml smoke plus the discovered live-test matrix) test
  * PLATFORM behavior, not any particular model vendor — so they all run on one
  * cheap, funded provider and must never depend on another provider account's
  * billing state (2026-07-03: the shared BYOK ANTHROPIC_API_KEY ran out of
- * credit and killed multiple gating shards while DeepSeek + managed-key tests
+ * credit and killed multiple gating jobs while DeepSeek + managed-key tests
  * passed). Per-provider correctness coverage (Anthropic BYOK, doubao, …)
  * lives in test/live/providers/ and runs only via the non-gating, dispatch-only
  * `test:user:providers` suite (live-on-demand-tests.yml).

@@ -1,7 +1,15 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildFileMatrix, collectTestFiles, excludeFiles, loadDurations, lptPartition } from "../../apps/user-tests/scripts/shard-files.mjs";
+import {
+  buildFileMatrix,
+  collectTestFiles,
+  declaredPeakSessionSlots,
+  excludeFiles,
+  loadDurations,
+  lptPartition,
+  sessionSlotsForFile
+} from "../../apps/user-tests/scripts/shard-files.mjs";
 import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -27,25 +35,34 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(new Set(matrix.map((entry) => entry.file)).size).toBe(files.length);
     expect(matrix.map((entry) => entry.shard)).toEqual(files.map((_, index) => index + 1));
     expect(matrix.every((entry) => entry.count === files.length)).toBe(true);
+    expect(matrix.every((entry) => entry.sessionSlots === sessionSlotsForFile(entry.file))).toBe(true);
   });
 
-  it("partitions the real collected suite completely and deterministically", () => {
+  it("collects only gating live tests", () => {
     const files = collectTestFiles(userTestsRoot);
-    const durations = loadDurations();
 
-    expect(files.length).toBeGreaterThanOrEqual(50);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((file) => file.startsWith("test/live/"))).toBe(true);
+    expect(files.every((file) => file.endsWith(".test.ts"))).toBe(true);
+    expect(files.some((file) => file.startsWith("test/offline/"))).toBe(false);
+    expect(files.some((file) => file.startsWith("test/_fixtures/"))).toBe(false);
     // Excluded explicit gates never leak into the default sweep.
     expect(files).not.toContain("test/live/edge-admission-gates.user.test.ts");
     expect(files).not.toContain("test/live/live-sdk-heavy-session.test.ts");
     expect(files).not.toContain("test/live/live-api-fuzz.test.ts");
     expect(files).not.toContain("test/live/live-sdk-tool-capability-fuzz.test.ts");
     expect(files.some((f) => f.startsWith("test/live/providers/"))).toBe(false);
-    // Provider-specific suites (Anthropic BYOK, doubao, ...) are non-gating:
-    // they live under test/live/providers/ and never enter the 50 shards.
+    // Provider-specific suites (Anthropic BYOK, doubao, ...) are non-gating.
     expect(files).not.toContain("test/live/live-sdk-anthropic-managed.test.ts");
     expect(files).not.toContain("test/live/providers/live-sdk-anthropic-managed.test.ts");
+  });
 
-    const bins = lptPartition(files, durations, 50);
+  it("partitions the real collected suite completely and deterministically", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const durations = loadDurations();
+    const shardCount = Math.max(1, Math.ceil(files.length / 2));
+
+    const bins = lptPartition(files, durations, shardCount);
     const all = bins.flatMap((bin) => bin.files);
     // Completeness + disjointness: every collected file in exactly one shard.
     expect([...all].sort()).toEqual([...files].sort());
@@ -53,8 +70,24 @@ describe("shard-files duration-balanced bin packing", () => {
     for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
 
     // Deterministic: same inputs => identical partition.
-    const again = lptPartition(files, durations, 50);
+    const again = lptPartition(files, durations, shardCount);
     expect(again.map((b) => b.files)).toEqual(bins.map((b) => b.files));
+  });
+
+  it("declares peak session-slot demand for internally concurrent live tests", () => {
+    const edgeConcurrency = "test/live/edge-concurrency-scale.user.test.ts";
+    const ordinary = "test/live/config-envvars.user.test.ts";
+
+    expect(sessionSlotsForFile(ordinary)).toBe(1);
+    expect(sessionSlotsForFile(edgeConcurrency)).toBe(10);
+    expect(declaredPeakSessionSlots([ordinary, edgeConcurrency])).toBe(11);
+
+    const files = collectTestFiles(userTestsRoot);
+    const matrix = buildFileMatrix(files);
+    expect(declaredPeakSessionSlots(files)).toBe(
+      matrix.reduce((total, entry) => total + entry.sessionSlots, 0)
+    );
+    expect(declaredPeakSessionSlots(files)).toBeGreaterThan(files.length);
   });
 
   it("balances by duration, not file count", () => {
@@ -92,8 +125,9 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(filtered).not.toContain("test/live/live-default-base-url.test.ts");
     expect(filtered.length).toBe(files.length - 1);
 
-    const bins = lptPartition(filtered, durations, 50);
-    expect(bins).toHaveLength(50);
+    const shardCount = Math.max(1, Math.ceil(filtered.length / 2));
+    const bins = lptPartition(filtered, durations, shardCount);
+    expect(bins).toHaveLength(shardCount);
     for (const bin of bins) expect(bin.files.length).toBeGreaterThan(0);
     expect(bins.flatMap((bin) => bin.files)).not.toContain("test/live/live-default-base-url.test.ts");
   });

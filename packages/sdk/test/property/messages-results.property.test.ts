@@ -91,6 +91,13 @@ function sessionRecord(status = "idle") {
     id: "sess_1",
     status,
     acceptsMessages: status === "idle",
+    lastRun: {
+      sessionId: "sess_1",
+      runId: "run_1",
+      turnSeq: 1,
+      phase: "finished",
+      outcome: "succeeded"
+    },
     costUsd: 0,
     costTelemetry: { providerUsage: [] }
   };
