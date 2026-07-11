@@ -97,6 +97,17 @@ describe("apiErrorFromResponse (WS4)", () => {
     expect(err.apiCode).toBeUndefined();
   });
 
+  it.each([
+    { status: 413, code: "event_archive_too_large" },
+    { status: 503, code: "event_archive_deadline_exceeded" }
+  ] as const)("maps archive HTTP $status to stable generic code $code", ({ status, code }) => {
+    const err = apiErrorFromResponse({ status, body: { error: code, retryable: false } });
+
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(err.apiCode).toBe(code);
+    expect(err.message).toBe(AEX_API_ERROR_MESSAGES[code]);
+  });
+
   it("every stable code maps to a kind with no throw", () => {
     for (const code of AEX_API_ERROR_CODES) {
       expect(typeof apiErrorKindForCode(code)).toBe("string");
@@ -125,6 +136,8 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "session_busy":
         case "session_not_terminal":
         case "session_terminal":
+        case "event_archive_too_large":
+        case "event_archive_deadline_exceeded":
         case "unknown_workspace":
         case "workspace_inactive":
         case "workspace_spend_cap_exceeded":

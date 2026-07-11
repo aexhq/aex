@@ -59,6 +59,8 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "session_busy":
     case "session_not_terminal":
     case "session_terminal":
+    case "event_archive_too_large":
+    case "event_archive_deadline_exceeded":
     case "unknown_workspace":
     case "workspace_inactive":
     case "workspace_spend_cap_exceeded":
