@@ -64,10 +64,10 @@ function makeFetch() {
           throughSeq: 10
         },
         files: [
-          { id: "file-read", checkpointId: "cp-1", filename: "read.txt", sizeBytes: 16, contentType: "text/plain" },
-          { id: "file-download", checkpointId: "cp-1", filename: "download.txt", sizeBytes: 20, contentType: "text/plain" },
-          { id: "file-archive", checkpointId: "cp-1", filename: "archive.txt", sizeBytes: 19, contentType: "text/plain" },
-          { id: "file-timeout", checkpointId: "cp-1", filename: "timeout.txt", sizeBytes: 7, contentType: "text/plain" }
+          { id: "file-read", checkpointId: "cp-1", filename: "read.txt", sizeBytes: 21, sha256: "b6040e352139602607f9f505e2e67c390666f8230e521cdbd5bb011521f03555", contentType: "text/plain" },
+          { id: "file-download", checkpointId: "cp-1", filename: "download.txt", sizeBytes: 25, sha256: "2d201c2ed644abd811f85e7d0c723d622b9ab397045ca6f903ddf6d591f4c450", contentType: "text/plain" },
+          { id: "file-archive", checkpointId: "cp-1", filename: "archive.txt", sizeBytes: 24, sha256: "e4004a29b896bfa70c355e4179d6eef5dadd58f858b48eda1eec6d78e2f264ba", contentType: "text/plain" },
+          { id: "file-timeout", checkpointId: "cp-1", filename: "timeout.txt", sizeBytes: 7, sha256: "f77d1bb58da886e3cbeebbf35a0b3d217b003506792268052c6a730fbc5ec9bc", contentType: "text/plain" }
         ]
       });
     }

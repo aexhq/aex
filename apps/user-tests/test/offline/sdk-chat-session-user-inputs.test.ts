@@ -39,7 +39,7 @@ const fetch = async (input, init = {}) => {
   }
   if (parsed.pathname === "/api/sessions/session-1/files" && method === "GET") {
     strictEqual(parsed.searchParams.get("checkpointId"), "cp-1");
-    return json({ revision, files: [{ id: "file-1", checkpointId: "cp-1", filename: "answer.txt", sizeBytes: 12 }] });
+    return json({ revision, files: [{ id: "file-1", checkpointId: "cp-1", filename: "answer.txt", sizeBytes: 12, sha256: "7509e5bda0c762d2bac7f90d758b5b2263fa01ccbc542ab5e3df163be08e6ca9" }] });
   }
   if (parsed.pathname === "/api/sessions/session-1/events" && method === "GET") {
     return json({ events: [] });

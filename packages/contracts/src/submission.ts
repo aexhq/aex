@@ -127,6 +127,35 @@ export interface PlatformPackageInput {
   readonly version?: string;
 }
 
+const APT_PACKAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9+.-]+(?::[a-z0-9][a-z0-9-]*)?$/;
+const APT_EXACT_VERSION_PATTERN = /^[0-9][0-9A-Za-z.+:~-]*$/;
+const NPM_PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+const NPM_EXACT_VERSION_PATTERN =
+  /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const PIP_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const PIP_EXACT_VERSION_PATTERN = /^[0-9](?:[0-9A-Za-z.!+_-]*[0-9A-Za-z])?$/;
+
+function assertPlatformPackage(pkg: PlatformPackage, path: string): void {
+  const invalidName = () => new Error(`${path}.name must be a valid ${pkg.ecosystem} registry package name`);
+  const invalidVersion = () => new Error(`${path}.version must be an exact ${pkg.ecosystem} version`);
+  switch (pkg.ecosystem) {
+    case "apt":
+      if (!APT_PACKAGE_NAME_PATTERN.test(pkg.name)) throw invalidName();
+      if (pkg.version !== undefined && !APT_EXACT_VERSION_PATTERN.test(pkg.version)) throw invalidVersion();
+      return;
+    case "npm":
+      if (!NPM_PACKAGE_NAME_PATTERN.test(pkg.name)) throw invalidName();
+      if (pkg.version !== undefined && !NPM_EXACT_VERSION_PATTERN.test(pkg.version)) throw invalidVersion();
+      return;
+    case "pip":
+      if (!PIP_PACKAGE_NAME_PATTERN.test(pkg.name)) throw invalidName();
+      if (pkg.version !== undefined && !PIP_EXACT_VERSION_PATTERN.test(pkg.version)) throw invalidVersion();
+      return;
+    default:
+      throw new Error(`${path}.ecosystem must be one of: ${PLATFORM_PACKAGE_ECOSYSTEMS.join(", ")}`);
+  }
+}
+
 /**
  * Render a parsed {@link PlatformPackage} as the version-embedded install
  * string used by runtime materialization. The join differs per manager:
@@ -137,6 +166,7 @@ export interface PlatformPackageInput {
  * package installer.
  */
 export function packageInstallString(pkg: PlatformPackage): string {
+  assertPlatformPackage(pkg, "package");
   if (pkg.version === undefined) {
     return pkg.name;
   }
@@ -433,7 +463,9 @@ function parsePackages(input: unknown): readonly PlatformPackage[] | undefined {
         `submission.environment.packages[${index}].name resolves to an empty package after stripping the "${ecosystem}:" ecosystem prefix`
       );
     }
-    return version ? { name, version, ecosystem } : { name, ecosystem };
+    const parsed = version ? { name, version, ecosystem } : { name, ecosystem };
+    assertPlatformPackage(parsed, `submission.environment.packages[${index}]`);
+    return parsed;
   });
 }
 

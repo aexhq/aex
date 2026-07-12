@@ -338,6 +338,32 @@ describe("environment.packages ecosystem parsing", () => {
   it("rejects a package whose name is empty after stripping the prefix", () => {
     expect(() => parsePackages([{ name: "pip:" }])).toThrow(/resolves to an empty package/);
   });
+
+  it("accepts registry package identifiers and exact ecosystem versions", () => {
+    expect(
+      parsePackages([
+        { name: "npm:@aex/example-package", version: "1.2.3-beta.1+build.7" },
+        { name: "pip:typing-extensions", version: "4.12.2" },
+        { name: "apt:libssl3:amd64", version: "3.0.13-0ubuntu3.5" }
+      ])
+    ).toEqual([
+      { name: "@aex/example-package", version: "1.2.3-beta.1+build.7", ecosystem: "npm" },
+      { name: "typing-extensions", version: "4.12.2", ecosystem: "pip" },
+      { name: "libssl3:amd64", version: "3.0.13-0ubuntu3.5", ecosystem: "apt" }
+    ]);
+  });
+
+  it.each([
+    [{ name: "apt:a" }, /valid apt registry package name/],
+    [{ name: "apt:--allow-unauthenticated" }, /valid apt registry package name/],
+    [{ name: "apt:../../tmp/package.deb" }, /valid apt registry package name/],
+    [{ name: "npm:https://example.test/package.tgz" }, /valid npm registry package name/],
+    [{ name: "npm:pkg", version: "^1.2.3" }, /exact npm version/],
+    [{ name: "pip:-r" }, /valid pip registry package name/],
+    [{ name: "pip:pkg", version: "@ https://example.test/pkg.whl" }, /exact pip version/]
+  ])("rejects package-manager options, paths, URLs, and non-exact versions", (entry, expected) => {
+    expect(() => parsePackages([entry])).toThrow(expected);
+  });
 });
 
 describe("packageInstallString", () => {
@@ -349,6 +375,13 @@ describe("packageInstallString", () => {
 
   it("emits the bare name when no version is given", () => {
     expect(packageInstallString({ name: "ffmpeg", ecosystem: "apt" })).toBe("ffmpeg");
+  });
+
+  it("revalidates parsed package objects before rendering manager input", () => {
+    expect(() => packageInstallString({ name: "--pre", ecosystem: "pip" })).toThrow(/valid pip registry package name/);
+    expect(() => packageInstallString({ name: "express", version: "latest", ecosystem: "npm" })).toThrow(
+      /exact npm version/
+    );
   });
 });
 
