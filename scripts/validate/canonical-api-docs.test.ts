@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { posix, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");
@@ -27,6 +27,21 @@ describe("canonical public API documentation", () => {
       }
     }
     expect(findings).toEqual([]);
+  });
+
+  it("teaches File.mountPath as a directory rather than a destination filename", () => {
+    const quickstart = readFileSync(resolve(repoRoot, "packages/sdk/docs/quickstart.md"), "utf8");
+    const files = readFileSync(resolve(repoRoot, "packages/sdk/docs/files.md"), "utf8");
+    const example = /File\.fromPath\("([^"]+)",\s*\{\s*mountPath:\s*"([^"]+)"/.exec(quickstart);
+    const sourceName = posix.basename(example?.[1] ?? "");
+    const mountDirectory = example?.[2] ?? "";
+    const resolvedPath = `${mountDirectory.replace(/\/$/, "")}/${sourceName}`;
+
+    expect(sourceName).not.toBe("");
+    expect(posix.basename(mountDirectory)).not.toBe(sourceName);
+    expect(files).toContain(`\`${resolvedPath}\``);
+    expect(files).toContain("`mountPath` is always a destination directory");
+    expect(files).toContain("storage slug; it never renames the mounted file");
   });
 });
 

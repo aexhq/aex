@@ -12,6 +12,14 @@ There are two different file concepts:
 Raw uploaded bytes are assets. A workspace file is a typed resource that pins
 an asset, logical resource ID, version, hash, name, and mount path.
 
+`mountPath` is always a destination directory. The runtime preserves each
+source/archive filename inside that directory, so an `input.csv` published
+with `mountPath: "/workspace/input"` appears at
+`/workspace/input/input.csv`. A `name` passed to `File.fromPath` is only the
+resource's storage slug; it never renames the mounted file. Multiple files can
+intentionally share one mount directory as long as their resulting paths do
+not collide.
+
 ## Reusable workspace files
 
 ```ts
@@ -32,6 +40,15 @@ const session = await aex.sessions.create({
 resource. `list()`, `get(resourceId, version?)`, and `delete(resourceId)` manage
 the catalog. Runs always receive pinned refs; they never resolve a mutable
 "latest" version during execution.
+
+As a run boots, each attached input archive is checked against a separate
+runtime materialization envelope: at most 64 MiB compressed, 128 MiB expanded,
+and 1,000 archive entries. The runtime may overlap bulk skill extraction with
+the first model call, but it blocks the first tool, any post-run hook, and run
+completion until every promised input is ready. These execution-safety bounds
+are distinct from the workspace storage quota and the limits enforced while
+publishing a resource. An input that exceeds them fails run setup explicitly;
+tools and terminal results never observe a silently partial input tree.
 
 ## Session file snapshots
 

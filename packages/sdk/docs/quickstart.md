@@ -72,7 +72,7 @@ drafts first, then pass the returned pinned refs under `assets`:
 import { File } from "@aexhq/sdk";
 
 const source = await aex.workspace.files.publish(
-  await File.fromPath("./input.csv", { mountPath: "/workspace/input.csv" })
+  await File.fromPath("./input.csv", { mountPath: "/workspace/input" })
 );
 
 const withInput = await aex.sessions.create({

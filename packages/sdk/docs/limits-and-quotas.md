@@ -56,6 +56,22 @@ silently lost.
 | `head`/`tail` max file size (larger files rejected — use `bash head`/`tail`) | 100 MB | aex policy | No (hard ceiling) | `SESSION_TOOL_HEAD_TAIL_MAX_FILE_BYTES` |
 | `grep`/`glob` files visited per recursive walk (then truncates with a notice) | 100,000 | aex policy | No (hard ceiling) | `SESSION_TOOL_WALK_MAX_FILES` |
 
+### Input materialization (per attached archive)
+
+Workspace storage and resource publication do not imply that one archive can
+consume the entire allowance inside a running container. Materialization may
+overlap the first model call, but the runtime applies these fail-closed bounds
+before the first tool, post-run hook, or run completion can observe the input.
+Exceeding one fails run setup with a stable resource-limit diagnostic; no tool
+or terminal result observes a partial archive.
+
+| Limit | Value | Source | Raisable? | Constant |
+| --- | --- | --- | --- | --- |
+| Max compressed archive bytes | 64 MiB | aex policy | No (hard ceiling) | `FILE_ARCHIVE_MAX_COMPRESSED_BYTES` |
+| Max expanded archive bytes | 128 MiB | aex policy | No (hard ceiling) | `FILE_ARCHIVE_MAX_DECOMPRESSED_BYTES` |
+| Max archive entries | 1,000 | aex policy | No (hard ceiling) | `FILE_ARCHIVE_MAX_ENTRIES` |
+| Max planned entries across all attached workspace-file archives | 10,000 | aex policy | No (hard ceiling) | `FILE_PLAN_MAX_ENTRIES` |
+
 ### Subagents (per session lineage)
 
 Subagent lineage bounds are enforced server-side but are intentionally not
@@ -111,6 +127,11 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
 | Skill bundle max directory depth (`a/b/c/d` = 4) | 16 | Workspace default | Per-workspace (plan/env) | `WORKSPACE_SKILL_BUNDLE_MAX_DEPTH` |
 | Skill bundle max entry path length | 512 characters | Workspace default | No (hard ceiling) | `WORKSPACE_SKILL_BUNDLE_MAX_PATH_LENGTH` |
 | `File.mountPath` max length | 512 characters | Workspace default | No (hard ceiling) | `WORKSPACE_MOUNT_PATH_MAX_LENGTH` |
+
+`File.mountPath` names a directory, not a destination filename. The attached
+file keeps its source/archive entry filename below that directory; the resource
+storage slug does not rename it. See [Files](files.md) for an example and the
+separate per-run materialization envelope.
 
 ### Rate limits (per workspace, per minute)
 
