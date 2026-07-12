@@ -1,5 +1,6 @@
 import { zipSync, type Zippable } from "fflate";
 import {
+  MAX_SYMLINK_TARGET_LENGTH,
   RESERVED_META_ENTRY,
   SKILL_BUNDLE_LIMITS,
   bundleManifestIsEmpty,
@@ -66,15 +67,19 @@ export function splitSkillBundleMetadata(
   const files: Record<string, Uint8Array> = { ...entries };
   const sidecar = files[RESERVED_META_ENTRY];
   delete files[RESERVED_META_ENTRY];
+  const collected = collectCanonicalArchiveFiles(files, source);
   if (sidecar === undefined) {
-    assertArchiveEntryCount(Object.keys(files).length, source);
-    return { files };
+    validateBundleGraph(collected, undefined, source);
+    return { files: Object.fromEntries(collected) };
   }
   const manifest = parseBundleManifest(sidecar);
   if (manifest === null) throw new Error(`${source}: invalid ${RESERVED_META_ENTRY} fidelity metadata`);
-  assertArchiveEntryCount(Object.keys(files).length + manifest.symlinks.length, source);
-  assertArchiveEntryCount(manifest.exec.length, `${source} executable metadata`);
-  return { files, meta: { exec: manifest.exec, symlinks: manifest.symlinks } };
+  const meta = validateBundleGraph(
+    collected,
+    { exec: manifest.exec, symlinks: manifest.symlinks },
+    source
+  );
+  return { files: Object.fromEntries(collected), ...(meta !== undefined ? { meta } : {}) };
 }
 
 /**
@@ -106,6 +111,130 @@ function buildCanonicalZippable(
 function assertNotReservedMetaPath(path: string, kind: string): void {
   if (path === RESERVED_META_ENTRY) {
     throw new Error(`${kind} files must not include reserved "${RESERVED_META_ENTRY}"; fidelity metadata is emitted by the SDK`);
+  }
+}
+
+function collectCanonicalArchiveFiles(
+  files: Readonly<Record<string, Uint8Array>>,
+  source: string
+): Map<string, Uint8Array> {
+  const entries = Object.entries(files);
+  assertArchiveEntryCount(entries.length, source);
+  const collected = new Map<string, Uint8Array>();
+  for (const [rawPath, bytes] of entries) {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error(`${source} file ${JSON.stringify(rawPath)} must be a Uint8Array`);
+    }
+    const path = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength }).path;
+    assertNotReservedMetaPath(path, source);
+    if (collected.has(path)) throw new Error(`${source} contains duplicate path: ${path}`);
+    collected.set(path, bytes);
+  }
+  return collected;
+}
+
+/** Validate the complete regular-file + fidelity-leaf graph before zipping. */
+function validateBundleGraph(
+  collected: ReadonlyMap<string, Uint8Array>,
+  meta: BundleMeta | undefined,
+  source: string
+): BundleMeta | undefined {
+  assertArchiveEntryCount(collected.size, source);
+  const leaves = new Map<string, "regular file" | "symlink">();
+  for (const path of collected.keys()) leaves.set(path, "regular file");
+
+  if (meta === undefined) {
+    assertNoLeafPrefixConflicts(leaves, source);
+    return undefined;
+  }
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {
+    throw new Error(`${source} fidelity metadata must be an object`);
+  }
+  const raw = meta as { readonly exec?: unknown; readonly symlinks?: unknown };
+  if (raw.exec !== undefined && !Array.isArray(raw.exec)) {
+    throw new Error(`${source} fidelity metadata exec must be an array`);
+  }
+  if (raw.symlinks !== undefined && !Array.isArray(raw.symlinks)) {
+    throw new Error(`${source} fidelity metadata symlinks must be an array`);
+  }
+  const rawExec = raw.exec ?? [];
+  const rawSymlinks = raw.symlinks ?? [];
+  assertArchiveEntryCount(rawExec.length, `${source} executable metadata`);
+  assertArchiveEntryCount(collected.size + rawSymlinks.length, source);
+
+  const exec: string[] = [];
+  const execSet = new Set<string>();
+  for (const value of rawExec) {
+    const path = canonicalMetadataPath(value, source, "executable");
+    if (execSet.has(path)) throw new Error(`${source} contains duplicate executable path: ${path}`);
+    if (!collected.has(path)) {
+      throw new Error(`${source} executable path ${JSON.stringify(path)} must reference a regular file`);
+    }
+    execSet.add(path);
+    exec.push(path);
+  }
+
+  const symlinks: BundleSymlink[] = [];
+  for (const value of rawSymlinks) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`${source} fidelity metadata contains a malformed symlink`);
+    }
+    const record = value as { readonly path?: unknown; readonly target?: unknown };
+    const path = canonicalMetadataPath(record.path, source, "symlink");
+    if (typeof record.target !== "string") {
+      throw new Error(`${source} symlink ${JSON.stringify(path)} target must be a string`);
+    }
+    if (record.target.length > MAX_SYMLINK_TARGET_LENGTH) {
+      throw new Error(
+        `${source} symlink ${JSON.stringify(path)} target exceeds ${MAX_SYMLINK_TARGET_LENGTH} characters`
+      );
+    }
+    const conflict = leaves.get(path);
+    if (conflict !== undefined) {
+      throw new Error(`${source} symlink path ${JSON.stringify(path)} conflicts with a ${conflict}`);
+    }
+    leaves.set(path, "symlink");
+    symlinks.push({ path, target: record.target });
+  }
+
+  assertNoLeafPrefixConflicts(leaves, source);
+  return { exec, symlinks };
+}
+
+function canonicalMetadataPath(value: unknown, source: string, kind: "executable" | "symlink"): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${source} ${kind} path must be a non-empty string`);
+  }
+  let path: string;
+  try {
+    path = validateSkillBundleEntry({ path: value, size: 0 }).path;
+  } catch (error) {
+    throw new Error(
+      `${source} ${kind} path ${JSON.stringify(value)} is invalid: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (path === RESERVED_META_ENTRY) {
+    throw new Error(`${source} ${kind} path must not use reserved ${JSON.stringify(RESERVED_META_ENTRY)}`);
+  }
+  return path;
+}
+
+function assertNoLeafPrefixConflicts(
+  leaves: ReadonlyMap<string, "regular file" | "symlink">,
+  source: string
+): void {
+  for (const path of leaves.keys()) {
+    let separator = path.lastIndexOf("/");
+    while (separator > 0) {
+      const ancestor = path.slice(0, separator);
+      if (leaves.has(ancestor)) {
+        throw new Error(
+          `${source} leaf prefix conflict: ${JSON.stringify(ancestor)} conflicts with ${JSON.stringify(path)}`
+        );
+      }
+      separator = ancestor.lastIndexOf("/");
+    }
   }
 }
 
@@ -160,12 +289,8 @@ export function bundleSkillFiles(files: SkillFiles, meta?: BundleMeta): BundledS
   // recomputes the canonical hash, so this is for retry-safety / debug
   // reproducibility rather than a wire-shape contract). The fidelity sidecar,
   // when present, is appended LAST so a metadata-free bundle is byte-identical.
-  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, meta);
-  assertArchiveEntryCount(
-    collected.size + (meta?.symlinks?.length ?? 0),
-    "Skill bundle"
-  );
-  assertArchiveEntryCount(meta?.exec?.length ?? 0, "Skill bundle executable metadata");
+  const validatedMeta = validateBundleGraph(collected, meta, "Skill bundle");
+  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, validatedMeta);
   assertArchiveExpandedSize(totalDecompressed + sidecarBytes, "Skill bundle");
 
   const zip = zipSync(zippable, { level: 6 });
@@ -238,12 +363,8 @@ export function bundleToolFiles(
   }
   collected.set("tool.json", manifestBytes);
 
-  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, meta);
-  assertArchiveEntryCount(
-    collected.size + (meta?.symlinks?.length ?? 0),
-    "Tool bundle"
-  );
-  assertArchiveEntryCount(meta?.exec?.length ?? 0, "Tool bundle executable metadata");
+  const validatedMeta = validateBundleGraph(collected, meta, "Tool bundle");
+  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, validatedMeta);
   assertArchiveExpandedSize(totalDecompressed + manifestBytes.byteLength + sidecarBytes, "Tool bundle");
 
   const zip = zipSync(zippable, { level: 6 });

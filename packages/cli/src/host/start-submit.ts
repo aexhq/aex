@@ -1,4 +1,5 @@
 import { zipSync, type Zippable } from "fflate";
+import { Buffer } from "node:buffer";
 import {
   ASSET_ARCHIVE_LIMITS,
   BUILTIN_TOOL_NAMES,
@@ -167,6 +168,7 @@ export async function buildCliInstructions(content: string, name: string): Promi
   if (!/^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name)) {
     throw new Error("Instructions.fromContent: name must be a lowercase workspace slug");
   }
+  assertCliExpandedSize(Buffer.byteLength(content, "utf8"), "Instructions.fromContent");
   const bytes = zipSync({ "AGENTS.md": [TEXT.encode(content), { mtime: ZIP_EPOCH }] }, { level: 6 });
   return { name, contentHash: await hashBytes(bytes), bytes };
 }
@@ -177,9 +179,10 @@ export async function buildCliFile(args: { readonly name: string; readonly bytes
     throw new Error(`File.fromBytes: name ${JSON.stringify(args.name)} is not a valid filename`);
   }
   const bytes = args.bytes;
-  if (bytes.byteLength === 0) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) {
     throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
   }
+  assertCliExpandedSize(bytes.byteLength, "File.fromBytes");
   const zip = zipSync({ [filename]: [bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
   return {
     name: slugFromFilename(filename),
@@ -187,6 +190,12 @@ export async function buildCliFile(args: { readonly name: string; readonly bytes
     mountPath: DEFAULT_FILE_MOUNT_PATH,
     bytes: zip
   };
+}
+
+export function assertCliExpandedSize(size: number, source: string): void {
+  if (!Number.isSafeInteger(size) || size < 0 || size > ASSET_ARCHIVE_LIMITS.maxDecompressedBytes) {
+    throw new Error(`${source} exceeds the 128 MiB expanded limit (got ${size})`);
+  }
 }
 
 export function toCliSessionEnvironment(env: PlatformEnvironment | undefined): CliSessionEnvironmentOptions | undefined {

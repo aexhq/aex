@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, writeFile, chmod, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { unzipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { parseBundleManifest, RESERVED_META_ENTRY } from "@aexhq/contracts";
 import { Skill } from "../../src/skill.js";
 import { Tool } from "../../src/tool.js";
@@ -206,6 +206,78 @@ describe("Skill.fromFiles — meta threading (OS-independent sidecar plumbing)",
     expect([...skillBytes(fromUrl)]).toEqual([...bytes]);
   });
 
+  it("rejects a malformed fidelity sidecar from both bytes and URL sources", async () => {
+    const malformed = zipSync({
+      "SKILL.md": strToU8(skillMd("malformed", "Malformed sidecar.")),
+      [RESERVED_META_ENTRY]: strToU8(
+        JSON.stringify({ v: 1, exec: ["SKILL.md", 42], symlinks: [] })
+      )
+    });
+
+    await expect(Skill.fromBytes({ name: "malformed", zip: malformed }))
+      .rejects.toThrow(/invalid \.aexmeta\.json fidelity metadata/);
+    await expect(Skill.fromUrl("https://x/malformed.zip", {
+      name: "malformed",
+      fetch: async () => new Response(malformed)
+    })).rejects.toThrow(/invalid \.aexmeta\.json fidelity metadata/);
+  });
+
+  it("rejects missing and duplicate executable paths during authoring", async () => {
+    const files = {
+      "SKILL.md": skillMd("exec-graph", "Exec graph."),
+      "run.sh": "#!/bin/sh\n"
+    };
+    await expect(Skill.fromFiles({
+      name: "missing-exec",
+      files,
+      meta: { exec: ["missing.sh"] }
+    })).rejects.toThrow(/executable path.*regular file/);
+    await expect(Skill.fromFiles({
+      name: "duplicate-exec",
+      files,
+      meta: { exec: ["run.sh", "run.sh"] }
+    })).rejects.toThrow(/duplicate executable path/);
+  });
+
+  it("rejects symlink exact and prefix collisions with files and other symlinks", async () => {
+    const files = {
+      "SKILL.md": skillMd("link-graph", "Link graph."),
+      "data.txt": "data",
+      "nested/file.txt": "nested"
+    };
+    await expect(Skill.fromFiles({
+      name: "exact-link-collision",
+      files,
+      meta: { symlinks: [{ path: "data.txt", target: "nested/file.txt" }] }
+    })).rejects.toThrow(/symlink path.*regular file/);
+    await expect(Skill.fromFiles({
+      name: "file-prefix-collision",
+      files,
+      meta: { symlinks: [{ path: "nested", target: "data.txt" }] }
+    })).rejects.toThrow(/leaf prefix conflict/);
+    await expect(Skill.fromFiles({
+      name: "link-prefix-collision",
+      files,
+      meta: {
+        symlinks: [
+          { path: "links", target: "data.txt" },
+          { path: "links/current", target: "../data.txt" }
+        ]
+      }
+    })).rejects.toThrow(/leaf prefix conflict/);
+  });
+
+  it("rejects a regular-file prefix collision before zipping", async () => {
+    await expect(Skill.fromFiles({
+      name: "regular-prefix",
+      files: {
+        "SKILL.md": skillMd("regular-prefix", "Regular prefix."),
+        node: "file",
+        "node/child.txt": "child"
+      }
+    })).rejects.toThrow(/leaf prefix conflict/);
+  });
+
   it("counts captured symlink leaves at the exact archive boundary", async () => {
     const symlinks = Array.from({ length: 999 }, (_, index) => ({
       path: `link-${index}`,
@@ -311,6 +383,19 @@ describe("Tool.fromFiles — meta threading (OS-independent sidecar plumbing)", 
     const without = await Tool.fromFiles({ ...TOOL_MANIFEST, files });
     expect([...toolBytes(withEmpty)]).toEqual([...toolBytes(without)]);
     expect(toolZip(withEmpty)[RESERVED_META_ENTRY]).toBeUndefined();
+  });
+
+  it("applies the same strict fidelity graph validation to tools", async () => {
+    await expect(Tool.fromFiles({
+      ...TOOL_MANIFEST,
+      files: { "src/index.js": "export default async () => {}\n" },
+      meta: { exec: ["missing.js"] }
+    })).rejects.toThrow(/executable path.*regular file/);
+    await expect(Tool.fromFiles({
+      ...TOOL_MANIFEST,
+      files: { "src/index.js": "export default async () => {}\n", data: "data" },
+      meta: { symlinks: [{ path: "data/child", target: "../src/index.js" }] }
+    })).rejects.toThrow(/leaf prefix conflict/);
   });
 });
 

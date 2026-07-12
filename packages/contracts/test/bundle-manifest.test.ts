@@ -63,11 +63,13 @@ describe("parseBundleManifest — forward-compatible + defensive", () => {
     expect(parseBundleManifest(new TextEncoder().encode('{"v":2,"exec":["x"]}'))).toBeNull();
   });
 
-  it("drops structurally-invalid entries without throwing", () => {
+  it("rejects a known-v1 manifest when any exec or symlink entry is malformed", () => {
     const bytes = new TextEncoder().encode(
       '{"v":1,"exec":["ok",123,""],"symlinks":[{"path":"p","target":"t"},{"path":"","target":"x"},{"nope":true}]}'
     );
-    expect(parseBundleManifest(bytes)).toEqual({ v: 1, exec: ["ok"], symlinks: [{ path: "p", target: "t" }] });
+    expect(parseBundleManifest(bytes)).toBeNull();
+    expect(parseBundleManifest(new TextEncoder().encode('{"v":1,"exec":{},"symlinks":[]}'))).toBeNull();
+    expect(parseBundleManifest(new TextEncoder().encode('{"v":1,"exec":[],"symlinks":{}}'))).toBeNull();
   });
 
   it("rejects oversized metadata before serialization", () => {
