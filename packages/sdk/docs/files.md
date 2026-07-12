@@ -43,11 +43,12 @@ the catalog. Runs always receive pinned refs; they never resolve a mutable
 
 As a run boots, each attached input archive is checked against a separate
 runtime materialization envelope: at most 64 MiB compressed, 128 MiB expanded,
-and 1,000 archive entries. The runtime may overlap bulk skill extraction with
+and 1,000 materialized files or safe symlinks. The runtime may overlap bulk skill extraction with
 the first model call, but it blocks the first tool, any post-run hook, and run
 completion until every promised input is ready. These execution-safety bounds
-are distinct from the workspace storage quota and the limits enforced while
-publishing a resource. An input that exceeds them fails run setup explicitly;
+are distinct from the broader raw-asset storage quota. The SDK and workspace
+publisher reject known violations before a resource can be pinned, and the
+runtime revalidates the immutable archive before use. An invalid input fails explicitly;
 tools and terminal results never observe a silently partial input tree.
 
 ## Session file snapshots

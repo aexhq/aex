@@ -10,12 +10,12 @@
  *   - an ordinary filename (with `.`/`_`) is accepted by `fromBytes`.
  */
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, truncate } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
 import { File } from "../../src/file.js";
-import { DEFAULT_FILE_MOUNT_PATH } from "@aexhq/contracts";
+import { ASSET_ARCHIVE_LIMITS, DEFAULT_FILE_MOUNT_PATH } from "@aexhq/contracts";
 
 const TEXT = new TextEncoder();
 const DEC = new TextDecoder();
@@ -87,6 +87,18 @@ describe("File.fromBytes", () => {
 });
 
 describe("File.fromPath", () => {
+  it("rejects an oversized sparse file before reading or framing it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aex-file-test-"));
+    try {
+      const p = join(dir, "oversized.bin");
+      await writeFile(p, "x");
+      await truncate(p, ASSET_ARCHIVE_LIMITS.maxDecompressedBytes + 1);
+      await expect(File.fromPath(p)).rejects.toThrow(/128 MiB expanded limit/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("a single file preserves its real basename as the sole zip entry", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aex-file-test-"));
     try {

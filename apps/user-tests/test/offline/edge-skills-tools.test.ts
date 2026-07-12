@@ -10,7 +10,7 @@
  *   A. Skill-bundle path safety + hard limits via `bundleSkillFiles` directly —
  *      path traversal (`..`), absolute/drive-letter paths, backslash separators,
  *      NUL bytes, trailing slash, depth > 16, path length > 512, empty map,
- *      missing SKILL.md, > 1000 files, an oversized (> 50 MB) file.
+ *      missing SKILL.md, > 1000 files, and expanded bytes above the runtime cap.
  *   B. `Tool.fromFiles` manifest validation — missing/empty/array input schema,
  *      non-"object" schema type, empty / oversized description, reserved "__" in
  *      the name, entry missing from files, reserved "tool.json" key, empty files
@@ -23,9 +23,8 @@
  *      two DISTINCT custom Tools with the SAME name are NOT deduped client-side
  *      (both ride the wire — the collision is the server's to resolve).
  *
- * Limits are the `SKILL_BUNDLE_LIMITS` contract values (maxFiles 1000,
- * maxDecompressedBytes 50 MiB, maxDepth 16, maxPathLength 512), hardcoded here
- * with a reference since the SDK does not re-export the limits object.
+ * Limits mirror the installed package contract and are interpolated into the
+ * child-process fixture so this blackbox test exercises the packed artifact.
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -139,7 +138,6 @@ function onlyCreateBody(calls) {
 const LIMIT_MAX_FILES = 1000;
 const LIMIT_MAX_DEPTH = 16;
 const LIMIT_MAX_PATH = 512;
-const LIMIT_MAX_DECOMPRESSED = 50 * 1024 * 1024;
 
 describe("edge: skills & tools composition (offline, installed package)", () => {
   let install: InstallResult;
@@ -199,11 +197,14 @@ const many = { "SKILL.md": SKILL };
 for (let i = 0; i < ${LIMIT_MAX_FILES} + 5; i++) many["f" + i + ".txt"] = "x";
 const manyMsg = await expectReject("too many files", async () => bundleSkillFiles(many), /file limit|maxFiles/);
 
-// A single oversized (> 50 MiB decompressed) file. The per-entry size check
-// fires before zipping, so this never allocates a giant zip.
+// Reuse one small allocation across enough entries to exceed the aggregate
+// expanded cap. The sum check fires before zipping, so the fixture stays cheap.
+const oversizedFiles = { "SKILL.md": SKILL };
+const sharedChunk = new Uint8Array(1024 * 1024 + 1);
+for (let i = 0; i < 128; i++) oversizedFiles["big-" + i + ".bin"] = sharedChunk;
 const bigMsg = await expectReject(
-  "oversized file",
-  async () => bundleSkillFiles({ "SKILL.md": SKILL, "big.bin": new Uint8Array(${LIMIT_MAX_DECOMPRESSED} + 1) }),
+  "oversized expanded bundle",
+  async () => bundleSkillFiles(oversizedFiles),
   /maxDecompressedBytes|decompressed cap/
 );
 

@@ -69,6 +69,21 @@ describe("parseBundleManifest — forward-compatible + defensive", () => {
     );
     expect(parseBundleManifest(bytes)).toEqual({ v: 1, exec: ["ok"], symlinks: [{ path: "p", target: "t" }] });
   });
+
+  it("rejects oversized metadata before serialization", () => {
+    const target = "x".repeat(4097);
+    expect(() => serializeBundleManifest({
+      v: 1,
+      exec: [],
+      symlinks: [{ path: "link", target }]
+    })).toThrow(/4096 characters/);
+  });
+
+  it("rejects oversized metadata arrays before iterating them", () => {
+    const exec = Array.from({ length: 1_001 }, (_, index) => `bin/run-${index}`);
+    const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, exec, symlinks: [] }));
+    expect(parseBundleManifest(bytes)).toBeNull();
+  });
 });
 
 describe("bundleManifestIsEmpty", () => {

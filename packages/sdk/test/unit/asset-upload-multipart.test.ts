@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { ASSET_ARCHIVE_LIMITS } from "@aexhq/contracts";
 import { uploadAssetMultipart, type AssetsHttpClient, type AssetFetch, type ZipStreamDriver } from "../../src/asset-upload.js";
 
 const noDelayRetry = {
@@ -118,6 +119,24 @@ function reassemble(bodies: Map<number, Uint8Array>): Uint8Array {
 }
 
 describe("uploadAssetMultipart — part boundaries", () => {
+  it("stops the first pass at the compressed cap without requesting a multipart plan", async () => {
+    const rec: Recorder = { presignBodies: [], finalizeBodies: [], aborts: 0, refreshes: 0 };
+    const http = makeHttp({ rec });
+    const chunk = new Uint8Array(1024 * 1024);
+    let pushes = 0;
+    const drive: ZipStreamDriver = async (sink) => {
+      for (;;) {
+        pushes += 1;
+        await sink(chunk);
+      }
+    };
+
+    await expect(uploadAssetMultipart({ http, drive, partSize: 1024 * 1024 }))
+      .rejects.toThrow(/64 MiB compressed limit/);
+    expect(pushes).toBe(ASSET_ARCHIVE_LIMITS.maxCompressedBytes / chunk.byteLength + 1);
+    expect(rec.presignBodies).toEqual([]);
+  });
+
   const P = 1024;
   for (const size of [1, P - 1, P, P + 1, 2 * P, 3 * P + 17]) {
     it(`size=${size} splits into the right parts and reassembles to the payload`, async () => {

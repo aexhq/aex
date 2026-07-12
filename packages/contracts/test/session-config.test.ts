@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASSET_ARCHIVE_LIMITS,
   MCP_SERVER_NAME_PATTERN,
   normaliseSkillBundlePath,
   normaliseSessionRequestConfig,
@@ -32,6 +33,21 @@ const baseSubmission = {
   },
   secrets: { apiKeys: { anthropic: "sk-ant-x" } }
 } as const;
+
+describe("asset archive limits", () => {
+  it("pins public authoring to the runtime materialization envelope", () => {
+    expect(ASSET_ARCHIVE_LIMITS).toEqual({
+      maxCompressedBytes: 64 * 1024 * 1024,
+      maxDecompressedBytes: 128 * 1024 * 1024,
+      maxEntries: 1_000,
+      maxMetadataBytes: 8 * 1024 * 1024
+    });
+    expect(SKILL_BUNDLE_LIMITS.maxCompressedBytes).toBe(ASSET_ARCHIVE_LIMITS.maxCompressedBytes);
+    expect(SKILL_BUNDLE_LIMITS.maxDecompressedBytes).toBe(ASSET_ARCHIVE_LIMITS.maxDecompressedBytes);
+    expect(SKILL_BUNDLE_LIMITS.maxFiles).toBe(ASSET_ARCHIVE_LIMITS.maxEntries);
+    expect("maxBytes" in SKILL_BUNDLE_LIMITS).toBe(false);
+  });
+});
 
 describe("session-config — id and name patterns", () => {
   it("accepts the canonical skl_ id format", () => {

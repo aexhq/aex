@@ -7,7 +7,7 @@
  *   - presign errors fail without a buffered `/api/assets` retry
  */
 import { describe, expect, it, vi } from "vitest";
-import { HttpClient } from "@aexhq/contracts";
+import { ASSET_ARCHIVE_LIMITS, HttpClient } from "@aexhq/contracts";
 import { uploadAsset, type AssetsHttpClient, type AssetFetch } from "../../src/asset-upload.js";
 import { AexApiError, AexNetworkError } from "../../src/index.js";
 
@@ -25,6 +25,15 @@ async function hashOf(b: Uint8Array): Promise<string> {
 }
 
 describe("uploadAsset (direct-to-storage)", () => {
+  it("rejects an oversized runtime archive before hashing or presign", async () => {
+    const http: AssetsHttpClient = { request: vi.fn() as AssetsHttpClient["request"] };
+    const oversized = { byteLength: ASSET_ARCHIVE_LIMITS.maxCompressedBytes + 1 } as Uint8Array;
+
+    await expect(uploadAsset({ http, bytes: oversized, hash: `sha256:${"0".repeat(64)}` }))
+      .rejects.toThrow(/64 MiB compressed limit/);
+    expect(http.request).not.toHaveBeenCalled();
+  });
+
   it("dedups when presign reports exists:true (no PUT, no finalize)", async () => {
     const hash = await hashOf(bytes);
     const calls: string[] = [];

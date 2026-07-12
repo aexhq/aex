@@ -1,5 +1,6 @@
 import { zipSync, type Zippable } from "fflate";
 import {
+  ASSET_ARCHIVE_LIMITS,
   BUILTIN_TOOL_NAMES,
   DEFAULT_FILE_MOUNT_PATH,
   SKILL_BUNDLE_LIMITS,
@@ -484,6 +485,15 @@ function collectBundleFiles(
 }
 
 function zipCollected(collected: Map<string, Uint8Array>): Uint8Array {
+  if (collected.size > ASSET_ARCHIVE_LIMITS.maxEntries) {
+    throw new Error(`bundle exceeds ${ASSET_ARCHIVE_LIMITS.maxEntries} materialized entries (got ${collected.size})`);
+  }
+  const expandedBytes = [...collected.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0);
+  if (expandedBytes > ASSET_ARCHIVE_LIMITS.maxDecompressedBytes) {
+    throw new Error(
+      `bundle exceeds expanded cap of ${ASSET_ARCHIVE_LIMITS.maxDecompressedBytes} bytes (got ${expandedBytes})`
+    );
+  }
   const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const zippable: Zippable = {};
   for (const [path, bytes] of sorted) {

@@ -1,6 +1,6 @@
 import { unzipSync } from "fflate";
 import { SKILL_BUNDLE_LIMITS, type FetchLike } from "@aexhq/contracts";
-import type { SkillFiles } from "./bundle.js";
+import { splitSkillBundleMetadata, type ParsedSkillBundle } from "./bundle.js";
 
 /**
  * Fetch a zip-archived skill from a URL and reduce it to the same in-memory
@@ -17,13 +17,7 @@ import type { SkillFiles } from "./bundle.js";
  */
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-// A valid skill cannot contain more than maxDecompressedBytes of payload.
-// Reserve deterministic ZIP header/path overhead for maxFiles entries without
-// inheriting the 10 GiB direct-file upload ceiling.
-const MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES =
-  SKILL_BUNDLE_LIMITS.maxDecompressedBytes +
-  SKILL_BUNDLE_LIMITS.maxFiles * (2 * SKILL_BUNDLE_LIMITS.maxPathLength + 256) +
-  64 * 1024;
+const MAX_SKILL_ARCHIVE_DOWNLOAD_BYTES = SKILL_BUNDLE_LIMITS.maxCompressedBytes;
 
 class SkillArchiveDownloadError extends Error {}
 
@@ -44,7 +38,7 @@ export interface FetchSkillArchiveOptions {
 export async function fetchSkillArchive(
   url: string,
   opts: FetchSkillArchiveOptions = {}
-): Promise<SkillFiles> {
+): Promise<ParsedSkillBundle> {
   if (typeof url !== "string" || url.length === 0) {
     throw new Error("Skill.fromUrl: url is required");
   }
@@ -61,7 +55,7 @@ export async function fetchSkillArchive(
     await verifySha256(bytes, opts.sha256, url);
   }
   const entries = unzip(bytes, url);
-  return resolveSkillRoot(entries, url);
+  return splitSkillBundleMetadata(resolveSkillRoot(entries, url), "Skill.fromUrl");
 }
 
 // ---------------------------------------------------------------------------
@@ -191,9 +185,10 @@ function unzip(bytes: Uint8Array, url: string): Record<string, Uint8Array> {
       filter: (file) => {
         if (/[\\/]$/.test(file.name)) return false;
         fileCount += 1;
-        if (fileCount > SKILL_BUNDLE_LIMITS.maxFiles) {
+        if (fileCount > SKILL_BUNDLE_LIMITS.maxFiles + 1) {
           throw new SkillArchiveDownloadError(
-            `Skill.fromUrl: archive at ${redactUrl(url)} exceeds the ${SKILL_BUNDLE_LIMITS.maxFiles}-file cap`
+            `Skill.fromUrl: archive at ${redactUrl(url)} exceeds the ` +
+              `${SKILL_BUNDLE_LIMITS.maxFiles}-entry cap plus one control record`
           );
         }
         declaredTotal += file.originalSize;
@@ -228,7 +223,7 @@ function unzip(bytes: Uint8Array, url: string): Record<string, Uint8Array> {
  * root `SKILL.md` — never speculatively. `bundleSkillFiles` re-asserts the
  * SKILL.md-at-root invariant as the authoritative check.
  */
-function resolveSkillRoot(entries: Record<string, Uint8Array>, url: string): SkillFiles {
+function resolveSkillRoot(entries: Record<string, Uint8Array>, url: string): Record<string, Uint8Array> {
   const files: Record<string, Uint8Array> = {};
   for (const [rawPath, bytes] of Object.entries(entries)) {
     const path = rawPath.replace(/\\/g, "/");

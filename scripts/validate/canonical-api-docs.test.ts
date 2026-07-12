@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { posix, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ASSET_ARCHIVE_LIMITS } from "../../packages/contracts/src/session-config.js";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");
 const publicDocs = [
@@ -42,6 +43,23 @@ describe("canonical public API documentation", () => {
     expect(files).toContain(`\`${resolvedPath}\``);
     expect(files).toContain("`mountPath` is always a destination directory");
     expect(files).toContain("storage slug; it never renames the mounted file");
+  });
+
+  it("documents the same usable asset envelope enforced by public authoring", () => {
+    const limits = readFileSync(resolve(repoRoot, "packages/sdk/docs/limits-and-quotas.md"), "utf8");
+    const files = readFileSync(resolve(repoRoot, "packages/sdk/docs/files.md"), "utf8");
+
+    expect(ASSET_ARCHIVE_LIMITS).toEqual({
+      maxCompressedBytes: 64 * 1024 * 1024,
+      maxDecompressedBytes: 128 * 1024 * 1024,
+      maxEntries: 1_000,
+      maxMetadataBytes: 8 * 1024 * 1024
+    });
+    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxCompressedBytes`");
+    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxDecompressedBytes`");
+    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxEntries`");
+    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxMetadataBytes`");
+    expect(files).toContain("1,000 materialized files or safe symlinks");
   });
 });
 

@@ -23,6 +23,8 @@
  * so existing content-addressed dedup is preserved.
  */
 
+import { ASSET_ARCHIVE_LIMITS } from "./session-config.js";
+
 /** Reserved zip entry carrying the fidelity sidecar. Rejected as a user file path. */
 export const RESERVED_META_ENTRY = ".aexmeta.json";
 
@@ -33,6 +35,8 @@ export const DEFAULT_FILE_MODE = 0o644;
 
 /** Bundle-time cap on a captured symlink target string. */
 export const MAX_SYMLINK_TARGET_LENGTH = 4096;
+/** Defensive cap for each metadata array before the parser iterates it. */
+const MAX_BUNDLE_METADATA_RECORDS = 1_000;
 
 /** A captured symlink: `path` is the bundle-relative link name, `target` the raw `readlink()` string. */
 export interface BundleSymlink {
@@ -70,13 +74,23 @@ const META_TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
  * perturbs dedup determinism.
  */
 export function serializeBundleManifest(manifest: BundleManifest): Uint8Array {
+  if (manifest.exec.length > MAX_BUNDLE_METADATA_RECORDS || manifest.symlinks.length > MAX_BUNDLE_METADATA_RECORDS) {
+    throw new Error(`bundle fidelity metadata exceeds the ${MAX_BUNDLE_METADATA_RECORDS}-record limit`);
+  }
+  if (manifest.symlinks.some((entry) => entry.target.length > MAX_SYMLINK_TARGET_LENGTH)) {
+    throw new Error(`bundle fidelity symlink target exceeds ${MAX_SYMLINK_TARGET_LENGTH} characters`);
+  }
   const exec = [...manifest.exec].sort(byString);
   const symlinks = [...manifest.symlinks]
     .map((s) => ({ path: s.path, target: s.target }))
     .sort((a, b) => byString(a.path, b.path));
   // Object literal key order is the wire order under JSON.stringify (fixed).
   const json = JSON.stringify({ v: 1, exec, symlinks });
-  return META_TEXT_ENCODER.encode(json);
+  const bytes = META_TEXT_ENCODER.encode(json);
+  if (bytes.byteLength > ASSET_ARCHIVE_LIMITS.maxMetadataBytes) {
+    throw new Error("bundle fidelity metadata exceeds the 8 MiB limit");
+  }
+  return bytes;
 }
 
 /**
@@ -88,6 +102,7 @@ export function serializeBundleManifest(manifest: BundleManifest): Uint8Array {
  */
 export function parseBundleManifest(bytes: Uint8Array | null | undefined): BundleManifest | null {
   if (!bytes || bytes.byteLength === 0) return null;
+  if (bytes.byteLength > ASSET_ARCHIVE_LIMITS.maxMetadataBytes) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(META_TEXT_DECODER.decode(bytes));
@@ -99,18 +114,21 @@ export function parseBundleManifest(bytes: Uint8Array | null | undefined): Bundl
   if (record.v !== 1) return null;
   const exec: string[] = [];
   if (Array.isArray(record.exec)) {
+    if (record.exec.length > MAX_BUNDLE_METADATA_RECORDS) return null;
     for (const item of record.exec) {
       if (typeof item === "string" && item.length > 0) exec.push(item);
     }
   }
   const symlinks: BundleSymlink[] = [];
   if (Array.isArray(record.symlinks)) {
+    if (record.symlinks.length > MAX_BUNDLE_METADATA_RECORDS) return null;
     for (const item of record.symlinks) {
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
       const rec = item as Record<string, unknown>;
       const path = rec.path;
       const target = rec.target;
       if (typeof path === "string" && path.length > 0 && typeof target === "string") {
+        if (target.length > MAX_SYMLINK_TARGET_LENGTH) continue;
         symlinks.push({ path, target });
       }
     }

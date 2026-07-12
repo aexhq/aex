@@ -236,7 +236,20 @@ describe("Skill — factory equivalence + fromUrl", () => {
     expect(cancelled).toBe(true);
   });
 
-  it("rejects a declared skill archive far below the generic 10 GiB asset cap", async () => {
+  it("rejects a fromBytes zip bomb declaration before inflating it", async () => {
+    const archive = makeZip({ "SKILL.md": skillMd("bomb", "Bomb guard") });
+    const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+    for (let offset = 0; offset <= archive.byteLength - 4; offset += 1) {
+      if (view.getUint32(offset, true) === 0x02014b50) {
+        view.setUint32(offset + 24, SKILL_BUNDLE_LIMITS.maxDecompressedBytes + 1, true);
+        break;
+      }
+    }
+
+    await expect(Skill.fromBytes({ zip: archive })).rejects.toThrow(/128 MiB expanded limit/);
+  });
+
+  it("rejects a declared skill archive above the runtime compressed envelope", async () => {
     let bodyRead = false;
     const declared = SKILL_BUNDLE_LIMITS.maxDecompressedBytes + 10 * 1024 * 1024;
     const fetch = async () => ({

@@ -72,29 +72,29 @@ export const TOOL_NAME_PATTERN = SKILL_NAME_PATTERN;
 export const SKILL_RESERVED_NAMES: ReadonlySet<string> = new Set(["skills", "skill"]);
 
 // ---------------------------------------------------------------------------
-// Skill bundle limits (uploaded bundles)
+// Runtime asset archive limits
 // ---------------------------------------------------------------------------
 
 /**
- * Hard caps applied at upload time. The SDK enforces these before
- * computing the zip hash so a clearly-too-big bundle never wastes
- * bytes-on-the-wire; the BFF re-enforces server-side because the SDK
- * is untrusted. Numbers are deliberately conservative for the MVP and
- * can be tuned later; keep this object as the single tuning point.
+ * One honest envelope for every file, skill, tool, or instruction archive that
+ * the managed runtime mounts. Raw asset storage is a broader concept and may
+ * have a different quota; these limits describe usable runtime inputs.
  */
+export const ASSET_ARCHIVE_LIMITS = {
+  maxCompressedBytes: 64 * 1024 * 1024,
+  maxDecompressedBytes: 128 * 1024 * 1024,
+  maxEntries: 1_000,
+  maxMetadataBytes: 8 * 1024 * 1024
+} as const;
+
+/** Skill-specific authoring constraints layered on the shared asset envelope. */
 export const SKILL_BUNDLE_LIMITS = {
   /** Compressed (.zip) ceiling. */
-  maxCompressedBytes: 10 * 1024 * 1024 * 1024,
-  /**
-   * Hard ceiling for the direct-to-storage upload path. Bytes never transit the
-   * hosted API, so its memory/request-payload limits do not cap accepted
-   * bundles; objects above this product cap are rejected before upload.
-   */
-  maxBytes: 10 * 1024 * 1024 * 1024,
+  maxCompressedBytes: ASSET_ARCHIVE_LIMITS.maxCompressedBytes,
   /** Sum of uncompressed file sizes. */
-  maxDecompressedBytes: 50 * 1024 * 1024,
+  maxDecompressedBytes: ASSET_ARCHIVE_LIMITS.maxDecompressedBytes,
   /** Number of regular file entries (directories don't count). */
-  maxFiles: 1000,
+  maxFiles: ASSET_ARCHIVE_LIMITS.maxEntries,
   /** Maximum directory nesting depth — `a/b/c/d` has depth 4. */
   maxDepth: 16,
   /** Single-entry path length cap. */

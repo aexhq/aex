@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { strToU8, zipSync } from "fflate";
 import { hashSkillBundle } from "./bundle.js";
+import { assertArchiveCompressedSize, assertArchiveExpandedSize } from "./archive-limits.js";
 
 /** Draft instruction context published through `aex.workspace.instructions`. */
 export class Instructions {
@@ -26,7 +27,10 @@ export class Instructions {
     if (!args || typeof args.name !== "string" || !WORKSPACE_NAME_RE.test(args.name)) {
       throw new Error(`Instructions.fromContent: name must match ${WORKSPACE_NAME_RE.source}`);
     }
-    const zip = zipSync({ "AGENTS.md": [strToU8(content), { mtime: ZIP_EPOCH }] }, { level: 6 });
+    const bytes = strToU8(content);
+    assertArchiveExpandedSize(bytes.byteLength, "Instructions.fromContent");
+    const zip = zipSync({ "AGENTS.md": [bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
+    assertArchiveCompressedSize(zip.byteLength, "Instructions.fromContent");
     return new Instructions(args.name, await hashSkillBundle(zip), zip);
   }
 

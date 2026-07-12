@@ -1,13 +1,21 @@
 import {
+  SKILL_BUNDLE_LIMITS,
   SKILL_NAME_PATTERN,
   SKILL_RESERVED_NAMES,
   type FetchLike
 } from "@aexhq/contracts";
-import { bundleSkillFiles, hashSkillBundle, type BundleMeta, type SkillFiles } from "./bundle.js";
+import {
+  bundleSkillFiles,
+  hashSkillBundle,
+  splitSkillBundleMetadata,
+  type BundleMeta,
+  type SkillFiles
+} from "./bundle.js";
 import { fetchSkillArchive } from "./fetch-archive.js";
 import { readDirectoryWithFidelity } from "./node-fs.js";
 import type { IgnoreOptions } from "./node-walk.js";
 import { unzipSync } from "fflate";
+import { assertArchiveCompressedSize, assertArchiveExpandedSize } from "./archive-limits.js";
 
 /**
  * A Skill is a draft workspace bundle of instructional /
@@ -88,13 +96,13 @@ export class Skill {
       readonly fetch?: FetchLike;
     } = {}
   ): Promise<Skill> {
-    const files = await fetchSkillArchive(url, {
+    const { files, meta } = await fetchSkillArchive(url, {
       ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
       ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
       ...(args.fetch !== undefined ? { fetch: args.fetch } : {})
     });
     // A URL has no reliable directory basename, so no slug fallback.
-    return Skill.#fromFiles("Skill.fromUrl", files, args.name, undefined);
+    return Skill.#fromFiles("Skill.fromUrl", files, args.name, undefined, meta);
   }
 
   /**
@@ -133,9 +141,25 @@ export class Skill {
     if (!args || !(args.zip instanceof Uint8Array) || args.zip.byteLength === 0) {
       throw new Error("Skill.fromBytes: { zip } must be a non-empty Uint8Array");
     }
+    assertArchiveCompressedSize(args.zip.byteLength, "Skill.fromBytes");
     let entries: Record<string, Uint8Array>;
+    let fileCount = 0;
+    let expandedBytes = 0;
     try {
-      entries = unzipSync(args.zip);
+      entries = unzipSync(args.zip, {
+        filter: (entry) => {
+          if (/[\\/]$/.test(entry.name)) return false;
+          fileCount += 1;
+          if (fileCount > SKILL_BUNDLE_LIMITS.maxFiles + 1) {
+            throw new Error(
+              `Skill.fromBytes exceeds the ${SKILL_BUNDLE_LIMITS.maxFiles}-entry limit plus one control record`
+            );
+          }
+          expandedBytes += entry.originalSize;
+          assertArchiveExpandedSize(expandedBytes, "Skill.fromBytes");
+          return true;
+        }
+      });
     } catch (err) {
       throw new Error(`Skill.fromBytes: could not unzip the bundle (expected a .zip): ${(err as Error).message}`);
     }
@@ -145,7 +169,8 @@ export class Skill {
       if (path.endsWith("/")) continue; // directory entry
       files[path] = bytes;
     }
-    return Skill.#fromFiles("Skill.fromBytes", files, args.name, undefined);
+    const parsed = splitSkillBundleMetadata(files, "Skill.fromBytes");
+    return Skill.#fromFiles("Skill.fromBytes", parsed.files, args.name, undefined, parsed.meta);
   }
 
   /**

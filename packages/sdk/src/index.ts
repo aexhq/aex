@@ -94,6 +94,7 @@ export type { ProviderFault, RetryOptions } from "./retry.js";
 
 // Skill-bundle / MCP wire types
 export {
+  ASSET_ARCHIVE_LIMITS,
   MCP_SERVER_NAME_PATTERN,
   SKILL_BUNDLE_LIMITS,
   SKILL_NAME_PATTERN,

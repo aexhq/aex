@@ -35,6 +35,7 @@ import {
   type UploadedAsset
 } from "@aexhq/contracts/internal";
 import type { ByteSink } from "./canonical-zip.js";
+import { assertArchiveCompressedSize } from "./archive-limits.js";
 
 export { uploadAsset } from "@aexhq/contracts/internal";
 export type { AssetFetch, AssetsHttpClient, UploadAssetArgs, UploadedAsset } from "@aexhq/contracts/internal";
@@ -59,7 +60,7 @@ function assetIdFromContentHash(contentHash: string): string {
 // A failure after presign aborts the multipart upload so no orphaned parts bill.
 // ===========================================================================
 
-/** Default multipart part size — 16 MiB covers the 100 GiB cap within S3's 10 000-part limit. */
+/** Default multipart part size for runtime input archives. */
 export const DEFAULT_MULTIPART_PART_SIZE = 16 * 1024 * 1024;
 /** Default in-flight part concurrency. */
 export const DEFAULT_MULTIPART_CONCURRENCY = 4;
@@ -243,8 +244,9 @@ async function hashAndSizeViaDrive(drive: ZipStreamDriver): Promise<{ hashHex: s
   const hash = createHash("sha256");
   let sizeBytes = 0;
   await drive((chunk) => {
-    hash.update(chunk);
     sizeBytes += chunk.length;
+    assertArchiveCompressedSize(sizeBytes, "uploadAssetMultipart");
+    hash.update(chunk);
   });
   return { hashHex: hash.digest("hex"), sizeBytes };
 }

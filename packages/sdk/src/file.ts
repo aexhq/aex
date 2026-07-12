@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import {
+  ASSET_ARCHIVE_LIMITS,
   DEFAULT_FILE_MOUNT_PATH,
   RESERVED_META_ENTRY,
   assertValidMountPath,
@@ -16,6 +17,11 @@ import {
 } from "./canonical-zip.js";
 import { walkDirectory, type IgnoreOptions } from "./node-walk.js";
 import { zipSync } from "fflate";
+import {
+  assertArchiveCompressedSize,
+  assertArchiveEntryCount,
+  assertArchiveExpandedSize
+} from "./archive-limits.js";
 
 /**
  * File — arbitrary bytes (single file or zipped folder) delivered to
@@ -40,8 +46,8 @@ import { zipSync } from "fflate";
  * `.aexignore` (gitignore-compatible) plus always-on defaults (`.git/`,
  * `node_modules/`). SCALE: a large input (total raw size over the streaming
  * threshold, `File.fromPath` only) is uploaded via a streaming two-pass
- * multipart flow that holds only one entry + one part in memory, lifting the
- * old ~2 GiB in-memory ceiling.
+ * multipart flow that holds only one entry + one part in memory within the
+ * runtime asset archive envelope.
  *
  * Publish drafts through `aex.workspace.files.publish(file)`, then pin the
  * returned immutable ref in `assets.files`.
@@ -91,8 +97,10 @@ export class File {
     if (!(args.bytes instanceof Uint8Array) || args.bytes.byteLength === 0) {
       throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
     }
+    assertArchiveExpandedSize(args.bytes.byteLength, "File.fromBytes");
     const mountPath = resolveMountPath(args.mountPath, "File.fromBytes");
     const zip = zipSync({ [filename]: [args.bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
+    assertArchiveCompressedSize(zip.byteLength, "File.fromBytes");
     const contentHash = await hashSkillBundle(zip);
     const ref: DraftFileRef = {
       kind: "draft",
@@ -141,6 +149,11 @@ export class File {
     const sidecar = bundleManifestIsEmpty(meta)
       ? undefined
       : serializeBundleManifest({ v: 1, exec: walk.exec, symlinks: walk.symlinks });
+    assertArchiveExpandedSize(walk.totalSize + (sidecar?.byteLength ?? 0), "File.fromPath");
+    assertArchiveEntryCount(
+      walk.entries.length + walk.symlinks.length,
+      "File.fromPath"
+    );
 
     if (walk.totalSize <= SMALL_UPLOAD_THRESHOLD_BYTES) {
       // Small: read all bytes and build the canonical zip in memory (single PUT).
@@ -150,6 +163,7 @@ export class File {
       }
       if (sidecar) ordered.push([RESERVED_META_ENTRY, sidecar]);
       const zip = frameCanonicalZipSync(ordered);
+      assertArchiveCompressedSize(zip.byteLength, "File.fromPath");
       const contentHash = await hashSkillBundle(zip);
       return new File({ kind: "draft", name: slug, contentHash, mountPath }, zip);
     }
@@ -173,12 +187,14 @@ export class File {
     const sidecar = isExecutable
       ? serializeBundleManifest({ v: 1, exec: [filename], symlinks: [] })
       : undefined;
+    assertArchiveExpandedSize(size + (sidecar?.byteLength ?? 0), "File.fromPath");
 
     if (size <= SMALL_UPLOAD_THRESHOLD_BYTES) {
       const bytes = new Uint8Array(await readFile(path));
       const ordered: Array<[string, Uint8Array]> = [[filename, bytes]];
       if (sidecar) ordered.push([RESERVED_META_ENTRY, sidecar]);
       const zip = frameCanonicalZipSync(ordered);
+      assertArchiveCompressedSize(zip.byteLength, "File.fromPath");
       const contentHash = await hashSkillBundle(zip);
       return new File({ kind: "draft", name: slug, contentHash, mountPath }, zip);
     }
@@ -254,7 +270,7 @@ const WORKSPACE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
  * streaming framer is byte-identical to the in-memory `zipSync` for Canonical A,
  * so a bundle at the threshold dedups either way.
  */
-const SMALL_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024;
+const SMALL_UPLOAD_THRESHOLD_BYTES = ASSET_ARCHIVE_LIMITS.maxCompressedBytes;
 
 /** Build lazy zip entry sources from walked descriptors, appending the sidecar LAST. */
 function buildEntrySources(

@@ -3,11 +3,17 @@ import {
   RESERVED_META_ENTRY,
   SKILL_BUNDLE_LIMITS,
   bundleManifestIsEmpty,
+  parseBundleManifest,
   serializeBundleManifest,
   validateSkillBundleEntry,
   type BundleSymlink,
   type ToolInputSchema
 } from "@aexhq/contracts";
+import {
+  assertArchiveCompressedSize,
+  assertArchiveEntryCount,
+  assertArchiveExpandedSize
+} from "./archive-limits.js";
 
 /**
  * In-memory skill bundle: a flat path -> bytes map and the
@@ -47,6 +53,30 @@ export interface BundleMeta {
   readonly symlinks?: readonly BundleSymlink[];
 }
 
+export interface ParsedSkillBundle {
+  readonly files: SkillFiles;
+  readonly meta?: BundleMeta;
+}
+
+/** Remove and parse the reserved fidelity sidecar before canonical rebundling. */
+export function splitSkillBundleMetadata(
+  entries: Readonly<Record<string, Uint8Array>>,
+  source: string
+): ParsedSkillBundle {
+  const files: Record<string, Uint8Array> = { ...entries };
+  const sidecar = files[RESERVED_META_ENTRY];
+  delete files[RESERVED_META_ENTRY];
+  if (sidecar === undefined) {
+    assertArchiveEntryCount(Object.keys(files).length, source);
+    return { files };
+  }
+  const manifest = parseBundleManifest(sidecar);
+  if (manifest === null) throw new Error(`${source}: invalid ${RESERVED_META_ENTRY} fidelity metadata`);
+  assertArchiveEntryCount(Object.keys(files).length + manifest.symlinks.length, source);
+  assertArchiveEntryCount(manifest.exec.length, `${source} executable metadata`);
+  return { files, meta: { exec: manifest.exec, symlinks: manifest.symlinks } };
+}
+
 /**
  * Build the ordered {@link Zippable} for a collected content map: content entries
  * sorted lexicographically, then (when `meta` carries any exec/symlink) the
@@ -54,17 +84,22 @@ export interface BundleMeta {
  * order (fflate iterates keys in insertion order), so the sidecar is always the
  * final entry and a metadata-free bundle is byte-identical to today's output.
  */
-function buildCanonicalZippable(collected: Map<string, Uint8Array>, meta?: BundleMeta): Zippable {
+function buildCanonicalZippable(
+  collected: Map<string, Uint8Array>,
+  meta?: BundleMeta
+): { zippable: Zippable; sidecarBytes: number } {
   const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const zippable: Zippable = {};
   for (const [path, bytes] of sorted) {
     zippable[path] = [bytes, { mtime: ZIP_EPOCH }];
   }
+  let sidecarBytes = 0;
   if (meta && !bundleManifestIsEmpty(meta)) {
     const sidecar = serializeBundleManifest({ v: 1, exec: meta.exec ?? [], symlinks: meta.symlinks ?? [] });
+    sidecarBytes = sidecar.byteLength;
     zippable[RESERVED_META_ENTRY] = [sidecar, { mtime: ZIP_EPOCH }];
   }
-  return zippable;
+  return { zippable, sidecarBytes };
 }
 
 /** Reject a user file colliding with the reserved sidecar name (matches the `tool.json` precedent). */
@@ -125,14 +160,16 @@ export function bundleSkillFiles(files: SkillFiles, meta?: BundleMeta): BundledS
   // recomputes the canonical hash, so this is for retry-safety / debug
   // reproducibility rather than a wire-shape contract). The fidelity sidecar,
   // when present, is appended LAST so a metadata-free bundle is byte-identical.
-  const zippable = buildCanonicalZippable(collected, meta);
+  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, meta);
+  assertArchiveEntryCount(
+    collected.size + (meta?.symlinks?.length ?? 0),
+    "Skill bundle"
+  );
+  assertArchiveEntryCount(meta?.exec?.length ?? 0, "Skill bundle executable metadata");
+  assertArchiveExpandedSize(totalDecompressed + sidecarBytes, "Skill bundle");
 
   const zip = zipSync(zippable, { level: 6 });
-  if (zip.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
-    throw new Error(
-      `Skill bundle exceeds compressed cap of ${SKILL_BUNDLE_LIMITS.maxCompressedBytes} bytes (got ${zip.byteLength})`
-    );
-  }
+  assertArchiveCompressedSize(zip.byteLength, "Skill bundle");
 
   return { zip, fileCount: entries.length, compressedSize: zip.byteLength };
 }
@@ -201,14 +238,16 @@ export function bundleToolFiles(
   }
   collected.set("tool.json", manifestBytes);
 
-  const zippable = buildCanonicalZippable(collected, meta);
+  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, meta);
+  assertArchiveEntryCount(
+    collected.size + (meta?.symlinks?.length ?? 0),
+    "Tool bundle"
+  );
+  assertArchiveEntryCount(meta?.exec?.length ?? 0, "Tool bundle executable metadata");
+  assertArchiveExpandedSize(totalDecompressed + manifestBytes.byteLength + sidecarBytes, "Tool bundle");
 
   const zip = zipSync(zippable, { level: 6 });
-  if (zip.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
-    throw new Error(
-      `Tool bundle exceeds compressed cap of ${SKILL_BUNDLE_LIMITS.maxCompressedBytes} bytes (got ${zip.byteLength})`
-    );
-  }
+  assertArchiveCompressedSize(zip.byteLength, "Tool bundle");
 
   return { zip, fileCount: collected.size, compressedSize: zip.byteLength };
 }

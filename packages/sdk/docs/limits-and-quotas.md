@@ -67,9 +67,10 @@ or terminal result observes a partial archive.
 
 | Limit | Value | Source | Raisable? | Constant |
 | --- | --- | --- | --- | --- |
-| Max compressed archive bytes | 64 MiB | aex policy | No (hard ceiling) | `FILE_ARCHIVE_MAX_COMPRESSED_BYTES` |
-| Max expanded archive bytes | 128 MiB | aex policy | No (hard ceiling) | `FILE_ARCHIVE_MAX_DECOMPRESSED_BYTES` |
-| Max archive entries | 1,000 | aex policy | No (hard ceiling) | `FILE_ARCHIVE_MAX_ENTRIES` |
+| Max compressed archive bytes | 64 MiB | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxCompressedBytes` |
+| Max expanded archive bytes | 128 MiB | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxDecompressedBytes` |
+| Max materialized leaves (regular files + safe symlinks; control sidecar excluded) | 1,000 | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxEntries` |
+| Max fidelity metadata sidecar | 8 MiB | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxMetadataBytes` |
 | Max planned entries across all attached workspace-file archives | 10,000 | aex policy | No (hard ceiling) | `FILE_PLAN_MAX_ENTRIES` |
 
 ### Subagents (per session lineage)
@@ -121,9 +122,9 @@ A few behaviours are worth knowing before you rely on the filesystem or RAM:
 | Workspace storage cap | 500 GB (decimal; admins uncapped — not a customer entitlement) | Workspace default | Per-plane via env `AEX_WORKSPACE_STORAGE_CAP_BYTES` | `WORKSPACE_DEFAULT_STORAGE_CAP_BYTES` |
 | Max concurrent sessions per workspace | Plan-based: **5** live (non-terminal) root sessions on the free plan, **50** on Pro, **200** on Team; hard platform ceiling **200**. One more submit past the cap fails with `429 workspace_concurrency_exceeded` (see [Errors](errors.md)). Subagent children are governed separately by the platform-managed per-lineage budgets above. Read your effective cap from `aex.whoami().limits.maxConcurrentSessions`. | Workspace default (per plan) | Per-plan (upgrade) or per-workspace override (contact support), clamped to the 200 ceiling | `PLANS[planKey].maxConcurrentSessions` / `WORKSPACE_MAX_CONCURRENT_SESSIONS_CEILING` |
 | Monthly workspace spend cap | **$250** per rolling UTC calendar month by default; `0` = unlimited. A submit past the cap fails with `402 workspace_spend_cap_exceeded` (see [Errors](errors.md)). | Workspace default | Per-workspace override (contact support) | `WORKSPACE_DEFAULT_SPEND_CAP_USD` |
-| Skill bundle max compressed size (`.zip`) | 10 GiB (enforced at upload by the SDK and re-enforced server-side) | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxCompressedBytes` |
-| Skill bundle max decompressed size (sum of uncompressed file sizes) | 50 MB | aex policy | No (hard ceiling) | `SKILL_BUNDLE_LIMITS.maxDecompressedBytes` |
-| Skill bundle max file entries | 1,000 | Workspace default | Per-workspace (plan/env) | `WORKSPACE_SKILL_BUNDLE_MAX_FILES` |
+| Runtime asset archive max compressed size (`.zip`) | 64 MiB (enforced before presign and re-enforced at workspace-resource publication) | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxCompressedBytes` |
+| Runtime asset archive max expanded size | 128 MiB | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxDecompressedBytes` |
+| Runtime asset archive max materialized leaves | 1,000 | aex policy | No (hard ceiling) | `ASSET_ARCHIVE_LIMITS.maxEntries` |
 | Skill bundle max directory depth (`a/b/c/d` = 4) | 16 | Workspace default | Per-workspace (plan/env) | `WORKSPACE_SKILL_BUNDLE_MAX_DEPTH` |
 | Skill bundle max entry path length | 512 characters | Workspace default | No (hard ceiling) | `WORKSPACE_SKILL_BUNDLE_MAX_PATH_LENGTH` |
 | `File.mountPath` max length | 512 characters | Workspace default | No (hard ceiling) | `WORKSPACE_MOUNT_PATH_MAX_LENGTH` |

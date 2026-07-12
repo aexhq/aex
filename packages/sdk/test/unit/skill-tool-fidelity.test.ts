@@ -184,6 +184,63 @@ describe("Skill.fromFiles — meta threading (OS-independent sidecar plumbing)",
     expect([...skillBytes(withEmpty)]).toEqual([...skillBytes(without)]);
     expect(skillZip(withEmpty)[RESERVED_META_ENTRY]).toBeUndefined();
   });
+
+  it("round-trips fidelity metadata through fromBytes and fromUrl", async () => {
+    const original = await Skill.fromFiles({
+      name: "roundtrip",
+      files: {
+        "SKILL.md": skillMd("roundtrip", "Round trip."),
+        "run.sh": "#!/bin/sh\n",
+        "real.txt": "real"
+      },
+      meta: { exec: ["run.sh"], symlinks: [{ path: "link.txt", target: "real.txt" }] }
+    });
+    const bytes = skillBytes(original);
+    const fromBytes = await Skill.fromBytes({ name: "roundtrip", zip: bytes });
+    const fromUrl = await Skill.fromUrl("https://x/roundtrip.zip", {
+      name: "roundtrip",
+      fetch: async () => new Response(bytes)
+    });
+
+    expect([...skillBytes(fromBytes)]).toEqual([...bytes]);
+    expect([...skillBytes(fromUrl)]).toEqual([...bytes]);
+  });
+
+  it("counts captured symlink leaves at the exact archive boundary", async () => {
+    const symlinks = Array.from({ length: 999 }, (_, index) => ({
+      path: `link-${index}`,
+      target: "SKILL.md"
+    }));
+    await expect(Skill.fromFiles({
+      name: "boundary",
+      files: { "SKILL.md": skillMd("boundary", "Boundary.") },
+      meta: { symlinks }
+    })).resolves.toBeInstanceOf(Skill);
+    await expect(Skill.fromFiles({
+      name: "over-boundary",
+      files: { "SKILL.md": skillMd("over-boundary", "Boundary.") },
+      meta: { symlinks: [...symlinks, { path: "link-over", target: "SKILL.md" }] }
+    })).rejects.toThrow(/1000-entry limit/);
+  });
+
+  it("accepts 1000 regular leaves plus the reserved control record", async () => {
+    const files: Record<string, string> = {
+      "SKILL.md": skillMd("record-boundary", "Record boundary.")
+    };
+    for (let index = 0; index < 999; index += 1) files[`file-${index}.txt`] = "x";
+    const original = await Skill.fromFiles({
+      name: "record-boundary",
+      files,
+      meta: { exec: ["file-0.txt"] }
+    });
+    const bytes = skillBytes(original);
+
+    await expect(Skill.fromBytes({ name: "record-boundary", zip: bytes })).resolves.toBeInstanceOf(Skill);
+    await expect(Skill.fromUrl("https://x/record-boundary.zip", {
+      name: "record-boundary",
+      fetch: async () => new Response(bytes)
+    })).resolves.toBeInstanceOf(Skill);
+  });
 });
 
 // ---------------------------------------------------------------------------
