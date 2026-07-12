@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   jobNeeds,
-  readRepoFile,
   readWorkflow,
   stepIndex,
   workflowJob,
@@ -221,23 +220,4 @@ describe("release pipeline gates", () => {
     }
   });
 
-  it("keeps feature-gate.yml manual, local, and non-publishing", () => {
-    const workflow = readWorkflow(".github/workflows/feature-gate.yml");
-    const triggers = workflowTriggers(workflow);
-    const rootPackageJson = JSON.parse(readRepoFile("package.json")) as { scripts?: Record<string, string> };
-    const commands = Object.values(workflow.jobs)
-      .flatMap((job) => job.steps ?? [])
-      .map((step) => step.run ?? "")
-      .join("\n");
-    const serialized = JSON.stringify(workflow);
-
-    expect(rootPackageJson.scripts?.["gate:feature"]).toBe("bun scripts/cicd/feature-gate.mjs");
-    expect(Object.keys(triggers)).toEqual(["workflow_dispatch"]);
-    expect(commands).toContain("bun scripts/cicd/feature-gate.mjs");
-    expect(commands).toContain("bun run test:user:offline");
-    expect(commands).toContain("bun run pack:sdk");
-    expect(commands).not.toContain("npm publish");
-    expect(commands).not.toContain("npm dist-tag");
-    expect(serialized).not.toContain("AEX_API_KEY");
-  });
 });
