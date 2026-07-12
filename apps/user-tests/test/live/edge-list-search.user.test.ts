@@ -6,7 +6,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildEdgeListSearchChildScript,
@@ -56,13 +56,37 @@ async function runChild(
     timeoutMs,
     env: childEnv()
   });
+  const leakedKnownKey = [apiKey, providerKey].some(
+    (secret) => child.stdout.includes(secret) || child.stderr.includes(secret)
+  );
   if (child.exitCode !== 0) {
     throw new Error(
-      `edge-list-search child ${scriptName} exited ${child.exitCode}:\n` +
-      `--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+      `edge-list-search child ${scriptName} exited ${child.exitCode}; ` +
+      `stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}; leakedKnownKey=${leakedKnownKey}`
     );
   }
-  return JSON.parse(child.stdout.trim()) as Record<string, unknown>;
+  if (leakedKnownKey) {
+    throw new Error(
+      `edge-list-search child ${scriptName} emitted a known key; ` +
+      `stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}`
+    );
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(child.stdout.trim()) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      `edge-list-search child ${scriptName} emitted invalid JSON; ` +
+      `stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}`
+    );
+  }
+  if (parsed.leakedKeyAnywhere === true) {
+    throw new Error(
+      `edge-list-search child ${scriptName} detected a known key before output; ` +
+      `stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}`
+    );
+  }
+  return parsed;
 }
 
 let install: InstallResult;
@@ -90,9 +114,10 @@ describe("edge: finished consistency and session listing", () => {
       const terminal = terminals[0];
       const session = await client.sessions.open(result.sessionId);
       const snapshot = await session.files.list();
-      const serialized = JSON.stringify({ result, record: session.record, snapshot });
+      const found = await session.files.findOne({ filename: ${JSON.stringify(marker)} });
+      const serialized = JSON.stringify({ result, record: session.record, snapshot, found });
 
-      process.stdout.write(JSON.stringify({
+      printSafe({
         sessionId: result.sessionId,
         resultStatus: result.status,
         resultOk: result.ok,
@@ -109,10 +134,12 @@ describe("edge: finished consistency and session listing", () => {
         lastRunOutcome: session.record.lastRun?.outcome ?? null,
         snapshotCheckpointId: snapshot.revision.checkpointId,
         snapshotRunId: snapshot.revision.runId,
-        fileNames: snapshot.files.map((file) => file.filename),
+        foundFileId: found?.id ?? null,
+        foundFilename: found?.filename ?? null,
+        foundCheckpointId: found?.checkpointId ?? null,
         leakedApiKey: serialized.includes(process.env.AEX_API_KEY),
         leakedProviderKey: serialized.includes(PROVIDER_KEY)
-      }));
+      });
     `);
 
     const dump = JSON.stringify(out, null, 2);
@@ -127,7 +154,9 @@ describe("edge: finished consistency and session listing", () => {
     expect(out.sessionStatus, dump).toBe("idle");
     expect(out.acceptsMessages, dump).toBe(true);
     expect(out.lastRunOutcome, dump).toBe("succeeded");
-    expect(out.fileNames, dump).toContain(marker);
+    expect(out.foundFileId, dump).toBeTypeOf("string");
+    expect(basename(String(out.foundFilename)), dump).toBe(marker);
+    expect(out.foundCheckpointId, dump).toBe(out.resultCheckpointId);
     expect(out.resultCostUsd, dump).toBeTypeOf("number");
     expect(out.resultUsageIsObject, dump).toBe(true);
     expect(out.leakedApiKey, dump).toBe(false);
@@ -178,14 +207,14 @@ describe("edge: finished consistency and session listing", () => {
           }
         }
 
-        process.stdout.write(JSON.stringify({
+        printSafe({
           createdIds: created.map((session) => session.id),
           ids,
           statuses,
           pages,
           futureCount: future.sessions.length,
           invalid
-        }));
+        });
       } finally {
         await Promise.all(created.map((session) => session.delete()));
       }

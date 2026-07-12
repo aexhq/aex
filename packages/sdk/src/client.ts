@@ -66,6 +66,8 @@ import {
   type UsageSummary,
   type SessionLimits,
   parseSessionLimits,
+  parseApprovalGate,
+  parseResponseFormat,
   parseRuntimeSize,
   parseSessionTimeout,
   parseSessionWebhook,
@@ -1422,8 +1424,7 @@ function validateStreamEventsFrom(value: number | undefined): number {
     throw configError(
       "session.events.stream",
       "from",
-      "from must be a non-negative safe integer",
-      value
+      "from must be a non-negative safe integer"
     );
   }
   return value;
@@ -1681,6 +1682,15 @@ export class Aex {
    * so callers can resume later with `aex.sessions.open(sessionId)`.
    */
   async start<T = unknown>(options: SessionStartOptions, opts: StartSessionOptions = {}): Promise<SessionResult<T>> {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw configError("Aex.start", "options", "options are required");
+    }
+    assertAllowedObjectFields(
+      opts,
+      "Aex.start",
+      "options",
+      ["timeoutMs", "webSocketFactory", "idleTimeoutMs", "pingIntervalMs", "throwOnFailure"]
+    );
     const scopedSignal = scopedAbortSignal(opts.timeoutMs);
     try {
       const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
@@ -1758,20 +1768,10 @@ export class Aex {
   }
 
   async #buildSessionCreateRequest(options: SessionCreateOptions): Promise<SessionCreateRequest> {
-    if (!options || typeof options !== "object") {
-      throw new SessionConfigValidationError("aex.sessions.create: options is required");
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw configError("aex.sessions.create", "options", "options are required");
     }
     assertSupportedSessionFields(options, "aex.sessions.create", false);
-    // `message` belongs to the one-shot `Aex.start` surface. Passing it to
-    // `sessions.create` used to be silently
-    // dropped — the session was created empty, idled from birth, and auto-
-    // suspended at the idle TTL without ever running a turn.
-    if (Object.prototype.hasOwnProperty.call(options as unknown as Record<string, unknown>, "message")) {
-      throw new SessionConfigValidationError(
-        "aex.sessions.create: message is not a supported option; sessions are created without a first " +
-          "message — send it with session.messages.send(...), or use Aex.start({ message }) for a one-shot."
-      );
-    }
     // Model is REQUIRED and checked BEFORE the provider key, so omitting `model`
     // reports "model is required" rather than a misleading provider-key message.
     if (typeof options.model !== "string" || !options.model) {
@@ -1780,17 +1780,18 @@ export class Aex {
     // One model→provider resolver (SSoT), shared with the CLI: it honors an
     // explicit provider (forward-compat: an unknown model is allowed through so a
     // slightly-old SDK can still run a newly-launched model), infers the default
-    // provider for a known model, and — for an UNKNOWN model with no provider —
-    // throws a shared `did you mean?` suggestion.
+    // provider for a known model, and rejects an unknown model without a provider.
     let provider: ProviderName;
     try {
       provider = resolveModelProvider(options.model, options.provider);
     } catch (err) {
+      void err;
       throw configError(
         "aex.sessions.create",
         options.provider === undefined ? "model" : "provider",
-        err instanceof Error ? err.message : String(err),
-        options.provider ?? options.model
+        options.provider === undefined
+          ? "model must be recognized unless provider is supplied explicitly"
+          : "provider cannot serve the selected model"
       );
     }
     validateApiKeys(options.apiKeys, provider, "aex.sessions.create");
@@ -1800,7 +1801,8 @@ export class Aex {
       try {
         assertStreamableOutputMode(options.outputMode, provider);
       } catch (err) {
-        throw configError("aex.sessions.create", "outputMode", err instanceof Error ? err.message : String(err), options.outputMode);
+        void err;
+        throw configError("aex.sessions.create", "outputMode", "outputMode is not supported for the selected provider");
       }
     }
     // Fast client-side validation via the contract parsers (the SSoT). runtimeSize
@@ -1813,40 +1815,98 @@ export class Aex {
     // server).
     try {
       parseRuntimeSize(options.runtime);
-      parseSessionTimeout(options.overrides?.timeout);
-      if (options.webhook !== undefined) parseSessionWebhook(options.webhook);
     } catch (err) {
-      throw new SessionConfigValidationError(
-        `aex.sessions.create: ${err instanceof Error ? err.message : String(err)}`
-      );
+      void err;
+      throw configError("aex.sessions.create", "runtime", "runtime must be a supported size preset");
     }
-    const { declarations: secretEnvDeclarations, values: envSecretValues } =
-      splitSecretEnv(options.environment?.secrets);
+    try {
+      parseSessionTimeout(options.overrides?.timeout);
+    } catch (err) {
+      void err;
+      throw configError("aex.sessions.create", "overrides.timeout", "overrides.timeout must be a supported duration");
+    }
+    if (options.webhook !== undefined) {
+      try {
+        parseSessionWebhook(options.webhook);
+      } catch (err) {
+        void err;
+        throw configError("aex.sessions.create", "webhook.url", "webhook.url must be a valid HTTPS URL");
+      }
+    }
+    if (options.responseFormat !== undefined) {
+      try {
+        parseResponseFormat(options.responseFormat);
+      } catch (err) {
+        void err;
+        throw configError("aex.sessions.create", "responseFormat", "responseFormat is invalid");
+      }
+    }
+    if (options.approvalGate !== undefined) {
+      try {
+        parseApprovalGate(options.approvalGate);
+      } catch (err) {
+        void err;
+        throw configError("aex.sessions.create", "approvalGate", "approvalGate is invalid");
+      }
+    }
+    let secretEnvDeclarations: ReturnType<typeof splitSecretEnv>["declarations"];
+    let envSecretValues: ReturnType<typeof splitSecretEnv>["values"];
+    try {
+      const split = splitSecretEnv(options.environment?.secrets);
+      secretEnvDeclarations = split.declarations;
+      envSecretValues = split.values;
+    } catch (err) {
+      void err;
+      throw configError("aex.sessions.create", "environment.secrets", "environment.secrets is invalid");
+    }
 
     let limits: SessionLimits | undefined;
     const limitsInput: { maxSpendUsd?: number; maxTurns?: number } = {};
-    if (options.overrides?.maxSpendUsd !== undefined) limitsInput.maxSpendUsd = options.overrides.maxSpendUsd;
-    if (options.overrides?.maxTurns !== undefined) limitsInput.maxTurns = options.overrides.maxTurns;
-    try {
-      limits = parseSessionLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
-    } catch (err) {
-      // One `configError` factory for every client-side validation throw, so
-      // maxSpendUsd/maxTurns are `SessionConfigValidationError` (not a base AexError).
-      throw configError("aex.sessions.create", "limits", err instanceof Error ? err.message : String(err));
+    if (options.overrides?.maxSpendUsd !== undefined) {
+      try {
+        parseSessionLimits({ maxSpendUsd: options.overrides.maxSpendUsd });
+      } catch (err) {
+        void err;
+        throw configError("aex.sessions.create", "overrides.maxSpendUsd", "overrides.maxSpendUsd must be valid");
+      }
+      limitsInput.maxSpendUsd = options.overrides.maxSpendUsd;
     }
+    if (options.overrides?.maxTurns !== undefined) {
+      try {
+        parseSessionLimits({ maxTurns: options.overrides.maxTurns });
+      } catch (err) {
+        void err;
+        throw configError("aex.sessions.create", "overrides.maxTurns", "overrides.maxTurns must be valid");
+      }
+      limitsInput.maxTurns = options.overrides.maxTurns;
+    }
+    limits = parseSessionLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
 
     const { submissionMcpServers, mergedMcpSecrets } = mergeMcpServers(
       options.mcpServers ?? [],
       []
     );
-    const fileCapture = fileCaptureForWire(options.fileCapture);
-    const environment = sessionEnvironmentForWire(options.environment);
+    let fileCapture: PlatformSubmission["fileCapture"] | undefined;
+    try {
+      fileCapture = fileCaptureForWire(options.fileCapture);
+    } catch (err) {
+      void err;
+      throw configError("aex.sessions.create", "fileCapture", "fileCapture is invalid");
+    }
+    let environment: PlatformEnvironmentInput | undefined;
+    try {
+      environment = sessionEnvironmentForWire(options.environment);
+    } catch (err) {
+      void err;
+      throw configError("aex.sessions.create", "environment", "environment is invalid");
+    }
     let builtinTools = options.builtinTools ?? "default";
     if (Array.isArray(builtinTools)) {
       try {
         builtinTools = resolveBuiltinToolNames(builtinTools);
       } catch (err) {
-        throw configError("aex.sessions.create", "builtinTools", err instanceof Error ? err.message : String(err));
+        void err;
+        throw configError("aex.sessions.create", "builtinTools", "builtinTools contains an unsupported tool name");
       }
     }
 
@@ -2013,15 +2073,11 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 }
 
 /**
- * ONE factory for every client-side validation throw: a
- * {@link SessionConfigValidationError} carrying structured `details: { field, value? }`
- * so callers branch on `err.details.field` instead of string-parsing the message.
+ * Module-private factory for SDK validation errors. `details.field` is the only
+ * stable machine-readable payload; messages are human guidance and may change.
  */
-function configError(surface: string, field: string, message: string, value?: unknown): SessionConfigValidationError {
-  return new SessionConfigValidationError(
-    `${surface}: ${message}`,
-    value === undefined ? { field } : { field, value }
-  );
+function configError(surface: string, field: string, message: string): SessionConfigValidationError {
+  return new SessionConfigValidationError(`${surface}: ${message}`, { field });
 }
 
 /**
@@ -2059,17 +2115,23 @@ function normaliseSessionInput(
 ): string | readonly string[] {
   if (typeof input === "string") {
     if (!input) {
-      throw new SessionConfigValidationError(`${surface}: ${field} must be a non-empty string`);
+      throw configError(surface, field, `${field} must be a non-empty string`);
+    }
+    if (!input.trim()) {
+      throw configError(surface, field, `${field} must contain non-whitespace text`);
     }
     return input;
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new SessionConfigValidationError(`${surface}: ${field} must be a non-empty string or string array`);
+    throw configError(surface, field, `${field} must be a non-empty string or string array`);
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new SessionConfigValidationError(`${surface}: ${field} segments must be non-empty strings`);
+      throw configError(surface, field, `${field} segments must be non-empty strings`);
     }
+  }
+  if (input.every((segment) => !segment.trim())) {
+    throw configError(surface, field, `${field} must contain non-whitespace text`);
   }
   return [...input];
 }
@@ -2097,8 +2159,10 @@ function assertSupportedSessionFields(
   for (const field of Object.keys(record)) {
     if (!allowed.has(field)) {
       const detail = guidance[field];
-      throw new SessionConfigValidationError(
-        `${surface}: ${field} is not a supported option${detail === undefined ? "" : `; ${detail}`}`
+      throw configError(
+        surface,
+        field,
+        `${field} is not a supported option${detail === undefined ? "" : `; ${detail}`}`
       );
     }
   }
@@ -2106,11 +2170,14 @@ function assertSupportedSessionFields(
   if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
     const overrideRecord = overrides as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(overrideRecord, "idleSuspendAfter")) {
-      throw new SessionConfigValidationError(
-        `${surface}: overrides.idleSuspendAfter is not a supported option; use overrides.idleTtl.`
+      throw configError(
+        surface,
+        "overrides.idleSuspendAfter",
+        "overrides.idleSuspendAfter is not a supported option; use overrides.idleTtl."
       );
     }
   }
+  assertStructuredSessionFields(record, surface, allowStartFields);
 }
 
 function assertSupportedSessionSendOptions(
@@ -2133,9 +2200,151 @@ function assertSupportedSessionSendOptions(
       : field === "signal"
         ? "use session.cancel() / session.suspend() for remote control"
         : undefined;
-    throw new SessionConfigValidationError(
-      `${surface}: ${field} is not a supported option${guidance === undefined ? "" : `; ${guidance}`}`
+    throw configError(
+      surface,
+      field,
+      `${field} is not a supported option${guidance === undefined ? "" : `; ${guidance}`}`
     );
+  }
+}
+
+function assertStructuredSessionFields(
+  record: Record<string, unknown>,
+  surface: string,
+  allowStartFields: boolean
+): void {
+  const overrides = assertAllowedObjectFields(
+    record.overrides,
+    surface,
+    "overrides",
+    ["idleTtl", "timeout", "maxSpendUsd", "maxTurns"]
+  );
+  void overrides;
+  assertAssetsFields(record.assets, surface);
+  assertAllowedObjectFields(
+    record.fileCapture,
+    surface,
+    "fileCapture",
+    ["allowedDirs", "deniedDirs", "captureTimeoutMs", "maxFileBytes", "maxTotalBytes", "maxFiles"]
+  );
+  assertEnvironmentFields(record.environment, surface);
+  assertAllowedObjectFields(record.webhook, surface, "webhook", ["url"]);
+
+  const responseFormat = assertRecord(record.responseFormat, surface, "responseFormat");
+  if (responseFormat !== undefined) {
+    const allowed = responseFormat.kind === "text"
+      ? ["kind"]
+      : ["kind", "schema", "strict", "name"];
+    assertAllowedKeys(responseFormat, surface, "responseFormat", allowed);
+  }
+  assertAllowedObjectFields(record.approvalGate, surface, "approvalGate", ["tools"]);
+  if (allowStartFields) {
+    assertAllowedObjectFields(
+      record.stream,
+      surface,
+      "stream",
+      ["webSocketFactory", "idleTimeoutMs", "pingIntervalMs"]
+    );
+  }
+}
+
+function assertAssetsFields(value: unknown, surface: string): void {
+  const assets = assertAllowedObjectFields(
+    value,
+    surface,
+    "assets",
+    ["files", "skills", "tools", "instructions"]
+  );
+  if (assets === undefined) return;
+  // Workspace publish methods return records that extend the reusable ref with
+  // immutable metadata. Accept those records directly so publish -> session is ergonomic.
+  const common = [
+    "kind", "resourceId", "version", "assetId", "contentHash",
+    "createdAt", "updatedAt", "sizeBytes", "contentType"
+  ];
+  const fields: Readonly<Record<string, readonly string[]>> = {
+    files: [...common, "name", "mountPath"],
+    skills: [...common, "name", "description"],
+    tools: [...common, "name", "description", "input_schema", "entry"],
+    instructions: [...common, "name"]
+  };
+  for (const [category, allowed] of Object.entries(fields)) {
+    const entries = assets[category];
+    if (entries === undefined) continue;
+    if (!Array.isArray(entries)) {
+      throw configError(surface, `assets.${category}`, `assets.${category} must be an array`);
+    }
+    entries.forEach((entry, index) => {
+      const field = `assets.${category}[${index}]`;
+      const item = assertRecord(entry, surface, field);
+      if (item !== undefined) assertAllowedKeys(item, surface, field, allowed);
+    });
+  }
+}
+
+function assertEnvironmentFields(value: unknown, surface: string): void {
+  const environment = assertAllowedObjectFields(
+    value,
+    surface,
+    "environment",
+    ["networking", "packages", "variables", "secrets"]
+  );
+  if (environment === undefined) return;
+  assertAllowedObjectFields(
+    environment.networking,
+    surface,
+    "environment.networking",
+    ["mode", "allowedHosts"]
+  );
+  for (const field of ["variables", "secrets"] as const) {
+    assertRecord(environment[field], surface, `environment.${field}`);
+  }
+  const packages = environment.packages;
+  if (packages === undefined) return;
+  if (!Array.isArray(packages)) {
+    throw configError(surface, "environment.packages", "environment.packages must be an array");
+  }
+  packages.forEach((entry, index) => {
+    const field = `environment.packages[${index}]`;
+    const item = assertRecord(entry, surface, field);
+    if (item !== undefined) assertAllowedKeys(item, surface, field, ["name", "version"]);
+  });
+}
+
+function assertAllowedObjectFields(
+  value: unknown,
+  surface: string,
+  field: string,
+  allowed: readonly string[]
+): Record<string, unknown> | undefined {
+  const record = assertRecord(value, surface, field);
+  if (record !== undefined) assertAllowedKeys(record, surface, field, allowed);
+  return record;
+}
+
+function assertRecord(
+  value: unknown,
+  surface: string,
+  field: string
+): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw configError(surface, field, `${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertAllowedKeys(
+  record: Record<string, unknown>,
+  surface: string,
+  field: string,
+  allowed: readonly string[]
+): void {
+  const allowedSet = new Set(allowed);
+  for (const key of Object.keys(record)) {
+    if (allowedSet.has(key)) continue;
+    const nested = `${field}.${key}`;
+    throw configError(surface, nested, `${nested} is not a supported option`);
   }
 }
 
@@ -2146,9 +2355,7 @@ function validateApiKeys(
 ): void {
   const key = apiKeys?.[provider];
   if (typeof key !== "string" || key.length === 0) {
-    throw new SessionConfigValidationError(
-      `${surface}: a provider API key is required — pass apiKeys[${JSON.stringify(provider)}].`
-    );
+    throw configError(surface, `apiKeys.${provider}`, "a provider API key is required in apiKeys");
   }
 }
 
@@ -2335,15 +2542,17 @@ function mergeMcpServers(
   for (let i = 0; i < inputs.length; i++) {
     const entry = inputs[i];
     if (!(entry instanceof McpServer)) {
-      throw new SessionConfigValidationError(`aex: mcpServers[${i}] must be an McpServer instance`);
+      throw configError("aex", `mcpServers[${i}]`, `mcpServers[${i}] must be an McpServer instance`);
     }
     submissionMcpServers.push(entry.toSubmissionEntry());
     const secret = entry.toSecretEntry();
     if (secret) {
       const existing = secretByName.get(secret.name);
       if (existing && existing.url !== secret.url) {
-        throw new SessionConfigValidationError(
-          `aex: mcpServers[${i}].url conflicts with secrets.mcpServers["${secret.name}"]`
+        throw configError(
+          "aex",
+          `mcpServers[${i}].url`,
+          `mcpServers[${i}].url conflicts with another MCP declaration`
         );
       }
       secretByName.set(secret.name, secret);

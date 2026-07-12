@@ -270,7 +270,7 @@ console.log(JSON.stringify({ ok: true, rejected: Object.keys(msgs).length, snake
     const script =
       CHILD_HARNESS +
       String.raw`
-const { Aex, BuiltinTools, Tool } = await import("@aexhq/sdk");
+const { Aex, BuiltinTools, SessionConfigValidationError, Tool } = await import("@aexhq/sdk");
 const okSchema = { type: "object", properties: {} };
 
 function makeClient() {
@@ -304,14 +304,18 @@ let cherry;
 }
 
 // 4. An unknown builtin name string is rejected BEFORE any HTTP.
-let unknownMsg;
+let unknownError;
 {
   const c = makeClient();
-  unknownMsg = await expectReject(
-    "unknown builtin",
-    async () => c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: ["definitely_not_a_builtin"], apiKeys: { anthropic: "sk-ant" } }),
-    /is not a builtin tool/
-  );
+  try {
+    await c.client.sessions.create({ model: "claude-haiku-4-5", builtinTools: ["definitely_not_a_builtin"], apiKeys: { anthropic: "sk-ant" } });
+  } catch (err) {
+    unknownError = err;
+  }
+  ok(unknownError instanceof SessionConfigValidationError, "unknown builtin uses the typed config error");
+  strictEqual(unknownError.name, "SessionConfigValidationError");
+  strictEqual(unknownError.code, "SESSION_CONFIG_INVALID");
+  deepStrictEqual(unknownError.details, { field: "builtinTools" });
   strictEqual(c.calls.length, 0, "no HTTP on invalid tool name");
 }
 
@@ -341,7 +345,7 @@ let dupWire;
   dupWire = { count: entries.length, distinctAssets: entries[0].assetId !== entries[1].assetId };
 }
 
-console.log(JSON.stringify({ ok: true, cherry, unknownRejected: /is not a builtin tool/.test(unknownMsg), dupWire }));
+console.log(JSON.stringify({ ok: true, cherry, unknownRejected: true, dupWire }));
 `;
     const result = await runChild(script, "edge-builtin-wire.mjs");
     expect(result).toMatchObject({

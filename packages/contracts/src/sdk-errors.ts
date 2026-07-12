@@ -23,9 +23,16 @@ export class AexError extends Error {
   }
 }
 
+export interface SessionConfigValidationDetails {
+  /** Stable public field path; human error prose is not a branching contract. */
+  readonly field: string;
+}
+
 export class SessionConfigValidationError extends AexError {
-  constructor(message: string, details?: unknown) {
-    super("SESSION_CONFIG_INVALID", message, details);
+  declare readonly details: SessionConfigValidationDetails;
+
+  constructor(message: string, details: SessionConfigValidationDetails) {
+    super("SESSION_CONFIG_INVALID", message, Object.freeze({ field: details.field }));
   }
 }
 

@@ -288,7 +288,8 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const outs = session.files;
 
         // list (sessions endpoint) and find({}) (sessions endpoint) — cross-check parity.
-        const listed = (await outs.list()).files;
+        const snapshot = await outs.list();
+        const listed = snapshot.files;
         const listMeta = listed.map((o) => ({ id: o.id, filename: o.filename ?? null, sizeBytes: o.sizeBytes ?? null, contentType: o.contentType ?? null }));
         const found = await outs.find({});
         const findMeta = found.map((o) => ({ id: o.id, filename: o.filename ?? null }));
@@ -301,7 +302,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         probes.push(await probe("read_suffix", async () => await outs.read({ path: "report.txt", match: "suffix" })));
         probes.push(await probe("read_exact", async () => await outs.read({ path: exactPath })));
         probes.push(await probe("read_file_obj", async () => report ? await outs.read(report) : null));
-        probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id }) : null));
+        probes.push(await probe("read_by_id", async () => report ? await outs.read({ id: report.id, checkpointId: report.checkpointId }) : null));
         const LIVE_FILE_TRANSFER_TIMEOUT_MS = 20_000;
         probes.push(await probe("read_timeout_option", async () => report ? await outs.read(report, { timeoutMs: LIVE_FILE_TRANSFER_TIMEOUT_MS }) : null));
         probes.push(await probe("find_regex", async () => (await outs.find({ filename: /report\\.txt$/ })).length));
@@ -344,7 +345,10 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
 
         // Bad-selector / boundary probes — must error CLEANLY (no hang).
         probes.push(await probe("read_missing_path", async () => await outs.read({ path: "nope-" + Date.now() + ".txt", match: "suffix" })));
-        probes.push(await probe("download_missing_id", async () => await outs.download({ id: "file_nonexistent_zzz" })));
+        probes.push(await probe("download_missing_id", async () => await outs.download({
+          id: "file_nonexistent_zzz",
+          checkpointId: snapshot.revision.checkpointId
+        })));
         probes.push(await probe("link_nomatch", async () => await outs.link({ filename: "nope-" + Date.now() + ".txt" })));
         probes.push(await probe("link_expires_zero", async () => await outs.link({ filename: "report.txt" }, { expiresIn: 0 })));
         probes.push(await probe("link_expires_badpreset", async () => await outs.link({ filename: "report.txt" }, { expiresIn: "5m" })));
@@ -564,11 +568,11 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
 
         const probes = [];
         probes.push(await probe("read_suffix_unicode", async () => target ? (await outs.read({ path: "café menu.txt", match: "suffix" })).text : null));
-        probes.push(await probe("read_by_id", async () => target ? (await outs.read({ id: target.id })).text : null));
+        probes.push(await probe("read_by_id", async () => target ? (await outs.read({ id: target.id, checkpointId: target.checkpointId })).text : null));
         probes.push(await probe("download_by_id", async () => { if (!target) return null; const b = await outs.download(target); return { len: b.byteLength, text: dec(b) }; }));
         probes.push(await probe("link_fetch_unicode", async () => {
           if (!target) return null;
-          const link = await outs.link({ id: target.id });
+          const link = await outs.link({ id: target.id, checkpointId: target.checkpointId });
           const resp = await tracedFetch(link.url);
           return { status: resp.status, text: (await resp.text()) };
         }));

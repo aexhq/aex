@@ -41,21 +41,42 @@ const MODEL = process.env.MODEL;
 const KEY = process.env.PROVIDER_KEY;
 const PROVIDER = process.env.PROVIDER;
 const gateKeys = { [PROVIDER]: KEY };
+const knownSecrets = [process.env.AEX_API_KEY, KEY]
+  .filter((value) => typeof value === "string" && value.length > 0);
 const WAIT = Number(process.env.WAIT_MS || "240000");
 function uid(p){ return p + "-" + Date.now() + "-" + Math.random().toString(36).slice(2,8); }
 function dense(s){ return (s || "").replace(/\\s+/g, ""); }
 function errInfo(e){
+  const details = e && e.details && typeof e.details === "object" && !Array.isArray(e.details)
+    ? e.details
+    : null;
+  const detailKeys = details ? Object.keys(details) : [];
   return {
     name: e && e.name ? e.name : null,
-    message: e && e.message ? String(e.message) : String(e),
+    hasMessage: !!(e && e.message),
     status: (e && typeof e.status === "number") ? e.status : null,
     code: (e && e.code) ? e.code : null,
+    detailsField: details && typeof details.field === "string" ? details.field : null,
+    detailsOnlyField: detailKeys.length === 1 && detailKeys[0] === "field",
     apiCode: e && e.apiCode ? String(e.apiCode) : null,
-    requestId: e && e.requestId ? String(e.requestId) : null
+    hasRequestId: !!(e && e.requestId)
   };
 }
-function leaks(obj){ try { return JSON.stringify(obj).includes(KEY); } catch { return false; } }
-function print(o){ process.stdout.write(JSON.stringify(o)); }
+function serialized(value){ try { return JSON.stringify(value) || ""; } catch { return ""; } }
+function containsKnownSecret(value){
+  const text = serialized(value);
+  return knownSecrets.some((secret) => text.includes(secret));
+}
+function redactKnownSecrets(value){
+  let text = serialized(value);
+  for (const secret of knownSecrets) text = text.split(secret).join("[REDACTED]");
+  return JSON.parse(text);
+}
+function print(value){
+  const leakedKeyAnywhere = containsKnownSecret(value);
+  const safe = redactKnownSecrets({ ...value, leakedKeyAnywhere });
+  process.stdout.write(JSON.stringify(safe));
+}
 `;
 
 function buildEnv(waitMs: number): Record<string, string> {
@@ -99,15 +120,48 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       timeoutMs: opts.childTimeoutMs,
       env: buildEnv(opts.waitMs)
     });
+    const leakedKnownKey = [apiKey, providerKey].some(
+      (secret) => child.stdout.includes(secret) || child.stderr.includes(secret)
+    );
     if (child.exitCode !== 0) {
       throw new Error(
-        `${fileName} exited ${child.exitCode}\n--- stdout ---\n${child.stdout}\n--- stderr ---\n${child.stderr}`
+        `${fileName} exited ${child.exitCode}; stdoutBytes=${child.stdout.length}; ` +
+        `stderrBytes=${child.stderr.length}; leakedKnownKey=${leakedKnownKey}`
       );
     }
-    const parsed = JSON.parse(child.stdout.trim()) as Record<string, unknown>;
-    // Echo raw evidence to stderr so passing cases still surface their JSON.
-    console.error(`[edge-evidence] ${fileName}: ${JSON.stringify(parsed)}`);
+    if (leakedKnownKey) {
+      throw new Error(
+        `${fileName} emitted a known key; stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}`
+      );
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(child.stdout.trim()) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `${fileName} emitted invalid JSON; stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}`
+      );
+    }
+    if (parsed.leakedKeyAnywhere === true) {
+      throw new Error(
+        `${fileName} detected a known key before output; stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}`
+      );
+    }
+    console.error(
+      `[edge-evidence] ${fileName}: stdoutBytes=${child.stdout.length}; ` +
+      `stderrBytes=${child.stderr.length}; fieldCount=${Object.keys(parsed).length}; leakedKnownKey=false`
+    );
     return parsed;
+  }
+
+  function expectConfigError(value: unknown, field: string): void {
+    expect(value).toMatchObject({
+      name: "SessionConfigValidationError",
+      code: "SESSION_CONFIG_INVALID",
+      hasMessage: true,
+      detailsField: field,
+      detailsOnlyField: true
+    });
   }
 
   // ── Case 0: pure CLIENT-side validation (no HTTP, no billable session turn) ──────────
@@ -115,29 +169,50 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     "rejects malformed session options at the SDK boundary before any HTTP call",
     async () => {
       const body = `
-        async function rej(fn){ try { await fn(); return "__RESOLVED__"; } catch(e){ return e && e.message ? e.message : String(e); } }
-        const emptyMsg     = await rej(() => client.start({ provider:PROVIDER, model:MODEL, message:"", apiKeys:gateKeys }));
-        const emptyArr     = await rej(() => client.start({ provider:PROVIDER, model:MODEL, message:[], apiKeys:gateKeys }));
-        const emptySegment = await rej(() => client.start({ provider:PROVIDER, model:MODEL, message:["ok",""], apiKeys:gateKeys }));
-        const missingKey   = await rej(() => client.start({ provider:PROVIDER, model:MODEL, message:"hi" }));
-        const badProvider  = await rej(() => client.start({ provider:"acme", model:MODEL, message:"hi", apiKeys:{ acme:"k" } }));
-        const legacyPrompt = await rej(() => client.start({ provider:PROVIDER, model:MODEL, message:"hi", apiKeys:gateKeys, prompt:"x" }));
-        print({ emptyMsg, emptyArr, emptySegment, missingKey, badProvider, legacyPrompt });
+        let httpCalls = 0;
+        const validationClient = new Aex({
+          baseUrl: process.env.AEX_API_URL,
+          apiKey: process.env.AEX_API_KEY,
+          retry: false,
+          fetch: async () => { httpCalls += 1; throw new Error("CLIENT_VALIDATION_MADE_HTTP"); }
+        });
+        async function rej(fn){
+          try {
+            await fn();
+            return { name:"Resolved", hasMessage:false, status:null, code:null, detailsField:null, detailsOnlyField:false, apiCode:null, hasRequestId:false };
+          } catch(e) {
+            return errInfo(e);
+          }
+        }
+        const emptyMsg     = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"", apiKeys:gateKeys }));
+        const emptyArr     = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:[], apiKeys:gateKeys }));
+        const emptySegment = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:["ok",""], apiKeys:gateKeys }));
+        const whitespaceMsg = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"  \\n\\t ", apiKeys:gateKeys }));
+        const whitespaceArray = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:["  ","\\n"], apiKeys:gateKeys }));
+        const missingKey   = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"hi" }));
+        const badProvider  = await rej(() => validationClient.start({ provider:"acme", model:MODEL, message:"hi", apiKeys:{ acme:"k" } }));
+        const legacyPrompt = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"hi", apiKeys:gateKeys, prompt:"x" }));
+        const unknownOption = await rej(() => validationClient.start({ provider:PROVIDER, model:MODEL, message:"hi", apiKeys:gateKeys, totallyUnknownOption:{nope:true} }));
+        print({ emptyMsg, emptyArr, emptySegment, whitespaceMsg, whitespaceArray, missingKey, badProvider, legacyPrompt, unknownOption, httpCalls });
       `;
       const r = await runChild("edge-clientside-validation.mjs", body, { childTimeoutMs: 120_000, waitMs: 60_000 });
-      expect(r.emptyMsg).toMatch(/message must be a non-empty string/);
-      expect(r.emptyArr).toMatch(/non-empty string or string array/);
-      expect(r.emptySegment).toMatch(/segments must be non-empty strings/);
-      expect(r.missingKey).toMatch(/provider API key is required/);
-      expect(r.badProvider).toMatch(/not available for (?:model|provider)/);
-      expect(r.legacyPrompt).toMatch(/prompt is not a supported option/);
+      expectConfigError(r.emptyMsg, "message");
+      expectConfigError(r.emptyArr, "message");
+      expectConfigError(r.emptySegment, "message");
+      expectConfigError(r.whitespaceMsg, "message");
+      expectConfigError(r.whitespaceArray, "message");
+      expectConfigError(r.missingKey, `apiKeys.${GATE_PROVIDER}`);
+      expectConfigError(r.badProvider, "provider");
+      expectConfigError(r.legacyPrompt, "prompt");
+      expectConfigError(r.unknownOption, "totallyUnknownOption");
+      expect(r.httpCalls).toBe(0);
     },
     150_000
   );
 
-  // ── Case 1: baseline success + SessionResult.ok/status/text + unknown-field ignore ─
+  // ── Case 1: baseline success + settled SessionResult fields ────────────────
   it(
-    "one-shot run succeeds: ok=true, parked status, verbatim text, and an unknown option is ignored gracefully",
+    "one-shot run succeeds with a settled status and verbatim text",
     async () => {
       const body = `
         const probe = "OK-" + Math.random().toString(36).slice(2,8);
@@ -145,25 +220,24 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
           provider:PROVIDER, model:MODEL,
           message:"SessionFile verbatim: " + probe,
           idempotencyKey: uid("edge-baseline"),
-          apiKeys: gateKeys,
-          totallyUnknownOption: { nope: 1 } // must be ignored, not rejected
+          apiKeys: gateKeys
         }, { timeoutMs: WAIT });
         const out = {
           sessionId: r.sessionId, ok: r.ok, status: r.status,
-          denseText: dense(r.text), probe,
+          textContainsProbe: dense(r.text).includes(probe), textLen: (r.text || "").length,
           hasUsage: !!r.usage, usageTotal: r.usage && r.usage.totalTokens,
           costUsd: (typeof r.costUsd === "number") ? r.costUsd : null,
           eventCount: Array.isArray(r.events) ? r.events.length : null,
-          error: r.error || null
+          hasError: !!r.error
         };
-        print({ ...out, leaked: leaks(out) });
+        print(out);
       `;
       const r = await runChild("edge-baseline.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
       expect(r.ok).toBe(true);
-      expect(["idle", "suspended", "succeeded"]).toContain(r.status);
-      expect(String(r.denseText)).toContain(String(r.probe));
+      expect(r.status).toBe("succeeded");
+      expect(r.textContainsProbe).toBe(true);
       expect(Number(r.eventCount)).toBeGreaterThan(0);
-      expect(r.leaked).toBe(false);
+      expect(r.leakedKeyAnywhere).toBe(false);
     },
     330_000
   );
@@ -244,30 +318,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     330_000
   );
 
-  // ── Case 5: whitespace-only message (passes client validation, server rejects it) ─
-  it(
-    "whitespace-only message is accepted client-side and terminates without hanging",
-    async () => {
-      const body = `
-        const t0 = Date.now();
-        let outcome, res=null, err=null;
-        try {
-          const r = await client.start({ provider:PROVIDER, model:MODEL, message:"   ", idempotencyKey: uid("edge-ws"), apiKeys:gateKeys }, { timeoutMs: WAIT });
-          outcome = "resolved";
-          const streamErrs = Array.isArray(r.events) ? r.events.filter(e => e && e.type === "CUSTOM" && e.data && e.data.name === "aex.stream_error").length : 0;
-          res = { ok:r.ok, status:r.status, hasError: !!r.error, error: (r.error||"").slice(0,300), denseTextLen: dense(r.text).length, streamErrs };
-        } catch(e) { outcome = "threw"; err = errInfo(e); }
-        print({ scenario:"whitespace", outcome, res, err, elapsedMs: Date.now()-t0, leaked: leaks({res, err}) });
-      `;
-      const r = await runChild("edge-whitespace-message.mjs", body, { childTimeoutMs: 300_000, waitMs: 200_000 });
-      // Robust invariant: it must TERMINATE (resolve or throw), not hang, and never leak the key.
-      expect(["resolved", "threw"]).toContain(r.outcome);
-      expect(r.leaked).toBe(false);
-    },
-    330_000
-  );
-
-  // ── Case 6: unicode / emoji / CJK / newline message (wire-encoding round-trip) ─
+  // ── Case 5: unicode / emoji / CJK / newline message (wire-encoding round-trip) ─
   it(
     "unicode + emoji + CJK + newline message submits and completes cleanly",
     async () => {
@@ -275,15 +326,20 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         const probe = "u" + Math.random().toString(36).slice(2,6);
         const msg = "SessionFile this token verbatim then stop: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
         const r = await client.start({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-unicode"), apiKeys:gateKeys }, { timeoutMs: WAIT });
-        const out = { sessionId:r.sessionId, ok:r.ok, status:r.status, probe, denseText: dense(r.text).slice(0,200), textLen: (r.text||"").length };
-        print({ ...out, leaked: leaks(out) });
+        print({
+          sessionId:r.sessionId,
+          ok:r.ok,
+          status:r.status,
+          textContainsProbe:dense(r.text).includes(probe),
+          textLen:(r.text||"").length
+        });
       `;
       const r = await runChild("edge-unicode-message.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
       expect(r.ok).toBe(true);
       expect(["idle", "suspended", "succeeded"]).toContain(r.status);
       expect(Number(r.textLen)).toBeGreaterThan(0);
-      expect(String(r.denseText)).toContain(String(r.probe));
-      expect(r.leaked).toBe(false);
+      expect(r.textContainsProbe).toBe(true);
+      expect(r.leakedKeyAnywhere).toBe(false);
     },
     330_000
   );
@@ -300,12 +356,12 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         try {
           const r = await client.start({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-big"), apiKeys:gateKeys }, { timeoutMs: WAIT });
           outcome = "resolved";
-          res = { ok:r.ok, status:r.status, denseText: dense(r.text).slice(0,80), textLen:(r.text||"").length, error:r.error||null };
+          res = { ok:r.ok, status:r.status, textLen:(r.text||"").length, hasError:!!r.error };
         } catch(e) { outcome="threw"; err = errInfo(e); }
-        print({ scenario:"bigmsg", bytes: msg.length, outcome, res, err, elapsedMs: Date.now()-t0, leaked: leaks({res, err}) });
+        print({ scenario:"bigmsg", bytes: msg.length, outcome, res, err, elapsedMs: Date.now()-t0 });
       `;
       const r = await runChild("edge-big-message.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
-      expect(r.leaked).toBe(false);
+      expect(r.leakedKeyAnywhere).toBe(false);
       // Observed behavior (pinned): a ~50KB message is accepted and succeeds —
       // no payload-size failure, no hang.
       expect(r.outcome).toBe("resolved");
@@ -321,13 +377,19 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       const body = `
         const probe = "arr" + Math.random().toString(36).slice(2,6);
         const r = await client.start({ provider:PROVIDER, model:MODEL, message:["SessionFile verbatim:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
-        const out = { sessionId:r.sessionId, ok:r.ok, status:r.status, probe, denseText: dense(r.text).slice(0,200), textLen:(r.text||"").length };
-        print({ ...out, leaked: leaks(out) });
+        print({
+          sessionId:r.sessionId,
+          ok:r.ok,
+          status:r.status,
+          textContainsProbe:dense(r.text).includes(probe),
+          textLen:(r.text||"").length
+        });
       `;
       const r = await runChild("edge-array-message.mjs", body, { childTimeoutMs: 300_000, waitMs: 240_000 });
       expect(r.ok).toBe(true);
       expect(Number(r.textLen)).toBeGreaterThan(0);
-      expect(r.leaked).toBe(false);
+      expect(r.textContainsProbe).toBe(true);
+      expect(r.leakedKeyAnywhere).toBe(false);
     },
     330_000
   );
@@ -341,7 +403,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         try {
           const r = await client.start({ provider:PROVIDER, model:"not-a-model", message:"hi", idempotencyKey: uid("edge-badmodel"), apiKeys:gateKeys }, { timeoutMs: 90_000 });
           outcome = "resolved";
-          res = { ok:r.ok, status:r.status, error:r.error||null };
+          res = { ok:r.ok, status:r.status, hasError:!!r.error };
         } catch(e) { outcome = "threw"; err = errInfo(e); }
         print({ scenario:"badmodel", outcome, res, err });
       `;
@@ -352,7 +414,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
       expect(r.outcome).toBe("threw");
       const err = r.err as Record<string, unknown>;
       expect(err.status).toBe(400);
-      expect(String(err.message ?? "")).toMatch(/invalid_model|model/i);
+      expect(err.hasMessage).toBe(true);
     },
     180_000
   );
@@ -367,15 +429,15 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         try {
           const r = await client.start({ provider:PROVIDER, model:MODEL, message:"SessionFile verbatim: TINY", idempotencyKey: uid("edge-tiny"), apiKeys:gateKeys }, { timeoutMs: 1 });
           outcome = "resolved";
-          res = { ok:r.ok, status:r.status, eventCount: Array.isArray(r.events)?r.events.length:null, hasError: !!r.error, error:r.error||null };
+          res = { ok:r.ok, status:r.status, eventCount: Array.isArray(r.events)?r.events.length:null, hasError:!!r.error };
         } catch(e) { outcome = "threw"; err = errInfo(e); }
-        print({ scenario:"tiny-timeout", outcome, res, err, elapsedMs: Date.now()-t0, leaked: leaks({res, err}) });
+        print({ scenario:"tiny-timeout", outcome, res, err, elapsedMs: Date.now()-t0 });
       `;
       const r = await runChild("edge-tiny-timeout.mjs", body, { childTimeoutMs: 120_000, waitMs: 5_000 });
       // The one hard requirement from the brief: no hang, no leak. A hang would
       // be caught by the 120s child timeout above and fail this test.
       expect(["resolved", "threw"]).toContain(r.outcome);
-      expect(r.leaked).toBe(false);
+      expect(r.leakedKeyAnywhere).toBe(false);
       expect(Number(r.elapsedMs)).toBeLessThan(90_000);
     },
     150_000

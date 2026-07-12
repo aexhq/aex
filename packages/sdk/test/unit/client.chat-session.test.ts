@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Aex, type SessionResult } from "../../src/index.js";
+import { Aex, SessionConfigValidationError, type SessionResult } from "../../src/index.js";
 import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
 
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -9,6 +9,32 @@ interface CapturedRequest {
   readonly method: string;
   readonly headers: Record<string, string>;
   readonly body: unknown;
+}
+
+function captureThrown(operation: () => unknown): unknown {
+  try {
+    operation();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected operation to throw");
+}
+
+async function captureRejected(operation: () => Promise<unknown>): Promise<unknown> {
+  return operation().then(
+    () => undefined,
+    (error: unknown) => error
+  );
+}
+
+function expectConfigError(error: unknown, field: string): void {
+  expect(error).toBeInstanceOf(SessionConfigValidationError);
+  expect(error).toMatchObject({
+    name: "SessionConfigValidationError",
+    code: "SESSION_CONFIG_INVALID"
+  });
+  expect((error as SessionConfigValidationError).details).toEqual({ field });
+  expect((error as Error).message.trim().length).toBeGreaterThan(0);
 }
 
 function event(sequence: number, patch: Partial<AexEvent> = {}): AexEvent {
@@ -400,49 +426,63 @@ describe("Aex sessions", () => {
 
   it("rejects the old idleSuspendAfter override", async () => {
     const { client } = makeClient();
-    await expect(
-      client.sessions.create({
+    const error = await captureRejected(() => client.sessions.create({
         model: "claude-haiku-4-5",
         overrides: { idleSuspendAfter: "10m" } as never,
         apiKeys: { anthropic: "sk-ant" }
-      })
-    ).rejects.toThrow(/overrides\.idleSuspendAfter is not a supported option; use overrides\.idleTtl/);
+      }));
+    expectConfigError(error, "overrides.idleSuspendAfter");
   });
 
   it("rejects legacy one-shot prompt input before any HTTP request", async () => {
     const { client, calls } = makeClient();
 
-    await expect(
-      client.start({
+    const error = await captureRejected(() => client.start({
         model: "claude-haiku-4-5",
         prompt: "legacy one-shot input",
         apiKeys: { anthropic: "sk-ant" }
-      } as never)
-    ).rejects.toThrow(/Aex\.start: prompt is not a supported option; use message/);
+      } as never));
+    expectConfigError(error, "prompt");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects unknown one-shot options before any HTTP request", async () => {
+    const { client, calls } = makeClient();
+
+    const error = await captureRejected(() => client.start({
+        model: "claude-haiku-4-5",
+        message: "hello",
+        apiKeys: { anthropic: "sk-ant" },
+        totallyUnknownOption: { nope: true }
+      } as never));
+    expectConfigError(error, "totallyUnknownOption");
     expect(calls).toHaveLength(0);
   });
 
   it("rejects invalid one-shot messages before any HTTP request", async () => {
     const { client, calls } = makeClient();
 
-    await expect(
-      client.start({
+    const invalidMessages = [
+      () => client.start({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-ant" }
-      } as never)
-    ).rejects.toThrow(/Aex\.start: message must be a non-empty string or string array/);
-    await expect(client.start({
-      model: "claude-haiku-4-5",
-      message: "",
-      apiKeys: { anthropic: "sk-ant" }
-    })).rejects.toThrow(/Aex\.start: message must be a non-empty string/);
-    await expect(
-      client.start({
+      } as never),
+      () => client.start({ model: "claude-haiku-4-5", message: "", apiKeys: { anthropic: "sk-ant" } }),
+      () => client.start({ model: "claude-haiku-4-5", message: "  \n\t ", apiKeys: { anthropic: "sk-ant" } }),
+      () => client.start({
         model: "claude-haiku-4-5",
         message: ["ok", ""] as never,
         apiKeys: { anthropic: "sk-ant" }
+      }),
+      () => client.start({
+        model: "claude-haiku-4-5",
+        message: ["  ", "\n"] as never,
+        apiKeys: { anthropic: "sk-ant" }
       })
-    ).rejects.toThrow(/Aex\.start: message segments must be non-empty strings/);
+    ];
+    for (const operation of invalidMessages) {
+      expectConfigError(await captureRejected(operation), "message");
+    }
     expect(calls).toHaveLength(0);
   });
 
@@ -454,9 +494,10 @@ describe("Aex sessions", () => {
     });
     calls.length = 0;
 
-    expect(() => session.messages.send("")).toThrow(/session\.messages\.send: input must be a non-empty string/);
-    expect(() => session.messages.send([] as never)).toThrow(/session\.messages\.send: input must be a non-empty string or string array/);
-    expect(() => session.messages.send(["ok", ""] as never)).toThrow(/session\.messages\.send: input segments must be non-empty strings/);
+    for (const input of ["", "  \n\t ", [], ["ok", ""], ["  ", "\n"]] as const) {
+      expectConfigError(captureThrown(() => session.messages.send(input as never)), "input");
+    }
+    expect(() => session.messages.send(["keep formatting", "  \n"])).not.toThrow();
     expect(calls).toHaveLength(0);
   });
 
@@ -468,15 +509,14 @@ describe("Aex sessions", () => {
       apiKeys: { anthropic: "sk-ant" }
     });
 
-    expect(() => session.messages.send("continue", { signal } as never)).toThrow(/signal is not a supported option/);
-    await expect(
-      client.start({
+    expectConfigError(captureThrown(() => session.messages.send("continue", { signal } as never)), "signal");
+    const error = await captureRejected(() => client.start({
         model: "claude-haiku-4-5",
         message: "continue",
         apiKeys: { anthropic: "sk-ant" },
         stream: { signal } as never
-      })
-    ).rejects.toThrow(/signal is not a supported option/);
+      }));
+    expectConfigError(error, "stream.signal");
   });
 
   it("keeps replay cursors on session.events instead of message sends", async () => {
@@ -487,9 +527,7 @@ describe("Aex sessions", () => {
     });
     calls.length = 0;
 
-    expect(() => session.messages.send("continue", { from: 0 } as never)).toThrow(
-      /from is not a supported option; use session\.events/
-    );
+    expectConfigError(captureThrown(() => session.messages.send("continue", { from: 0 } as never)), "from");
     expect(calls).toHaveLength(0);
   });
 });

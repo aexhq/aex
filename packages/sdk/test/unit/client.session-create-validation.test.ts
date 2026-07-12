@@ -13,6 +13,25 @@ function recordingFetch(): { fetch: typeof fetch; calls: string[] } {
   return { fetch: f, calls };
 }
 
+async function expectConfigError(
+  operation: () => Promise<unknown>,
+  field: string,
+  calls: readonly string[]
+): Promise<void> {
+  const error = await operation().then(
+    () => undefined,
+    (caught: unknown) => caught
+  );
+  expect(error).toBeInstanceOf(SessionConfigValidationError);
+  expect(error).toMatchObject({
+    name: "SessionConfigValidationError",
+    code: "SESSION_CONFIG_INVALID"
+  });
+  expect((error as SessionConfigValidationError).details).toEqual({ field });
+  expect((error as Error).message.trim().length).toBeGreaterThan(0);
+  expect(calls).toHaveLength(0);
+}
+
 describe("aex.sessions.create — removed field validation", () => {
   it("rejects the legacy runtimeSize field without an HTTP call", async () => {
     const rec = recordingFetch();
@@ -140,6 +159,79 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     });
     // A valid config DOES reach the network (create call).
     expect(rec.calls.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["runtime", { runtime: "sensitive-invalid-runtime" }, "runtime"],
+    ["timeout", { overrides: { timeout: "sensitive-invalid-timeout" } }, "overrides.timeout"],
+    ["webhook", { webhook: { url: "sensitive-invalid-webhook" } }, "webhook.url"],
+    ["maxSpendUsd", { overrides: { maxSpendUsd: -1 } }, "overrides.maxSpendUsd"],
+    ["maxTurns", { overrides: { maxTurns: 0 } }, "overrides.maxTurns"]
+  ] as const)("uses a stable field-only error for invalid %s", async (_label, extra, field) => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expectConfigError(
+      () => client.sessions.create({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        ...extra
+      } as never),
+      field,
+      rec.calls
+    );
+  });
+
+  it.each([
+    ["overrides", { overrides: { maxTurn: 2 } }, "overrides.maxTurn"],
+    ["assets", { assets: { skill: [] } }, "assets.skill"],
+    [
+      "asset item",
+      {
+        assets: {
+          files: [{
+            kind: "file",
+            resourceId: `wres_${"1".repeat(32)}`,
+            version: 1,
+            assetId: "asset-1",
+            contentHash: `sha256:${"a".repeat(64)}`,
+            name: "input",
+            mountpath: "/workspace/input"
+          }]
+        }
+      },
+      "assets.files[0].mountpath"
+    ],
+    ["fileCapture", { fileCapture: { maxFileByte: 10 } }, "fileCapture.maxFileByte"],
+    ["environment", { environment: { variable: { MODE: "test" } } }, "environment.variable"],
+    [
+      "environment networking",
+      { environment: { networking: { mode: "limited", allowedHost: ["example.test"] } } },
+      "environment.networking.allowedHost"
+    ],
+    [
+      "environment package",
+      { environment: { packages: [{ name: "apt:curl", versions: "1" }] } },
+      "environment.packages[0].versions"
+    ],
+    ["webhook", { webhook: { uri: "https://hooks.example.test/aex" } }, "webhook.uri"],
+    [
+      "responseFormat",
+      { responseFormat: { kind: "json_schema", schema: {}, stric: true } },
+      "responseFormat.stric"
+    ],
+    ["approvalGate", { approvalGate: { tool: ["bash"] } }, "approvalGate.tool"]
+  ] as const)("rejects an unknown nested %s key before HTTP", async (_label, extra, field) => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expectConfigError(
+      () => client.sessions.create({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        ...extra
+      } as never),
+      field,
+      rec.calls
+    );
   });
 });
 

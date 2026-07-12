@@ -55,7 +55,10 @@ The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
 Transport failures with no HTTP response (DNS, connection refused, TLS reset)
 surface as `AexNetworkError`; client-side config validation surfaces as
 `SessionConfigValidationError` (`err.code === "SESSION_CONFIG_INVALID"`) before any
-request is sent.
+request is sent. Its stable machine-readable payload is exactly
+`err.details = { field }`, where `field` is the rejected public option path such
+as `overrides.timeout`. Branch on `details.field`; the human `message` may change
+and never includes the rejected value.
 
 ## 401 — authentication
 

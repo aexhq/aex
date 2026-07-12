@@ -35,15 +35,46 @@ function templateSource(node: ts.TemplateLiteral): string {
   return node.head.text + node.templateSpans.map((span) => `undefined${span.literal.text}`).join("");
 }
 
-function suppressedSessionReads(path: string): readonly string[] {
-  const source = ts.createSourceFile(path, readRepoFile(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+function isNonzeroNumericLiteral(node: ts.Expression | undefined): boolean {
+  return node !== undefined && ts.isNumericLiteral(node) && Number(node.text) !== 0;
+}
+
+function catchFailsChildProcess(node: ts.CatchClause, source: ts.SourceFile): boolean {
+  let fails = false;
+  const visit = (candidate: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(candidate) &&
+      candidate.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      candidate.left.getText(source) === "process.exitCode" &&
+      isNonzeroNumericLiteral(candidate.right)
+    ) {
+      fails = true;
+    }
+    if (
+      ts.isCallExpression(candidate) &&
+      candidate.expression.getText(source) === "process.exit" &&
+      isNonzeroNumericLiteral(candidate.arguments[0])
+    ) {
+      fails = true;
+    }
+    ts.forEachChild(candidate, visit);
+  };
+  visit(node.block);
+  return fails;
+}
+
+function suppressedSessionReadsInSource(text: string, label: string): readonly string[] {
+  const source = ts.createSourceFile(label, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const findings: string[] = [];
   const inspect = (text: string, label: string): void => {
     const embedded = ts.createSourceFile(label, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     const visitEmbedded = (node: ts.Node): void => {
       if (ts.isCatchClause(node) && ts.isTryStatement(node.parent)) {
         const guarded = node.parent.tryBlock.getText(embedded);
-        if (/(?:\.sessions\.(?:open|get|list)|\.(?:events|files|messages)\.list)\s*\(/.test(guarded)) {
+        if (
+          /(?:\.sessions\.(?:open|get|list)|\.(?:events|files|messages)\.list)\s*\(/.test(guarded) &&
+          !catchFailsChildProcess(node, embedded)
+        ) {
           findings.push(label);
         }
       }
@@ -54,12 +85,16 @@ function suppressedSessionReads(path: string): readonly string[] {
   const visit = (node: ts.Node): void => {
     if (ts.isTemplateExpression(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
-      inspect(templateSource(node), `${path}:${line}`);
+      inspect(templateSource(node), `${label}:${line}`);
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return findings;
+}
+
+function suppressedSessionReads(path: string): readonly string[] {
+  return suppressedSessionReadsInSource(readRepoFile(path), path);
 }
 
 describe("live scenario reliability", () => {
@@ -116,6 +151,27 @@ describe("live scenario reliability", () => {
     ]) {
       expect(suppressedSessionReads(path), path).toEqual([]);
     }
+  });
+
+  it("distinguishes swallowed reads from secret-safe child-process failure propagation", () => {
+    const swallowed = `
+      const script = \`try {
+        await session.events.list();
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ error: String(error) }));
+      }\`;
+    `;
+    const propagated = `
+      const script = \`try {
+        await session.events.list();
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ hasError: true }));
+        process.exitCode = 1;
+      }\`;
+    `;
+
+    expect(suppressedSessionReadsInSource(swallowed, "swallowed.ts")).toEqual(["swallowed.ts:2"]);
+    expect(suppressedSessionReadsInSource(propagated, "propagated.ts")).toEqual([]);
   });
 
   it("keeps file-level dynamic fanout at one worker per job", () => {

@@ -4,7 +4,7 @@
  * ephemeral values live in `secrets.envSecrets` (vaulted, hash-excluded).
  */
 import { describe, expect, it, vi } from "vitest";
-import { Aex, Secret } from "../../src/index.js";
+import { Aex, Secret, SessionConfigValidationError } from "../../src/index.js";
 
 interface CapturedRequest {
   readonly url: string;
@@ -47,6 +47,20 @@ function openWith(secrets: Record<string, Secret>) {
         environment: { secrets }
       })
   };
+}
+
+async function rejected(operation: () => Promise<unknown>): Promise<unknown> {
+  return operation().then(
+    () => undefined,
+    (error: unknown) => error
+  );
+}
+
+function expectConfigError(error: unknown, field: string): void {
+  expect(error).toBeInstanceOf(SessionConfigValidationError);
+  expect(error).toMatchObject({ name: "SessionConfigValidationError", code: "SESSION_CONFIG_INVALID" });
+  expect((error as SessionConfigValidationError).details).toEqual({ field });
+  expect((error as Error).message.trim().length).toBeGreaterThan(0);
 }
 
 describe("sessions.create environment.secrets split", () => {
@@ -104,19 +118,20 @@ describe("sessions.create environment.secrets split", () => {
   });
 
   it("rejects an invalid env var name", async () => {
-    const { run } = openWith({ "bad-name": Secret.ref("serper") });
-    await expect(run()).rejects.toThrow(/env var name/i);
+    const { calls, run } = openWith({ "bad-name": Secret.ref("serper") });
+    expectConfigError(await rejected(run), "environment.secrets");
+    expect(calls).toHaveLength(0);
   });
 
   it("rejects a non-Secret value", async () => {
-    const { fetch } = makeStubFetch();
+    const { fetch, calls } = makeStubFetch();
     const client = new Aex({ apiKey: "tkn", baseUrl: "https://x", fetch });
-    await expect(
-      client.sessions.create({
+    const error = await rejected(() => client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         environment: { secrets: { SERPER_API_KEY: "sk-x" as unknown as Secret } }
-      })
-    ).rejects.toThrow(/must be a Secret/);
+      }));
+    expectConfigError(error, "environment.secrets");
+    expect(calls).toHaveLength(0);
   });
 });

@@ -177,6 +177,8 @@ export interface SessionCostProviderUsage {
 
 export interface SessionCostStorageTelemetry {
   readonly storedBytes?: number;
+  /** Number of files retained in the checkpoint snapshot. */
+  readonly storedFiles?: number;
   readonly byteMilliseconds?: number;
 }
 
@@ -553,6 +555,7 @@ function normalizeProviderUsage(input: SessionCostProviderUsage): SessionCostPro
 function normalizeStorage(input: SessionCostStorageTelemetry): SessionCostStorageTelemetry {
   return freezeOptionalNumbers<keyof SessionCostStorageTelemetry>({
     storedBytes: input.storedBytes,
+    storedFiles: input.storedFiles,
     byteMilliseconds: input.byteMilliseconds
   });
 }
@@ -734,7 +737,7 @@ function sumStorage(
   base: SessionCostStorageTelemetry | undefined,
   next: SessionCostStorageTelemetry | undefined
 ): SessionCostStorageTelemetry | undefined {
-  return sumNumberFields<keyof SessionCostStorageTelemetry>(["storedBytes", "byteMilliseconds"], base, next);
+  return sumNumberFields<keyof SessionCostStorageTelemetry>(["storedBytes", "storedFiles", "byteMilliseconds"], base, next);
 }
 
 function sumProxy(

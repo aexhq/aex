@@ -5,6 +5,25 @@ export function buildEdgeListSearchChildScript(body: string): string {
     const PROVIDER = process.env.PROVIDER;
     const PROVIDER_KEY = process.env.PROVIDER_KEY;
     const MODEL = process.env.MODEL;
+    const knownSecrets = [process.env.AEX_API_KEY, PROVIDER_KEY]
+      .filter((value) => typeof value === "string" && value.length > 0);
+    function serialized(value) {
+      try { return JSON.stringify(value) || ""; } catch { return ""; }
+    }
+    function containsKnownSecret(value) {
+      const text = serialized(value);
+      return knownSecrets.some((secret) => text.includes(secret));
+    }
+    function redactKnownSecrets(value) {
+      let text = serialized(value);
+      for (const secret of knownSecrets) text = text.split(secret).join("[REDACTED]");
+      return JSON.parse(text);
+    }
+    function printSafe(value) {
+      const leakedKeyAnywhere = containsKnownSecret(value);
+      const safe = redactKnownSecrets({ ...value, leakedKeyAnywhere });
+      process.stdout.write(JSON.stringify(safe));
+    }
     ${body}
   `;
 }
@@ -18,9 +37,9 @@ export const EDGE_SESSION_DEBUG_BODY = String.raw`
   });
   await debugClient.sessions.list({ limit: 1 });
   const joined = lines.join("\n");
-  process.stdout.write(JSON.stringify({
+  printSafe({
     count: lines.length,
     leakedApiKey: joined.includes(process.env.AEX_API_KEY),
     leakedProviderKey: joined.includes(PROVIDER_KEY)
-  }));
+  });
 `;

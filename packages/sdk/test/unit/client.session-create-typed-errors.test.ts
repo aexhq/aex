@@ -31,20 +31,35 @@ function makeClient(fetchImpl: typeof fetch): Aex {
   return new Aex({ apiKey: "tkn_test", baseUrl: "https://example.test", fetch: fetchImpl });
 }
 
+async function captureRejected(operation: () => Promise<unknown>): Promise<unknown> {
+  return operation().then(
+    () => undefined,
+    (error: unknown) => error
+  );
+}
+
+function expectConfigError(error: unknown, field: string): void {
+  expect(error).toBeInstanceOf(SessionConfigValidationError);
+  expect(error).toBeInstanceOf(AexError);
+  expect(error).toMatchObject({
+    name: "SessionConfigValidationError",
+    code: "SESSION_CONFIG_INVALID"
+  });
+  expect((error as SessionConfigValidationError).details).toEqual({ field });
+  expect((error as Error).message.trim().length).toBeGreaterThan(0);
+}
+
 const unknownModel = "totally-unknown-model-xyz" as unknown as ModelName;
 
 describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", () => {
   it("throws SessionConfigValidationError with code SESSION_CONFIG_INVALID for a missing options object", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
-    await expect(
+    const error = await captureRejected(() =>
       // deliberately pass an invalid value
       (client.sessions.create as unknown as (o: unknown) => Promise<unknown>)(undefined)
-    ).rejects.toMatchObject({
-      name: "SessionConfigValidationError",
-      code: "SESSION_CONFIG_INVALID",
-      message: "aex.sessions.create: options is required"
-    });
+    );
+    expectConfigError(error, "options");
     expect(calls).toBe(0);
   });
 
@@ -64,51 +79,42 @@ describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", ()
     expect(caught).toBeInstanceOf(AexError);
     expect(caught).toBeInstanceOf(Error);
     expect((caught as AexError).code).toBe("SESSION_CONFIG_INVALID");
+    expect((caught as SessionConfigValidationError).details).toEqual({ field: "apiKeys.anthropic" });
   });
 
-  it("rejects an empty one-shot message with the unchanged message + code", async () => {
+  it("rejects an empty one-shot message with stable error metadata", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
-    await expect(
+    const error = await captureRejected(() =>
       client.start({
         model: "claude-haiku-4-5",
         message: "",
         apiKeys: { anthropic: "sk-x" }
       })
-    ).rejects.toMatchObject({
-      code: "SESSION_CONFIG_INVALID",
-      message: "Aex.start: message must be a non-empty string"
-    });
+    );
+    expectConfigError(error, "message");
     expect(calls).toBe(0);
   });
 
-  it("rejects a missing provider API key with the unchanged message + code", async () => {
+  it("rejects a missing provider API key with its provider-specific field", async () => {
     const { fetch } = noNetworkFetch();
     const client = makeClient(fetch);
-    await expect(
-      client.sessions.create({ model: "claude-haiku-4-5" })
-    ).rejects.toMatchObject({ code: "SESSION_CONFIG_INVALID" });
-    await expect(
-      client.sessions.create({ model: "claude-haiku-4-5" })
-    ).rejects.toThrow(/aex\.sessions\.create: a provider API key is required/);
+    const error = await captureRejected(() => client.sessions.create({ model: "claude-haiku-4-5" }));
+    expectConfigError(error, "apiKeys.anthropic");
   });
 
-  it("names the unknown model (not a missing default-provider key) when provider cannot be inferred", async () => {
+  it("identifies an unknown model without echoing its value", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
     // Unknown model + no provider + a key for a real provider: the old
     // behavior fell back to the default provider and complained about a
     // missing apiKeys["anthropic"], pointing at the wrong problem.
-    await expect(
-      client.sessions.create({
+    const error = await captureRejected(() => client.sessions.create({
         model: unknownModel,
         apiKeys: { deepseek: "sk-x" }
-      })
-    ).rejects.toMatchObject({
-      name: "SessionConfigValidationError",
-      code: "SESSION_CONFIG_INVALID",
-      message: expect.stringMatching(/"totally-unknown-model-xyz" is not a known model id.*pass provider explicitly/)
-    });
+      }));
+    expectConfigError(error, "model");
+    expect((error as Error).message).not.toContain(unknownModel);
     expect(calls).toBe(0);
   });
 
@@ -129,30 +135,26 @@ describe("aex.sessions.create — typed SessionConfigValidationError (DX4a)", ()
   it("rejects a provider that does not serve the model with code SESSION_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
-    await expect(
-      client.sessions.create({
+    const error = await captureRejected(() => client.sessions.create({
         model: "gpt-4.1",
         provider: "anthropic",
         apiKeys: { anthropic: "sk-x" }
-      })
-    ).rejects.toMatchObject({
-      name: "SessionConfigValidationError",
-      code: "SESSION_CONFIG_INVALID"
-    });
+      }));
+    expectConfigError(error, "provider");
     expect(calls).toBe(0);
   });
 
   it("rejects a non-Tool / non-builtin tools entry with code SESSION_CONFIG_INVALID", async () => {
     const { fetch, calls } = noNetworkFetch();
     const client = makeClient(fetch);
-    await expect(
-      client.sessions.create({
+    const error = await captureRejected(() => client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
         // not a builtin tool name
         tools: ["definitely_not_a_builtin"] as unknown as never
       } as never)
-    ).rejects.toMatchObject({ code: "SESSION_CONFIG_INVALID" });
+    );
+    expectConfigError(error, "tools");
     expect(calls).toBe(0);
   });
 });

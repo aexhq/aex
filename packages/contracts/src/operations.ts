@@ -86,6 +86,11 @@ export interface CreateSessionWithMessageOptions extends IdempotencyOptions {
 export const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 const MESSAGE_IDEMPOTENCY_SUFFIX = ":message";
 
+/** Module-private factory for every public client-side session config rejection. */
+function configError(field: string, message: string): SessionConfigValidationError {
+  return new SessionConfigValidationError(message, { field });
+}
+
 /**
  * Resolve a caller-supplied idempotency key to the value that ships on the
  * request. FAIL-FAST: an empty or whitespace-only key THROWS
@@ -99,16 +104,10 @@ export function resolveIdempotencyKey(key?: string): string {
     return `aex-idem-${randomUUID()}`;
   }
   if (typeof key !== "string" || key.trim().length === 0) {
-    throw new SessionConfigValidationError("idempotencyKey must be a non-empty, non-whitespace string", {
-      field: "idempotencyKey",
-      value: key
-    });
+    throw configError("idempotencyKey", "idempotencyKey must be a non-empty, non-whitespace string");
   }
   if (key.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
-    throw new SessionConfigValidationError(
-      `idempotencyKey must be at most ${IDEMPOTENCY_KEY_MAX_LENGTH} characters`,
-      { field: "idempotencyKey" }
-    );
+    throw configError("idempotencyKey", `idempotencyKey must be at most ${IDEMPOTENCY_KEY_MAX_LENGTH} characters`);
   }
   return key;
 }
@@ -165,10 +164,7 @@ export async function createSessionWithMessage(
     !((typeof input === "string" && input.length > 0) ||
       (Array.isArray(input) && input.length > 0 && input.every((part) => typeof part === "string" && part.length > 0)))
   ) {
-    throw new SessionConfigValidationError("session message must be a non-empty string or string array", {
-      field: "input",
-      value: input
-    });
+    throw configError("input", "session message must be a non-empty string or string array");
   }
   const created = await createSession(http, request, { idempotencyKey: createKey });
   return sendSessionMessage(http, created.id, { input }, { idempotencyKey: messageKey });
@@ -236,28 +232,16 @@ export async function listSessions(
 
 function validateSessionListQuery(query: SessionListQuery | undefined): void {
   if (query?.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
-    throw new SessionConfigValidationError("sessions.list limit must be an integer between 1 and 100", {
-      field: "limit",
-      value: query.limit
-    });
+    throw configError("limit", "sessions.list limit must be an integer between 1 and 100");
   }
   if (query?.status !== undefined && !SESSION_STATUS_SET.has(query.status)) {
-    throw new SessionConfigValidationError("sessions.list status must be a session lifecycle status", {
-      field: "status",
-      value: query.status
-    });
+    throw configError("status", "sessions.list status must be a session lifecycle status");
   }
   if (query?.since !== undefined && (query.since.length === 0 || !Number.isFinite(Date.parse(query.since)))) {
-    throw new SessionConfigValidationError("sessions.list since must be an ISO-8601 timestamp", {
-      field: "since",
-      value: query.since
-    });
+    throw configError("since", "sessions.list since must be an ISO-8601 timestamp");
   }
   if (query?.cursor !== undefined && query.cursor.length === 0) {
-    throw new SessionConfigValidationError("sessions.list cursor must be a non-empty opaque string", {
-      field: "cursor",
-      value: query.cursor
-    });
+    throw configError("cursor", "sessions.list cursor must be a non-empty opaque string");
   }
 }
 
@@ -406,10 +390,7 @@ export async function* iterateSessionEvents(
 ): AsyncIterable<AexEvent> {
   const pageSize = options.pageSize;
   if (pageSize !== undefined && (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1000)) {
-    throw new SessionConfigValidationError("session event pageSize must be an integer between 1 and 1000", {
-      sessionId,
-      pageSize
-    });
+    throw configError("pageSize", "session event pageSize must be an integer between 1 and 1000");
   }
 
   const path = `/api/sessions/${encodeURIComponent(sessionId)}/events`;
@@ -653,11 +634,11 @@ export async function downloadSessionFile(
   selector: SessionFileSelector,
   options?: SessionFileTransferOptions
 ): Promise<SessionFileDownload> {
+  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const requestedCheckpointId = options?.checkpointId === undefined
     ? undefined
     : requireSessionFileCheckpointId(options.checkpointId, "files.download");
   const file = await resolveAuthoritativeSessionFile(http, sessionId, selector, requestedCheckpointId);
-  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const checkpointId = requestedCheckpointId ?? file.checkpointId;
   const path = sessionFileRoute(sessionId, file.id, "download", checkpointId);
   return { file, bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs, file) };
@@ -692,12 +673,12 @@ export async function readSessionFileText(
   selector: SessionFileSelector,
   options?: ReadSessionFileTextOptions
 ): Promise<SessionFileText> {
+  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_SESSION_FILE_TEXT_DEFAULT_BYTES, READ_SESSION_FILE_TEXT_MAX_BYTES));
   const requestedCheckpointId = options?.checkpointId === undefined
     ? undefined
     : requireSessionFileCheckpointId(options.checkpointId, "files.read");
   const file = await resolveAuthoritativeSessionFile(http, sessionId, selector, requestedCheckpointId);
-  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const checkpointId = requestedCheckpointId ?? file.checkpointId;
   const path = sessionFileRoute(sessionId, file.id, "download", checkpointId);
   const capped = await readSessionFileTextWithRetry(http, path, maxBytes, timeoutMs, file);
@@ -859,9 +840,7 @@ function requireSessionFileCheckpointId(value: unknown, context: string): string
 function normalizeSessionFileTransferTimeoutMs(value: number | undefined): number {
   if (value === undefined) return SESSION_FILE_TRANSFER_DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(value) || value <= 0) {
-    throw new SessionConfigValidationError("files.download: timeoutMs must be a positive finite number", {
-      timeoutMs: value
-    });
+    throw configError("timeoutMs", "files.download: timeoutMs must be a positive finite number");
   }
   return Math.max(1, Math.floor(value));
 }
@@ -1258,9 +1237,9 @@ export async function getBilling(http: HttpClient): Promise<BillingSummary> {
 
 function resolveBillingIdempotencyKey(request: unknown, options?: IdempotencyOptions): string {
   if (isRecord(request) && Object.prototype.hasOwnProperty.call(request, "idempotencyKey")) {
-    throw new SessionConfigValidationError(
-      "billing idempotencyKey belongs in the second options argument, not the request body",
-      { field: "idempotencyKey" }
+    throw configError(
+      "idempotencyKey",
+      "billing idempotencyKey belongs in the second options argument, not the request body"
     );
   }
   const idempotencyKey = resolveIdempotencyKey(options?.idempotencyKey);
@@ -1653,6 +1632,7 @@ export async function downloadSessionFiles(
   sessionId: string,
   options?: SessionFileTransferOptions
 ): Promise<Uint8Array> {
+  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const requestedCheckpointId = options?.checkpointId === undefined
     ? undefined
     : requireSessionFileCheckpointId(options.checkpointId, "files.download");
@@ -1661,7 +1641,6 @@ export async function downloadSessionFiles(
     sessionId,
     requestedCheckpointId === undefined ? undefined : { checkpointId: requestedCheckpointId }
   );
-  const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const { entries, captured, errors } = await collectArtifactBytes(
     http,
     sessionId,

@@ -56,6 +56,7 @@ describe("session cost telemetry", () => {
       ],
       storage: {
         storedBytes: 4096,
+        storedFiles: 2,
         byteMilliseconds: 8192
       },
       proxy: {
@@ -74,6 +75,7 @@ describe("session cost telemetry", () => {
     expect(telemetry.providerUsage?.[0]?.totalTokens).toBe(35);
     expect(telemetry.providerUsage?.[0]?.sourceSampleIds).toEqual(["usage-sample-1"]);
     expect(telemetry.storage?.storedBytes).toBe(4096);
+    expect(telemetry.storage?.storedFiles).toBe(2);
     expect(telemetry.proxy?.responseBytes).toBe(256);
     expect(JSON.parse(JSON.stringify(telemetry))).toEqual(telemetry);
   });
@@ -216,18 +218,21 @@ describe("session cost telemetry", () => {
       provider: "anthropic",
       durations: { runtimeMs: 10 },
       files: { capturedBytes: 20 },
+      storage: { storedBytes: 20, storedFiles: 1 },
       providerUsage: [{ provider: "anthropic", inputTokens: 1 }]
     });
 
     const merged = mergeSessionCostTelemetry(first, {
       durations: { runtimeMs: 5, cleanupMs: 2 },
       files: { capturedBytes: 7, failedFiles: 1 },
+      storage: { storedBytes: 7, storedFiles: 2 },
       providerUsage: [{ provider: "anthropic", outputTokens: 3 }]
     });
 
     expect(first.durations?.runtimeMs).toBe(10);
     expect(merged.durations).toEqual({ runtimeMs: 15, cleanupMs: 2 });
     expect(merged.files).toEqual({ capturedBytes: 27, failedFiles: 1 });
+    expect(merged.storage).toEqual({ storedBytes: 27, storedFiles: 3 });
     expect(merged.providerUsage).toHaveLength(2);
   });
 
@@ -238,6 +243,9 @@ describe("session cost telemetry", () => {
     expect(() =>
       buildSessionCostTelemetry({ providerUsage: [{ provider: "anthropic", totalTokens: Number.NaN }] })
     ).toThrow(/totalTokens must be a non-negative finite number/);
+    expect(() => buildSessionCostTelemetry({ storage: { storedFiles: -1 } })).toThrow(
+      /storedFiles must be a non-negative finite number/
+    );
     expect(() =>
       buildSessionUsageSample({
         metric: "runtime.active_ms",

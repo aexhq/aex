@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Aex, McpServer, type WorkspaceToolRef } from "../../src/index.js";
+import { Aex, McpServer, SessionConfigValidationError, type WorkspaceToolRef } from "../../src/index.js";
 
 interface Call {
   readonly url: string;
@@ -109,8 +109,11 @@ describe("aex.sessions.create", () => {
 
   it("requires the selected provider key before network access", async () => {
     const { client, calls } = harness();
-    await expect(client.sessions.create({ model: "claude-haiku-4-5" }))
-      .rejects.toThrow(/provider API key is required/);
+    const error = await client.sessions.create({ model: "claude-haiku-4-5" }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SessionConfigValidationError);
+    expect(error).toMatchObject({ name: "SessionConfigValidationError", code: "SESSION_CONFIG_INVALID" });
+    expect((error as SessionConfigValidationError).details).toEqual({ field: "apiKeys.anthropic" });
+    expect((error as Error).message.trim().length).toBeGreaterThan(0);
     expect(calls).toHaveLength(0);
   });
 
@@ -122,11 +125,14 @@ describe("aex.sessions.create", () => {
 
   it("rejects a provider that cannot serve the selected model", async () => {
     const { client, calls } = harness();
-    await expect(client.sessions.create({
+    const error = await client.sessions.create({
       model: "gpt-4.1",
       provider: "anthropic",
       apiKeys: { anthropic: "sk-test" }
-    })).rejects.toThrow(/not available for provider/);
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SessionConfigValidationError);
+    expect((error as SessionConfigValidationError).details).toEqual({ field: "provider" });
+    expect((error as Error).message.trim().length).toBeGreaterThan(0);
     expect(calls).toHaveLength(0);
   });
 
