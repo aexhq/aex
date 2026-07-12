@@ -74,7 +74,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertManagedShape, type CaseResult, type Probes } from "../_fixtures/heavy-session-shape.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { settledRunReadinessSource } from "../_fixtures/settled-run-readiness.js";
+import { finishedRunReadinessSource } from "../_fixtures/finished-run-readiness.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -194,7 +194,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
 
   return `
     import { Aex, Skill, McpServer, Instructions } from "@aexhq/sdk";
-    ${settledRunReadinessSource()}
+    ${finishedRunReadinessSource()}
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,

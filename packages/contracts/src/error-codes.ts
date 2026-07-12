@@ -58,7 +58,7 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   not_found: "The requested resource was not found.",
   idempotency_conflict: "This idempotency key was already used with a different request body.",
   session_busy: "The session is busy handling another turn.",
-  checkpoint_not_available: "The session does not have a settled checkpoint available yet.",
+  checkpoint_not_available: "The session does not have a committed checkpoint available yet.",
   session_not_terminal: "The session has not reached a terminal state yet.",
   session_terminal: "The session has ended and cannot perform this action.",
   event_archive_too_large: "The session event history is too large for synchronous bulk export.",

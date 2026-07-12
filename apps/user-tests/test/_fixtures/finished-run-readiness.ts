@@ -1,4 +1,4 @@
-type SettledRunObservation = Readonly<Record<string, unknown>>;
+type FinishedRunObservation = Readonly<Record<string, unknown>>;
 
 /**
  * Fail on the authoritative run result before a test performs checkpoint-backed
@@ -7,7 +7,7 @@ type SettledRunObservation = Readonly<Record<string, unknown>>;
  */
 export function requireSucceededRunBeforeFiles(
   label: string,
-  result: SettledRunObservation,
+  result: FinishedRunObservation,
   knownSecrets: readonly unknown[] = [],
 ): void {
   if (result["ok"] === true && result["status"] === "succeeded") return;
@@ -52,6 +52,6 @@ export function requireSucceededRunBeforeFiles(
   throw new Error(`${label}: run ended before checkpoint-backed file reads: ${JSON.stringify(diagnostic)}`);
 }
 
-export function settledRunReadinessSource(): string {
+export function finishedRunReadinessSource(): string {
   return `const requireSucceededRunBeforeFiles = ${requireSucceededRunBeforeFiles.toString()};`;
 }

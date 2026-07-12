@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   requireSucceededRunBeforeFiles,
-  settledRunReadinessSource,
-} from "../_fixtures/settled-run-readiness.js";
+  finishedRunReadinessSource,
+} from "../_fixtures/finished-run-readiness.js";
 
 const failedResult = {
   sessionId: "ses_92a322388074120e884a27772f4dc313",
@@ -20,7 +20,7 @@ const failedResult = {
   }],
 };
 
-describe("settled run readiness before checkpoint-backed reads", () => {
+describe("finished run readiness before checkpoint-backed reads", () => {
   it("allows only the consistent succeeded result", () => {
     expect(() => requireSucceededRunBeforeFiles("probe", { status: "succeeded", ok: true })).not.toThrow();
   });
@@ -32,7 +32,7 @@ describe("settled run readiness before checkpoint-backed reads", () => {
   });
 
   it("injects the same guard into clean-install child scripts", () => {
-    const source = `${settledRunReadinessSource()}\nreturn requireSucceededRunBeforeFiles;`;
+    const source = `${finishedRunReadinessSource()}\nreturn requireSucceededRunBeforeFiles;`;
     const childGuard = new Function(source)() as typeof requireSucceededRunBeforeFiles;
     expect(() => childGuard("child", failedResult, ["AEXSECRET-HEADER-VALUE"]))
       .toThrowError(/child: run ended before checkpoint-backed file reads/);

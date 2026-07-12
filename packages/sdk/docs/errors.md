@@ -175,7 +175,7 @@ does not distinguish the two). The SDK raises `AexNotFoundError` (guard:
 | --- | --- |
 | `idempotency_conflict` | The `idempotencyKey` was already used with a different request body. The SDK raises `AexIdempotencyConflictError` (guard: `isIdempotencyConflict(err)`). |
 | `session_busy` | The session is handling another turn or lifecycle transition. Wait for its current operation to finish. |
-| `checkpoint_not_available` | No settled checkpoint exists yet for a checkpoint-backed read such as `session.files.list()`. Wait for the current run to finish. This remains a base `AexApiError`, not an idempotency conflict. |
+| `checkpoint_not_available` | No committed checkpoint exists yet for a checkpoint-backed read such as `session.files.list()`. Wait for the current run to finish. This remains a base `AexApiError`, not an idempotency conflict. |
 | `session_not_terminal` | The requested operation requires a terminal session state. |
 | `session_terminal` | The session has ended and cannot perform the requested action. |
 | `workspace_inactive` | A workspace deletion fence won the admission race, so the workspace no longer accepts new session work. The body carries `workspaceStatus` (normally `deleting`). Use an active workspace. |

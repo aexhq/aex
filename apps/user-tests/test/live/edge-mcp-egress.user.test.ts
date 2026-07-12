@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
-import { settledRunReadinessSource } from "../_fixtures/settled-run-readiness.js";
+import { finishedRunReadinessSource } from "../_fixtures/finished-run-readiness.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -268,7 +268,7 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
     "Reply with ONLY the final three probe tokens separated by single spaces.";
   return `
     import { Aex } from "@aexhq/sdk";
-    ${settledRunReadinessSource()}
+    ${finishedRunReadinessSource()}
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     const sessionResult = await client.start({
       provider: process.env.PROVIDER,
@@ -303,7 +303,7 @@ function mcpSecretChildScript(marker: string): string {
     `repository anthropics/anthropic-cookbook. Reply with exactly one line: lang=<language>.`;
   return `
     import { Aex, McpServer } from "@aexhq/sdk";
-    ${settledRunReadinessSource()}
+    ${finishedRunReadinessSource()}
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     const marker = ${JSON.stringify(marker)};
     // Secret header carried under secrets.mcpServers — must never surface in events/files.
