@@ -16,6 +16,7 @@ import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const userTestsRoot = resolve(repoRoot, "apps/user-tests");
+const SHARD_COLLECTION_PROCESS_TIMEOUT_MS = 30_000;
 
 function durationsOf(entries: Record<string, number>): Map<string, number> {
   return new Map(Object.entries(entries));
@@ -84,6 +85,9 @@ describe("shard-files duration-balanced bin packing", () => {
       {
         cwd: userTestsRoot,
         encoding: "utf8",
+        // This starts a nested Vitest CLI. Bound a hung process without applying
+        // the outer runner's unit-test timeout to cold CLI startup.
+        timeout: SHARD_COLLECTION_PROCESS_TIMEOUT_MS,
         env: {
           ...process.env,
           AEX_API_URL: "https://example.invalid",
@@ -98,7 +102,7 @@ describe("shard-files duration-balanced bin packing", () => {
       .sort();
 
     expect(collectedFiles).toEqual(shards.map(({ file }) => file).sort());
-  });
+  }, SHARD_COLLECTION_PROCESS_TIMEOUT_MS + 5_000);
 
   it("partitions the real collected suite completely and deterministically", () => {
     const files = collectTestFiles(userTestsRoot);
