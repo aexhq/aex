@@ -17,6 +17,8 @@ coverage/
 .release-worktrees/
 .tmp-gh-run-*/
 .tmp-gh-actions-*/
+.aex-generated-dist.lock/
+.aex-generated-dist.lock.breaker/
 **/test/fixtures/api-recordings/**/*.raw.json
 **/test/fixtures/api-recordings/**/*.secret.json
 .claude/

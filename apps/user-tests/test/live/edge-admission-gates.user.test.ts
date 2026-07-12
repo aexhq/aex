@@ -325,7 +325,11 @@ describe("edge: session-path admission gates", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           provider: PROVIDER,
-          submission: { model: MODEL, builtinTools: "none" },
+          submission: {
+            model: MODEL,
+            builtinTools: "none",
+            assets: { files: [], skills: [], tools: [], instructions: [] }
+          },
           secrets: { apiKeys: { [PROVIDER]: "   " } }
         });
         out.status = r.status;
@@ -352,7 +356,11 @@ describe("edge: session-path admission gates", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           provider: "anthropic",
-          submission: { model: MODEL, builtinTools: "none" },
+          submission: {
+            model: MODEL,
+            builtinTools: "none",
+            assets: { files: [], skills: [], tools: [], instructions: [] }
+          },
           secrets: { apiKeys: { anthropic: "sk-ant-probe-invalid-000000000000" } }
         });
         out.status = r.status;
@@ -367,7 +375,7 @@ describe("edge: session-path admission gates", () => {
       const result = await runChild(install, "admission-provider-mismatch.mjs", body);
       console.info("edge-admission-gates provider-mismatch result", JSON.stringify(result));
       expect(result.status).toBe(400);
-      expect(["invalid_submission", "invalid_model"]).toContain(result.error);
+      expect(result.error).toBe("invalid_model");
     },
     5 * 60_000
   );

@@ -200,7 +200,12 @@ describe("edge: public type-contract gaps", () => {
         const out = { status: null, error: null, admittedId: null };
         const r = await raw("POST", "/api/sessions", {
           provider: PROVIDER,
-          submission: { model: MODEL, builtinTools: "none", prompt: ["x".repeat(2 * 1024 * 1024)] },
+          submission: {
+            model: MODEL,
+            builtinTools: "none",
+            assets: { files: [], skills: [], tools: [], instructions: [] },
+            prompt: ["x".repeat(2 * 1024 * 1024)]
+          },
           secrets: { apiKeys: { [PROVIDER]: "sk-probe-fake-key" } }
         });
         out.status = r.status;

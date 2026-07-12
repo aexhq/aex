@@ -202,7 +202,11 @@ describe("edge: runtime honored, validated, and visible", () => {
         const r = await raw("POST", "/api/sessions", {
           provider: PROVIDER,
           runtimeSize: "shared-99x-1tb",
-          submission: { model: MODEL, builtinTools: "none" },
+          submission: {
+            model: MODEL,
+            builtinTools: "none",
+            assets: { files: [], skills: [], tools: [], instructions: [] }
+          },
           secrets: { apiKeys: { [PROVIDER]: PROVIDER_KEY } }
         });
         out.status = r.status;

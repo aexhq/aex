@@ -2,15 +2,15 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
-const tmpRoot = resolve(tmpdir());
-const lockId = createHash("sha256").update(repoRoot).digest("hex").slice(0, 16);
-const lockDir = resolve(tmpRoot, `aex-generated-dist-${lockId}.lock`);
+// Keep the mutex on the same filesystem as the dist trees it protects. CI
+// runners can share /tmp while mounting independent checkouts at the same
+// logical path; a temp path hash would serialize those unrelated outputs.
+const lockDir = resolve(repoRoot, ".aex-generated-dist.lock");
 const ownerPath = join(lockDir, "owner.json");
 const breakerDir = `${lockDir}.breaker`;
 const heldEnv = "AEX_GENERATED_DIST_LOCK_HELD";
@@ -20,9 +20,9 @@ const pollMs = 250;
 const token = createHash("sha256").update(lockDir).digest("hex");
 const ownerId = randomUUID();
 
-const tmpRel = relative(tmpRoot, lockDir);
-if (tmpRel.startsWith("..") || isAbsolute(tmpRel)) {
-  throw new Error(`refusing to use generated-dist lock outside temp dir: ${lockDir}`);
+const repoRel = relative(repoRoot, lockDir);
+if (repoRel.startsWith("..") || isAbsolute(repoRel)) {
+  throw new Error(`refusing to use generated-dist lock outside repository: ${lockDir}`);
 }
 
 const args = process.argv.slice(2);

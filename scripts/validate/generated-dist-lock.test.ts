@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { access, copyFile, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,17 +6,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const sourceRepoRoot = resolve(import.meta.dirname, "../..");
 const fixtureRepoRoot = join(tmpdir(), `aex-generated-dist-fixture-${process.pid}`);
-const lockId = createHash("sha256").update(fixtureRepoRoot).digest("hex").slice(0, 16);
-const lockDir = join(tmpdir(), `aex-generated-dist-${lockId}.lock`);
+const secondFixtureRepoRoot = join(tmpdir(), `aex-generated-dist-fixture-second-${process.pid}`);
+const lockDir = join(fixtureRepoRoot, ".aex-generated-dist.lock");
+const secondLockDir = join(secondFixtureRepoRoot, ".aex-generated-dist.lock");
 const breakerDir = `${lockDir}.breaker`;
 const probeRoot = join(tmpdir(), `aex-generated-dist-probe-${process.pid}`);
 const sourceLockScript = join(sourceRepoRoot, "scripts", "with-generated-dist-lock.mjs");
 const lockScript = join(fixtureRepoRoot, "scripts", "with-generated-dist-lock.mjs");
+const secondLockScript = join(secondFixtureRepoRoot, "scripts", "with-generated-dist-lock.mjs");
 const probeScript = join(sourceRepoRoot, "scripts", "validate", "fixtures", "generated-dist-lock-probe.mjs");
 
 beforeEach(async () => {
   await mkdir(join(fixtureRepoRoot, "scripts"), { recursive: true });
+  await mkdir(join(secondFixtureRepoRoot, "scripts"), { recursive: true });
   await copyFile(sourceLockScript, lockScript);
+  await copyFile(sourceLockScript, secondLockScript);
 });
 
 afterEach(async () => {
@@ -25,6 +28,7 @@ afterEach(async () => {
   await rm(breakerDir, { recursive: true, force: true });
   await rm(probeRoot, { recursive: true, force: true });
   await rm(fixtureRepoRoot, { recursive: true, force: true });
+  await rm(secondFixtureRepoRoot, { recursive: true, force: true });
 });
 
 describe("generated dist lock", () => {
@@ -39,6 +43,31 @@ describe("generated dist lock", () => {
 
     const entries = await readdir(probeRoot);
     expect(entries.filter((name) => name.startsWith("overlap-"))).toEqual([]);
+  }, 20_000);
+
+  it("lets independent output trees build concurrently without a shared temp lock", async () => {
+    await mkdir(probeRoot, { recursive: true });
+
+    const builds = Promise.all([
+      runLockedProbe({ script: lockScript, cwd: fixtureRepoRoot, holdMs: 1_000 }),
+      runLockedProbe({ script: secondLockScript, cwd: secondFixtureRepoRoot, holdMs: 1_000 })
+    ]);
+    await waitFor(async () => {
+      try {
+        return (await readdir(join(probeRoot, "active"))).length === 2;
+      } catch {
+        return false;
+      }
+    });
+    const outputScopedLocks = await Promise.all([
+      access(lockDir).then(() => true, () => false),
+      access(secondLockDir).then(() => true, () => false)
+    ]);
+    await builds;
+
+    const entries = await readdir(probeRoot);
+    expect(outputScopedLocks).toEqual([true, true]);
+    expect(entries.some((name) => name.startsWith("overlap-"))).toBe(true);
   }, 20_000);
 
   it("does not delete a replacement owner's lock during cleanup", async () => {
@@ -63,17 +92,25 @@ describe("generated dist lock", () => {
   }, 20_000);
 });
 
-function runLockedProbe(): Promise<void> {
+function runLockedProbe(
+  options: { readonly script?: string; readonly cwd?: string; readonly holdMs?: number } = {}
+): Promise<void> {
+  const script = options.script ?? lockScript;
+  const cwd = options.cwd ?? fixtureRepoRoot;
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(process.execPath, [lockScript, process.execPath, probeScript, probeRoot], {
-      cwd: fixtureRepoRoot,
-      env: {
-        ...process.env,
-        AEX_GENERATED_DIST_LOCK_STALE_MS: "100",
-        AEX_GENERATED_DIST_LOCK_TIMEOUT_MS: "10000"
-      },
-      stdio: "pipe"
-    });
+    const child = spawn(
+      process.execPath,
+      [script, process.execPath, probeScript, probeRoot, String(options.holdMs ?? 100)],
+      {
+        cwd,
+        env: {
+          ...process.env,
+          AEX_GENERATED_DIST_LOCK_STALE_MS: "100",
+          AEX_GENERATED_DIST_LOCK_TIMEOUT_MS: "10000"
+        },
+        stdio: "pipe"
+      }
+    );
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child.on("error", rejectRun);

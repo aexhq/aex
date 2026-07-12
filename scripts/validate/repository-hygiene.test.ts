@@ -35,6 +35,13 @@ describe("repository hygiene", () => {
     expect(tracked).toBe("");
   });
 
+  it("keeps checkout-local generated-dist mutex state out of Git", () => {
+    const ignore = read(".gitignore");
+
+    expect(ignore).toMatch(/^\.aex-generated-dist\.lock\/$/m);
+    expect(ignore).toMatch(/^\.aex-generated-dist\.lock\.breaker\/$/m);
+  });
+
   it("does not ship dangling sourcemap comments for inlined SDK contracts", () => {
     const dir = resolve(repoRoot, "packages/sdk/dist/_contracts");
     expect(statSync(dir).isDirectory()).toBe(true);

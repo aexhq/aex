@@ -29,6 +29,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import {
+  liveSessionStartDiagnostic,
+  requireStartedSessionIdentity
+} from "../_fixtures/live-session-start-result.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -63,21 +67,20 @@ function rand(prefix: string): string {
   return `${prefix}-${randomBytes(6).toString("hex")}`;
 }
 
-function logCase(label: string, result: Record<string, unknown>): void {
+function logCase(
+  label: string,
+  result: Record<string, unknown>,
+  knownSecrets: readonly (string | undefined)[]
+): void {
+  const diagnostic = JSON.parse(
+    liveSessionStartDiagnostic(result, knownSecrets)
+  ) as Record<string, unknown>;
   const summary = {
     label,
-    sessionId: result.sessionId ?? null,
-    status: result.status ?? null,
+    ...diagnostic,
     eventCount: result.eventCount ?? null,
     fileCount: result.fileCount ?? null,
-    leaked: result.leaked ?? result.realLeaked ?? result.unusedLeaked ?? null,
-    textPreview: typeof result.text === "string" ? result.text.slice(0, 240) : null,
-    errorMessage:
-      typeof result.errorMessage === "string"
-        ? result.errorMessage.slice(0, 240)
-        : typeof result.runErr === "string"
-          ? result.runErr.slice(0, 240)
-          : null
+    leaked: result.leaked ?? result.realLeaked ?? result.unusedLeaked ?? null
   };
   console.error(`[edge-byok] ${label} ${JSON.stringify(summary)}`);
 }
@@ -163,7 +166,9 @@ function assistantText(surfaces, sessionResult) {
   return fromEvents || (typeof sessionResult?.text === "string" ? sessionResult.text : "");
 }
 function statusOf(sessionResult) {
-  return sessionResult && sessionResult.ok ? "succeeded" : (sessionResult && typeof sessionResult.status === "string" && sessionResult.status ? sessionResult.status : "failed");
+  return sessionResult && typeof sessionResult.status === "string" && sessionResult.status
+    ? sessionResult.status
+    : null;
 }
 `;
 
@@ -204,9 +209,14 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         }));
       `;
       const r = await runScript(install, "edge-a-keyleak.mjs", body, { PROBE: probe });
-      logCase("A", r);
-      expect(r.status, `case A result: ${JSON.stringify(r)}`).toBe("succeeded");
-      expect(dense(String(r.text))).toContain(probe);
+      const diagnosticSecrets = [apiKey, providerKey];
+      const diagnostic = liveSessionStartDiagnostic(r, diagnosticSecrets);
+      logCase("A", r, diagnosticSecrets);
+      expect(r.status, `edge BYOK case A did not succeed: ${diagnostic}`).toBe("succeeded");
+      expect(
+        dense(String(r.text)).includes(probe),
+        `edge BYOK case A reply omitted its probe: ${diagnostic}`
+      ).toBe(true);
       // The CRITICAL assertion: the raw provider key is nowhere customer-readable.
       expect(r.leaked).toBe(false);
     },
@@ -396,8 +406,12 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         }));
       `;
       const r = await runScript(install, "edge-f-multiprov.mjs", body, { PROBE: probe, UNUSED_KEY: unusedKey });
-      expect(r.status).toBe("succeeded");
-      expect(dense(String(r.text))).toContain(probe);
+      const diagnostic = liveSessionStartDiagnostic(r, [apiKey, providerKey, unusedKey]);
+      expect(r.status, `edge BYOK case F did not succeed: ${diagnostic}`).toBe("succeeded");
+      expect(
+        dense(String(r.text)).includes(probe),
+        `edge BYOK case F reply omitted its probe: ${diagnostic}`
+      ).toBe(true);
       expect(r.unusedLeaked).toBe(false);
       expect(r.realLeaked).toBe(false);
     },
@@ -442,10 +456,18 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
         await client.workspace.secrets.delete(NAME);
         process.stdout.write(JSON.stringify({
           sessionId, status: statusOf(sessionResult), text, runErr,
+          errorMessage: sessionResult && typeof sessionResult.error === "string" ? sessionResult.error : null,
           secretRecord, metaLeak, leaked: scan.leaked, per: scan.per
         }));
       `;
       const r = await runScript(install, "edge-g-wsref.mjs", body, { WS_NAME: name, CANARY: canary });
+      const diagnosticSecrets = [apiKey, providerKey, canary];
+      logCase("G", r, diagnosticSecrets);
+      const sessionId = requireStartedSessionIdentity("edge BYOK case G", r, diagnosticSecrets);
+      expect(
+        r.status,
+        `edge BYOK case G session did not complete successfully: ${liveSessionStartDiagnostic(r, diagnosticSecrets)}`
+      ).toBe("succeeded");
       // The upload + workspace-secret create/get/delete cycle must work and the
       // stored value must never come back in metadata.
       expect(r.metaLeak).toBe(false);
@@ -457,11 +479,11 @@ describe("edge/BYOK+secrets — leakage & error-path hardening on the dev plane"
       const denseText = dense(String(r.text));
       const injected = denseText.includes(digest) || denseText.includes(digestNl);
       const unset = /CANARY_UNSET/.test(String(r.text));
-      // Assert the session itself is healthy (submitted + reached terminal) so a
-      // false `injected` is a resolution gap, not an infra failure.
-      expect(r.status === "succeeded" || r.status === "error" || r.status === "failed").toBe(true);
       // Document: on dev we expect NO injection (ref not sealed) → agent sees unset.
-      expect(injected || unset).toBe(true);
+      expect(
+        injected || unset,
+        `edge BYOK case G session ${sessionId} produced no injection outcome: ${liveSessionStartDiagnostic(r, diagnosticSecrets)}`
+      ).toBe(true);
     },
     IT_TIMEOUT_MS
   );

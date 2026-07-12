@@ -8,6 +8,10 @@ import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  buildEdgeListSearchChildScript,
+  EDGE_SESSION_DEBUG_BODY
+} from "../_fixtures/edge-list-search-child.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
@@ -46,14 +50,7 @@ async function runChild(
   timeoutMs = 10 * 60_000
 ): Promise<Record<string, unknown>> {
   const scriptPath = join(install.installDir, scriptName);
-  writeFileSync(scriptPath, `
-    import { Aex } from "@aexhq/sdk";
-    const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
-    const PROVIDER = process.env.PROVIDER;
-    const PROVIDER_KEY = process.env.PROVIDER_KEY;
-    const MODEL = process.env.MODEL;
-    ${body}
-  `);
+  writeFileSync(scriptPath, buildEdgeListSearchChildScript(body));
   const child = await runCommand(getBunCommand(), [scriptPath], {
     cwd: install.installDir,
     timeoutMs,
@@ -216,21 +213,7 @@ describe("edge: finished consistency and session listing", () => {
   }, 10 * 60_000);
 
   it("debug output is emitted through the configured sink without leaking credentials", async () => {
-    const out = await runChild(install, "edge-session-debug.mjs", `
-      const lines = [];
-      const debugClient = new Aex({
-        baseUrl: process.env.AEX_API_URL,
-        apiKey: process.env.AEX_API_KEY,
-        debug: (line) => lines.push(line)
-      });
-      await debugClient.sessions.list({ limit: 1 });
-      const joined = lines.join("\n");
-      process.stdout.write(JSON.stringify({
-        count: lines.length,
-        leakedApiKey: joined.includes(process.env.AEX_API_KEY),
-        leakedProviderKey: joined.includes(PROVIDER_KEY)
-      }));
-    `, 60_000);
+    const out = await runChild(install, "edge-session-debug.mjs", EDGE_SESSION_DEBUG_BODY, 60_000);
 
     expect(out.count).toBeGreaterThan(0);
     expect(out.leakedApiKey).toBe(false);
