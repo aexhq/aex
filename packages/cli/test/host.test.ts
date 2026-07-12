@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { strToU8, unzipSync } from "fflate";
+import { createHash } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import { executeCli } from "../src/main.js";
 import { parseDuration, takeOptionFlag } from "../src/host/common.js";
@@ -7,6 +8,7 @@ import type { CliIO } from "../src/internal.js";
 import { canonicalWhoami } from "./canonical-whoami.js";
 
 const CWD = "/tmp/cli-test";
+const EMPTY_SHA256 = createHash("sha256").update("").digest("hex");
 
 /** Compute the absolute path the session-config loader will produce for a
  * given input — keeps tests cross-platform between Windows and POSIX. */
@@ -436,7 +438,13 @@ describe("aex files", () => {
               committedAt: "2026-07-01T00:00:00Z",
               throughSeq: 10
             },
-            files: [{ id: "o1", checkpointId: "cp-1", filename: "report.md" }]
+            files: [{
+              id: "o1",
+              checkpointId: "cp-1",
+              filename: "report.md",
+              sizeBytes: 0,
+              sha256: EMPTY_SHA256
+            }]
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
@@ -553,7 +561,14 @@ describe("aex download", () => {
             committedAt: "2026-07-01T00:00:00Z",
             throughSeq: 10
           },
-          files: [{ id: "o1", checkpointId: "cp-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
+          files: [{
+            id: "o1",
+            checkpointId: "cp-1",
+            filename: "report.txt",
+            sizeBytes: 5,
+            sha256: createHash("sha256").update("hello").digest("hex"),
+            contentType: "text/plain"
+          }]
         });
       }
       if (pathname.endsWith(`/api/sessions/${sessionId}/files/o1/download`)) {

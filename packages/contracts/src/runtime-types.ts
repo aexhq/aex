@@ -337,7 +337,10 @@ export interface SessionFile {
   /** Checkpoint this file record is pinned to. */
   readonly checkpointId: string;
   readonly filename?: string;
-  readonly sizeBytes?: number;
+  /** Exact byte length recorded by the committed checkpoint. */
+  readonly sizeBytes: number;
+  /** Lowercase SHA-256 digest of the committed bytes. */
+  readonly sha256: string;
   readonly contentType?: string;
   readonly createdAt?: string;
   readonly [key: string]: unknown;
@@ -439,10 +442,7 @@ export interface SessionFileText {
   readonly text: string;
   /** True when the file is larger than `maxBytes` (so `text` is a prefix). */
   readonly truncated: boolean;
-  /**
-   * Full size of the file in bytes when the server reports it (`content-length`);
-   * otherwise the number of bytes actually read.
-   */
+  /** Exact full size recorded by the authoritative checkpoint. */
   readonly totalBytes: number;
 }
 

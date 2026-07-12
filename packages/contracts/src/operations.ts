@@ -72,6 +72,8 @@ import type {
  */
 
 const SESSION_STATUS_SET = new Set<string>(SESSION_STATUSES);
+const SESSION_FILE_SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const SESSION_FILE_CHECKPOINT_ID_PATTERN = /^[A-Za-z0-9._-]{1,200}$/;
 
 export interface IdempotencyOptions {
   readonly idempotencyKey?: string;
@@ -448,26 +450,60 @@ export async function listSessionFiles(
   sessionId: string,
   query?: SessionFilesQuery
 ): Promise<SessionFilesSnapshot> {
+  const requestedCheckpointId = query?.checkpointId === undefined
+    ? undefined
+    : requireSessionFileCheckpointId(query.checkpointId, "files.list");
   const result = await http.request<SessionFilesSnapshot>(
     `/api/sessions/${encodeURIComponent(sessionId)}/files`,
     {},
-    query?.checkpointId ? { checkpointId: query.checkpointId } : {}
+    requestedCheckpointId === undefined ? {} : { checkpointId: requestedCheckpointId }
   );
   if (
+    !Array.isArray(result.files) ||
     !result.revision ||
     typeof result.revision.checkpointId !== "string" ||
+    !SESSION_FILE_CHECKPOINT_ID_PATTERN.test(result.revision.checkpointId) ||
     typeof result.revision.runId !== "string" ||
-    !Number.isSafeInteger(result.revision.turnSeq)
+    result.revision.runId.trim().length === 0 ||
+    !Number.isSafeInteger(result.revision.turnSeq) ||
+    result.revision.turnSeq < 1 ||
+    typeof result.revision.committedAt !== "string" ||
+    !Number.isFinite(Date.parse(result.revision.committedAt)) ||
+    !Number.isSafeInteger(result.revision.throughSeq) ||
+    result.revision.throughSeq < 0
   ) {
     throw new SessionStateError("session files response is missing checkpoint revision metadata", { sessionId });
   }
+  if (requestedCheckpointId !== undefined && result.revision.checkpointId !== requestedCheckpointId) {
+    throw new SessionStateError("session files response did not resolve the requested checkpoint", {
+      sessionId,
+      requestedCheckpointId,
+      resolvedCheckpointId: result.revision.checkpointId
+    });
+  }
   for (const file of result.files) {
+    if (typeof file.id !== "string" || file.id.length === 0) {
+      throw new SessionStateError("session files response contains an invalid file id", { sessionId });
+    }
     if (file.checkpointId !== result.revision.checkpointId) {
       throw new SessionStateError("session file is not pinned to the response checkpoint", {
         sessionId,
         fileId: file.id,
         fileCheckpointId: file.checkpointId,
         checkpointId: result.revision.checkpointId
+      });
+    }
+    if (!Number.isSafeInteger(file.sizeBytes) || file.sizeBytes < 0) {
+      throw new SessionStateError("session file is missing a valid committed byte length", {
+        sessionId,
+        fileId: file.id,
+        sizeBytes: file.sizeBytes
+      });
+    }
+    if (!SESSION_FILE_SHA256_PATTERN.test(file.sha256)) {
+      throw new SessionStateError("session file is missing a valid committed SHA-256 digest", {
+        sessionId,
+        fileId: file.id
       });
     }
   }
@@ -529,9 +565,12 @@ export async function sessionFileLink(
   selectorOrQuery: SessionFileLinkSelector,
   options?: SessionFileLinkOptions
 ): Promise<SessionFileLink> {
-  const file = await resolveSessionFileLinkTarget(http, sessionId, selectorOrQuery, options?.checkpointId);
+  const requestedCheckpointId = options?.checkpointId === undefined
+    ? undefined
+    : requireSessionFileCheckpointId(options.checkpointId, "files.link");
+  const file = await resolveSessionFileLinkTarget(http, sessionId, selectorOrQuery, requestedCheckpointId);
   const expiresInSeconds = normalizeSessionFileLinkExpiresIn(options?.expiresIn);
-  const checkpointId = options?.checkpointId ?? file.checkpointId;
+  const checkpointId = requestedCheckpointId ?? file.checkpointId;
   const result = await http.request<SessionFileLink>(
     sessionFileRoute(sessionId, file.id, "link", checkpointId),
     {
@@ -544,7 +583,7 @@ export async function sessionFileLink(
     ...result,
     expiresInSeconds: effectiveExpiresIn,
     expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn),
-    file: result.file ?? file
+    file
   };
 }
 
@@ -580,38 +619,32 @@ export async function eventArchiveLink(
 
 export function resolveSessionFileSelector(
   files: readonly SessionFile[],
-  selector: SessionFileSelector,
+  selector: SessionFilePathSelector,
   sessionId?: string
 ): SessionFile {
-  if (isPathSelector(selector)) {
-    const target = normalizeSessionFileLookupPath(selector.path);
-    if (!target) {
-      throw new SessionStateError("files.download: file path must be non-empty", { sessionId, path: selector.path });
-    }
-    const matches = files.filter((file) => {
-      if (typeof file.filename !== "string") return false;
-      const filename = normalizeSessionFileLookupPath(file.filename);
-      if (selector.match === "suffix") {
-        return filename === target || filename.endsWith(`/${target}`);
-      }
-      return filename === target;
-    });
-    if (matches.length === 1) return matches[0]!;
-    if (matches.length > 1) {
-      throw new SessionStateError(
-        `files.download: file path "${selector.path}" matched multiple files`,
-        { sessionId, path: selector.path, matches: matches.map((file) => file.filename ?? file.id) }
-      );
-    }
-    throw new SessionStateError(`files.download: file path "${selector.path}" was not found`, {
-      sessionId,
-      path: selector.path
-    });
+  const target = normalizeSessionFileLookupPath(selector.path);
+  if (!target) {
+    throw new SessionStateError("files.download: file path must be non-empty", { sessionId, path: selector.path });
   }
-  if (typeof selector?.id !== "string" || selector.id.length === 0) {
-    throw new SessionStateError("files.download: selector must include a file id or path", { sessionId });
+  const matches = files.filter((file) => {
+    if (typeof file.filename !== "string") return false;
+    const filename = normalizeSessionFileLookupPath(file.filename);
+    if (selector.match === "suffix") {
+      return filename === target || filename.endsWith(`/${target}`);
+    }
+    return filename === target;
+  });
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) {
+    throw new SessionStateError(
+      `files.download: file path "${selector.path}" matched multiple files`,
+      { sessionId, path: selector.path, matches: matches.map((file) => file.filename ?? file.id) }
+    );
   }
-  return { ...selector, id: selector.id };
+  throw new SessionStateError(`files.download: file path "${selector.path}" was not found`, {
+    sessionId,
+    path: selector.path
+  });
 }
 
 export async function downloadSessionFile(
@@ -620,14 +653,14 @@ export async function downloadSessionFile(
   selector: SessionFileSelector,
   options?: SessionFileTransferOptions
 ): Promise<SessionFileDownload> {
-  const listQuery = options?.checkpointId ? { checkpointId: options.checkpointId } : undefined;
-  const file = isPathSelector(selector)
-    ? resolveSessionFileSelector((await listSessionFiles(http, sessionId, listQuery)).files, selector, sessionId)
-    : resolveSessionFileSelector([], selector, sessionId);
+  const requestedCheckpointId = options?.checkpointId === undefined
+    ? undefined
+    : requireSessionFileCheckpointId(options.checkpointId, "files.download");
+  const file = await resolveAuthoritativeSessionFile(http, sessionId, selector, requestedCheckpointId);
   const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
-  const checkpointId = options?.checkpointId ?? file.checkpointId;
+  const checkpointId = requestedCheckpointId ?? file.checkpointId;
   const path = sessionFileRoute(sessionId, file.id, "download", checkpointId);
-  return { file, bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs) };
+  return { file, bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs, file) };
 }
 
 /** Byte ceiling for {@link readSessionFileText} — a hard cap even if a caller asks for more. */
@@ -650,8 +683,8 @@ export interface SessionFileTransferOptions {
  * a 200 MB artifact never fully buffers in memory or context. `truncated` is true
  * when the file is larger than the cap. Optionally `grep` keeps only matching lines.
  *
- * Selector is the same `{ path }` / `{ id }` shape as `downloadSessionFile`. A path
- * selector lists the session's files to resolve the id; an id selector skips that.
+ * Selector is the same `{ path }` / `{ id }` shape as `downloadSessionFile`.
+ * Both forms resolve against the authoritative checkpoint snapshot first.
  */
 export async function readSessionFileText(
   http: HttpClient,
@@ -660,14 +693,14 @@ export async function readSessionFileText(
   options?: ReadSessionFileTextOptions
 ): Promise<SessionFileText> {
   const maxBytes = Math.max(1, Math.min(options?.maxBytes ?? READ_SESSION_FILE_TEXT_DEFAULT_BYTES, READ_SESSION_FILE_TEXT_MAX_BYTES));
-  const listQuery = options?.checkpointId ? { checkpointId: options.checkpointId } : undefined;
-  const file = isPathSelector(selector)
-    ? resolveSessionFileSelector((await listSessionFiles(http, sessionId, listQuery)).files, selector, sessionId)
-    : resolveSessionFileSelector([], selector, sessionId);
+  const requestedCheckpointId = options?.checkpointId === undefined
+    ? undefined
+    : requireSessionFileCheckpointId(options.checkpointId, "files.read");
+  const file = await resolveAuthoritativeSessionFile(http, sessionId, selector, requestedCheckpointId);
   const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
-  const checkpointId = options?.checkpointId ?? file.checkpointId;
+  const checkpointId = requestedCheckpointId ?? file.checkpointId;
   const path = sessionFileRoute(sessionId, file.id, "download", checkpointId);
-  const capped = await readSessionFileTextWithRetry(http, path, maxBytes, timeoutMs);
+  const capped = await readSessionFileTextWithRetry(http, path, maxBytes, timeoutMs, file);
   const text = options?.grep === undefined ? capped.text : grepLines(capped.text, options.grep);
   return { file, text, truncated: capped.truncated, totalBytes: capped.totalBytes };
 }
@@ -675,11 +708,76 @@ export async function readSessionFileText(
 async function downloadSessionFileBytesWithRetry(
   http: HttpClient,
   path: string,
-  timeoutMs: number
+  timeoutMs: number,
+  file: SessionFile
 ): Promise<Uint8Array> {
   return sessionFileTransferWithRetry(path, timeoutMs, async () => {
     const response = await downloadSessionFileResponse(http, path, timeoutMs);
-    return readResponseBytes(response, timeoutMs);
+    assertSessionFileResponseLength(file, response);
+    const bytes = await readResponseBytes(response, timeoutMs);
+    assertSessionFileIntegrity(file, bytes);
+    return bytes;
+  });
+}
+
+async function resolveAuthoritativeSessionFile(
+  http: HttpClient,
+  sessionId: string,
+  selector: SessionFileSelector,
+  checkpointOverride?: string
+): Promise<SessionFile> {
+  const selectorCheckpointId = isPathSelector(selector)
+    ? undefined
+    : requireSessionFileCheckpointId(
+        selector && typeof selector === "object" ? selector.checkpointId : undefined,
+        "session file id selector"
+      );
+  const checkpointId = checkpointOverride === undefined
+    ? selectorCheckpointId
+    : requireSessionFileCheckpointId(checkpointOverride, "session file operation");
+  const snapshot = await listSessionFiles(
+    http,
+    sessionId,
+    checkpointId === undefined ? undefined : { checkpointId }
+  );
+  if (isPathSelector(selector)) return resolveSessionFileSelector(snapshot.files, selector, sessionId);
+  if (typeof selector.id !== "string" || selector.id.length === 0) {
+    throw new SessionStateError("files.download: selector must include a file id or path", { sessionId });
+  }
+  const file = snapshot.files.find((candidate) => candidate.id === selector.id);
+  if (file !== undefined) return file;
+  throw new SessionStateError(`files.download: file id "${selector.id}" was not found in checkpoint`, {
+    sessionId,
+    fileId: selector.id,
+    checkpointId: snapshot.revision.checkpointId
+  });
+}
+
+class SessionFileIntegrityError extends SessionStateError {}
+
+function assertSessionFileResponseLength(file: SessionFile, response: Response): void {
+  const raw = response.headers.get("content-length");
+  if (raw === null) return;
+  const declaredSizeBytes = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (Number.isSafeInteger(declaredSizeBytes) && declaredSizeBytes === file.sizeBytes) return;
+  throw new SessionFileIntegrityError("files.download: checkpoint file integrity verification failed", {
+    fileId: file.id,
+    checkpointId: file.checkpointId,
+    expectedSizeBytes: file.sizeBytes,
+    declaredSizeBytes: raw
+  });
+}
+
+function assertSessionFileIntegrity(file: SessionFile, bytes: Uint8Array): void {
+  const actualSha256 = createHash("sha256").update(bytes).digest("hex");
+  if (bytes.byteLength === file.sizeBytes && actualSha256 === file.sha256) return;
+  throw new SessionFileIntegrityError("files.download: checkpoint file integrity verification failed", {
+    fileId: file.id,
+    checkpointId: file.checkpointId,
+    expectedSizeBytes: file.sizeBytes,
+    actualSizeBytes: bytes.byteLength,
+    expectedSha256: file.sha256,
+    actualSha256
   });
 }
 
@@ -687,11 +785,13 @@ async function readSessionFileTextWithRetry(
   http: HttpClient,
   path: string,
   maxBytes: number,
-  timeoutMs: number
+  timeoutMs: number,
+  file: SessionFile
 ): Promise<{ readonly text: string; readonly truncated: boolean; readonly totalBytes: number }> {
   return sessionFileTransferWithRetry(path, timeoutMs, async () => {
     const response = await downloadSessionFileResponse(http, path, timeoutMs);
-    return readCappedText(response, maxBytes, timeoutMs);
+    assertSessionFileResponseLength(file, response);
+    return readCappedText(response, maxBytes, timeoutMs, file);
   });
 }
 
@@ -742,6 +842,18 @@ function sessionFileRoute(
   }
   return `/api/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(fileId)}/${action}` +
     `?checkpointId=${encodeURIComponent(checkpointId)}`;
+}
+
+function requireSessionFileCheckpointId(value: unknown, context: string): string {
+  if (typeof value !== "string" || !SESSION_FILE_CHECKPOINT_ID_PATTERN.test(value)) {
+    throw new SessionStateError(
+      `${context}: checkpointId must match ${SESSION_FILE_CHECKPOINT_ID_PATTERN.source}`,
+      {
+        checkpointId: value
+      }
+    );
+  }
+  return value;
 }
 
 function normalizeSessionFileTransferTimeoutMs(value: number | undefined): number {
@@ -837,38 +949,47 @@ async function readResponseBytes(response: Response, timeoutMs: number): Promise
 }
 
 /**
- * Read a streamed response body up to `maxBytes`, decode as UTF-8, and report
- * whether the file was larger than the cap. Prefers the `content-length` header
- * for `totalBytes`; falls back to the bytes actually read. Cancels the stream
- * once the cap is reached so the remainder is never transferred.
+ * Read a streamed response body up to `maxBytes` and decode as UTF-8. The
+ * checkpoint supplies the authoritative total size. A partial read cancels as
+ * soon as the retained prefix reaches the cap; a complete read reaches EOF and
+ * verifies both committed size and digest.
  */
 async function readCappedText(
   response: Response,
   maxBytes: number,
-  timeoutMs: number
+  timeoutMs: number,
+  file: SessionFile
 ): Promise<{ readonly text: string; readonly truncated: boolean; readonly totalBytes: number }> {
-  const declaredRaw = response.headers.get("content-length");
-  const declared = declaredRaw !== null && /^\d+$/.test(declaredRaw) ? Number(declaredRaw) : undefined;
   const decoder = new TextDecoder("utf-8");
+  const wholeFile = file.sizeBytes <= maxBytes;
+  const targetBytes = wholeFile ? file.sizeBytes : maxBytes;
   const body = response.body;
   if (!body) {
     // No streaming body (some fetch polyfills) — buffer, then slice to the cap.
     const buf = new Uint8Array(
       await withSessionFileTransferTimeout(response.arrayBuffer(), timeoutMs, () => {}, "body-read")
     );
-    const total = declared ?? buf.byteLength;
+    if (wholeFile) {
+      assertSessionFileIntegrity(file, buf);
+    } else if (buf.byteLength < targetBytes) {
+      throw new SessionFileIntegrityError("files.read: checkpoint file ended before the requested prefix", {
+        fileId: file.id,
+        checkpointId: file.checkpointId,
+        expectedPrefixBytes: targetBytes,
+        actualSizeBytes: buf.byteLength
+      });
+    }
     return {
-      text: decoder.decode(buf.subarray(0, maxBytes)),
-      truncated: buf.byteLength > maxBytes,
-      totalBytes: total
+      text: decoder.decode(buf.subarray(0, targetBytes)),
+      truncated: !wholeFile,
+      totalBytes: file.sizeBytes
     };
   }
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
-  let read = 0;
-  let sawMore = false;
+  let retainedBytes = 0;
   try {
-    while (read < maxBytes) {
+    while (wholeFile || retainedBytes < targetBytes) {
       const { done, value } = await withSessionFileTransferTimeout(
         reader.read(),
         timeoutMs,
@@ -879,29 +1000,40 @@ async function readCappedText(
       );
       if (done) break;
       if (value && value.byteLength > 0) {
-        read += value.byteLength;
-        chunks.push(value);
+        const remainingBytes = targetBytes - retainedBytes;
+        const retainedFromChunk = Math.min(remainingBytes, value.byteLength);
+        if (retainedFromChunk > 0) {
+          chunks.push(
+            retainedFromChunk === value.byteLength ? value : value.slice(0, retainedFromChunk)
+          );
+          retainedBytes += retainedFromChunk;
+        }
+        if (wholeFile && value.byteLength > remainingBytes) {
+          throw new SessionFileIntegrityError("files.read: checkpoint file exceeded its committed byte length", {
+            fileId: file.id,
+            checkpointId: file.checkpointId,
+            expectedSizeBytes: file.sizeBytes,
+            actualSizeBytesAtLeast: retainedBytes + value.byteLength - retainedFromChunk
+          });
+        }
+        if (!wholeFile && retainedBytes >= targetBytes) break;
       }
-    }
-    if (read >= maxBytes) {
-      // We hit the cap; peek once more to learn whether bytes remain, then stop.
-      const next = await withSessionFileTransferTimeout(
-        reader.read(),
-        timeoutMs,
-        () => {
-          void reader.cancel().catch(() => {});
-        },
-        "body-read"
-      );
-      if (!next.done && next.value && next.value.byteLength > 0) sawMore = true;
     }
   } finally {
     void reader.cancel().catch(() => {});
   }
-  const merged = concatBytes(chunks).subarray(0, maxBytes);
-  const truncated = declared !== undefined ? declared > maxBytes : read > maxBytes || sawMore;
-  const totalBytes = declared ?? read;
-  return { text: decoder.decode(merged), truncated, totalBytes };
+  const merged = concatBytes(chunks);
+  if (wholeFile) {
+    assertSessionFileIntegrity(file, merged);
+  } else if (retainedBytes < targetBytes) {
+    throw new SessionFileIntegrityError("files.read: checkpoint file ended before the requested prefix", {
+      fileId: file.id,
+      checkpointId: file.checkpointId,
+      expectedPrefixBytes: targetBytes,
+      actualSizeBytes: retainedBytes
+    });
+  }
+  return { text: decoder.decode(merged), truncated: !wholeFile, totalBytes: file.sizeBytes };
 }
 
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
@@ -1225,7 +1357,8 @@ interface ZipEntry extends SessionRecordArchiveEntryForRedactionV1 {
  * download route. Best-effort: a per-artifact fetch failure records an
  * `errors[]` entry rather than aborting the rest, so the failure is
  * surfaced (never silent) while a partially-available run still yields a
- * usable zip.
+ * usable zip. A committed size or digest contradiction is terminal because
+ * returning a partial archive would misrepresent corrupted bytes as absent.
  */
 async function collectArtifactBytes(
   http: HttpClient,
@@ -1245,7 +1378,7 @@ async function collectArtifactBytes(
       const path = sessionFileRoute(sessionId, item.id, "download", item.checkpointId);
       entries.push({
         path: `${zipPrefix}${rel}`,
-        bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs),
+        bytes: await downloadSessionFileBytesWithRetry(http, path, timeoutMs, item),
         ...(item.contentType !== undefined ? { contentType: item.contentType } : {}),
         customerContent: true
       });
@@ -1256,6 +1389,7 @@ async function collectArtifactBytes(
         ...(item.contentType !== undefined ? { contentType: item.contentType } : {})
       });
     } catch (err) {
+      if (err instanceof SessionFileIntegrityError) throw err;
       errors.push({ namespace, id: item.id, filename: item.filename ?? null, message: (err as Error).message });
     }
   }
@@ -1363,11 +1497,16 @@ async function resolveSessionFileLinkTarget(
   selectorOrQuery: SessionFileLinkSelector,
   checkpointId?: string
 ): Promise<SessionFile> {
-  if (hasSessionFileId(selectorOrQuery)) {
-    if (selectorOrQuery.id.length === 0) {
+  if (hasSessionFileIdProperty(selectorOrQuery)) {
+    if (typeof selectorOrQuery.id !== "string" || selectorOrQuery.id.length === 0) {
       throw new SessionStateError("sessionFileLink: selector must include a file id or query", { sessionId });
     }
-    return selectorOrQuery;
+    return resolveAuthoritativeSessionFile(
+      http,
+      sessionId,
+      selectorOrQuery as SessionFileSelector,
+      checkpointId
+    );
   }
   if (isPathSelector(selectorOrQuery as SessionFileSelector) && (selectorOrQuery as SessionFilePathSelector).match === "suffix") {
     const snapshot = await listSessionFiles(http, sessionId, checkpointId ? { checkpointId } : undefined);
@@ -1410,14 +1549,13 @@ function sessionFileMatchesQuery(file: SessionFile, query: SessionFileQuery): bo
   return true;
 }
 
-function hasSessionFileId(value: SessionFileSelector | SessionFilesQuery): value is SessionFile {
+function hasSessionFileIdProperty(
+  value: SessionFileSelector | SessionFilesQuery
+): value is (SessionFileSelector | SessionFilesQuery) & { readonly id: unknown } {
   return Boolean(
     value &&
     typeof value === "object" &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    "checkpointId" in value &&
-    typeof value.checkpointId === "string"
+    "id" in value
   );
 }
 
@@ -1515,10 +1653,13 @@ export async function downloadSessionFiles(
   sessionId: string,
   options?: SessionFileTransferOptions
 ): Promise<Uint8Array> {
+  const requestedCheckpointId = options?.checkpointId === undefined
+    ? undefined
+    : requireSessionFileCheckpointId(options.checkpointId, "files.download");
   const snapshot = await listSessionFiles(
     http,
     sessionId,
-    options?.checkpointId ? { checkpointId: options.checkpointId } : undefined
+    requestedCheckpointId === undefined ? undefined : { checkpointId: requestedCheckpointId }
   );
   const timeoutMs = normalizeSessionFileTransferTimeoutMs(options?.timeoutMs);
   const { entries, captured, errors } = await collectArtifactBytes(

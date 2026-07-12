@@ -64,9 +64,10 @@ console.log(snapshot.files);
 ```
 
 `SessionFilesSnapshot` contains both `revision` and `files`. Every file carries
-the same `checkpointId` as the revision. After `RUN_FINISHED`, this is the final
-committed state for that run. During an active run, an older complete
-checkpoint may still be visible.
+the same `checkpointId` as the revision, plus its exact `sizeBytes` and
+lowercase `sha256` digest. After `RUN_FINISHED`, this is the final committed
+state for that run. During an active run, an older complete checkpoint may
+still be visible.
 
 ## Find and read
 
@@ -105,6 +106,14 @@ await session.files.download({ id: "file_123", checkpointId: "cp_123" });
 
 A string ID alone is intentionally rejected because an ID without a revision
 can resolve inconsistently after a later run.
+
+`download()` resolves the selector against that checkpoint and verifies both
+the byte length and SHA-256 digest before returning. An integrity mismatch
+fails immediately and is not retried. `read()` remains a bounded prefix read
+for large files and verifies integrity when it consumes the complete file.
+`link()` returns the resolved file metadata alongside the direct storage URL;
+`fetch()` returns only the raw one-shot storage `Response`, so retain metadata
+from `list()`, `findOne()`, or `link()` when independently verifying that stream.
 
 Omit the selector from `session.files.download()` to download the files
 namespace archive. `session.download()` returns the complete public session

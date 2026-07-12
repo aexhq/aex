@@ -10,6 +10,7 @@
  * future refactor routes a read around the token-bearing transport, one of
  * these turns red BEFORE it can break against the gated routes in production.
  */
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { Aex, type SessionHandle } from "../../src/index.js";
 
@@ -17,6 +18,15 @@ const TOKEN = "apt_read_auth_token";
 const BASE = "https://example.test";
 const SID = "sess-1";
 const CHECKPOINT_ID = "cp-1";
+
+function listedFile(id: string, contents = "", filename?: string) {
+  return {
+    id,
+    ...(filename === undefined ? {} : { filename }),
+    sizeBytes: new TextEncoder().encode(contents).byteLength,
+    sha256: createHash("sha256").update(contents).digest("hex")
+  };
+}
 
 function checkpointSnapshot(files: readonly Record<string, unknown>[]) {
   return {
@@ -43,7 +53,11 @@ interface RecordedCall {
  * (`GET /api/sessions/sess-1`, used by `sessions.open`) which always returns a
  * minimal session record so a handle can be built.
  */
-function recordingClient(body: unknown, contentType = "application/json") {
+function recordingClient(
+  body: unknown,
+  contentType = "application/json",
+  listedFiles: readonly Record<string, unknown>[] = []
+) {
   const calls: RecordedCall[] = [];
   const stub: typeof fetch = async (input, init) => {
     const url =
@@ -61,11 +75,14 @@ function recordingClient(body: unknown, contentType = "application/json") {
         headers: { "content-type": "application/json" }
       });
     }
-    const responseBody =
-      url.endsWith(`/api/sessions/${SID}/files`) &&
-      body && typeof body === "object" && "files" in body && !("revision" in body)
-        ? checkpointSnapshot((body as { files: readonly Record<string, unknown>[] }).files)
-        : body;
+    const isFilesList = new URL(url).pathname === `/api/sessions/${SID}/files`;
+    const responseBody = isFilesList
+      ? checkpointSnapshot(
+          body && typeof body === "object" && "files" in body && !("revision" in body)
+            ? (body as { files: readonly Record<string, unknown>[] }).files
+            : listedFiles
+        )
+      : body;
     return new Response(typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody), {
       status: 200,
       headers: { "content-type": contentType }
@@ -109,11 +126,18 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
   });
 
   it("sessionFileLink by id sends Authorization: Bearer (POST /link)", async () => {
-    const { client, calls } = recordingClient({ url: `${BASE}/api/sessions/${SID}/files/abc/download` });
+    const { client, calls } = recordingClient(
+      { url: `${BASE}/api/sessions/${SID}/files/abc/download` },
+      "application/json",
+      [listedFile("abc", "", "result.txt")]
+    );
     const session = await openHandle(client, calls);
     await session.files.link({ id: "abc", checkpointId: CHECKPOINT_ID });
-    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/files/abc/link?checkpointId=${CHECKPOINT_ID}`);
-    expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(calls.map((call) => call.url)).toEqual([
+      `${BASE}/api/sessions/${SID}/files?checkpointId=${CHECKPOINT_ID}`,
+      `${BASE}/api/sessions/${SID}/files/abc/link?checkpointId=${CHECKPOINT_ID}`
+    ]);
+    expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
 
   it("sessionFileLink resolves queries with Authorization: Bearer and sends the TTL body", async () => {
@@ -135,7 +159,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
         });
       }
       if (url.endsWith(`/api/sessions/${SID}/files`)) {
-        return new Response(JSON.stringify(checkpointSnapshot([{ id: "abc", filename: "reports/result.txt" }])), {
+        return new Response(JSON.stringify(checkpointSnapshot([listedFile("abc", "", "reports/result.txt")])), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -180,7 +204,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
         });
       }
       if (url.endsWith(`/api/sessions/${SID}/files`)) {
-        return new Response(JSON.stringify(checkpointSnapshot([{ id: "abc", filename: "result.txt" }])), {
+        return new Response(JSON.stringify(checkpointSnapshot([listedFile("abc", "", "result.txt")])), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -219,12 +243,15 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
   });
 
   it("downloadSessionFile by id sends Authorization: Bearer to the gated download route", async () => {
-    const { client, calls } = recordingClient("hello", "text/plain");
+    const { client, calls } = recordingClient("hello", "text/plain", [listedFile("abc", "hello", "result.txt")]);
     const session = await openHandle(client, calls);
     const bytes = await session.files.download({ id: "abc", checkpointId: CHECKPOINT_ID });
     expect(new TextDecoder().decode(bytes)).toBe("hello");
-    expect(calls[0]!.url).toBe(`${BASE}/api/sessions/${SID}/files/abc/download?checkpointId=${CHECKPOINT_ID}`);
-    expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(calls.map((call) => call.url)).toEqual([
+      `${BASE}/api/sessions/${SID}/files?checkpointId=${CHECKPOINT_ID}`,
+      `${BASE}/api/sessions/${SID}/files/abc/download?checkpointId=${CHECKPOINT_ID}`
+    ]);
+    expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
 
   it("downloadSessionFile by path sends Authorization: Bearer on list and download", async () => {
@@ -242,7 +269,7 @@ describe("SDK read paths send the workspace token (H-1 coherence)", () => {
         });
       }
       if (url.endsWith(`/api/sessions/${SID}/files`)) {
-        return new Response(JSON.stringify(checkpointSnapshot([{ id: "abc", filename: "reports/result.txt" }])), {
+        return new Response(JSON.stringify(checkpointSnapshot([listedFile("abc", "hello", "reports/result.txt")])), {
           status: 200,
           headers: { "content-type": "application/json" }
         });

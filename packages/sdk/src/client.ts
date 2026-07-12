@@ -907,8 +907,8 @@ async function downloadSessionFile(
   selector?: SessionFileSelector,
   options?: DownloadOptions
 ): Promise<Uint8Array> {
-  // One selector-resolution path: the contracts `downloadSessionFile` lists-if-path
-  // then downloads, throwing with PUBLIC verb names — no duplicated resolver.
+  // One selector-resolution path: contracts resolve every selector against the
+  // authoritative checkpoint, then download and verify the committed bytes.
   const transferOptions = {
     ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options?.checkpointId !== undefined ? { checkpointId: options.checkpointId } : {})

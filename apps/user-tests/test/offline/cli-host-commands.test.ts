@@ -8,11 +8,15 @@
  * auth header, URL, and public wire-shape drift in the shipped artifact.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { strToU8, unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getAexBinPath, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+
+const REPORT_BYTES = strToU8("hello world");
+const REPORT_SHA256 = createHash("sha256").update(REPORT_BYTES).digest("hex");
 
 interface CapturedRequest {
   readonly method: string;
@@ -198,12 +202,19 @@ async function startFakeApi(): Promise<FakeApi> {
           committedAt: "2026-07-10T00:00:00.000Z",
           throughSeq: 2
         },
-        files: [{ id: "out-1", checkpointId: "cp-1", filename: "report.txt", sizeBytes: 11, contentType: "text/plain" }]
+        files: [{
+          id: "out-1",
+          checkpointId: "cp-1",
+          filename: "report.txt",
+          sizeBytes: REPORT_BYTES.byteLength,
+          sha256: REPORT_SHA256,
+          contentType: "text/plain"
+        }]
       });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/files/out-1/download") {
-      bytes(res, 200, strToU8("hello world"), "text/plain");
+      bytes(res, 200, REPORT_BYTES, "text/plain");
       return;
     }
 

@@ -1,8 +1,32 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Aex } from "../../src/index.js";
+
+function listedFile(id: string, contents: string, filename = "report.txt") {
+  return {
+    id,
+    checkpointId: "cp-1",
+    filename,
+    sizeBytes: new TextEncoder().encode(contents).byteLength,
+    sha256: createHash("sha256").update(contents).digest("hex")
+  };
+}
+
+function checkpointSnapshot(files: readonly ReturnType<typeof listedFile>[]) {
+  return {
+    revision: {
+      checkpointId: "cp-1",
+      runId: "run-1",
+      turnSeq: 1,
+      committedAt: "2026-07-10T00:00:00Z",
+      throughSeq: 9
+    },
+    files
+  };
+}
 
 function downloadClient(): Aex {
   const fetch: typeof globalThis.fetch = async (input) => {
@@ -16,11 +40,11 @@ function downloadClient(): Aex {
         headers: { "content-type": "application/json" }
       });
     }
-    if (url.endsWith("/api/sessions/session-1/files")) {
-      return new Response(JSON.stringify({
-        revision: { checkpointId: "cp-1", runId: "run-1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: 9 },
-        files: []
-      }), {
+    if (new URL(url).pathname === "/api/sessions/session-1/files") {
+      const files = new URL(url).searchParams.get("checkpointId") === null
+        ? []
+        : [listedFile("abc", "hello")];
+      return new Response(JSON.stringify(checkpointSnapshot(files)), {
         status: 200,
         headers: { "content-type": "application/json" }
       });
@@ -89,6 +113,9 @@ describe("SessionHandle download { to } options", () => {
         downloadCalls += 1;
         return downloadCalls === 1 ? stalledFileResponse() : new Response("hello", { status: 200 });
       }
+      if (url.endsWith("/api/sessions/session-1/files?checkpointId=cp-1")) {
+        return Response.json(checkpointSnapshot([listedFile("abc", "hello")]));
+      }
       throw new Error(`No fake responder for ${url}`);
     };
     const session = await new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }).sessions.open("session-1");
@@ -97,5 +124,29 @@ describe("SessionHandle download { to } options", () => {
 
     expect(new TextDecoder().decode(bytes)).toBe("hello");
     expect(downloadCalls).toBe(2);
+  });
+
+  it("verifies a selected download once and does not retry an integrity mismatch", async () => {
+    let downloadCalls = 0;
+    const fetch: typeof globalThis.fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (url.endsWith("/api/sessions/session-1")) {
+        return Response.json({ session: { id: "session-1", status: "idle", acceptsMessages: true } });
+      }
+      if (url.endsWith("/api/sessions/session-1/files?checkpointId=cp-1")) {
+        return Response.json(checkpointSnapshot([listedFile("abc", "expected")]));
+      }
+      if (url.endsWith("/api/sessions/session-1/files/abc/download?checkpointId=cp-1")) {
+        downloadCalls += 1;
+        return new Response("tampered", { status: 200 });
+      }
+      throw new Error(`No fake responder for ${url}`);
+    };
+    const session = await new Aex({ apiKey: "tkn", baseUrl: "https://example.test", fetch }).sessions.open("session-1");
+
+    await expect(
+      session.files.download({ id: "abc", checkpointId: "cp-1" })
+    ).rejects.toThrow(/integrity/i);
+    expect(downloadCalls).toBe(1);
   });
 });

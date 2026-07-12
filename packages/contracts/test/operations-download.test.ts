@@ -5,12 +5,25 @@
  */
 import { describe, expect, it } from "vitest";
 import { unzipSync } from "fflate";
+import { createHash } from "node:crypto";
 import { HttpClient } from "../src/http.js";
 import { SessionStateError } from "../src/index.js";
 import { operations } from "../src/internal.js";
 
 const BASE = "https://api.test";
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const file = (
+  id: string,
+  filename: string,
+  contents: string,
+  extra: Record<string, unknown> = {}
+) => ({
+  id,
+  filename,
+  sizeBytes: new TextEncoder().encode(contents).byteLength,
+  sha256: createHash("sha256").update(contents).digest("hex"),
+  ...extra
+});
 
 function clientFor(routes: Record<string, () => Response>) {
   const fetchImpl = async (input: string | URL | Request) => {
@@ -46,7 +59,7 @@ function runWithSessionFile() {
     "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
     "/api/sessions/session-1/events": () => json({ events: [{ seq: 0, kind: "a" }, { seq: 1, kind: "b" }] }),
     "/api/sessions/session-1/files": () =>
-      json({ files: [{ id: "o1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] }),
+      json({ files: [file("o1", "report.txt", "hello", { contentType: "text/plain" })] }),
     "/api/sessions/session-1/files/o1/download": () => new Response("hello", { status: 200 })
   });
 }
@@ -91,7 +104,7 @@ describe("operations.download", () => {
       "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "error", acceptsMessages: true } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () =>
-        json({ files: [{ id: "ok", filename: "good.txt" }, { id: "bad", filename: "missing.txt" }] }),
+        json({ files: [file("ok", "good.txt", "present"), file("bad", "missing.txt", "gone")] }),
       "/api/sessions/session-1/files/ok/download": () => new Response("present", { status: 200 }),
       "/api/sessions/session-1/files/bad/download": () => new Response("gone", { status: 404 })
     });
@@ -104,6 +117,22 @@ describe("operations.download", () => {
     expect(manifest.sessionFiles.map((file: { id: string }) => file.id)).toEqual(["ok"]);
     expect(manifest.errors).toHaveLength(1);
     expect(manifest.errors[0]).toMatchObject({ namespace: "files", id: "bad", filename: "missing.txt" });
+  });
+
+  it("treats checkpoint integrity mismatch as terminal instead of returning a partial archive", async () => {
+    let downloads = 0;
+    const http = clientFor({
+      "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
+      "/api/sessions/session-1/events": () => json({ events: [] }),
+      "/api/sessions/session-1/files": () => json({ files: [file("bad", "report.txt", "expected")] }),
+      "/api/sessions/session-1/files/bad/download": () => {
+        downloads += 1;
+        return new Response("tampered", { status: 200 });
+      }
+    });
+
+    await expect(operations.download(http, "session-1")).rejects.toThrow(/integrity/i);
+    expect(downloads).toBe(1);
   });
 
   it("rejects secret-shaped JSON/text archive entries before writing the zip", async () => {
@@ -121,7 +150,7 @@ describe("operations.download", () => {
       "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () =>
-        json({ files: [{ id: "o1", filename: "report.txt", sizeBytes: 27, contentType: "text/plain" }] }),
+        json({ files: [file("o1", "report.txt", "Authorization: Bearer abcdefgh", { contentType: "text/plain" })] }),
       "/api/sessions/session-1/files/o1/download": () => new Response("Authorization: Bearer abcdefgh", { status: 200 })
     });
 
@@ -136,7 +165,7 @@ describe("operations.download", () => {
       "/api/sessions/session-1": () => json({ session: { id: "session-1", status: "idle", acceptsMessages: true } }),
       "/api/sessions/session-1/events": () => json({ events: [] }),
       "/api/sessions/session-1/files": () =>
-        json({ files: [{ id: opaqueId, filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }] }),
+        json({ files: [file(opaqueId, "report.txt", "hello", { contentType: "text/plain" })] }),
       [`/api/sessions/session-1/files/${opaqueId}/download`]: () => new Response("hello", { status: 200 })
     });
 
@@ -174,7 +203,7 @@ describe("operations.downloadSessionFile", () => {
   it("downloads a file by suffix when requested", async () => {
     const http = clientFor({
       "/api/sessions/session-2/files": () =>
-        json({ files: [{ id: "report", filename: "files/report-folder/report.txt", contentType: "text/plain" }] }),
+        json({ files: [file("report", "files/report-folder/report.txt", "marker", { contentType: "text/plain" })] }),
       "/api/sessions/session-2/files/report/download": () => new Response("marker", { status: 200 })
     });
 
@@ -193,7 +222,7 @@ describe("operations.downloadSessionFile", () => {
   it("rejects an ambiguous suffix selector", async () => {
     const http = clientFor({
       "/api/sessions/session-3/files": () =>
-        json({ files: [{ id: "a", filename: "a/report.txt" }, { id: "b", filename: "b/report.txt" }] })
+        json({ files: [file("a", "a/report.txt", "a"), file("b", "b/report.txt", "b")] })
     });
 
     await expect(
@@ -201,31 +230,55 @@ describe("operations.downloadSessionFile", () => {
     ).rejects.toThrow(/matched multiple files/);
   });
 
-  it("downloads by file id without listing files first", async () => {
+  it("resolves a file id from its pinned checkpoint before downloading", async () => {
     const http = clientFor({
+      "/api/sessions/session-4/files": () => json({ files: [file("o1", "report.txt", "direct")] }),
       "/api/sessions/session-4/files/o1/download": () => new Response("direct", { status: 200 })
     });
 
     const result = await operations.downloadSessionFile(http, "session-4", { id: "o1", checkpointId: "cp_1" });
 
-    expect(result.file).toEqual({ id: "o1", checkpointId: "cp_1" });
+    expect(result.file).toMatchObject({ id: "o1", checkpointId: "cp_1", filename: "report.txt" });
     expect(decode(result.bytes)).toBe("direct");
   });
 
-  it("preserves file metadata when the selector is a SessionFile object", async () => {
+  it("uses authoritative checkpoint metadata instead of caller-supplied file metadata", async () => {
     const http = clientFor({
+      "/api/sessions/session-5/files": () =>
+        json({ files: [file("o1", "report.txt", "bytes", { contentType: "text/plain" })] }),
       "/api/sessions/session-5/files/o1/download": () => new Response("bytes", { status: 200 })
     });
 
     const result = await operations.downloadSessionFile(http, "session-5", {
       id: "o1",
       checkpointId: "cp_1",
-      filename: "report.txt",
-      contentType: "text/plain"
+      filename: "stale.txt",
+      sizeBytes: 999,
+      sha256: "0".repeat(64),
+      contentType: "application/octet-stream"
     });
 
     expect(result.file).toMatchObject({ id: "o1", filename: "report.txt", contentType: "text/plain" });
     expect(decode(result.bytes)).toBe("bytes");
+  });
+
+  it.each([
+    ["size", file("o1", "report.txt", "longer")],
+    ["sha256", { ...file("o1", "report.txt", "bytes"), sha256: "0".repeat(64) }]
+  ])("rejects a %s mismatch after one download attempt", async (_kind, listedFile) => {
+    let downloads = 0;
+    const http = clientFor({
+      "/api/sessions/session-6/files": () => json({ files: [listedFile] }),
+      "/api/sessions/session-6/files/o1/download": () => {
+        downloads += 1;
+        return new Response("bytes", { status: 200 });
+      }
+    });
+
+    await expect(
+      operations.downloadSessionFile(http, "session-6", { id: "o1", checkpointId: "cp_1" })
+    ).rejects.toThrow(/integrity/i);
+    expect(downloads).toBe(1);
   });
 });
 

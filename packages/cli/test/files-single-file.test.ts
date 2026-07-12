@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { executeCli } from "../src/main.js";
 import { makeIo, type FetchCall } from "./support.js";
@@ -11,7 +12,15 @@ const REVISION = {
   committedAt: "2026-07-01T00:00:01Z",
   throughSeq: 10
 };
-const FILES = [{ id: "o1", checkpointId: "cp-1", filename: "data.json", sizeBytes: 8, contentType: "application/json" }];
+const FILE_CONTENTS = "{\"ok\":1}";
+const FILES = [{
+  id: "o1",
+  checkpointId: "cp-1",
+  filename: "data.json",
+  sizeBytes: 8,
+  sha256: createHash("sha256").update(FILE_CONTENTS).digest("hex"),
+  contentType: "application/json"
+}];
 
 function filesFetch(call: FetchCall): Response {
   const url = new URL(call.url);
@@ -22,7 +31,7 @@ function filesFetch(call: FetchCall): Response {
     return json({ revision: REVISION, files: FILES });
   }
   if (url.pathname === "/api/sessions/s1/files/o1/download") {
-    return new Response("{\"ok\":1}", {
+    return new Response(FILE_CONTENTS, {
       status: 200,
       headers: { "content-type": "application/json", "content-length": "8" }
     });

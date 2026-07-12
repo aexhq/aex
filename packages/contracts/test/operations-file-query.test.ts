@@ -3,6 +3,7 @@ import { HttpClient, SessionStateError, type SessionFile } from "../src/index.js
 import { operations } from "../src/internal.js";
 
 const BASE = "https://api.test";
+const sha256 = "a".repeat(64);
 
 interface RecordedCall {
   readonly path: string;
@@ -12,12 +13,12 @@ interface RecordedCall {
 }
 
 const files: readonly SessionFile[] = [
-  { id: "json", checkpointId: "cp_1", filename: "files/reports/summary.json", contentType: "application/json", sizeBytes: 10 },
-  { id: "txt", checkpointId: "cp_1", filename: "reports/notes.txt", contentType: "text/plain; charset=utf-8", sizeBytes: 20 },
-  { id: "deep", checkpointId: "cp_1", filename: "reports/nested/frame.png", contentType: "image/png", sizeBytes: 30 },
-  { id: "pdf", checkpointId: "cp_1", filename: "docs/spec.pdf", contentType: "application/octet-stream", sizeBytes: 40 },
-  { id: "zip", checkpointId: "cp_1", filename: "bundle.zip", contentType: "application/zip", sizeBytes: 50 },
-  { id: "video", checkpointId: "cp_1", filename: "media/clip.mp4", sizeBytes: 60 }
+  { id: "json", checkpointId: "cp_1", filename: "files/reports/summary.json", contentType: "application/json", sizeBytes: 10, sha256 },
+  { id: "txt", checkpointId: "cp_1", filename: "reports/notes.txt", contentType: "text/plain; charset=utf-8", sizeBytes: 20, sha256 },
+  { id: "deep", checkpointId: "cp_1", filename: "reports/nested/frame.png", contentType: "image/png", sizeBytes: 30, sha256 },
+  { id: "pdf", checkpointId: "cp_1", filename: "docs/spec.pdf", contentType: "application/octet-stream", sizeBytes: 40, sha256 },
+  { id: "zip", checkpointId: "cp_1", filename: "bundle.zip", contentType: "application/zip", sizeBytes: 50, sha256 },
+  { id: "video", checkpointId: "cp_1", filename: "media/clip.mp4", sizeBytes: 60, sha256 }
 ];
 
 const snapshot = (items: readonly SessionFile[]) => ({
@@ -82,14 +83,60 @@ describe("operations file discovery", () => {
     const { http } = clientFor({
       "/api/sessions/session-1/files": () =>
         json(snapshot([
-          { id: "a", checkpointId: "cp_1", filename: "a/report.txt" },
-          { id: "b", checkpointId: "cp_1", filename: "b/report.txt" }
+          { id: "a", checkpointId: "cp_1", filename: "a/report.txt", sizeBytes: 1, sha256 },
+          { id: "b", checkpointId: "cp_1", filename: "b/report.txt", sizeBytes: 1, sha256 }
         ]))
     });
 
     await expect(operations.findSessionFile(http, "session-1", { filename: "missing.txt" })).resolves.toBeNull();
     await expect(operations.findSessionFile(http, "session-1", { extension: "txt" })).rejects.toBeInstanceOf(SessionStateError);
   });
+
+  it("rejects a checkpoint-pinned list whose revision resolves to a different checkpoint", async () => {
+    const { http, calls } = clientFor({
+      "/api/sessions/session-1/files?checkpointId=cp_requested": () => json({
+        revision: { ...snapshot([]).revision, checkpointId: "cp_other" },
+        files: []
+      })
+    });
+
+    await expect(
+      operations.listSessionFiles(http, "session-1", { checkpointId: "cp_requested" })
+    ).rejects.toThrow(/requested checkpoint/i);
+    expect(calls.map((call) => call.path)).toEqual([
+      "/api/sessions/session-1/files?checkpointId=cp_requested"
+    ]);
+  });
+
+  it.each([
+    ["checkpointId", "bad/checkpoint"],
+    ["runId", ""],
+    ["turnSeq", 0],
+    ["turnSeq", 1.5],
+    ["committedAt", "not-a-date"],
+    ["throughSeq", -1],
+    ["throughSeq", 1.5]
+  ] as const)("rejects malformed revision field %s=%j", async (field, value) => {
+    const { http } = clientFor({
+      "/api/sessions/session-1/files": () => json({
+        revision: { ...snapshot([]).revision, [field]: value },
+        files: []
+      })
+    });
+
+    await expect(operations.listSessionFiles(http, "session-1")).rejects.toBeInstanceOf(SessionStateError);
+  });
+
+  it.each(["", "   ", " cp_1", "cp/1", "x".repeat(201), 123, null])(
+    "rejects invalid checkpoint query %j before making a request",
+    async (checkpointId) => {
+      const { http, calls } = clientFor({});
+      await expect(
+        operations.listSessionFiles(http, "session-1", { checkpointId } as never)
+      ).rejects.toThrow(/checkpointId/);
+      expect(calls).toHaveLength(0);
+    }
+  );
 });
 
 describe("operations file links", () => {
@@ -114,18 +161,62 @@ describe("operations file links", () => {
     });
   });
 
-  it("uses a checkpoint-pinned id without listing files first", async () => {
+  it("resolves a checkpoint-pinned id before minting a link", async () => {
     const { http, calls } = clientFor({
+      "/api/sessions/session-1/files?checkpointId=cp_1": () => json(snapshot([files[1]!])),
       "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () => json({ url: "https://storage.example/direct.txt" })
     });
 
     const link = await operations.sessionFileLink(http, "session-1", { id: "txt", checkpointId: "cp_1" });
 
-    expect(calls.map((call) => [call.method, call.path])).toEqual([["POST", "/api/sessions/session-1/files/txt/link?checkpointId=cp_1"]]);
-    expect(JSON.parse(calls[0]!.body!)).toEqual({ expiresInSeconds: 3600 });
+    expect(calls.map((call) => [call.method, call.path])).toEqual([
+      ["GET", "/api/sessions/session-1/files?checkpointId=cp_1"],
+      ["POST", "/api/sessions/session-1/files/txt/link?checkpointId=cp_1"]
+    ]);
+    expect(JSON.parse(calls[1]!.body!)).toEqual({ expiresInSeconds: 3600 });
     expect(link.expiresInSeconds).toBe(3600);
-    expect(link.file).toEqual({ id: "txt", checkpointId: "cp_1" });
+    expect(link.file).toEqual(files[1]);
   });
+
+  it.each(["", "   ", 123, null])(
+    "rejects an id selector with invalid checkpoint %j before listing the current checkpoint",
+    async (checkpointId) => {
+      const { http, calls } = clientFor({});
+      await expect(
+        operations.sessionFileLink(http, "session-1", { id: "txt", checkpointId } as never)
+      ).rejects.toThrow(/checkpointId/);
+      expect(calls).toHaveLength(0);
+    }
+  );
+
+  it("does not let a valid option mask an invalid id-selector checkpoint", async () => {
+    const { http, calls } = clientFor({});
+    await expect(
+      operations.downloadSessionFile(
+        http,
+        "session-1",
+        { id: "txt", checkpointId: "" },
+        { checkpointId: "cp_1" }
+      )
+    ).rejects.toThrow(/checkpointId/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["", "   ", 123, null])(
+    "rejects an invalid checkpoint option %j before selector resolution",
+    async (checkpointId) => {
+      const { http, calls } = clientFor({});
+      await expect(
+        operations.downloadSessionFile(
+          http,
+          "session-1",
+          { path: "reports/notes.txt" },
+          { checkpointId } as never
+        )
+      ).rejects.toThrow(/checkpointId/);
+      expect(calls).toHaveLength(0);
+    }
+  );
 
   it("posts event archive link requests with the same TTL body", async () => {
     const { http, calls } = clientFor({
@@ -141,6 +232,7 @@ describe("operations file links", () => {
 
   it("synthesizes the documented expiresAt when the server omits it", async () => {
     const { http } = clientFor({
+      "/api/sessions/session-1/files?checkpointId=cp_1": () => json(snapshot([files[1]!])),
       "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
         json({ url: "https://storage.example/direct.txt", expiresInSeconds: 900 })
     });
@@ -157,6 +249,7 @@ describe("operations file links", () => {
 
   it("keeps a server-provided expiresAt untouched", async () => {
     const { http } = clientFor({
+      "/api/sessions/session-1/files?checkpointId=cp_1": () => json(snapshot([files[1]!])),
       "/api/sessions/session-1/files/txt/link?checkpointId=cp_1": () =>
         json({ url: "https://storage.example/direct.txt", expiresAt: "2026-06-18T12:00:00.000Z" })
     });

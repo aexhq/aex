@@ -4,6 +4,7 @@ import { SessionRunStream } from "../../src/client.js";
 import type { Session } from "@aexhq/contracts";
 
 const hash = `sha256:${"a".repeat(64)}`;
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const file = {
   kind: "file" as const,
   resourceId: `wres_${"1".repeat(32)}`,
@@ -28,7 +29,7 @@ function harness() {
       headers: { "content-type": "application/json" }
     });
     if (url.includes("/api/workspace/files")) return json({ resources: [file], nextCursor: "next-page" });
-    if (url.endsWith("/api/sessions/session_1/files")) return json({
+    if (new URL(url).pathname === "/api/sessions/session_1/files") return json({
       revision: {
         checkpointId: "cp_2",
         runId: "run_2",
@@ -36,7 +37,7 @@ function harness() {
         committedAt: "2026-07-10T00:00:00.000Z",
         throughSeq: 44
       },
-      files: [{ id: "output_1", checkpointId: "cp_2", filename: "result.txt" }]
+      files: [{ id: "output_1", checkpointId: "cp_2", filename: "result.txt", sizeBytes: 0, sha256: EMPTY_SHA256 }]
     });
     if (url.includes("/api/sessions/session_1/files/output_1/link?checkpointId=cp_2")) {
       return json({ url: "https://objects.example.test/output_1", expiresInSeconds: 3600 });
@@ -106,12 +107,15 @@ describe("public SDK clean cut", () => {
     expect(Array.isArray(snapshot)).toBe(false);
     expect(snapshot).toMatchObject({
       revision: { checkpointId: "cp_2", runId: "run_2", turnSeq: 2 },
-      files: [{ id: "output_1", checkpointId: "cp_2", filename: "result.txt" }]
+      files: [{ id: "output_1", checkpointId: "cp_2", filename: "result.txt", sizeBytes: 0, sha256: EMPTY_SHA256 }]
     });
     expect(snapshot.revision.checkpointId).toBe("cp_2");
     expect(snapshot.files[0]?.checkpointId).toBe("cp_2");
     await session.files.link(snapshot.files[0]!);
-    expect(calls.at(-1)?.url).toContain("/files/output_1/link?checkpointId=cp_2");
+    expect(calls.slice(-2).map((call) => call.url)).toEqual([
+      "https://api.example.test/api/sessions/session_1/files?checkpointId=cp_2",
+      "https://api.example.test/api/sessions/session_1/files/output_1/link?checkpointId=cp_2"
+    ]);
   });
 
   it("offers finished() as the only run completion method", () => {

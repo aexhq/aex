@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { Aex, type SessionResult } from "../../src/index.js";
 import type { AexEvent, WebSocketLike } from "@aexhq/contracts";
 
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
 interface CapturedRequest {
   readonly url: string;
   readonly method: string;
@@ -104,7 +106,13 @@ function makeClient(options: {
     if (url.includes("/api/sessions/sess_1/files?checkpointId=cp_1")) {
       return json({
         revision: { checkpointId: "cp_1", runId: "run_1", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: 4097 },
-        files: [{ id: "out_1", checkpointId: "cp_1", filename: "answer.txt" }]
+        files: [{
+          id: "out_1",
+          checkpointId: "cp_1",
+          filename: "answer.txt",
+          sizeBytes: 0,
+          sha256: EMPTY_SHA256
+        }]
       });
     }
     if (url.endsWith("/api/sessions/sess_1")) {
@@ -167,7 +175,13 @@ describe("Aex sessions", () => {
     expect(result.session?.status).toBe("idle");
     expect(result.text).toBe("hello");
     expect(result.events.map((evt) => evt.sequence)).toEqual([4096, 4097]);
-    expect(result.files).toEqual([{ id: "out_1", checkpointId: "cp_1", filename: "answer.txt" }]);
+    expect(result.files).toEqual([{
+      id: "out_1",
+      checkpointId: "cp_1",
+      filename: "answer.txt",
+      sizeBytes: 0,
+      sha256: EMPTY_SHA256
+    }]);
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
       "POST https://api.example.test/api/sessions/sess_1/messages"
     );

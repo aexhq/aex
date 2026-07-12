@@ -10,6 +10,7 @@ const API_KEYS = { anthropic: "sk-ant-fuzztestkey0123456789" } as const;
 const TEXT_SEQUENCE_START = 1024;
 const PROPERTY_RUNS = { numRuns: 150 };
 const EVENT_PROPERTY_RUNS = { numRuns: 100 };
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 interface CapturedRequest {
   readonly url: string;
@@ -120,7 +121,13 @@ function makeHarness(): Harness {
     if (method === "GET" && url.includes(`/api/sessions/${SESSION_ID}/files?checkpointId=cp_property`)) {
       return json({
         revision: { checkpointId: "cp_property", runId: "run_property", turnSeq: 1, committedAt: "2026-07-10T00:00:00Z", throughSeq: TEXT_SEQUENCE_START },
-        files: [{ id: "out_property", checkpointId: "cp_property", filename: "answer.txt" }]
+        files: [{
+          id: "out_property",
+          checkpointId: "cp_property",
+          filename: "answer.txt",
+          sizeBytes: 0,
+          sha256: EMPTY_SHA256
+        }]
       });
     }
     if (method === "GET" && url.endsWith(`/api/sessions/${SESSION_ID}`)) {
@@ -320,7 +327,13 @@ function assertTurnEventProjection(result: SessionResult, specs: readonly TextEv
   ]);
   expect(result.trace.text).toEqual(expectedTraceText(specs));
   expect(result.trace.toolCalls).toEqual([]);
-  expect(result.files).toEqual([{ id: "out_property", checkpointId: "cp_property", filename: "answer.txt" }]);
+  expect(result.files).toEqual([{
+    id: "out_property",
+    checkpointId: "cp_property",
+    filename: "answer.txt",
+    sizeBytes: 0,
+    sha256: EMPTY_SHA256
+  }]);
   expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 5, totalTokens: 8 });
   expect(result.costUsd).toBe(0.001);
 }

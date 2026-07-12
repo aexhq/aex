@@ -94,6 +94,9 @@ describe("download namespaces surface (offline)", () => {
     const script = `
       const { Aex } = await import("@aexhq/sdk");
       const { strFromU8, unzipSync } = await import("fflate");
+      const { createHash } = await import("node:crypto");
+      const reportBytes = new TextEncoder().encode("hello");
+      const reportSha256 = createHash("sha256").update(reportBytes).digest("hex");
       const calls = [];
       const fetch = async (input) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -132,14 +135,21 @@ describe("download namespaces surface (offline)", () => {
               committedAt: "2026-07-10T00:00:00.000Z",
               throughSeq: 2
             },
-            files: [{ id: "out-1", checkpointId: "cp-1", filename: "report.txt", sizeBytes: 5, contentType: "text/plain" }]
+            files: [{
+              id: "out-1",
+              checkpointId: "cp-1",
+              filename: "report.txt",
+              sizeBytes: reportBytes.byteLength,
+              sha256: reportSha256,
+              contentType: "text/plain"
+            }]
           }), {
             status: 200,
             headers: { "content-type": "application/json" }
           });
         }
         if (key.startsWith("/api/sessions/session-1/files/out-1/download?checkpointId=cp-1")) {
-          return new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
+          return new Response(reportBytes, { status: 200, headers: { "content-type": "text/plain" } });
         }
         throw new Error("unexpected route: " + key);
       };
