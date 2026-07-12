@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
+import { settledRunReadinessSource } from "../_fixtures/settled-run-readiness.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -267,6 +268,7 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
     "Reply with ONLY the final three probe tokens separated by single spaces.";
   return `
     import { Aex } from "@aexhq/sdk";
+    ${settledRunReadinessSource()}
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
     const sessionResult = await client.start({
       provider: process.env.PROVIDER,
@@ -276,6 +278,7 @@ printf "%s %s %s\\n" "$a" "$o" "$i"`;
       apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-egress-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
+    requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.PROVIDER_KEY]);
     ${COLLECT}
     const evidence = (toolResultText + " " + assistantText).replace(/\\s+/g, "");
     process.stdout.write(JSON.stringify({ sessionId, status, eventKinds, evidence, streamErrors }));
@@ -300,7 +303,9 @@ function mcpSecretChildScript(marker: string): string {
     `repository anthropics/anthropic-cookbook. Reply with exactly one line: lang=<language>.`;
   return `
     import { Aex, McpServer } from "@aexhq/sdk";
+    ${settledRunReadinessSource()}
     const client = new Aex({ baseUrl: process.env.AEX_API_URL, apiKey: process.env.AEX_API_KEY });
+    const marker = ${JSON.stringify(marker)};
     // Secret header carried under secrets.mcpServers — must never surface in events/files.
     const mcp = McpServer.remote({
       name: ${JSON.stringify(MCP_NAME)},
@@ -318,8 +323,8 @@ function mcpSecretChildScript(marker: string): string {
       apiKeys: { [process.env.PROVIDER]: process.env.PROVIDER_KEY },
       idempotencyKey: "edge-mcp-secret-" + Date.now()
     }, { timeoutMs: 8 * 60000 });
+    requireSucceededRunBeforeFiles("edge-mcp-egress", sessionResult, [process.env.PROVIDER_KEY, marker]);
     ${COLLECT}
-    const marker = ${JSON.stringify(marker)};
     const secretLeaked = serialized.includes(marker) || subEntry.includes(marker);
     process.stdout.write(JSON.stringify({ sessionId, status, eventKinds, toolRequests, toolResponseCount, assistantText, secretLeaked, streamErrors }));
     process.exit(0);

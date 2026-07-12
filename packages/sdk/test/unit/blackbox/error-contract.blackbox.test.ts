@@ -61,6 +61,19 @@ describe("blackbox: typed error dispatch", () => {
     );
     expect(isNotFound(err)).toBe(true);
   });
+
+  it("a 409 checkpoint_not_available remains a branchable state conflict", async () => {
+    const platform = new FakePlatform();
+    platform.scriptError({ pathIncludes: "/api/sessions", status: 409, code: "checkpoint_not_available" });
+
+    const err = await platform.start(SESSION).then(
+      () => undefined,
+      (e) => e as unknown
+    );
+    expect(isIdempotencyConflict(err)).toBe(false);
+    expect((err as { status?: number }).status).toBe(409);
+    expect((err as { apiCode?: string }).apiCode).toBe("checkpoint_not_available");
+  });
 });
 
 describe("blackbox: idempotency key is a real safety property", () => {

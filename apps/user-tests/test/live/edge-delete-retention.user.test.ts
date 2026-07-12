@@ -149,7 +149,7 @@ describe("edge: deleting a session retires its files", () => {
 
         const session = await client.sessions.open(sessionResult.sessionId);
         const outs = session.files;
-        const listed = await outs.list();
+        const listed = (await outs.list()).files;
         const pre = listed.find((o) => (o.filename || "").endsWith("keep.txt")) || null;
 
         await session.delete();
@@ -157,7 +157,7 @@ describe("edge: deleting a session retires its files", () => {
 
         let postDeleteListCount = null, postDeleteListError = null;
         try {
-          postDeleteListCount = (await outs.list()).length;
+          postDeleteListCount = (await outs.list()).files.length;
         } catch (e) { postDeleteListError = errShape(e); }
 
         let postDeleteReadText = null, postDeleteReadError = null;

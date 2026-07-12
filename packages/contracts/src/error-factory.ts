@@ -57,6 +57,7 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "workspace_submit_rate_exceeded":
       return "rate_limit";
     case "session_busy":
+    case "checkpoint_not_available":
     case "session_not_terminal":
     case "session_terminal":
     case "event_archive_too_large":
@@ -74,7 +75,6 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
 function kindForStatus(status: number): ApiErrorKind {
   if (status === 401 || status === 403) return "auth";
   if (status === 404) return "not_found";
-  if (status === 409) return "idempotency";
   if (status === 429) return "rate_limit";
   return "generic";
 }

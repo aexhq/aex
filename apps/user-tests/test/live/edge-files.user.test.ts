@@ -285,10 +285,10 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files;
+        const outs = session.files;
 
         // list (sessions endpoint) and find({}) (sessions endpoint) — cross-check parity.
-        const listed = await outs.list();
+        const listed = (await outs.list()).files;
         const listMeta = listed.map((o) => ({ id: o.id, filename: o.filename ?? null, sizeBytes: o.sizeBytes ?? null, contentType: o.contentType ?? null }));
         const found = await outs.find({});
         const findMeta = found.map((o) => ({ id: o.id, filename: o.filename ?? null }));
@@ -471,8 +471,8 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files;
-        const listed = await outs.list();
+        const outs = session.files;
+        const listed = (await outs.list()).files;
         const big = listed.find((o) => (o.filename || "").endsWith("big.txt")) || null;
         const sizeBytes = big ? (big.sizeBytes ?? null) : null;
 
@@ -557,8 +557,8 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files;
-        const listed = await outs.list();
+        const outs = session.files;
+        const listed = (await outs.list()).files;
         const listNames = listed.map((o) => o.filename ?? null);
         const target = listed.find((o) => (o.filename || "").endsWith("menu.txt")) || null;
 
@@ -620,7 +620,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
         const sessionId = sessionResult.sessionId;
         const status = sessionResult.ok ? "succeeded" : (sessionResult.status || "failed");
         const session = await client.sessions.open(sessionId);
-        const outs = await session.files;
+        const outs = session.files;
 
         const probes = [];
         probes.push(await probe("list_len", async () => (await outs.list()).files.length));

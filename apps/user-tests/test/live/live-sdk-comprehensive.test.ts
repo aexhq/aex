@@ -50,6 +50,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { settledRunReadinessSource } from "../_fixtures/settled-run-readiness.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -173,6 +174,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
 
   return `
     import { Aex, Skill, McpServer, Instructions } from "@aexhq/sdk";
+    ${settledRunReadinessSource()}
 
     const client = new Aex({
       baseUrl: process.env.AEX_API_URL,
@@ -218,6 +220,7 @@ function buildScript(spec: CaseSpec, probes: { system: string; instructions: str
       idempotencyKey: "comprehensive-${spec.provider}-" + Date.now()
     };
     const sessionResult = await client.start(runOpts, { timeoutMs: ${spec.pollDeadlineMs} });
+    requireSucceededRunBeforeFiles("comprehensive-session", sessionResult, [process.env.DEEPSEEK_KEY, process.env.${spec.keyEnvName}]);
     const sessionId = sessionResult.sessionId;
     const session = await client.sessions.open(sessionId);
     const run = {

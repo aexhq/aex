@@ -21,7 +21,7 @@ factory dispatches to a subclass by code/status:
 | `AexIdempotencyConflictError` | `409` `idempotency_conflict` | — |
 | `AexNotFoundError` | `404` `not_found` | — |
 | `AexRateLimitError` | `429` (rate_limited, workspace_concurrency_exceeded, workspace_submit_rate_exceeded) | `retryAfterMs` (when advertised) |
-| `AexApiError` (base) | every other stable code (session_busy, session_not_terminal, session_terminal, event_archive_too_large, event_archive_deadline_exceeded, workspace_inactive, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
+| `AexApiError` (base) | every other stable code (session_busy, checkpoint_not_available, session_not_terminal, session_terminal, event_archive_too_large, event_archive_deadline_exceeded, workspace_inactive, insufficient_balance, workspace_spend_cap_exceeded, upstream_error, internal_error, …) | — |
 
 Branch with the exported guards instead of parsing bodies or matching status
 codes: `isAuthError`, `isInsufficientScope`, `isIdempotencyConflict`,
@@ -44,7 +44,7 @@ try {
 The **stable** `apiCode` set the SDK types and dispatches on is: `unauthorized`,
 `forbidden`, `insufficient_scope`, `token_invalid`, `token_revoked`,
 `token_expired`, `malformed_token`, `not_found`, `idempotency_conflict`,
-`session_busy`, `session_not_terminal`, `session_terminal`,
+`session_busy`, `checkpoint_not_available`, `session_not_terminal`, `session_terminal`,
 `event_archive_too_large`, `event_archive_deadline_exceeded`, `unknown_workspace`,
 `workspace_inactive`, `workspace_concurrency_exceeded`, `workspace_submit_rate_exceeded`,
 `workspace_spend_cap_exceeded`, `insufficient_balance`, `rate_limited`,
@@ -175,6 +175,7 @@ does not distinguish the two). The SDK raises `AexNotFoundError` (guard:
 | --- | --- |
 | `idempotency_conflict` | The `idempotencyKey` was already used with a different request body. The SDK raises `AexIdempotencyConflictError` (guard: `isIdempotencyConflict(err)`). |
 | `session_busy` | The session is handling another turn or lifecycle transition. Wait for its current operation to finish. |
+| `checkpoint_not_available` | No settled checkpoint exists yet for a checkpoint-backed read such as `session.files.list()`. Wait for the current run to finish. This remains a base `AexApiError`, not an idempotency conflict. |
 | `session_not_terminal` | The requested operation requires a terminal session state. |
 | `session_terminal` | The session has ended and cannot perform the requested action. |
 | `workspace_inactive` | A workspace deletion fence won the admission race, so the workspace no longer accepts new session work. The body carries `workspaceStatus` (normally `deleting`). Use an active workspace. |

@@ -1,5 +1,6 @@
 /**
- * Live EDGE-CASE sweep: edge-chat-session.user.test.ts
+ * Shared harness and scenario registrations for the independently sharded
+ * edge-chat-*.user.test.ts files.
  *
  * Customer-perspective adversarial probing of the multi-turn CHAT SESSION
  * surface of the installed `@aexhq/sdk` against the DEV plane:
@@ -20,9 +21,10 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
-import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
-import { formatChildFailure, redactKnownValues } from "../_fixtures/live-diagnostics.js";
+import { getBunCommand, installAex, runCommand, type InstallResult } from "./install.js";
+import { GATE_PROVIDER, gateModel, requireGateKey } from "./provider.js";
+import { formatChildFailure, redactKnownValues } from "./live-diagnostics.js";
+import type { EdgeChatSessionShard } from "./edge-chat-session-manifest.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -127,8 +129,14 @@ async function runChild(scriptName: string, body: string, timeoutMs = 8 * 60_000
   }
 }
 
-describe("live DEV — chat session edge cases via installed SDK", () => {
-  it(
+export function registerEdgeChatSessionScenario(shard: EdgeChatSessionShard, wrapperUrl: string): void {
+  const wrapperPath = new URL(wrapperUrl).pathname;
+  if (!wrapperPath.endsWith(`/${shard.file}`)) {
+    throw new Error(`edge chat shard ${shard.scenario} must be registered by ${shard.file}`);
+  }
+  const { scenario } = shard;
+  describe("live DEV — chat session edge cases via installed SDK", () => {
+    if (scenario === "multiturn") it(
     "multi-turn keeps context, open() in a fresh client resumes, messages are ordered",
     async () => {
       const result = await runChild(
@@ -200,9 +208,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     9 * 60_000
-  );
+    );
 
-  it(
+    if (scenario === "replay") it(
     "replayLast() de-dupes on the reused key, forces a new turn with a fresh key, and throws before any send",
     async () => {
       const result = await runChild(
@@ -266,9 +274,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     9 * 60_000
-  );
+    );
 
-  it(
+    if (scenario === "concurrency") it(
     "two concurrent sends on one session serialize — one sessions, the other is a clean busy rejection",
     async () => {
       const result = await runChild(
@@ -303,9 +311,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     9 * 60_000
-  );
+    );
 
-  it(
+    if (scenario === "suspend") it(
     "suspend() parks the session; a send while suspended has a clean outcome (auto-resume or clear error)",
     async () => {
       const result = await runChild(
@@ -366,9 +374,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     9 * 60_000
-  );
+    );
 
-  it(
+    if (scenario === "cancel-send") it(
     "cancel() then send() on the cancelled session is a clean error, never a ghost turn",
     async () => {
       const result = await runChild(
@@ -426,9 +434,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     10 * 60_000
-  );
+    );
 
-  it(
+    if (scenario === "cancel-launch") it(
     "cancel during run launch returns a cancelled outcome and leaves the session resumable",
     async () => {
       const result = await runChild(
@@ -500,9 +508,9 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     10 * 60_000
-  );
+    );
 
-  it(
+    if (scenario === "delete") it(
     "delete() leaves no usable ghost; open() on missing/malformed/empty ids is a clean 404, not a crash",
     async () => {
       const result = await runChild(
@@ -566,5 +574,6 @@ describe("live DEV — chat session edge cases via installed SDK", () => {
       expect(result.leaked, dump).toBe(false);
     },
     6 * 60_000
-  );
-});
+    );
+  });
+}

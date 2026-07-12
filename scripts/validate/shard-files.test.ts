@@ -1,6 +1,8 @@
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { EDGE_CHAT_SESSION_SHARDS } from "../../apps/user-tests/test/_fixtures/edge-chat-session-manifest.js";
 import {
   buildFileMatrix,
   collectTestFiles,
@@ -55,6 +57,47 @@ describe("shard-files duration-balanced bin packing", () => {
     // Provider-specific suites (Anthropic BYOK, doubao, ...) are non-gating.
     expect(files).not.toContain("test/live/live-sdk-anthropic-managed.test.ts");
     expect(files).not.toContain("test/live/providers/live-sdk-anthropic-managed.test.ts");
+  });
+
+  it("keeps independent chat-session scenarios in independent matrix jobs", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const matrix = buildFileMatrix(files);
+    const shards = Object.values(EDGE_CHAT_SESSION_SHARDS);
+    const shardFiles = shards.map(({ file }) => file).sort();
+    const shardScenarios = shards.map(({ scenario }) => scenario);
+
+    expect(files).not.toContain("test/live/edge-chat-session.user.test.ts");
+    expect(new Set(shardFiles).size).toBe(shards.length);
+    expect(new Set(shardScenarios).size).toBe(shards.length);
+    expect(files.filter((file) => file.startsWith("test/live/edge-chat-")).sort()).toEqual(shardFiles);
+    for (const { file } of shards) {
+      expect(matrix.filter((entry) => entry.file === file)).toHaveLength(1);
+      expect(matrix.find((entry) => entry.file === file)?.sessionSlots).toBe(1);
+    }
+  });
+
+  it("collects exactly one registered scenario from every chat-session shard", () => {
+    const shards = Object.values(EDGE_CHAT_SESSION_SHARDS);
+    const output = execFileSync(
+      "bun",
+      ["x", "vitest", "list", "--config", "vitest.config.ts", ...shards.map(({ file }) => file), "--json"],
+      {
+        cwd: userTestsRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          AEX_API_URL: "https://example.invalid",
+          AEX_API_KEY: "test-api-key",
+          DEEPSEEK_API_KEY: "test-provider-key"
+        }
+      }
+    );
+    const collected = JSON.parse(output) as Array<{ readonly file: string; readonly name: string }>;
+    const collectedFiles = collected
+      .map(({ file }) => relative(userTestsRoot, file).replaceAll("\\", "/"))
+      .sort();
+
+    expect(collectedFiles).toEqual(shards.map(({ file }) => file).sort());
   });
 
   it("partitions the real collected suite completely and deterministically", () => {

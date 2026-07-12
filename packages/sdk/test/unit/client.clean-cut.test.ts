@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Aex } from "../../src/index.js";
+import { Aex, type SessionFilesSnapshot } from "../../src/index.js";
 import { SessionRunStream } from "../../src/client.js";
 import type { Session } from "@aexhq/contracts";
 
@@ -100,7 +100,14 @@ describe("public SDK clean cut", () => {
     expect(session.events).toBe(session.events);
     expect(session.files).toBe(session.files);
     expect(typeof session.messages).toBe("object");
-    const snapshot = await session.files.list();
+    const snapshot: SessionFilesSnapshot = await session.files.list();
+    const snapshotIsArray: typeof snapshot extends readonly unknown[] ? true : false = false;
+    expect(snapshotIsArray).toBe(false);
+    expect(Array.isArray(snapshot)).toBe(false);
+    expect(snapshot).toMatchObject({
+      revision: { checkpointId: "cp_2", runId: "run_2", turnSeq: 2 },
+      files: [{ id: "output_1", checkpointId: "cp_2", filename: "result.txt" }]
+    });
     expect(snapshot.revision.checkpointId).toBe("cp_2");
     expect(snapshot.files[0]?.checkpointId).toBe("cp_2");
     await session.files.link(snapshot.files[0]!);

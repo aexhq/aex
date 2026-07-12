@@ -1,7 +1,8 @@
 /**
  * WS4 class-killer: one error factory (wire → typed subclass) backed by the
- * stable-code SSoT. Maps 409/403/404/401/429 to the right subclass with
- * apiCode + requestId + cause, and an exhaustive switch over AexApiErrorCode.
+ * stable-code SSoT. Maps 409 idempotency conflicts plus 403/404/401/429 to the
+ * right subclass with apiCode + requestId + cause, and keeps unrelated 409s
+ * generic through an exhaustive switch over AexApiErrorCode.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -78,6 +79,27 @@ describe("apiErrorFromResponse (WS4)", () => {
     expect(AEX_API_ERROR_REMEDIES.workspace_inactive).toMatch(/active workspace/i);
   });
 
+  it("does not misclassify checkpoint availability as an idempotency conflict", () => {
+    const body = { error: "checkpoint_not_available", requestId: "req-checkpoint" };
+    const err = apiErrorFromResponse({ status: 409, body });
+
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(err).not.toBeInstanceOf(AexIdempotencyConflictError);
+    expect(err.apiCode).toBe("checkpoint_not_available");
+    expect(err.requestId).toBe("req-checkpoint");
+    expect(err.message).toBe(AEX_API_ERROR_MESSAGES.checkpoint_not_available);
+  });
+
+  it("does not infer idempotency from an unknown 409 body", () => {
+    const body = { error: "future_state_conflict" };
+    const err = apiErrorFromResponse({ status: 409, body });
+
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(err).not.toBeInstanceOf(AexIdempotencyConflictError);
+    expect(err.apiCode).toBeUndefined();
+    expect(err.body).toEqual(body);
+  });
+
   it("uses the precomputed message and threads cause", () => {
     const cause = new Error("boom");
     const err = apiErrorFromResponse({
@@ -134,6 +156,7 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "workspace_submit_rate_exceeded":
           return "rate_limit";
         case "session_busy":
+        case "checkpoint_not_available":
         case "session_not_terminal":
         case "session_terminal":
         case "event_archive_too_large":
