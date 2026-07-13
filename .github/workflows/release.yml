@@ -431,6 +431,15 @@ jobs:
     needs:
       - publish
       - live-user-tests-preflight
+    # Automatic releases intentionally skip the manual static-gate jobs that
+    # publish needs. GitHub propagates a skipped ancestor through dependent
+    # jobs unless the dependent job explicitly evaluates its own needs.
+    if: >-
+      ${{
+        always() &&
+        needs.publish.result == 'success' &&
+        needs.live-user-tests-preflight.result == 'success'
+      }}
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     environment: live-user-tests
     timeout-minutes: 45
@@ -552,6 +561,12 @@ jobs:
     needs:
       - publish
       - live-user-tests
+    if: >-
+      ${{
+        always() &&
+        needs.publish.result == 'success' &&
+        needs.live-user-tests.result == 'success'
+      }}
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     steps:
       - name: Checkout
@@ -609,3 +624,26 @@ jobs:
           }
           JSON
           gh api --method POST repos/aexhq/aex-platform/dispatches --input platform-dispatch.json
+
+  release-complete:
+    name: Verify complete release
+    needs:
+      - publish
+      - live-user-tests
+      - public-release-manifest
+    # A successful publish is irreversible. Once it happens, make skipped
+    # smoke, manifest, or dispatch work fail the workflow instead of allowing
+    # GitHub's skipped-job semantics to report a false green release.
+    if: ${{ always() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require complete published candidate
+        env:
+          SMOKE_RESULT: ${{ needs.live-user-tests.result }}
+          MANIFEST_RESULT: ${{ needs.public-release-manifest.result }}
+        run: |
+          set -euo pipefail
+          if [ "${SMOKE_RESULT}" != "success" ] || [ "${MANIFEST_RESULT}" != "success" ]; then
+            echo "::error::Published candidate is incomplete: smoke=${SMOKE_RESULT}, manifest-and-dispatch=${MANIFEST_RESULT}."
+            exit 1
+          fi

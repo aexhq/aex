@@ -207,6 +207,45 @@ describe("release pipeline gates", () => {
     });
   });
 
+  it("cannot report success after publishing without smoke, manifest, and dispatch", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    const smoke = workflowJob(workflow, "live-user-tests");
+    const manifest = workflowJob(workflow, "public-release-manifest");
+    const complete = workflowJob(workflow, "release-complete");
+    const smokeRun = workflowStep(smoke, "Published-artifact smoke");
+    const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
+    const verify = workflowStep(complete, "Require complete published candidate");
+
+    expect(smoke.if).toContain("always()");
+    expect(smoke.if).toContain("needs.publish.result == 'success'");
+    expect(smoke.if).toContain("needs.live-user-tests-preflight.result == 'success'");
+
+    expect(manifest.if).toContain("always()");
+    expect(manifest.if).toContain("needs.publish.result == 'success'");
+    expect(manifest.if).toContain("needs.live-user-tests.result == 'success'");
+    expect(smoke["continue-on-error"]).not.toBe(true);
+    expect(smokeRun.if).toBeUndefined();
+    expect(smokeRun["continue-on-error"]).not.toBe(true);
+    expect(dispatch.if).toBeUndefined();
+    expect(dispatch["continue-on-error"]).not.toBe(true);
+
+    expect(new Set(jobNeeds(complete))).toEqual(
+      new Set(["publish", "live-user-tests", "public-release-manifest"])
+    );
+    expect(complete.if).toContain("always()");
+    expect(complete.if).toContain("needs.publish.result == 'success'");
+    expect(complete["continue-on-error"]).not.toBe(true);
+    expect(verify.if).toBeUndefined();
+    expect(verify["continue-on-error"]).not.toBe(true);
+    expect(verify.env).toMatchObject({
+      SMOKE_RESULT: "${{ needs.live-user-tests.result }}",
+      MANIFEST_RESULT: "${{ needs.public-release-manifest.result }}"
+    });
+    expect(verify.run).toContain('"${SMOKE_RESULT}" != "success"');
+    expect(verify.run).toContain('"${MANIFEST_RESULT}" != "success"');
+    expect(verify.run).toContain("exit 1");
+  });
+
   it("overwrites reusable release artifacts when a workflow run is rerun", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     const reusableUploads = Object.values(workflow.jobs)
