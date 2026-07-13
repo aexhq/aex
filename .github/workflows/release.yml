@@ -1,34 +1,27 @@
 name: Release
-run-name: release ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }} ${{ inputs.release_key && format('[{0}]', inputs.release_key) || '' }}
+run-name: release ${{ github.sha }} [${{ inputs.release_key }}]
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       npm_dist_tag:
-        description: npm dist-tag for the initial publish (latest is forbidden; assign it via promote.yml after this run is green).
+        description: npm dist-tag for the immutable candidate (latest is assigned only by promote.yml after validation).
         required: true
         default: canary
         type: choice
         options:
           - canary
-          - next
       release_key:
-        description: Optional idempotency key used by the release controller.
-        required: false
-        default: ""
+        description: Required idempotency key supplied by the release controller.
+        required: true
         type: string
       platform_sha:
-        description: Optional exact platform commit expected to receive the candidate.
-        required: false
-        default: ""
+        description: Required exact platform commit expected to receive the candidate.
+        required: true
         type: string
 
 concurrency:
-  group: release-aex-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+  group: release-aex-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
@@ -36,24 +29,35 @@ permissions:
   id-token: write
 
 env:
-  RELEASE_HEAD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-  NPM_DIST_TAG: ${{ github.event_name == 'workflow_run' && 'canary' || inputs.npm_dist_tag }}
-  RELEASE_MODE: ${{ github.event_name == 'workflow_run' && 'automatic-canary' || 'manual' }}
+  RELEASE_HEAD_SHA: ${{ github.sha }}
+  NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+  RELEASE_MODE: immutable-canary
 
 jobs:
   authorize:
     name: Authorize release source
-    if: >-
-      ${{ github.event_name != 'workflow_run' ||
-          (github.event.workflow_run.conclusion == 'success' &&
-           github.event.workflow_run.event == 'push' &&
-           github.event.workflow_run.head_branch == 'main' &&
-           github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     steps:
-      - name: Record trusted release source
+      - name: Require exact controller release source
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          PLATFORM_SHA: ${{ inputs.platform_sha }}
+          RELEASE_KEY: ${{ inputs.release_key }}
         run: |
           set -euo pipefail
+          expected_ref="refs/tags/release/sha-${RELEASE_HEAD_SHA}"
+          if [ "${RELEASE_REF}" != "${expected_ref}" ]; then
+            echo "::error::Release must run from immutable tag ${expected_ref}; received ${RELEASE_REF}."
+            exit 1
+          fi
+          if ! [[ "${PLATFORM_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::platform_sha must be a full lowercase 40-character commit SHA."
+            exit 1
+          fi
+          if [ -z "${RELEASE_KEY}" ]; then
+            echo "::error::release_key is required for controller correlation."
+            exit 1
+          fi
           echo "release-mode=${RELEASE_MODE}"
           echo "source-sha=${RELEASE_HEAD_SHA}"
 
@@ -67,16 +71,16 @@ jobs:
       already_published: ${{ steps.availability.outputs.already_published }}
     steps:
       # This workflow publishes BEFORE the live user tests run, so it must
-      # never ship straight to `latest`. Guard the raw input as well as the
-      # choice list so an API dispatch can't sneak `latest` past the UI.
+      # publish only to the candidate lane. Guard the raw input as well as the
+      # choice list because API dispatch is not constrained by the UI options.
       # `publish` needs this job, so failing here blocks the publish.
-      - name: Forbid direct publish to latest
+      - name: Require canary dist-tag
         env:
           NPM_DIST_TAG: ${{ env.NPM_DIST_TAG }}
         run: |
           set -euo pipefail
-          if [ "${NPM_DIST_TAG}" = "latest" ]; then
-            echo "::error::Publishing directly to the 'latest' dist-tag is forbidden: release.yml publishes before the live user tests run. Publish to 'canary' and assign 'latest' via promote.yml once this release workflow attempt is green."
+          if [ "${NPM_DIST_TAG}" != "canary" ]; then
+            echo "::error::release.yml publishes immutable candidates only to the 'canary' dist-tag; assign 'latest' via promote.yml once validation is green."
             exit 1
           fi
 
@@ -102,14 +106,10 @@ jobs:
         run: |
           set -euo pipefail
           base_version="$(node -p "require('./packages/sdk/package.json').version")"
-          if [ "${RELEASE_MODE}" = "automatic-canary" ]; then
-            version="$(bun scripts/cicd/canary-version.mjs resolve \
-              --base-version "${base_version}" \
-              --run-number "${RELEASE_RUN_ID}" \
-              --sha "${RELEASE_HEAD_SHA}")"
-          else
-            version="${base_version}"
-          fi
+          version="$(bun scripts/cicd/canary-version.mjs resolve \
+            --base-version "${base_version}" \
+            --run-number "${RELEASE_RUN_ID}" \
+            --sha "${RELEASE_HEAD_SHA}")"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve immutable publication state
@@ -118,12 +118,6 @@ jobs:
           SDK_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          if [ "${RELEASE_MODE}" != "automatic-canary" ]; then
-            node scripts/cicd/assert-npm-version-available.mjs @aexhq/sdk "${SDK_VERSION}"
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           set +e
           npm view "@aexhq/sdk@${SDK_VERSION}" version --json > npm-version.json 2> npm-version.err
           npm_status=$?
@@ -146,10 +140,6 @@ jobs:
 
   lint:
     name: Lint
-    # Automatic canaries trust the exact successful main CI run that triggered
-    # this workflow. Manual releases have no such upstream proof, so they run
-    # the static gates here before publication.
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: authorize
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     steps:
@@ -171,7 +161,6 @@ jobs:
 
   unit-tests:
     name: Unit tests
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: authorize
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     steps:
@@ -193,7 +182,6 @@ jobs:
 
   offline-user-tests:
     name: Offline user tests
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: authorize
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     steps:
@@ -217,7 +205,6 @@ jobs:
 
   docs-build:
     name: Docs build
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: authorize
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     steps:
@@ -239,7 +226,6 @@ jobs:
 
   pack-sdk:
     name: Pack SDK gate
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: authorize
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     steps:
@@ -312,22 +298,6 @@ jobs:
       - docs-build
       - pack-sdk
       - platform-dispatch-preflight
-    if: >-
-      ${{
-        always() &&
-        needs.version.result == 'success' &&
-        needs.platform-dispatch-preflight.result == 'success' &&
-        (
-          github.event_name == 'workflow_run' ||
-          (
-            needs.lint.result == 'success' &&
-            needs.unit-tests.result == 'success' &&
-            needs.offline-user-tests.result == 'success' &&
-            needs.docs-build.result == 'success' &&
-            needs.pack-sdk.result == 'success'
-          )
-        )
-      }}
     # npm trusted publishing supports GitHub-hosted runners only. Keep this job
     # off AEX_CI_RUNNER so OIDC exchange and provenance remain deterministic.
     runs-on: ubuntu-latest
@@ -360,7 +330,7 @@ jobs:
         run: bun ci
 
       - name: Apply immutable canary version
-        if: ${{ env.RELEASE_MODE == 'automatic-canary' && needs.version.outputs.already_published != 'true' }}
+        if: ${{ needs.version.outputs.already_published != 'true' }}
         run: bun scripts/cicd/canary-version.mjs apply --version "${{ needs.version.outputs.version }}"
 
       - name: Bind package to release source
@@ -435,9 +405,6 @@ jobs:
     needs:
       - publish
       - live-user-tests-preflight
-    # Automatic releases intentionally skip the manual static-gate jobs that
-    # publish needs. GitHub propagates a skipped ancestor through dependent
-    # jobs unless the dependent job explicitly evaluates its own needs.
     if: >-
       ${{
         always() &&
@@ -615,13 +582,22 @@ jobs:
           SDK_VERSION: ${{ needs.publish.outputs.version }}
           SDK_INTEGRITY: ${{ needs.publish.outputs.integrity }}
           SOURCE_SHA: ${{ needs.publish.outputs.head_sha }}
+          RELEASE_MODE: ${{ env.RELEASE_MODE }}
+          PLATFORM_SHA: ${{ inputs.platform_sha }}
+          RELEASE_KEY: ${{ inputs.release_key }}
         run: |
           set -euo pipefail
+          manifest_digest="sha256:$(sha256sum public-release-manifest.json | awk '{print $1}')"
+          manifest_base64="$(base64 -w 0 public-release-manifest.json)"
+          if ! [[ "${manifest_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "::error::public release manifest digest is invalid"; exit 1; fi
+          if [ -z "${manifest_base64}" ]; then echo "::error::public release manifest transfer is empty"; exit 1; fi
           jq -n \
             --arg sdk_version "${SDK_VERSION}" \
             --arg integrity "${SDK_INTEGRITY}" \
             --arg public_sha "${SOURCE_SHA}" \
             --arg public_release_run_id "${GITHUB_RUN_ID}" \
+            --arg public_release_manifest_base64 "${manifest_base64}" \
+            --arg public_release_manifest_digest "${manifest_digest}" \
             --arg release_mode "${RELEASE_MODE}" \
             --arg platform_sha "${PLATFORM_SHA}" \
             --arg release_key "${RELEASE_KEY}" \
@@ -632,6 +608,8 @@ jobs:
                 integrity: $integrity,
                 public_sha: $public_sha,
                 public_release_run_id: $public_release_run_id,
+                public_release_manifest_base64: $public_release_manifest_base64,
+                public_release_manifest_digest: $public_release_manifest_digest,
                 release_mode: $release_mode,
                 platform_sha: $platform_sha,
                 release_key: $release_key

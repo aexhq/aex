@@ -27,12 +27,13 @@ project and exercise the SDK and CLI from that install tree.
 
 ## Publish
 
-Every push merged to `main` that passes the `CI` workflow automatically starts
-`.github/workflows/release.yml`. The automatic path derives an immutable canary
+`.github/workflows/release.yml` is dispatched only by the workspace release
+controller from the immutable `release/sha-<full-sha>` tag. It requires the
+exact platform commit and controller release key, derives an immutable canary
 version from the package version, release run, and source commit, then:
 
-- Reuses the successful `main` CI result instead of rerunning the same static,
-  unit, offline-user-test, docs, and package gates.
+- Reruns the static, unit, offline-user-test, docs, and package gates at the
+  exact tagged source.
 - Packs `packages/sdk` with `bun pm pack`.
 - Binds the tarball manifest to the exact 40-character release commit under
   `aexRelease.sourceSha`.
@@ -48,16 +49,13 @@ Neither the public smoke nor the validation suite retries a failed user
 scenario.
 
 The canary version is deterministic for a release run. Restarting an interrupted
-automatic release resumes the same already-published version after verifying its
-identity; it never overwrites an npm artifact.
+controller release resumes the same already-published version after verifying
+its identity; it never overwrites an npm artifact. The workflow accepts only the
+`canary` initial dist-tag. It never publishes the unqualified package base
+version or publishes directly to `latest`.
 
-`release.yml` also supports manual dispatch to the `canary` or `next` lane. A
-manual release reruns all package gates because it has no upstream successful
-`main` CI run to trust, and it refuses to publish an existing package version.
-Neither path may publish directly to `latest`.
-
-Each merge therefore produces a traceable prerelease. Promote that same
-immutable version only after its release gate is green.
+Each controller release therefore produces one traceable prerelease. Promote
+that same immutable version only after its release gate is green.
 
 ## npm credentials
 

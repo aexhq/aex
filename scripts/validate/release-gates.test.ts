@@ -26,9 +26,12 @@ describe("release pipeline gates", () => {
     expect(parityCheck.run).toContain("bun run contracts:parity:check");
   });
 
-  it("automatically publishes an immutable canary only after green main CI", () => {
+  it("publishes an immutable canary only through the exact controller dispatch", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
-    const workflowRun = workflowTriggers(workflow).workflow_run as Record<string, unknown>;
+    const triggers = workflowTriggers(workflow);
+    const workflowDispatch = triggers.workflow_dispatch as {
+      readonly inputs?: Readonly<Record<string, { readonly required?: boolean }>>;
+    };
     const authorize = workflowJob(workflow, "authorize");
     const version = workflowJob(workflow, "version");
     const publish = workflowJob(workflow, "publish");
@@ -38,17 +41,21 @@ describe("release pipeline gates", () => {
     const applyVersion = workflowStep(publish, "Apply immutable canary version");
     const bindSource = workflowStep(publish, "Bind package to release source");
     const registryEvidence = workflowStep(publish, "Resolve immutable registry evidence");
+    const uploadManifest = workflowStep(manifest, "Upload public release manifest");
     const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
 
-    expect(workflowRun.workflows).toEqual(["CI"]);
-    expect(workflowRun.types).toEqual(["completed"]);
-    expect(workflowRun.branches).toEqual(["main"]);
+    expect(Object.keys(triggers)).toEqual(["workflow_dispatch"]);
+    expect(workflowDispatch.inputs?.platform_sha?.required).toBe(true);
+    expect(workflowDispatch.inputs?.release_key?.required).toBe(true);
     expect(workflow.concurrency).toMatchObject({
-      group: expect.stringContaining("github.event.workflow_run.head_sha"),
+      group: expect.stringContaining("github.sha"),
       "cancel-in-progress": false
     });
-    expect(authorize.if).toContain("github.event.workflow_run.conclusion == 'success'");
-    expect(authorize.if).toContain("github.event.workflow_run.event == 'push'");
+    const authorizeSource = workflowStep(authorize, "Require exact controller release source");
+    expect(authorize.if).toBeUndefined();
+    expect(authorizeSource.run).toContain('refs/tags/release/sha-${RELEASE_HEAD_SHA}');
+    expect(authorizeSource.run).toContain('[[ "${PLATFORM_SHA}" =~ ^[0-9a-f]{40}$ ]]');
+    expect(authorizeSource.run).toContain('-z "${RELEASE_KEY}"');
     expect(resolveVersion.run).toContain("canary-version.mjs resolve");
     expect(resolvePublication.run).toContain("already_published=true");
     expect(applyVersion.run).toContain("canary-version.mjs apply");
@@ -69,36 +76,65 @@ describe("release pipeline gates", () => {
     expect(dispatch.run).toContain('--arg integrity "${SDK_INTEGRITY}"');
     expect(dispatch.run).toContain('--arg platform_sha "${PLATFORM_SHA}"');
     expect(dispatch.run).toContain('--arg release_key "${RELEASE_KEY}"');
+    expect(uploadManifest.id).toBeUndefined();
+    expect(dispatch.env).not.toHaveProperty("PUBLIC_RELEASE_ARTIFACT_ID");
+    expect(dispatch.env).not.toHaveProperty("PUBLIC_RELEASE_ARTIFACT_DIGEST");
+    expect(dispatch.run).toContain('manifest_digest="sha256:$(sha256sum public-release-manifest.json');
+    expect(dispatch.run).toContain('manifest_base64="$(base64 -w 0 public-release-manifest.json)"');
+    expect(dispatch.run).toContain('--arg public_release_manifest_base64 "${manifest_base64}"');
+    expect(dispatch.run).toContain('--arg public_release_manifest_digest "${manifest_digest}"');
+    expect(dispatch.run).toContain("public_release_manifest_base64: $public_release_manifest_base64");
+    expect(dispatch.run).toContain("public_release_manifest_digest: $public_release_manifest_digest");
+    expect(dispatch.run).not.toContain("public_release_artifact_id");
+    expect(dispatch.run).not.toContain("public_release_artifact_digest");
   });
 
-  it("reuses green main CI gates and reruns them only for manual releases", () => {
+  it("runs every public gate for the controller-owned release", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     for (const id of MANUAL_GATE_JOBS) {
-      expect(workflowJob(workflow, id).if, id).toBe("${{ github.event_name == 'workflow_dispatch' }}");
+      expect(workflowJob(workflow, id).if, id).toBeUndefined();
     }
 
     const publish = workflowJob(workflow, "publish");
-    expect(publish.if).toContain("github.event_name == 'workflow_run'");
     for (const id of MANUAL_GATE_JOBS) {
       expect(jobNeeds(publish), id).toContain(id);
-      expect(publish.if, id).toContain(`needs.${id}.result == 'success'`);
     }
+    expect(JSON.stringify(workflow)).not.toContain("workflow_run");
   });
 
-  it("forbids latest as a release.yml dist-tag before publish", () => {
+  it("publishes a source-bound immutable canary for controller workflow dispatch", () => {
+    const workflow = readWorkflow(".github/workflows/release.yml");
+    const version = workflowJob(workflow, "version");
+    const publish = workflowJob(workflow, "publish");
+    const manifest = workflowJob(workflow, "public-release-manifest");
+    const resolveVersion = workflowStep(version, "Resolve package version");
+    const resolvePublication = workflowStep(version, "Resolve immutable publication state");
+    const applyVersion = workflowStep(publish, "Apply immutable canary version");
+    const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
+
+    expect(workflow.env?.RELEASE_MODE).toBe("immutable-canary");
+    expect(resolveVersion.run).toContain("canary-version.mjs resolve");
+    expect(resolveVersion.run).not.toContain('version="${base_version}"');
+    expect(resolvePublication.run).not.toContain("assert-npm-version-available.mjs");
+    expect(applyVersion.if).toBe("${{ needs.version.outputs.already_published != 'true' }}");
+    expect(dispatch.env?.RELEASE_MODE).toBe("${{ env.RELEASE_MODE }}");
+    expect(dispatch.run).toContain("release_mode: $release_mode");
+  });
+
+  it("requires the canary dist-tag before publish", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     const workflowDispatch = workflowTriggers(workflow).workflow_dispatch as {
       readonly inputs?: Readonly<Record<string, { readonly options?: readonly string[] }>>;
     };
     const version = workflowJob(workflow, "version");
     const publish = workflowJob(workflow, "publish");
-    const guard = workflowStep(version, "Forbid direct publish to latest");
+    const guard = workflowStep(version, "Require canary dist-tag");
 
-    expect(workflowDispatch.inputs?.npm_dist_tag?.options).toEqual(["canary", "next"]);
-    expect(workflowDispatch.inputs?.release_key).toMatchObject({ required: false, type: "string" });
-    expect(workflowDispatch.inputs?.platform_sha).toMatchObject({ required: false, type: "string" });
+    expect(workflowDispatch.inputs?.npm_dist_tag?.options).toEqual(["canary"]);
+    expect(workflowDispatch.inputs?.release_key).toMatchObject({ required: true, type: "string" });
+    expect(workflowDispatch.inputs?.platform_sha).toMatchObject({ required: true, type: "string" });
     expect(workflow["run-name"]).toContain("inputs.release_key");
-    expect(guard.run).toContain('if [ "${NPM_DIST_TAG}" = "latest" ]');
+    expect(guard.run).toContain('if [ "${NPM_DIST_TAG}" != "canary" ]');
     expect(jobNeeds(publish)).toContain("version");
     expect(workflowStep(publish, "Publish to npm")).toBeDefined();
   });
@@ -211,6 +247,7 @@ describe("release pipeline gates", () => {
       path: "public-release-manifest.json",
       overwrite: true
     });
+    expect(upload.id).toBeUndefined();
   });
 
   it("cannot report success after publishing without smoke, manifest, and dispatch", () => {

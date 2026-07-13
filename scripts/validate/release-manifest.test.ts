@@ -122,7 +122,10 @@ describe("release manifest contract", () => {
       "sdk.packageName must be @aexhq/sdk"
     );
     expect(validatePublicReleaseManifest({ ...manifest, sdk: { ...manifest.sdk, initialDistTag: "" } }).errors).toContain(
-      "sdk.initialDistTag is required"
+      "sdk.initialDistTag must be canary"
+    );
+    expect(validatePublicReleaseManifest({ ...manifest, sdk: { ...manifest.sdk, initialDistTag: "next" } }).errors).toContain(
+      "sdk.initialDistTag must be canary"
     );
     expect(validatePublicReleaseManifest({ ...manifest, sdk: { ...manifest.sdk, integrity: "" } }).errors).toContain(
       "sdk.integrity is required"

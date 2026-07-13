@@ -62,7 +62,7 @@ pack checks.
 | Workflow | Scope |
 | --- | --- |
 | [`CI`](../.github/workflows/ci.yml) | Static/type/unit/offline user-test/docs/package gates. |
-| [`Release`](../.github/workflows/release.yml) | Immutable canary publication after eligible green main CI, plus published-artifact smoke. |
+| [`Release`](../.github/workflows/release.yml) | Controller-dispatched immutable canary publication from an exact release tag, plus published-artifact smoke. |
 | [`Live User Tests`](../.github/workflows/live-user-tests.yml) | Protected hosted API user tests and optional heavy canary. |
 
 The public repository is the sole npm publisher. An exact canary is validated

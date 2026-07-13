@@ -77,7 +77,7 @@ export function validatePublicReleaseManifest(manifest, expected = {}) {
   if (!manifest?.headSha) errors.push("headSha is required");
   if (manifest?.sdk?.packageName !== "@aexhq/sdk") errors.push("sdk.packageName must be @aexhq/sdk");
   if (!manifest?.sdk?.integrity) errors.push("sdk.integrity is required");
-  if (!manifest?.sdk?.initialDistTag) errors.push("sdk.initialDistTag is required");
+  if (manifest?.sdk?.initialDistTag !== "canary") errors.push("sdk.initialDistTag must be canary");
   if (manifest?.cli?.packageName !== "@aexhq/sdk") errors.push("cli.packageName must be @aexhq/sdk");
   if (manifest?.cli?.version !== manifest?.sdk?.version) errors.push("cli.version must match sdk.version");
   if (manifest?.cli?.integrity !== manifest?.sdk?.integrity) errors.push("cli.integrity must match sdk.integrity");
