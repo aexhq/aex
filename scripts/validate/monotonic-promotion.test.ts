@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,6 +26,47 @@ function attestedTags(overrides: Record<string, unknown> = {}) {
       sourceIsCandidateAncestor: true
     }
   ].map((tagged) => ({ ...tagged, ...overrides }));
+}
+
+function createAncestryRepository() {
+  const repository = mkdtempSync(join(tmpdir(), "aex-promotion-ancestry-"));
+  execFileSync("git", ["init", "--bare", "--quiet"], { cwd: repository });
+
+  const commits = [
+    { ref: "first", mark: 1, parent: null, content: "first" },
+    { ref: "second", mark: 2, parent: 1, content: "second" },
+    { ref: "newer", mark: 3, parent: 2, content: "newer" },
+    { ref: "divergent", mark: 4, parent: 2, content: "divergent" }
+  ];
+  const fastImport = commits.map(({ ref, mark, parent, content }) => [
+    `commit refs/heads/${ref}`,
+    `mark :${mark}`,
+    `author aex release test <release-test@aex.dev> ${1_700_000_000 + mark} +0000`,
+    `committer aex release test <release-test@aex.dev> ${1_700_000_000 + mark} +0000`,
+    "data <<COMMIT_MESSAGE",
+    content,
+    "COMMIT_MESSAGE",
+    ...(parent === null ? [] : [`from :${parent}`]),
+    "M 100644 inline source.txt",
+    "data <<FILE_CONTENT",
+    content,
+    "FILE_CONTENT",
+    ""
+  ].join("\n")).join("\n");
+  execFileSync("git", ["fast-import", "--quiet"], { cwd: repository, input: fastImport });
+
+  const shas = execFileSync("git", [
+    "rev-parse",
+    "refs/heads/first",
+    "refs/heads/second",
+    "refs/heads/newer",
+    "refs/heads/divergent"
+  ], { cwd: repository, encoding: "utf8" }).trim().split(/\r?\n/);
+  if (shas.length !== 4 || shas.some((sha) => !/^[0-9a-f]{40}$/.test(sha))) {
+    throw new Error("failed to create the deterministic Git ancestry fixture");
+  }
+  const [first, second, newer, divergent] = shas as [string, string, string, string];
+  return { repository, first, second, newer, divergent };
 }
 
 describe("monotonic promotion guard", () => {
@@ -119,45 +160,31 @@ describe("monotonic promotion guard", () => {
   });
 
   it("checks real Git ancestry rather than trusting a caller-provided version order", () => {
-    const repository = mkdtempSync(join(tmpdir(), "aex-promotion-ancestry-"));
-    execFileSync("git", ["init", "--quiet"], { cwd: repository });
-    execFileSync("git", ["config", "user.email", "release-test@aex.dev"], { cwd: repository });
-    execFileSync("git", ["config", "user.name", "aex release test"], { cwd: repository });
+    const { repository, first, second, newer, divergent } = createAncestryRepository();
+    try {
+      expect(() => assertPromotionInRepository({
+        repository,
+        candidateVersion: "0.43.0-canary.99.g000000000000",
+        candidateSha: divergent,
+        currentMainSha: newer,
+        taggedReleases: [
+          { tag: "latest", version: "0.42.0", sourceSha: first },
+          { tag: "canary", version: "0.42.1-canary.98.g" + newer.slice(0, 12), sourceSha: newer }
+        ]
+      })).toThrow(/current main|current canary/);
 
-    const commit = (content: string): string => {
-      writeFileSync(join(repository, "source.txt"), content);
-      execFileSync("git", ["add", "source.txt"], { cwd: repository });
-      execFileSync("git", ["commit", "--quiet", "-m", content], { cwd: repository });
-      return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8" }).trim();
-    };
-
-    const first = commit("first");
-    const second = commit("second");
-    execFileSync("git", ["branch", "candidate"], { cwd: repository });
-    const newer = commit("newer");
-    execFileSync("git", ["checkout", "--quiet", "candidate"], { cwd: repository });
-    const divergent = commit("divergent");
-
-    expect(() => assertPromotionInRepository({
-      repository,
-      candidateVersion: "0.43.0-canary.99.g000000000000",
-      candidateSha: divergent,
-      currentMainSha: newer,
-      taggedReleases: [
-        { tag: "latest", version: "0.42.0", sourceSha: first },
-        { tag: "canary", version: "0.42.1-canary.98.g" + newer.slice(0, 12), sourceSha: newer }
-      ]
-    })).toThrow(/current main|current canary/);
-
-    expect(assertPromotionInRepository({
-      repository,
-      candidateVersion: "0.42.1-canary.99.g" + newer.slice(0, 12),
-      candidateSha: newer,
-      currentMainSha: newer,
-      taggedReleases: [
-        { tag: "latest", version: "0.42.0", sourceSha: first },
-        { tag: "canary", version: "0.42.1-canary.98.g" + second.slice(0, 12), sourceSha: second }
-      ]
-    }).candidateSha).toBe(newer);
+      expect(assertPromotionInRepository({
+        repository,
+        candidateVersion: "0.42.1-canary.99.g" + newer.slice(0, 12),
+        candidateSha: newer,
+        currentMainSha: newer,
+        taggedReleases: [
+          { tag: "latest", version: "0.42.0", sourceSha: first },
+          { tag: "canary", version: "0.42.1-canary.98.g" + second.slice(0, 12), sourceSha: second }
+        ]
+      }).candidateSha).toBe(newer);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
   });
 });
