@@ -63,9 +63,12 @@ describe("release pipeline gates", () => {
     expect(workflowStep(publish, "Publish to npm").if).toContain("needs.version.outputs.already_published != 'true'");
     expect(jobNeeds(publish)).not.toContain("live-user-tests-preflight");
     expect(jobNeeds(workflowJob(workflow, "live-user-tests"))).toContain("live-user-tests-preflight");
-    expect(dispatch.run).toContain('"event_type": "aex-canary-published"');
-    expect(dispatch.run).toContain('"sdk_version": "${SDK_VERSION}"');
-    expect(dispatch.run).toContain('"integrity": "${SDK_INTEGRITY}"');
+    expect(dispatch.run).toContain('event_type: "aex-canary-published"');
+    expect(dispatch.run).toContain("jq -n");
+    expect(dispatch.run).toContain('--arg sdk_version "${SDK_VERSION}"');
+    expect(dispatch.run).toContain('--arg integrity "${SDK_INTEGRITY}"');
+    expect(dispatch.run).toContain('--arg platform_sha "${PLATFORM_SHA}"');
+    expect(dispatch.run).toContain('--arg release_key "${RELEASE_KEY}"');
   });
 
   it("reuses green main CI gates and reruns them only for manual releases", () => {
@@ -92,6 +95,9 @@ describe("release pipeline gates", () => {
     const guard = workflowStep(version, "Forbid direct publish to latest");
 
     expect(workflowDispatch.inputs?.npm_dist_tag?.options).toEqual(["canary", "next"]);
+    expect(workflowDispatch.inputs?.release_key).toMatchObject({ required: false, type: "string" });
+    expect(workflowDispatch.inputs?.platform_sha).toMatchObject({ required: false, type: "string" });
+    expect(workflow["run-name"]).toContain("inputs.release_key");
     expect(guard.run).toContain('if [ "${NPM_DIST_TAG}" = "latest" ]');
     expect(jobNeeds(publish)).toContain("version");
     expect(workflowStep(publish, "Publish to npm")).toBeDefined();
@@ -121,7 +127,7 @@ describe("release pipeline gates", () => {
     const promote = workflowJob(workflow, "promote");
     const releaseRun = workflowStep(promote, "Verify green release workflow attempt published this version");
     const publicManifest = workflowStep(promote, "Verify public release manifest");
-    const platformRun = workflowStep(promote, "Verify green platform deploy tested this version");
+    const platformRun = workflowStep(promote, "Verify green dev validation and production promotion");
     const platformManifest = workflowStep(promote, "Verify platform validation manifest");
     const registry = workflowStep(promote, "Verify exact registry integrity");
     const monotonic = workflowStep(promote, "Require current monotonic release candidate");
@@ -131,17 +137,21 @@ describe("release pipeline gates", () => {
     for (const input of [
       "version",
       "release_run_id",
-      "platform_deploy_run_id",
+      "dev_validation_run_id",
+      "platform_promotion_run_id",
       "public_sha",
       "sdk_integrity",
       "npm_dist_tag"
     ]) {
       expect(workflowDispatch.inputs?.[input]?.required, input).toBe(true);
     }
+    expect(workflowDispatch.inputs?.release_key).toMatchObject({ required: false, type: "string" });
+    expect(workflow["run-name"]).toContain("inputs.release_key");
     expect(workflow.env).toMatchObject({
       PACKAGE_VERSION: "${{ inputs.version }}",
       RELEASE_RUN_ID: "${{ inputs.release_run_id }}",
-      PLATFORM_DEPLOY_RUN_ID: "${{ inputs.platform_deploy_run_id }}",
+      DEV_VALIDATION_RUN_ID: "${{ inputs.dev_validation_run_id }}",
+      PLATFORM_PROMOTION_RUN_ID: "${{ inputs.platform_promotion_run_id }}",
       RELEASE_SOURCE_SHA: "${{ inputs.public_sha }}",
       RELEASE_INTEGRITY: "${{ inputs.sdk_integrity }}",
       NPM_DIST_TAG: "${{ inputs.npm_dist_tag }}"
@@ -156,15 +166,11 @@ describe("release pipeline gates", () => {
     expect(releaseRun.run).toContain('.github/workflows/release.yml');
     expect(releaseRun.run).toContain('status}" != "completed');
     expect(publicManifest.run).toContain("release-manifest.mjs verify-public");
-    expect(platformRun.run).toContain('.github/workflows/deploy.yml');
-    expect(platformRun.run).toContain('proof_schema}" != "2"');
-    expect(platformRun.run).toContain("platform-promotion-proof");
+    expect(platformRun.env).toMatchObject({
+      DEV_VALIDATION_RUN_ID: "${{ env.DEV_VALIDATION_RUN_ID }}",
+      PLATFORM_PROMOTION_RUN_ID: "${{ env.PLATFORM_PROMOTION_RUN_ID }}"
+    });
     expect(platformManifest.run).toContain("release-manifest.mjs verify-platform");
-    const proofGates = /for gate in ([^;]+); do/.exec(platformRun.run ?? "")?.[1]?.trim().split(/\s+/) ?? [];
-    expect(new Set(proofGates)).toEqual(new Set(["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"]));
-    expect(platformRun.run).toContain("for image in brain egress byok; do");
-    expect(platformRun.run).toContain("$e.prd.digest == $e.dev.digest");
-    expect(platformRun.run).toContain('test("^sha256:[0-9a-f]{64}$")');
     expect(publicManifest.run).toContain('--head-sha "${RELEASE_SOURCE_SHA}"');
     expect(publicManifest.run).toContain('--integrity "${RELEASE_INTEGRITY}"');
     expect(registry.env).toMatchObject({ RELEASE_INTEGRITY: "${{ env.RELEASE_INTEGRITY }}" });

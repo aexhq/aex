@@ -51,6 +51,11 @@ npx aex start \
 - [Files](packages/sdk/docs/files.md)
 - [Provider/runtime capabilities](packages/sdk/docs/provider-runtime-capabilities.md)
 
+## Examples
+
+Runnable TypeScript, CLI, and skill projects live in the canonical
+[`aexhq/examples`](https://github.com/aexhq/examples) repository.
+
 ## Contribute
 
 - [Contributor flow](CONTRIBUTING.md)

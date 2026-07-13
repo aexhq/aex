@@ -14,11 +14,10 @@ loadLocalEnv();
 // tempdir (AEX_USER_TEST_VERSION is set), so this exercises the real npm
 // artifact, not a local pack.
 //
-// It is deliberately not the complete release matrix. Platform deploy.yml
-// installs this same sdk_version in dev + prd for every discovered gating SDK
-// file and the isolated admission, heavy-session, and tool-fuzz lanes. Both
-// planes must pass before promotion; this workflow owns only the fast registry
-// artifact self-check.
+// It is deliberately not the complete release matrix. Platform deploy-dev.yml
+// validates this same sdk_version in dev, then promote-prd.yml deploys the exact
+// evidence-backed candidate to prd. Both planes must pass before promotion;
+// this workflow owns only the fast registry artifact self-check.
 const maxWorkers = workerCountFromEnv("AEX_USER_TEST_MAX_WORKERS", 2);
 
 export default defineConfig({

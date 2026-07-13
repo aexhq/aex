@@ -5,7 +5,10 @@ description: "Runnable public patterns for common aex workflows."
 
 # Examples
 
-Use these as starting points for local projects. Each example keeps provider keys in your environment and submits through the SDK or CLI.
+Use these as starting points for local projects. The canonical
+[`aexhq/examples`](https://github.com/aexhq/examples) repository contains
+complete runnable projects, including the vision-skill example. Each example
+keeps provider keys in your environment and submits through the SDK or CLI.
 
 ## Quick agent run
 
@@ -49,4 +52,6 @@ aex start \
   --follow
 ```
 
-Next: [Quickstart](/docs/guides/quickstart/), [Composition](/docs/concepts/composition/), and [CLI reference](/docs/reference/cli/).
+Next: browse the [example repository](https://github.com/aexhq/examples),
+[Quickstart](/docs/guides/quickstart/), [Composition](/docs/concepts/composition/),
+and [CLI reference](/docs/reference/cli/).

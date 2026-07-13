@@ -1,6 +1,6 @@
 ---
 title: "Integrations"
-description: "Public integration points for providers, MCP servers, skills, files, webhooks, and files."
+description: "Public integration points for providers, MCP servers, skills, files, and webhooks."
 ---
 
 # Integrations

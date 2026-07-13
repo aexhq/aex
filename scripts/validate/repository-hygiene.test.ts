@@ -24,15 +24,42 @@ function listFiles(dir: string): string[] {
 }
 
 describe("repository hygiene", () => {
-  it("keeps local release diagnostics out of tracked public files", () => {
-    expect(read(".gitignore")).toMatch(/^\.release-diagnostics\/$/m);
+  it("keeps generated release and suite scratch out of tracked public files", () => {
+    const ignore = read(".gitignore");
 
-    const tracked = execFileSync("git", ["ls-files", "-z", "--", ".release-diagnostics"], {
-      cwd: repoRoot,
-      encoding: "utf8"
-    });
+    expect(ignore).toMatch(/^\.tmp\/$/m);
+    expect(ignore).toMatch(/^\.release-diagnostics\/$/m);
+    expect(ignore).toMatch(/^\.release-worktrees\/$/m);
+    expect(ignore).toMatch(/^\.suite-diagnostics\/$/m);
+    expect(ignore).toMatch(/^\.suite-diagnostics-\*\/$/m);
+    expect(ignore).toMatch(/^release-diagnostics\/$/m);
+
+    const tracked = execFileSync(
+      "git",
+      [
+        "ls-files",
+        "-z",
+        "--",
+        ".tmp",
+        ".release-diagnostics",
+        ".release-worktrees",
+        ".suite-diagnostics",
+        ".suite-diagnostics-*",
+        "release-diagnostics"
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    );
 
     expect(tracked).toBe("");
+  });
+
+  it("uses AGENTS.md only as an index to durable internal references", () => {
+    const agents = read("AGENTS.md");
+
+    expect(agents).toMatch(/table of contents/i);
+    expect(agents).toContain("references/README.md");
+    expect(agents).toContain("references/rules.md");
+    expect(agents).toContain("references/repository-hygiene.md");
   });
 
   it("keeps checkout-local generated-dist mutex state out of Git", () => {

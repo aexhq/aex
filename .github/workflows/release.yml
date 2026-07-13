@@ -1,4 +1,5 @@
 name: Release
+run-name: release ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }} ${{ inputs.release_key && format('[{0}]', inputs.release_key) || '' }}
 
 on:
   workflow_run:
@@ -15,6 +16,16 @@ on:
         options:
           - canary
           - next
+      release_key:
+        description: Optional idempotency key used by the release controller.
+        required: false
+        default: ""
+        type: string
+      platform_sha:
+        description: Optional exact platform commit expected to receive the candidate.
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: release-aex-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
@@ -317,9 +328,8 @@ jobs:
           )
         )
       }}
-    # npm publish stays on GitHub-hosted even when AEX_CI_RUNNER is flipped on:
-    # keeps NPM_TOKEN off the self-hosted home box and avoids any npm-provenance
-    # attestation edge case on release day. It is a fast, once-per-release job.
+    # npm trusted publishing supports GitHub-hosted runners only. Keep this job
+    # off AEX_CI_RUNNER so OIDC exchange and provenance remain deterministic.
     runs-on: ubuntu-latest
     environment: npm-release
     outputs:
@@ -376,16 +386,10 @@ jobs:
       - name: Publish to npm
         if: ${{ needs.version.outputs.already_published != 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_DIST_TAG: ${{ env.NPM_DIST_TAG }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN is required in the npm-release environment for token-based npm publish. Configure npm trusted publishing before removing this token path."
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=%s\n' "${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
           npm publish "${{ steps.pack.outputs.tarball }}" \
             --registry https://registry.npmjs.org \
             --access public \
@@ -477,8 +481,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$(dirname "$RAW_LOG")"
           # Smoke-only: install the PUBLISHED @aexhq/sdk@<version> from npm and
-          # exercise the SDK + CLI end-to-end. The full behavioral matrix is the
-          # deploy.yml gate (see the job comment above).
+          # exercise the SDK + CLI end-to-end. The full behavioral matrix runs
+          # in the platform deploy-dev.yml and promote-prd.yml gates.
           set +e
           bun run test:user:smoke -- --reporter=default --reporter=json --outputFile.json="$REPORT" > "$RAW_LOG" 2>&1
           test_status=$?
@@ -584,6 +588,8 @@ jobs:
           SDK_VERSION: ${{ needs.publish.outputs.version }}
           SDK_INTEGRITY: ${{ needs.publish.outputs.integrity }}
           SOURCE_SHA: ${{ needs.publish.outputs.head_sha }}
+          PLATFORM_SHA: ${{ inputs.platform_sha }}
+          RELEASE_KEY: ${{ inputs.release_key }}
           NPM_DIST_TAG: ${{ env.NPM_DIST_TAG }}
         run: |
           set -euo pipefail
@@ -611,18 +617,26 @@ jobs:
           SOURCE_SHA: ${{ needs.publish.outputs.head_sha }}
         run: |
           set -euo pipefail
-          cat > platform-dispatch.json <<JSON
-          {
-            "event_type": "aex-canary-published",
-            "client_payload": {
-              "sdk_version": "${SDK_VERSION}",
-              "integrity": "${SDK_INTEGRITY}",
-              "public_sha": "${SOURCE_SHA}",
-              "public_release_run_id": "${GITHUB_RUN_ID}",
-              "release_mode": "${RELEASE_MODE}"
-            }
-          }
-          JSON
+          jq -n \
+            --arg sdk_version "${SDK_VERSION}" \
+            --arg integrity "${SDK_INTEGRITY}" \
+            --arg public_sha "${SOURCE_SHA}" \
+            --arg public_release_run_id "${GITHUB_RUN_ID}" \
+            --arg release_mode "${RELEASE_MODE}" \
+            --arg platform_sha "${PLATFORM_SHA}" \
+            --arg release_key "${RELEASE_KEY}" \
+            '{
+              event_type: "aex-canary-published",
+              client_payload: {
+                sdk_version: $sdk_version,
+                integrity: $integrity,
+                public_sha: $public_sha,
+                public_release_run_id: $public_release_run_id,
+                release_mode: $release_mode,
+                platform_sha: $platform_sha,
+                release_key: $release_key
+              }
+            }' > platform-dispatch.json
           gh api --method POST repos/aexhq/platform/dispatches --input platform-dispatch.json
 
   release-complete:

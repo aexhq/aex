@@ -8,8 +8,7 @@ const publicDocs = [
   "README.md",
   "packages/sdk/README.md",
   "packages/sdk/docs",
-  "apps/docs/content/docs",
-  "examples"
+  "apps/docs/content/docs"
 ] as const;
 
 const bareRoute = /\b(?:GET|POST|PUT|PATCH|DELETE) \/(?!api(?:\/|\b))(?:sessions|assets|secrets|whoami|workspace|billing|webhook|mcp-servers)\b/;
@@ -55,10 +54,10 @@ describe("canonical public API documentation", () => {
       maxEntries: 1_000,
       maxMetadataBytes: 8 * 1024 * 1024
     });
-    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxCompressedBytes`");
-    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxDecompressedBytes`");
-    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxEntries`");
-    expect(limits).toContain("`ASSET_ARCHIVE_LIMITS.maxMetadataBytes`");
+    expect(limits).toContain("Compressed archive bytes | 64 MiB maximum");
+    expect(limits).toContain("Expanded archive bytes | 128 MiB maximum");
+    expect(limits).toContain("Materialized files and safe symlinks | 1,000 maximum per archive");
+    expect(limits).toContain("Fidelity metadata | 8 MiB maximum");
     expect(files).toContain("1,000 materialized files or safe symlinks");
   });
 });

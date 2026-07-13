@@ -25,8 +25,8 @@ console.log(result.session.status); // usually idle after a successful run
 ```
 
 `finished()` resolves only after `RUN_FINISHED` or `RUN_ERROR`. A
-`RUN_FINISHED` is the consistency barrier: session state, billing, checkpoint,
-and S3-backed files are committed before it is emitted. This release does not
+`RUN_FINISHED` is the consistency barrier: session state, usage, checkpoint,
+and checkpoint-backed files are committed before it is emitted. This release does not
 expose a separate pre-checkpoint "brain idle" wait. The committed session
 projection must identify that exact run in `lastRun`; an idle projection with a
 missing or older `lastRun` is treated as inconsistent and `finished()` fails.

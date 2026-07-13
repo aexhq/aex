@@ -9,7 +9,7 @@ reasoning model for the session; if a skill needs image understanding mid-sessio
 skill that calls the vision provider with normal HTTP and pass that provider key
 as a runtime secret.
 
-The sessionnable example lives at [`vision-skill/` in aexhq/aex-examples](https://github.com/aexhq/aex-examples/tree/main/vision-skill).
+The runnable example lives at [`vision-skill/` in aexhq/examples](https://github.com/aexhq/examples/tree/main/vision-skill).
 It captions a frame with ByteDance Doubao Seed Vision (Ark) and returns a
 per-noun "does the frame depict X?" verdict.
 
@@ -41,7 +41,7 @@ console.log(result.sessionId, result.text);
 
 `Skill.fromDir("./vision-skill", ...)` is resolved relative to the process
 CWD. Run the script from the directory that contains `vision-skill/` (the
-root of the aex-examples repo).
+root of the examples repo).
 
 ## Call the provider from the skill
 

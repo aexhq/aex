@@ -13,8 +13,12 @@ coverage/
 *.tsbuildinfo
 # npm pack / publish artifacts
 *.tgz
+.tmp/
 .release-diagnostics/
 .release-worktrees/
+.suite-diagnostics/
+.suite-diagnostics-*/
+release-diagnostics/
 .tmp-gh-run-*/
 .tmp-gh-actions-*/
 .aex-generated-dist.lock/

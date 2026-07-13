@@ -99,6 +99,8 @@ describe("aex --help", () => {
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(0);
     expect(cap.stdout).toContain("https://api.aex.dev");
+    expect(cap.stdout).toContain("https://dev-api.aex.dev");
+    expect(cap.stdout).toContain("optional after `aex login`");
   });
 });
 

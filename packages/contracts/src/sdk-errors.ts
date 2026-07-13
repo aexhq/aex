@@ -83,7 +83,7 @@ export class CleanupError extends AexError {
 }
 
 /**
- * Thrown by SDK and CLI operations when the dashboard BFF returns a non-2xx
+ * Thrown by SDK and CLI operations when the hosted aex API returns a non-2xx
  * response. Carries the HTTP status, the redacted parsed body, the server's
  * STABLE {@link AexApiErrorCode} (when present), and a `requestId` for support.
  * Construct via {@link import("./error-factory.js").apiErrorFromResponse} — the

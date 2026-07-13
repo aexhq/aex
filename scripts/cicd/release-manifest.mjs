@@ -5,11 +5,11 @@ import { fileURLToPath } from "node:url";
 export const PUBLIC_RELEASE_MANIFEST_KIND = "aex-public-release-manifest";
 export const PLATFORM_VALIDATION_MANIFEST_KIND = "platform-validation-manifest";
 export const PUBLIC_MANIFEST_SCHEMA_VERSION = 3;
-export const PLATFORM_MANIFEST_SCHEMA_VERSION = 4;
+export const PLATFORM_MANIFEST_SCHEMA_VERSION = 5;
 export const MANIFEST_SCHEMA_VERSION = PUBLIC_MANIFEST_SCHEMA_VERSION;
 export const REQUIRED_PLATFORM_GATES = ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"];
 const IMAGE_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
-const BRAIN_TAG_RE = /^sha-[0-9a-f]{12}-pub-([0-9a-f]{12})$/;
+const BRAIN_TAG_RE = /^sha-([0-9a-f]{12})-pub-([0-9a-f]{12})$/;
 const SIDECAR_TAG_RE = /^sha-[0-9a-f]{12}$/;
 const AWS_REGION = "eu-west-2";
 
@@ -93,7 +93,7 @@ export function validatePublicReleaseManifest(manifest, expected = {}) {
 export function validatePlatformValidationManifest(manifest, expected = {}) {
   const errors = [];
   if (!isRecord(manifest)) errors.push("manifest must be an object");
-  if (manifest?.schemaVersion !== PLATFORM_MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 4");
+  if (manifest?.schemaVersion !== PLATFORM_MANIFEST_SCHEMA_VERSION) errors.push("schemaVersion must be 5");
   if (manifest?.kind !== PLATFORM_VALIDATION_MANIFEST_KIND) {
     errors.push(`kind must be ${PLATFORM_VALIDATION_MANIFEST_KIND}`);
   }
@@ -101,8 +101,11 @@ export function validatePlatformValidationManifest(manifest, expected = {}) {
     errors.push(`sdk.version must be ${expected.version}`);
   }
   if (!manifest?.sdk?.integrity) errors.push("sdk.integrity is required");
-  if (expected.runId && String(manifest?.platform?.runId ?? "") !== String(expected.runId)) {
-    errors.push(`platform.runId must be ${expected.runId}`);
+  if (expected.runId && String(manifest?.productionPromotion?.runId ?? "") !== String(expected.runId)) {
+    errors.push(`productionPromotion.runId must be ${expected.runId}`);
+  }
+  if (expected.devValidationRunId && String(manifest?.devValidation?.runId ?? "") !== String(expected.devValidationRunId)) {
+    errors.push(`devValidation.runId must be ${expected.devValidationRunId}`);
   }
   if (expected.publicReleaseRunId && String(manifest?.publicRelease?.runId ?? "") !== String(expected.publicReleaseRunId)) {
     errors.push(`publicRelease.runId must be ${expected.publicReleaseRunId}`);
@@ -112,6 +115,38 @@ export function validatePlatformValidationManifest(manifest, expected = {}) {
   }
   if (expected.integrity && manifest?.sdk?.integrity !== expected.integrity) {
     errors.push(`sdk.integrity must be ${expected.integrity}`);
+  }
+  if (!/^[1-9]\d*$/.test(String(manifest?.devValidation?.runId ?? ""))) {
+    errors.push("devValidation.runId must be a positive GitHub run id");
+  }
+  if (!/^[1-9]\d*$/.test(String(manifest?.productionPromotion?.runId ?? ""))) {
+    errors.push("productionPromotion.runId must be a positive GitHub run id");
+  }
+  if (!/^[1-9]\d*$/.test(String(manifest?.productionPromotion?.runAttempt ?? ""))) {
+    errors.push("productionPromotion.runAttempt must be positive");
+  }
+  if (manifest?.devValidation?.repository !== "aexhq/platform") {
+    errors.push("devValidation.repository must be aexhq/platform");
+  }
+  if (manifest?.devValidation?.workflow !== "deploy-dev.yml") {
+    errors.push("devValidation.workflow must be deploy-dev.yml");
+  }
+  if (manifest?.productionPromotion?.repository !== "aexhq/platform") {
+    errors.push("productionPromotion.repository must be aexhq/platform");
+  }
+  if (manifest?.productionPromotion?.workflow !== "promote-prd.yml") {
+    errors.push("productionPromotion.workflow must be promote-prd.yml");
+  }
+  const devPlatformSha = String(manifest?.devValidation?.headSha ?? "");
+  const platformSha = String(manifest?.productionPromotion?.headSha ?? "");
+  if (!/^[0-9a-f]{40}$/.test(devPlatformSha)) {
+    errors.push("devValidation.headSha must be a full lowercase git SHA");
+  }
+  if (!/^[0-9a-f]{40}$/.test(platformSha)) {
+    errors.push("productionPromotion.headSha must be a full lowercase git SHA");
+  }
+  if (devPlatformSha && platformSha && devPlatformSha !== platformSha) {
+    errors.push("productionPromotion.headSha must match the dev-tested platform SHA");
   }
   for (const gate of REQUIRED_PLATFORM_GATES) {
     if (!Array.isArray(manifest?.gates) || !manifest.gates.includes(gate)) {
@@ -127,8 +162,13 @@ export function validatePlatformValidationManifest(manifest, expected = {}) {
     } else if (image === "brain") {
       const match = BRAIN_TAG_RE.exec(tag);
       if (!match) errors.push("images.brain.tag must match sha-<platform12>-pub-<public12>");
-      else if (/^[0-9a-f]{40}$/.test(publicSha) && match[1] !== publicSha.slice(0, 12)) {
-        errors.push("images.brain.tag public source must match publicRelease.headSha");
+      else {
+        if (/^[0-9a-f]{40}$/.test(platformSha) && match[1] !== platformSha.slice(0, 12)) {
+          errors.push("images.brain.tag platform source must match productionPromotion.headSha");
+        }
+        if (/^[0-9a-f]{40}$/.test(publicSha) && match[2] !== publicSha.slice(0, 12)) {
+          errors.push("images.brain.tag public source must match publicRelease.headSha");
+        }
       }
     } else if (!SIDECAR_TAG_RE.test(tag)) {
       errors.push(`images.${image}.tag must match sha-<12hex>`);
@@ -145,6 +185,22 @@ export function validatePlatformValidationManifest(manifest, expected = {}) {
     if (evidence?.dev?.digest !== evidence?.prd?.digest) {
       errors.push(`images.${image} prd digest must match the dev-tested digest`);
     }
+  }
+  const lambdaEvidence = manifest?.evidence?.lambdaZips;
+  if (!/^[1-9]\d*$/.test(String(lambdaEvidence?.id ?? ""))) {
+    errors.push("evidence.lambdaZips.id must be a positive artifact id");
+  }
+  if (!IMAGE_DIGEST_RE.test(String(lambdaEvidence?.digest ?? ""))) {
+    errors.push("evidence.lambdaZips.digest must be a sha256 artifact digest");
+  }
+  if (String(lambdaEvidence?.sourceRunId ?? "") !== String(manifest?.devValidation?.runId ?? "")) {
+    errors.push("evidence.lambdaZips.sourceRunId must match devValidation.runId");
+  }
+  if (manifest?.planes?.dev?.apiBase !== "https://dev-api.aex.dev") {
+    errors.push("planes.dev.apiBase must be https://dev-api.aex.dev");
+  }
+  if (manifest?.planes?.prd?.apiBase !== "https://api.aex.dev") {
+    errors.push("planes.prd.apiBase must be https://api.aex.dev");
   }
   return { ok: errors.length === 0, errors };
 }
@@ -205,6 +261,7 @@ export function main(argv = process.argv.slice(2)) {
     const result = validatePlatformValidationManifest(readJson(requireArg(args, "manifest")), {
       version: requireArg(args, "version"),
       runId: requireArg(args, "runId"),
+      devValidationRunId: requireArg(args, "devValidationRunId"),
       publicReleaseRunId: requireArg(args, "publicReleaseRunId"),
       publicReleaseHeadSha: requireArg(args, "publicReleaseHeadSha"),
       integrity: requireArg(args, "integrity")

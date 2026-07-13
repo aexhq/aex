@@ -10,6 +10,7 @@ const OTHER_SDK_INTEGRITY = "sha512-b3RoZXI=";
 const BRAIN_DIGEST = `sha256:${"1".repeat(64)}`;
 const EGRESS_DIGEST = `sha256:${"2".repeat(64)}`;
 const BYOK_DIGEST = `sha256:${"3".repeat(64)}`;
+const LAMBDA_DIGEST = `sha256:${"4".repeat(64)}`;
 
 function imageEvidence() {
   return {
@@ -27,6 +28,37 @@ function imageEvidence() {
       tag: `sha-${"e".repeat(12)}`,
       dev: { repository: "aex-dev-eu-west-2-byok-inject", digest: BYOK_DIGEST },
       prd: { repository: "aex-prd-eu-west-2-byok-inject", digest: BYOK_DIGEST }
+    }
+  };
+}
+
+function platformEvidence() {
+  return {
+    schemaVersion: 5,
+    kind: "platform-validation-manifest",
+    devValidation: {
+      repository: "aexhq/platform",
+      workflow: "deploy-dev.yml",
+      runId: "455",
+      headSha: PLATFORM_SHA
+    },
+    productionPromotion: {
+      repository: "aexhq/platform",
+      workflow: "promote-prd.yml",
+      runId: "456",
+      runAttempt: "1",
+      headSha: PLATFORM_SHA
+    },
+    publicRelease: { runId: "123", headSha: PUBLIC_SHA },
+    sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
+    gates: ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"],
+    images: imageEvidence(),
+    planes: {
+      dev: { apiBase: "https://dev-api.aex.dev" },
+      prd: { apiBase: "https://api.aex.dev" }
+    },
+    evidence: {
+      lambdaZips: { id: "789", digest: LAMBDA_DIGEST, sourceRunId: "455" }
     }
   };
 }
@@ -120,18 +152,11 @@ describe("release manifest contract", () => {
 
   it("fails platform validation manifests that do not prove every release gate", () => {
     const result = validatePlatformValidationManifest(
-      {
-        schemaVersion: 4,
-        kind: "platform-validation-manifest",
-        platform: { runId: "456", headSha: PLATFORM_SHA },
-        publicRelease: { runId: "123", headSha: PUBLIC_SHA },
-        sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
-        gates: ["suite_dev"],
-        images: imageEvidence()
-      },
+      { ...platformEvidence(), gates: ["suite_dev"] },
       {
         version: "0.40.17",
         runId: "456",
+        devValidationRunId: "455",
         publicReleaseRunId: "123",
         publicReleaseHeadSha: PUBLIC_SHA,
         integrity: SDK_INTEGRITY
@@ -144,16 +169,21 @@ describe("release manifest contract", () => {
     );
   });
 
+  it("accepts evidence only when dev validation and production promotion are bound to the candidate", () => {
+    const result = validatePlatformValidationManifest(platformEvidence(), {
+      version: "0.40.17",
+      runId: "456",
+      devValidationRunId: "455",
+      publicReleaseRunId: "123",
+      publicReleaseHeadSha: PUBLIC_SHA,
+      integrity: SDK_INTEGRITY
+    });
+
+    expect(result).toEqual({ ok: true, errors: [] });
+  });
+
   it("rejects platform evidence bound to a different public SHA or package integrity", () => {
-    const manifest = {
-      schemaVersion: 4,
-      kind: "platform-validation-manifest",
-      platform: { runId: "456", headSha: PLATFORM_SHA },
-      publicRelease: { runId: "123", headSha: PUBLIC_SHA },
-      sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
-      gates: ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"],
-      images: imageEvidence()
-    };
+    const manifest = platformEvidence();
 
     expect(validatePlatformValidationManifest(manifest, { publicReleaseHeadSha: OTHER_PUBLIC_SHA }).errors).toContain(
       `publicRelease.headSha must be ${OTHER_PUBLIC_SHA}`
@@ -166,15 +196,7 @@ describe("release manifest contract", () => {
   it("rejects platform proof whose prd image digest differs from the dev-tested artifact", () => {
     const images = imageEvidence();
     images.brain.prd.digest = `sha256:${"9".repeat(64)}`;
-    const result = validatePlatformValidationManifest({
-      schemaVersion: 4,
-      kind: "platform-validation-manifest",
-      platform: { runId: "456", headSha: PLATFORM_SHA },
-      publicRelease: { runId: "123", headSha: PUBLIC_SHA },
-      sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
-      gates: ["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"],
-      images
-    });
+    const result = validatePlatformValidationManifest({ ...platformEvidence(), images });
 
     expect(result.errors).toContain("images.brain prd digest must match the dev-tested digest");
   });

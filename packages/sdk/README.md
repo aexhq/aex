@@ -36,6 +36,8 @@ messages, and session state are committed before `finished()` resolves.
 
 See the [Quickstart](docs/quickstart.md), [Events](docs/events.md),
 [Files](docs/files.md), and [Composition](docs/concepts/composition.md) guides.
+Runnable projects are collected in
+[`aexhq/examples`](https://github.com/aexhq/examples).
 
 The package also includes the CLI:
 

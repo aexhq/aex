@@ -1,4 +1,5 @@
 name: Promote
+run-name: promote @aexhq/sdk@${{ inputs.version }} to ${{ inputs.npm_dist_tag }} ${{ inputs.release_key && format('[{0}]', inputs.release_key) || '' }}
 
 on:
   workflow_dispatch:
@@ -11,8 +12,12 @@ on:
         description: GitHub Actions run ID of the green release.yml run that published this version.
         required: true
         type: string
-      platform_deploy_run_id:
-        description: GitHub Actions run ID of the green platform deploy.yml run that tested this SDK version.
+      dev_validation_run_id:
+        description: GitHub Actions run ID of the green platform deploy-dev.yml run that tested this SDK version.
+        required: true
+        type: string
+      platform_promotion_run_id:
+        description: GitHub Actions run ID of the green platform promote-prd.yml run that promoted the dev-tested candidate.
         required: true
         type: string
       public_sha:
@@ -32,6 +37,11 @@ on:
           - latest
           - next
           - canary
+      release_key:
+        description: Optional idempotency key used by the release controller.
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: promote-aex
@@ -45,7 +55,8 @@ permissions:
 env:
   PACKAGE_VERSION: ${{ inputs.version }}
   RELEASE_RUN_ID: ${{ inputs.release_run_id }}
-  PLATFORM_DEPLOY_RUN_ID: ${{ inputs.platform_deploy_run_id }}
+  DEV_VALIDATION_RUN_ID: ${{ inputs.dev_validation_run_id }}
+  PLATFORM_PROMOTION_RUN_ID: ${{ inputs.platform_promotion_run_id }}
   RELEASE_SOURCE_SHA: ${{ inputs.public_sha }}
   RELEASE_INTEGRITY: ${{ inputs.sdk_integrity }}
   NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
@@ -155,90 +166,90 @@ jobs:
             --head-sha "${RELEASE_SOURCE_SHA}" \
             --integrity "${RELEASE_INTEGRITY}"
 
-      # Fail-closed platform proof: promotion also requires a private
-      # platform deploy.yml run whose final Promotion proof job uploaded an
-      # artifact naming this exact SDK version. That artifact is created only
-      # after the dev suite, Spot canary, prd suite, and prod smoke are green.
-      - name: Verify green platform deploy tested this version
+      # The dev and prd workflows are separate run identities. Promotion is
+      # accepted only when both are green on the same platform SHA and the prd
+      # proof names the exact dev run and SDK candidate.
+      - name: Verify green dev validation and production promotion
         env:
           GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          PLATFORM_DEPLOY_RUN_ID: ${{ env.PLATFORM_DEPLOY_RUN_ID }}
+          DEV_VALIDATION_RUN_ID: ${{ env.DEV_VALIDATION_RUN_ID }}
+          PLATFORM_PROMOTION_RUN_ID: ${{ env.PLATFORM_PROMOTION_RUN_ID }}
           PACKAGE_VERSION: ${{ env.PACKAGE_VERSION }}
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::PLATFORM_REPO_TOKEN is required to verify the private platform deploy proof before promotion."
+            echo "::error::PLATFORM_REPO_TOKEN is required to verify private platform evidence."
             exit 1
           fi
-          case "${PLATFORM_DEPLOY_RUN_ID}" in
-            ''|*[!0-9]*)
-              echo "::error::platform_deploy_run_id must be a numeric workflow run id (got '${PLATFORM_DEPLOY_RUN_ID}')."
+          for run_id in "${DEV_VALIDATION_RUN_ID}" "${PLATFORM_PROMOTION_RUN_ID}"; do
+            case "${run_id}" in
+              ''|*[!0-9]*)
+                echo "::error::Platform run IDs must be numeric (got '${run_id}')."
+                exit 1
+                ;;
+            esac
+          done
+
+          dev_run="$(gh api "repos/aexhq/platform/actions/runs/${DEV_VALIDATION_RUN_ID}")"
+          promotion_run="$(gh api "repos/aexhq/platform/actions/runs/${PLATFORM_PROMOTION_RUN_ID}")"
+          dev_path="$(jq -r '.path' <<<"${dev_run}")"
+          promotion_path="$(jq -r '.path' <<<"${promotion_run}")"
+          dev_sha="$(jq -r '.head_sha' <<<"${dev_run}")"
+          promotion_sha="$(jq -r '.head_sha' <<<"${promotion_run}")"
+          if [ "${dev_path}" != ".github/workflows/deploy-dev.yml" ]; then
+            echo "::error::Run ${DEV_VALIDATION_RUN_ID} is '${dev_path}', not deploy-dev.yml."
+            exit 1
+          fi
+          if [ "${promotion_path}" != ".github/workflows/promote-prd.yml" ]; then
+            echo "::error::Run ${PLATFORM_PROMOTION_RUN_ID} is '${promotion_path}', not promote-prd.yml."
+            exit 1
+          fi
+          for run_json in "${dev_run}" "${promotion_run}"; do
+            status="$(jq -r '.status' <<<"${run_json}")"
+            conclusion="$(jq -r '.conclusion' <<<"${run_json}")"
+            if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
+              echo "::error::Platform evidence must come from completed, successful workflow runs."
               exit 1
-              ;;
-          esac
-          workflow_json="$(gh api "repos/aexhq/platform/actions/runs/${PLATFORM_DEPLOY_RUN_ID}")"
-          workflow_path="$(jq -r '.path' <<<"${workflow_json}")"
-          status="$(jq -r '.status' <<<"${workflow_json}")"
-          conclusion="$(jq -r '.conclusion' <<<"${workflow_json}")"
-          if [ "${workflow_path}" != ".github/workflows/deploy.yml" ]; then
-            echo "::error::Platform run ${PLATFORM_DEPLOY_RUN_ID} is '${workflow_path}', not .github/workflows/deploy.yml."
+            fi
+          done
+          if [ "${dev_sha}" != "${promotion_sha}" ]; then
+            echo "::error::Production promotion SHA ${promotion_sha} differs from dev-tested SHA ${dev_sha}."
             exit 1
           fi
-          if [ "${status}" != "completed" ] || [ "${conclusion}" != "success" ]; then
-            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} has status='${status}' conclusion='${conclusion}'; promotion requires a fully green deploy workflow attempt."
-            exit 1
-          fi
+
           rm -rf platform-proof
           mkdir platform-proof
-          gh run download "${PLATFORM_DEPLOY_RUN_ID}" \
+          gh run download "${PLATFORM_PROMOTION_RUN_ID}" \
             --repo aexhq/platform \
-            --name "promotion-proof-${PLATFORM_DEPLOY_RUN_ID}" \
+            --name "promotion-proof-${PLATFORM_PROMOTION_RUN_ID}" \
             --dir platform-proof
           proof_file="$(find platform-proof -name promotion-proof.json -print -quit)"
           if [ -z "${proof_file}" ]; then
-            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} did not include promotion-proof.json."
+            echo "::error::Promotion run ${PLATFORM_PROMOTION_RUN_ID} did not include promotion-proof.json."
             exit 1
           fi
-          proof_workflow="$(jq -r '.workflow // empty' "${proof_file}")"
-          proof_run_id="$(jq -r '.runId // empty' "${proof_file}")"
-          proof_version="$(jq -r '.sdkVersion // empty' "${proof_file}")"
-          proof_schema="$(jq -r '.schemaVersion // empty' "${proof_file}")"
-          proof_kind="$(jq -r '.kind // empty' "${proof_file}")"
-          if [ "${proof_schema}" != "2" ] || [ "${proof_kind}" != "platform-promotion-proof" ] || \
-             [ "${proof_workflow}" != "deploy.yml" ] || [ "${proof_run_id}" != "${PLATFORM_DEPLOY_RUN_ID}" ]; then
-            echo "::error::Platform promotion proof does not match deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID}."
-            exit 1
-          fi
-          if [ "${proof_version}" != "${PACKAGE_VERSION}" ]; then
-            echo "::error::Platform deploy proof tested sdkVersion='${proof_version}', not '${PACKAGE_VERSION}'."
-            exit 1
-          fi
-          for gate in suite_dev spot_canary_dev suite_prod smoke_prod; do
-            if ! jq -e --arg gate "${gate}" '.gates | index($gate)' "${proof_file}" >/dev/null; then
-              echo "::error::Platform promotion proof is missing gate '${gate}'."
+          jq -e \
+            --arg promotionRun "${PLATFORM_PROMOTION_RUN_ID}" \
+            --arg devRun "${DEV_VALIDATION_RUN_ID}" \
+            --arg version "${PACKAGE_VERSION}" '
+              .schemaVersion == 3
+              and .kind == "platform-promotion-proof"
+              and .workflow == "promote-prd.yml"
+              and .runId == $promotionRun
+              and .devValidationRunId == $devRun
+              and .sdkVersion == $version
+              and (["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"] - .gates | length == 0)
+            ' "${proof_file}" >/dev/null || {
+              echo "::error::Promotion proof is not bound to the requested dev run, promotion run, and SDK version."
               exit 1
-            fi
-          done
-          for image in brain egress byok; do
-            if ! jq -e --arg image "${image}" '
-              .images[$image] as $e
-              | ($e.tag | type == "string" and length > 0)
-                and ($e.dev.repository | type == "string" and startswith("aex-dev-eu-west-2-"))
-                and ($e.prd.repository | type == "string" and startswith("aex-prd-eu-west-2-"))
-                and ($e.dev.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
-                and ($e.prd.digest == $e.dev.digest)
-            ' "${proof_file}" >/dev/null; then
-              echo "::error::Platform promotion proof does not establish dev/prd digest identity for image '${image}'."
-              exit 1
-            fi
-          done
-          echo "Verified: green platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} tested @aexhq/sdk@${PACKAGE_VERSION}."
+            }
 
       - name: Verify platform validation manifest
         env:
           GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          PLATFORM_DEPLOY_RUN_ID: ${{ env.PLATFORM_DEPLOY_RUN_ID }}
+          DEV_VALIDATION_RUN_ID: ${{ env.DEV_VALIDATION_RUN_ID }}
+          PLATFORM_PROMOTION_RUN_ID: ${{ env.PLATFORM_PROMOTION_RUN_ID }}
           RELEASE_RUN_ID: ${{ env.RELEASE_RUN_ID }}
           PACKAGE_VERSION: ${{ env.PACKAGE_VERSION }}
           RELEASE_SOURCE_SHA: ${{ env.RELEASE_SOURCE_SHA }}
@@ -248,19 +259,20 @@ jobs:
           set -euo pipefail
           rm -rf platform-validation-manifest
           mkdir platform-validation-manifest
-          gh run download "${PLATFORM_DEPLOY_RUN_ID}" \
+          gh run download "${PLATFORM_PROMOTION_RUN_ID}" \
             --repo aexhq/platform \
-            --name "platform-validation-manifest-${PLATFORM_DEPLOY_RUN_ID}" \
+            --name "platform-validation-manifest-${PLATFORM_PROMOTION_RUN_ID}" \
             --dir platform-validation-manifest
           manifest_file="$(find platform-validation-manifest -name platform-validation-manifest.json -print -quit)"
           if [ -z "${manifest_file}" ]; then
-            echo "::error::Platform deploy workflow attempt ${PLATFORM_DEPLOY_RUN_ID} did not include platform-validation-manifest.json."
+            echo "::error::Platform promotion workflow attempt ${PLATFORM_PROMOTION_RUN_ID} did not include platform-validation-manifest.json."
             exit 1
           fi
           bun scripts/cicd/release-manifest.mjs verify-platform \
             --manifest "${manifest_file}" \
             --version "${PACKAGE_VERSION}" \
-            --run-id "${PLATFORM_DEPLOY_RUN_ID}" \
+            --run-id "${PLATFORM_PROMOTION_RUN_ID}" \
+            --dev-validation-run-id "${DEV_VALIDATION_RUN_ID}" \
             --public-release-run-id "${RELEASE_RUN_ID}" \
             --public-release-head-sha "${RELEASE_SOURCE_SHA}" \
             --integrity "${RELEASE_INTEGRITY}"

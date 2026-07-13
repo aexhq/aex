@@ -113,9 +113,10 @@ export interface AexOptions {
   /** Workspace-scoped SDK API key. */
   readonly apiKey?: string;
   /**
-   * API plane root, e.g. `https://aex.example.com`. Optional —
-   * defaults to the canonical hosted URL (`https://api.aex.dev`).
-   * Override for local, staging, or other hosted aex API planes.
+   * API root, e.g. `https://aex.example.com`. Optional — defaults to the
+   * canonical prd URL (`https://api.aex.dev`). Dev keys select
+   * `https://dev-api.aex.dev`; override this for a localhost development stack
+   * or another hosted aex API endpoint.
    */
   readonly baseUrl?: string;
   /** Optional `fetch` override for testing. */
@@ -1568,10 +1569,9 @@ function unwrapSecretValue(value: string | SecretString): string {
 }
 
 /**
- * Unified user-facing client for the aex platform. The same class
- * powers the published `@aexhq/sdk` SDK and (under the hood) every host-side
- * subcommand of the in-container `aex` CLI. All operations talk to
- * the dashboard BFF and operate on durable session records.
+ * Unified user-facing client for aex. The same class powers the published
+ * `@aexhq/sdk` SDK and, under the hood, the bundled `aex` CLI. All remote
+ * operations use the hosted aex API and operate on durable session records.
  *
  * The SDK never asks the caller for a workspace id — workspace identity
  * is derived server-side from the API key on every request. Use

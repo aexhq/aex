@@ -24,11 +24,11 @@
  *     - `aex login` / `aex logout` / `aex auth status`
  *     - `aex models|providers|tools|runtime-sizes list` (no token needed)
  *
- * Every host subcommand requires
- * `--api-key`. `--aex-url` is
- * optional and defaults to `https://api.aex.dev`. There is no
- * `--workspace` flag — the workspace is derived server-side from the
- * API key.
+ * Authenticated host subcommands resolve an explicit `--api-key` first, then a
+ * key saved by `aex login`. Local discovery and help commands need no token.
+ * `--aex-url` is optional and defaults to the canonical URL for the key's dev
+ * or prd plane. There is no `--workspace` flag — the workspace is derived
+ * server-side from the API key.
  */
 import { PROVIDERS } from "@aexhq/contracts";
 import type { CliIO } from "./internal.js";
@@ -207,8 +207,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex runtime-sizes list [--json]              List managed runtime presets (no token needed)\n");
   io.stdout("  aex --help\n\n");
   io.stdout("Common flags on every host subcommand:\n");
-  io.stdout("  --api-key <token>         REQUIRED — aex SDK API key (workspace is derived from it)\n");
-  io.stdout("  --aex-url <url>         Optional; defaults to https://api.aex.dev (local/staging/hosted plane)\n");
+  io.stdout("  --api-key <token>         aex SDK API key; optional after `aex login` (workspace is derived from it)\n");
+  io.stdout("  --aex-url <url>         Optional; defaults by key plane (prd https://api.aex.dev; dev https://dev-api.aex.dev)\n");
   io.stdout("  --debug                     Optional; print a redacted per-request trace to stderr (uploads nothing)\n\n");
   io.stdout("aex start flags:\n");
   io.stdout(`  --provider <name>           Optional; one of: ${PROVIDERS.join(", ")} (default anthropic)\n`);

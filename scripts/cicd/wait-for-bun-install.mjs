@@ -5,49 +5,87 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [packageName, version] = process.argv.slice(2);
-
-if (!packageName || !version) {
-  console.error("Usage: wait-for-bun-install.mjs <package> <version>");
-  process.exit(2);
-}
-
-const registry = (process.env.NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/$/, "");
-const timeoutMs = Number(process.env.BUN_INSTALL_WAIT_TIMEOUT_MS ?? 10 * 60_000);
-const intervalMs = Number(process.env.BUN_INSTALL_WAIT_INTERVAL_MS ?? 10_000);
-const attemptTimeoutMs = Number(process.env.BUN_INSTALL_ATTEMPT_TIMEOUT_MS ?? 60_000);
-const deadline = Date.now() + timeoutMs;
-const spec = `${packageName}@${version}`;
 const bunCommand = "bun" in process.versions ? process.execPath : "bun";
-let attempt = 0;
-let lastStatus = "not checked";
 
-while (Date.now() < deadline) {
-  attempt++;
-  const defaultResult = await tryInstall(spec, registry, false, attemptTimeoutMs);
-  if (defaultResult.exitCode === 0) {
-    console.log(`${spec} is installable with bun.`);
-    process.exit(0);
+export async function main(argv = process.argv.slice(2)) {
+  const [packageName, version] = argv;
+  if (!packageName || !version) {
+    console.error("Usage: wait-for-bun-install.mjs <package> <version>");
+    return 2;
   }
 
-  const refreshResult = await tryInstall(spec, registry, true, attemptTimeoutMs);
-  if (refreshResult.exitCode === 0) {
-    const confirmResult = await tryInstall(spec, registry, false, attemptTimeoutMs);
-    if (confirmResult.exitCode === 0) {
+  const registry = (process.env.NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/$/, "");
+  const timeoutMs = Number(process.env.BUN_INSTALL_WAIT_TIMEOUT_MS ?? 10 * 60_000);
+  const intervalMs = Number(process.env.BUN_INSTALL_WAIT_INTERVAL_MS ?? 10_000);
+  const attemptTimeoutMs = Number(process.env.BUN_INSTALL_ATTEMPT_TIMEOUT_MS ?? 60_000);
+  const deadline = Date.now() + timeoutMs;
+  const spec = `${packageName}@${version}`;
+  let attempt = 0;
+  let lastStatus = "not checked";
+
+  while (Date.now() < deadline) {
+    attempt++;
+    const defaultResult = await tryInstall(spec, registry, false, attemptTimeoutMs);
+    if (defaultResult.exitCode === 0) {
       console.log(`${spec} is installable with bun.`);
-      process.exit(0);
+      return 0;
     }
-    lastStatus = `forced no-cache install succeeded, default install still failed: ${summarize(confirmResult)}`;
-  } else {
-    lastStatus = `default install failed: ${summarize(defaultResult)}; forced no-cache install failed: ${summarize(refreshResult)}`;
+
+    const refreshResult = await tryInstall(spec, registry, true, attemptTimeoutMs);
+    let retryClassification;
+    if (refreshResult.exitCode === 0) {
+      const confirmResult = await tryInstall(spec, registry, false, attemptTimeoutMs);
+      if (confirmResult.exitCode === 0) {
+        console.log(`${spec} is installable with bun.`);
+        return 0;
+      }
+      retryClassification = "cache-propagation";
+      lastStatus = `forced no-cache install succeeded, default install still failed: ${summarize(confirmResult)}`;
+    } else {
+      retryClassification = classifyRetryableInstallFailure({
+        packageName,
+        version,
+        outputs: [defaultResult.stderr, defaultResult.stdout, refreshResult.stderr, refreshResult.stdout],
+      });
+      lastStatus = `default install failed: ${summarize(defaultResult)}; forced no-cache install failed: ${summarize(refreshResult)}`;
+    }
+
+    if (!retryClassification) {
+      console.error(`bun install failed for ${spec} with a deterministic or unclassified error; not retrying. ${lastStatus}`);
+      return 1;
+    }
+
+    console.warn(
+      `bun install attempt ${attempt} for ${spec} failed with retryable class ${retryClassification}; retrying. Last status: ${lastStatus}`
+    );
+    await sleep(intervalMs);
   }
 
-  console.warn(`bun install attempt ${attempt} for ${spec} failed; retrying. Last status: ${lastStatus}`);
-  await sleep(intervalMs);
+  console.error(`Timed out waiting for ${spec} to install with bun. Last status: ${lastStatus}`);
+  return 1;
 }
 
-console.error(`Timed out waiting for ${spec} to install with bun. Last status: ${lastStatus}`);
-process.exit(1);
+export function classifyRetryableInstallFailure({ packageName, version, outputs }) {
+  const output = outputs.filter(Boolean).join("\n").toLowerCase();
+  const targetMentioned = output.includes(packageName.toLowerCase()) && output.includes(version.toLowerCase());
+
+  if (targetMentioned && /(?:\b404\b|not found|no version matching|could not find|failed to resolve)/u.test(output)) {
+    return "target-version-not-visible";
+  }
+  if (/\b(?:eai_again|econnreset|etimedout|econnrefused|enetunreach|ehostunreach|und_err_[a-z_]+)\b|fetch failed|socket hang up|connection (?:reset|closed)|tls handshake/u.test(output)) {
+    return "registry-transport";
+  }
+  if (/\b429\b|too many requests|rate limit/u.test(output)) {
+    return "registry-rate-limit";
+  }
+  if (/\b(?:http|status(?: code)?)\s*(?:500|502|503|504)\b|service unavailable|bad gateway|gateway timeout/u.test(output)) {
+    return "registry-server";
+  }
+  if (/(?:integrity|checksum).*(?:mismatch|failed)|(?:mismatch|failed).*(?:integrity|checksum)/u.test(output)) {
+    return "integrity-propagation";
+  }
+  return null;
+}
 
 async function tryInstall(spec, registry, refreshCache, timeout) {
   const installDir = await mkdtemp(join(tmpdir(), "aex-bun-install-check-"));
@@ -126,4 +164,8 @@ function truncate(value, maxLength) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+if (import.meta.main) {
+  process.exit(await main());
 }
