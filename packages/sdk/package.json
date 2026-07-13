@@ -22,8 +22,7 @@
   "files": [
     "dist",
     "README.md",
-    "docs",
-    "examples"
+    "docs"
   ],
   "scripts": {
     "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
