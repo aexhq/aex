@@ -107,7 +107,10 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     requiredHeaders?: Record<string, string>;
   }>("/api/assets/presign", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "Idempotency-Key": `asset-presign:${actual}`
+    },
     body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength, contentType })
   });
 
@@ -149,7 +152,10 @@ export async function uploadAsset(args: UploadAssetArgs): Promise<UploadedAsset>
     contentType?: string;
   }>("/api/assets/finalize", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "Idempotency-Key": `asset-finalize:${actual}`
+    },
     body: JSON.stringify({ hash: contentHashHeader, sizeBytes: args.bytes.byteLength })
   });
   const contentHash = fin.contentHash ?? presign.contentHash ?? contentHashHeader;

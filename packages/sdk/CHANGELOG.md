@@ -26,6 +26,8 @@ follows semantic versioning.
   message keys within it, including for maximum-length create keys.
 - Applied the client retry policy to direct workspace-asset uploads as well as
   hosted API transport.
+- Made single-part asset presign and finalize requests replay-safe with stable,
+  content-derived idempotency identities, without retrying whole user scenarios.
 - Removed the unavailable `doubao-cn` route; Doubao uses the supported
   international BytePlus gateway.
 - Made run-stream iteration safe alongside a concurrent `finished()` call and

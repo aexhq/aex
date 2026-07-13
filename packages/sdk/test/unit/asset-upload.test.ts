@@ -55,11 +55,14 @@ describe("uploadAsset (direct-to-storage)", () => {
     const hex = hash.slice("sha256:".length);
     const calls: string[] = [];
     let presignBody: Record<string, unknown> | undefined;
+    let presignIdempotencyKey: string | null = null;
+    let finalizeIdempotencyKey: string | null = null;
     const http: AssetsHttpClient = {
       request: vi.fn(async (path: string, init?: RequestInit) => {
         calls.push(path);
         if (path === "/api/assets/presign") {
           presignBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          presignIdempotencyKey = new Headers(init?.headers).get("idempotency-key");
           return {
             ok: true,
             exists: false,
@@ -69,6 +72,7 @@ describe("uploadAsset (direct-to-storage)", () => {
             requiredHeaders: { "x-amz-checksum-sha256": "Y2hlY2tzdW0=" }
           } as unknown;
         }
+        finalizeIdempotencyKey = new Headers(init?.headers).get("idempotency-key");
         return { ok: true, exists: false, assetId: `asset_${hex}`, contentHash: hash, sizeBytes: bytes.byteLength, contentType: "application/x-aex-bundle" } as unknown;
       }) as AssetsHttpClient["request"]
     };
@@ -88,6 +92,8 @@ describe("uploadAsset (direct-to-storage)", () => {
     expect(out.assetId).toBe(`asset_${hex}`);
     expect(out.contentType).toBe("application/x-aex-bundle");
     expect(presignBody).toMatchObject({ contentType: "application/x-aex-bundle" });
+    expect(presignIdempotencyKey).toBe(`asset-presign:${hex}`);
+    expect(finalizeIdempotencyKey).toBe(`asset-finalize:${hex}`);
     expect(calls).toEqual(["/api/assets/presign", "/api/assets/finalize"]);
     expect(putUrl).toBe("https://object-storage.example.test/bucket/assets/ws/" + hex + "?X-Amz-Signature=sig");
     expect(putMethod).toBe("PUT");
