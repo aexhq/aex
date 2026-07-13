@@ -13,6 +13,7 @@ import {
   EDGE_SESSION_DEBUG_BODY
 } from "../_fixtures/edge-list-search-child.js";
 import { getBunCommand, installAex, runCommand, type InstallResult } from "../_fixtures/install.js";
+import { formatChildFailure } from "../_fixtures/live-diagnostics.js";
 import { GATE_PROVIDER, gateModel, requireGateKey } from "../_fixtures/provider.js";
 
 function requireEnv(name: string): string {
@@ -60,10 +61,11 @@ async function runChild(
     (secret) => child.stdout.includes(secret) || child.stderr.includes(secret)
   );
   if (child.exitCode !== 0) {
-    throw new Error(
-      `edge-list-search child ${scriptName} exited ${child.exitCode}; ` +
-      `stdoutBytes=${child.stdout.length}; stderrBytes=${child.stderr.length}; leakedKnownKey=${leakedKnownKey}`
-    );
+    throw new Error(formatChildFailure(
+      `edge-list-search child ${scriptName}`,
+      child,
+      [apiKey, providerKey]
+    ));
   }
   if (leakedKnownKey) {
     throw new Error(

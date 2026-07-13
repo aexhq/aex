@@ -5,9 +5,8 @@
  *   - `runtime` (RuntimeSize preset token) on submission.
  *   - `overrides.maxSpendUsd` (the ONLY SessionLimits field the SDK exposes).
  *   - `overrides.timeout` (session deadline duration string).
- *   - The wire `SessionLimits.maxConcurrentChildSessions` / `maxSubagentDepth`
- *     concurrency/depth caps — which the SDK's typed `SessionOverrides` does
- *     NOT surface (probed for silent-drop behaviour).
+ *   - Unsupported `maxConcurrentChildSessions` / `maxSubagentDepth` override
+ *     keys, which the SDK rejects instead of silently dropping.
  *
  * Cost discipline: almost every case is a CLIENT-SIDE validation rejection or a
  * create-only (no billable turn) submit probe. Exactly ONE case sends a billable
@@ -61,13 +60,19 @@ const PROVIDER = process.env.PROVIDER;
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const MODEL = process.env.MODEL;
 const out = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(0); };
-const asErr = (e) => ({
-  thrown: true,
-  name: e && e.name ? String(e.name) : null,
-  code: e && e.code ? String(e.code) : null,
-  status: (e && typeof e.status === "number") ? e.status : null,
-  message: String(e && e.message ? e.message : e).slice(0, 600)
-});
+const asErr = (e) => {
+  const details = e && e.details && typeof e.details === "object" && !Array.isArray(e.details)
+    ? e.details
+    : null;
+  return {
+    thrown: true,
+    name: e && e.name ? String(e.name) : null,
+    code: e && e.code ? String(e.code) : null,
+    status: (e && typeof e.status === "number") ? e.status : null,
+    hasMessage: !!(e && e.message),
+    detailsField: details && typeof details.field === "string" ? details.field : null
+  };
+};
 // Create a session (no turn = not billable) and best-effort delete it.
 async function createOnly(opts) {
   try {
@@ -85,11 +90,22 @@ interface Verdict {
   readonly name?: string | null;
   readonly code?: string | null;
   readonly status?: number | null;
-  readonly message?: string;
+  readonly hasMessage?: boolean;
+  readonly detailsField?: string | null;
   readonly sessionId?: string | null;
   readonly sessionStatus?: string | null;
   readonly deleted?: boolean;
   readonly [k: string]: unknown;
+}
+
+function expectConfigError(verdict: Verdict, field: string, label: string): void {
+  expect(verdict.thrown, `${label} should reject`).toBe(true);
+  expect(verdict.name, `${label} error name`).toBe("SessionConfigValidationError");
+  expect(verdict.code, `${label} error code`).toBe("SESSION_CONFIG_INVALID");
+  expect(verdict.status ?? null, `${label} should not carry an HTTP status`).toBeNull();
+  expect(verdict.hasMessage, `${label} should retain human guidance`).toBe(true);
+  expect(verdict.detailsField, `${label} stable field`).toBe(field);
+  expect(verdict.sessionId, `${label} minted a session`).toBeUndefined();
 }
 
 describe("live dev — per-session limit / override edge cases (installed SDK)", () => {
@@ -158,12 +174,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
 
       for (const key of ["zero", "negative", "stringy", "infinity", "nan"] as const) {
         const v = result[key];
-        expect(v.thrown, `maxSpendUsd=${key} should be rejected`).toBe(true);
-        // Client-side config validation => AexError code SESSION_CONFIG_INVALID
-        // (never reached the network, so NOT an API_ERROR / status).
-        expect(v.code, `maxSpendUsd=${key} error code`).toBe("SESSION_CONFIG_INVALID");
-        expect(v.status ?? null, `maxSpendUsd=${key} should not be a server status`).toBeNull();
-        expect(String(v.message)).toMatch(/maxSpendUsd/i);
+        expectConfigError(v, "overrides.maxSpendUsd", `maxSpendUsd=${key}`);
       }
     },
     120_000
@@ -242,63 +253,41 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
       // before issuing HTTP, so bad tokens and wrong types must fail without
       // minting a billable session.
       for (const v of result.results) {
-        expect(
-          v.thrown,
-          `runtime=${JSON.stringify(v.size)} should be rejected before submit: ${JSON.stringify(v)}`
-        ).toBe(true);
-        expect(v.name, `runtime=${JSON.stringify(v.size)} error name: ${JSON.stringify(v)}`).toBe("SessionConfigValidationError");
-        expect(v.code, `runtime=${JSON.stringify(v.size)} error code: ${JSON.stringify(v)}`).toBe("SESSION_CONFIG_INVALID");
-        expect(v.status ?? null, `runtime=${JSON.stringify(v.size)} error status: ${JSON.stringify(v)}`).toBeNull();
-        expect(String(v.message), `runtime=${JSON.stringify(v.size)} error message: ${JSON.stringify(v)}`).toMatch(/runtimeSize must be one of/i);
+        expectConfigError(v, "runtime", `runtime=${JSON.stringify(v.size)}`);
         expect(v.reflect, `runtime=${JSON.stringify(v.size)} should not reach unit reflection`).toBeNull();
-        expect((v as { sessionId?: unknown }).sessionId, `runtime=${JSON.stringify(v.size)} minted a session`).toBeUndefined();
       }
     },
     170_000
   );
 
   // -------------------------------------------------------------------------
-  // Concurrency / depth: the wire SessionLimits carries maxConcurrentChildSessions and
-  // maxSubagentDepth, and the server resolver honours them, but the SDK's typed
-  // SessionOverrides does NOT expose them. This case documents the asymmetry:
-  // an INVALID maxSpendUsd is rejected, while an equally-invalid concurrency or
-  // depth override is SILENTLY DROPPED (neither validated nor transmitted).
+  // Concurrency / depth are not public SessionOverrides fields. JavaScript callers
+  // still receive a typed, field-addressable error instead of silent omission.
   // -------------------------------------------------------------------------
   it(
-    "does not surface concurrency/depth overrides — invalid values are silently ignored (not rejected, not honoured)",
+    "rejects unsupported concurrency/depth override keys before submission",
     async () => {
       const result = await probe<{
         spend: Verdict;
         concurrency: Verdict;
         depth: Verdict;
-        both: Verdict;
       }>(`
-        // Control: invalid maxSpendUsd IS validated (rejects client-side).
+        // Control: an invalid supported override also rejects client-side.
         const spend = await createOnly({ ...BASE, overrides: { maxSpendUsd: -1 } });
-        // Siblings on the SAME wire SessionLimits type — passed via overrides at
-        // runtime (untyped in JS). If the SDK wired them, an invalid negative
-        // would reject like maxSpendUsd; instead they are dropped => accepted.
+        // These keys are deliberately absent from SessionOverrides. Probe from
+        // untyped JavaScript to prove they are rejected rather than ignored.
         const concurrency = await createOnly({ ...BASE, overrides: { maxConcurrentChildSessions: -1 } });
         const depth = await createOnly({ ...BASE, overrides: { maxSubagentDepth: -1 } });
-        const both = await createOnly({ ...BASE, overrides: { maxConcurrentChildSessions: 999999, maxSubagentDepth: 99 } });
-        out({ spend, concurrency, depth, both });
+        out({ spend, concurrency, depth });
       `, { timeoutMs: 120_000 });
 
-      // Control behaves (proves the harness distinguishes reject vs accept).
-      expect(result.spend.thrown, "control maxSpendUsd=-1 must reject").toBe(true);
-      expect(result.spend.code).toBe("SESSION_CONFIG_INVALID");
-
-      // Documented gap: concurrency/depth overrides are neither validated nor
-      // enforced via the SDK. They are silently accepted (dropped) — a user
-      // who sets them via `overrides` gets no error and no effect. This is the
-      // finding; if a future SDK wires them, these expectations flip and the
-      // test correctly fails, prompting a re-classification.
-      expect(result.concurrency.thrown, `concurrency override outcome: ${JSON.stringify(result.concurrency)}`).toBe(false);
-      expect(result.depth.thrown, `depth override outcome: ${JSON.stringify(result.depth)}`).toBe(false);
-      expect(result.both.thrown, `both override outcome: ${JSON.stringify(result.both)}`).toBe(false);
-
-      // Safety corollary: because the SDK cannot RAISE these caps, an absurd
-      // concurrency/depth is not a workspace-ceiling bypass — it is a no-op.
+      expectConfigError(result.spend, "overrides.maxSpendUsd", "control maxSpendUsd=-1");
+      expectConfigError(
+        result.concurrency,
+        "overrides.maxConcurrentChildSessions",
+        "unsupported concurrency override"
+      );
+      expectConfigError(result.depth, "overrides.maxSubagentDepth", "unsupported depth override");
     },
     140_000
   );
@@ -328,23 +317,9 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
       // The public timeout contract is validated before HTTP: malformed values
       // and values outside the 1m..8h bounds must fail without creating a
       // session. A valid in-range duration is the control.
-      expect(result.malformed.thrown, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe(true);
-      expect(result.malformed.name, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe("SessionConfigValidationError");
-      expect(result.malformed.code, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBe("SESSION_CONFIG_INVALID");
-      expect(result.malformed.status ?? null, `malformed timeout: ${JSON.stringify(result.malformed)}`).toBeNull();
-      expect(String(result.malformed.message), `malformed timeout: ${JSON.stringify(result.malformed)}`).toMatch(/invalid duration/i);
-
-      expect(result.tooShort.thrown, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe(true);
-      expect(result.tooShort.name, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe("SessionConfigValidationError");
-      expect(result.tooShort.code, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBe("SESSION_CONFIG_INVALID");
-      expect(result.tooShort.status ?? null, `too-short timeout: ${JSON.stringify(result.tooShort)}`).toBeNull();
-      expect(String(result.tooShort.message), `too-short timeout: ${JSON.stringify(result.tooShort)}`).toMatch(/at least 60000ms/i);
-
-      expect(result.tooLong.thrown, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe(true);
-      expect(result.tooLong.name, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe("SessionConfigValidationError");
-      expect(result.tooLong.code, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBe("SESSION_CONFIG_INVALID");
-      expect(result.tooLong.status ?? null, `too-long timeout: ${JSON.stringify(result.tooLong)}`).toBeNull();
-      expect(String(result.tooLong.message), `too-long timeout: ${JSON.stringify(result.tooLong)}`).toMatch(/at most 28800000ms/i);
+      expectConfigError(result.malformed, "overrides.timeout", "malformed timeout");
+      expectConfigError(result.tooShort, "overrides.timeout", "too-short timeout");
+      expectConfigError(result.tooLong, "overrides.timeout", "too-long timeout");
 
       // A valid in-range duration is (also) accepted — the control.
       expect(result.valid.thrown, `valid timeout: ${JSON.stringify(result.valid)}`).toBe(false);
@@ -391,7 +366,11 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
       expect(result.text.replace(/\s+/g, "")).toContain(probeMarker);
       expect((result.reflect as { runtime?: unknown }).runtime).toBe("shared-0.5x-4gb");
       // eslint-disable-next-line no-console
-      console.log("[edge-session-limits] size reflection:", JSON.stringify(result.reflect));
+      console.log("[edge-session-limits] size run evidence:", JSON.stringify({
+        sessionId: result.sessionId,
+        status: result.status,
+        reflect: result.reflect
+      }));
     },
     9 * 60 * 1000 + 30_000
   );

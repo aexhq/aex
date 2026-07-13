@@ -24,7 +24,9 @@ export function buildEdgeListSearchChildScript(body: string): string {
       const safe = redactKnownSecrets({ ...value, leakedKeyAnywhere });
       process.stdout.write(JSON.stringify(safe));
     }
-    ${body}
+    await (async () => {
+      ${body}
+    })();
   `;
 }
 
