@@ -623,7 +623,7 @@ jobs:
             }
           }
           JSON
-          gh api --method POST repos/aexhq/aex-platform/dispatches --input platform-dispatch.json
+          gh api --method POST repos/aexhq/platform/dispatches --input platform-dispatch.json
 
   release-complete:
     name: Verify complete release

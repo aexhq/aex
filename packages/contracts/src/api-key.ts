@@ -8,7 +8,7 @@
  * surfacing a bare `token_invalid` after a full round-trip.
  *
  * Ported byte-for-byte from the platform codec
- * (`aex-platform apps/dashboard/src/server/auth.ts`), which is pinned to this
+ * (`platform apps/dashboard/src/server/auth.ts`), which is pinned to this
  * module by a cross-repo parity test. Parse-only: it makes NO trust decision
  * (the server still validates the secret).
  */

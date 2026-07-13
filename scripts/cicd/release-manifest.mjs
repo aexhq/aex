@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PUBLIC_RELEASE_MANIFEST_KIND = "aex-public-release-manifest";
-export const PLATFORM_VALIDATION_MANIFEST_KIND = "aex-platform-validation-manifest";
+export const PLATFORM_VALIDATION_MANIFEST_KIND = "platform-validation-manifest";
 export const PUBLIC_MANIFEST_SCHEMA_VERSION = 3;
 export const PLATFORM_MANIFEST_SCHEMA_VERSION = 4;
 export const MANIFEST_SCHEMA_VERSION = PUBLIC_MANIFEST_SCHEMA_VERSION;

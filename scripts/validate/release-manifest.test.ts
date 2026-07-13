@@ -82,7 +82,7 @@ describe("release manifest contract", () => {
       integrity: SDK_INTEGRITY
     });
 
-    expect(validatePublicReleaseManifest({ ...manifest, repository: "aexhq/aex-platform" }).errors).toContain(
+    expect(validatePublicReleaseManifest({ ...manifest, repository: "aexhq/platform" }).errors).toContain(
       "repository must be aexhq/aex"
     );
     expect(validatePublicReleaseManifest({ ...manifest, headSha: "" }).errors).toContain("headSha is required");
@@ -122,7 +122,7 @@ describe("release manifest contract", () => {
     const result = validatePlatformValidationManifest(
       {
         schemaVersion: 4,
-        kind: "aex-platform-validation-manifest",
+        kind: "platform-validation-manifest",
         platform: { runId: "456", headSha: PLATFORM_SHA },
         publicRelease: { runId: "123", headSha: PUBLIC_SHA },
         sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
@@ -147,7 +147,7 @@ describe("release manifest contract", () => {
   it("rejects platform evidence bound to a different public SHA or package integrity", () => {
     const manifest = {
       schemaVersion: 4,
-      kind: "aex-platform-validation-manifest",
+      kind: "platform-validation-manifest",
       platform: { runId: "456", headSha: PLATFORM_SHA },
       publicRelease: { runId: "123", headSha: PUBLIC_SHA },
       sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },
@@ -168,7 +168,7 @@ describe("release manifest contract", () => {
     images.brain.prd.digest = `sha256:${"9".repeat(64)}`;
     const result = validatePlatformValidationManifest({
       schemaVersion: 4,
-      kind: "aex-platform-validation-manifest",
+      kind: "platform-validation-manifest",
       platform: { runId: "456", headSha: PLATFORM_SHA },
       publicRelease: { runId: "123", headSha: PUBLIC_SHA },
       sdk: { version: "0.40.17", integrity: SDK_INTEGRITY },

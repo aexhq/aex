@@ -172,7 +172,7 @@ custom tool bundle upload/execution.
 It also covers custom tool schemas, structured arguments, environment and secret
 access, result forms, expected tool failures, and redaction. It is **excluded**
 from the default `test:user` sweep, runs in the platform deploy suite via
-`aex-platform/.github/workflows/aws-suite.yml`, and remains directly invokable
+`platform/.github/workflows/aws-suite.yml`, and remains directly invokable
 for reproduction:
 
 ```bash

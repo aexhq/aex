@@ -1,7 +1,7 @@
 /**
  * SSoT for the platform's STABLE API error codes.
  *
- * The server (aex-platform `api.ts`) imports this table instead of keeping its
+ * The server (platform `api.ts`) imports this table instead of keeping its
  * own private copy, so a route emitting a code absent from the union fails to
  * compile and adding a code without a message is caught. The SDK error factory
  * ({@link import("./error-factory.js").apiErrorFromResponse}) dispatches on the

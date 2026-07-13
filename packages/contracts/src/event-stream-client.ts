@@ -90,7 +90,7 @@ const isTerminalType = (e: AexEvent): boolean =>
 /**
  * Keep-alive ping the client sends; the coordinator answers it with the matching
  * pong in its WebSocket message handler. Must stay byte-identical to
- * the coordinator's pair (aex-platform `packages/shared/src/event-stream-client.ts`).
+ * the coordinator's pair (platform `packages/shared/src/event-stream-client.ts`).
  */
 const COORDINATOR_PING = "aex:ping";
 /** Post-open replay request; $connect cannot safely PostToConnection before the handshake completes. */

@@ -42,7 +42,7 @@ jobs:
       - name: Checkout platform (for contract parity)
         uses: actions/checkout@v6
         with:
-          repository: aexhq/aex-platform
+          repository: aexhq/platform
           token: ${{ secrets.PLATFORM_REPO_TOKEN }}
           path: _platform
           persist-credentials: false
@@ -61,7 +61,7 @@ jobs:
       - name: Contract parity
         run: bun run contracts:parity:check
         env:
-          AEX_PLATFORM_DIR: ${{ github.workspace }}/_platform
+          PLATFORM_DIR: ${{ github.workspace }}/_platform
 
   lint:
     name: Lint

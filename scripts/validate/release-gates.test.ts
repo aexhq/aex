@@ -109,7 +109,7 @@ describe("release pipeline gates", () => {
     expect(checkout.if).toBeUndefined();
     expect(parityCheck.if).toBeUndefined();
     expect(parityCheck.run).toContain("bun run contracts:parity:check");
-    expect(parityCheck.env?.AEX_PLATFORM_DIR).toBe("${{ github.workspace }}/_platform");
+    expect(parityCheck.env?.PLATFORM_DIR).toBe("${{ github.workspace }}/_platform");
   });
 
   it("promotes only an exact version proven by successful public and platform runs", () => {
@@ -158,7 +158,7 @@ describe("release pipeline gates", () => {
     expect(publicManifest.run).toContain("release-manifest.mjs verify-public");
     expect(platformRun.run).toContain('.github/workflows/deploy.yml');
     expect(platformRun.run).toContain('proof_schema}" != "2"');
-    expect(platformRun.run).toContain("aex-platform-promotion-proof");
+    expect(platformRun.run).toContain("platform-promotion-proof");
     expect(platformManifest.run).toContain("release-manifest.mjs verify-platform");
     const proofGates = /for gate in ([^;]+); do/.exec(platformRun.run ?? "")?.[1]?.trim().split(/\s+/) ?? [];
     expect(new Set(proofGates)).toEqual(new Set(["suite_dev", "spot_canary_dev", "suite_prod", "smoke_prod"]));
