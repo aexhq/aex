@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { appendFile } from "node:fs/promises";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
