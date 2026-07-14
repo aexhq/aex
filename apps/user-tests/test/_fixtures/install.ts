@@ -12,17 +12,11 @@
  *   5. Returns paths for the install so scenarios can spawn child
  *      processes with cwd = installDir.
  *
- * Cleanup is the test's responsibility (typically in afterAll).
- *
- * Install reuse: `installAex()` returns a per-worker SHARED install by
- * default. The tree is read-only after Bun install — every read-only
- * scenario only drops UNIQUELY-named sibling scripts and reads
- * node_modules — so all such scenarios in a worker reuse ONE install
- * instead of each paying a redundant `bun install`. Scenarios that
- * MUTATE the tree (install extra packages, write fixed-name sources —
- * e.g. the TS consumer scenario) must pass `{ isolated: true }` to get
- * their own clean tree. The shared tree is removed once at process exit;
- * isolated trees are the caller's responsibility (typically afterAll).
+ * Every Vitest file runs in its own isolated worker context and owns one
+ * fresh install. Cleanup is the test file's responsibility (typically in
+ * afterAll) and failures are surfaced as test failures. The outer
+ * user-vitest runner also owns the common parent directory and fails if a
+ * worker leaves residue behind.
  *
  * Bun keeps a process-external global package cache. Registry installs are
  * serialized across Vitest worker processes so parallel live smoke files do
@@ -72,13 +66,11 @@ export interface InstallOptions {
   readonly registryUrl?: string;
   /** Override the install timeout (ms). Default 120s. */
   readonly timeoutMs?: number;
-  /**
-   * Force a fresh, isolated install tree instead of the per-worker
-   * shared one. Required for scenarios that MUTATE the tree (install
-   * extra packages, write fixed-name sources), e.g. the typescript
-   * consumer test. Read-only scenarios should omit this and share.
-   */
-  readonly isolated?: boolean;
+}
+
+export interface DirectoryCleanupDependencies {
+  readonly pathExists?: (path: string) => boolean;
+  readonly removeDirectory?: (path: string) => void;
 }
 
 export interface ResolveInstallSpecOptions {
@@ -140,50 +132,10 @@ export async function resolveInstallSpec(
 }
 
 /**
- * Install the resolved aex artifact. Returns a per-worker SHARED install
- * by default (memoized for the worker process — see file header); pass
- * `{ isolated: true }` for scenarios that mutate the tree.
+ * Install the resolved aex artifact into the current test file's fresh tree.
  */
 export async function installAex(options: InstallOptions = {}): Promise<InstallResult> {
-  if (options.isolated) {
-    return await installAexIsolated(options);
-  }
-  return await getSharedInstall(options);
-}
-
-let sharedInstallPromise: Promise<InstallResult> | null = null;
-const deferredSharedCleanups: Array<() => void> = [];
-let sharedExitHookRegistered = false;
-
-/**
- * Memoized per worker PROCESS. vitest distributes test files across worker
- * processes, so each worker memoizes its OWN shared dir — no cross-process
- * FS race. The wrapped cleanup() is a no-op because per-file afterAll hooks
- * must NOT delete a tree later files in the same worker still reuse; the
- * real dir is removed once at process exit. Options after the first call
- * are ignored (the first caller wins).
- */
-function getSharedInstall(options: InstallOptions): Promise<InstallResult> {
-  sharedInstallPromise ??= installAexIsolated(options).then((result) => {
-    registerSharedExitCleanup();
-    deferredSharedCleanups.push(result.cleanup);
-    return { ...result, cleanup: () => {} };
-  });
-  return sharedInstallPromise;
-}
-
-function registerSharedExitCleanup(): void {
-  if (sharedExitHookRegistered) return;
-  sharedExitHookRegistered = true;
-  process.once("exit", () => {
-    for (const cleanup of deferredSharedCleanups) {
-      try {
-        cleanup();
-      } catch {
-        // Best effort at process exit.
-      }
-    }
-  });
+  return await installAexIsolated(options);
 }
 
 /**
@@ -192,7 +144,8 @@ function registerSharedExitCleanup(): void {
  */
 async function installAexIsolated(options: InstallOptions = {}): Promise<InstallResult> {
   const { spec, source } = await resolveInstallSpec();
-  const installDir = mkdtempSync(join(tmpdir(), "aex-user-test-"));
+  const installDir = createInstallDirectory();
+  const cleanup = createDirectoryCleanup(installDir);
   // Minimal host package.json so Bun install has a host project.
   const hostPkg = {
     name: "aex-user-test-host",
@@ -219,49 +172,37 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
   try {
     await withInstallLock(async () => runBun(args, { cwd: installDir }, timeoutMs));
   } catch (error) {
-    rmSync(installDir, { recursive: true, force: true });
-    throw error;
+    cleanupAfterFailure(cleanup, error);
   }
 
   const aexDir = join(installDir, "node_modules", "@aexhq", "sdk");
   if (!existsSync(aexDir)) {
-    rmSync(installDir, { recursive: true, force: true });
-    throw new Error(`user-tests: install completed but ${aexDir} is missing`);
+    cleanupAfterFailure(cleanup, new Error(`user-tests: install completed but ${aexDir} is missing`));
   }
   const pkgPath = join(aexDir, "package.json");
   if (!existsSync(pkgPath)) {
-    rmSync(installDir, { recursive: true, force: true });
-    throw new Error(`user-tests: install completed but ${pkgPath} is missing`);
+    cleanupAfterFailure(cleanup, new Error(`user-tests: install completed but ${pkgPath} is missing`));
   }
   let pkg: AexPackageJson;
   try {
     const text = await import("node:fs/promises").then((m) => m.readFile(pkgPath, "utf8"));
     pkg = JSON.parse(text) as AexPackageJson;
   } catch (error) {
-    rmSync(installDir, { recursive: true, force: true });
-    throw new Error(`user-tests: could not read installed package.json: ${(error as Error).message}`);
+    cleanupAfterFailure(
+      cleanup,
+      new Error(`user-tests: could not read installed package.json: ${(error as Error).message}`)
+    );
   }
 
   if (source === "registry") {
     const want = spec.replace(/^@aexhq\/sdk@/, "");
     if (pkg.version !== want) {
-      rmSync(installDir, { recursive: true, force: true });
-      throw new Error(
-        `user-tests: registry resolved @aexhq/sdk@${want} but installed package reports version ${pkg.version}`
+      cleanupAfterFailure(
+        cleanup,
+        new Error(`user-tests: registry resolved @aexhq/sdk@${want} but installed package reports version ${pkg.version}`)
       );
     }
   }
-
-  let cleanedUp = false;
-  const cleanup = (): void => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    try {
-      rmSync(installDir, { recursive: true, force: true });
-    } catch {
-      // Best effort: a stuck file handle on Windows is not worth failing for.
-    }
-  };
 
   return {
     installDir,
@@ -272,6 +213,70 @@ async function installAexIsolated(options: InstallOptions = {}): Promise<Install
     source,
     cleanup
   };
+}
+
+function createInstallDirectory(): string {
+  const runRoot = process.env["AEX_USER_TEST_TEMP_ROOT"];
+  if (!runRoot) return mkdtempSync(join(tmpdir(), "aex-user-test-"));
+
+  let rootStat;
+  try {
+    rootStat = statSync(runRoot);
+  } catch (error) {
+    throw new Error(`user-tests: AEX_USER_TEST_TEMP_ROOT is not accessible: ${runRoot} (${describeFsError(error)})`);
+  }
+  if (!rootStat.isDirectory()) {
+    throw new Error(`user-tests: AEX_USER_TEST_TEMP_ROOT is not a directory: ${runRoot}`);
+  }
+  return mkdtempSync(join(runRoot, "install-"));
+}
+
+/**
+ * Build an idempotent, fail-closed cleanup for an install tree.
+ * Completion is recorded only after removal succeeds and the path is gone.
+ */
+export function createDirectoryCleanup(
+  installDir: string,
+  dependencies: DirectoryCleanupDependencies = {}
+): () => void {
+  const pathExists = dependencies.pathExists ?? existsSync;
+  const removeDirectory =
+    dependencies.removeDirectory ?? ((path: string) => rmSync(path, { recursive: true, force: true }));
+  let cleanedUp = false;
+
+  return (): void => {
+    if (cleanedUp) return;
+    try {
+      removeDirectory(installDir);
+    } catch (error) {
+      throw new Error(`user-tests: failed to remove install tempdir ${installDir}: ${describeFsError(error)}`);
+    }
+    if (pathExists(installDir)) {
+      throw new Error(`user-tests: remove returned successfully but install tempdir still exists: ${installDir}`);
+    }
+    cleanedUp = true;
+  };
+}
+
+function cleanupAfterFailure(cleanup: () => void, originalError: unknown): never {
+  try {
+    cleanup();
+  } catch (cleanupError) {
+    throw new AggregateError(
+      [originalError, cleanupError],
+      "user-tests: operation failed and its install tempdir could not be removed"
+    );
+  }
+  throw originalError;
+}
+
+function describeFsError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const fsError = error as NodeJS.ErrnoException;
+  const details = [fsError.code, fsError.syscall, fsError.path].filter(
+    (value): value is string => typeof value === "string" && value.length > 0
+  );
+  return details.length > 0 ? `${details.join(" ")}: ${error.message}` : error.message;
 }
 
 function packCurrentSdkOnce(): Promise<string> {

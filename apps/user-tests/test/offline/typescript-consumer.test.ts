@@ -13,7 +13,7 @@ describe("typescript consumer", () => {
   let install: InstallResult;
 
   beforeAll(async () => {
-    install = await installAex({ isolated: true });
+    install = await installAex();
     const result = await runCommand(
       getBunCommand(),
       ["install", "typescript@5.8.3", "@types/node@20", "--ignore-scripts", "--no-progress"],

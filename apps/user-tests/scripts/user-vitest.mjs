@@ -20,7 +20,7 @@ export async function main() {
 
   if (tarball && version) {
     console.error("AEX_USER_TEST_TARBALL and AEX_USER_TEST_VERSION are mutually exclusive.");
-    process.exit(1);
+    return 1;
   }
 
   await buildConformance();
@@ -30,28 +30,136 @@ export async function main() {
       const packed = await packCurrentSdk();
       env.AEX_USER_TEST_TARBALL = packed;
     } catch (error) {
-      if (packDir) rmSync(packDir, { recursive: true, force: true });
+      if (packDir) {
+        try {
+          removeOwnedDirectory(packDir, "SDK pack tempdir");
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "user-tests: SDK packing failed and its tempdir could not be removed"
+          );
+        }
+      }
       throw error;
     }
   }
 
   const vitestArgs = process.argv.slice(2);
   const invocation = buildUserVitestSpawnInvocation(vitestArgs);
-  const child = spawn(invocation.command, invocation.args, {
-    cwd: appRoot,
-    env,
-    stdio: "inherit",
-    ...invocation.options
-  });
+  const runTempRoot = createUserTestTempRoot();
+  env.AEX_USER_TEST_TEMP_ROOT = runTempRoot;
 
-  child.on("close", (code, signal) => {
-    if (packDir) rmSync(packDir, { recursive: true, force: true });
-    if (signal) {
-      console.error(`vitest exited with signal ${signal}`);
-      process.exit(1);
+  let outcome;
+  let runFailure;
+  try {
+    outcome = await spawnUserVitest(invocation);
+  } catch (error) {
+    runFailure = error;
+  }
+
+  const cleanupFailures = [];
+  try {
+    cleanupUserTestTempRoot(runTempRoot);
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (packDir) {
+    try {
+      removeOwnedDirectory(packDir, "SDK pack tempdir");
+    } catch (error) {
+      cleanupFailures.push(error);
     }
-    process.exit(code ?? 1);
+  }
+
+  if (runFailure || cleanupFailures.length > 0) {
+    const failures = [runFailure, ...cleanupFailures].filter((error) => error !== undefined);
+    throw failures.length === 1
+      ? failures[0]
+      : new AggregateError(failures, "user-tests: runner and cleanup failures occurred");
+  }
+  if (outcome.signal) {
+    console.error(`vitest exited with signal ${outcome.signal}`);
+    return 1;
+  }
+  return outcome.code ?? 1;
+}
+
+function spawnUserVitest(invocation) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: appRoot,
+      env,
+      stdio: "inherit",
+      ...invocation.options
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolvePromise({ code, signal }));
   });
+}
+
+export function createUserTestTempRoot(parentDir = tmpdir()) {
+  return mkdtempSync(join(parentDir, "aex-user-test-run-"));
+}
+
+/**
+ * Remove the temp root owned by one wrapper invocation. Any retained child
+ * is reported after removal so a worker cleanup regression fails the run
+ * without preserving hardlinks in the global Bun cache.
+ */
+export function cleanupUserTestTempRoot(runTempRoot) {
+  let retainedEntries;
+  let inspectionFailure;
+  try {
+    retainedEntries = readdirSync(runTempRoot);
+  } catch (error) {
+    retainedEntries = [];
+    inspectionFailure = new Error(
+      `user-tests: failed to inspect owned run temp root ${runTempRoot}: ${describeFsError(error)}`
+    );
+  }
+
+  try {
+    removeOwnedDirectory(runTempRoot, "owned run temp root");
+  } catch (removalFailure) {
+    if (inspectionFailure) {
+      throw new AggregateError(
+        [inspectionFailure, removalFailure],
+        "user-tests: failed to inspect and remove the owned run temp root"
+      );
+    }
+    throw removalFailure;
+  }
+
+  if (inspectionFailure) throw inspectionFailure;
+
+  if (retainedEntries.length > 0) {
+    const shown = retainedEntries.slice(0, 20).join(", ");
+    const omitted = retainedEntries.length > 20 ? ` (+${retainedEntries.length - 20} more)` : "";
+    const noun = retainedEntries.length === 1 ? "entry" : "entries";
+    throw new Error(
+      `user-tests: fixture cleanup left ${retainedEntries.length} ${noun} in ${runTempRoot}: ` +
+        `${shown}${omitted}; removed the owned run root and failing the run`
+    );
+  }
+}
+
+function removeOwnedDirectory(path, label) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (error) {
+    throw new Error(`user-tests: failed to remove ${label} ${path}: ${describeFsError(error)}`);
+  }
+  if (existsSync(path)) {
+    throw new Error(`user-tests: remove returned successfully but ${label} still exists: ${path}`);
+  }
+}
+
+function describeFsError(error) {
+  if (!(error instanceof Error)) return String(error);
+  const details = [error.code, error.syscall, error.path].filter(
+    (value) => typeof value === "string" && value.length > 0
+  );
+  return details.length > 0 ? `${details.join(" ")}: ${error.message}` : error.message;
 }
 
 export function buildUserVitestSpawnInvocation(vitestArgs, command = getBunCommand()) {
@@ -161,5 +269,10 @@ function getBunCommand() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === thisFile) {
-  await main();
+  try {
+    process.exitCode = await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.stack : error);
+    process.exitCode = 1;
+  }
 }

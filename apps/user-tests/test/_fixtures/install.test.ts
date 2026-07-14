@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { getBunCommand, resolveInstallSpec, runCommand } from "./install.js";
+import { createDirectoryCleanup, getBunCommand, resolveInstallSpec, runCommand } from "./install.js";
 
 describe("user-test install artifact resolution", () => {
   it("uses AEX_USER_TEST_TARBALL when set", async () => {
@@ -84,5 +84,36 @@ describe("user-test install artifact resolution", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("removes install trees idempotently", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aex-install-cleanup-test-"));
+    writeFileSync(join(dir, "hardlinked-package-file"), "fixture");
+
+    const cleanup = createDirectoryCleanup(dir);
+    cleanup();
+    cleanup();
+
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("fails closed with actionable diagnostics when an install tree cannot be removed", () => {
+    const dir = join(tmpdir(), "aex-install-cleanup-locked");
+    let removeCalls = 0;
+    const cleanup = createDirectoryCleanup(dir, {
+      pathExists: () => true,
+      removeDirectory: () => {
+        removeCalls++;
+        throw Object.assign(new Error("file is in use"), {
+          code: "EPERM",
+          syscall: "unlink",
+          path: join(dir, "node_modules", "ignore", "LICENSE-MIT")
+        });
+      }
+    });
+
+    expect(cleanup).toThrow(/failed to remove install tempdir[\s\S]*EPERM[\s\S]*LICENSE-MIT/);
+    expect(cleanup).toThrow(/failed to remove install tempdir/);
+    expect(removeCalls).toBe(2);
   });
 });
