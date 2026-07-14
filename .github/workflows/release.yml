@@ -350,30 +350,17 @@ jobs:
             --tag "${NPM_DIST_TAG}" \
             --provenance
 
-      - name: Wait for npm visibility
-        run: node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
-
-      - name: Wait for Bun install visibility
-        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
-
-      - name: Resolve immutable registry evidence
+      - name: Wait for immutable npm evidence
         id: registry-evidence
         env:
           SDK_VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          package_spec="@aexhq/sdk@${SDK_VERSION}"
-          integrity="$(npm view "${package_spec}" dist.integrity --json --registry https://registry.npmjs.org | jq -r '.')"
-          if ! [[ "${integrity}" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]; then
-            echo "::error::npm returned invalid dist.integrity for ${package_spec}"
-            exit 1
-          fi
-          source_sha="$(npm view "${package_spec}" aexRelease.sourceSha --json --registry https://registry.npmjs.org | jq -r 'select(type == "string")')"
-          if [ "${source_sha}" != "${RELEASE_HEAD_SHA}" ]; then
-            echo "::error::Registry source attestation '${source_sha:-missing}' does not match release source '${RELEASE_HEAD_SHA}'."
-            exit 1
-          fi
-          echo "integrity=${integrity}" >> "$GITHUB_OUTPUT"
+        run: >-
+          node scripts/cicd/wait-for-npm.mjs @aexhq/sdk "${SDK_VERSION}"
+          --source-sha "${RELEASE_HEAD_SHA}"
+          --github-output "${GITHUB_OUTPUT}"
+
+      - name: Wait for Bun install visibility
+        run: bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "${{ needs.version.outputs.version }}"
 
   live-user-tests:
     # Published-artifact SMOKE (not the full behavioral matrix). release.yml

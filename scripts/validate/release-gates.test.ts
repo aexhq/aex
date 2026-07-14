@@ -42,7 +42,7 @@ describe("release pipeline gates", () => {
     const resolvePublication = workflowStep(version, "Resolve immutable publication state");
     const applyVersion = workflowStep(publish, "Apply immutable canary version");
     const bindSource = workflowStep(publish, "Bind package to release source");
-    const registryEvidence = workflowStep(publish, "Resolve immutable registry evidence");
+    const registryEvidence = workflowStep(publish, "Wait for immutable npm evidence");
     const uploadManifest = workflowStep(manifest, "Upload public release manifest");
 
     expect(Object.keys(triggers)).toEqual(["workflow_dispatch"]);
@@ -66,8 +66,13 @@ describe("release pipeline gates", () => {
     expect(stepIndex(publish, bindSource.name!)).toBeLessThan(
       stepIndex(publish, workflowStep(publish, "Pack publish tarball").name!)
     );
-    expect(registryEvidence.run).toContain("aexRelease.sourceSha");
-    expect(registryEvidence.run).toContain('!= "${RELEASE_HEAD_SHA}"');
+    expect(registryEvidence.id).toBe("registry-evidence");
+    expect(registryEvidence.run).toContain('wait-for-npm.mjs @aexhq/sdk "${SDK_VERSION}"');
+    expect(registryEvidence.run).toContain('--source-sha "${RELEASE_HEAD_SHA}"');
+    expect(registryEvidence.run).toContain('--github-output "${GITHUB_OUTPUT}"');
+    expect(
+      publish.steps?.filter((step) => typeof step.run === "string" && step.run.includes("npm view"))
+    ).toHaveLength(0);
     expect(workflowStep(publish, "Publish to npm").if).toContain("needs.version.outputs.already_published != 'true'");
     expect(jobNeeds(publish)).not.toContain("live-user-tests-preflight");
     expect(jobNeeds(publish)).not.toContain("platform-dispatch-preflight");
