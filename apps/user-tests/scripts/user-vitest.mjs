@@ -53,13 +53,16 @@ export async function main() {
   let runFailure;
   try {
     outcome = await spawnUserVitest(invocation);
+    if (outcome.error) runFailure = outcome.error;
   } catch (error) {
     runFailure = error;
   }
 
   const cleanupFailures = [];
   try {
-    cleanupUserTestTempRoot(runTempRoot);
+    cleanupUserTestTempRoot(runTempRoot, {
+      allowRetainedEntries: Boolean(outcome?.cancellationSignal)
+    });
   } catch (error) {
     cleanupFailures.push(error);
   }
@@ -70,12 +73,17 @@ export async function main() {
       cleanupFailures.push(error);
     }
   }
+  outcome?.disposeSignalHandlers();
 
   if (runFailure || cleanupFailures.length > 0) {
     const failures = [runFailure, ...cleanupFailures].filter((error) => error !== undefined);
     throw failures.length === 1
       ? failures[0]
       : new AggregateError(failures, "user-tests: runner and cleanup failures occurred");
+  }
+  if (outcome.cancellationSignal) {
+    console.error(`user-tests: exiting after graceful ${outcome.cancellationSignal} cancellation`);
+    return 1;
   }
   if (outcome.signal) {
     console.error(`vitest exited with signal ${outcome.signal}`);
@@ -86,14 +94,48 @@ export async function main() {
 
 function spawnUserVitest(invocation) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: appRoot,
-      env,
-      stdio: "inherit",
-      ...invocation.options
+    let child;
+    try {
+      child = spawn(invocation.command, invocation.args, {
+        cwd: appRoot,
+        env,
+        stdio: "inherit",
+        ...invocation.options
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    let cancellationSignal;
+    let childError;
+    const forwardSignal = (signal) => {
+      if (cancellationSignal) return;
+      cancellationSignal = signal;
+      console.error(`user-tests: received ${signal}; forwarding it to the Vitest child and waiting for close`);
+      try {
+        if (!child.kill(signal) && child.exitCode === null && child.signalCode === null) {
+          childError = new Error(`user-tests: failed to forward ${signal} to the Vitest child`);
+        }
+      } catch (error) {
+        childError = new Error(`user-tests: failed to forward ${signal} to the Vitest child: ${describeFsError(error)}`);
+      }
+    };
+    const onSigint = () => forwardSignal("SIGINT");
+    const onSigterm = () => forwardSignal("SIGTERM");
+    const removeSignalHandlers = () => {
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+    };
+
+    process.on("SIGINT", onSigint);
+    process.on("SIGTERM", onSigterm);
+    child.once("error", (error) => {
+      childError ??= error;
     });
-    child.once("error", reject);
-    child.once("close", (code, signal) => resolvePromise({ code, signal }));
+    child.once("close", (code, signal) => {
+      resolvePromise({ code, signal, cancellationSignal, error: childError, disposeSignalHandlers: removeSignalHandlers });
+    });
   });
 }
 
@@ -106,7 +148,7 @@ export function createUserTestTempRoot(parentDir = tmpdir()) {
  * is reported after removal so a worker cleanup regression fails the run
  * without preserving hardlinks in the global Bun cache.
  */
-export function cleanupUserTestTempRoot(runTempRoot) {
+export function cleanupUserTestTempRoot(runTempRoot, options = {}) {
   let retainedEntries;
   let inspectionFailure;
   try {
@@ -136,6 +178,13 @@ export function cleanupUserTestTempRoot(runTempRoot) {
     const shown = retainedEntries.slice(0, 20).join(", ");
     const omitted = retainedEntries.length > 20 ? ` (+${retainedEntries.length - 20} more)` : "";
     const noun = retainedEntries.length === 1 ? "entry" : "entries";
+    if (options.allowRetainedEntries) {
+      console.error(
+        `user-tests: graceful cancellation retained ${retainedEntries.length} ${noun} in ${runTempRoot}: ` +
+          `${shown}${omitted}; removed the owned run root`
+      );
+      return;
+    }
     throw new Error(
       `user-tests: fixture cleanup left ${retainedEntries.length} ${noun} in ${runTempRoot}: ` +
         `${shown}${omitted}; removed the owned run root and failing the run`

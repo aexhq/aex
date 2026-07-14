@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,7 +26,8 @@ function callUserVitestValue<T>(expression: string): T {
   return JSON.parse(
     execFileSync(process.execPath, ["--input-type=module", "--eval", code], {
       cwd: repoRoot,
-      encoding: "utf8"
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
     })
   ) as T;
 }
@@ -107,6 +108,23 @@ describe("user-vitest argv spawning", () => {
     }
   });
 
+  it("removes expected fixture residue during graceful cancellation", () => {
+    const parentDir = mkdtempSync(join(tmpdir(), "aex-user-vitest-cancel-cleanup-test-"));
+    const runRoot = mkdtempSync(join(parentDir, "aex-user-test-run-"));
+    mkdirSync(join(runRoot, "install-retained"));
+
+    try {
+      const result = callUserVitestValue<{ readonly cleaned: boolean }>(
+        `(() => { mod.cleanupUserTestTempRoot(${JSON.stringify(runRoot)}, { allowRetainedEntries: true }); ` +
+          `return { cleaned: true }; })()`
+      );
+      expect(result).toEqual({ cleaned: true });
+      expect(existsSync(runRoot)).toBe(false);
+    } finally {
+      rmSync(parentDir, { recursive: true, force: true });
+    }
+  });
+
   it("exits nonzero when a Vitest worker leaves an install tree behind", () => {
     const dir = mkdtempSync(join(tmpdir(), "aex-user-vitest-residue-test-"));
     const fakeTarball = join(dir, "aexhq-sdk-0.0.0.tgz");
@@ -151,4 +169,96 @@ describe("user-vitest argv spawning", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  if (process.platform !== "win32") {
+    it.each(["SIGINT", "SIGTERM"] as const)(
+      "forwards %s, awaits child close, and removes retained install trees",
+      async (signal) => {
+        const dir = mkdtempSync(join(tmpdir(), "aex-user-vitest-signal-test-"));
+        const fakeTarball = join(dir, "aexhq-sdk-0.0.0.tgz");
+        const fakeBun = join(dir, "fake-bun");
+        const readyFile = join(dir, "vitest-child-ready");
+        writeFileSync(fakeTarball, "fixture");
+        writeFileSync(
+          fakeBun,
+          [
+            "#!/bin/sh",
+            'if [ -z "$AEX_USER_TEST_TEMP_ROOT" ]; then exit 0; fi',
+            "trap 'exit 0' INT TERM",
+            'mkdir "$AEX_USER_TEST_TEMP_ROOT/install-retained"',
+            'printf ready > "$AEX_USER_TEST_SIGNAL_READY"',
+            "while :; do sleep 1; done"
+          ].join("\n")
+        );
+        chmodSync(fakeBun, 0o755);
+
+        const child = spawn(process.execPath, [fileURLToPath(runUserVitestUrl), "--config", "fake.config.ts"], {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            AEX_USER_TEST_BUN: fakeBun,
+            AEX_USER_TEST_SIGNAL_READY: readyFile,
+            AEX_USER_TEST_TARBALL: fakeTarball,
+            AEX_USER_TEST_VERSION: ""
+          },
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+        let stderr = "";
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk.toString();
+        });
+        const close = new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
+          (resolvePromise, reject) => {
+            child.once("error", reject);
+            child.once("close", (code, closeSignal) => resolvePromise({ code, signal: closeSignal }));
+          }
+        );
+
+        try {
+          await waitForPath(readyFile, 5_000);
+          expect(child.kill(signal)).toBe(true);
+          const outcome = await within(close, 5_000, `user-vitest did not exit after ${signal}`);
+
+          expect(outcome).toEqual({ code: 1, signal: null });
+          expect(stderr).toContain(`received ${signal}; forwarding it to the Vitest child and waiting for close`);
+          expect(stderr).toContain(`exiting after graceful ${signal} cancellation`);
+          expect(stderr).toMatch(
+            /graceful cancellation retained 1 entr(?:y|ies)[\s\S]*install-retained[\s\S]*removed the owned run root/
+          );
+          const runRoot = stderr.match(/in ([^\r\n]+aex-user-test-run-[^:]+):/)?.[1];
+          expect(runRoot).toBeTruthy();
+          expect(existsSync(runRoot!)).toBe(false);
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) {
+            // Test-only timeout containment; graceful-signal behavior is asserted above.
+            child.kill("SIGKILL");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    );
+  }
 });
+
+async function waitForPath(path: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}
+
+async function within<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolvePromise, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

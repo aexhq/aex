@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error JavaScript CI policy helper is validated directly.
 import { isRetryableRegistryStatus, validateRegistryMetadata, waitForNpmEvidence } from "../cicd/wait-for-npm.mjs";
@@ -18,7 +19,17 @@ const metadata = {
   }
 };
 
+const helperSource = readFileSync(new URL("../cicd/wait-for-npm.mjs", import.meta.url), "utf8");
+
 describe("immutable npm evidence", () => {
+  it.each([
+    ["LF", helperSource.replace(/\r\n?/gu, "\n")],
+    ["CRLF", helperSource.replace(/\r\n?/gu, "\n").replace(/\n/gu, "\r\n")]
+  ])("keeps the importable helper hashbang-free with %s line endings", (_lineEnding, source) => {
+    expect(source.startsWith("#!")).toBe(false);
+    expect(source).toMatch(/^import \{ appendFile \} from "node:fs\/promises";/u);
+  });
+
   it("carries one successful metadata observation through tarball visibility", async () => {
     const fetch = vi
       .fn()
