@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   jobNeeds,
@@ -26,7 +27,8 @@ describe("release pipeline gates", () => {
     expect(parityCheck.run).toContain("bun run contracts:parity:check");
   });
 
-  it("publishes an immutable canary only through the exact controller dispatch", () => {
+  it("publishes an immutable canary without granting the public workflow platform mutation authority", () => {
+    const source = readFileSync(".github/workflows/release.yml", "utf8");
     const workflow = readWorkflow(".github/workflows/release.yml");
     const triggers = workflowTriggers(workflow);
     const workflowDispatch = triggers.workflow_dispatch as {
@@ -42,7 +44,6 @@ describe("release pipeline gates", () => {
     const bindSource = workflowStep(publish, "Bind package to release source");
     const registryEvidence = workflowStep(publish, "Resolve immutable registry evidence");
     const uploadManifest = workflowStep(manifest, "Upload public release manifest");
-    const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
 
     expect(Object.keys(triggers)).toEqual(["workflow_dispatch"]);
     expect(workflowDispatch.inputs?.platform_sha?.required).toBe(true);
@@ -69,24 +70,12 @@ describe("release pipeline gates", () => {
     expect(registryEvidence.run).toContain('!= "${RELEASE_HEAD_SHA}"');
     expect(workflowStep(publish, "Publish to npm").if).toContain("needs.version.outputs.already_published != 'true'");
     expect(jobNeeds(publish)).not.toContain("live-user-tests-preflight");
+    expect(jobNeeds(publish)).not.toContain("platform-dispatch-preflight");
     expect(jobNeeds(workflowJob(workflow, "live-user-tests"))).toContain("live-user-tests-preflight");
-    expect(dispatch.run).toContain('event_type: "aex-canary-published"');
-    expect(dispatch.run).toContain("jq -n");
-    expect(dispatch.run).toContain('--arg sdk_version "${SDK_VERSION}"');
-    expect(dispatch.run).toContain('--arg integrity "${SDK_INTEGRITY}"');
-    expect(dispatch.run).toContain('--arg platform_sha "${PLATFORM_SHA}"');
-    expect(dispatch.run).toContain('--arg release_key "${RELEASE_KEY}"');
     expect(uploadManifest.id).toBeUndefined();
-    expect(dispatch.env).not.toHaveProperty("PUBLIC_RELEASE_ARTIFACT_ID");
-    expect(dispatch.env).not.toHaveProperty("PUBLIC_RELEASE_ARTIFACT_DIGEST");
-    expect(dispatch.run).toContain('manifest_digest="sha256:$(sha256sum public-release-manifest.json');
-    expect(dispatch.run).toContain('manifest_base64="$(base64 -w 0 public-release-manifest.json)"');
-    expect(dispatch.run).toContain('--arg public_release_manifest_base64 "${manifest_base64}"');
-    expect(dispatch.run).toContain('--arg public_release_manifest_digest "${manifest_digest}"');
-    expect(dispatch.run).toContain("public_release_manifest_base64: $public_release_manifest_base64");
-    expect(dispatch.run).toContain("public_release_manifest_digest: $public_release_manifest_digest");
-    expect(dispatch.run).not.toContain("public_release_artifact_id");
-    expect(dispatch.run).not.toContain("public_release_artifact_digest");
+    expect(workflow.jobs).not.toHaveProperty("platform-dispatch-preflight");
+    expect(source).not.toContain("PLATFORM_REPO_TOKEN");
+    expect(source).not.toContain("repos/aexhq/platform/actions/workflows");
   });
 
   it("runs every public gate for the controller-owned release", () => {
@@ -99,26 +88,22 @@ describe("release pipeline gates", () => {
     for (const id of MANUAL_GATE_JOBS) {
       expect(jobNeeds(publish), id).toContain(id);
     }
-    expect(JSON.stringify(workflow)).not.toContain("workflow_run");
+    expect(workflowTriggers(workflow)).not.toHaveProperty("workflow_run");
   });
 
   it("publishes a source-bound immutable canary for controller workflow dispatch", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     const version = workflowJob(workflow, "version");
     const publish = workflowJob(workflow, "publish");
-    const manifest = workflowJob(workflow, "public-release-manifest");
     const resolveVersion = workflowStep(version, "Resolve package version");
     const resolvePublication = workflowStep(version, "Resolve immutable publication state");
     const applyVersion = workflowStep(publish, "Apply immutable canary version");
-    const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
 
     expect(workflow.env?.RELEASE_MODE).toBe("immutable-canary");
     expect(resolveVersion.run).toContain("canary-version.mjs resolve");
     expect(resolveVersion.run).not.toContain('version="${base_version}"');
     expect(resolvePublication.run).not.toContain("assert-npm-version-available.mjs");
     expect(applyVersion.if).toBe("${{ needs.version.outputs.already_published != 'true' }}");
-    expect(dispatch.env?.RELEASE_MODE).toBe("${{ env.RELEASE_MODE }}");
-    expect(dispatch.run).toContain("release_mode: $release_mode");
   });
 
   it("requires the canary dist-tag before publish", () => {
@@ -250,13 +235,12 @@ describe("release pipeline gates", () => {
     expect(upload.id).toBeUndefined();
   });
 
-  it("cannot report success after publishing without smoke, manifest, and dispatch", () => {
+  it("cannot report success after publishing without smoke and manifest", () => {
     const workflow = readWorkflow(".github/workflows/release.yml");
     const smoke = workflowJob(workflow, "live-user-tests");
     const manifest = workflowJob(workflow, "public-release-manifest");
     const complete = workflowJob(workflow, "release-complete");
     const smokeRun = workflowStep(smoke, "Published-artifact smoke");
-    const dispatch = workflowStep(manifest, "Dispatch exact candidate to platform");
     const verify = workflowStep(complete, "Require complete published candidate");
 
     expect(smoke.if).toContain("always()");
@@ -269,9 +253,6 @@ describe("release pipeline gates", () => {
     expect(smoke["continue-on-error"]).not.toBe(true);
     expect(smokeRun.if).toBeUndefined();
     expect(smokeRun["continue-on-error"]).not.toBe(true);
-    expect(dispatch.if).toBeUndefined();
-    expect(dispatch["continue-on-error"]).not.toBe(true);
-
     expect(new Set(jobNeeds(complete))).toEqual(
       new Set(["publish", "live-user-tests", "public-release-manifest"])
     );

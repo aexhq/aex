@@ -273,21 +273,6 @@ jobs:
           LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,files:read
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
-  platform-dispatch-preflight:
-    name: Platform dispatch preflight
-    needs: authorize
-    runs-on: ubuntu-latest
-    env:
-      HAS_PLATFORM_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN != '' }}
-    steps:
-      - name: Require platform dispatch token
-        run: |
-          set -euo pipefail
-          if [ "${HAS_PLATFORM_TOKEN}" != "true" ]; then
-            echo "::error::PLATFORM_REPO_TOKEN is required before publishing so the exact candidate can enter platform validation."
-            exit 1
-          fi
-
   publish:
     name: Publish @aexhq/sdk
     needs:
@@ -297,7 +282,6 @@ jobs:
       - offline-user-tests
       - docs-build
       - pack-sdk
-      - platform-dispatch-preflight
     # npm trusted publishing supports GitHub-hosted runners only. Keep this job
     # off AEX_CI_RUNNER so OIDC exchange and provenance remain deterministic.
     runs-on: ubuntu-latest
@@ -555,8 +539,6 @@ jobs:
           SDK_VERSION: ${{ needs.publish.outputs.version }}
           SDK_INTEGRITY: ${{ needs.publish.outputs.integrity }}
           SOURCE_SHA: ${{ needs.publish.outputs.head_sha }}
-          PLATFORM_SHA: ${{ inputs.platform_sha }}
-          RELEASE_KEY: ${{ inputs.release_key }}
           NPM_DIST_TAG: ${{ env.NPM_DIST_TAG }}
         run: |
           set -euo pipefail
@@ -576,47 +558,6 @@ jobs:
           retention-days: 30
           overwrite: true
 
-      - name: Dispatch exact candidate to platform
-        env:
-          GH_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          SDK_VERSION: ${{ needs.publish.outputs.version }}
-          SDK_INTEGRITY: ${{ needs.publish.outputs.integrity }}
-          SOURCE_SHA: ${{ needs.publish.outputs.head_sha }}
-          RELEASE_MODE: ${{ env.RELEASE_MODE }}
-          PLATFORM_SHA: ${{ inputs.platform_sha }}
-          RELEASE_KEY: ${{ inputs.release_key }}
-        run: |
-          set -euo pipefail
-          manifest_digest="sha256:$(sha256sum public-release-manifest.json | awk '{print $1}')"
-          manifest_base64="$(base64 -w 0 public-release-manifest.json)"
-          if ! [[ "${manifest_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "::error::public release manifest digest is invalid"; exit 1; fi
-          if [ -z "${manifest_base64}" ]; then echo "::error::public release manifest transfer is empty"; exit 1; fi
-          jq -n \
-            --arg sdk_version "${SDK_VERSION}" \
-            --arg integrity "${SDK_INTEGRITY}" \
-            --arg public_sha "${SOURCE_SHA}" \
-            --arg public_release_run_id "${GITHUB_RUN_ID}" \
-            --arg public_release_manifest_base64 "${manifest_base64}" \
-            --arg public_release_manifest_digest "${manifest_digest}" \
-            --arg release_mode "${RELEASE_MODE}" \
-            --arg platform_sha "${PLATFORM_SHA}" \
-            --arg release_key "${RELEASE_KEY}" \
-            '{
-              event_type: "aex-canary-published",
-              client_payload: {
-                sdk_version: $sdk_version,
-                integrity: $integrity,
-                public_sha: $public_sha,
-                public_release_run_id: $public_release_run_id,
-                public_release_manifest_base64: $public_release_manifest_base64,
-                public_release_manifest_digest: $public_release_manifest_digest,
-                release_mode: $release_mode,
-                platform_sha: $platform_sha,
-                release_key: $release_key
-              }
-            }' > platform-dispatch.json
-          gh api --method POST repos/aexhq/platform/dispatches --input platform-dispatch.json
-
   release-complete:
     name: Verify complete release
     needs:
@@ -624,7 +565,7 @@ jobs:
       - live-user-tests
       - public-release-manifest
     # A successful publish is irreversible. Once it happens, make skipped
-    # smoke, manifest, or dispatch work fail the workflow instead of allowing
+    # smoke or manifest work fail the workflow instead of allowing
     # GitHub's skipped-job semantics to report a false green release.
     if: ${{ always() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
