@@ -122,6 +122,19 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     expect(rec.calls).toHaveLength(0);
   });
 
+  it("rejects an invalid runtimeKind without an HTTP call", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expect(
+      client.sessions.create({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        runtimeKind: "fargate"
+      } as never)
+    ).rejects.toThrow(SessionConfigValidationError);
+    expect(rec.calls).toHaveLength(0);
+  });
+
   it("rejects a malformed overrides.timeout without an HTTP call (F12)", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
@@ -163,6 +176,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
 
   it.each([
     ["runtime", { runtime: "sensitive-invalid-runtime" }, "runtime"],
+    ["runtimeKind", { runtimeKind: "sensitive-invalid-kind" }, "runtimeKind"],
     ["timeout", { overrides: { timeout: "sensitive-invalid-timeout" } }, "overrides.timeout"],
     ["webhook", { webhook: { url: "sensitive-invalid-webhook" } }, "webhook.url"],
     ["maxSpendUsd", { overrides: { maxSpendUsd: -1 } }, "overrides.maxSpendUsd"],

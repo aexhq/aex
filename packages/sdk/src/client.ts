@@ -69,6 +69,7 @@ import {
   parseApprovalGate,
   parseResponseFormat,
   parseRuntimeSize,
+  parseRuntimeKind,
   parseSessionTimeout,
   parseSessionWebhook,
   type SessionWebhookDelivery,
@@ -76,6 +77,7 @@ import {
   type SecretRecord,
   type BuiltinToolName,
   type RuntimeSize,
+  type RuntimeKind,
   type SubmissionAssets,
   type WorkspaceFileRef,
   type WorkspaceFileRecord,
@@ -262,6 +264,16 @@ export interface SessionCreateOptions extends IdempotencyOptions {
    * Prefer the {@link Sizes} symbol const.
    */
   readonly runtime?: RuntimeSize;
+  /**
+   * Execution-runtime backend for the session — which infrastructure runs it
+   * ({@link RuntimeKind}: `container` | `spot_container` | `lambda`). Distinct
+   * from {@link runtime} (the box size). Default `container` (today's behavior).
+   * `spot_container` is cheaper + interruption-tolerant (at-least-once — a
+   * side-effecting tool call since the last checkpoint may repeat on reclaim);
+   * `lambda` is the serverless runtime (availability-gated). Prefer the
+   * {@link RuntimeKinds} symbol const.
+   */
+  readonly runtimeKind?: RuntimeKind;
   readonly overrides?: SessionOverrides;
   /**
     * Optional callback URL registered on the session. The platform delivers a
@@ -1820,6 +1832,16 @@ export class Aex {
       throw configError("aex.sessions.create", "runtime", "runtime must be a supported size preset");
     }
     try {
+      parseRuntimeKind(options.runtimeKind);
+    } catch (err) {
+      void err;
+      throw configError(
+        "aex.sessions.create",
+        "runtimeKind",
+        "runtimeKind must be one of: container, spot_container, lambda"
+      );
+    }
+    try {
       parseSessionTimeout(options.overrides?.timeout);
     } catch (err) {
       void err;
@@ -1942,6 +1964,7 @@ export class Aex {
       provider,
       submission,
       ...(options.runtime ? { runtimeSize: options.runtime } : {}),
+      ...(options.runtimeKind ? { runtimeKind: options.runtimeKind } : {}),
       ...(options.overrides?.timeout ? { timeout: options.overrides.timeout } : {}),
       ...(limits ? { limits } : {}),
       retention,
@@ -2145,7 +2168,7 @@ function assertSupportedSessionFields(
   const allowed = new Set([
     "provider", "model", "system", "assets", "mcpServers", "fileCapture",
     "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
-    "idempotencyKey", "apiKeys", "environment", "runtime", "overrides", "webhook",
+    "idempotencyKey", "apiKeys", "environment", "runtime", "runtimeKind", "overrides", "webhook",
     ...(allowStartFields ? ["message", "deleteAfter", "messageIdempotencyKey", "stream"] : [])
   ]);
   const guidance: Readonly<Record<string, string>> = {

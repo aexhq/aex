@@ -198,6 +198,11 @@ export {
 export { RuntimeSizes as Sizes } from "@aexhq/contracts";
 export type { RuntimeResources, RuntimeSize } from "@aexhq/contracts";
 
+// Execution runtime — which backend runs the session (distinct from size).
+// Prefer the `RuntimeKinds` symbol const (e.g. `RuntimeKinds.SPOT_CONTAINER`).
+export { DEFAULT_RUNTIME_KIND, RUNTIME_KINDS, RuntimeKinds } from "@aexhq/contracts";
+export type { RuntimeKind } from "@aexhq/contracts";
+
 // Builtin tools — the closed + default builtin tool sets. Select `"default"`,
 // `"none"`, or individual names with `builtinTools`. Prefer the `BuiltinTools` const (e.g.
 // `BuiltinTools.web_search`) so a typo is a compile error, not a runtime 400.

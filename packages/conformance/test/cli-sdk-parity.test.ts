@@ -28,6 +28,7 @@ const SESSION_OPTION_COVERAGE = {
   apiKeys: CLI_PARITY_PROVIDER_KEY_FLAG,
   environment: "--config",
   runtime: "--runtime-size",
+  runtimeKind: "--runtime-kind",
   overrides: "--session-timeout",
   webhook: "--webhook",
   message: "--prompt",

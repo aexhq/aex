@@ -51,6 +51,7 @@ export const START_FLAGS: readonly string[] = [
   "--mcp-auth",
   "--metadata",
   "--runtime-size",
+  "--runtime-kind",
   "--session-timeout",
   "--idempotency-key",
   "--webhook",
@@ -75,6 +76,7 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
       "  --mcp name=url       MCP server (repeatable); --mcp-auth name=Hdr:Val for headers",
       "  --metadata key=value Submission metadata (repeatable)",
       "  --runtime-size <s>   Managed runtime preset",
+      "  --runtime-kind <k>   Execution runtime: container | spot_container | lambda",
       "  --session-timeout <dur>  Server-side session deadline (validated client-side by the SDK)",
       "  --webhook <url>      Finalized run callback (run.finished/run.error; https)",
       "  --follow             Stream events until the run finishes"

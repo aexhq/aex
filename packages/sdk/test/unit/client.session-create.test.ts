@@ -19,7 +19,8 @@ function harness() {
         id: "session_1",
         status: "idle",
         acceptsMessages: true,
-        runtimeSize: body.runtimeSize ?? "shared-0.25x-1gb"
+        runtimeSize: body.runtimeSize ?? "shared-0.25x-1gb",
+        ...(body.runtimeKind ? { runtimeKind: body.runtimeKind } : {})
       }
     }), {
       status: 201,
@@ -105,6 +106,30 @@ describe("aex.sessions.create", () => {
     });
     expect(session.record.runtime).toBe("shared-0.5x-4gb");
     expect(session.record).not.toHaveProperty("runtimeSize");
+  });
+
+  it("forwards runtimeKind to the wire and exposes it on the record, orthogonal to size", async () => {
+    const { client, calls } = harness();
+    const session = await client.sessions.create({
+      model: "claude-haiku-4-5",
+      runtime: "shared-2x-8gb",
+      runtimeKind: "spot_container",
+      apiKeys: { anthropic: "sk-test" }
+    });
+    expect(calls[0]!.body).toMatchObject({
+      runtimeSize: "shared-2x-8gb",
+      runtimeKind: "spot_container"
+    });
+    expect(session.record.runtimeKind).toBe("spot_container");
+  });
+
+  it("omits runtimeKind from the wire when not selected (container default applied downstream)", async () => {
+    const { client, calls } = harness();
+    await client.sessions.create({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-test" }
+    });
+    expect(calls[0]!.body).not.toHaveProperty("runtimeKind");
   });
 
   it("requires the selected provider key before network access", async () => {

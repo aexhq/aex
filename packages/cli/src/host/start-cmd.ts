@@ -27,13 +27,15 @@ import {
   providersForModel,
   resolveModelProvider,
   RUNTIME_SIZES,
+  RUNTIME_KINDS,
   PROVIDERS,
   type HttpClient,
   type JsonValue,
   type PlatformEnvironment,
   type ModelName,
   type ProviderName,
-  type RuntimeSize
+  type RuntimeSize,
+  type RuntimeKind
 } from "@aexhq/contracts";
 import { operations } from "@aexhq/contracts/internal";
 import { resolve as resolvePath } from "node:path";
@@ -130,6 +132,17 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   if (runtimeSizeFlag.value && !(RUNTIME_SIZES as readonly string[]).includes(runtimeSizeFlag.value)) {
     const hint = suggest(runtimeSizeFlag.value, RUNTIME_SIZES);
     io.stderr(`--runtime-size must be one of: ${RUNTIME_SIZES.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}\n`);
+    return USAGE_ERR;
+  }
+
+  // `--runtime-kind` selects the execution backend (container | spot_container |
+  // lambda); distinct from `--runtime-size` (the box preset). Default container.
+  const runtimeKindFlag = takeFlagValue(rest, "--runtime-kind");
+  if (runtimeKindFlag.error) { io.stderr(`${runtimeKindFlag.error}\n`); return USAGE_ERR; }
+  rest = runtimeKindFlag.remaining;
+  if (runtimeKindFlag.value && !(RUNTIME_KINDS as readonly string[]).includes(runtimeKindFlag.value)) {
+    const hint = suggest(runtimeKindFlag.value, RUNTIME_KINDS);
+    io.stderr(`--runtime-kind must be one of: ${RUNTIME_KINDS.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}\n`);
     return USAGE_ERR;
   }
 
@@ -367,6 +380,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
 
   const environment = toCliSessionEnvironment(configEnvironment);
   const runtimeSize = (runtimeSizeFlag.value as RuntimeSize | null) ?? configRuntimeSize;
+  const runtimeKind = runtimeKindFlag.value as RuntimeKind | null;
   const timeout = sessionTimeoutFlag.value ?? configTimeout;
 
   const options: CliSessionSubmitOptions = {
@@ -383,6 +397,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     apiKeys: providerKeyValues,
     ...(environment ? { environment } : {}),
     ...(runtimeSize ? { runtime: runtimeSize } : {}),
+    ...(runtimeKind ? { runtimeKind } : {}),
     overrides: {
       idleTtl: DEFAULT_SESSION_IDLE_TTL,
       ...(timeout ? { timeout } : {})

@@ -4,6 +4,17 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.43.0
+
+### Added
+
+- `runtimeKind` session-create option — choose the execution runtime backend:
+  `container` (default, today's behavior), `spot_container` (cheaper,
+  interruption-tolerant, at-least-once), or `lambda` (serverless; availability
+  gated). Additive and backward-compatible: omit it and sessions run exactly as
+  before. Distinct from `runtime` (the box size). Prefer the `RuntimeKinds`
+  symbol const. Exposed on the session record as `session.record.runtimeKind`.
+
 ## 0.42.0
 
 ### Changed

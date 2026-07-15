@@ -28,6 +28,7 @@ import {
   type ModelName,
   type ProviderName,
   type RuntimeSize,
+  type RuntimeKind,
   type SessionMessageAccepted,
   type SessionCreateRequest,
   type ToolInputSchema,
@@ -88,6 +89,7 @@ export interface CliSessionSubmitOptions {
   readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly environment?: CliSessionEnvironmentOptions;
   readonly runtime?: RuntimeSize;
+  readonly runtimeKind?: RuntimeKind;
   readonly overrides?: {
     readonly idleTtl?: string;
     readonly timeout?: string;
@@ -254,6 +256,7 @@ async function buildSessionCreateRequest(
     provider,
     submission,
     ...(options.runtime ? { runtimeSize: options.runtime } : {}),
+    ...(options.runtimeKind ? { runtimeKind: options.runtimeKind } : {}),
     ...(options.overrides?.timeout ? { timeout: options.overrides.timeout } : {}),
     ...(limits ? { limits } : {}),
     retention: { idleTtl: options.overrides?.idleTtl ?? "3m" },
