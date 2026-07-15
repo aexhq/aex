@@ -8,6 +8,7 @@ import {
 } from "./session-config.js";
 import type { McpServerRef, ToolInputSchema } from "./session-config.js";
 import { parseSessionTimeout, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
+import { parseRuntimeKind, type RuntimeKind } from "./runtime-kind.js";
 import {
   assertModelNameMatchesProvider,
   parseModelName,
@@ -869,6 +870,15 @@ export interface PlatformSessionSubmissionRequest {
    */
   readonly runtimeSize?: RuntimeSize;
   /**
+   * Execution-runtime selector — which backend runs the session
+   * ({@link RuntimeKind}: `container` | `spot_container` | `lambda`). Distinct
+   * from {@link runtimeSize} (the box preset). Absent ⇒ downstream applies
+   * {@link import("./runtime-kind.js").DEFAULT_RUNTIME_KIND} (`container`).
+   * `spot_container` implies interruptible capacity (reconciled with
+   * {@link machine}); `lambda` is availability-gated server-side.
+   */
+  readonly runtimeKind?: RuntimeKind;
+  /**
    * Session deadline in milliseconds, normalised by the parser from the wire
    * `timeout` duration string (bounded to [1m, 8h]). Absent ⇒
    * {@link DEFAULT_SESSION_TIMEOUT_MS} (8h). Applies to the managed runner's
@@ -980,6 +990,7 @@ export function parseSessionSubmissionRequest(
     "provider",
     "submission",
     "runtimeSize",
+    "runtimeKind",
     "timeout",
     "webhook",
     "limits",
@@ -1005,6 +1016,7 @@ export function parseSessionSubmissionRequest(
   }
   const provider = parseProviderName(value.provider);
   const runtimeSize = parseRuntimeSize(value.runtimeSize);
+  const runtimeKind = parseRuntimeKind(value.runtimeKind);
   const timeoutMs = parseSessionTimeout(value.timeout);
   const webhook = parseSessionWebhook(value.webhook);
   const limits = parseSessionLimits(value.limits);
@@ -1049,6 +1061,7 @@ export function parseSessionSubmissionRequest(
     provider,
     submission,
     ...(runtimeSize ? { runtimeSize } : {}),
+    ...(runtimeKind ? { runtimeKind } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(webhook !== undefined ? { webhook } : {}),
     ...(limits !== undefined ? { limits } : {}),

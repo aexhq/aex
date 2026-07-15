@@ -1,5 +1,6 @@
 import type { SessionStatus, SessionTerminalOutcome } from "./status.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
+import type { RuntimeKind } from "./runtime-kind.js";
 import type { SessionCostProviderUsage } from "./session-cost.js";
 import type {
   PlatformInlineSecrets,
@@ -37,6 +38,8 @@ export interface Session {
   readonly model?: PlatformSubmission["model"];
   /** Managed runtime preset selected when the session was created. */
   readonly runtime?: RuntimeSize;
+  /** Execution-runtime backend the session runs on (`container` by default). */
+  readonly runtimeKind?: RuntimeKind;
   readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;
   readonly acceptsMessages: boolean;
   readonly currentRun?: SessionRun;
@@ -67,6 +70,8 @@ export interface SessionSummary {
   readonly status: SessionStatus;
   /** Managed runtime preset selected when the session was created. */
   readonly runtime?: RuntimeSize;
+  /** Execution-runtime backend the session runs on (`container` by default). */
+  readonly runtimeKind?: RuntimeKind;
   readonly acceptsMessages: boolean;
   readonly currentRun?: SessionRun;
   readonly lastRun?: SessionRun;
@@ -107,6 +112,7 @@ export interface SessionCreateRequest {
   readonly provider: ProviderName;
   readonly submission: SessionSubmission;
   readonly runtimeSize?: RuntimeSize;
+  readonly runtimeKind?: RuntimeKind;
   readonly timeout?: string;
   readonly limits?: SessionLimits;
   readonly retention?: SessionRetentionPolicy;
