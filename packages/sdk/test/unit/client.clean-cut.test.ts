@@ -161,7 +161,7 @@ describe("public SDK clean cut", () => {
       fetch: async () => response({ runtimeSize: "shared-0.25x-1gb" })
     });
     const session = await canonical.sessions.open("session_1");
-    expect(session.record.runtime).toBe("shared-0.25x-1gb");
+    expect(session.record.runtime).toEqual({ size: "shared-0.25x-1gb" });
     expect(session.record).not.toHaveProperty("runtimeSize");
 
     const legacy = new Aex({

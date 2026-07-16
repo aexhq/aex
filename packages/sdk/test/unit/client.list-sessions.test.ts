@@ -47,7 +47,7 @@ describe("aex.sessions.list", () => {
       sessions: [{
         id: "sess-1",
         status: "idle",
-        runtime: "shared-1x-6gb",
+        runtime: { size: "shared-1x-6gb" },
         acceptsMessages: true,
         createdAt: "t",
         updatedAt: "t"

@@ -78,6 +78,7 @@ import {
   type BuiltinToolName,
   type RuntimeSize,
   type RuntimeKind,
+  type SessionRuntime,
   type SubmissionAssets,
   type WorkspaceFileRef,
   type WorkspaceFileRecord,
@@ -260,20 +261,17 @@ export interface SessionCreateOptions extends IdempotencyOptions {
   readonly apiKeys?: Partial<Record<ProviderName, string>>;
   readonly environment?: SessionEnvironmentOptions;
   /**
-   * Managed runtime size. One of the closed {@link RuntimeSize} preset tokens.
-   * Prefer the {@link Sizes} symbol const.
+   * The execution runtime for the session — grouped as `{ kind, size }`.
+   *
+   *   - `kind` — which backend runs it: `container` (default), `spot_container`
+   *     (cheaper, interruption-tolerant, at-least-once), or `lambda` (serverless,
+   *     availability-gated). Prefer the {@link RuntimeKinds} symbol const.
+   *   - `size` — the managed box preset ({@link RuntimeSize}); prefer {@link Sizes}.
+   *
+   * Both optional; the platform applies defaults (`container`, the 1 GB tier).
+   * e.g. `runtime: { kind: "lambda", size: Sizes.SHARED_2X_8GB }`.
    */
-  readonly runtime?: RuntimeSize;
-  /**
-   * Execution-runtime backend for the session — which infrastructure runs it
-   * ({@link RuntimeKind}: `container` | `spot_container` | `lambda`). Distinct
-   * from {@link runtime} (the box size). Default `container` (today's behavior).
-   * `spot_container` is cheaper + interruption-tolerant (at-least-once — a
-   * side-effecting tool call since the last checkpoint may repeat on reclaim);
-   * `lambda` is the serverless runtime (availability-gated). Prefer the
-   * {@link RuntimeKinds} symbol const.
-   */
-  readonly runtimeKind?: RuntimeKind;
+  readonly runtime?: SessionRuntime;
   readonly overrides?: SessionOverrides;
   /**
     * Optional callback URL registered on the session. The platform delivers a
@@ -1826,19 +1824,19 @@ export class Aex {
     // added server-side before an SDK upgrade (an unknown model still fails on the
     // server).
     try {
-      parseRuntimeSize(options.runtime);
+      parseRuntimeSize(options.runtime?.size);
     } catch (err) {
       void err;
-      throw configError("aex.sessions.create", "runtime", "runtime must be a supported size preset");
+      throw configError("aex.sessions.create", "runtime.size", "runtime.size must be a supported size preset");
     }
     try {
-      parseRuntimeKind(options.runtimeKind);
+      parseRuntimeKind(options.runtime?.kind);
     } catch (err) {
       void err;
       throw configError(
         "aex.sessions.create",
-        "runtimeKind",
-        "runtimeKind must be one of: container, spot_container, lambda"
+        "runtime.kind",
+        "runtime.kind must be one of: container, spot_container, lambda"
       );
     }
     try {
@@ -1963,8 +1961,8 @@ export class Aex {
     return {
       provider,
       submission,
-      ...(options.runtime ? { runtimeSize: options.runtime } : {}),
-      ...(options.runtimeKind ? { runtimeKind: options.runtimeKind } : {}),
+      ...(options.runtime?.size ? { runtimeSize: options.runtime.size } : {}),
+      ...(options.runtime?.kind ? { runtimeKind: options.runtime.kind } : {}),
       ...(options.overrides?.timeout ? { timeout: options.overrides.timeout } : {}),
       ...(limits ? { limits } : {}),
       retention,
@@ -2168,11 +2166,12 @@ function assertSupportedSessionFields(
   const allowed = new Set([
     "provider", "model", "system", "assets", "mcpServers", "fileCapture",
     "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
-    "idempotencyKey", "apiKeys", "environment", "runtime", "runtimeKind", "overrides", "webhook",
+    "idempotencyKey", "apiKeys", "environment", "runtime", "overrides", "webhook",
     ...(allowStartFields ? ["message", "deleteAfter", "messageIdempotencyKey", "stream"] : [])
   ]);
   const guidance: Readonly<Record<string, string>> = {
-    runtimeSize: "use runtime",
+    runtimeSize: "use runtime.size",
+    runtimeKind: "use runtime.kind",
     secretEnv: "use environment.secrets",
     parentSessionId: "subagent lineage is assigned by the platform",
     message: "sessions are created without a first message; use Aex.start or session.messages.send",
@@ -2198,6 +2197,17 @@ function assertSupportedSessionFields(
         "overrides.idleSuspendAfter",
         "overrides.idleSuspendAfter is not a supported option; use overrides.idleTtl."
       );
+    }
+  }
+  const runtime = record.runtime;
+  if (runtime !== undefined) {
+    if (typeof runtime !== "object" || runtime === null || Array.isArray(runtime)) {
+      throw configError(surface, "runtime", "runtime must be an object like { kind, size }");
+    }
+    for (const key of Object.keys(runtime as Record<string, unknown>)) {
+      if (key !== "kind" && key !== "size") {
+        throw configError(surface, `runtime.${key}`, `runtime.${key} is not a supported option; use runtime.kind or runtime.size`);
+      }
     }
   }
   assertStructuredSessionFields(record, surface, allowStartFields);

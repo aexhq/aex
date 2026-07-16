@@ -147,6 +147,7 @@ export type {
   SessionListPage,
   SessionListQuery,
   SessionRetentionPolicy,
+  SessionRuntime,
   SessionStatus,
   SessionSummary,
   SessionRun,

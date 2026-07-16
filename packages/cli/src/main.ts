@@ -222,8 +222,8 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  --mcp name=url              MCP server entry (repeatable)\n");
   io.stdout("  --mcp-auth name=Hdr:Val     Auth header on the matching --mcp; routed into vaulted secrets (repeatable)\n");
   io.stdout("  --metadata key=value        Submission metadata entry (repeatable)\n");
-  io.stdout("  --runtime-size <size>       managed runtime preset\n");
-  io.stdout("  --runtime-kind <kind>       execution runtime: container | spot_container | lambda (default container)\n");
+  io.stdout("  --runtime <kind>            execution runtime: container | spot_container | lambda (default container)\n");
+  io.stdout("  --runtime-size <size>       managed runtime size preset\n");
   io.stdout("  --session-timeout <dur>     Server-side session deadline (e.g. 1h, max 8h); distinct from --timeout\n");
   io.stdout("  --idempotency-key <key>     Optional; defaults to a fresh UUID\n");
   io.stdout("  --webhook <url>             Optional session callback URL (https); receives each run.finished/run.error event\n");

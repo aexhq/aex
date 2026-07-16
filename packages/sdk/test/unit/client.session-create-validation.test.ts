@@ -109,27 +109,40 @@ describe("aex.sessions.create — removed field validation", () => {
 });
 
 describe("aex.sessions.create — submit-boundary validation (Theme A, pre-network)", () => {
-  it("rejects an invalid runtime token without an HTTP call (F11)", async () => {
+  it("rejects an invalid runtime.size token without an HTTP call (F11)", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
-        runtime: "lite"
+        runtime: { size: "lite" }
       } as never)
     ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
   });
 
-  it("rejects an invalid runtimeKind without an HTTP call", async () => {
+  it("rejects an invalid runtime.kind without an HTTP call", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
     await expect(
       client.sessions.create({
         model: "claude-haiku-4-5",
         apiKeys: { anthropic: "sk-x" },
-        runtimeKind: "fargate"
+        runtime: { kind: "fargate" }
+      } as never)
+    ).rejects.toThrow(SessionConfigValidationError);
+    expect(rec.calls).toHaveLength(0);
+  });
+
+  it("rejects an unknown runtime sub-key without an HTTP call", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expect(
+      client.sessions.create({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        runtime: { tier: "big" }
       } as never)
     ).rejects.toThrow(SessionConfigValidationError);
     expect(rec.calls).toHaveLength(0);
@@ -167,7 +180,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-x" },
-      runtime: "shared-0.5x-4gb",
+      runtime: { kind: "spot_container", size: "shared-0.5x-4gb" },
       overrides: { timeout: "30m" }
     });
     // A valid config DOES reach the network (create call).
@@ -175,8 +188,8 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
   });
 
   it.each([
-    ["runtime", { runtime: "sensitive-invalid-runtime" }, "runtime"],
-    ["runtimeKind", { runtimeKind: "sensitive-invalid-kind" }, "runtimeKind"],
+    ["runtime.size", { runtime: { size: "sensitive-invalid-runtime" } }, "runtime.size"],
+    ["runtime.kind", { runtime: { kind: "sensitive-invalid-kind" } }, "runtime.kind"],
     ["timeout", { overrides: { timeout: "sensitive-invalid-timeout" } }, "overrides.timeout"],
     ["webhook", { webhook: { url: "sensitive-invalid-webhook" } }, "webhook.url"],
     ["maxSpendUsd", { overrides: { maxSpendUsd: -1 } }, "overrides.maxSpendUsd"],

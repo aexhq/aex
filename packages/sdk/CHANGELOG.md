@@ -6,14 +6,19 @@ follows semantic versioning.
 
 ## 0.43.0
 
-### Added
+### Changed
 
-- `runtimeKind` session-create option — choose the execution runtime backend:
-  `container` (default, today's behavior), `spot_container` (cheaper,
-  interruption-tolerant, at-least-once), or `lambda` (serverless; availability
-  gated). Additive and backward-compatible: omit it and sessions run exactly as
-  before. Distinct from `runtime` (the box size). Prefer the `RuntimeKinds`
-  symbol const. Exposed on the session record as `session.record.runtimeKind`.
+- **`runtime` is now a grouped object `{ kind, size }`** (was a bare size token).
+  - `runtime.kind` — the execution backend: `container` (default),
+    `spot_container` (cheaper, interruption-tolerant, at-least-once), or
+    `lambda` (serverless; availability-gated). Prefer the `RuntimeKinds` const.
+  - `runtime.size` — the managed box preset (was the old top-level `runtime`);
+    prefer the `Sizes` const.
+  - Exposed the same way on the session record: `session.record.runtime.kind` /
+    `session.record.runtime.size`.
+  - Migration: `runtime: Sizes.SHARED_2X_8GB` → `runtime: { size: Sizes.SHARED_2X_8GB }`;
+    add `kind` to select a runtime, e.g. `runtime: { kind: "lambda", size: … }`.
+  - Pre-launch breaking change; both fields are optional and default sensibly.
 
 ## 0.42.0
 

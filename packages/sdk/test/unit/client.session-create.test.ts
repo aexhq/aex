@@ -86,11 +86,11 @@ describe("aex.sessions.create", () => {
     ]);
   });
 
-  it("serializes file capture, runtime, limits, timeout, and webhook", async () => {
+  it("serializes file capture, runtime.size, limits, timeout, and webhook", async () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
       model: "claude-haiku-4-5",
-      runtime: "shared-0.5x-4gb",
+      runtime: { size: "shared-0.5x-4gb" },
       overrides: { timeout: "10m", maxSpendUsd: 3, maxTurns: 20, idleTtl: "5m" },
       fileCapture: { allowedDirs: ["/workspace/out"], maxFiles: 20 },
       webhook: { url: "https://hooks.example.test/aex" },
@@ -101,35 +101,35 @@ describe("aex.sessions.create", () => {
       timeout: "10m",
       limits: { maxSpendUsd: 3, maxTurns: 20 },
       retention: { idleTtl: "5m" },
-      webhook: { url: "https://hooks.example.test/aex" },
       submission: { fileCapture: { allowedDirs: ["/workspace/out"], maxFiles: 20 } }
     });
-    expect(session.record.runtime).toBe("shared-0.5x-4gb");
+    // The flat wire fields fold into the grouped `runtime: { kind, size }`.
+    expect(session.record.runtime).toEqual({ size: "shared-0.5x-4gb" });
     expect(session.record).not.toHaveProperty("runtimeSize");
   });
 
-  it("forwards runtimeKind to the wire and exposes it on the record, orthogonal to size", async () => {
+  it("forwards runtime.kind + runtime.size to the wire and exposes both on the record", async () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
       model: "claude-haiku-4-5",
-      runtime: "shared-2x-8gb",
-      runtimeKind: "spot_container",
+      runtime: { kind: "spot_container", size: "shared-2x-8gb" },
       apiKeys: { anthropic: "sk-test" }
     });
     expect(calls[0]!.body).toMatchObject({
       runtimeSize: "shared-2x-8gb",
       runtimeKind: "spot_container"
     });
-    expect(session.record.runtimeKind).toBe("spot_container");
+    expect(session.record.runtime).toEqual({ kind: "spot_container", size: "shared-2x-8gb" });
   });
 
-  it("omits runtimeKind from the wire when not selected (container default applied downstream)", async () => {
+  it("omits the runtime wire fields when not selected (container default applied downstream)", async () => {
     const { client, calls } = harness();
     await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-test" }
     });
     expect(calls[0]!.body).not.toHaveProperty("runtimeKind");
+    expect(calls[0]!.body).not.toHaveProperty("runtime");
   });
 
   it("requires the selected provider key before network access", async () => {

@@ -31,15 +31,25 @@ export interface SessionRun {
   readonly eventCursor?: number;
 }
 
+/**
+ * The execution runtime a session runs on. Both fields are optional (the
+ * platform applies defaults): `kind` selects the backend
+ * (`container` (default) | `spot_container` | `lambda`), `size` selects the
+ * managed box preset. Grouped so the SDK surface reads
+ * `runtime: { kind: "lambda", size: Sizes.SHARED_2X_8GB }`.
+ */
+export interface SessionRuntime {
+  readonly kind?: RuntimeKind;
+  readonly size?: RuntimeSize;
+}
+
 export interface Session {
   readonly id: string;
   readonly status: SessionStatus;
   readonly workspaceId?: string;
   readonly model?: PlatformSubmission["model"];
-  /** Managed runtime preset selected when the session was created. */
-  readonly runtime?: RuntimeSize;
-  /** Execution-runtime backend the session runs on (`container` by default). */
-  readonly runtimeKind?: RuntimeKind;
+  /** Execution runtime: the backend (`kind`) and box size (`size`) it runs on. */
+  readonly runtime?: SessionRuntime;
   readonly runtimeManifest?: import("./runtime-manifest.js").RuntimeManifest;
   readonly acceptsMessages: boolean;
   readonly currentRun?: SessionRun;
@@ -68,10 +78,8 @@ export interface Session {
 export interface SessionSummary {
   readonly id: string;
   readonly status: SessionStatus;
-  /** Managed runtime preset selected when the session was created. */
-  readonly runtime?: RuntimeSize;
-  /** Execution-runtime backend the session runs on (`container` by default). */
-  readonly runtimeKind?: RuntimeKind;
+  /** Execution runtime: the backend (`kind`) and box size (`size`) it runs on. */
+  readonly runtime?: SessionRuntime;
   readonly acceptsMessages: boolean;
   readonly currentRun?: SessionRun;
   readonly lastRun?: SessionRun;

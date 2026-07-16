@@ -74,7 +74,7 @@ describe("operations.listSessions", () => {
       id: WELL_FORMED.id,
       status: WELL_FORMED.status,
       acceptsMessages: true,
-      runtime: "shared-1x-6gb",
+      runtime: { size: "shared-1x-6gb" },
       createdAt: WELL_FORMED.createdAt,
       updatedAt: WELL_FORMED.updatedAt,
       costUsd: WELL_FORMED.costUsd

@@ -5,13 +5,16 @@ import {
   SUPPORTED_MODELS,
   PROVIDERS,
   RUNTIME_SIZES,
+  RUNTIME_KINDS,
   providersForModel,
   type BuiltinToolName,
   type JsonValue,
   type OutputMode,
   type ModelName,
   type ProviderName,
-  type RuntimeSize
+  type RuntimeSize,
+  type RuntimeKind,
+  type SessionRuntime
 } from "@aexhq/contracts";
 import { parseSessionSubmissionRequest } from "@aexhq/contracts/internal";
 import {
@@ -52,6 +55,15 @@ interface ValidCase {
 const createSurface = fc.constant<CreateSurface>("sessions.create");
 const modelName = fc.constantFrom<ModelName>(...(SUPPORTED_MODELS as readonly ModelName[]));
 const runtimeSize = fc.constantFrom<RuntimeSize>(...(RUNTIME_SIZES as readonly RuntimeSize[]));
+const runtimeKind = fc.constantFrom<RuntimeKind>(...(RUNTIME_KINDS as readonly RuntimeKind[]));
+// The grouped runtime selector: at least one of { kind, size } present.
+const runtimeArb: fc.Arbitrary<SessionRuntime> = fc
+  .record({ kind: fc.option(runtimeKind, { nil: undefined }), size: fc.option(runtimeSize, { nil: undefined }) })
+  .filter((r) => r.kind !== undefined || r.size !== undefined)
+  .map((r): SessionRuntime => ({
+    ...(r.kind !== undefined ? { kind: r.kind } : {}),
+    ...(r.size !== undefined ? { size: r.size } : {})
+  }));
 const outputMode = fc.constant<OutputMode>("buffered");
 const safeToken = fc.stringMatching(/^[A-Za-z0-9_-]{1,24}$/);
 const shortText = fc.stringMatching(/^[A-Za-z0-9 .,:/_-]{1,64}$/);
@@ -211,7 +223,7 @@ const richValidCase = providerChoice.chain((choice) =>
         environment: richEnvironment,
         fileCapture: richFileCapture,
         overrides: richOverrides,
-        runtime: runtimeSize,
+        runtime: runtimeArb,
         outputMode,
         builtinTools: fc.oneof(fc.constant("default" as const), fc.constant("none" as const), nonEmptyBuiltinTools),
         webhook,
@@ -248,7 +260,7 @@ const sparseValidCase = providerChoice.chain((choice) =>
           environment: fc.option(sparseEnvironment, { nil: undefined }),
           fileCapture: fc.option(sparseFileCapture, { nil: undefined }),
           overrides: fc.option(sparseOverrides, { nil: undefined }),
-          runtime: fc.option(runtimeSize, { nil: undefined }),
+          runtime: fc.option(runtimeArb, { nil: undefined }),
           outputMode: fc.option(outputMode, { nil: undefined }),
           builtinTools: fc.option(
             fc.oneof(fc.constant("default" as const), fc.constant("none" as const), builtinTools),
@@ -445,7 +457,7 @@ function buildSessionOptions(
     readonly environment?: SessionCreateOptions["environment"] | undefined;
     readonly fileCapture?: SessionCreateOptions["fileCapture"] | undefined;
     readonly overrides?: SessionCreateOptions["overrides"] | undefined;
-    readonly runtime?: RuntimeSize | undefined;
+    readonly runtime?: SessionRuntime | undefined;
     readonly outputMode?: OutputMode | undefined;
     readonly builtinTools?: "default" | "none" | readonly BuiltinToolName[] | undefined;
     readonly webhook?: { readonly url: string } | undefined;

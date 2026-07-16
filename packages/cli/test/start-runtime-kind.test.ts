@@ -25,15 +25,15 @@ function runSubmitHandler(call: { readonly url: string; readonly init: RequestIn
   });
 }
 
-describe("aex start --runtime-kind", () => {
-  it("forwards a valid --runtime-kind to the create request", async () => {
+describe("aex start --runtime", () => {
+  it("forwards a valid --runtime to the create request", async () => {
     const cap = makeIo({
       argv: [
         "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-1",
-        "--runtime-kind", "spot_container",
+        "--runtime", "spot_container",
         ...COMMON
       ],
       fetchHandler: runSubmitHandler
@@ -60,20 +60,20 @@ describe("aex start --runtime-kind", () => {
     expect(cap.calls[0]!.body).not.toHaveProperty("runtimeKind");
   });
 
-  it("rejects an invalid --runtime-kind synchronously, firing NO network call", async () => {
+  it("rejects an invalid --runtime synchronously, firing NO network call", async () => {
     const cap = makeIo({
       argv: [
         "start",
         "--model", "claude-haiku-4-5",
         "--prompt", "hi",
         "--anthropic-api-key", "sk-ant-1",
-        "--runtime-kind", "fargate",
+        "--runtime", "fargate",
         ...COMMON
       ]
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--runtime-kind");
+    expect(cap.stderr).toContain("--runtime");
     expect(cap.stderr).toMatch(/container, spot_container, lambda/);
     expect(cap.calls).toHaveLength(0);
   });

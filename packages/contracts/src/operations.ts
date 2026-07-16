@@ -2120,14 +2120,22 @@ function normalizeSessionRun(value: Record<string, unknown>, sessionId: string, 
 }
 
 function normalizeSessionRuntime(value: Record<string, unknown>, context: string): Record<string, unknown> {
-  const rawRuntime = value.runtimeSize;
-  let runtime;
+  let size;
   try {
-    runtime = parseRuntimeSize(rawRuntime);
+    size = parseRuntimeSize(value.runtimeSize);
   } catch (error) {
-    throw new SessionStateError(`${context} has an invalid runtime: ${error instanceof Error ? error.message : String(error)}`);
+    throw new SessionStateError(`${context} has an invalid runtimeSize: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const { runtimeSize: _wireRuntimeSize, ...normalized } = value;
+  // Fold the flat wire fields (`runtimeKind`, `runtimeSize`) into the grouped
+  // client shape `runtime: { kind, size }`. Tolerant on read — an unknown future
+  // runtime kind passes through rather than throwing (forward-compat), unlike the
+  // strict submit path.
+  const kind = typeof value.runtimeKind === "string" ? value.runtimeKind : undefined;
+  const runtime =
+    kind !== undefined || size !== undefined
+      ? { ...(kind !== undefined ? { kind } : {}), ...(size !== undefined ? { size } : {}) }
+      : undefined;
+  const { runtimeSize: _wireSize, runtimeKind: _wireKind, ...normalized } = value;
   return {
     ...normalized,
     ...(runtime !== undefined ? { runtime } : {})
