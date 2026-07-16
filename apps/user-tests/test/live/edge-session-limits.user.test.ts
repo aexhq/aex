@@ -204,7 +204,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
         const sizes = ${JSON.stringify(VALID_SIZES)};
         const results = [];
         for (const size of sizes) {
-          const r = await createOnly({ ...BASE, runtime: size });
+          const r = await createOnly({ ...BASE, runtime: { size } });
           results.push({ size, ...r });
         }
         out({ results });
@@ -253,7 +253,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
       // before issuing HTTP, so bad tokens and wrong types must fail without
       // minting a billable session.
       for (const v of result.results) {
-        expectConfigError(v, "runtime", `runtime=${JSON.stringify(v.size)}`);
+        expectConfigError(v, "runtime.size", `runtime=${JSON.stringify(v.size)}`);
         expect(v.reflect, `runtime=${JSON.stringify(v.size)} should not reach unit reflection`).toBeNull();
       }
     },

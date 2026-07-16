@@ -187,7 +187,7 @@ describe("edge: runtime honored, validated, and visible", () => {
       const result = await runChild(install, "runtime-size-echo.mjs", body);
       expect(result.error).toBeNull();
       expect(result.created).toBeTruthy();
-      expect(result.recordRuntime).toBe("shared-1x-6gb");
+      expect(result.recordRuntime).toEqual({ kind: "container", size: "shared-1x-6gb" });
       expect(result.leakedRuntimeSize).toBe(false);
       expect(result.rawRuntimeSize).toBe("shared-1x-6gb");
     },
