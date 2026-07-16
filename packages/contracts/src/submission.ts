@@ -946,6 +946,14 @@ export interface SessionLimits {
    * resolver's job.
    */
   readonly maxTurns?: number;
+  /**
+   * Maximum number of agent STEPS (LLM+tool cycles) a single turn may take before
+   * the platform terminalizes it — the per-turn runaway-loop backstop (doc 13 G2),
+   * one level below {@link maxTurns}. A positive integer; omitted ⇒ the platform
+   * default (`SESSION_DEFAULT_MAX_STEPS_PER_TURN`). Only shape/positivity are
+   * validated here; clamping to the ceiling is the resolver's job.
+   */
+  readonly maxStepsPerTurn?: number;
 }
 
 /**
@@ -1121,7 +1129,13 @@ export function parseSessionLimits(input: unknown): SessionLimits | undefined {
     return undefined;
   }
   const value = requireRecord(input, "limits");
-  const allowed = new Set(["maxConcurrentChildSessions", "maxSubagentDepth", "maxSpendUsd", "maxTurns"]);
+  const allowed = new Set([
+    "maxConcurrentChildSessions",
+    "maxSubagentDepth",
+    "maxSpendUsd",
+    "maxTurns",
+    "maxStepsPerTurn"
+  ]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
       throw new Error(`limits.${key} is not an allowed field; permitted: ${[...allowed].join(", ")}`);
@@ -1139,6 +1153,10 @@ export function parseSessionLimits(input: unknown): SessionLimits | undefined {
   // maxTurns is an ITERATION count — a positive safe integer. Clamp to the ceiling
   // is the resolver's job; here we enforce shape + positivity only.
   const maxTurns = optionalPositiveInt(value.maxTurns, "limits.maxTurns");
+  // maxStepsPerTurn is a per-turn STEP count — a positive safe integer (the
+  // runaway-loop backstop one level below maxTurns). Same shape/positivity gate;
+  // the resolver clamps to the ceiling.
+  const maxStepsPerTurn = optionalPositiveInt(value.maxStepsPerTurn, "limits.maxStepsPerTurn");
   // Collapse an all-absent override (e.g. `limits: {}`) to `undefined` so it never
   // lands an empty object on the request — matches sibling parsers (parseSessionWebhook,
   // parseEnvironment). The resolver supplies platform defaults for absent fields.
@@ -1146,7 +1164,8 @@ export function parseSessionLimits(input: unknown): SessionLimits | undefined {
     maxConcurrentChildSessions === undefined &&
     maxSubagentDepth === undefined &&
     maxSpendUsd === undefined &&
-    maxTurns === undefined
+    maxTurns === undefined &&
+    maxStepsPerTurn === undefined
   ) {
     return undefined;
   }
@@ -1154,7 +1173,8 @@ export function parseSessionLimits(input: unknown): SessionLimits | undefined {
     ...(maxConcurrentChildSessions !== undefined ? { maxConcurrentChildSessions } : {}),
     ...(maxSubagentDepth !== undefined ? { maxSubagentDepth } : {}),
     ...(maxSpendUsd !== undefined ? { maxSpendUsd } : {}),
-    ...(maxTurns !== undefined ? { maxTurns } : {})
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
+    ...(maxStepsPerTurn !== undefined ? { maxStepsPerTurn } : {})
   };
 }
 

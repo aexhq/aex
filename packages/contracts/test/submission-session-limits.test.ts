@@ -226,6 +226,36 @@ describe("parseSessionLimits (shape + positivity gate)", () => {
     });
   });
 
+  describe("maxStepsPerTurn boundaries (positive safe integer — doc 13 G2)", () => {
+    it("accepts a positive integer", () => {
+      expect(parseSessionLimits({ maxStepsPerTurn: 500 })).toEqual({ maxStepsPerTurn: 500 });
+    });
+
+    it("accepts it alongside the other fields", () => {
+      expect(
+        parseSessionLimits({ maxConcurrentChildSessions: 2, maxSubagentDepth: 3, maxSpendUsd: 5, maxTurns: 20, maxStepsPerTurn: 500 })
+      ).toEqual({
+        maxConcurrentChildSessions: 2,
+        maxSubagentDepth: 3,
+        maxSpendUsd: 5,
+        maxTurns: 20,
+        maxStepsPerTurn: 500
+      });
+    });
+
+    it("rejects 0 / -1 / fractional / string", () => {
+      expect(() => parseSessionLimits({ maxStepsPerTurn: 0 })).toThrow(/limits\.maxStepsPerTurn must be a positive safe integer/);
+      expect(() => parseSessionLimits({ maxStepsPerTurn: -1 })).toThrow(/limits\.maxStepsPerTurn must be a positive safe integer/);
+      expect(() => parseSessionLimits({ maxStepsPerTurn: 1.5 })).toThrow(/limits\.maxStepsPerTurn must be a positive safe integer/);
+      expect(() => parseSessionLimits({ maxStepsPerTurn: "500" })).toThrow(/limits\.maxStepsPerTurn must be a positive safe integer/);
+    });
+
+    it("survives the full request parser", () => {
+      const parsed = parseSessionSubmissionRequest({ ...baseRequest(), limits: { maxStepsPerTurn: 750 } });
+      expect(parsed.limits).toEqual({ maxStepsPerTurn: 750 });
+    });
+  });
+
   describe("non-object input", () => {
     it("rejects a string", () => {
       expect(() => parseSessionLimits("nope")).toThrow(/limits must be an object/);
