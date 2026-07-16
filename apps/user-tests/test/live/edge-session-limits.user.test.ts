@@ -228,10 +228,10 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
       const result = await probe<{ results: Array<Verdict & { size: unknown; reflect: unknown }> }>(`
         async function probeSize(size) {
           try {
-            const h = await client.sessions.create({ ...BASE, runtime: size });
+            const h = await client.sessions.create({ ...BASE, runtime: { size } });
             const rm = h.record.runtimeManifest ?? null;
             const reflect = {
-              recordRuntime: h.record.runtime ?? null,
+              recordRuntime: h.record.runtime?.size ?? null,
               runtimeManifestResources: rm && (rm.resources ?? rm.runtime ?? rm.size ?? null)
             };
             let deleted = false;
@@ -350,7 +350,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
         }, { timeoutMs: 8 * 60 * 1000 });
         const session = await client.sessions.open(sessionResult.sessionId);
         const reflect = {
-          runtime: session.record.runtime ?? null,
+          runtime: session.record.runtime?.size ?? null,
           runtimeManifest: session.record.runtimeManifest ?? null
         };
         out({
