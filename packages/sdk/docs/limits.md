@@ -22,7 +22,7 @@ For the current provider/model set, see the generated
 
 | Area | Boundary |
 | --- | --- |
-| Runtime | New submissions run on the managed runtime. The `runtime` option selects a managed machine-size preset (`Sizes.*`); there is no alternative runtime backend. |
+| Runtime | New submissions run on a managed runtime. `runtime.kind` selects `container` (the default), `spot_container`, or `lambda`; `runtime.size` selects a managed machine-size preset (`Sizes.*`). Both fields are optional. |
 | Provider policy | Provider retention, training exclusion, HIPAA/BAA, data residency, abuse policy, and pricing belong to the selected provider account, endpoint, and contract. |
 | Secrets | Provider keys, MCP credentials, and environment secrets are caller-owned. aex excludes secret values from idempotency and uses the explicit secret surfaces described in [Secrets](secrets.md). |
 | MCP servers | Remote MCP servers are customer-trusted systems. aex validates declarations and routes credentials; it does not make an untrusted MCP server safe. |

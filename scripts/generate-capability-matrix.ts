@@ -135,7 +135,7 @@ export function renderProviderRuntimeCapabilityMarkdown(
     "Notes:",
     "",
     "- Supported models are the public SDK model ids accepted for each provider.",
-    "- Execution uses the managed path; there is no public runtime selector.",
+    "- Runtime selection is independent of provider/model selection: `runtime.kind` accepts `container`, `spot_container`, or `lambda`; `runtime.size` accepts the managed size presets.",
     "",
     "## Provider anchors",
     ""

@@ -26,7 +26,9 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import {
   Aex,
+  DEFAULT_RUNTIME_KIND,
   Instructions,
+  RUNTIME_KINDS,
   Sizes,
   File as AexFile
 } from "../../src/index.js";
@@ -345,5 +347,25 @@ describe("[REGRESSION] pre-release fix-sweep — onboarding doc-drift", () => {
     expect(limits).toContain("maxTurns");
     expect(limits).toMatch(/\/workspace/);
     expect(limits).toMatch(/PEP 668/);
+  });
+
+  it("documents the grouped runtime selector from the public contracts", () => {
+    const providers = readDoc("packages/sdk/docs/concepts/providers-and-runtimes.md");
+    const limits = readDoc("packages/sdk/docs/limits.md");
+    const capabilities = readDoc("packages/sdk/docs/provider-runtime-capabilities.md");
+    const docs = `${providers}\n${limits}\n${capabilities}`;
+
+    expect(docs).not.toMatch(/no alternative runtime backend|no public runtime selector/i);
+    expect(providers).toContain("runtime.kind");
+    expect(providers).toContain("runtime.size");
+    expect(providers).toContain("--runtime <kind>");
+    expect(limits).toContain("runtime.kind");
+    expect(limits).toContain("runtime.size");
+    expect(capabilities).toContain("runtime.kind");
+    expect(capabilities).toContain("runtime.size");
+    expect(docs).toContain(DEFAULT_RUNTIME_KIND);
+    for (const kind of RUNTIME_KINDS) {
+      expect(docs).toContain(kind);
+    }
   });
 });
