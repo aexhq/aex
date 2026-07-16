@@ -52,7 +52,7 @@ await client.sessions.create({
     secrets: { SERVICE_TOKEN: Secret.value("secret-value") },
     packages: [{ name: "pip:pandas", version: "2.2.0" }]
   },
-  runtime: "shared-2x-8gb",
+  runtime: { size: "shared-2x-8gb" },
   overrides: { idleTtl: "5m", timeout: "15m", maxSpendUsd: 2, maxTurns: 8 },
   webhook: { url: "https://hooks.example/aex" },
   idempotencyKey: "stable-create"

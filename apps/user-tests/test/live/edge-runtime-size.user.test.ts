@@ -169,7 +169,7 @@ describe("edge: runtime honored, validated, and visible", () => {
             model: MODEL,
             builtinTools: "none",
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
-            runtime: "shared-1x-6gb"
+            runtime: { size: "shared-1x-6gb" }
           });
           out.created = session.id;
           const rec = (await client.sessions.open(session.id)).record;

@@ -176,7 +176,7 @@ describe("edge: idempotencyKey body-mismatch is a conflict, not a silent replay"
         const diffMessage = await mismatch({ message: "Reply with the single word OTHER. Do not use any tools." });
         const alternateModel = MODEL === "deepseek-v4-flash" ? "deepseek-v4-pro" : "deepseek-v4-flash";
         const diffModel = await mismatch({ model: alternateModel });
-        const diffRuntime = await mismatch({ runtime: "shared-0.25x-1gb" });
+        const diffRuntime = await mismatch({ runtime: { size: "shared-0.25x-1gb" } });
 
         process.stdout.write(JSON.stringify({
           firstSessionId: first.sessionId,

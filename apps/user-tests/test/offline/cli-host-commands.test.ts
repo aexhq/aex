@@ -278,7 +278,7 @@ describe("installed CLI host commands", () => {
       status: "running",
       acceptsMessages: false,
       provider: "deepseek",
-      runtime: "shared-0.25x-1gb"
+      runtime: { size: "shared-0.25x-1gb" }
     });
 
     const status = await runCommand(binPath, ["status", "session-cli-1", ...common], {
@@ -290,7 +290,7 @@ describe("installed CLI host commands", () => {
       id: "session-cli-1",
       status: "running",
       provider: "deepseek",
-      runtime: "shared-0.25x-1gb"
+      runtime: { size: "shared-0.25x-1gb" }
     });
 
     const events = await runCommand(binPath, ["events", "session-cli-1", ...common], {
@@ -312,7 +312,7 @@ describe("installed CLI host commands", () => {
       status: "idle",
       acceptsMessages: true,
       provider: "deepseek",
-      runtime: "shared-0.25x-1gb"
+      runtime: { size: "shared-0.25x-1gb" }
     });
 
     const outPath = join(install.installDir, "installed-cli-run.zip");

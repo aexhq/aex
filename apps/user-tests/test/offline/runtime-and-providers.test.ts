@@ -24,7 +24,7 @@ describe("managed-only provider surface (published package)", () => {
     return runCommand(getBunCommand(), [path], { cwd: install.installDir, timeoutMs: 30_000 });
   }
 
-  it("exports providers without runtime/region selector helpers", async () => {
+  it("exports providers + runtime-kind helpers but no region selectors", async () => {
     const script = `
       const mod = await import("@aexhq/sdk");
       console.log(JSON.stringify({
@@ -41,7 +41,7 @@ describe("managed-only provider surface (published package)", () => {
     expect(JSON.parse(stdout.trim())).toEqual({
       providers: ["anthropic", "deepseek", "openai", "gemini", "mistral", "openrouter", "doubao"],
       defaultProvider: "anthropic",
-      hasRuntimeKinds: false,
+      hasRuntimeKinds: true,
       hasRegions: false,
       hasSelectRuntime: false,
       hasRuntimeValidationError: false
