@@ -113,7 +113,7 @@ describe("live api.aex.dev via installed SDK — Anthropic round-trip on managed
         const sessionResult = await client.start({
           provider: "anthropic",
           model,
-          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Reply with exactly the following token and nothing else, character for character: ${probe}`)},
           idempotencyKey: "user-test-anthropic-mgd-" + Date.now(),
           apiKeys: { anthropic: anthropicKey }
         }, { timeoutMs: 8 * 60 * 1000 });

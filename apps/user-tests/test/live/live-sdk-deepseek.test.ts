@@ -108,7 +108,7 @@ describe("live api.aex.dev via installed SDK — DeepSeek round-trip on managed 
         const sessionResult = await client.start({
           provider: "deepseek",
           model,
-          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Reply with exactly the following token and nothing else, character for character: ${probe}`)},
           idempotencyKey: "user-test-deepseek-" + Date.now(),
           apiKeys: { deepseek: deepseekKey }
         }, { timeoutMs: 8 * 60 * 1000 });

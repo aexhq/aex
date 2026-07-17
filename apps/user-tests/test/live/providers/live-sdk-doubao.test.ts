@@ -114,7 +114,7 @@ describe("live api.aex.dev via installed SDK — Doubao round-trip on managed ru
         const result = await client.start({
           provider,
           model,
-          message: ${JSON.stringify(`SessionFile verbatim: ${probe}`)},
+          message: ${JSON.stringify(`Reply with exactly the following token and nothing else, character for character: ${probe}`)},
           idempotencyKey: "user-test-doubao-" + Date.now(),
           apiKeys: { doubao: doubaoKey }
         }, { timeoutMs: 8 * 60 * 1000 });

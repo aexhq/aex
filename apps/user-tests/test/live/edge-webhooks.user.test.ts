@@ -199,7 +199,7 @@ describe("live hosted - session webhooks edge cases", () => {
         const sessionResult = await client.start({
           provider: PROVIDER,
           model,
-          message: "SessionFile verbatim: " + probe,
+          message: "Reply with exactly the following token and nothing else, character for character: " + probe,
           apiKeys: { [PROVIDER]: providerKey },
           webhook: { url: "https://example.com/aex-webhook-probe" },
           idempotencyKey: "user-test-wh-valid-" + Date.now()

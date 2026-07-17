@@ -612,7 +612,7 @@ describe("edge: SessionFiles read/find/link/fetch/download selector matrix", () 
     "D: session with NO files — list() is empty, bad reads error, archive verbs still yield valid zips",
     async () => {
       const probe = "NOFILES-" + Math.random().toString(36).slice(2, 8);
-      const prompt = `SessionFile verbatim: ${probe}. Do not create, write, or save any files.`;
+      const prompt = `Reply with exactly the following token and nothing else, character for character: ${probe}. Do not create, write, or save any files.`;
       const body = `
         const sessionResult = await client.start({
           provider: PROVIDER,
