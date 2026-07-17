@@ -8,8 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 import { formatApiKey, PLANE_BASE_URLS } from "@aexhq/contracts";
 import { Aex, CredentialValidationError } from "../../src/index.js";
 
-const devKey = formatApiKey({ plane: "dev", region: "eu-west-2", workspaceId: "ws123", secret: "s3cr3tvalue" });
-const prdKey = formatApiKey({ plane: "prd", region: "eu-west-2", workspaceId: "ws123", secret: "s3cr3tvalue" });
+const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: "ws123", secret: "s3cr3tvalue" });
+const prdKey = formatApiKey({ plane: "prd", region: "eu-west-1", workspaceId: "ws123", secret: "s3cr3tvalue" });
 const whoami = {
   ok: true,
   principalType: "api_key",

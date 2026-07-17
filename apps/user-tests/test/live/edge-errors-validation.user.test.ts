@@ -106,7 +106,7 @@ function craftWellFormedToken() {
   const activePlane = parsedApiKey && (parsedApiKey.plane === "dev" || parsedApiKey.plane === "prd")
     ? parsedApiKey.plane
     : apiUrl.replace(/\/+$/, "") === "https://api.aex.dev" ? "prd" : "dev";
-  const body = ["aex", activePlane, "euw2", "wwwwwwww", "feedfacecafebeef"].join("_");
+  const body = ["aex", activePlane, "euw1", "wwwwwwww", "feedfacecafebeef"].join("_");
   return body + "_" + crc32b36(body);
 }
 

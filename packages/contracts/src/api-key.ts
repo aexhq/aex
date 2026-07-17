@@ -18,9 +18,7 @@ export type ApiKeyPlane = (typeof API_KEY_PLANES)[number];
 
 /** Supported region → embedded region code. */
 export const API_KEY_REGION_TO_CODE: Readonly<Record<string, string>> = {
-  "eu-west-2": "euw2",
-  "us-west-2": "usw2",
-  "ap-northeast-1": "apn1"
+  "eu-west-1": "euw1"
 };
 
 const CODE_TO_REGION: Readonly<Record<string, string>> = Object.fromEntries(

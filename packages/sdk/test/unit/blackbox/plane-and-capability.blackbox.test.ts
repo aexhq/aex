@@ -37,7 +37,7 @@ const whoami = {
 
 describe("blackbox: plane routing guard (constructor, zero-network)", () => {
   it("routes a dev key with no baseUrl to dev-api.aex.dev", async () => {
-    const devKey = formatApiKey({ plane: "dev", region: "eu-west-2", workspaceId: WORKSPACE_ID, secret: SECRET });
+    const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: WORKSPACE_ID, secret: SECRET });
     const seen: string[] = [];
     const spyFetch: typeof globalThis.fetch = async (...args) => {
       const [input] = args;
@@ -55,7 +55,7 @@ describe("blackbox: plane routing guard (constructor, zero-network)", () => {
   });
 
   it("constructs fine when the same dev key is paired with an explicit baseUrl", () => {
-    const devKey = formatApiKey({ plane: "dev", region: "eu-west-2", workspaceId: WORKSPACE_ID, secret: SECRET });
+    const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: WORKSPACE_ID, secret: SECRET });
     expect(() => new Aex({ apiKey: devKey, baseUrl: "https://dev.aex.test", fetch: async () => new Response("{}") })).not.toThrow();
   });
 });
