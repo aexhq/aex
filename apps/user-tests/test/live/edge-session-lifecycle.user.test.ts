@@ -218,7 +218,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
         const probe = "OK-" + Math.random().toString(36).slice(2,8);
         const r = await client.start({
           provider:PROVIDER, model:MODEL,
-          message:"SessionFile verbatim: " + probe,
+          message:"Reply with exactly this token and nothing else: " + probe,
           idempotencyKey: uid("edge-baseline"),
           apiKeys: gateKeys
         }, { timeoutMs: WAIT });
@@ -324,7 +324,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const probe = "u" + Math.random().toString(36).slice(2,6);
-        const msg = "SessionFile this token verbatim then stop: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
+        const msg = "Reply with exactly this token and nothing else: [[" + probe + "-café-\\uD83D\\uDE80-\\u65E5\\u672C\\u8A9E]]\\nSecond line.";
         const r = await client.start({ provider:PROVIDER, model:MODEL, message: msg, idempotencyKey: uid("edge-unicode"), apiKeys:gateKeys }, { timeoutMs: WAIT });
         print({
           sessionId:r.sessionId,
@@ -376,7 +376,7 @@ describe("live dev-plane — edge cases for client.start submission + idempotenc
     async () => {
       const body = `
         const probe = "arr" + Math.random().toString(36).slice(2,6);
-        const r = await client.start({ provider:PROVIDER, model:MODEL, message:["SessionFile verbatim:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
+        const r = await client.start({ provider:PROVIDER, model:MODEL, message:["Reply with exactly this token and nothing else:", probe], idempotencyKey: uid("edge-arr"), apiKeys:gateKeys }, { timeoutMs: WAIT });
         print({
           sessionId:r.sessionId,
           ok:r.ok,
