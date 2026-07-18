@@ -192,6 +192,18 @@ const client = new Aex({
 const MODEL = process.env.MODEL_DEEPSEEK;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 
+// Execution-runtime fan-out: when AEX_USER_TEST_RUNTIME selects a NON-default
+// runtime, every seeded tool scenario submits with that runtimeKind so the SAME
+// tool surface is proven on spot_container / lambda instead of only the default
+// (container). Unset OR "container" ⇒ omit runtime entirely, keeping the historical
+// container-default submission byte-identical. An unknown value fails loud — never
+// a silent degrade to the default runtime.
+const RUNTIME_KIND = process.env.AEX_USER_TEST_RUNTIME;
+if (RUNTIME_KIND !== undefined && RUNTIME_KIND !== "" && !["container", "spot_container", "lambda"].includes(RUNTIME_KIND)) {
+  throw new Error("AEX_USER_TEST_RUNTIME must be one of container|spot_container|lambda, got: " + RUNTIME_KIND);
+}
+const RUNTIME_KIND_OVERRIDE = RUNTIME_KIND && RUNTIME_KIND !== "container" ? { runtime: { kind: RUNTIME_KIND } } : {};
+
 function eventData(event) {
   return event && event.data && typeof event.data === "object" ? event.data : {};
 }
@@ -279,6 +291,9 @@ function passEnv(extras: Readonly<Record<string, string>> = {}): Record<string, 
     AEX_API_KEY: apiKey,
     DEEPSEEK_KEY: deepseekKey,
     MODEL_DEEPSEEK: deepseekModel,
+    // Propagate the execution-runtime selector into the child runner so its
+    // client.start() submissions carry the fanned-out runtimeKind.
+    ...(process.env.AEX_USER_TEST_RUNTIME ? { AEX_USER_TEST_RUNTIME: process.env.AEX_USER_TEST_RUNTIME } : {}),
     ...extras
   };
   const pathKey = process.platform === "win32" ? "Path" : "PATH";
@@ -433,8 +448,9 @@ const sourceRef = await client.workspace.files.publish(source);
 const otherRef = await client.workspace.files.publish(other);
 const result = await client.start({
   provider: "deepseek",
+  ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
-  message: ${JSON.stringify(prompt)},
+  message:${JSON.stringify(prompt)},
   assets: { files: [sourceRef, otherRef] },
   builtinTools: [
     BuiltinTools.read_file,
@@ -499,8 +515,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const body = `
 const result = await client.start({
   provider: "deepseek",
+  ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
-  message: ${JSON.stringify(prompt)},
+  message:${JSON.stringify(prompt)},
   builtinTools: [
     BuiltinTools.bash,
     BuiltinTools.code_execution,
@@ -556,8 +573,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const body = `
 const result = await client.start({
   provider: "deepseek",
+  ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
-  message: ${JSON.stringify(prompt)},
+  message:${JSON.stringify(prompt)},
   builtinTools: [BuiltinTools.bash, BuiltinTools.bash_output, BuiltinTools.bash_kill],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-bg-${testCase.id}-" + Date.now()
@@ -594,8 +612,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const body = `
 const result = await client.start({
   provider: "deepseek",
+  ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
-  message: ${JSON.stringify(prompt)},
+  message:${JSON.stringify(prompt)},
   builtinTools: [BuiltinTools.web_fetch, BuiltinTools.web_search],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-web-${testCase.id}-" + Date.now()
@@ -643,8 +662,9 @@ process.stdout.write(JSON.stringify(await observe(result)));
       const body = `
 const result = await client.start({
   provider: "deepseek",
+  ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
-  message: ${JSON.stringify(prompt)},
+  message:${JSON.stringify(prompt)},
   builtinTools: [BuiltinTools.subagent, BuiltinTools.subagent_result],
   apiKeys: { deepseek: DEEPSEEK_KEY },
   idempotencyKey: "tool-fuzz-subagent-${testCase.id}-" + Date.now()
@@ -764,8 +784,9 @@ const contextRef = await client.workspace.tools.publish(context);
 const failureRef = await client.workspace.tools.publish(failure);
 const result = await client.start({
   provider: "deepseek",
+  ...RUNTIME_KIND_OVERRIDE,
   model: MODEL,
-  message: ${JSON.stringify(prompt)},
+  message:${JSON.stringify(prompt)},
   builtinTools: "none",
   assets: { tools: [transformRef, contextRef, failureRef] },
   environment: {
