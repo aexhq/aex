@@ -115,6 +115,75 @@ describe("aex login", () => {
     expect(printed.remedy).toContain("aex login");
   });
 
+  it("workspace key (aex_…) validates via the DATA-plane whoami and persists apiKey", async () => {
+    // The default stub answers /api/whoami with an api_key principal.
+    const cap = makeIo({
+      argv: ["login", "--api-key", "aex_dev_euw1_wsp1_secret_crc", "--aex-url", "https://dev.example"]
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(0);
+    expect(cap.calls).toEqual(["https://dev.example/api/whoami"]);
+    expect(cap.writes).toHaveLength(1);
+    expect(cap.writes[0]).toMatchObject({
+      schemaVersion: 1,
+      apiKey: "aex_dev_euw1_wsp1_secret_crc",
+      aexUrl: "https://dev.example"
+    });
+    // A workspace key is NEVER stored as the account credential.
+    expect(cap.writes[0]!.accountToken).toBeUndefined();
+  });
+
+  it("account PAT (aexu_…) validates via the CONTROL-plane whoami and persists accountToken", async () => {
+    const cap = makeIo({
+      argv: ["login", "--api-key", "aexu_pat_tokentokentokentoken", "--aex-url", "https://ctrl.example"],
+      // Control-plane whoami answers with an account_token principal (not api_key).
+      fetchHandler: async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            principalType: "account_token",
+            appUserId: "usr_1",
+            orgId: "org_1",
+            tokenId: "atk_1",
+            tokenName: "cli",
+            tokenKind: "account",
+            scopes: []
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(0);
+    expect(cap.calls).toEqual(["https://ctrl.example/api/whoami"]);
+    expect(cap.writes).toHaveLength(1);
+    expect(cap.writes[0]).toMatchObject({
+      schemaVersion: 1,
+      accountToken: "aexu_pat_tokentokentokentoken",
+      aexUrl: "https://ctrl.example"
+    });
+    // A PAT is NEVER stored as the data-plane workspace key.
+    expect(cap.writes[0]!.apiKey).toBeUndefined();
+    const printed = JSON.parse(cap.out().trim()) as { ok: boolean; accountAuthorized?: boolean };
+    expect(printed.ok).toBe(true);
+    expect(printed.accountAuthorized).toBe(true);
+    // The PAT value is never printed on stdout.
+    expect(cap.out()).not.toContain("aexu_pat_tokentokentokentoken");
+  });
+
+  it("does NOT persist a bad account PAT (control-plane whoami fails)", async () => {
+    const cap = makeIo({
+      argv: ["login", "--api-key", "aexu_bad_tokentokentokentoken", "--aex-url", "https://ctrl.example"],
+      whoamiStatus: 401
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(1);
+    expect(cap.writes).toHaveLength(0);
+    const printed = JSON.parse(cap.err().trim()) as { error: string; status?: number; remedy?: string };
+    expect(printed.error).toBe("login_failed");
+    expect(printed.status).toBe(401);
+    expect(printed.remedy).toContain("aex login");
+  });
+
 });
 
 describe("aex login (device flow)", () => {
@@ -357,5 +426,25 @@ describe("aex auth status", () => {
     expect(cap.exit()).toBe(0);
     const printed = JSON.parse(cap.out().trim()) as { hasToken: boolean };
     expect(printed.hasToken).toBe(false);
+  });
+
+  it("reflects a stored account credential (accountToken only) without printing it", async () => {
+    const cap = makeIo({
+      argv: ["auth", "status"],
+      stored: { schemaVersion: 1, accountToken: "aexu_acct_secret_TAIL", aexUrl: "https://ctrl.example" }
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(0);
+    const printed = JSON.parse(cap.out().trim()) as {
+      hasToken: boolean;
+      tokenSuffix?: string;
+      credential?: string;
+      aexUrl?: string;
+    };
+    expect(printed.hasToken).toBe(true);
+    expect(printed.tokenSuffix).toBe("TAIL");
+    expect(printed.credential).toBe("account");
+    expect(printed.aexUrl).toBe("https://ctrl.example");
+    expect(cap.out()).not.toContain("aexu_acct_secret_TAIL");
   });
 });

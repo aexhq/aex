@@ -45,6 +45,7 @@ import type {
   SecretRecord,
   WebhookSigningSecret,
   WhoAmI,
+  AccountWhoAmI,
   OrgRecord,
   CreateOrgRequest,
   WorkspaceRecord,
@@ -1145,6 +1146,43 @@ export async function deleteWorkspaceAsset(http: HttpClient, hash: string): Prom
 
 export async function whoami(http: HttpClient): Promise<WhoAmI> {
   return parseWhoAmI(await http.request<unknown>("/api/whoami"));
+}
+
+/**
+ * Validate a CONTROL-plane account token (PAT / device session) against the
+ * dashboard BFF `GET /api/whoami`. Same endpoint as {@link whoami}, but the
+ * bearer is an account PAT (`aexu_...`) so the server answers with an
+ * `account_token` principal (no workspace, no data-plane limits) — a shape the
+ * workspace-key {@link whoami} parser rejects. Used by
+ * `aex login --api-key <account PAT>` to prove the PAT before persisting it.
+ */
+export async function accountWhoami(http: HttpClient): Promise<AccountWhoAmI> {
+  return parseAccountWhoAmI(await http.request<unknown>("/api/whoami"));
+}
+
+function parseAccountWhoAmI(value: unknown): AccountWhoAmI {
+  if (!isRecord(value)) {
+    throw new SessionStateError("account whoami response must be an object");
+  }
+  if (value.ok !== true || value.principalType !== "account_token") {
+    throw new SessionStateError("account whoami response must identify an account_token principal");
+  }
+  if (typeof value.appUserId !== "string" || value.appUserId.length === 0) {
+    throw new SessionStateError("account whoami response appUserId must be a non-empty string");
+  }
+  if (!Array.isArray(value.scopes) || !value.scopes.every((scope) => typeof scope === "string")) {
+    throw new SessionStateError("account whoami response scopes must be an array of strings");
+  }
+  return {
+    ok: true,
+    principalType: "account_token",
+    appUserId: value.appUserId,
+    scopes: value.scopes as string[],
+    ...(typeof value.orgId === "string" ? { orgId: value.orgId } : {}),
+    ...(typeof value.tokenId === "string" ? { tokenId: value.tokenId } : {}),
+    ...(typeof value.tokenName === "string" ? { tokenName: value.tokenName } : {}),
+    ...(typeof value.tokenKind === "string" ? { tokenKind: value.tokenKind } : {})
+  };
 }
 
 function parseWhoAmI(value: unknown): WhoAmI {

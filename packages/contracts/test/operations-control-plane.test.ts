@@ -145,3 +145,45 @@ describe("api-key operations", () => {
     expect(cap.url).toBe(`${BASE}/api/keys/key_1`);
   });
 });
+
+describe("accountWhoami (control-plane PAT validation)", () => {
+  it("GETs /api/whoami and parses an account_token principal", async () => {
+    const cap: Captured = {};
+    const client = clientFor(
+      {
+        ok: true,
+        principalType: "account_token",
+        appUserId: "usr_1",
+        orgId: "org_1",
+        tokenId: "atk_1",
+        tokenName: "cli",
+        tokenKind: "account",
+        scopes: ["orgs:read"]
+      },
+      cap
+    );
+    const me = await operations.accountWhoami(client);
+    expect(cap.method).toBe("GET");
+    expect(cap.url).toBe(`${BASE}/api/whoami`);
+    expect(me).toEqual({
+      ok: true,
+      principalType: "account_token",
+      appUserId: "usr_1",
+      orgId: "org_1",
+      tokenId: "atk_1",
+      tokenName: "cli",
+      tokenKind: "account",
+      scopes: ["orgs:read"]
+    });
+  });
+
+  it("rejects an api_key principal (a workspace key is not an account PAT)", async () => {
+    const client = clientFor({ ok: true, principalType: "api_key", workspaceId: "wsp_1", scopes: [] });
+    await expect(operations.accountWhoami(client)).rejects.toThrow(/account_token principal/);
+  });
+
+  it("fails closed when appUserId is missing", async () => {
+    const client = clientFor({ ok: true, principalType: "account_token", scopes: [] });
+    await expect(operations.accountWhoami(client)).rejects.toThrow(/appUserId/);
+  });
+});

@@ -491,6 +491,28 @@ export interface SessionFileLink {
   readonly [key: string]: unknown;
 }
 
+/**
+ * Identity of a CONTROL-plane account principal (a PAT / device session),
+ * as returned by the dashboard BFF `GET /api/whoami` when the bearer is an
+ * account token (`aexu_...`). Distinct from {@link WhoAmI} (a data-plane
+ * workspace key): an account principal spans orgs and carries no workspace or
+ * data-plane limits. Used by `aex login --api-key <account PAT>` to validate a
+ * PAT before persisting it, and by any control-plane identity probe.
+ */
+export interface AccountWhoAmI {
+  readonly ok: true;
+  readonly principalType: "account_token";
+  /** The app user the token authenticates as. */
+  readonly appUserId: string;
+  readonly scopes: readonly string[];
+  /** Org the token is scoped to, when the server reports one. */
+  readonly orgId?: string;
+  readonly tokenId?: string;
+  readonly tokenName?: string;
+  /** e.g. `"account"` — the account-token kind reported by the server. */
+  readonly tokenKind?: string;
+}
+
 export interface WhoAmI {
   readonly ok: true;
   readonly principalType: "api_key";

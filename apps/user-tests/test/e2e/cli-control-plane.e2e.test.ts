@@ -156,7 +156,11 @@ afterAll(async () => {
 });
 
 describe("flow 1 — login + auth status", () => {
-  // LIVE (fails-closed until control-plane + a PAT accepted by /api/whoami exist).
+  // LIVE (fails-closed until the control-plane whoami is deployed and accepts the
+  // PAT). The CLI now detects the `aexu_` PAT and validates it against the
+  // CONTROL-plane (dashboard-BFF) whoami — persisting `accountToken`, not the
+  // data-plane `apiKey` — so this no longer 400s (`malformed_token`) client-side
+  // against a live plane; it exercises the real control-plane whoami path.
   it("login --api-key <account PAT> persists a credential; auth status reveals only the last 4", async () => {
     const cfg = freshConfigDir();
     const login = await runCli(["login", "--api-key", accountToken, "--aex-url", apiBase], cfg);
