@@ -158,16 +158,16 @@ describe("public SDK clean cut", () => {
     const canonical = new Aex({
       apiKey: "token",
       baseUrl: "https://api.example.test",
-      fetch: async () => response({ runtimeSize: "shared-0.25x-1gb" })
+      fetch: async () => response({ runtimeSize: "0.25cpu-1gb" })
     });
     const session = await canonical.sessions.open("session_1");
-    expect(session.record.runtime).toEqual({ size: "shared-0.25x-1gb" });
+    expect(session.record.runtime).toEqual({ size: "0.25cpu-1gb" });
     expect(session.record).not.toHaveProperty("runtimeSize");
 
     const legacy = new Aex({
       apiKey: "token",
       baseUrl: "https://api.example.test",
-      fetch: async () => response({ runtime: "shared-0.25x-1gb" })
+      fetch: async () => response({ runtime: "0.25cpu-1gb" })
     });
     await expect(legacy.sessions.open("session_1")).rejects.toThrow(/removed runtime field/);
   });

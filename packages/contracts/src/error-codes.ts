@@ -35,6 +35,7 @@ export const AEX_API_ERROR_CODES = [
   "workspace_spend_cap_exceeded",
   "insufficient_balance",
   "rate_limited",
+  "content_deleted",
   "upstream_error",
   "internal_error"
 ] as const;
@@ -70,6 +71,7 @@ export const AEX_API_ERROR_MESSAGES: Record<AexApiErrorCode, string> = {
   workspace_spend_cap_exceeded: "The workspace monthly spend cap was reached.",
   insufficient_balance: "The workspace prepaid balance is insufficient to submit this session.",
   rate_limited: "Too many requests — retry after a short backoff.",
+  content_deleted: "The session's content was deleted after its retention window; only metadata remains.",
   upstream_error: "An upstream provider returned an error.",
   internal_error: "The aex API encountered an internal error."
 };
@@ -90,7 +92,9 @@ export const AEX_API_ERROR_REMEDIES: Partial<Record<AexApiErrorCode, string>> = 
   workspace_spend_cap_exceeded: "Raise the workspace spend cap or wait for the next billing cycle.",
   insufficient_balance: "Top up the workspace balance or add a payment method.",
   workspace_concurrency_exceeded: "Wait for in-flight sessions to finish or raise the concurrency limit.",
-  workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit."
+  workspace_submit_rate_exceeded: "Slow the submit rate or raise the workspace submit-rate limit.",
+  content_deleted:
+    "The session content is gone after its retention window; read the session record's metadata, or start a new session."
 };
 
 const API_ERROR_CODE_SET: ReadonlySet<string> = new Set(AEX_API_ERROR_CODES);

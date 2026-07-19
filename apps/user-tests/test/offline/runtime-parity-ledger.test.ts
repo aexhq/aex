@@ -8,13 +8,13 @@ import {
 } from "../_fixtures/runtime-parity-ledger.js";
 
 describe("public runtime-parity scenario ledger", () => {
-  it("has stable unique scenario IDs and paired on-demand runtime coverage", () => {
+  it("has stable unique scenario IDs and complete execution-runtime coverage", () => {
     const ids = PUBLIC_RUNTIME_PARITY_SCENARIOS.map(({ id }) => id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toEqual([...ids].sort());
 
     for (const scenario of PUBLIC_RUNTIME_PARITY_SCENARIOS) {
-      expect(scenario.runtimes).toEqual(["container", "lambda"]);
+      expect(scenario.runtimes).toEqual(["container", "spot_container", "lambda"]);
       expect(scenario.layers.e2e.length).toBeGreaterThan(0);
       expect(scenario.layers.user.length).toBeGreaterThan(0);
       expect(scenario.sourceFiles.length).toBeGreaterThan(0);
@@ -32,7 +32,7 @@ describe("public runtime-parity scenario ledger", () => {
 
   it("generates a deterministic, complete scenario/layer/entrypoint/runtime manifest", () => {
     const cells = buildExpectedParityCells(PUBLIC_RUNTIME_PARITY_SCENARIOS);
-    expect(cells.length).toBe(PUBLIC_RUNTIME_PARITY_SCENARIOS.length * 8);
+    expect(cells.length).toBe(PUBLIC_RUNTIME_PARITY_SCENARIOS.length * 12);
     expect(new Set(cells.map(scenarioCellKey)).size).toBe(cells.length);
     expect(cells.map(scenarioCellKey)).toEqual([...cells.map(scenarioCellKey)].sort());
   });
@@ -60,7 +60,7 @@ describe("public runtime-parity scenario ledger", () => {
       { ...second, status: "skipped", cleanup: "passed", evidenceDigest: "sha256:skip" },
       {
         ...third,
-        runtime: "spot_container",
+        scenarioId: "unexpected.scenario",
         status: "passed",
         cleanup: "failed",
         evidenceDigest: "sha256:extra"

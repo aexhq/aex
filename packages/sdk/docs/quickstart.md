@@ -30,7 +30,7 @@ const aex = new Aex(process.env.AEX_API_KEY!);
 const session = await aex.sessions.create({
   model: Models.CLAUDE_HAIKU_4_5,
   system: "You are a concise engineering assistant.",
-  runtime: Sizes.SHARED_0_25X_1GB,
+  runtime: Sizes.CPU_0_25_1GB,
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }
 });
 

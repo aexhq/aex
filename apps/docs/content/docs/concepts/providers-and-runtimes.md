@@ -26,7 +26,7 @@ independent selectors:
   TypeScript.
 
 Omit either field to use its default (`container` for `kind` and
-`shared-0.25x-1gb` for `size`). The CLI equivalents are `--runtime <kind>` and
+`0.25cpu-1gb` for `size`). The CLI equivalents are `--runtime <kind>` and
 `--runtime-size <size>`.
 
 Runtime choice changes scheduling, cold-start behavior, capacity sourcing, and
@@ -59,7 +59,7 @@ await aex.start({
   message: "Summarise the attached files.",
   runtime: {
     kind: RuntimeKinds.LAMBDA,
-    size: Sizes.SHARED_0_25X_1GB
+    size: Sizes.CPU_0_25_1GB
   },
   apiKeys: { openai: process.env.OPENAI_API_KEY! }
 });
@@ -74,7 +74,7 @@ aex start \
   --openai-api-key "$OPENAI_API_KEY" \
   --model gpt-4.1 \
   --runtime lambda \
-  --runtime-size shared-0.25x-1gb \
+  --runtime-size 0.25cpu-1gb \
   --prompt "Summarise the attached files." \
   --follow
 ```

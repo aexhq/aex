@@ -180,7 +180,7 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
     await client.sessions.create({
       model: "claude-haiku-4-5",
       apiKeys: { anthropic: "sk-x" },
-      runtime: { kind: "spot_container", size: "shared-0.5x-4gb" },
+      runtime: { kind: "spot_container", size: "0.5cpu-4gb" },
       overrides: { timeout: "30m" }
     });
     // A valid config DOES reach the network (create call).

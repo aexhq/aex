@@ -45,12 +45,11 @@ const model = gateModel();
 
 /** Every valid runtime-size preset token (mirrors RUNTIME_SIZE_PRESETS keys). */
 const VALID_SIZES = [
-  "shared-0.06x-256mb",
-  "shared-0.25x-1gb",
-  "shared-0.5x-4gb",
-  "shared-1x-6gb",
-  "shared-2x-8gb",
-  "shared-4x-12gb"
+  "0.25cpu-1gb",
+  "0.5cpu-4gb",
+  "1cpu-6gb",
+  "2cpu-8gb",
+  "4cpu-12gb"
 ] as const;
 
 const PREAMBLE = `
@@ -332,7 +331,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
   // and capture any server-side reflection of the size for evidence.
   // -------------------------------------------------------------------------
   it(
-    "runs a tiny turn on a non-default runtime size (shared-0.5x-4gb) to terminal success",
+    "runs a tiny turn on a non-default runtime size (0.5cpu-4gb) to terminal success",
     async () => {
       const probeMarker = "size-session-" + Math.random().toString(36).slice(2, 8);
       const result = await probe<{
@@ -344,7 +343,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
       }>(`
         const sessionResult = await client.start({
           ...BASE,
-          runtime: { size: "shared-0.5x-4gb" },
+          runtime: { size: "0.5cpu-4gb" },
           message: ${JSON.stringify(`Reply with exactly the following token and nothing else, character for character: ${probeMarker}`)},
           idempotencyKey: "edge-size-session-" + Date.now()
         }, { timeoutMs: 8 * 60 * 1000 });
@@ -364,7 +363,7 @@ describe("live dev — per-session limit / override edge cases (installed SDK)",
 
       expect(result.ok, `run verdict: status=${result.status} text=${JSON.stringify(result.text).slice(0, 200)}`).toBe(true);
       expect(result.text.replace(/\s+/g, "")).toContain(probeMarker);
-      expect((result.reflect as { runtime?: unknown }).runtime).toBe("shared-0.5x-4gb");
+      expect((result.reflect as { runtime?: unknown }).runtime).toBe("0.5cpu-4gb");
       // eslint-disable-next-line no-console
       console.log("[edge-session-limits] size run evidence:", JSON.stringify({
         sessionId: result.sessionId,

@@ -32,7 +32,7 @@ describe("aex.sessions.list", () => {
       sessions: [{
         id: "sess-1",
         status: "idle",
-        runtimeSize: "shared-1x-6gb",
+        runtimeSize: "1cpu-6gb",
         acceptsMessages: true,
         createdAt: "t",
         updatedAt: "t"
@@ -47,7 +47,7 @@ describe("aex.sessions.list", () => {
       sessions: [{
         id: "sess-1",
         status: "idle",
-        runtime: { size: "shared-1x-6gb" },
+        runtime: { size: "1cpu-6gb" },
         acceptsMessages: true,
         createdAt: "t",
         updatedAt: "t"

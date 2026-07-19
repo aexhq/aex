@@ -32,14 +32,13 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runtime size presets", () => {
-  it("exposes exactly the six managed runtime preset tokens", () => {
+  it("exposes exactly the five managed runtime preset tokens", () => {
     expect([...RUNTIME_SIZES]).toEqual([
-      "shared-0.06x-256mb",
-      "shared-0.25x-1gb",
-      "shared-0.5x-4gb",
-      "shared-1x-6gb",
-      "shared-2x-8gb",
-      "shared-4x-12gb"
+      "0.25cpu-1gb",
+      "0.5cpu-4gb",
+      "1cpu-6gb",
+      "2cpu-8gb",
+      "4cpu-12gb"
     ]);
   });
 
@@ -68,7 +67,7 @@ describe("RuntimeSizes symbol const stays in lockstep with presets", () => {
 
 describe("default sessiontime size", () => {
   it("resolves to the current default sessiontime resource preset", () => {
-    expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.SHARED_0_25X_1GB);
+    expect(DEFAULT_RUNTIME_SIZE).toBe(RuntimeSizes.CPU_0_25_1GB);
     expect(runtimeResources(DEFAULT_RUNTIME_SIZE)).toEqual({ cpus: 0.25, memoryMb: 1024 });
   });
 });
@@ -156,9 +155,9 @@ describe("graceful termination constants", () => {
 describe("submission contract — runtimeSize + timeout round-trip", () => {
   it("normalises timeout string to timeoutMs and keeps runtime size token", () => {
     const parsed = parseSessionSubmissionRequest(
-      baseRequest({ runtimeSize: RuntimeSizes.SHARED_2X_8GB, timeout: "2h" })
+      baseRequest({ runtimeSize: RuntimeSizes.CPU_2_8GB, timeout: "2h" })
     );
-    expect(parsed.runtimeSize).toBe("shared-2x-8gb");
+    expect(parsed.runtimeSize).toBe("2cpu-8gb");
     expect(parsed.timeoutMs).toBe(7_200_000);
   });
 
@@ -169,7 +168,7 @@ describe("submission contract — runtimeSize + timeout round-trip", () => {
   });
 
   it("rejects the old machine field spelling (a runtimeSize string) — machine is now a {spot} object", () => {
-    expect(() => parseSessionSubmissionRequest(baseRequest({ machine: "shared-2x-8gb" }))).toThrow(
+    expect(() => parseSessionSubmissionRequest(baseRequest({ machine: "2cpu-8gb" }))).toThrow(
       /machine must be an object/
     );
   });

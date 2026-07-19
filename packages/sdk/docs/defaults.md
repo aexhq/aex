@@ -15,7 +15,7 @@ For hard ceilings and adjustable limits, see
 | Option | Default | How to override |
 | --- | --- | --- |
 | `timeout` | 8 hours | `overrides.timeout` (minimum 1 minute, maximum 8 hours) |
-| `runtime` | `shared-0.25x-1gb` (0.25 vCPU, 1 GB) | `runtime` or `Sizes.*` |
+| `runtime` | `0.25cpu-1gb` (0.25 vCPU, 1 GB) | `runtime` or `Sizes.*` |
 | `overrides.maxSpendUsd` | No per-session spend cap | A positive USD amount |
 | `overrides.maxTurns` | 20 iterations | A positive integer, up to 200 |
 

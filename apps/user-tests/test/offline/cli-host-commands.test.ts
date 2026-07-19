@@ -85,7 +85,7 @@ async function startFakeApi(): Promise<FakeApi> {
           status: "idle",
           acceptsMessages: true,
           provider: "deepseek",
-          runtimeSize: "shared-0.25x-1gb"
+          runtimeSize: "0.25cpu-1gb"
         }
       });
       return;
@@ -97,7 +97,7 @@ async function startFakeApi(): Promise<FakeApi> {
           status: "running",
           acceptsMessages: false,
           provider: "deepseek",
-          runtimeSize: "shared-0.25x-1gb"
+          runtimeSize: "0.25cpu-1gb"
         },
         run: { sessionId: "session-cli-1", runId: "run-1", turnSeq: 1, phase: "running" },
         eventCursor: 1
@@ -112,7 +112,7 @@ async function startFakeApi(): Promise<FakeApi> {
           status: statusPolls > 1 ? "idle" : "running",
           acceptsMessages: statusPolls > 1,
           provider: "deepseek",
-          runtimeSize: "shared-0.25x-1gb"
+          runtimeSize: "0.25cpu-1gb"
         }
       });
       return;
@@ -278,7 +278,7 @@ describe("installed CLI host commands", () => {
       status: "running",
       acceptsMessages: false,
       provider: "deepseek",
-      runtime: { size: "shared-0.25x-1gb" }
+      runtime: { size: "0.25cpu-1gb" }
     });
 
     const status = await runCommand(binPath, ["status", "session-cli-1", ...common], {
@@ -290,7 +290,7 @@ describe("installed CLI host commands", () => {
       id: "session-cli-1",
       status: "running",
       provider: "deepseek",
-      runtime: { size: "shared-0.25x-1gb" }
+      runtime: { size: "0.25cpu-1gb" }
     });
 
     const events = await runCommand(binPath, ["events", "session-cli-1", ...common], {
@@ -312,7 +312,7 @@ describe("installed CLI host commands", () => {
       status: "idle",
       acceptsMessages: true,
       provider: "deepseek",
-      runtime: { size: "shared-0.25x-1gb" }
+      runtime: { size: "0.25cpu-1gb" }
     });
 
     const outPath = join(install.installDir, "installed-cli-run.zip");

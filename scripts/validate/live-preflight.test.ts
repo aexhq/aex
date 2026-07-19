@@ -18,14 +18,13 @@ const runtimeCapabilities = {
   schemaVersion: 1,
   capabilityVersion: "dev-2026-07-20",
   capabilityHash: `sha256:${"a".repeat(64)}`,
-  availableRuntimeKinds: ["container", "lambda"],
+  availableRuntimeKinds: ["container", "spot_container", "lambda"],
   sizesByRuntimeKind: {
     container: ["shared-0.25x-1gb", "shared-1x-6gb"],
+    spot_container: ["shared-0.25x-1gb"],
     lambda: ["shared-0.25x-1gb"]
   },
-  unavailable: {
-    spot_container: { code: "not_enabled_for_workspace" }
-  }
+  unavailable: {}
 };
 
 interface ChildResult {
@@ -200,7 +199,9 @@ describe("live user-test preflight", () => {
     const result = runScenario("lambdaUnavailable");
 
     expect(result.ok).toBe(false);
-    expect(result.message).toContain("missing required runtime parity kind(s): lambda:runtime_not_ready");
+    expect(result.message).toContain(
+      "missing required runtime parity kind(s): spot_container:not_enabled_for_workspace, lambda:runtime_not_ready"
+    );
   });
 
   it("rejects private live endpoints unless explicitly allowed", () => {

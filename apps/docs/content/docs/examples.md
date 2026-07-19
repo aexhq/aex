@@ -19,7 +19,7 @@ const aex = new Aex(process.env.AEX_API_KEY!);
 
 const result = await aex.start({
   model: Models.CLAUDE_HAIKU_4_5,
-  runtime: Sizes.SHARED_0_25X_1GB,
+  runtime: Sizes.CPU_0_25_1GB,
   system: "You are a concise engineering assistant.",
   message: "Inspect this repository and list the highest-priority fix.",
   apiKeys: { anthropic: process.env.ANTHROPIC_API_KEY! }

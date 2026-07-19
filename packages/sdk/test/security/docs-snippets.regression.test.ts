@@ -129,9 +129,9 @@ describe("[REGRESSION] H9 — SDK docs ↔ code drift", () => {
 
     expect(missing).toEqual([]);
 
-    // Runtime sizing is exported as `Sizes` (the docs use `Sizes.SHARED_0_25X_1GB`);
+    // Runtime sizing is exported as `Sizes` (the docs use `Sizes.CPU_0_25_1GB`);
     // the old `RuntimeSizes` export was removed.
-    expect(typeof Sizes.SHARED_0_25X_1GB).toBe("string");
+    expect(typeof Sizes.CPU_0_25_1GB).toBe("string");
   });
 
   it("Instructions.fromPath and File.fromPath exist when referenced in public docs", () => {

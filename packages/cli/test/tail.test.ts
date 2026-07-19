@@ -117,7 +117,7 @@ function makeIo(opts: {
               acceptsMessages: false,
               provider: "anthropic",
               model: "claude-haiku-4-5",
-              runtimeSize: "shared-0.25x-1gb",
+              runtimeSize: "0.25cpu-1gb",
               createdAt: "2026-01-01T00:00:00Z"
             }
           }),
@@ -133,7 +133,7 @@ function makeIo(opts: {
               acceptsMessages: false,
               provider: "anthropic",
               model: "claude-haiku-4-5",
-              runtimeSize: "shared-0.25x-1gb",
+              runtimeSize: "0.25cpu-1gb",
               createdAt: "2026-01-01T00:00:00Z"
             },
             run: { sessionId: "session-x", runId: "run-1", turnSeq: 1, phase: "running" },

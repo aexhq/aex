@@ -21,7 +21,7 @@ const WELL_FORMED = {
   id: "ses_a1",
   status: "idle",
   acceptsMessages: true,
-  runtimeSize: "shared-1x-6gb",
+  runtimeSize: "1cpu-6gb",
   createdAt: "2026-07-04T04:21:51.650Z",
   updatedAt: "2026-07-04T04:22:44.525Z",
   costUsd: 0.0004
@@ -74,7 +74,7 @@ describe("operations.listSessions", () => {
       id: WELL_FORMED.id,
       status: WELL_FORMED.status,
       acceptsMessages: true,
-      runtime: { size: "shared-1x-6gb" },
+      runtime: { size: "1cpu-6gb" },
       createdAt: WELL_FORMED.createdAt,
       updatedAt: WELL_FORMED.updatedAt,
       costUsd: WELL_FORMED.costUsd

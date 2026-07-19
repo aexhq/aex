@@ -1,6 +1,6 @@
-export const PARITY_RUNTIME_KINDS = ["container", "lambda"] as const;
+export const PARITY_RUNTIME_KINDS = ["container", "spot_container", "lambda"] as const;
 export type ParityRuntimeKind = (typeof PARITY_RUNTIME_KINDS)[number];
-export type RuntimeKind = ParityRuntimeKind | "spot_container";
+export type RuntimeKind = ParityRuntimeKind;
 export type PublicTestLayer = "e2e" | "user";
 export type PublicEntryPoint = "sdk" | "cli";
 
@@ -32,7 +32,7 @@ const BOTH_LAYERS = {
 } as const;
 
 /**
- * Public journey ownership for the container/Lambda parity gate. These records
+ * Public journey ownership for the shared execution-runtime parity gate. These records
  * describe required evidence, not a reason to treat an existing source file as
  * proof for every generated cell. The release aggregator still requires one
  * explicit verdict for each layer/entry-point/runtime cell.

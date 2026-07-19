@@ -51,7 +51,7 @@ describe("parseSessionMachine (shape gate)", () => {
   });
 
   it("rejects a non-object input", () => {
-    expect(() => parseSessionMachine("shared-2x-8gb")).toThrow(/machine must be an object/);
+    expect(() => parseSessionMachine("2cpu-8gb")).toThrow(/machine must be an object/);
     expect(() => parseSessionMachine(7)).toThrow(/machine must be an object/);
     expect(() => parseSessionMachine([])).toThrow(/machine must be an object/);
   });

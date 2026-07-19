@@ -133,7 +133,7 @@ describe("aex runtime-sizes list", () => {
     expect(cap.exit()).toBe(0);
     const arr = JSON.parse(cap.out().trim()) as Array<{ size: string; cpus: number; memoryMb: number; default: boolean }>;
     const def = arr.find((e) => e.default);
-    expect(def!.size).toBe("shared-0.25x-1gb");
+    expect(def!.size).toBe("0.25cpu-1gb");
     expect(def!.memoryMb).toBe(1024);
   });
 });

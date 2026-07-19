@@ -70,7 +70,7 @@ describe("managed-only provider surface (published package)", () => {
               : field === "limits"
                 ? { maxConcurrentChildSessions: 2 }
                 : field === "runtimeSize"
-                  ? "shared-2x-8gb"
+                  ? "2cpu-8gb"
                   : "unsupported"
           });
           results.push({ field, caught: false });

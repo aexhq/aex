@@ -13,6 +13,7 @@ import {
   AexIdempotencyConflictError,
   AexNotFoundError,
   AexRateLimitError,
+  ContentDeletedError,
   type AexApiErrorInit
 } from "./sdk-errors.js";
 import { AEX_API_ERROR_MESSAGES, isAexApiErrorCode, type AexApiErrorCode } from "./error-codes.js";
@@ -29,7 +30,7 @@ export interface ApiErrorFromResponseInput {
   readonly cause?: unknown;
 }
 
-type ApiErrorKind = "auth" | "idempotency" | "not_found" | "rate_limit" | "generic";
+type ApiErrorKind = "auth" | "idempotency" | "not_found" | "rate_limit" | "content_deleted" | "generic";
 
 /**
  * EXHAUSTIVE stable-code → subclass-kind map. There is NO `default`: adding a
@@ -56,6 +57,8 @@ export function apiErrorKindForCode(code: AexApiErrorCode): ApiErrorKind {
     case "workspace_concurrency_exceeded":
     case "workspace_submit_rate_exceeded":
       return "rate_limit";
+    case "content_deleted":
+      return "content_deleted";
     case "session_busy":
     case "checkpoint_not_available":
     case "session_not_terminal":
@@ -101,6 +104,13 @@ export function apiErrorFromResponse(input: ApiErrorFromResponseInput): AexApiEr
       return new AexNotFoundError(init);
     case "rate_limit":
       return new AexRateLimitError({ ...init, retryAfterMs: retryAfterMsFromBody(input.body) });
+    case "content_deleted":
+      return new ContentDeletedError({
+        ...init,
+        sessionId: sessionIdFromBody(input.body),
+        purgedAt: purgedAtFromBody(input.body),
+        deletedBy: deletedByFromBody(input.body)
+      });
     case "generic":
       return new AexApiError(input.status, message, input.body, {
         apiCode,
@@ -138,6 +148,21 @@ function requiredScopeFromBody(body: unknown): string | undefined {
     if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
+}
+
+function sessionIdFromBody(body: unknown): string | undefined {
+  const value = asRecord(body)?.sessionId;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function purgedAtFromBody(body: unknown): string | undefined {
+  const value = asRecord(body)?.purgedAt;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function deletedByFromBody(body: unknown): "retention" | "user" | undefined {
+  const value = asRecord(body)?.deletedBy;
+  return value === "retention" || value === "user" ? value : undefined;
 }
 
 function retryAfterMsFromBody(body: unknown): number | undefined {

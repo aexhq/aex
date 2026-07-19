@@ -47,7 +47,7 @@ describe("shard-files duration-balanced bin packing", () => {
 
   it("fans out only runtime-aware files across the authenticated available runtime set", () => {
     const files = collectTestFiles(userTestsRoot);
-    const runtimeKinds = ["container", "lambda"] as const;
+    const runtimeKinds = ["container", "spot_container", "lambda"] as const;
     const matrix = buildFileMatrix(files, runtimeKinds);
     const expectedCount = files.length + RUNTIME_PAIRED_FILES.size * (runtimeKinds.length - 1);
 

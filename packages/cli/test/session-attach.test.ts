@@ -52,14 +52,14 @@ function attachFetch(call: FetchCall): Response {
     });
   }
   if (url.pathname === "/api/sessions" && call.init.method === "POST") {
-    return new Response(JSON.stringify({ session: { id: "s1", status: "idle", acceptsMessages: true, provider: "anthropic", runtimeSize: "shared-0.25x-1gb" } }), {
+    return new Response(JSON.stringify({ session: { id: "s1", status: "idle", acceptsMessages: true, provider: "anthropic", runtimeSize: "0.25cpu-1gb" } }), {
       status: 201,
       headers: { "content-type": "application/json" }
     });
   }
   if (url.pathname === "/api/sessions/s1/messages" && call.init.method === "POST") {
     return new Response(JSON.stringify({
-      session: { id: "s1", status: "running", acceptsMessages: false, provider: "anthropic", runtimeSize: "shared-0.25x-1gb" },
+      session: { id: "s1", status: "running", acceptsMessages: false, provider: "anthropic", runtimeSize: "0.25cpu-1gb" },
       run: { sessionId: "s1", runId: "run-1", turnSeq: 1, phase: "running" },
       eventCursor: 1
     }), {

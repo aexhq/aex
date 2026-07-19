@@ -19,7 +19,7 @@ function harness() {
         id: "session_1",
         status: "idle",
         acceptsMessages: true,
-        runtimeSize: body.runtimeSize ?? "shared-0.25x-1gb",
+        runtimeSize: body.runtimeSize ?? "0.25cpu-1gb",
         ...(body.runtimeKind ? { runtimeKind: body.runtimeKind } : {})
       }
     }), {
@@ -90,21 +90,21 @@ describe("aex.sessions.create", () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
       model: "claude-haiku-4-5",
-      runtime: { size: "shared-0.5x-4gb" },
+      runtime: { size: "0.5cpu-4gb" },
       overrides: { timeout: "10m", maxSpendUsd: 3, maxTurns: 20, idleTtl: "5m" },
       fileCapture: { allowedDirs: ["/workspace/out"], maxFiles: 20 },
       webhook: { url: "https://hooks.example.test/aex" },
       apiKeys: { anthropic: "sk-test" }
     });
     expect(calls[0]!.body).toMatchObject({
-      runtimeSize: "shared-0.5x-4gb",
+      runtimeSize: "0.5cpu-4gb",
       timeout: "10m",
       limits: { maxSpendUsd: 3, maxTurns: 20 },
       retention: { idleTtl: "5m" },
       submission: { fileCapture: { allowedDirs: ["/workspace/out"], maxFiles: 20 } }
     });
     // The flat wire fields fold into the grouped `runtime: { kind, size }`.
-    expect(session.record.runtime).toEqual({ size: "shared-0.5x-4gb" });
+    expect(session.record.runtime).toEqual({ size: "0.5cpu-4gb" });
     expect(session.record).not.toHaveProperty("runtimeSize");
   });
 
@@ -112,14 +112,14 @@ describe("aex.sessions.create", () => {
     const { client, calls } = harness();
     const session = await client.sessions.create({
       model: "claude-haiku-4-5",
-      runtime: { kind: "spot_container", size: "shared-2x-8gb" },
+      runtime: { kind: "spot_container", size: "2cpu-8gb" },
       apiKeys: { anthropic: "sk-test" }
     });
     expect(calls[0]!.body).toMatchObject({
-      runtimeSize: "shared-2x-8gb",
+      runtimeSize: "2cpu-8gb",
       runtimeKind: "spot_container"
     });
-    expect(session.record.runtime).toEqual({ kind: "spot_container", size: "shared-2x-8gb" });
+    expect(session.record.runtime).toEqual({ kind: "spot_container", size: "2cpu-8gb" });
   });
 
   it("omits the runtime wire fields when not selected (container default applied downstream)", async () => {

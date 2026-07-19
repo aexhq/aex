@@ -68,6 +68,7 @@
  *     OR AEX_USER_TEST_VERSION       published package version
  * Optional:
  *   AEX_USER_TEST_DEEPSEEK_MODEL    default "deepseek-v4-flash"
+ *   AEX_USER_TEST_RUNTIME          default "container"
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -88,6 +89,15 @@ const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const deepseekModel = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const runtimeKind = selectedRuntimeKind();
+
+function selectedRuntimeKind(): "container" | "spot_container" | "lambda" {
+  const value = process.env["AEX_USER_TEST_RUNTIME"]?.trim() || "container";
+  if (value !== "container" && value !== "spot_container" && value !== "lambda") {
+    throw new Error(`user-tests live (heavy-session): invalid AEX_USER_TEST_RUNTIME ${JSON.stringify(value)}.`);
+  }
+  return value;
+}
 
 // DeepWiki MCP — public, unauthenticated, exposes GitHub repo Q&A tools.
 const MCP_SERVER_URL = "https://mcp.deepwiki.com/mcp";
@@ -244,6 +254,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       environment: { variables: { HEAVY_SUITE: "heavy-session", HEAVY_CELL: "${spec.provider}" } },
       metadata: { suite: "heavy-session", cell: "${spec.provider}" },
       apiKeys: { [${JSON.stringify(spec.provider)}]: process.env.${spec.keyEnvName} },
+      runtime: { kind: process.env.AEX_USER_TEST_RUNTIME },
       idempotencyKey: "heavy-${spec.provider}-" + Date.now()
     };
 
@@ -255,7 +266,7 @@ function buildScript(spec: CaseSpec, probes: Probes): string {
       const sessionId = result.sessionId;
       const run = {
         status: result.status,
-        runtime: "managed",
+        runtime: result.session.runtime?.kind,
         provider: ${JSON.stringify(spec.provider)}
       };
       const session = await client.sessions.open(sessionId);
@@ -443,7 +454,8 @@ async function runCase(spec: CaseSpec, installDir: string): Promise<CaseResult> 
     AEX_API_URL: apiUrl,
     AEX_API_KEY: apiKey,
     [spec.keyEnvName]: spec.keyValue,
-    DEEPSEEK_KEY: deepseekKey
+    DEEPSEEK_KEY: deepseekKey,
+    AEX_USER_TEST_RUNTIME: runtimeKind
   });
 
   const child = await runCommand(getBunCommand(), [scriptPath], {
@@ -494,7 +506,7 @@ describe("live hosted API — heavy full-feature long session via installed SDK"
         managedHeavySkillName("beta", "deepseek"),
         managedHeavySkillName("gamma", "deepseek")
       ]);
-      expect(result.runtime).toBe("managed");
+      expect(result.runtime).toBe(runtimeKind);
       expect(result.provider).toBe("deepseek");
     },
     13 * 60_000

@@ -16,7 +16,9 @@ import {
   AexIdempotencyConflictError,
   AexNotFoundError,
   AexRateLimitError,
+  ContentDeletedError,
   isAuthError,
+  isContentDeleted,
   isInsufficientScope,
   isIdempotencyConflict,
   isNotFound,
@@ -65,6 +67,42 @@ describe("apiErrorFromResponse (WS4)", () => {
     expect(err).toBeInstanceOf(AexRateLimitError);
     expect(isRateLimited(err)).toBe(true);
     expect((err as AexRateLimitError).retryAfterMs).toBe(2000);
+  });
+
+  it("maps 410 content_deleted → ContentDeletedError carrying sessionId/purgedAt/deletedBy (WS4)", () => {
+    const body = {
+      error: "content_deleted",
+      sessionId: "sess-purged",
+      purgedAt: "2026-07-17T00:00:00.000Z",
+      deletedBy: "retention",
+      requestId: "req-410"
+    };
+    const err = apiErrorFromResponse({ status: 410, body });
+    expect(err).toBeInstanceOf(ContentDeletedError);
+    expect(err).toBeInstanceOf(AexApiError);
+    expect(isContentDeleted(err)).toBe(true);
+    expect(err.apiCode).toBe("content_deleted");
+    expect(err.status).toBe(410);
+    expect(err.requestId).toBe("req-410");
+    const deleted = err as ContentDeletedError;
+    expect(deleted.sessionId).toBe("sess-purged");
+    expect(deleted.purgedAt).toBe("2026-07-17T00:00:00.000Z");
+    expect(deleted.deletedBy).toBe("retention");
+  });
+
+  it("tolerates a content_deleted body missing the optional purge fields", () => {
+    const err = apiErrorFromResponse({ status: 410, body: { error: "content_deleted" } });
+    expect(err).toBeInstanceOf(ContentDeletedError);
+    const deleted = err as ContentDeletedError;
+    expect(deleted.sessionId).toBeUndefined();
+    expect(deleted.purgedAt).toBeUndefined();
+    expect(deleted.deletedBy).toBeUndefined();
+    // An unrecognized `deletedBy` never leaks through the closed union.
+    const weird = apiErrorFromResponse({
+      status: 410,
+      body: { error: "content_deleted", deletedBy: "aliens" }
+    }) as ContentDeletedError;
+    expect(weird.deletedBy).toBeUndefined();
   });
 
   it("maps workspace_inactive to a generic 409 with stable guidance and status context", () => {
@@ -155,6 +193,8 @@ describe("apiErrorFromResponse (WS4)", () => {
         case "workspace_concurrency_exceeded":
         case "workspace_submit_rate_exceeded":
           return "rate_limit";
+        case "content_deleted":
+          return "content_deleted";
         case "session_busy":
         case "checkpoint_not_available":
         case "session_not_terminal":

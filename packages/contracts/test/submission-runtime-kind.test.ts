@@ -32,10 +32,10 @@ describe("submission parser - runtimeKind", () => {
 
   it("is orthogonal to runtimeSize (both can be set together)", () => {
     const parsed = parseSessionSubmissionRequest(
-      baseRequest({ runtimeKind: "spot_container", runtimeSize: "shared-2x-8gb" })
+      baseRequest({ runtimeKind: "spot_container", runtimeSize: "2cpu-8gb" })
     );
     expect(parsed.runtimeKind).toBe("spot_container");
-    expect(parsed.runtimeSize).toBe("shared-2x-8gb");
+    expect(parsed.runtimeSize).toBe("2cpu-8gb");
   });
 
   it("rejects an unknown runtimeKind through the full request parser", () => {

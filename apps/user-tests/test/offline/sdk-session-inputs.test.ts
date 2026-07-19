@@ -52,7 +52,7 @@ await client.sessions.create({
     secrets: { SERVICE_TOKEN: Secret.value("secret-value") },
     packages: [{ name: "pip:pandas", version: "2.2.0" }]
   },
-  runtime: { size: "shared-2x-8gb" },
+  runtime: { size: "2cpu-8gb" },
   overrides: { idleTtl: "5m", timeout: "15m", maxSpendUsd: 2, maxTurns: 8 },
   webhook: { url: "https://hooks.example/aex" },
   idempotencyKey: "stable-create"
@@ -75,7 +75,7 @@ deepStrictEqual(request.secrets.apiKeys, { anthropic: "sk-ant" });
 deepStrictEqual(request.submission.secretEnv, { SERVICE_TOKEN: { ephemeral: true } });
 strictEqual(request.secrets.envSecrets.SERVICE_TOKEN, "secret-value");
 strictEqual(request.secrets.mcpServers[0].headers.Authorization, "Bearer secret");
-strictEqual(request.runtimeSize, "shared-2x-8gb");
+strictEqual(request.runtimeSize, "2cpu-8gb");
 deepStrictEqual(request.limits, { maxSpendUsd: 2, maxTurns: 8 });
 deepStrictEqual(request.retention, { idleTtl: "5m" });
 
@@ -84,7 +84,7 @@ for (const [field, value] of [
   ["tools", []],
   ["files", []],
   ["includeBuiltinTools", false],
-  ["runtimeSize", "shared-2x-8gb"],
+  ["runtimeSize", "2cpu-8gb"],
   ["prompt", "hello"]
 ]) {
   const before = calls.length;
@@ -123,7 +123,7 @@ describe("installed SDK session input contract", () => {
     expect(JSON.parse(child.stdout)).toEqual({
       assetKinds: ["files", "skills", "tools", "instructions"],
       builtinTools: ["bash", "grep"],
-      runtimeSize: "shared-2x-8gb",
+      runtimeSize: "2cpu-8gb",
       rejectedLegacyFields: 6
     });
   });

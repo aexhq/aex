@@ -1,15 +1,13 @@
 /**
  * Live edge-case sweep: SDK `runtime` must be honored, validated, and visible.
  *
- * DEFECT PROBE — the public contract offers six runtime-size presets
- * (packages/contracts/src/runtime-sizes.ts): shared-0.06x-256mb,
- * shared-0.25x-1gb, shared-0.5x-4gb, shared-1x-6gb, shared-2x-8gb,
- * shared-4x-12gb. On the dev plane, the platform's token list only knows
- * shared-0.06x-256mb, shared-0.25x-1gb + internal tier names
- * (lite/standard/standard-2/standard-4), so FOUR of the six documented
- * public sizes silently fall back to the 0.25 vCPU / 1 GB default task
+ * DEFECT PROBE — the public contract offers five runtime-size presets
+ * (packages/contracts/src/runtime-sizes.ts): 0.25cpu-1gb, 0.5cpu-4gb,
+ * 1cpu-6gb, 2cpu-8gb, 4cpu-12gb. If the platform's token list knows only a
+ * subset + internal tier names (lite/standard/standard-2/standard-4), the
+ * other public sizes silently fall back to the 0.25 vCPU / 1 GB default task
  * definition — a customer asking for a 4-vCPU/12 GB box gets the smallest
- * shared box with no error and no visible signal. Two observable defects:
+ * box with no error and no visible signal. Two observable defects:
  *   1. The SDK session record must expose the requested size as typed `runtime`.
  *   2. The server accepts a GARBAGE `runtimeSize` (raw wire, 201) instead of
  *      rejecting it — only the SDK's client-side validation catches typos.
@@ -169,7 +167,7 @@ describe("edge: runtime honored, validated, and visible", () => {
             model: MODEL,
             builtinTools: "none",
             apiKeys: { [PROVIDER]: PROVIDER_KEY },
-            runtime: { size: "shared-1x-6gb" }
+            runtime: { size: "1cpu-6gb" }
           });
           out.created = session.id;
           const rec = (await client.sessions.open(session.id)).record;
@@ -187,9 +185,9 @@ describe("edge: runtime honored, validated, and visible", () => {
       const result = await runChild(install, "runtime-size-echo.mjs", body);
       expect(result.error).toBeNull();
       expect(result.created).toBeTruthy();
-      expect(result.recordRuntime).toEqual({ kind: "container", size: "shared-1x-6gb" });
+      expect(result.recordRuntime).toEqual({ kind: "container", size: "1cpu-6gb" });
       expect(result.leakedRuntimeSize).toBe(false);
-      expect(result.rawRuntimeSize).toBe("shared-1x-6gb");
+      expect(result.rawRuntimeSize).toBe("1cpu-6gb");
     },
     5 * 60_000
   );

@@ -177,6 +177,40 @@ export class AexRateLimitError extends AexApiError {
   }
 }
 
+/**
+ * 410 (WS4) — the session's CONTENT (events, messages, files, manifest,
+ * archive, event stream) was deleted after its retention window; only the
+ * session RECORD (metadata) remains. Carries the `sessionId`, when the content
+ * was `purgedAt`, and what triggered it (`deletedBy`). Every content read AND
+ * `session…stream()` surface it via the one wire→exception factory. Narrow with
+ * {@link isContentDeleted}; check `session.dataState === "metadata_only"` first
+ * to avoid the round-trip.
+ */
+export class ContentDeletedError extends AexApiError {
+  /** The session whose content was deleted. */
+  readonly sessionId: string | undefined;
+  /** When the content was purged (ISO 8601), when the server reported it. */
+  readonly purgedAt: string | undefined;
+  /** What triggered the purge: retention-window elapse or an explicit user delete. */
+  readonly deletedBy: "retention" | "user" | undefined;
+  constructor(
+    init: AexApiErrorInit & {
+      readonly sessionId?: string | undefined;
+      readonly purgedAt?: string | undefined;
+      readonly deletedBy?: "retention" | "user" | undefined;
+    }
+  ) {
+    super(init.status, init.message, init.body, {
+      apiCode: init.apiCode,
+      requestId: init.requestId,
+      cause: init.cause
+    });
+    this.sessionId = init.sessionId;
+    this.purgedAt = init.purgedAt;
+    this.deletedBy = init.deletedBy;
+  }
+}
+
 /** True for a 401/403 authentication/authorization failure. */
 export function isAuthError(err: unknown): err is AexAuthError {
   return err instanceof AexAuthError;
@@ -196,6 +230,10 @@ export function isNotFound(err: unknown): err is AexNotFoundError {
 /** True for a 429 rate/concurrency-limit error. */
 export function isRateLimited(err: unknown): err is AexRateLimitError {
   return err instanceof AexRateLimitError;
+}
+/** True for a 410 whose session content was deleted after its retention window. */
+export function isContentDeleted(err: unknown): err is ContentDeletedError {
+  return err instanceof ContentDeletedError;
 }
 
 /**

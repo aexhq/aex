@@ -14,15 +14,14 @@ export interface RuntimeResources {
 /**
  * The single source of truth: every offered preset, keyed by its wire token.
  * Tokens intentionally remain stable product presets. The smallest
- * (`shared-0.06x-256mb`) tier is for light / IO-bound sessions only.
+ * (`0.25cpu-1gb`) tier is also the default.
  */
 export const RUNTIME_SIZE_PRESETS = {
-  "shared-0.06x-256mb": { cpus: 0.0625, memoryMb: 256 },
-  "shared-0.25x-1gb": { cpus: 0.25, memoryMb: 1024 },
-  "shared-0.5x-4gb": { cpus: 0.5, memoryMb: 4096 },
-  "shared-1x-6gb": { cpus: 1, memoryMb: 6144 },
-  "shared-2x-8gb": { cpus: 2, memoryMb: 8192 },
-  "shared-4x-12gb": { cpus: 4, memoryMb: 12288 }
+  "0.25cpu-1gb": { cpus: 0.25, memoryMb: 1024 },
+  "0.5cpu-4gb": { cpus: 0.5, memoryMb: 4096 },
+  "1cpu-6gb": { cpus: 1, memoryMb: 6144 },
+  "2cpu-8gb": { cpus: 2, memoryMb: 8192 },
+  "4cpu-12gb": { cpus: 4, memoryMb: 12288 }
 } as const satisfies Record<string, RuntimeResources>;
 
 /** The accepted runtime-size values (the wire/CLI tokens). */
@@ -32,19 +31,19 @@ export type RuntimeSize = keyof typeof RUNTIME_SIZE_PRESETS;
 export const RUNTIME_SIZES = Object.keys(RUNTIME_SIZE_PRESETS) as readonly RuntimeSize[];
 
 /** Default when `runtimeSize` is omitted (the 1 GB tier). */
-export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "shared-0.25x-1gb";
+export const DEFAULT_RUNTIME_SIZE: RuntimeSize = "0.25cpu-1gb";
 
 /**
- * Symbol-style accessors for TS callers: the `SHARED_2X_8GB` member resolves to
- * the wire token `"shared-2x-8gb"`. Re-exported by the SDK as `Sizes`.
+ * Symbol-style accessors for TS callers: the `CPU_2_8GB` member resolves to
+ * the wire token `"2cpu-8gb"`. Re-exported by the SDK as `Sizes`. The const key
+ * is a TS identifier alias (letter-led); it does not mirror the digit-led token.
  */
 export const RuntimeSizes = {
-  SHARED_0_06X_256MB: "shared-0.06x-256mb",
-  SHARED_0_25X_1GB: "shared-0.25x-1gb",
-  SHARED_0_5X_4GB: "shared-0.5x-4gb",
-  SHARED_1X_6GB: "shared-1x-6gb",
-  SHARED_2X_8GB: "shared-2x-8gb",
-  SHARED_4X_12GB: "shared-4x-12gb"
+  CPU_0_25_1GB: "0.25cpu-1gb",
+  CPU_0_5_4GB: "0.5cpu-4gb",
+  CPU_1_6GB: "1cpu-6gb",
+  CPU_2_8GB: "2cpu-8gb",
+  CPU_4_12GB: "4cpu-12gb"
 } as const satisfies Record<string, RuntimeSize>;
 
 /** Resolve a preset token to its product-level resource descriptor. */
