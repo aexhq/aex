@@ -1,0 +1,90 @@
+const RUNTIME_KINDS = ["container", "spot_container", "lambda"];
+const RUNTIME_SIZES = [
+  "shared-0.06x-256mb",
+  "shared-0.25x-1gb",
+  "shared-0.5x-4gb",
+  "shared-1x-6gb",
+  "shared-2x-8gb",
+  "shared-4x-12gb"
+];
+
+/**
+ * Parse the authenticated public runtime-capability projection. This parser is
+ * deliberately strict: CI must stop when the projection is absent or malformed
+ * rather than silently shrinking the runtime matrix.
+ */
+export function parseRuntimeCapabilities(value) {
+  const fail = (message) => {
+    throw new Error(`invalid runtimeCapabilities: ${message}`);
+  };
+  if (!isRecord(value)) fail("expected an object");
+  if (value.schemaVersion !== 1) fail("schemaVersion must be 1");
+  if (!isNonEmptyString(value.capabilityVersion)) fail("capabilityVersion must be a non-empty string");
+  if (typeof value.capabilityHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value.capabilityHash)) {
+    fail("capabilityHash must be a lowercase sha256 digest");
+  }
+
+  const availableRuntimeKinds = parseUniqueKnownStrings(
+    value.availableRuntimeKinds,
+    "availableRuntimeKinds",
+    RUNTIME_KINDS,
+    fail
+  );
+  if (availableRuntimeKinds.length === 0) fail("availableRuntimeKinds must not be empty");
+
+  if (!isRecord(value.sizesByRuntimeKind)) fail("sizesByRuntimeKind must be an object");
+  const sizesByRuntimeKind = {};
+  for (const [runtime, sizes] of Object.entries(value.sizesByRuntimeKind)) {
+    if (!RUNTIME_KINDS.includes(runtime)) fail(`sizesByRuntimeKind contains unknown runtime ${runtime}`);
+    sizesByRuntimeKind[runtime] = parseUniqueKnownStrings(
+      sizes,
+      `sizesByRuntimeKind.${runtime}`,
+      RUNTIME_SIZES,
+      fail
+    );
+  }
+  for (const runtime of availableRuntimeKinds) {
+    if (!Object.hasOwn(sizesByRuntimeKind, runtime) || sizesByRuntimeKind[runtime].length === 0) {
+      fail(`sizesByRuntimeKind.${runtime} must contain at least one size for an available runtime`);
+    }
+  }
+
+  if (!isRecord(value.unavailable)) fail("unavailable must be an object");
+  const unavailable = {};
+  for (const [runtime, detail] of Object.entries(value.unavailable)) {
+    if (!RUNTIME_KINDS.includes(runtime)) fail(`unavailable contains unknown runtime ${runtime}`);
+    if (availableRuntimeKinds.includes(runtime)) fail(`${runtime} cannot be both available and unavailable`);
+    if (!isRecord(detail) || !isNonEmptyString(detail.code)) {
+      fail(`unavailable.${runtime}.code must be a non-empty string`);
+    }
+    unavailable[runtime] = { code: detail.code };
+  }
+
+  return Object.freeze({
+    schemaVersion: 1,
+    capabilityVersion: value.capabilityVersion,
+    capabilityHash: value.capabilityHash,
+    availableRuntimeKinds: Object.freeze([...availableRuntimeKinds]),
+    sizesByRuntimeKind: Object.freeze(sizesByRuntimeKind),
+    unavailable: Object.freeze(unavailable)
+  });
+}
+
+function parseUniqueKnownStrings(value, path, known, fail) {
+  if (!Array.isArray(value)) fail(`${path} must be an array`);
+  const result = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !known.includes(item)) fail(`${path} contains unknown value ${String(item)}`);
+    if (result.includes(item)) fail(`${path} contains duplicate value ${item}`);
+    result.push(item);
+  }
+  return result;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}

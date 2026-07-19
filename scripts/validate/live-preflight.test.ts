@@ -14,6 +14,20 @@ const baseEnv = {
   LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS: "1"
 };
 
+const runtimeCapabilities = {
+  schemaVersion: 1,
+  capabilityVersion: "dev-2026-07-20",
+  capabilityHash: `sha256:${"a".repeat(64)}`,
+  availableRuntimeKinds: ["container", "lambda"],
+  sizesByRuntimeKind: {
+    container: ["shared-0.25x-1gb", "shared-1x-6gb"],
+    lambda: ["shared-0.25x-1gb"]
+  },
+  unavailable: {
+    spot_container: { code: "not_enabled_for_workspace" }
+  }
+};
+
 interface ChildResult {
   readonly ok: boolean;
   readonly message?: string;
@@ -22,6 +36,7 @@ interface ChildResult {
     readonly maxConcurrentSessions: number;
     readonly requiredScopes: readonly string[];
     readonly attempt: number;
+    readonly runtimeCapabilities: typeof runtimeCapabilities;
   };
   readonly calls: number;
   readonly sleeps: number[];
@@ -34,6 +49,7 @@ function runScenario(scenario: string): ChildResult {
     const mod = await import(${JSON.stringify(preflightUrl)});
     const scenario = ${JSON.stringify(scenario)};
     const baseEnv = ${JSON.stringify(baseEnv)};
+    const runtimeCapabilities = ${JSON.stringify(runtimeCapabilities)};
     const sleeps = [];
     const logs = [];
     const out = [];
@@ -44,12 +60,16 @@ function runScenario(scenario: string): ChildResult {
       if (scenario === "retry503") {
         return calls === 1
           ? response(503, { error: "db_resuming" }, { "apigw-requestid": "req-1", "retry-after": "3" })
-          : response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] }, { "x-amzn-requestid": "req-2" });
+          : response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities }, { "x-amzn-requestid": "req-2" });
       }
       if (scenario === "auth401") return response(401, { error: "unauthorized" });
       if (scenario === "lowLimit") return response(200, { limits: { maxConcurrentSessions: 49 } });
       if (scenario === "missingScope") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read"] });
-      return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
+      if (scenario === "missingCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
+      if (scenario === "invalidCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, availableRuntimeKinds: ["container", "container"] } });
+      if (scenario === "availableWithoutSizes") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] } } });
+      if (scenario === "lambdaUnavailable") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, availableRuntimeKinds: ["container"], sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] }, unavailable: { lambda: { code: "runtime_not_ready" }, spot_container: { code: "not_enabled_for_workspace" } } } });
+      return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities });
     };
     try {
       const env = {
@@ -100,6 +120,7 @@ describe("live user-test preflight", () => {
     expect(result.ok).toBe(true);
     expect(result.result).toMatchObject({ status: 200, maxConcurrentSessions: 50, attempt: 2 });
     expect(result.result?.requiredScopes).toEqual(["sessions:read", "sessions:write", "files:read"]);
+    expect(result.result?.runtimeCapabilities).toEqual(runtimeCapabilities);
     expect(result.calls).toBe(2);
     expect(result.sleeps).toEqual([3000]);
     expect(result.logs).toContain("transient HTTP 503");
@@ -162,6 +183,24 @@ describe("live user-test preflight", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("missing required scope(s): sessions:write, files:read");
+  });
+
+  it.each(["missingCapabilities", "invalidCapabilities", "availableWithoutSizes"])(
+    "fails closed on an absent or malformed authenticated runtime projection (%s)",
+    (scenario) => {
+      const result = runScenario(scenario);
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("invalid runtimeCapabilities");
+      expect(result.calls).toBe(1);
+    }
+  );
+
+  it("does not turn an unavailable required runtime into a reduced or skipped matrix", () => {
+    const result = runScenario("lambdaUnavailable");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("missing required runtime parity kind(s): lambda:runtime_not_ready");
   });
 
   it("rejects private live endpoints unless explicitly allowed", () => {

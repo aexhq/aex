@@ -38,11 +38,23 @@ const apiUrl = requireEnv("AEX_API_URL");
 const apiKey = requireEnv("AEX_API_KEY");
 const deepseekKey = requireEnv("DEEPSEEK_API_KEY");
 const model = process.env["AEX_USER_TEST_DEEPSEEK_MODEL"]?.trim() || "deepseek-v4-flash";
+const runtimeKind = requireRuntimeKind();
+
+function requireRuntimeKind(): "container" | "spot_container" | "lambda" {
+  const value = requireEnv("AEX_USER_TEST_RUNTIME_KIND");
+  if (value !== "container" && value !== "spot_container" && value !== "lambda") {
+    throw new Error(`user-tests live (event-stream): invalid AEX_USER_TEST_RUNTIME_KIND ${JSON.stringify(value)}.`);
+  }
+  return value;
+}
 
 interface StreamResult {
   readonly sessionId: string;
   readonly runId: string;
   readonly runStatus: string;
+  readonly requestedRuntimeKind: string;
+  readonly observedRuntimeKind: string | null;
+  readonly cleanupPassed: boolean;
   readonly streamedCount: number;
   readonly streamedTypes: readonly string[];
   readonly streamedCustomNames: readonly string[];
@@ -149,6 +161,7 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
         const apiKey = process.env.AEX_API_KEY;
         const deepseekKey = process.env.DEEPSEEK_KEY;
         const model = process.env.MODEL;
+        const runtimeKind = process.env.RUNTIME_KIND;
 
         const client = new Aex({ baseUrl, apiKey });
         const session = await client.sessions.create({
@@ -156,8 +169,12 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           model,
           outputMode: "stream",
           idempotencyKey: "user-test-event-stream-" + Date.now(),
-          apiKeys: { deepseek: deepseekKey }
+          apiKeys: { deepseek: deepseekKey },
+          runtime: { kind: runtimeKind }
         });
+        if (session.runtime?.kind !== runtimeKind) {
+          throw new Error("runtime identity mismatch: requested=" + runtimeKind + " observed=" + String(session.runtime?.kind));
+        }
         process.stderr.write(JSON.stringify({ eventStreamSessionId: session.id }) + "\\n");
         const turn = session.messages.send(
           ${JSON.stringify(`Reply with exactly these words: ${probe} alpha beta gamma delta epsilon zeta eta theta iota kappa lambda.`)},
@@ -228,6 +245,10 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           archive: lifecycleCounts(archiveRunEvents, result.run.runId)
         };
 
+        // A passing parity verdict requires the hosted session to be cleaned,
+        // not merely the caller's temporary install directory.
+        await session.delete();
+
         const serialized = JSON.stringify({ run, streamedEvents, snapshot, archiveEvents });
         const snapshotCustomNames = snapshot
           .filter((e) => e.type === "CUSTOM" && e.data && typeof e.data.name === "string")
@@ -236,6 +257,8 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           sessionId,
           runId: result.run.runId,
           runStatus: run.status,
+          requestedRuntimeKind: runtimeKind,
+          observedRuntimeKind: session.runtime?.kind ?? null,
           streamedCount: streamed.length,
           streamedTypes: [...new Set(streamed)],
           streamedCustomNames: [...new Set(streamedCustomNames)],
@@ -245,6 +268,7 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           archiveEventCount: archiveEvents.length,
           archiveTypes: [...new Set(archiveEvents.map((event) => event.type))],
           archiveMatchesSnapshot,
+          cleanupPassed: true,
           lifecycle,
           leakedKey: [deepseekKey, apiKey].some((secret) => serialized.includes(secret)),
           terminalOutcome: snapshot.find((e) => e.type === "RUN_FINISHED" || e.type === "RUN_ERROR")?.data?.outcome ?? null,
@@ -267,7 +291,8 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
         AEX_API_URL: apiUrl,
         AEX_API_KEY: apiKey,
         DEEPSEEK_KEY: deepseekKey,
-        MODEL: model
+        MODEL: model,
+        RUNTIME_KIND: runtimeKind
       };
       const pathKey = process.platform === "win32" ? "Path" : "PATH";
       if (process.env[pathKey]) passEnv[pathKey] = process.env[pathKey]!;
@@ -299,6 +324,9 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
 
       try {
         expect(result.runStatus).toBe("succeeded");
+        expect(result.requestedRuntimeKind).toBe(runtimeKind);
+        expect(result.observedRuntimeKind).toBe(runtimeKind);
+        expect(result.cleanupPassed).toBe(true);
         // Live WS delivered the unified envelope.
         expect(result.streamedCount).toBeGreaterThan(0);
         expect(result.streamedTypes).toContain("TEXT_MESSAGE_CONTENT");

@@ -16,12 +16,14 @@
 //     matrix job can never silently pass with zero coverage.
 //
 // Usage:
-//   node scripts/shard-files.mjs --matrix [--exclude-file <rel>]...
+//   node scripts/shard-files.mjs --matrix --runtime-capabilities-json <json> [--exclude-file <rel>]...
 //   node scripts/shard-files.mjs --shard <i>/<N> [--exclude-file <rel>]...
 //   node scripts/shard-files.mjs --summary <N> [--exclude-file <rel>]...
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseRuntimeCapabilities } from "../../../scripts/cicd/runtime-capabilities.mjs";
+import { parityCellsForFile } from "./runtime-parity-verdicts.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -43,6 +45,15 @@ const EXCLUDED_DIRS = new Set(["node_modules", "providers"]);
 // one-file-per-job matrix consumes more workspace slots than its job count.
 const SESSION_SLOT_OVERRIDES = new Map([
   ["test/live/edge-concurrency-scale.user.test.ts", 10]
+]);
+
+// These files explicitly submit the selected runtime and assert the returned
+// session identity. Only such files may be multiplied by runtime discovery;
+// duplicating a test that relies on the default would create false Lambda/spot
+// evidence while actually exercising container.
+export const RUNTIME_PAIRED_FILES = new Set([
+  "test/live/edge-cli.user.test.ts",
+  "test/live/live-sdk-event-stream.test.ts"
 ]);
 
 export function collectTestFiles(root = appRoot) {
@@ -136,13 +147,26 @@ export function excludeFiles(files, excludedFiles) {
   return files.filter((file) => !excluded.has(file));
 }
 
-export function buildFileMatrix(files) {
+export function buildFileMatrix(files, runtimeKinds = ["container"]) {
   if (files.length === 0) throw new Error("no test files collected");
-  const count = files.length;
-  return files.map((file, index) => ({
+  if (!Array.isArray(runtimeKinds) || runtimeKinds.length === 0) {
+    throw new Error("runtime kinds must be a non-empty array");
+  }
+  if (new Set(runtimeKinds).size !== runtimeKinds.length) {
+    throw new Error("runtime kinds must be unique");
+  }
+  const entries = files.flatMap((file) =>
+    RUNTIME_PAIRED_FILES.has(file)
+      ? runtimeKinds.map((runtimeKind) => ({ file, runtimeKind }))
+      : [{ file, runtimeKind: null }]
+  );
+  const count = entries.length;
+  return entries.map(({ file, runtimeKind }, index) => ({
     shard: index + 1,
     count,
     file,
+    runtimeKind,
+    parityCells: parityCellsForFile(file, runtimeKind),
     sessionSlots: sessionSlotsForFile(file)
   }));
 }
@@ -151,6 +175,7 @@ function parseArgs(argv) {
   let mode;
   let value;
   const excludedFiles = [];
+  let runtimeCapabilitiesJson;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--matrix") {
@@ -165,18 +190,33 @@ function parseArgs(argv) {
       const file = argv[++i];
       if (file === undefined || file === "") throw new Error("--exclude-file requires a relative test path");
       excludedFiles.push(file);
+    } else if (arg === "--runtime-capabilities-json") {
+      runtimeCapabilitiesJson = argv[++i];
+      if (runtimeCapabilitiesJson === undefined || runtimeCapabilitiesJson === "") {
+        throw new Error("--runtime-capabilities-json requires a JSON value");
+      }
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { mode, value, excludedFiles };
+  return { mode, value, excludedFiles, runtimeCapabilitiesJson };
 }
 
 function main(argv) {
-  const { mode, value, excludedFiles } = parseArgs(argv);
+  const { mode, value, excludedFiles, runtimeCapabilitiesJson } = parseArgs(argv);
   const files = excludeFiles(collectTestFiles(), excludedFiles);
   if (mode === "--matrix") {
-    process.stdout.write(`${JSON.stringify(buildFileMatrix(files))}\n`);
+    if (!runtimeCapabilitiesJson) {
+      throw new Error("--matrix requires authenticated --runtime-capabilities-json");
+    }
+    let rawCapabilities;
+    try {
+      rawCapabilities = JSON.parse(runtimeCapabilitiesJson);
+    } catch {
+      throw new Error("--runtime-capabilities-json must be valid JSON");
+    }
+    const capabilities = parseRuntimeCapabilities(rawCapabilities);
+    process.stdout.write(`${JSON.stringify(buildFileMatrix(files, capabilities.availableRuntimeKinds))}\n`);
     return;
   }
   const durations = loadDurations();
@@ -198,7 +238,7 @@ function main(argv) {
     }
     return;
   }
-  throw new Error("usage: shard-files.mjs --matrix [--exclude-file <rel>]... | --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]...");
+  throw new Error("usage: shard-files.mjs --matrix --runtime-capabilities-json <json> [--exclude-file <rel>]... | --shard <i>/<N> [--exclude-file <rel>]... | --summary <N> [--exclude-file <rel>]...");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

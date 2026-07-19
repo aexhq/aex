@@ -30,8 +30,7 @@ jobs:
     outputs:
       version: ${{ steps.artifact.outputs.version }}
       tarball_artifact: ${{ steps.artifact.outputs.tarball_artifact }}
-      test_matrix: ${{ steps.test-matrix.outputs.matrix }}
-      peak_session_slots: ${{ steps.test-matrix.outputs.peak_session_slots }}
+      candidate_identity: ${{ steps.artifact.outputs.candidate_identity }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,21 +39,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
-
-      - name: Prepare one-file live-test matrix
-        id: test-matrix
-        shell: bash
-        run: |
-          set -euo pipefail
-          matrix="$(node apps/user-tests/scripts/shard-files.mjs --matrix)"
-          peak_session_slots="$(node -e '
-            const entries = JSON.parse(process.argv[1]);
-            const peak = entries.reduce((total, entry) => total + entry.sessionSlots, 0);
-            if (!Number.isSafeInteger(peak) || peak < 1) throw new Error("invalid live-test session-slot declaration");
-            process.stdout.write(String(peak));
-          ' "$matrix")"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"
 
       - name: Install
         if: ${{ inputs.artifact_source == 'pack-current' }}
@@ -74,6 +58,7 @@ jobs:
             bun scripts/cicd/wait-for-npm.mjs @aexhq/sdk "$PACKAGE_VERSION"
             bun scripts/cicd/wait-for-bun-install.mjs @aexhq/sdk "$PACKAGE_VERSION"
             echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+            echo "candidate_identity=npm:@aexhq/sdk@$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           else
             pack_dir="$RUNNER_TEMP/aex-pack"
             mkdir -p "$pack_dir"
@@ -84,6 +69,8 @@ jobs:
               exit 1
             fi
             echo "tarball_artifact=live-user-tests-sdk-tarball" >> "$GITHUB_OUTPUT"
+            digest="$(sha256sum "$tarball" | awk '{print $1}')"
+            echo "candidate_identity=sha256:$digest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload SDK tarball
@@ -100,6 +87,9 @@ jobs:
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     environment: live-user-tests
     needs: prepare-artifact
+    outputs:
+      runtime_capabilities: ${{ steps.preflight.outputs.runtime_capabilities }}
+      max_concurrent_sessions: ${{ steps.preflight.outputs.max_concurrent_sessions }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -110,20 +100,57 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Check live user-test configuration
+        id: preflight
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
           AEX_EXPECTED_API_HOST: ${{ vars.AEX_EXPECTED_API_HOST || 'dev-api.aex.dev' }}
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: ${{ needs.prepare-artifact.outputs.peak_session_slots }}
+          LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 1
           LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,sessions:cancel,sessions:delete,files:read,files:write,assets:write,skills:write,tools:write,instructions:write,secrets:read,secrets:write
         run: bun scripts/cicd/preflight-live-user-tests.mjs
+
+  prepare-live-test-matrix:
+    name: Prepare authenticated runtime matrix
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    needs:
+      - prepare-artifact
+      - live-user-tests-preflight
+    outputs:
+      test_matrix: ${{ steps.test-matrix.outputs.matrix }}
+      peak_session_slots: ${{ steps.test-matrix.outputs.peak_session_slots }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build one-file matrix from authenticated runtime capabilities
+        id: test-matrix
+        shell: bash
+        env:
+          RUNTIME_CAPABILITIES: ${{ needs.live-user-tests-preflight.outputs.runtime_capabilities }}
+          MAX_CONCURRENT_SESSIONS: ${{ needs.live-user-tests-preflight.outputs.max_concurrent_sessions }}
+        run: |
+          set -euo pipefail
+          matrix="$(node apps/user-tests/scripts/shard-files.mjs --matrix --runtime-capabilities-json "$RUNTIME_CAPABILITIES")"
+          peak_session_slots="$(node -e '
+            const entries = JSON.parse(process.argv[1]);
+            const peak = entries.reduce((total, entry) => total + entry.sessionSlots, 0);
+            if (!Number.isSafeInteger(peak) || peak < 1) throw new Error("invalid live-test session-slot declaration");
+            process.stdout.write(String(peak));
+          ' "$matrix")"
+          if [ "$peak_session_slots" -gt "$MAX_CONCURRENT_SESSIONS" ]; then
+            echo "Authenticated workspace maxConcurrentSessions=$MAX_CONCURRENT_SESSIONS is below discovered runtime matrix demand $peak_session_slots." >&2
+            exit 1
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"
 
   live-user-tests:
     name: Live user tests file ${{ matrix.shard }}/${{ matrix.count }}
     needs:
       - prepare-artifact
       - live-user-tests-preflight
+      - prepare-live-test-matrix
     runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
     environment: live-user-tests
     timeout-minutes: 240
@@ -132,7 +159,7 @@ jobs:
       # Full file-level fanout with no max-parallel cap. The preflight sums each
       # file's declared peak session-slot demand from this discovered matrix.
       matrix:
-        include: ${{ fromJSON(needs.prepare-artifact.outputs.test_matrix) }}
+        include: ${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -157,6 +184,7 @@ jobs:
         env:
           ARTIFACT_SOURCE: ${{ inputs.artifact_source }}
           PACKAGE_VERSION: ${{ needs['prepare-artifact'].outputs.version }}
+          CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
         run: |
           set -euo pipefail
           if [ "$ARTIFACT_SOURCE" = "published-version" ]; then
@@ -167,10 +195,16 @@ jobs:
               echo "No downloaded @aexhq/sdk tarball was found." >&2
               exit 1
             fi
+            downloaded_identity="sha256:$(sha256sum "$tarball" | awk '{print $1}')"
+            if [ "$downloaded_identity" != "$CANDIDATE_IDENTITY" ]; then
+              echo "Downloaded SDK tarball identity does not match the prepared candidate." >&2
+              exit 1
+            fi
             echo "AEX_USER_TEST_TARBALL=${tarball}" >> "$GITHUB_ENV"
           fi
 
       - name: Live user tests
+        id: live-test
         shell: bash
         env:
           AEX_API_URL: ${{ vars.AEX_API_URL }}
@@ -178,6 +212,8 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           AEX_USER_TEST_DEEPSEEK_MODEL: ${{ vars.AEX_USER_TEST_DEEPSEEK_MODEL }}
           AEX_USER_TEST_MAX_WORKERS: 1
+          AEX_USER_TEST_RUNTIME_KIND: ${{ matrix.runtimeKind }}
+          AEX_USER_TEST_CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
           TEST_FILE: ${{ matrix.file }}
           RAW_LOG: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log
           REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json
@@ -198,6 +234,32 @@ jobs:
             exit "$test_status"
           fi
           exit "$assertion_status"
+
+      - name: Emit runtime parity verdicts
+        if: ${{ always() && matrix.runtimeKind != null }}
+        shell: bash
+        env:
+          PARITY_CELLS: ${{ toJSON(matrix.parityCells) }}
+          STEP_OUTCOME: ${{ steps.live-test.outcome }}
+          CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
+          REPORT: ${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json
+          VERDICT: ${{ github.workspace }}/.suite-diagnostics/verdicts/verdict-${{ matrix.shard }}.json
+        run: |
+          node apps/user-tests/scripts/runtime-parity-verdicts.mjs emit \
+            --cells-json "$PARITY_CELLS" \
+            --step-outcome "$STEP_OUTCOME" \
+            --candidate-identity "$CANDIDATE_IDENTITY" \
+            --report "$REPORT" \
+            --out "$VERDICT"
+
+      - name: Upload runtime parity verdict
+        if: ${{ always() && matrix.runtimeKind != null }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-parity-verdict-${{ matrix.shard }}
+          path: .suite-diagnostics/verdicts
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Redact live user test log
         if: ${{ always() }}
@@ -268,3 +330,33 @@ jobs:
       # full-feature session) are NOT run here — they live in the
       # manually-dispatched .github/workflows/live-on-demand-tests.yml. The
       # deterministic tool-fuzz gate sessions in the platform deploy suite.
+
+  runtime-parity-verdict:
+    name: Runtime parity verdict closure
+    if: ${{ always() }}
+    needs:
+      - prepare-artifact
+      - prepare-live-test-matrix
+      - live-user-tests
+    runs-on: ${{ fromJSON(vars.AEX_CI_RUNNER || '"ubuntu-latest"') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download runtime parity verdicts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-parity-verdict-*
+          path: ${{ runner.temp }}/runtime-parity-verdicts
+          merge-multiple: true
+
+      - name: Require exact runtime parity verdict closure
+        shell: bash
+        env:
+          TEST_MATRIX: ${{ needs.prepare-live-test-matrix.outputs.test_matrix }}
+          CANDIDATE_IDENTITY: ${{ needs.prepare-artifact.outputs.candidate_identity }}
+        run: |
+          node apps/user-tests/scripts/runtime-parity-verdicts.mjs validate \
+            --matrix-json "$TEST_MATRIX" \
+            --candidate-identity "$CANDIDATE_IDENTITY" \
+            --verdict-directory "$RUNNER_TEMP/runtime-parity-verdicts"

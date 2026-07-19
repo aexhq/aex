@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import { setTimeout as sleep } from "node:timers/promises";
+import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseRuntimeCapabilities } from "./runtime-capabilities.mjs";
 
 const REQUIRED_ENV = ["AEX_API_URL", "AEX_API_KEY", "DEEPSEEK_API_KEY"];
 const DEFAULT_ATTEMPTS = 4;
@@ -9,6 +11,7 @@ const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 8_000;
 const DEFAULT_MIN_MAX_CONCURRENT_SESSIONS = 1;
 const DEFAULT_REQUIRED_SCOPES = ["sessions:read", "sessions:write", "files:read"];
+const REQUIRED_PARITY_RUNTIME_KINDS = ["container", "lambda"];
 
 class PreflightFatalError extends Error {}
 
@@ -137,10 +140,29 @@ export async function checkLiveUserTestsPreflight(options = {}) {
           `live-user-tests /api/whoami token is missing required scope(s): ${missingScopes.join(", ")} (requestId=${requestId}).`
         );
       }
+      let runtimeCapabilities;
+      try {
+        runtimeCapabilities = parseRuntimeCapabilities(body?.runtimeCapabilities);
+      } catch (error) {
+        throw new PreflightFatalError(
+          `live-user-tests /api/whoami ${error instanceof Error ? error.message : String(error)} (requestId=${requestId}).`
+        );
+      }
+      const missingParityRuntimes = REQUIRED_PARITY_RUNTIME_KINDS.filter(
+        (runtime) => !runtimeCapabilities.availableRuntimeKinds.includes(runtime)
+      );
+      if (missingParityRuntimes.length > 0) {
+        const reasons = missingParityRuntimes.map(
+          (runtime) => `${runtime}:${runtimeCapabilities.unavailable[runtime]?.code ?? "not_reported"}`
+        );
+        throw new PreflightFatalError(
+          `live-user-tests workspace is missing required runtime parity kind(s): ${reasons.join(", ")} (requestId=${requestId}).`
+        );
+      }
       out.write(
         `live-user-tests /api/whoami preflight passed (status=${res.status}, requestId=${requestId}, maxConcurrentSessions=${maxConcurrentSessions}, requiredScopes=${requiredScopes.join(",")}, attempt=${attempt}/${attempts}).\n`
       );
-      return { status: res.status, requestId, maxConcurrentSessions, requiredScopes, attempt, attempts };
+      return { status: res.status, requestId, maxConcurrentSessions, requiredScopes, runtimeCapabilities, attempt, attempts };
     } catch (error) {
       if (error instanceof PreflightFatalError) throw error;
       if (attempt < attempts && isRetryableFetchFailure(error)) {
@@ -276,8 +298,19 @@ function causeCandidates(error) {
 }
 
 if (fileURLToPath(import.meta.url) === process.argv[1]) {
-  checkLiveUserTestsPreflight().catch((error) => {
-    process.stderr.write(`::error::${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(1);
-  });
+  checkLiveUserTestsPreflight()
+    .then((result) => {
+      const githubOutput = String(process.env.GITHUB_OUTPUT ?? "").trim();
+      if (!githubOutput) return;
+      appendFileSync(
+        githubOutput,
+        `runtime_capabilities=${JSON.stringify(result.runtimeCapabilities)}\n` +
+          `runtime_kinds=${JSON.stringify(result.runtimeCapabilities.availableRuntimeKinds)}\n` +
+          `max_concurrent_sessions=${result.maxConcurrentSessions}\n`
+      );
+    })
+    .catch((error) => {
+      process.stderr.write(`::error::${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    });
 }

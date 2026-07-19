@@ -179,8 +179,10 @@ describe("live scenario reliability", () => {
     const job = workflowJob(workflow, "live-user-tests");
     const step = workflowStep(job, "Live user tests");
 
-    expect(jobNeeds(job)).toEqual(expect.arrayContaining(["prepare-artifact", "live-user-tests-preflight"]));
-    expect(job.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-artifact.outputs.test_matrix) }}");
+    expect(jobNeeds(job)).toEqual(
+      expect.arrayContaining(["prepare-artifact", "live-user-tests-preflight", "prepare-live-test-matrix"])
+    );
+    expect(job.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}");
     expect(job.strategy?.["max-parallel"]).toBeUndefined();
     expect(step.env?.AEX_USER_TEST_MAX_WORKERS).toBe(1);
     expect(step.env?.TEST_FILE).toBe("${{ matrix.file }}");

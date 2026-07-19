@@ -59,11 +59,16 @@ describe("live user-test release gate", () => {
     const job = workflowJob(workflow, "live-user-tests");
     const live = runStep(job, "bun run test:user:files");
     const redact = runStep(job, "function redactSignedUrls");
-    const upload = usesStep(job, "actions/upload-artifact@");
+    const upload = job.steps?.find((step) =>
+      step.uses?.startsWith("actions/upload-artifact@") && String(step.with?.name ?? "").includes("redacted-log")
+    );
+    if (!upload) throw new Error("redacted log upload is missing");
 
-    expect(job.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-artifact.outputs.test_matrix) }}");
+    expect(job.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}");
     expect(live.env).toMatchObject({
       AEX_USER_TEST_MAX_WORKERS: 1,
+      AEX_USER_TEST_RUNTIME_KIND: "${{ matrix.runtimeKind }}",
+      AEX_USER_TEST_CANDIDATE_IDENTITY: "${{ needs.prepare-artifact.outputs.candidate_identity }}",
       TEST_FILE: "${{ matrix.file }}",
       RAW_LOG: "${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.log",
       REPORT: "${{ github.workspace }}/.suite-diagnostics/raw/live-user-tests-shard-${{ matrix.shard }}.report.json"
@@ -85,6 +90,44 @@ describe("live user-test release gate", () => {
       "retention-days": 7
     });
     expect(JSON.stringify(upload.with)).not.toContain(".suite-diagnostics/raw");
+  });
+
+  it("requires evidence-bound runtime verdict closure for every authenticated paired matrix cell", () => {
+    const workflow = readWorkflow(".github/workflows/live-user-tests.yml");
+    const live = workflowJob(workflow, "live-user-tests");
+    const aggregate = workflowJob(workflow, "runtime-parity-verdict");
+    const emit = runStep(live, "runtime-parity-verdicts.mjs emit");
+    const validate = runStep(aggregate, "runtime-parity-verdicts.mjs validate");
+
+    expect(emit.if).toBe("${{ always() && matrix.runtimeKind != null }}");
+    expect(emit.env).toMatchObject({
+      PARITY_CELLS: "${{ toJSON(matrix.parityCells) }}",
+      STEP_OUTCOME: "${{ steps.live-test.outcome }}",
+      CANDIDATE_IDENTITY: "${{ needs.prepare-artifact.outputs.candidate_identity }}"
+    });
+    expect(jobNeeds(aggregate)).toContain("live-user-tests");
+    expect(validate.env).toMatchObject({
+      TEST_MATRIX: "${{ needs.prepare-live-test-matrix.outputs.test_matrix }}",
+      CANDIDATE_IDENTITY: "${{ needs.prepare-artifact.outputs.candidate_identity }}"
+    });
+    expect(validate.run).toContain('--verdict-directory "$RUNNER_TEMP/runtime-parity-verdicts"');
+  });
+
+  it("preserves the exact prepared canary identity through install and verdict aggregation", () => {
+    const workflow = readWorkflow(".github/workflows/live-user-tests.yml");
+    const prepare = workflowJob(workflow, "prepare-artifact");
+    const live = workflowJob(workflow, "live-user-tests");
+    const select = prepare.steps?.find((step) => step.name === "Select SDK artifact");
+    if (!select) throw new Error("Select SDK artifact step is missing");
+    const use = runStep(live, "downloaded_identity=");
+
+    expect((prepare.outputs as Record<string, unknown> | undefined)?.["candidate_identity"]).toBe(
+      "${{ steps.artifact.outputs.candidate_identity }}"
+    );
+    expect(select.run).toContain('candidate_identity=npm:@aexhq/sdk@$PACKAGE_VERSION');
+    expect(select.run).toContain('candidate_identity=sha256:$digest');
+    expect(use.env?.CANDIDATE_IDENTITY).toBe("${{ needs.prepare-artifact.outputs.candidate_identity }}");
+    expect(use.run).toContain('if [ "$downloaded_identity" != "$CANDIDATE_IDENTITY" ]');
   });
 
   it("never writes raw hosted-test output to public Actions logs", () => {
@@ -163,9 +206,10 @@ describe("live user-test release gate", () => {
     const liveCapacity = runStep(workflowJob(live, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
       .env?.LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS;
     const liveWorkers = runStep(liveJob, "test:user:files").env?.AEX_USER_TEST_MAX_WORKERS;
-    expect(liveCapacity).toBe("${{ needs.prepare-artifact.outputs.peak_session_slots }}");
+    expect(liveCapacity).toBe(1);
     expect(liveWorkers).toBe(1);
     expect(jobNeeds(workflowJob(live, "live-user-tests-preflight"))).toContain("prepare-artifact");
+    expect(jobNeeds(liveJob)).toContain("prepare-live-test-matrix");
     expect(runStep(workflowJob(live, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
       .env?.LIVE_USER_TEST_REQUIRED_SCOPES).toBe(
       "sessions:read,sessions:write,sessions:cancel,sessions:delete,files:read,files:write,assets:write," +
@@ -176,17 +220,23 @@ describe("live user-test release gate", () => {
   it("derives one live job per discovered file while keeping release smoke focused", () => {
     const workflow = readWorkflow(".github/workflows/live-user-tests.yml");
     const prepare = workflowJob(workflow, "prepare-artifact");
+    const prepareMatrix = workflowJob(workflow, "prepare-live-test-matrix");
     const live = workflowJob(workflow, "live-user-tests");
     const release = workflowJob(readWorkflow(".github/workflows/release.yml"), "live-user-tests");
     const liveRun = runStep(live, "test:user:files");
     const smokeRun = runStep(release, "test:user:smoke");
 
-    const matrixStep = runStep(prepare, "shard-files.mjs --matrix");
+    const matrixStep = runStep(prepareMatrix, "shard-files.mjs --matrix");
+    expect(matrixStep.run).toContain('--runtime-capabilities-json "$RUNTIME_CAPABILITIES"');
+    expect(matrixStep.env?.RUNTIME_CAPABILITIES).toBe(
+      "${{ needs.live-user-tests-preflight.outputs.runtime_capabilities }}"
+    );
+    expect(matrixStep.run).toContain('"$peak_session_slots" -gt "$MAX_CONCURRENT_SESSIONS"');
     expect(matrixStep.run).toContain('echo "matrix=$matrix" >> "$GITHUB_OUTPUT"');
     expect(matrixStep.run).toContain('echo "peak_session_slots=$peak_session_slots" >> "$GITHUB_OUTPUT"');
     expect(matrixStep.run).toContain("entry.sessionSlots");
     expect(prepare.outputs).not.toHaveProperty("test_count");
-    expect(live.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-artifact.outputs.test_matrix) }}");
+    expect(live.strategy?.matrix?.include).toBe("${{ fromJSON(needs.prepare-live-test-matrix.outputs.test_matrix) }}");
     expect(live.strategy?.["max-parallel"]).toBeUndefined();
     expect(liveRun.env?.AEX_USER_TEST_MAX_WORKERS).toBe(1);
     expect(liveRun.env?.TEST_FILE).toBe("${{ matrix.file }}");

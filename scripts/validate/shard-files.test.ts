@@ -10,6 +10,7 @@ import {
   excludeFiles,
   loadDurations,
   lptPartition,
+  RUNTIME_PAIRED_FILES,
   sessionSlotsForFile
 } from "../../apps/user-tests/scripts/shard-files.mjs";
 import type { ShardBin } from "../../apps/user-tests/scripts/shard-files.mjs";
@@ -39,6 +40,43 @@ describe("shard-files duration-balanced bin packing", () => {
     expect(matrix.map((entry) => entry.shard)).toEqual(files.map((_, index) => index + 1));
     expect(matrix.every((entry) => entry.count === files.length)).toBe(true);
     expect(matrix.every((entry) => entry.sessionSlots === sessionSlotsForFile(entry.file))).toBe(true);
+    expect(matrix.filter((entry) => entry.runtimeKind !== null).map((entry) => entry.runtimeKind)).toEqual(
+      [...RUNTIME_PAIRED_FILES].sort().map(() => "container")
+    );
+  });
+
+  it("fans out only runtime-aware files across the authenticated available runtime set", () => {
+    const files = collectTestFiles(userTestsRoot);
+    const runtimeKinds = ["container", "lambda"] as const;
+    const matrix = buildFileMatrix(files, runtimeKinds);
+    const expectedCount = files.length + RUNTIME_PAIRED_FILES.size * (runtimeKinds.length - 1);
+
+    expect(matrix).toHaveLength(expectedCount);
+    expect(matrix.every((entry) => entry.count === expectedCount)).toBe(true);
+    for (const file of files) {
+      const entries = matrix.filter((entry) => entry.file === file);
+      if (RUNTIME_PAIRED_FILES.has(file)) {
+        expect(entries.map((entry) => entry.runtimeKind)).toEqual(runtimeKinds);
+        for (const entry of entries) {
+          expect(entry.parityCells).toHaveLength(3);
+          expect(entry.parityCells.every((cell) => cell.runtime === entry.runtimeKind)).toBe(true);
+          expect(new Set(entry.parityCells.map((cell) => cell.scenarioId))).toEqual(new Set([
+            "public.admission-and-identity",
+            "public.conversation",
+            "public.files-and-checkpoints"
+          ]));
+        }
+      } else {
+        expect(entries).toHaveLength(1);
+        expect(entries[0]?.runtimeKind).toBeNull();
+        expect(entries[0]?.parityCells).toEqual([]);
+      }
+    }
+  });
+
+  it("fails closed when the authenticated runtime set is empty or duplicated", () => {
+    expect(() => buildFileMatrix(["a.ts"], [])).toThrow(/non-empty/);
+    expect(() => buildFileMatrix(["a.ts"], ["container", "container"])).toThrow(/unique/);
   });
 
   it("collects only gating live tests", () => {
@@ -92,7 +130,8 @@ describe("shard-files duration-balanced bin packing", () => {
           ...process.env,
           AEX_API_URL: "https://example.invalid",
           AEX_API_KEY: "test-api-key",
-          DEEPSEEK_API_KEY: "test-provider-key"
+          DEEPSEEK_API_KEY: "test-provider-key",
+          AEX_USER_TEST_RUNTIME_KIND: "container"
         }
       }
     );

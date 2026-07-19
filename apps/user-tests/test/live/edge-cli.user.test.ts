@@ -35,6 +35,15 @@ const apiBase = requireEnv("AEX_API_URL").replace(/\/+$/, "");
 const apiKey = requireEnv("AEX_API_KEY");
 const providerKey = requireGateKey("edge-cli");
 const model = gateModel();
+const runtimeKind = requireRuntimeKind();
+
+function requireRuntimeKind(): "container" | "spot_container" | "lambda" {
+  const value = requireEnv("AEX_USER_TEST_RUNTIME_KIND");
+  if (value !== "container" && value !== "spot_container" && value !== "lambda") {
+    throw new Error(`edge-cli live: invalid AEX_USER_TEST_RUNTIME_KIND ${JSON.stringify(value)}`);
+  }
+  return value;
+}
 
 // RUN_FINISHED is a consistency barrier: the session is immediately idle and
 // ready for another message on every subsequent read.
@@ -195,6 +204,7 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
             "start",
             "--provider", GATE_PROVIDER,
             "--model", model,
+            "--runtime", runtimeKind,
             "--prompt", `@${promptPath}`,
             "--deepseek-api-key", providerKey,
             "--idempotency-key", `edge-cli-${asciiId.toLowerCase()}`,
@@ -225,6 +235,9 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const statusDoc = JSON.parse(status.stdout.trim()) as Record<string, unknown>;
         expect(statusDoc["id"], diag("aex status", status)).toBe(id);
         expect(SESSION_READY, diag("aex status", status)).toContain(statusDoc["status"]);
+        const observedRuntime = statusDoc["runtime"];
+        expect(observedRuntime, diag("aex status", status)).toBeTypeOf("object");
+        expect((observedRuntime as Record<string, unknown>)["kind"], diag("aex status", status)).toBe(runtimeKind);
         assertNoSecretLeak("status", status);
 
         // events: RUN_STARTED + clean terminal + the assistant echoed the markers
@@ -257,6 +270,12 @@ describe("live DEV plane via installed aex CLI — edge cases", () => {
         const entries = unzipSync(new Uint8Array(readFileSync(zipPath)));
         expect(Object.keys(entries)).toContain("events.jsonl");
         assertNoSecretLeak("download", download);
+
+        // A passing parity verdict includes remote cleanup, not just disposal
+        // of the isolated local install tree.
+        const deleted = await executeCli(["delete", id, ...common()]);
+        expect(deleted.exitCode, diag("aex delete", deleted)).toBe(0);
+        assertNoSecretLeak("delete", deleted);
     },
     30 * 60_000
   );
