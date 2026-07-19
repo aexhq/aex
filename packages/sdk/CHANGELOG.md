@@ -4,6 +4,57 @@ All notable changes to `@aexhq/sdk` are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows semantic versioning.
 
+## 0.45.0
+
+### Added
+
+- **Unified control-plane resource surface** (additive). New instance-field
+  clients on `Aex` for account/control-plane management, alongside the existing
+  data-plane `client.workspace` (singular) and `client.sessions`:
+  - `client.orgs` — `create` / `list` / `members(orgId)` /
+    `invite(orgId, { email, role })`.
+  - `client.workspaces` (plural) — control-plane management across your orgs:
+    `create({ orgId, name })` / `list()` / `delete(id)`. Distinct from
+    `client.workspace` (singular), the data-plane context of the current key.
+  - `client.keys` — `create({ workspaceId } | { account: true })` / `list()` /
+    `delete(id)`.
+  - `client.workspaces.create(...)` and `client.keys.create(...)` return the
+    freshly minted key exactly ONCE, wrapped in a redacted `SecretString`
+    (`NewWorkspaceResult` / `NewApiKeyResult`) — call `.unwrap()` to read it.
+  - New wire types: `OrgRecord`, `WorkspaceRecord`, `NewWorkspace`,
+    `ApiKeyRecord`, `NewApiKey`, `OrgMemberRecord`, `OrgInvite`, and their
+    request shapes.
+- **CLI parity**: new `aex orgs`, `aex workspaces`, and `aex keys` verbs; `aex
+  login` gains a browser **device flow** (persisting an account token) while
+  keeping `--api-key` as the non-interactive workspace-key fallback.
+- Secret redaction now recognizes the aex self-describing workspace-key shape
+  and the `aexu_` account-PAT prefix.
+
+## 0.44.0
+
+### Changed
+
+- **Renamed the managed runtime-size tokens to `<vcpu>cpu-<mem>gb`** (were
+  `shared-<n>x-<mem>`). The `shared-` prefix wrongly implied burstable /
+  oversubscribed CPU; the boxes are dedicated Fargate allocations. The tokens
+  are now: `0.25cpu-1gb` (default), `0.5cpu-4gb`, `1cpu-6gb`, `2cpu-8gb`,
+  `4cpu-12gb`.
+  - The `Sizes` const members are renamed to match:
+    `Sizes.SHARED_2X_8GB` → `Sizes.CPU_2_8GB` (and likewise for the others).
+    The const key is a letter-led TS alias; the wire token stays digit-led
+    (`0.25cpu-1gb`).
+  - Migration: `runtime: { size: Sizes.SHARED_2X_8GB }` →
+    `runtime: { size: Sizes.CPU_2_8GB }`; or the raw token `"shared-2x-8gb"` →
+    `"2cpu-8gb"`.
+
+### Removed
+
+- **Removed the `shared-0.06x-256mb` tier.** It advertised 0.0625 vCPU / 256 MB
+  but was floored up to the host's 0.25 vCPU / 512 MB minimum, so the published
+  spec never matched what ran. Use `0.25cpu-1gb` (the default) instead.
+
+Pre-launch breaking change.
+
 ## 0.43.0
 
 ### Changed

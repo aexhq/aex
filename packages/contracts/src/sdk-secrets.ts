@@ -24,6 +24,15 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /sk-[A-Za-z0-9_-]{20,}/g,
   // aex workspace / proxy tokens: apt_… / ant_….
   /\b(?:apt|ant)_[A-Za-z0-9_-]{16,}/g,
+  // aex self-describing workspace API key (one-time reveal from createWorkspace /
+  // createApiKey): aex_<plane>_<region>_<workspaceId>_<secret>_<crc>. Anchored on
+  // the full 6-part shape so the whole key masks as one label (the entropy
+  // catch-all would otherwise redact only its dense segments, leaving the
+  // `aex_<plane>_<region>_` prefix behind). Never matches `api.aex.dev`.
+  /\baex_(?:dev|prd)_[a-z0-9]+_[a-z0-9]+_[A-Za-z0-9]+_[a-z0-9]+/gi,
+  // aex account PAT (control-plane): aexu_<opaque>. Distinct prefix from the
+  // workspace-key family so a PAT masks by shape even when short.
+  /\baexu_[A-Za-z0-9_-]{16,}/g,
   // Slack tokens.
   /xox[pbar]-[A-Za-z0-9-]{10,}/g,
   // AWS access key id + secret access key shapes.

@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.43.0",
+  "version": "0.45.0",
   "description": "TypeScript SDK for autonomous agent sessions across Anthropic, DeepSeek, OpenAI, Gemini, Mistral, OpenRouter, and Doubao.",
   "license": "Apache-2.0",
   "repository": {

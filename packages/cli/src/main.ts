@@ -56,6 +56,9 @@ import {
   executeLoginCmd,
   executeLogoutCmd,
   executeAuthStatusCmd,
+  executeOrgsCmd,
+  executeWorkspacesCmd,
+  executeKeysCmd,
   modelNamesCmd,
   providerNamesCmd,
   executeToolsCmd,
@@ -148,6 +151,15 @@ async function dispatch(io: CliIO, args: readonly string[]): Promise<CliExitCode
     case "webhooks":
       // `aex webhooks secret` — reveal the workspace webhook signing secret.
       return sessionWebhooksCmd(io, rest);
+    case "orgs":
+      // Control-plane: orgs the account principal belongs to.
+      return executeOrgsCmd(io, rest);
+    case "workspaces":
+      // Control-plane: manage workspaces across your orgs (plural collection).
+      return executeWorkspacesCmd(io, rest);
+    case "keys":
+      // Control-plane: manage API keys (workspace keys + account PATs).
+      return executeKeysCmd(io, rest);
     case "login":
       return executeLoginCmd(io, rest);
     case "logout":
@@ -198,7 +210,12 @@ async function printGlobalHelp(io: CliIO): Promise<CliExitCode> {
   io.stdout("  aex billing upgrade pro|team --api-key T   Create a hosted checkout session and print its URL\n");
   io.stdout("  aex billing portal --api-key T             Create a hosted billing portal session and print its URL\n");
   io.stdout("  aex webhooks secret --api-key T           Reveal (create on first use) the webhook signing secret\n");
-  io.stdout("  aex login --api-key T [--aex-url U]      Persist token + url (then other verbs need no --api-key)\n");
+  io.stdout("\nControl-plane (account credential from `aex login`, or an account PAT via --api-key):\n");
+  io.stdout("  aex orgs [list|create|members|invite]      Manage the orgs you belong to (members, invites)\n");
+  io.stdout("  aex workspaces [list|create|delete]        Manage workspaces across your orgs (create reveals its first key once)\n");
+  io.stdout("  aex keys [list|create|delete]              Manage API keys (workspace keys + account PATs)\n\n");
+  io.stdout("  aex login [--aex-url U]                     Browser device flow -> account token (control-plane)\n");
+  io.stdout("  aex login --api-key T [--aex-url U]      Persist a workspace key (data-plane); then verbs need no --api-key\n");
   io.stdout("  aex logout                                 Clear the stored token\n");
   io.stdout("  aex auth status                            Show the resolved config (token never printed)\n");
   io.stdout("  aex models list [--json]                   List models + default provider (no token needed)\n");

@@ -180,9 +180,47 @@ export const CLI_VERBS: readonly CliVerbSpec[] = [
     subverbs: ["secret"]
   },
   {
+    name: "orgs",
+    summary: "Control-plane: manage the orgs you belong to (members, invites).",
+    usage: [
+      "aex orgs [list]                              List your orgs",
+      "aex orgs create --name <name>                Create an org (you become its admin)",
+      "aex orgs members <orgId>                      List members + pending invites",
+      "aex orgs invite <orgId> --email E [--role admin|member]"
+    ],
+    flags: ["--name", "--email", "--role"],
+    subverbs: ["list", "create", "members", "invite"]
+  },
+  {
+    name: "workspaces",
+    summary: "Control-plane: manage workspaces across your orgs (create/list/delete).",
+    usage: [
+      "aex workspaces [list]                         List manageable workspaces",
+      "aex workspaces create --org <orgId> --name N  Create + reveal its first key ONCE",
+      "aex workspaces delete <workspaceId>           Delete a workspace"
+    ],
+    flags: ["--org", "--name"],
+    subverbs: ["list", "create", "delete"]
+  },
+  {
+    name: "keys",
+    summary: "Control-plane: manage API keys — workspace keys and account PATs.",
+    usage: [
+      "aex keys [list]                               List key metadata (never values)",
+      "aex keys create <workspaceId> [--name N]      Mint a workspace (data-plane) key",
+      "aex keys create --account [--name N]          Mint an account PAT (control-plane)",
+      "aex keys delete <keyId>                        Revoke a key"
+    ],
+    flags: ["--account", "--name"],
+    subverbs: ["list", "create", "delete"]
+  },
+  {
     name: "login",
-    summary: "Persist the API key + url so other verbs need no --api-key.",
-    usage: ["aex login --api-key T [--aex-url U]"]
+    summary: "Sign in via the browser device flow (or persist a workspace key with --api-key).",
+    usage: [
+      "aex login [--aex-url U]                       Device flow → account token (control-plane)",
+      "aex login --api-key T [--aex-url U]           Persist a workspace key (data-plane)"
+    ]
   },
   {
     name: "logout",

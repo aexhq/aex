@@ -16,8 +16,14 @@ export type {
   WorkspaceFilesClient,
   WorkspaceInstructionsClient,
   WorkspaceSkillsClient,
-  WorkspaceToolsClient
+  WorkspaceToolsClient,
+  OrgsClient,
+  WorkspacesClient,
+  KeysClient
 } from "./client.js";
+// Control-plane one-time reveal results — the minted key is a redacted
+// `SecretString` (call `.unwrap()` to read it).
+export type { NewWorkspaceResult, NewApiKeyResult } from "./client.js";
 export type {
   AexOptions,
   ChildSessionEvents,
@@ -70,6 +76,7 @@ export {
   AexNetworkError,
   AexNotFoundError,
   CleanupError,
+  ContentDeletedError,
   CredentialValidationError,
   ProviderError,
   SessionConfigValidationError,
@@ -77,6 +84,7 @@ export {
   apiErrorFromResponse,
   isAexApiErrorCode,
   isAuthError,
+  isContentDeleted,
   isIdempotencyConflict,
   isInsufficientScope,
   isNotFound
@@ -173,7 +181,18 @@ export type {
   SecretRecord,
   UsageSummary,
   WebhookSigningSecret,
-  WhoAmI
+  WhoAmI,
+  OrgRecord,
+  CreateOrgRequest,
+  WorkspaceRecord,
+  CreateWorkspaceRequest,
+  NewWorkspace,
+  ApiKeyRecord,
+  CreateApiKeyRequest,
+  NewApiKey,
+  OrgMemberRecord,
+  CreateOrgInviteRequest,
+  OrgInvite
 } from "@aexhq/contracts";
 
 // Platform submission types exposed so callers can build typed environment and
@@ -187,7 +206,7 @@ export type {
 } from "@aexhq/contracts";
 
 // Runtime sizing — the closed set of valid managed runtime presets.
-// Prefer the `Sizes` symbol const (e.g. `Sizes.SHARED_2X_8GB`)
+// Prefer the `Sizes` symbol const (e.g. `Sizes.CPU_2_8GB`)
 // so an invalid token is a compile error, not a runtime 400.
 export {
   SESSION_RECORD_MANIFEST_SCHEMA_VERSION,

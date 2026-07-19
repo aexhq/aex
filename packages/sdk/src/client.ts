@@ -75,6 +75,17 @@ import {
   type SessionWebhookDelivery,
   type ProviderName,
   type SecretRecord,
+  type OrgRecord,
+  type CreateOrgRequest,
+  type WorkspaceRecord,
+  type CreateWorkspaceRequest,
+  type NewWorkspace,
+  type ApiKeyRecord,
+  type CreateApiKeyRequest,
+  type NewApiKey,
+  type OrgMemberRecord,
+  type CreateOrgInviteRequest,
+  type OrgInvite,
   type BuiltinToolName,
   type RuntimeSize,
   type RuntimeKind,
@@ -269,7 +280,7 @@ export interface SessionCreateOptions extends IdempotencyOptions {
    *   - `size` — the managed box preset ({@link RuntimeSize}); prefer {@link Sizes}.
    *
    * Both optional; the platform applies defaults (`container`, the 1 GB tier).
-   * e.g. `runtime: { kind: "lambda", size: Sizes.SHARED_2X_8GB }`.
+   * e.g. `runtime: { kind: "lambda", size: Sizes.CPU_2_8GB }`.
    */
   readonly runtime?: SessionRuntime;
   readonly overrides?: SessionOverrides;
@@ -1579,6 +1590,154 @@ function unwrapSecretValue(value: string | SecretString): string {
 }
 
 /**
+ * The one-time reveal of a newly created workspace + its first workspace-scoped
+ * API key. The key is shown exactly once at creation; it is wrapped in a
+ * redacted {@link SecretString} so it never lands in a log via string coercion —
+ * call `apiKey.unwrap()` to read the raw value (e.g. to construct a new `Aex`
+ * client bound to the workspace).
+ */
+export interface NewWorkspaceResult {
+  readonly workspaceId: string;
+  /** The workspace-scoped API key, revealed ONCE. Redacted on `toString`/JSON. */
+  readonly apiKey: SecretString;
+  readonly slug?: string;
+  readonly orgId?: string;
+}
+
+/** The one-time reveal of a newly minted API key (workspace key or account PAT). */
+export interface NewApiKeyResult {
+  readonly id: string;
+  /** The freshly minted key value, revealed ONCE. Redacted on `toString`/JSON. */
+  readonly apiKey: SecretString;
+  readonly name?: string;
+  readonly kind?: string;
+  readonly workspaceId?: string;
+  readonly scopes?: readonly string[];
+}
+
+function wrapNewWorkspace(wire: NewWorkspace): NewWorkspaceResult {
+  return {
+    workspaceId: wire.workspaceId,
+    apiKey: new SecretString(wire.apiKey, "workspace api key"),
+    ...(typeof wire.slug === "string" ? { slug: wire.slug } : {}),
+    ...(typeof wire.orgId === "string" ? { orgId: wire.orgId } : {})
+  };
+}
+
+function wrapNewApiKey(wire: NewApiKey): NewApiKeyResult {
+  return {
+    id: wire.id,
+    apiKey: new SecretString(wire.apiKey, "api key"),
+    ...(typeof wire.name === "string" ? { name: wire.name } : {}),
+    ...(typeof wire.kind === "string" ? { kind: wire.kind } : {}),
+    ...(typeof wire.workspaceId === "string" ? { workspaceId: wire.workspaceId } : {}),
+    ...(Array.isArray(wire.scopes) ? { scopes: wire.scopes as readonly string[] } : {})
+  };
+}
+
+/**
+ * Control-plane management of the ORGS the account principal belongs to. Reached
+ * with an account credential (PAT / device session), NOT a data-plane workspace
+ * key. An org owns workspaces and is the billing / roles / cap boundary.
+ *
+ * Naming: `client.orgs` (plural) is a collection across the account, mirroring
+ * `client.sessions` / `client.workspaces`.
+ */
+export class OrgsClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  /** Create an org; the caller becomes its admin. */
+  create(args: CreateOrgRequest): Promise<OrgRecord> {
+    return operations.createOrg(this.#http, args);
+  }
+
+  /** List the orgs the caller belongs to. */
+  list(): Promise<readonly OrgRecord[]> {
+    return operations.listOrgs(this.#http);
+  }
+
+  /** List an org's members (pending invites appear with `status: "pending"`). */
+  members(orgId: string): Promise<readonly OrgMemberRecord[]> {
+    return operations.listOrgMembers(this.#http, orgId);
+  }
+
+  /** Invite an email to the org at a role (`member` by default). */
+  invite(orgId: string, args: CreateOrgInviteRequest): Promise<OrgInvite> {
+    return operations.createOrgInvite(this.#http, orgId, args);
+  }
+}
+
+/**
+ * Control-plane management of WORKSPACES across the account's orgs. This is the
+ * PLURAL collection (`client.workspaces`) — distinct from the SINGULAR
+ * `client.workspace`, which is the data-plane context bound to the current key
+ * (its files/skills/tools/instructions/secrets). Creating a workspace returns
+ * its first workspace-scoped key ONCE.
+ */
+export class WorkspacesClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  /**
+   * Create a workspace under an org and reveal its first workspace-scoped API
+   * key ONCE (wrapped in a redacted {@link SecretString}). The free tier caps at
+   * 3 workspaces per org.
+   */
+  async create(args: CreateWorkspaceRequest): Promise<NewWorkspaceResult> {
+    return wrapNewWorkspace(await operations.createWorkspace(this.#http, args));
+  }
+
+  /** List the workspaces the caller can manage across their orgs. */
+  list(): Promise<readonly WorkspaceRecord[]> {
+    return operations.listWorkspaces(this.#http);
+  }
+
+  /** Delete a workspace by id. Idempotent. */
+  delete(workspaceId: string): Promise<void> {
+    return operations.deleteWorkspace(this.#http, workspaceId);
+  }
+}
+
+/**
+ * Control-plane management of API KEYS — both data-plane workspace keys and
+ * account PATs. Creating a key reveals its value ONCE (wrapped in a redacted
+ * {@link SecretString}); list/delete operate on metadata only.
+ */
+export class KeysClient {
+  readonly #http: HttpClient;
+
+  constructor(http: HttpClient) {
+    this.#http = http;
+  }
+
+  /**
+   * Mint an API key and reveal its value ONCE. Pass `workspaceId` for a
+   * data-plane workspace key, or `account: true` for an account PAT. A PAT
+   * cannot mint another PAT (anti-escalation, enforced server-side).
+   */
+  async create(args: CreateApiKeyRequest = {}): Promise<NewApiKeyResult> {
+    return wrapNewApiKey(await operations.createApiKey(this.#http, args));
+  }
+
+  /** List API keys (metadata only; never values). */
+  list(): Promise<readonly ApiKeyRecord[]> {
+    return operations.listApiKeys(this.#http);
+  }
+
+  /** Revoke/delete an API key by id. Idempotent. */
+  delete(keyId: string): Promise<void> {
+    return operations.deleteApiKey(this.#http, keyId);
+  }
+}
+
+/**
  * Unified user-facing client for aex. The same class powers the published
  * `@aexhq/sdk` SDK and, under the hood, the bundled `aex` CLI. All remote
  * operations use the hosted aex API and operate on durable session records.
@@ -1593,8 +1752,23 @@ export class Aex {
   /** The same fetch the HttpClient uses, threaded into direct asset uploads. */
   readonly #fetch: FetchLike | undefined;
   readonly #assetRetry: AssetUploadRetryOptions;
+  /**
+   * The SINGULAR data-plane context bound to the current key: this workspace's
+   * files, skills, tools, instructions, and secrets. (Contrast {@link workspaces},
+   * the plural control-plane collection.)
+   */
   readonly workspace: WorkspaceClient;
   readonly sessions: SessionClient;
+  /** Control-plane: the orgs the account principal belongs to (roles/members/invites). */
+  readonly orgs: OrgsClient;
+  /**
+   * Control-plane: manage WORKSPACES across your orgs (create/list/delete). The
+   * PLURAL collection — not to be confused with {@link workspace} (singular), the
+   * data-plane context of the current key.
+   */
+  readonly workspaces: WorkspacesClient;
+  /** Control-plane: manage API keys — workspace keys and account PATs (create/list/delete). */
+  readonly keys: KeysClient;
 
   constructor(apiKey: string, options?: Omit<AexOptions, "apiKey">);
   constructor(options: AexOptions);
@@ -1639,6 +1813,9 @@ export class Aex {
       uploadStream: (args) => this.#uploadAssetStream(args)
     });
     this.sessions = new SessionClient(this.#http, (options) => this.#buildSessionCreateRequest(options), this.#fetch);
+    this.orgs = new OrgsClient(this.#http);
+    this.workspaces = new WorkspacesClient(this.#http);
+    this.keys = new KeysClient(this.#http);
   }
 
   /**

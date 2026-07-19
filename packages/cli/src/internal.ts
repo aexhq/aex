@@ -76,7 +76,18 @@ export interface CliIO {
  */
 export interface StoredCliConfig {
   readonly schemaVersion?: number;
+  /** Workspace-scoped data-plane API key (persisted by `aex login --api-key`). */
   readonly apiKey?: string;
+  /**
+   * Account-scoped control-plane token (PAT / device session) persisted by the
+   * `aex login` device flow. Drives `aex orgs|workspaces|keys` when no
+   * `--api-key` is supplied; a workspace key stays data-plane-only.
+   */
+  readonly accountToken?: string;
+  /** Default org for control-plane commands that need one (e.g. `workspaces create`). */
+  readonly defaultOrgId?: string;
+  /** Default workspace for control-plane commands that target one. */
+  readonly defaultWorkspaceId?: string;
   readonly aexUrl?: string;
 }
 

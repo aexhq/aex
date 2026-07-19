@@ -44,7 +44,18 @@ import type {
   SessionWebhookDelivery,
   SecretRecord,
   WebhookSigningSecret,
-  WhoAmI
+  WhoAmI,
+  OrgRecord,
+  CreateOrgRequest,
+  WorkspaceRecord,
+  CreateWorkspaceRequest,
+  NewWorkspace,
+  ApiKeyRecord,
+  CreateApiKeyRequest,
+  NewApiKey,
+  OrgMemberRecord,
+  CreateOrgInviteRequest,
+  OrgInvite
 } from "./runtime-types.js";
 import type { PlatformSubmission } from "./submission.js";
 import { parseRuntimeSize } from "./runtime-sizes.js";
@@ -1972,6 +1983,152 @@ function unwrapSecret(result: { readonly secret: SecretRecord }): SecretRecord {
     throw new SessionStateError("workspace secret response must contain a secret object");
   }
   return result.secret as unknown as SecretRecord;
+}
+
+// ===========================================================================
+// Control-plane operations (orgs / workspaces / API keys / members)
+//
+// These target the ACCOUNT/control-plane surface on the dashboard BFF — reached
+// with an account PAT / device session, NOT a data-plane workspace key. They
+// mirror the publish/list/get/delete generic and the value-bearing one-time
+// reveal shapes above (create returns the key exactly once). Endpoints:
+//   orgs:       POST/GET  /api/orgs, GET /api/orgs/:orgId/members,
+//               POST /api/orgs/:orgId/invites
+//   workspaces: POST/GET  /api/workspaces, DELETE /api/workspaces/:id
+//   keys:       POST/GET  /api/keys, DELETE /api/keys/:id
+// Workspace/org identity is passed EXPLICITLY here (unlike the data plane, which
+// derives the workspace from the key) because a control-plane principal spans
+// multiple orgs and workspaces.
+// ===========================================================================
+
+/** Create an org (the caller becomes its admin). `POST /api/orgs`. */
+export async function createOrg(http: HttpClient, request: CreateOrgRequest): Promise<OrgRecord> {
+  const result = await http.request<{ readonly org: OrgRecord }>("/api/orgs", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+  return unwrapControlRecord(result, "org", "org");
+}
+
+/** List the orgs the caller belongs to. `GET /api/orgs`. */
+export async function listOrgs(http: HttpClient): Promise<readonly OrgRecord[]> {
+  return listControlRecords<OrgRecord>(http, "/api/orgs", "orgs");
+}
+
+/** List an org's members (and pending invites, as `status: "pending"`). `GET /api/orgs/:orgId/members`. */
+export async function listOrgMembers(http: HttpClient, orgId: string): Promise<readonly OrgMemberRecord[]> {
+  requireControlId(orgId, "orgId", "listOrgMembers");
+  return listControlRecords<OrgMemberRecord>(
+    http,
+    `/api/orgs/${encodeURIComponent(orgId)}/members`,
+    "members"
+  );
+}
+
+/** Invite an email to an org at a role. `POST /api/orgs/:orgId/invites`. */
+export async function createOrgInvite(
+  http: HttpClient,
+  orgId: string,
+  request: CreateOrgInviteRequest
+): Promise<OrgInvite> {
+  requireControlId(orgId, "orgId", "createOrgInvite");
+  const result = await http.request<{ readonly invite: OrgInvite }>(
+    `/api/orgs/${encodeURIComponent(orgId)}/invites`,
+    { method: "POST", body: JSON.stringify(request) }
+  );
+  return unwrapControlRecord(result, "invite", "org invite");
+}
+
+/**
+ * Create a workspace under an org and mint its FIRST workspace-scoped API key,
+ * returned once as {@link NewWorkspace}. `POST /api/workspaces`. The free tier
+ * caps at 3 workspaces per org (the server surfaces a 409 when exceeded).
+ */
+export async function createWorkspace(
+  http: HttpClient,
+  request: CreateWorkspaceRequest
+): Promise<NewWorkspace> {
+  const result = await http.request<{ readonly workspace: NewWorkspace }>("/api/workspaces", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+  const workspace = unwrapControlRecord<NewWorkspace>(result, "workspace", "new workspace");
+  if (typeof workspace.workspaceId !== "string" || workspace.workspaceId.length === 0) {
+    throw new SessionStateError("createWorkspace response is missing workspaceId");
+  }
+  if (typeof workspace.apiKey !== "string" || workspace.apiKey.length === 0) {
+    throw new SessionStateError("createWorkspace response is missing the one-time apiKey");
+  }
+  return workspace;
+}
+
+/** List the workspaces the caller can manage across their orgs. `GET /api/workspaces`. */
+export async function listWorkspaces(http: HttpClient): Promise<readonly WorkspaceRecord[]> {
+  return listControlRecords<WorkspaceRecord>(http, "/api/workspaces", "workspaces");
+}
+
+/** Delete a workspace by id. `DELETE /api/workspaces/:id`. Idempotent. */
+export async function deleteWorkspace(http: HttpClient, workspaceId: string): Promise<void> {
+  requireControlId(workspaceId, "workspaceId", "deleteWorkspace");
+  await http.request<void>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
+}
+
+/**
+ * Mint an API key, returned once as {@link NewApiKey}. `POST /api/keys`. Pass
+ * `workspaceId` for a data-plane workspace key, or `account: true` for an
+ * account PAT (control-plane). A PAT cannot mint another PAT (anti-escalation,
+ * enforced server-side).
+ */
+export async function createApiKey(http: HttpClient, request: CreateApiKeyRequest = {}): Promise<NewApiKey> {
+  if (request.account === true && request.workspaceId !== undefined) {
+    throw configError("account", "createApiKey: pass either workspaceId or account:true, not both");
+  }
+  const result = await http.request<{ readonly key: NewApiKey }>("/api/keys", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+  const key = unwrapControlRecord<NewApiKey>(result, "key", "new api key");
+  if (typeof key.id !== "string" || key.id.length === 0) {
+    throw new SessionStateError("createApiKey response is missing the key id");
+  }
+  if (typeof key.apiKey !== "string" || key.apiKey.length === 0) {
+    throw new SessionStateError("createApiKey response is missing the one-time apiKey");
+  }
+  return key;
+}
+
+/** List API keys (metadata only; never values). `GET /api/keys`. */
+export async function listApiKeys(http: HttpClient): Promise<readonly ApiKeyRecord[]> {
+  return listControlRecords<ApiKeyRecord>(http, "/api/keys", "keys");
+}
+
+/** Revoke/delete an API key by id. `DELETE /api/keys/:id`. Idempotent. */
+export async function deleteApiKey(http: HttpClient, keyId: string): Promise<void> {
+  requireControlId(keyId, "keyId", "deleteApiKey");
+  await http.request<void>(`/api/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+}
+
+function requireControlId(value: string, field: string, context: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw configError(field, `${context}: ${field} must be a non-empty string`);
+  }
+}
+
+/** Unwrap a `{ <key>: T }` single-record control-plane envelope, validating shape. */
+function unwrapControlRecord<T>(result: unknown, key: string, label: string): T {
+  if (!isRecord(result) || !isRecord(result[key])) {
+    throw new SessionStateError(`${label} response must contain a ${key} object`);
+  }
+  return result[key] as unknown as T;
+}
+
+/** Unwrap a `{ <key>: T[] }` list control-plane envelope, validating shape. */
+async function listControlRecords<T>(http: HttpClient, path: string, key: string): Promise<readonly T[]> {
+  const result = await http.request<unknown>(path);
+  if (!isRecord(result) || !Array.isArray(result[key])) {
+    throw new SessionStateError(`${path} response must contain a ${key} array`);
+  }
+  return result[key] as readonly T[];
 }
 
 function unwrapSession(result: { readonly session: Session }): Session {

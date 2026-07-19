@@ -13,6 +13,7 @@ function makeIo(opts: {
   argv: readonly string[];
   stored?: StoredCliConfig | null;
   whoamiStatus?: number;
+  fetchHandler?: (url: string, init?: RequestInit) => Promise<Response>;
 }): {
   io: CliIO;
   out: () => string;
@@ -36,8 +37,9 @@ function makeIo(opts: {
       throw new Error("writeFile not configured");
     },
     cwd: () => "/tmp",
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       calls.push(String(url));
+      if (opts.fetchHandler) return opts.fetchHandler(String(url), init);
       const status = opts.whoamiStatus ?? 200;
       if (status !== 200) {
         return new Response(JSON.stringify({ error: "unauthorized" }), {
@@ -113,12 +115,139 @@ describe("aex login", () => {
     expect(printed.remedy).toContain("aex login");
   });
 
-  it("requires a token", async () => {
-    const cap = makeIo({ argv: ["login"] });
+});
+
+describe("aex login (device flow)", () => {
+  function deviceHandler(steps: {
+    code: Record<string, unknown>;
+    tokens: ReadonlyArray<{ status?: number; body: Record<string, unknown> }>;
+  }): (url: string) => Promise<Response> {
+    let tokenCall = 0;
+    return async (url: string) => {
+      if (url.endsWith("/api/device/code")) {
+        return new Response(JSON.stringify(steps.code), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/api/device/token")) {
+        const step = steps.tokens[Math.min(tokenCall, steps.tokens.length - 1)]!;
+        tokenCall += 1;
+        return new Response(JSON.stringify(step.body), {
+          status: step.status ?? 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+    };
+  }
+
+  it("bare `aex login` runs the device flow and persists an account token", async () => {
+    const cap = makeIo({
+      argv: ["login", "--aex-url", "https://dev.example"],
+      fetchHandler: deviceHandler({
+        code: {
+          device_code: "dc-1",
+          user_code: "WXYZ-1234",
+          verification_uri: "https://dev.example/device",
+          interval: 0,
+          expires_in: 300
+        },
+        tokens: [{ body: { access_token: "aexu_accttokenaccttokenacct" } }]
+      })
+    });
     await executeCli(cap.io);
-    expect(cap.exit()).toBe(2);
-    expect(cap.err()).toContain("usage: aex login");
-    expect(cap.calls).toHaveLength(0);
+    expect(cap.exit()).toBe(0);
+    // /device/code, then /device/token
+    expect(cap.calls).toEqual([
+      "https://dev.example/api/device/code",
+      "https://dev.example/api/device/token"
+    ]);
+    // Verification instructions go to stderr; the account token is never printed.
+    expect(cap.err()).toContain("WXYZ-1234");
+    expect(cap.err()).toContain("https://dev.example/device");
+    expect(cap.err()).not.toContain("aexu_accttokenaccttokenacct");
+    expect(cap.out()).not.toContain("aexu_accttokenaccttokenacct");
+    expect(cap.writes).toHaveLength(1);
+    expect(cap.writes[0]).toMatchObject({
+      schemaVersion: 1,
+      accountToken: "aexu_accttokenaccttokenacct",
+      aexUrl: "https://dev.example"
+    });
+    const printed = JSON.parse(cap.out().trim()) as { ok: boolean; accountAuthorized?: boolean };
+    expect(printed.ok).toBe(true);
+    expect(printed.accountAuthorized).toBe(true);
+  });
+
+  it("keeps polling on authorization_pending then persists on approval", async () => {
+    const cap = makeIo({
+      argv: ["login"],
+      fetchHandler: deviceHandler({
+        code: {
+          device_code: "dc-2",
+          user_code: "AAAA-0000",
+          verification_uri: "https://api.aex.dev/device",
+          interval: 0,
+          expires_in: 300
+        },
+        tokens: [
+          { status: 400, body: { error: "authorization_pending" } },
+          { body: { access_token: "aexu_secondtry_tokentokentoken" } }
+        ]
+      })
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(0);
+    // Two token polls (pending, then success).
+    expect(cap.calls.filter((u) => u.endsWith("/api/device/token"))).toHaveLength(2);
+    expect(cap.writes[0]).toMatchObject({ accountToken: "aexu_secondtry_tokentokentoken" });
+  });
+
+  it("does NOT persist when authorization is denied", async () => {
+    const cap = makeIo({
+      argv: ["login"],
+      fetchHandler: deviceHandler({
+        code: {
+          device_code: "dc-3",
+          user_code: "BBBB-1111",
+          verification_uri: "https://api.aex.dev/device",
+          interval: 0,
+          expires_in: 300
+        },
+        tokens: [{ status: 400, body: { error: "access_denied" } }]
+      })
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(1);
+    expect(cap.writes).toHaveLength(0);
+    // Human instructions and the JSON error both go to stderr; the error is the
+    // last (JSON) line.
+    const lastLine = cap.err().trim().split("\n").at(-1)!;
+    const printed = JSON.parse(lastLine) as { error: string };
+    expect(printed.error).toBe("login_denied");
+  });
+
+  it("preserves an existing workspace key when adding an account token", async () => {
+    const cap = makeIo({
+      argv: ["login"],
+      stored: { schemaVersion: 1, apiKey: "ws-key-existing" },
+      fetchHandler: deviceHandler({
+        code: {
+          device_code: "dc-4",
+          user_code: "CCCC-2222",
+          verification_uri: "https://api.aex.dev/device",
+          interval: 0,
+          expires_in: 300
+        },
+        tokens: [{ body: { access_token: "aexu_coexist_tokentokentoken" } }]
+      })
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(0);
+    expect(cap.writes[0]).toMatchObject({
+      apiKey: "ws-key-existing",
+      accountToken: "aexu_coexist_tokentokentoken"
+    });
   });
 });
 

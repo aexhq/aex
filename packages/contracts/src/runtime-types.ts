@@ -36,7 +36,7 @@ export interface SessionRun {
  * platform applies defaults): `kind` selects the backend
  * (`container` (default) | `spot_container` | `lambda`), `size` selects the
  * managed box preset. Grouped so the SDK surface reads
- * `runtime: { kind: "lambda", size: Sizes.SHARED_2X_8GB }`.
+ * `runtime: { kind: "lambda", size: Sizes.CPU_2_8GB }`.
  */
 export interface SessionRuntime {
   readonly kind?: RuntimeKind;
@@ -73,6 +73,20 @@ export interface Session {
    * on, complementing the human-readable `errorMessage`.
    */
   readonly failureClass?: string | null;
+  /**
+   * Content-retention lifecycle (WS4). `"active"` — the default when absent —
+   * means the session's CONTENT (events, messages, files, manifest, archive) is
+   * still readable. `"metadata_only"` means the content-retention window elapsed
+   * and the content was tombstoned: this session RECORD still reads, but every
+   * content endpoint now answers HTTP 410 `content_deleted` (surfaced by the SDK
+   * as `ContentDeletedError`). Optional and forward-compatible: an older
+   * deployment omits it and the session parses as active.
+   */
+  readonly dataState?: "active" | "metadata_only";
+  /** When the content was purged (ISO 8601). Present once `dataState` is `"metadata_only"`. */
+  readonly contentPurgedAt?: string;
+  /** What triggered the content purge: `"retention"` (window elapsed) or `"user"` (explicit delete). */
+  readonly contentDeletedBy?: "retention" | "user";
 }
 
 export interface SessionSummary {
@@ -612,4 +626,170 @@ export interface BillingLedgerPage {
  */
 export interface WebhookSigningSecret {
   readonly whsec: string;
+}
+
+// ===========================================================================
+// Control-plane resources (orgs / workspaces / API keys / members)
+//
+// These describe the ACCOUNT/control-plane surface served by the dashboard BFF
+// (distinct from the data-plane, which self-routes on a workspace key). An org
+// owns workspaces and is the billing/roles/cap boundary; a workspace stays the
+// runtime tenant. Records are metadata-only and additive-tolerant (an unknown
+// key from a newer deployment passes through, never rejected) — matching the
+// `SecretRecord` / `BillingSummary` precedent. The value-bearing one-time
+// reveals ({@link NewWorkspace} / {@link NewApiKey}) carry the freshly minted
+// key exactly once; the SDK wraps that field in a redacted `SecretString`.
+// ===========================================================================
+
+/**
+ * One org the caller belongs to — the ownership / billing / roles wrapper ABOVE
+ * workspaces. `role` is the caller's own membership role in this org
+ * (`admin | member`); billing and the per-org workspace cap live at this level.
+ */
+export interface OrgRecord {
+  readonly id: string;
+  readonly name: string;
+  /** Globally-unique org slug (`/org/<slug>`); omitted by older deployments. */
+  readonly slug?: string;
+  /** Plan key that governs billing + the per-org workspace cap (e.g. `free`). */
+  readonly planKey?: string;
+  /** The caller's role in this org: `admin` or `member`. */
+  readonly role?: string;
+  readonly createdAt?: string;
+  readonly [key: string]: unknown;
+}
+
+/** Request body for {@link createOrg} — a display name; the server assigns id/slug. */
+export interface CreateOrgRequest {
+  readonly name: string;
+}
+
+/**
+ * A workspace as seen from the CONTROL plane (management view): its id, name,
+ * and owning org. Distinct from the data-plane view — this never carries the
+ * workspace's files/skills/secrets, only the row a dashboard/CLI lists.
+ */
+export interface WorkspaceRecord {
+  readonly id: string;
+  readonly name: string;
+  /** Globally-unique workspace slug (`/workspace/<slug>`); omitted by older deployments. */
+  readonly slug?: string;
+  /** The org that owns this workspace. */
+  readonly orgId: string;
+  readonly createdAt?: string;
+  readonly [key: string]: unknown;
+}
+
+/** Request body for {@link createWorkspace}. Free tier caps at 3 workspaces per org. */
+export interface CreateWorkspaceRequest {
+  /** The org to create the workspace under. */
+  readonly orgId: string;
+  readonly name: string;
+}
+
+/**
+ * One-time reveal returned by {@link createWorkspace}: the new workspace's id
+ * plus its FIRST workspace-scoped, data-plane API key. The key is shown exactly
+ * once at creation — the creating (account) principal has no other data-plane
+ * access to it, though the owning user can see/delete it in the dashboard
+ * (orphan recovery). The SDK wraps `apiKey` in a redacted `SecretString`.
+ */
+export interface NewWorkspace {
+  readonly workspaceId: string;
+  /** The workspace-scoped API key (`aex_<plane>_…`), revealed ONCE. */
+  readonly apiKey: string;
+  /** Globally-unique workspace slug, when the server assigns one. */
+  readonly slug?: string;
+  /** The org that owns the new workspace. */
+  readonly orgId?: string;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Metadata for one API key (data-plane workspace key OR account PAT). NEVER
+ * carries the secret value — the value is write-only and revealed only once via
+ * {@link NewApiKey}. `kind` distinguishes a `workspace` key from an `account`
+ * PAT; `workspaceId` is present only for workspace keys.
+ */
+export interface ApiKeyRecord {
+  readonly id: string;
+  readonly name?: string;
+  /** `workspace` (data-plane) or `account` (control-plane PAT). */
+  readonly kind?: string;
+  /** Present for workspace keys; absent for account PATs. */
+  readonly workspaceId?: string;
+  readonly scopes?: readonly string[];
+  readonly createdAt?: string;
+  readonly lastUsedAt?: string | null;
+  readonly revokedAt?: string | null;
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Request body for {@link createApiKey}. Mint EITHER a workspace-scoped
+ * data-plane key (pass `workspaceId`) or an account PAT (`account: true`) — the
+ * two are mutually exclusive. Anti-escalation: an account PAT can mint workspace
+ * keys but not another PAT (enforced server-side).
+ */
+export interface CreateApiKeyRequest {
+  /** Mint a WORKSPACE-scoped data-plane key for this workspace. */
+  readonly workspaceId?: string;
+  /** Mint an ACCOUNT PAT (control-plane) instead. Mutually exclusive with `workspaceId`. */
+  readonly account?: boolean;
+  /** Optional human label for the key. */
+  readonly name?: string;
+  /** Optional scope restriction; defaults server-side. */
+  readonly scopes?: readonly string[];
+}
+
+/**
+ * One-time reveal returned by {@link createApiKey}: the key id plus the freshly
+ * minted secret value, shown exactly once. The SDK wraps `apiKey` in a redacted
+ * `SecretString`.
+ */
+export interface NewApiKey {
+  readonly id: string;
+  /** The freshly minted key value, revealed ONCE. */
+  readonly apiKey: string;
+  readonly name?: string;
+  readonly kind?: string;
+  readonly workspaceId?: string;
+  readonly scopes?: readonly string[];
+  readonly [key: string]: unknown;
+}
+
+/** One member of an org (from {@link listOrgMembers}). Never carries credentials. */
+export interface OrgMemberRecord {
+  /** The member's stable account (app-user) id. */
+  readonly appUserId: string;
+  readonly email?: string;
+  /** `admin` or `member`. */
+  readonly role: string;
+  /** `active` or `pending` (an unaccepted invite). */
+  readonly status?: string;
+  readonly createdAt?: string;
+  readonly [key: string]: unknown;
+}
+
+/** Request body for {@link createOrgInvite} — invite an email at a role. */
+export interface CreateOrgInviteRequest {
+  readonly email: string;
+  /** `admin` or `member`; defaults server-side to `member`. */
+  readonly role?: string;
+}
+
+/**
+ * A pending team invite created by {@link createOrgInvite}. Metadata only — the
+ * invite token itself is delivered out-of-band (email), never returned here.
+ */
+export interface OrgInvite {
+  readonly id: string;
+  readonly orgId: string;
+  readonly email: string;
+  readonly role: string;
+  /** `pending` until accepted. */
+  readonly status?: string;
+  readonly expiresAt?: string;
+  readonly createdAt?: string;
+  readonly [key: string]: unknown;
 }

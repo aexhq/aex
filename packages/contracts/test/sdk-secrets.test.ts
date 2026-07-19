@@ -35,6 +35,24 @@ describe("redactString — value-agnostic shapes", () => {
     });
   }
 
+  it("redacts an aex self-describing workspace key as one label (whole 6-part shape)", () => {
+    const key = "aex_dev_euw1_abc123def456_SeCr3tValue123_z9";
+    const out = redactString(`AEX_API_KEY=${key} then run`);
+    expect(out).not.toContain(key);
+    expect(out).toContain(REDACTED);
+    expect(containsSecretLikeValue(key)).toBe(true);
+    // The canonical dashboard URL must survive (no `aex_<plane>_` shape).
+    expect(redactString("https://api.aex.dev/api/sessions")).toBe("https://api.aex.dev/api/sessions");
+  });
+
+  it("redacts an aex account PAT by its aexu_ prefix", () => {
+    const pat = "aexu_abcDEF123456ghiJKL789mnoPQR";
+    const out = redactString(`token ${pat} done`);
+    expect(out).not.toContain(pat);
+    expect(out).toContain(REDACTED);
+    expect(containsSecretLikeValue(pat)).toBe(true);
+  });
+
   it("redacts an Authorization: Bearer header value but keeps the header name", () => {
     const out = redactString("Authorization: Bearer abcDEF123456ghiJKL789mnoPQR");
     expect(out).not.toContain("abcDEF123456ghiJKL789mnoPQR");

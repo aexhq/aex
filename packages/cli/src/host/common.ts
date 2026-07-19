@@ -225,6 +225,93 @@ export async function resolveCommonHostFlags(
   return { ok: true, flags: { apiKey: token, aexUrl: resolvedUrl, debug, json }, rest };
 }
 
+/** Which credential a control-plane resolution selected. */
+export type ControlPlaneAuthSource = "flag" | "account" | "workspace";
+
+export type ResolveControlPlaneResult =
+  | {
+      readonly ok: true;
+      readonly flags: CommonHostFlags;
+      readonly rest: readonly string[];
+      readonly source: ControlPlaneAuthSource;
+      readonly defaultOrgId?: string;
+      readonly defaultWorkspaceId?: string;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Resolve the bearer for a CONTROL-PLANE verb (`orgs`/`workspaces`/`keys`).
+ * Where {@link resolveCommonHostFlags} prefers a workspace (data-plane) key,
+ * this prefers the ACCOUNT token persisted by the `aex login` device flow, so a
+ * control-plane command reaches the account principal that spans your orgs.
+ *
+ * Precedence: `--api-key` flag (an explicitly supplied PAT) > stored
+ * `accountToken` > stored workspace `apiKey` (last-resort — the server rejects a
+ * workspace key for control-plane, but this yields an actionable 401/403 rather
+ * than a confusing "no credential" before the request). An account PAT is NOT
+ * self-describing, so the base URL comes from `--aex-url` > stored `aexUrl` >
+ * the prd default (never key-derived).
+ */
+export async function resolveControlPlaneHostFlags(
+  io: CliIO,
+  argv: readonly string[]
+): Promise<ResolveControlPlaneResult> {
+  const extracted = extractCommonHostFlags(argv);
+  if (!extracted.ok) return extracted;
+  const { apiKey: flagToken, aexUrl: flagUrl, debug, json, rest } = extracted.flags;
+
+  let token = flagToken;
+  let url = flagUrl;
+  let source: ControlPlaneAuthSource | "none" = flagToken ? "flag" : "none";
+  let storedLocation = "";
+  let defaultOrgId: string | undefined;
+  let defaultWorkspaceId: string | undefined;
+
+  if (io.configStore) {
+    const stored = await io.configStore.read();
+    storedLocation = io.configStore.location();
+    defaultOrgId = stored?.defaultOrgId;
+    defaultWorkspaceId = stored?.defaultWorkspaceId;
+    if (!token && stored?.accountToken) {
+      token = stored.accountToken;
+      source = "account";
+    } else if (!token && stored?.apiKey) {
+      token = stored.apiKey;
+      source = "workspace";
+    }
+    if (!url && stored?.aexUrl) url = stored.aexUrl;
+  }
+
+  const resolvedUrl = url ?? AEX_DEFAULT_BASE_URL;
+
+  if (debug) {
+    const where =
+      source === "flag"
+        ? "--api-key flag"
+        : source === "account"
+          ? `stored account token (${storedLocation})`
+          : source === "workspace"
+            ? `stored workspace key (${storedLocation})`
+            : "none";
+    io.stderr(`[aex] control-plane auth: ${where}; aex-url=${resolvedUrl}\n`);
+  }
+
+  if (!token || source === "none") {
+    return {
+      ok: false,
+      reason: "no account credential — run `aex login` (device flow) or pass an account PAT via --api-key"
+    };
+  }
+  return {
+    ok: true,
+    flags: { apiKey: token, aexUrl: resolvedUrl, debug, json },
+    rest,
+    source,
+    ...(defaultOrgId ? { defaultOrgId } : {}),
+    ...(defaultWorkspaceId ? { defaultWorkspaceId } : {})
+  };
+}
+
 /**
  * Map a thrown SDK/transport error to a structured, actionable shape for the
  * CLI's JSON error envelope. Pulls `status` from {@link AexApiError}, a stable
