@@ -36,11 +36,15 @@ describe("parseApiKey / formatApiKey codec (WS11)", () => {
     expect(parseApiKey("aex_prd_euw1_ws1_secret")).toBeNull(); // 5 parts
   });
 
-  it("rejects a tampered secret (wrong CRC)", () => {
+  it("WS6: a tag/secret tamper still PARSES (structure only) — authenticity is server-verified", () => {
+    // The trailing tag is an HMAC keyed by the server pepper, which the SDK does not hold, so the
+    // SDK parse is STRUCTURAL. A tampered secret is structurally valid → it routes; the server's
+    // verifyTokenTag rejects it at auth. Only a broken SHAPE is null here.
     const key = formatApiKey({ plane: "prd", region: "eu-west-1", workspaceId: "ws1", secret: "aaaa" });
     const parts = key.split("_");
-    parts[4] = "bbbb"; // change the secret without recomputing the CRC
-    expect(parseApiKey(parts.join("_"))).toBeNull();
+    parts[4] = "bbbb";
+    expect(parseApiKey(parts.join("_"))).not.toBeNull();
+    expect(parseApiKey("aex_prd_euw1_ws1_secret")).toBeNull(); // a broken SHAPE is still rejected
   });
 
   it("rejects an unknown plane", () => {

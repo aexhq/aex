@@ -54,15 +54,17 @@ export function normalizeWorkspaceId(workspaceId: string): string {
 }
 
 /**
- * Parse a self-describing API key, or `null` for any opaque, malformed, or tampered
- * value. Validates the `aex_` prefix, the 6-part shape, a known plane and
- * region code, and the CRC over the first 5 parts.
+ * Parse a self-describing API key, or `null` for any opaque or STRUCTURALLY malformed value.
+ * Validates the `aex_` prefix, the 6-part shape, and a known plane + region code. The trailing
+ * tag is an HMAC keyed by the server pepper (WS6/P4) which the SDK does not hold, so this is the
+ * pure routing parse; authenticity is verified server-side. A tampered tag parses (routes) and is
+ * rejected at auth.
  */
 export function parseApiKey(token: string): ParsedApiKey | null {
   if (typeof token !== "string" || !token.startsWith("aex_")) return null;
   const parts = token.split("_");
   if (parts.length !== 6) return null;
-  const [prefix, plane, regionCode, workspaceId, secret, crc] = parts as [
+  const [prefix, plane, regionCode, workspaceId, secret, tag] = parts as [
     string,
     string,
     string,
@@ -70,10 +72,12 @@ export function parseApiKey(token: string): ParsedApiKey | null {
     string,
     string
   ];
-  if (prefix !== "aex" || !API_KEY_PLANE_SET.has(plane) || !regionCode || !workspaceId || !secret || !crc) {
+  if (prefix !== "aex" || !API_KEY_PLANE_SET.has(plane) || !regionCode || !workspaceId || !secret || !tag) {
     return null;
   }
-  if (crc32Base36(parts.slice(0, 5).join("_")) !== crc) return null;
+  // WS6/P4: the tag is an HMAC keyed by the server pepper, which the SDK does not hold — so this is
+  // the PURE routing parse (structure only). Authenticity is enforced server-side by verifyTokenTag
+  // before any store touch; a tag-tampered token routes and is then rejected at auth.
   const region = CODE_TO_REGION[regionCode];
   if (region === undefined) return null;
   return { plane: plane as ApiKeyPlane, regionCode, region, workspaceId };
