@@ -275,7 +275,7 @@ export interface SessionCreateOptions extends IdempotencyOptions {
    * The execution runtime for the session — grouped as `{ kind, size }`.
    *
    *   - `kind` — which backend runs it: `container` (default), `spot_container`
-   *     (cheaper, interruption-tolerant, at-least-once), or `lambda` (serverless,
+   *     (same behavior on cheaper interruption-tolerant capacity), or `lambda` (serverless,
    *     availability-gated). Prefer the {@link RuntimeKinds} symbol const.
    *   - `size` — the managed box preset ({@link RuntimeSize}); prefer {@link Sizes}.
    *

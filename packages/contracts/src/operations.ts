@@ -59,7 +59,8 @@ import type {
   OrgInvite
 } from "./runtime-types.js";
 import type { PlatformSubmission } from "./submission.js";
-import { parseRuntimeSize } from "./runtime-sizes.js";
+import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
+import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
 import { SESSION_STATUSES } from "./status.js";
 import type { ToolInputSchema } from "./session-config.js";
 import type {
@@ -1203,12 +1204,85 @@ function parseWhoAmI(value: unknown): WhoAmI {
     throw new SessionStateError("whoami response scopes must be an array of non-empty strings");
   }
   const limits = parseWhoAmILimits(value.limits);
+  const runtimeCapabilities = value.runtimeCapabilities === undefined
+    ? undefined
+    : parseRuntimeCapabilities(value.runtimeCapabilities);
   return {
     ok: true,
     principalType: "api_key",
     workspaceId: value.workspaceId,
     scopes: value.scopes as string[],
-    limits
+    limits,
+    ...(runtimeCapabilities ? { runtimeCapabilities } : {})
+  };
+}
+
+const CAPABILITY_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const RUNTIME_KIND_SET = new Set<string>(RUNTIME_KINDS);
+const RUNTIME_SIZE_SET = new Set<string>(RUNTIME_SIZES);
+
+function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"] {
+  const field = "whoami response runtimeCapabilities";
+  if (!isRecord(value)) throw new SessionStateError(`${field} must be an object`);
+  if (value.schemaVersion !== 1) throw new SessionStateError(`${field}.schemaVersion must be 1`);
+  if (typeof value.capabilityVersion !== "string" || value.capabilityVersion.length === 0) {
+    throw new SessionStateError(`${field}.capabilityVersion must be a non-empty string`);
+  }
+  if (typeof value.capabilityHash !== "string" || !CAPABILITY_SHA256_PATTERN.test(value.capabilityHash)) {
+    throw new SessionStateError(`${field}.capabilityHash must be a canonical SHA-256 digest`);
+  }
+  if (!Array.isArray(value.availableRuntimeKinds)) {
+    throw new SessionStateError(`${field}.availableRuntimeKinds must be an array`);
+  }
+  const availableRuntimeKinds = value.availableRuntimeKinds as unknown[];
+  if (
+    !availableRuntimeKinds.every((kind): kind is RuntimeKind => typeof kind === "string" && RUNTIME_KIND_SET.has(kind)) ||
+    new Set(availableRuntimeKinds).size !== availableRuntimeKinds.length
+  ) {
+    throw new SessionStateError(`${field}.availableRuntimeKinds must contain unique supported runtime kinds`);
+  }
+  if (!isRecord(value.sizesByRuntimeKind)) {
+    throw new SessionStateError(`${field}.sizesByRuntimeKind must be an object`);
+  }
+  if (!isRecord(value.unavailable)) {
+    throw new SessionStateError(`${field}.unavailable must be an object`);
+  }
+  const unknownSizeKind = Object.keys(value.sizesByRuntimeKind).find((kind) => !RUNTIME_KIND_SET.has(kind));
+  const unknownUnavailableKind = Object.keys(value.unavailable).find((kind) => !RUNTIME_KIND_SET.has(kind));
+  if (unknownSizeKind || unknownUnavailableKind) {
+    throw new SessionStateError(`${field} contains an unknown runtime kind`);
+  }
+
+  const available = new Set<RuntimeKind>(availableRuntimeKinds);
+  const sizesByRuntimeKind: Partial<Record<RuntimeKind, readonly RuntimeSize[]>> = {};
+  const unavailable: Partial<Record<RuntimeKind, { readonly code: string }>> = {};
+  for (const runtimeKind of RUNTIME_KINDS) {
+    const sizes = value.sizesByRuntimeKind[runtimeKind];
+    const reason = value.unavailable[runtimeKind];
+    if (available.has(runtimeKind)) {
+      if (
+        !Array.isArray(sizes) || sizes.length === 0 ||
+        !sizes.every((size): size is RuntimeSize => typeof size === "string" && RUNTIME_SIZE_SET.has(size)) ||
+        new Set(sizes).size !== sizes.length || reason !== undefined
+      ) {
+        throw new SessionStateError(`${field}.${runtimeKind} must have unique supported sizes and no unavailable reason`);
+      }
+      sizesByRuntimeKind[runtimeKind] = sizes;
+    } else {
+      if (sizes !== undefined || !isRecord(reason) || typeof reason.code !== "string" || reason.code.length === 0) {
+        throw new SessionStateError(`${field}.${runtimeKind} must have one unavailable reason and no sizes`);
+      }
+      unavailable[runtimeKind] = { code: reason.code };
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    capabilityVersion: value.capabilityVersion,
+    capabilityHash: value.capabilityHash as `sha256:${string}`,
+    availableRuntimeKinds,
+    sizesByRuntimeKind,
+    unavailable
   };
 }
 

@@ -518,6 +518,12 @@ export interface WhoAmI {
   readonly principalType: "api_key";
   readonly workspaceId: string;
   readonly scopes: readonly string[];
+  /**
+   * Authenticated runtime availability for this workspace. Optional only for
+   * compatibility with deployments predating capability discovery; when
+   * present it is validated as one complete, non-contradictory runtime set.
+   */
+  readonly runtimeCapabilities?: RuntimeCapabilities;
   /** Effective workspace limits from the same read models used by admission. */
   readonly limits: {
     /** Effective live-run concurrency cap. One more live run past it fails with `429 workspace_concurrency_exceeded`. */
@@ -542,6 +548,15 @@ export interface WhoAmI {
     readonly pastDueAt?: string;
     readonly graceEndsAt?: string;
   };
+}
+
+export interface RuntimeCapabilities {
+  readonly schemaVersion: 1;
+  readonly capabilityVersion: string;
+  readonly capabilityHash: `sha256:${string}`;
+  readonly availableRuntimeKinds: readonly RuntimeKind[];
+  readonly sizesByRuntimeKind: Partial<Record<RuntimeKind, readonly RuntimeSize[]>>;
+  readonly unavailable: Partial<Record<RuntimeKind, { readonly code: string }>>;
 }
 
 /**

@@ -31,6 +31,18 @@ const LIMITS: WhoAmI["limits"] = {
   subscriptionGate: "ok"
 };
 
+const RUNTIME_CAPABILITIES: WhoAmI["runtimeCapabilities"] = {
+  schemaVersion: 1,
+  capabilityVersion: "runtime-capabilities.v1",
+  capabilityHash: `sha256:${"a".repeat(64)}`,
+  availableRuntimeKinds: ["container", "spot_container"],
+  sizesByRuntimeKind: {
+    container: ["shared-0.25x-1gb"],
+    spot_container: ["shared-0.25x-1gb"]
+  },
+  unavailable: { lambda: { code: "runtime_unavailable" } }
+};
+
 describe("whoami limits typing", () => {
   it("parses the canonical whoami response", async () => {
     const result = await whoami(
@@ -71,6 +83,43 @@ describe("whoami limits typing", () => {
       scopes: ["sessions:read"],
       limits: LIMITS
     });
+  });
+
+  it("parses the authenticated runtime capability projection", async () => {
+    const result = await whoami(clientReturning({
+      ok: true,
+      principalType: "api_key",
+      workspaceId: "ws_1",
+      scopes: ["sessions:read"],
+      limits: LIMITS,
+      runtimeCapabilities: RUNTIME_CAPABILITIES
+    }));
+
+    expect(result.runtimeCapabilities).toEqual(RUNTIME_CAPABILITIES);
+    expect(result.runtimeCapabilities?.availableRuntimeKinds).toEqual(["container", "spot_container"]);
+  });
+
+  it.each([
+    { ...RUNTIME_CAPABILITIES, schemaVersion: 2 },
+    { ...RUNTIME_CAPABILITIES, capabilityHash: "sha256:not-a-digest" },
+    { ...RUNTIME_CAPABILITIES, availableRuntimeKinds: ["container", "container"] },
+    { ...RUNTIME_CAPABILITIES, availableRuntimeKinds: ["container", "native"] },
+    { ...RUNTIME_CAPABILITIES, sizesByRuntimeKind: { container: ["unknown-size"] } },
+    {
+      ...RUNTIME_CAPABILITIES,
+      availableRuntimeKinds: ["container", "lambda"],
+      sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] },
+      unavailable: { lambda: { code: "runtime_unavailable" }, spot_container: { code: "runtime_unavailable" } }
+    }
+  ])("rejects malformed or contradictory runtime capabilities", async (runtimeCapabilities) => {
+    await expect(whoami(clientReturning({
+      ok: true,
+      principalType: "api_key",
+      workspaceId: "ws_1",
+      scopes: ["sessions:read"],
+      limits: LIMITS,
+      runtimeCapabilities
+    }))).rejects.toThrow(/runtimeCapabilities/);
   });
 
   it.each([

@@ -29,12 +29,29 @@ Omit either field to use its default (`container` for `kind` and
 `shared-0.25x-1gb` for `size`). The CLI equivalents are `--runtime <kind>` and
 `--runtime-size <size>`.
 
+Runtime choice changes scheduling, cold-start behavior, capacity sourcing, and
+price—not the LLM request, tools, files, controls, lifecycle, or stable error
+contract. An explicit runtime request is never silently replaced with another
+runtime. If it is unavailable for your workspace or the selected size, the
+submission fails before execution.
+
+Use `aex.whoami().runtimeCapabilities` (CLI: `aex whoami --json`) to inspect the
+authenticated runtime kinds and sizes currently available to your workspace.
+The capability hash identifies the exact availability document used by the
+service. During a staged rollout a runtime may be part of the SDK vocabulary
+without yet appearing in your workspace's available set.
+
 ## Selection
 
 ### TypeScript
 
 ```ts
 import { Models, Providers, RuntimeKinds, Sizes } from "@aexhq/sdk";
+
+const capabilities = (await aex.whoami()).runtimeCapabilities;
+if (!capabilities?.availableRuntimeKinds.includes(RuntimeKinds.LAMBDA)) {
+  throw new Error("Lambda runtime is not available for this workspace");
+}
 
 await aex.start({
   provider: Providers.OPENAI,
@@ -62,6 +79,7 @@ aex start \
   --follow
 ```
 
-Events, files, cleanup, and downloads use the same SDK and CLI surface for
-every provider. For the exact supported model list, use the generated
+Events, files, streaming/replay, controls, cleanup, and downloads use the same
+SDK and CLI surface for every runtime and provider. For the exact supported
+model list, use the generated
 [provider/runtime capability matrix](../provider-runtime-capabilities.md).
