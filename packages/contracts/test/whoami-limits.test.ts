@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { HttpClient } from "../src/http.js";
 import { whoami } from "../src/operations.js";
+import { RUNTIME_SIZES } from "../src/runtime-sizes.js";
 import type { WhoAmI } from "../src/runtime-types.js";
 
 function clientReturning(body: unknown): HttpClient {
@@ -37,8 +38,8 @@ const RUNTIME_CAPABILITIES: WhoAmI["runtimeCapabilities"] = {
   capabilityHash: `sha256:${"a".repeat(64)}`,
   availableRuntimeKinds: ["container", "spot_container"],
   sizesByRuntimeKind: {
-    container: ["shared-0.25x-1gb"],
-    spot_container: ["shared-0.25x-1gb"]
+    container: [RUNTIME_SIZES[0]!],
+    spot_container: [RUNTIME_SIZES[0]!]
   },
   unavailable: { lambda: { code: "runtime_unavailable" } }
 };
@@ -108,7 +109,7 @@ describe("whoami limits typing", () => {
     {
       ...RUNTIME_CAPABILITIES,
       availableRuntimeKinds: ["container", "lambda"],
-      sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] },
+      sizesByRuntimeKind: { container: [RUNTIME_SIZES[0]!] },
       unavailable: { lambda: { code: "runtime_unavailable" }, spot_container: { code: "runtime_unavailable" } }
     }
   ])("rejects malformed or contradictory runtime capabilities", async (runtimeCapabilities) => {
