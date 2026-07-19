@@ -2,10 +2,11 @@
  * WS11 — the constructor parses the self-describing API key and routes by plane
  * ZERO-network: a plane/baseUrl mismatch throws before any request; a prd key
  * with no baseUrl auto-derives `api.aex.dev`; a dev key with no baseUrl
- * auto-derives `dev-api.aex.dev`.
+ * auto-derives `dev-api.aex.dev`. A non-self-describing account PAT (`aexu_…`)
+ * is NOT plane-routable, so with no baseUrl it defaults to the prd host.
  */
 import { describe, expect, it, vi } from "vitest";
-import { formatApiKey, PLANE_BASE_URLS } from "@aexhq/contracts";
+import { AEX_DEFAULT_BASE_URL, formatApiKey, PLANE_BASE_URLS } from "@aexhq/contracts";
 import { Aex, CredentialValidationError } from "../../src/index.js";
 
 const devKey = formatApiKey({ plane: "dev", region: "eu-west-1", workspaceId: "ws123", secret: "s3cr3tvalue" });
@@ -76,5 +77,20 @@ describe("constructor plane guard (WS11)", () => {
 
   it("an opaque/legacy key skips plane routing (no throw)", () => {
     expect(() => new Aex("opaque-legacy-token", { baseUrl: "https://x" })).not.toThrow();
+  });
+
+  it("an account PAT (aexu_…) with no baseUrl defaults to the prd host api.aex.dev", async () => {
+    // A PAT is not self-describing → resolveBaseUrlForKey returns undefined →
+    // the HttpClient default (prd) applies. Pins the SDK-layer behavior that,
+    // until now, was only exercised through the CLI's control-plane resolver.
+    const seen: string[] = [];
+    const fetch: typeof globalThis.fetch = async (input) => {
+      seen.push(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url);
+      return new Response(JSON.stringify(whoami), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const client = new Aex({ apiKey: "aexu_pat_tokentokentokentoken", fetch });
+    await client.whoami();
+    expect(AEX_DEFAULT_BASE_URL).toBe(PLANE_BASE_URLS.prd);
+    expect(seen[0]).toBe(`${AEX_DEFAULT_BASE_URL}/api/whoami`);
   });
 });

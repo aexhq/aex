@@ -249,6 +249,75 @@ describe("aex login (device flow)", () => {
       accountToken: "aexu_coexist_tokentokentoken"
     });
   });
+
+  it("reports login_expired when the device code expires before approval", async () => {
+    const cap = makeIo({
+      argv: ["login"],
+      fetchHandler: deviceHandler({
+        code: {
+          device_code: "dc-exp",
+          user_code: "DDDD-3333",
+          verification_uri: "https://api.aex.dev/device",
+          interval: 0,
+          expires_in: 300
+        },
+        tokens: [{ status: 400, body: { error: "expired_token" } }]
+      })
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(1);
+    expect(cap.writes).toHaveLength(0);
+    const lastLine = cap.err().trim().split("\n").at(-1)!;
+    const printed = JSON.parse(lastLine) as { error: string; message: string };
+    expect(printed.error).toBe("login_expired");
+    expect(printed.message).toContain("aex login");
+  });
+
+  it("reports login_timeout when the approval deadline elapses while still pending", async () => {
+    // expires_in:0 → the deadline is ~1s out; a single authorization_pending poll
+    // + the minimum 1s pacing sleep crosses it, so the loop exits into the
+    // timeout branch WITHOUT ever seeing a token.
+    const cap = makeIo({
+      argv: ["login"],
+      fetchHandler: deviceHandler({
+        code: {
+          device_code: "dc-timeout",
+          user_code: "EEEE-4444",
+          verification_uri: "https://api.aex.dev/device",
+          interval: 0,
+          expires_in: 0
+        },
+        tokens: [{ status: 400, body: { error: "authorization_pending" } }]
+      })
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(1);
+    expect(cap.writes).toHaveLength(0);
+    const lastLine = cap.err().trim().split("\n").at(-1)!;
+    const printed = JSON.parse(lastLine) as { error: string; message: string };
+    expect(printed.error).toBe("login_timeout");
+    expect(printed.message).toContain("timed out");
+  });
+
+  it("reports device_code_failed on a malformed /api/device/code response", async () => {
+    // The device-code response is missing `user_code` — the bootstrap refuses to
+    // proceed (and never polls /api/device/token) rather than print a blank code.
+    const cap = makeIo({
+      argv: ["login"],
+      fetchHandler: deviceHandler({
+        code: { device_code: "dc-malformed", verification_uri: "https://api.aex.dev/device" },
+        tokens: [{ body: { access_token: "aexu_never_reached_tokentoken" } }]
+      })
+    });
+    await executeCli(cap.io);
+    expect(cap.exit()).toBe(1);
+    expect(cap.writes).toHaveLength(0);
+    expect(cap.calls.filter((u) => u.endsWith("/api/device/token"))).toHaveLength(0);
+    const lastLine = cap.err().trim().split("\n").at(-1)!;
+    const printed = JSON.parse(lastLine) as { error: string; message: string };
+    expect(printed.error).toBe("device_code_failed");
+    expect(printed.message).toContain("user_code");
+  });
 });
 
 describe("aex logout", () => {

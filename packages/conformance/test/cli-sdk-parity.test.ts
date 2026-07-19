@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { Aex } from "../../sdk/dist/index.js";
-import type { SessionFiles, SessionStartOptions } from "../../sdk/dist/index.js";
+import type { KeysClient, OrgsClient, SessionFiles, SessionStartOptions, WorkspacesClient } from "../../sdk/dist/index.js";
 import { CLI_VERB_NAMES, FILES_SUBVERBS, START_FLAGS as SESSION_FLAGS, findVerbSpec } from "../../cli/dist/index.js";
 import {
   CLI_PARITY_BARE_LIST,
   CLI_PARITY_NOT_SURFACED,
   CLI_PARITY_PROVIDER_KEY_FLAG,
-  CLI_SDK_PARITY_MANIFEST
+  CLI_SDK_PARITY_MANIFEST,
+  CONTROL_PLANE_VERB_BY_CLIENT
 } from "../src/index.js";
 
 /**
@@ -53,12 +54,60 @@ const FILES_COVERAGE = {
   fetch: CLI_PARITY_NOT_SURFACED
 } satisfies Record<keyof SessionFiles, string>;
 
+/**
+ * COMPILE-TIME class-killers for the CONTROL-PLANE surface. `client.orgs` /
+ * `client.workspaces` / `client.keys` are INSTANCE FIELDS, so they never appear
+ * on `Aex.prototype` and {@link publicAexMethods} can't see them — these typed
+ * copies fail to BUILD the moment an `OrgsClient` / `WorkspacesClient` /
+ * `KeysClient` method is added, removed, or renamed without a manifest entry.
+ */
+const ORGS_COVERAGE = {
+  create: "create",
+  list: "list",
+  members: "members",
+  invite: "invite"
+} satisfies Record<keyof OrgsClient, string>;
+
+const WORKSPACES_COVERAGE = {
+  create: "create",
+  list: "list",
+  delete: "delete"
+} satisfies Record<keyof WorkspacesClient, string>;
+
+const KEYS_COVERAGE = {
+  create: "create",
+  list: "list",
+  delete: "delete"
+} satisfies Record<keyof KeysClient, string>;
+
 /** Public `Aex` client methods, reflected off the prototype (drop ctor + internals). */
 function publicAexMethods(): string[] {
   return Object.getOwnPropertyNames(Aex.prototype)
     .filter((name) => name !== "constructor" && !name.startsWith("_"))
     .sort();
 }
+
+/** Public methods of a control-plane client, reflected off its instance prototype. */
+function publicInstanceMethods(instance: object): string[] {
+  return Object.getOwnPropertyNames(Object.getPrototypeOf(instance))
+    .filter((name) => name !== "constructor" && !name.startsWith("_"))
+    .sort();
+}
+
+// A REAL client instance so the control-plane surface is reflected off the live
+// objects the SDK hands users, not a hand-written list. A non-self-describing
+// opaque key keeps the explicit baseUrl and makes ZERO network calls in the ctor.
+const controlPlaneClient = new Aex({ apiKey: "aexu_parity_probe", baseUrl: "https://parity.invalid" });
+
+const CONTROL_PLANE_SURFACES = [
+  { section: "orgs", instance: controlPlaneClient.orgs, coverage: ORGS_COVERAGE },
+  { section: "workspaces", instance: controlPlaneClient.workspaces, coverage: WORKSPACES_COVERAGE },
+  { section: "keys", instance: controlPlaneClient.keys, coverage: KEYS_COVERAGE }
+] as const satisfies ReadonlyArray<{
+  readonly section: keyof typeof CONTROL_PLANE_VERB_BY_CLIENT;
+  readonly instance: object;
+  readonly coverage: Readonly<Record<string, string>>;
+}>;
 
 describe("CLI ↔ SDK parity manifest", () => {
   it("covers every SessionStartOptions key (compile-time) and pins the published manifest", () => {
@@ -111,4 +160,49 @@ describe("CLI ↔ SDK parity manifest", () => {
     const files = findVerbSpec("files");
     expect(files?.subverbs).toEqual([...FILES_SUBVERBS]);
   });
+
+  // ── CONTROL-PLANE surface (instance-field clients) ────────────────────────
+  // `client.orgs` / `client.workspaces` / `client.keys` are INSTANCE FIELDS, so
+  // the `Aex.prototype` reflection above never sees them. These cases pin the
+  // published manifest to the typed coverage copies (compile-time) AND reflect
+  // the live client instances against the registered CLI sub-verbs, so the gate
+  // goes RED on drift in either direction:
+  //   • an SDK control-plane method added without a manifest entry / CLI sub-verb
+  //     fails "reflected methods === manifest" (and the `satisfies` won't build);
+  //   • a CLI sub-verb added without an SDK method fails the reverse check.
+  it("pins the published control-plane manifest to the typed coverage copies", () => {
+    expect(CLI_SDK_PARITY_MANIFEST.controlPlaneSubverbs.orgs).toEqual(ORGS_COVERAGE);
+    expect(CLI_SDK_PARITY_MANIFEST.controlPlaneSubverbs.workspaces).toEqual(WORKSPACES_COVERAGE);
+    expect(CLI_SDK_PARITY_MANIFEST.controlPlaneSubverbs.keys).toEqual(KEYS_COVERAGE);
+  });
+
+  for (const { section, instance, coverage } of CONTROL_PLANE_SURFACES) {
+    const verb = CONTROL_PLANE_VERB_BY_CLIENT[section];
+
+    it(`accounts for every public ${section} client method — a new method fails until mapped`, () => {
+      const reflected = publicInstanceMethods(instance);
+      const manifest = Object.keys(CLI_SDK_PARITY_MANIFEST.controlPlaneSubverbs[section]).sort();
+      expect(manifest).toEqual(reflected);
+      // The manifest section and the typed coverage copy must agree too.
+      expect(Object.keys(coverage).sort()).toEqual(reflected);
+    });
+
+    it(`maps every ${section} method to a REGISTERED \`aex ${verb}\` sub-verb`, () => {
+      expect(CLI_VERB_NAMES, `control-plane verb "${verb}"`).toContain(verb);
+      const spec = findVerbSpec(verb);
+      expect(spec, `verb "${verb}" spec`).toBeDefined();
+      const subverbs = spec?.subverbs ?? [];
+      for (const [method, sub] of Object.entries(CLI_SDK_PARITY_MANIFEST.controlPlaneSubverbs[section])) {
+        expect(subverbs, `${section}.${method} → sub-verb "${sub}"`).toContain(sub);
+      }
+    });
+
+    it(`every registered \`aex ${verb}\` sub-verb is reachable from a ${section} SDK method`, () => {
+      const surfaced = new Set(Object.values(CLI_SDK_PARITY_MANIFEST.controlPlaneSubverbs[section]));
+      const subverbs = findVerbSpec(verb)?.subverbs ?? [];
+      for (const sub of subverbs) {
+        expect(surfaced, `sub-verb "${verb} ${sub}" has an SDK method`).toContain(sub);
+      }
+    });
+  }
 });

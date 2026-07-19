@@ -24,6 +24,29 @@ export const CLI_PARITY_BARE_LIST = "(bare: aex files <id>)";
 /** The dynamic per-provider `--<provider>-api-key` flag family. */
 export const CLI_PARITY_PROVIDER_KEY_FLAG = "--<provider>-api-key";
 
+/**
+ * The instance-field control-plane clients and their `aex <verb>` counterparts.
+ * `client.orgs` / `client.workspaces` / `client.keys` are INSTANCE FIELDS set in
+ * the `Aex` constructor — they never touch the prototype that {@link
+ * CliSdkParityManifest.aexMethods} reflects — so their method surface is pinned
+ * separately here.
+ */
+export interface ControlPlaneSubverbManifest {
+  /** `OrgsClient` method → `aex orgs` sub-verb. */
+  readonly orgs: Readonly<Record<string, string>>;
+  /** `WorkspacesClient` method → `aex workspaces` sub-verb. */
+  readonly workspaces: Readonly<Record<string, string>>;
+  /** `KeysClient` method → `aex keys` sub-verb. */
+  readonly keys: Readonly<Record<string, string>>;
+}
+
+/** The CLI verb that surfaces each control-plane client, keyed by manifest section. */
+export const CONTROL_PLANE_VERB_BY_CLIENT = {
+  orgs: "orgs",
+  workspaces: "workspaces",
+  keys: "keys"
+} as const satisfies Readonly<Record<keyof ControlPlaneSubverbManifest, string>>;
+
 export interface CliSdkParityManifest {
   /** Public `Aex` client method → the CLI verb that surfaces it. */
   readonly aexMethods: Readonly<Record<string, string>>;
@@ -31,6 +54,14 @@ export interface CliSdkParityManifest {
   readonly sessionOptionFlags: Readonly<Record<string, string>>;
   /** `SessionFiles` accessor method → the CLI `files` sub-verb that surfaces it. */
   readonly filesSubverbs: Readonly<Record<string, string>>;
+  /**
+   * Control-plane instance-field client method → CLI sub-verb. Because
+   * `client.orgs` / `client.workspaces` / `client.keys` are instance fields, the
+   * prototype-reflection gate that pins {@link aexMethods} can never see their
+   * methods. This section makes the CI gate go RED if an SDK control-plane method
+   * is added without the matching `aex <verb> <sub-verb>` (or vice-versa).
+   */
+  readonly controlPlaneSubverbs: ControlPlaneSubverbManifest;
 }
 
 export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
@@ -78,5 +109,23 @@ export const CLI_SDK_PARITY_MANIFEST: CliSdkParityManifest = {
     first: CLI_PARITY_NOT_SURFACED,
     findOne: CLI_PARITY_NOT_SURFACED,
     fetch: CLI_PARITY_NOT_SURFACED
+  },
+  controlPlaneSubverbs: {
+    orgs: {
+      create: "create",
+      list: "list",
+      members: "members",
+      invite: "invite"
+    },
+    workspaces: {
+      create: "create",
+      list: "list",
+      delete: "delete"
+    },
+    keys: {
+      create: "create",
+      list: "list",
+      delete: "delete"
+    }
   }
 };
