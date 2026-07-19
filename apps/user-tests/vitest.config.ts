@@ -30,7 +30,11 @@ export default defineConfig({
       "test/live/live-sdk-heavy-session.test.ts",
       "test/live/live-api-fuzz.test.ts",
       "test/live/live-sdk-tool-capability-fuzz.test.ts",
-      "test/live/providers/**"
+      "test/live/providers/**",
+      // The LIVE black-box CLI control-plane e2e is a SEPARATE explicit gate
+      // (`test:user:e2e` + vitest.e2e.config.ts). It needs its own account-PAT
+      // bootstrap and must never run implicitly in the default sweep.
+      "test/e2e/**"
     ],
     // Each scenario spawns its own child processes (bun install, tsc,
     // bun) with cwd in an install tempdir and drives a live run.

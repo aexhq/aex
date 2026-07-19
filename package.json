@@ -28,6 +28,7 @@
     "test:user:heavy": "bun run --filter @aexhq/user-tests test:user:heavy",
     "test:user:providers": "bun run --filter @aexhq/user-tests test:user:providers",
     "test:user:fuzz": "bun run --filter @aexhq/user-tests test:user:fuzz",
+    "test:user:e2e": "bun run --filter @aexhq/user-tests test:user:e2e",
     "test:user:tool-fuzz": "bun run --filter @aexhq/user-tests test:user:tool-fuzz",
     "capabilities:generate": "bun scripts/generate-capability-matrix.ts --write",
     "capabilities:check": "bun scripts/generate-capability-matrix.ts --check",

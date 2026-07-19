@@ -13,6 +13,7 @@
     "test:user:heavy": "bun scripts/user-vitest.mjs --config vitest.heavy.config.ts",
     "test:user:providers": "bun scripts/user-vitest.mjs --config vitest.providers.config.ts",
     "test:user:fuzz": "vitest run --config vitest.fuzz.config.ts",
+    "test:user:e2e": "bun run --filter @aexhq/cli build && vitest run --config vitest.e2e.config.ts",
     "test:user:tool-fuzz": "bun scripts/user-vitest.mjs --config vitest.tool-fuzz.config.ts",
     "lint": "tsc --noEmit"
   },
