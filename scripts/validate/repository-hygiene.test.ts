@@ -91,4 +91,17 @@ describe("repository hygiene", () => {
     );
     expect(pkg.scripts?.["generate:unlocked"]).toBe("bun ../../scripts/docs/generate-all.mjs");
   });
+
+  it("serializes conformance parity builds with the consuming typecheck", () => {
+    const pkg = JSON.parse(read("packages/conformance/package.json")) as {
+      readonly scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.lint).toBe(
+      "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked"
+    );
+    expect(pkg.scripts?.["lint:unlocked"]).toBe(
+      "bun run build:parity-deps && tsc --noEmit -p tsconfig.json"
+    );
+  });
 });

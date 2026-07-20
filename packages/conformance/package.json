@@ -24,7 +24,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:parity-deps": "bun run --cwd ../.. --filter @aexhq/sdk build && bun run --cwd ../.. --filter @aexhq/cli build",
-    "lint": "bun run build:parity-deps && tsc --noEmit -p tsconfig.json",
+    "lint": "bun ../../scripts/with-generated-dist-lock.mjs bun run lint:unlocked",
+    "lint:unlocked": "bun run build:parity-deps && tsc --noEmit -p tsconfig.json",
     "pretest": "bun run build",
     "test:unit": "bun run build:parity-deps && vitest run"
   },
