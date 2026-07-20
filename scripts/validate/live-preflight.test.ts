@@ -34,8 +34,9 @@ interface ChildResult {
     readonly status: number;
     readonly maxConcurrentSessions: number;
     readonly requiredScopes: readonly string[];
+    readonly requiredParityRuntimeKinds: readonly string[];
     readonly attempt: number;
-    readonly runtimeCapabilities: typeof runtimeCapabilities;
+    readonly runtimeCapabilities?: typeof runtimeCapabilities;
   };
   readonly calls: number;
   readonly sleeps: number[];
@@ -65,6 +66,7 @@ function runScenario(scenario: string): ChildResult {
       if (scenario === "lowLimit") return response(200, { limits: { maxConcurrentSessions: 49 } });
       if (scenario === "missingScope") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read"] });
       if (scenario === "missingCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
+      if (scenario === "legacySmoke") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
       if (scenario === "invalidCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, availableRuntimeKinds: ["container", "container"] } });
       if (scenario === "availableWithoutSizes") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] } } });
       if (scenario === "lambdaUnavailable") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, availableRuntimeKinds: ["container"], sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] }, unavailable: { lambda: { code: "runtime_not_ready" }, spot_container: { code: "not_enabled_for_workspace" } } } });
@@ -82,7 +84,8 @@ function runScenario(scenario: string): ChildResult {
         ...(scenario === "capCeiling" ? { LIVE_USER_TEST_MAX_MAX_CONCURRENT_SESSIONS: "20" } : {}),
         ...(scenario === "blankCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "" } : {}),
         ...(scenario === "garbageCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "12slots" } : {}),
-        ...(scenario === "zeroCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "0" } : {})
+        ...(scenario === "zeroCapacity" ? { LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: "0" } : {}),
+        ...(scenario === "legacySmoke" ? { LIVE_USER_TEST_REQUIRED_RUNTIME_KINDS: "" } : {})
       };
       if (scenario === "missingCapacity") delete env.LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS;
       const result = await mod.checkLiveUserTestsPreflight({
@@ -119,6 +122,7 @@ describe("live user-test preflight", () => {
     expect(result.ok).toBe(true);
     expect(result.result).toMatchObject({ status: 200, maxConcurrentSessions: 50, attempt: 2 });
     expect(result.result?.requiredScopes).toEqual(["sessions:read", "sessions:write", "files:read"]);
+    expect(result.result?.requiredParityRuntimeKinds).toEqual(["container", "spot_container", "lambda"]);
     expect(result.result?.runtimeCapabilities).toEqual(runtimeCapabilities);
     expect(result.calls).toBe(2);
     expect(result.sleeps).toEqual([3000]);
@@ -202,6 +206,15 @@ describe("live user-test preflight", () => {
     expect(result.message).toContain(
       "missing required runtime parity kind(s): spot_container:not_enabled_for_workspace, lambda:runtime_not_ready"
     );
+  });
+
+  it("allows the pre-deploy published-artifact smoke to run against a legacy whoami projection", () => {
+    const result = runScenario("legacySmoke");
+
+    expect(result.ok).toBe(true);
+    expect(result.result?.requiredParityRuntimeKinds).toEqual([]);
+    expect(result.result?.runtimeCapabilities).toBeUndefined();
+    expect(result.calls).toBe(1);
   });
 
   it("rejects private live endpoints unless explicitly allowed", () => {

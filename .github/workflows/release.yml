@@ -268,9 +268,13 @@ jobs:
           AEX_API_KEY: ${{ secrets.AEX_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           # This gate starts exactly two smoke files in parallel. The full
-          # live matrix preflights declared session-slot demand separately.
+          # live matrix preflights declared session-slot demand and runtime
+          # capabilities separately after deploy-dev. The public artifact
+          # smoke uses the default managed runtime and intentionally runs
+          # against the currently deployed dev API before platform rollout.
           LIVE_USER_TEST_MIN_MAX_CONCURRENT_SESSIONS: 2
           LIVE_USER_TEST_REQUIRED_SCOPES: sessions:read,sessions:write,files:read
+          LIVE_USER_TEST_REQUIRED_RUNTIME_KINDS: ""
         run: bun scripts/cicd/preflight-live-user-tests.mjs
 
   publish:

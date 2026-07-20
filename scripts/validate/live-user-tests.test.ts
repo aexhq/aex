@@ -201,6 +201,8 @@ describe("live user-test release gate", () => {
     expect(releaseCapacity).toBe(releaseWorkers);
     expect(runStep(workflowJob(release, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
       .env?.LIVE_USER_TEST_REQUIRED_SCOPES).toBe("sessions:read,sessions:write,files:read");
+    expect(runStep(workflowJob(release, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
+      .env?.LIVE_USER_TEST_REQUIRED_RUNTIME_KINDS).toBe("");
 
     const liveJob = workflowJob(live, "live-user-tests");
     const liveCapacity = runStep(workflowJob(live, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
@@ -215,6 +217,8 @@ describe("live user-test release gate", () => {
       "sessions:read,sessions:write,sessions:cancel,sessions:delete,files:read,files:write,assets:write," +
       "skills:write,tools:write,instructions:write,secrets:read,secrets:write"
     );
+    expect(runStep(workflowJob(live, "live-user-tests-preflight"), "preflight-live-user-tests.mjs")
+      .env?.LIVE_USER_TEST_REQUIRED_RUNTIME_KINDS).toBeUndefined();
   });
 
   it("derives one live job per discovered file while keeping release smoke focused", () => {
