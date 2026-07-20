@@ -26,7 +26,9 @@ describe("repository validation Vitest isolation", () => {
     const manifest = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
       readonly scripts?: Record<string, string>;
     };
-    expect(manifest.scripts?.["test:validate"]).toBe(`bun ${runnerRelativePath}`);
+    expect(manifest.scripts?.["test:validate"]).toBe(
+      `bun scripts/with-generated-dist-lock.mjs bun ${runnerRelativePath}`
+    );
     expect(manifest.scripts?.["test:unit"]).toContain("bun run test:validate");
     expect(existsSync(runnerPath)).toBe(true);
     expect(existsSync(configPath)).toBe(true);

@@ -2391,7 +2391,7 @@ function normalizeSessionRun(value: Record<string, unknown>, sessionId: string, 
 function normalizeSessionRuntime(value: Record<string, unknown>, context: string): Record<string, unknown> {
   let size;
   try {
-    size = parseRuntimeSize(value.runtimeSize);
+    size = parseRuntimeSizeForRead(value.runtimeSize);
   } catch (error) {
     throw new SessionStateError(`${context} has an invalid runtimeSize: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -2409,4 +2409,22 @@ function normalizeSessionRuntime(value: Record<string, unknown>, context: string
     ...normalized,
     ...(runtime !== undefined ? { runtime } : {})
   };
+}
+
+// Session records can outlive a public runtime-size vocabulary migration. Keep
+// read-side normalization compatible with records emitted by the previous
+// pre-launch platform while retaining strict validation for new submissions.
+const LEGACY_RUNTIME_SIZE_ALIASES: Readonly<Record<string, RuntimeSize>> = {
+  "shared-0.25x-1gb": "0.25cpu-1gb",
+  "shared-0.5x-4gb": "0.5cpu-4gb",
+  "shared-1x-6gb": "1cpu-6gb",
+  "shared-2x-8gb": "2cpu-8gb",
+  "shared-4x-12gb": "4cpu-12gb"
+};
+
+function parseRuntimeSizeForRead(input: unknown): RuntimeSize | undefined {
+  if (typeof input === "string" && input in LEGACY_RUNTIME_SIZE_ALIASES) {
+    return LEGACY_RUNTIME_SIZE_ALIASES[input]!;
+  }
+  return parseRuntimeSize(input);
 }

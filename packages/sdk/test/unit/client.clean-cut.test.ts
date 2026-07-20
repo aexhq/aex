@@ -172,6 +172,47 @@ describe("public SDK clean cut", () => {
     await expect(legacy.sessions.open("session_1")).rejects.toThrow(/removed runtime field/);
   });
 
+  it.each([
+    ["shared-0.25x-1gb", "0.25cpu-1gb"],
+    ["shared-0.5x-4gb", "0.5cpu-4gb"],
+    ["shared-1x-6gb", "1cpu-6gb"],
+    ["shared-2x-8gb", "2cpu-8gb"],
+    ["shared-4x-12gb", "4cpu-12gb"]
+  ])("normalizes a legacy read-side runtime-size token (%s)", async (legacy, canonical) => {
+    const client = new Aex({
+      apiKey: "token",
+      baseUrl: "https://api.example.test",
+      fetch: async () => new Response(JSON.stringify({
+        session: {
+          id: "session_1",
+          status: "idle",
+          acceptsMessages: true,
+          runtimeSize: legacy
+        }
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    });
+
+    const session = await client.sessions.open("session_1");
+    expect(session.record.runtime).toEqual({ size: canonical });
+  });
+
+  it("still rejects the retired legacy runtime-size tier on read", async () => {
+    const client = new Aex({
+      apiKey: "token",
+      baseUrl: "https://api.example.test",
+      fetch: async () => new Response(JSON.stringify({
+        session: {
+          id: "session_1",
+          status: "idle",
+          acceptsMessages: true,
+          runtimeSize: "shared-0.06x-256mb"
+        }
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    });
+
+    await expect(client.sessions.open("session_1")).rejects.toThrow(/invalid runtimeSize/);
+  });
+
   it("rejects bare child and webhook arrays", async () => {
     const fetch: typeof globalThis.fetch = async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;

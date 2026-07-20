@@ -104,4 +104,14 @@ describe("repository hygiene", () => {
       "bun run build:parity-deps && tsc --noEmit -p tsconfig.json"
     );
   });
+
+  it("serializes repository validation with generated SDK dist rebuilds", () => {
+    const pkg = JSON.parse(read("package.json")) as {
+      readonly scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.["test:validate"]).toBe(
+      "bun scripts/with-generated-dist-lock.mjs bun scripts/cicd/run-validation-tests.mjs"
+    );
+  });
 });
