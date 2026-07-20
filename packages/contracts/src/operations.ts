@@ -1260,14 +1260,23 @@ function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"]
     const sizes = value.sizesByRuntimeKind[runtimeKind];
     const reason = value.unavailable[runtimeKind];
     if (available.has(runtimeKind)) {
+      const parsedSizes = Array.isArray(sizes)
+        ? sizes.map((size) => {
+          try {
+            return parseRuntimeSizeForRead(size);
+          } catch {
+            return undefined;
+          }
+        })
+        : undefined;
       if (
-        !Array.isArray(sizes) || sizes.length === 0 ||
-        !sizes.every((size): size is RuntimeSize => typeof size === "string" && RUNTIME_SIZE_SET.has(size)) ||
-        new Set(sizes).size !== sizes.length || reason !== undefined
+        !Array.isArray(parsedSizes) || parsedSizes.length === 0 ||
+        !parsedSizes.every((size): size is RuntimeSize => typeof size === "string" && RUNTIME_SIZE_SET.has(size)) ||
+        new Set(parsedSizes).size !== parsedSizes.length || reason !== undefined
       ) {
         throw new SessionStateError(`${field}.${runtimeKind} must have unique supported sizes and no unavailable reason`);
       }
-      sizesByRuntimeKind[runtimeKind] = sizes;
+      sizesByRuntimeKind[runtimeKind] = parsedSizes;
     } else {
       if (sizes !== undefined || !isRecord(reason) || typeof reason.code !== "string" || reason.code.length === 0) {
         throw new SessionStateError(`${field}.${runtimeKind} must have one unavailable reason and no sizes`);

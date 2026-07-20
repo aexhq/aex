@@ -20,11 +20,19 @@ const runtimeCapabilities = {
   capabilityHash: `sha256:${"a".repeat(64)}`,
   availableRuntimeKinds: ["container", "spot_container", "lambda"],
   sizesByRuntimeKind: {
+    container: ["0.25cpu-1gb", "1cpu-6gb"],
+    spot_container: ["0.25cpu-1gb"],
+    lambda: ["0.25cpu-1gb"]
+  },
+  unavailable: {}
+};
+const legacyRuntimeCapabilities = {
+  ...runtimeCapabilities,
+  sizesByRuntimeKind: {
     container: ["shared-0.25x-1gb", "shared-1x-6gb"],
     spot_container: ["shared-0.25x-1gb"],
     lambda: ["shared-0.25x-1gb"]
-  },
-  unavailable: {}
+  }
 };
 
 interface ChildResult {
@@ -50,6 +58,7 @@ function runScenario(scenario: string): ChildResult {
     const scenario = ${JSON.stringify(scenario)};
     const baseEnv = ${JSON.stringify(baseEnv)};
     const runtimeCapabilities = ${JSON.stringify(runtimeCapabilities)};
+    const legacyRuntimeCapabilities = ${JSON.stringify(legacyRuntimeCapabilities)};
     const sleeps = [];
     const logs = [];
     const out = [];
@@ -67,6 +76,7 @@ function runScenario(scenario: string): ChildResult {
       if (scenario === "missingScope") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read"] });
       if (scenario === "missingCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
       if (scenario === "legacySmoke") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"] });
+      if (scenario === "legacyCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: legacyRuntimeCapabilities });
       if (scenario === "invalidCapabilities") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, availableRuntimeKinds: ["container", "container"] } });
       if (scenario === "availableWithoutSizes") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] } } });
       if (scenario === "lambdaUnavailable") return response(200, { limits: { maxConcurrentSessions: 50 }, scopes: ["sessions:read", "sessions:write", "files:read"], runtimeCapabilities: { ...runtimeCapabilities, availableRuntimeKinds: ["container"], sizesByRuntimeKind: { container: ["shared-0.25x-1gb"] }, unavailable: { lambda: { code: "runtime_not_ready" }, spot_container: { code: "not_enabled_for_workspace" } } } });
@@ -214,6 +224,14 @@ describe("live user-test preflight", () => {
     expect(result.ok).toBe(true);
     expect(result.result?.requiredParityRuntimeKinds).toEqual([]);
     expect(result.result?.runtimeCapabilities).toBeUndefined();
+    expect(result.calls).toBe(1);
+  });
+
+  it("canonicalizes renamed legacy runtime sizes in the authenticated capability projection", () => {
+    const result = runScenario("legacyCapabilities");
+
+    expect(result.ok).toBe(true);
+    expect(result.result?.runtimeCapabilities).toEqual(runtimeCapabilities);
     expect(result.calls).toBe(1);
   });
 

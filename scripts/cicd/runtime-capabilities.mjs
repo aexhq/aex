@@ -1,12 +1,18 @@
 const RUNTIME_KINDS = ["container", "spot_container", "lambda"];
 const RUNTIME_SIZES = [
-  "shared-0.06x-256mb",
-  "shared-0.25x-1gb",
-  "shared-0.5x-4gb",
-  "shared-1x-6gb",
-  "shared-2x-8gb",
-  "shared-4x-12gb"
+  "0.25cpu-1gb",
+  "0.5cpu-4gb",
+  "1cpu-6gb",
+  "2cpu-8gb",
+  "4cpu-12gb"
 ];
+const LEGACY_RUNTIME_SIZE_ALIASES = {
+  "shared-0.25x-1gb": "0.25cpu-1gb",
+  "shared-0.5x-4gb": "0.5cpu-4gb",
+  "shared-1x-6gb": "1cpu-6gb",
+  "shared-2x-8gb": "2cpu-8gb",
+  "shared-4x-12gb": "4cpu-12gb"
+};
 
 /**
  * Parse the authenticated public runtime-capability projection. This parser is
@@ -37,7 +43,7 @@ export function parseRuntimeCapabilities(value) {
   for (const [runtime, sizes] of Object.entries(value.sizesByRuntimeKind)) {
     if (!RUNTIME_KINDS.includes(runtime)) fail(`sizesByRuntimeKind contains unknown runtime ${runtime}`);
     sizesByRuntimeKind[runtime] = parseUniqueKnownStrings(
-      sizes,
+      Array.isArray(sizes) ? sizes.map(canonicalRuntimeSize) : sizes,
       `sizesByRuntimeKind.${runtime}`,
       RUNTIME_SIZES,
       fail
@@ -68,6 +74,10 @@ export function parseRuntimeCapabilities(value) {
     sizesByRuntimeKind: Object.freeze(sizesByRuntimeKind),
     unavailable: Object.freeze(unavailable)
   });
+}
+
+function canonicalRuntimeSize(value) {
+  return typeof value === "string" ? LEGACY_RUNTIME_SIZE_ALIASES[value] ?? value : value;
 }
 
 function parseUniqueKnownStrings(value, path, known, fail) {
