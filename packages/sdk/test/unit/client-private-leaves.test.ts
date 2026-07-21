@@ -55,7 +55,9 @@ describe("SDK client private leaves", () => {
       event(3, "TOOL_CALL_START", { id: "tool_1", name: "search", arguments: { q: "aex" } }),
       event(4, "TEXT_MESSAGE_CONTENT", { text: "lo", messageId: "msg_1", turnSeq: 1 }),
       event(5, "CUSTOM", { name: "aex.usage", value: { input_tokens: 3, output_tokens: 2 } }),
-      event(6, "RUN_FINISHED", {
+      event(6, "FUTURE_PROJECTION_ROW", { text: "must not be projected", nested: { retained: true } }),
+      event(7, "CUSTOM", { name: "aex.result.decoded", value: { value: { answer: 42 } } }),
+      event(8, "RUN_FINISHED", {
         outcome: "succeeded",
         costUsd: 0.25,
         providerUsage: [],
@@ -85,14 +87,18 @@ describe("SDK client private leaves", () => {
       lastRun: { runId: "run_1" }
     } as Session;
     const run = { sessionId: "sess_1", runId: "run_1" } as SessionRun;
-    expect(buildTurnResult("sess_1", session, run, views, [], undefined, messages, "succeeded")).toMatchObject({
+    const result = buildTurnResult("sess_1", session, run, views, [], undefined, messages, "succeeded");
+    expect(result).toMatchObject({
       sessionId: "sess_1",
       status: "succeeded",
       ok: true,
       costUsd: 0.25,
       text: "hello",
-      messages
+      messages,
+      outcome: { kind: "decoded", value: { answer: 42 } }
     });
+    expect(result.events).toBe(views);
+    expect(result.events[5]).toBe(views[5]);
   });
 
   it("preserves exact validation identity, first-error selection, and input normalization", () => {
