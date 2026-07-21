@@ -544,4 +544,45 @@ describe("installed CLI host commands", () => {
     );
     expect(missing).toMatchObject({ exitCode: 2, stdout: "", stderr: "--aex-url requires a value\n" });
   });
+
+  it("preserves start duplicate precedence and negative ordering in the packed CLI", async () => {
+    const before = api.requests.length;
+    const duplicate = await runCommand(binPath, [
+      "start",
+      "--provider=anthropic", "--provider", "deepseek",
+      "--model=claude-haiku-4-5", "--model", "deepseek-v4-flash",
+      "--prompt=first", "--prompt", "second",
+      "--deepseek-api-key=old-secret", "--deepseek-api-key", "new-secret",
+      "--metadata=mode=first", "--metadata", "mode=last",
+      "--runtime-size=1cpu-4gb", "--runtime-size", "0.25cpu-1gb",
+      "--api-key=old-token", "--api-key", "tok-installed-cli",
+      `--aex-url=${api.baseUrl}`
+    ], { cwd: install.installDir, timeoutMs: 30_000 });
+    const requests = api.requests.slice(before);
+
+    expect(duplicate.exitCode, `stdout:\n${duplicate.stdout}\nstderr:\n${duplicate.stderr}`).toBe(0);
+    expect(duplicate.stdout).not.toContain("new-secret");
+    expect(duplicate.stderr).not.toContain("new-secret");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      path: "/api/sessions",
+      authorization: "Bearer tok-installed-cli",
+      body: {
+        provider: "deepseek",
+        runtimeSize: "0.25cpu-1gb",
+        submission: { model: "deepseek-v4-flash", metadata: { mode: "last" } },
+        secrets: { apiKeys: { deepseek: "new-secret" } }
+      }
+    });
+    expect(requests[1]).toMatchObject({ body: { input: ["first", "second"] } });
+
+    const negativeBefore = api.requests.length;
+    const negative = await runCommand(binPath, [
+      "start", "unexpected-position", "--unknown",
+      "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl
+    ], { cwd: install.installDir, timeoutMs: 30_000 });
+    expect(negative).toMatchObject({ exitCode: 2, stdout: "", stderr: "unknown flag: --unknown\n" });
+    expect(api.requests).toHaveLength(negativeBefore);
+  });
 });

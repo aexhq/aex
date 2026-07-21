@@ -208,16 +208,30 @@ describe("value-parser ownership", () => {
   it("has no split-only helper or command-local value consumption", () => {
     const source = readHostSources(hostSource);
     const commandSource = readHostSources(hostSource, "common.ts");
+    const startSource = readFileSync(join(hostSource, "start-arguments.ts"), "utf8");
     expect(source).not.toContain("takeFlagValue");
     expect(commandSource).not.toMatch(/argv\[\+\+i\]|rest\[\+\+i\]|args\[\+\+i\]/);
 
-    expect(literalFlagArguments(source, "takeOptionFlag")).toEqual(
+    expect(sortedUnique([
+      ...literalFlagArguments(source, "takeOptionFlag"),
+      ...literalSingleFlagArguments(startSource, "option")
+    ])).toEqual(
       sortedUnique(SINGLE_VALUE_FLAGS.filter((flag) => !PROVIDER_KEY_FLAGS.includes(flag)))
     );
-    expect(source).toContain("takeOptionFlag(rest, `--${p}-api-key`)");
-    expect(literalFlagArguments(source, "collectRepeated")).toEqual(sortedUnique(REPEATED_VALUE_FLAGS));
-    expect(literalFlagArguments(source, "collectRepeatedKv")).toEqual(sortedUnique(REPEATED_KV_FLAGS));
-    expect(literalFlagArguments(source, "collectRepeatedKvList")).toEqual(["--mcp-auth"]);
+    expect(startSource).toContain("takeOptionFlag(state.rest, flag)");
+    expect(startSource).toContain("option(`--${provider}-api-key`)");
+    expect(sortedUnique([
+      ...literalFlagArguments(source, "collectRepeated"),
+      ...literalSingleFlagArguments(startSource, "repeated")
+    ])).toEqual(sortedUnique(REPEATED_VALUE_FLAGS));
+    expect(sortedUnique([
+      ...literalFlagArguments(source, "collectRepeatedKv"),
+      ...literalSingleFlagArguments(startSource, "repeatedKv")
+    ])).toEqual(sortedUnique(REPEATED_KV_FLAGS));
+    expect(sortedUnique([
+      ...literalFlagArguments(source, "collectRepeatedKvList"),
+      ...literalSingleFlagArguments(startSource, "repeatedKvList")
+    ])).toEqual(["--mcp-auth"]);
   });
 });
 
@@ -233,6 +247,11 @@ function readHostSources(dir: string, excludedName?: string): string {
 
 function literalFlagArguments(source: string, functionName: string): string[] {
   const pattern = new RegExp(`${functionName}\\([^,\\n]+,\\s*"([^"]+)"\\)`, "g");
+  return sortedUnique([...source.matchAll(pattern)].map((match) => match[1]!));
+}
+
+function literalSingleFlagArguments(source: string, functionName: string): string[] {
+  const pattern = new RegExp(`${functionName}\\("([^"]+)"\\)`, "g");
   return sortedUnique([...source.matchAll(pattern)].map((match) => match[1]!));
 }
 

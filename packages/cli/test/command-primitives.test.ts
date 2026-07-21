@@ -15,11 +15,12 @@ describe("shared command primitive ownership", () => {
     const primitiveSource = hostSource("command-primitives.ts");
     expect(primitiveSource).not.toContain('from "./common.js"');
 
-    for (const name of ["files.ts", "start-cmd.ts"]) {
+    for (const name of ["files.ts", "start-attachments.ts"]) {
       const source = hostSource(name);
       expect(source).toContain('from "./command-primitives.js"');
       expect(source).not.toMatch(/function baseName\s*\(/);
     }
+    expect(hostSource("start-cmd.ts")).toContain('from "./start-attachments.js"');
 
     for (const name of ["billing.ts", "list-cmds.ts"]) {
       const source = hostSource(name);
