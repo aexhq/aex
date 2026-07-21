@@ -3,7 +3,6 @@ import {
   DEFAULT_PROVIDER,
   HttpClient,
   PLANE_BASE_URLS,
-  SessionConfigValidationError,
   SessionStateError,
   SecretString,
   asAexEventView,
@@ -15,12 +14,10 @@ import {
   resolveModelProvider,
   resolveBuiltinToolNames,
   streamCoordinatorEvents,
-  usageFromProviderUsage,
   type AexEvent,
   type AexEventView,
   type AexStreamEvent,
   type AexStreamEventView,
-  type ApprovalGate,
   type BillingCheckoutRequest,
   type BillingHostedSession,
   type BillingLedgerPage,
@@ -38,32 +35,19 @@ import {
   type SessionFileQuery,
   type SessionFilesQuery,
   type SessionFilesSnapshot,
-  type SessionCheckpointRevision,
   type SessionFileText,
-  type OutputMode,
   type ReadSessionFileTextOptions,
-  type ResponseFormat,
-  type SessionCostProviderUsage,
   type TurnOutcome,
   type Session,
   type SessionCreateRequest,
   type SessionListPage,
   type SessionListQuery,
-  type SessionMessage,
   type SessionMessageAccepted,
-  type SessionRetentionPolicy,
   type SessionStateChangeAccepted,
-  type SessionStatus,
-  type SessionRunOutcome,
   type SessionRun,
-  type TurnResult,
   type PlatformEnvironmentInput,
   type PlatformSubmission,
   type PlatformInlineSecrets,
-  type PlatformMcpServerSecret,
-  type ModelName,
-  type TurnTrace,
-  type UsageSummary,
   type SessionLimits,
   parseSessionLimits,
   parseApprovalGate,
@@ -86,11 +70,6 @@ import {
   type OrgMemberRecord,
   type CreateOrgInviteRequest,
   type OrgInvite,
-  type BuiltinToolName,
-  type RuntimeSize,
-  type RuntimeKind,
-  type SessionRuntime,
-  type SubmissionAssets,
   type WorkspaceFileRef,
   type WorkspaceFileRecord,
   type WorkspaceInstructionRef,
@@ -109,7 +88,6 @@ import { operations, type AssetUploadRetryOptions } from "@aexhq/contracts/inter
 import { Instructions } from "./instructions.js";
 import { uploadAsset, uploadAssetMultipart, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
 import { File, type ZipStreamDriver } from "./file.js";
-import { McpServer } from "./mcp-server.js";
 import {
   AexRateLimitError,
   isThrottleFault,
@@ -119,9 +97,58 @@ import {
   type ProviderFault,
   type RetryOptions
 } from "./retry.js";
-import { Secret, splitSecretEnv } from "./secret.js";
+import { splitSecretEnv } from "./secret.js";
 import { Skill } from "./skill.js";
 import { Tool } from "./tool.js";
+import type {
+  IdempotencyOptions,
+  Message,
+  SessionCreateOptions,
+  SessionInput,
+  SessionResult,
+  SessionRunResult,
+  SessionSendOptions,
+  SessionStartOptions
+} from "./client-types.js";
+import {
+  assertRunCheckpoint,
+  assertSessionCommittedAfterRun,
+  buildTurnResult,
+  isSessionRunTerminalEvent,
+  messageFromWire,
+  PROGRESSING_SESSION_STATUSES,
+  projectAssistantMessages,
+  terminalCheckpointId,
+  terminalSessionStatusFromEvents,
+  turnTraceFromEvents
+} from "./event-projection.js";
+import {
+  assertAllowedObjectFields,
+  assertSupportedSessionFields,
+  assertSupportedSessionSendOptions,
+  configError,
+  normaliseSessionInput,
+  validateApiKeys
+} from "./session-validate.js";
+import {
+  fileCaptureForWire,
+  mergeMcpServers,
+  sessionEnvironmentForWire,
+  sessionRetentionForWire
+} from "./submission-wire.js";
+
+export type {
+  IdempotencyOptions,
+  Message,
+  SessionCreateOptions,
+  SessionEnvironmentOptions,
+  SessionInput,
+  SessionOverrides,
+  SessionResult,
+  SessionRunResult,
+  SessionSendOptions,
+  SessionStartOptions
+} from "./client-types.js";
 
 export interface AexOptions {
   /** Workspace-scoped SDK API key. */
@@ -153,23 +180,6 @@ export interface AexOptions {
   readonly retry?: RetryOptions | false;
 }
 
-/**
- * The unified finished result of {@link Aex.start}. Extends the contracts
- * {@link TurnResult} (the one shape `start()` and `finished()` share), so
- * the terminal `status` (a {@link SessionTerminalOutcome}), `ok`, `costUsd`
- * (`number`, `>= 0`), and `usage` are always present. RUN_FINISHED is emitted
- * only after the checkpoint commit. It is the same result returned by
- * `session.messages.send(...).finished()`, plus the decoded event trace.
- *
- * `T` is the `responseFormat` decode type: when the session was submitted with a
- * `json_schema` `responseFormat`, {@link outcome} carries the typed decoded
- * value or a typed refusal.
- */
-export interface SessionResult<T = unknown> extends SessionRunResult<T> {
-  /** Decoded view of the events: tool calls, usage, and assistant text. */
-  readonly trace: TurnTrace;
-}
-
 /** Options for {@link Aex.start}. */
 export interface StartSessionOptions {
   /** Overall wait budget (ms) for the one-shot run to finish. */
@@ -181,157 +191,12 @@ export interface StartSessionOptions {
   readonly throwOnFailure?: boolean;
 }
 
-export type SessionInput = string | readonly string[];
-
-export interface SessionEnvironmentOptions extends Omit<PlatformEnvironmentInput, "envVars"> {
-  readonly variables?: Readonly<Record<string, string>>;
-  readonly secrets?: Readonly<Record<string, Secret>>;
-}
-
-export interface SessionOverrides {
-  readonly idleTtl?: string;
-  readonly timeout?: string;
-  readonly maxSpendUsd?: number;
-  /**
-   * Per-session iteration cap (agent loop turns). Defaults + ceiling are enforced
-   * server-side; omit to accept the platform default. A positive integer.
-   */
-  readonly maxTurns?: number;
-}
-
-/** Stable mutation identity used for server-side deduplication and safe transport retries. */
-export interface IdempotencyOptions {
-  readonly idempotencyKey?: string;
-}
-
-/**
- * Options for creating a resumable session or starting a one-shot run.
- * Reusable bytes are published first through `aex.workspace`, then pinned in
- * `assets` by resource id and immutable version.
- */
-export interface SessionCreateOptions extends IdempotencyOptions {
-  /**
-   * Upstream provider selector. Prefer naming it explicitly with the
-   * {@link Providers} symbol const, e.g. `provider: Providers.DEEPSEEK`. When
-   * omitted it is derived from `model`; if supplied it MUST serve the model.
-   */
-  readonly provider?: ProviderName;
-  /**
-   * Closed public model id. Prefer the {@link Models} symbol const, e.g.
-   * `Models.CLAUDE_HAIKU_4_5`.
-   */
-  readonly model: ModelName;
-  readonly system?: string;
-  /** Immutable workspace resources to materialize for the session. */
-  readonly assets?: Partial<SubmissionAssets>;
-  readonly mcpServers?: readonly McpServer[];
-  /**
-   * File capture policy for the session's captured files. Omit `allowedDirs`
-   * to expose regular workspace files from the latest complete checkpoint;
-   * listed roots narrow capture, and `deniedDirs` subtracts noise.
-   */
-  readonly fileCapture?: {
-    readonly allowedDirs?: readonly string[];
-    readonly deniedDirs?: readonly string[];
-    readonly captureTimeoutMs?: number;
-    readonly maxFileBytes?: number;
-    readonly maxTotalBytes?: number;
-    readonly maxFiles?: number;
-  };
-  /** Builtin capabilities, kept separate from uploaded custom-tool assets. */
-  readonly builtinTools?: "default" | "none" | readonly BuiltinToolName[];
-  /**
-   * Assistant-output granularity. `"buffered"` (default) delivers ONE coalesced
-   * `TEXT_MESSAGE_CONTENT` per assistant message. `"stream"` delivers provisional,
-   * non-replayable per-token `TEXT_MESSAGE_CONTENT` deltas (`replayable:false`,
-   * `liveSequence`, and no durable `sequence`) as they arrive. This is capability-gated:
-   * `"stream"` is only honored for a streamable provider (submitting `"stream"`
-   * against a non-streamable one is rejected at submit, never silently
-   * downgraded). A coalesced final `TEXT_MESSAGE_CONTENT` ALWAYS follows the
-   * deltas, so a buffered consumer sees the same final text either way; deltas
-   * are provisional until that coalesced block.
-   */
-  readonly outputMode?: OutputMode;
-  /**
-   * Structured-output policy. `{ kind:'text' }` (default) is free-form;
-   * `{ kind:'json_schema', schema, strict?, name? }` requests provider-native
-   * constrained decode against `schema`. The typed outcome is read from
-   * `start<T>()`'s `result.outcome` (`{ kind:'decoded', value }` or
-   * `{ kind:'refused', reason }`) — never an untyped hallucinated object.
-   */
-  readonly responseFormat?: ResponseFormat;
-  /**
-   * Declarative HITL write-gate: the platform puts the session
-   * `awaiting_approval` BEFORE dispatching any tool in `tools`, independent of
-   * model prose. Resume with `session.approve()` or reject with
-   * `session.deny()`.
-   */
-  readonly approvalGate?: ApprovalGate;
-  readonly metadata?: PlatformSubmission["metadata"];
-  /** BYOK provider key(s), keyed by provider. */
-  readonly apiKeys?: Partial<Record<ProviderName, string>>;
-  readonly environment?: SessionEnvironmentOptions;
-  /**
-   * The execution runtime for the session — grouped as `{ kind, size }`.
-   *
-   *   - `kind` — which backend runs it: `container` (default), `spot_container`
-   *     (same behavior on cheaper interruption-tolerant capacity), or `lambda` (serverless,
-   *     availability-gated). Prefer the {@link RuntimeKinds} symbol const.
-   *   - `size` — the managed box preset ({@link RuntimeSize}); prefer {@link Sizes}.
-   *
-   * Both optional; the platform applies defaults (`container`, the 1 GB tier).
-   * e.g. `runtime: { kind: "lambda", size: Sizes.CPU_2_8GB }`.
-   */
-  readonly runtime?: SessionRuntime;
-  readonly overrides?: SessionOverrides;
-  /**
-    * Optional callback URL registered on the session. The platform delivers a
-    * run-scoped `run.finished` or `run.error` event after every run finalizes,
-    * signed Standard-Webhooks style (verify with {@link verifyAexWebhook}). The
-    * URL must be https.
-   */
-  readonly webhook?: { readonly url: string };
-}
-
-export interface SessionSendOptions extends IdempotencyOptions {
-  readonly webSocketFactory?: WebSocketFactory;
-  readonly idleTimeoutMs?: number;
-  readonly pingIntervalMs?: number;
-}
-
 interface InternalSessionSendOptions extends SessionSendOptions {
   readonly signal?: AbortSignal;
 }
 
 interface InternalSessionRunStreamOptions extends InternalSessionSendOptions {
   readonly from: number;
-}
-
-export interface SessionStartOptions extends SessionCreateOptions {
-  readonly message: SessionInput;
-  readonly deleteAfter?: boolean;
-  readonly messageIdempotencyKey?: string;
-  readonly stream?: Omit<SessionSendOptions, "idempotencyKey">;
-}
-
-/**
- * The unified finished result of one run (`session.messages.send(...).finished()`). Extends
- * the contracts {@link TurnResult}, so `finished()` returns the SAME shape as
- * `start()`: the terminal `status` (a {@link SessionTerminalOutcome}), `ok`,
- * `costUsd`, and `usage` come from that run's terminal event and are always present.
- */
-export interface SessionRunResult<T = unknown> extends TurnResult {
-  readonly sessionId: string;
-  readonly session: Session;
-  readonly run: SessionRun;
-  readonly text: string;
-  readonly events: readonly AexEventView[];
-  readonly files: readonly SessionFile[];
-  /** Committed checkpoint for a finished run; absent when a run errors before one exists. */
-  readonly checkpoint?: SessionCheckpointRevision;
-  readonly messages: readonly Message[];
-  /** The typed schema-decode outcome when a `json_schema` `responseFormat` was set. */
-  readonly outcome?: TurnOutcome<T>;
 }
 
 export class SessionRunStream implements AsyncIterable<AexStreamEventView> {
@@ -420,8 +285,6 @@ function sendSessionInternal(
   }
   return sender(normaliseSessionInput(input, "session.messages.send", "input"), options);
 }
-
-export type Message = SessionMessage;
 
 /**
  * Accessor over the session's assistant messages. `session.messages` returns
@@ -1037,394 +900,6 @@ function sessionEvents(http: HttpClient, id: string): SessionEvents {
   };
 }
 
-function messageFromWire(message: SessionMessage): Message {
-  return {
-    id: message.id,
-    sender: message.sender,
-    text: message.text,
-    ...(message.timestamp !== undefined ? { timestamp: message.timestamp } : {}),
-    ...(message.turnSeq !== undefined ? { turnSeq: message.turnSeq } : {}),
-    ...(message.sequence !== undefined ? { sequence: message.sequence } : {})
-  };
-}
-
-function projectAssistantMessages(events: readonly AexEvent[]): readonly Message[] {
-  const out: Message[] = [];
-  const byMessageId = new Map<string, number>();
-  for (let i = 0; i < events.length; i++) {
-    const event = events[i] as MessageEventLike;
-    if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
-    const data = asRecord(event.data);
-    if (data.delta === true) continue;
-    const text = typeof data.text === "string" ? data.text : undefined;
-    if (text === undefined) continue;
-    const messageId = typeof data.messageId === "string" && data.messageId ? data.messageId : undefined;
-    const sequence = event.sequence ?? event.seq;
-    const timestamp = event.time ?? event.recordedAt ?? timestampFromEpochMs(event.receivedAt);
-    const turnSeq = typeof data.turnSeq === "number" ? data.turnSeq : undefined;
-    if (messageId !== undefined) {
-      const existing = byMessageId.get(messageId);
-      if (existing !== undefined) {
-        const current = out[existing]!;
-        out[existing] = {
-          ...current,
-          text: `${current.text}${text}`,
-          ...(timestamp !== undefined ? { timestamp } : {}),
-          ...(sequence !== undefined ? { sequence } : {}),
-          ...(turnSeq !== undefined ? { turnSeq } : {})
-        };
-        continue;
-      }
-      byMessageId.set(messageId, out.length);
-    }
-    out.push({
-      id: messageId ?? (typeof event.id === "string" && event.id ? event.id : `message-${i}`),
-      sender: "assistant",
-      text,
-      ...(timestamp !== undefined ? { timestamp } : {}),
-      ...(sequence !== undefined ? { sequence } : {}),
-      ...(turnSeq !== undefined ? { turnSeq } : {})
-    });
-  }
-  return out;
-}
-
-function assistantTextFromEvents(events: readonly AexEvent[]): string {
-  return assistantTextEntriesFromEvents(events).map((entry) => entry.text).join("");
-}
-
-function turnTraceFromEvents(events: readonly AexEvent[]): TurnTrace {
-  return {
-    toolCalls: toolCallsFromEvents(events),
-    usage: usageFromEvents(events),
-    text: assistantTextEntriesFromEvents(events)
-  };
-}
-
-function assistantTextEntriesFromEvents(
-  events: readonly AexEvent[]
-): TurnTrace["text"] {
-  const out: Array<Mutable<TurnTrace["text"][number]>> = [];
-  for (const event of events) {
-    if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
-    const data = asRecord(event.data);
-    if (data.delta === true) continue;
-    const text = typeof data.text === "string" ? data.text : undefined;
-    if (text === undefined) continue;
-    const entry: Mutable<TurnTrace["text"][number]> = { text };
-    const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
-    if (messageId !== undefined) entry.messageId = messageId;
-    if (typeof event.sequence === "number") entry.seq = event.sequence;
-    if (typeof event.time === "string") entry.recordedAt = event.time;
-    out.push(entry);
-  }
-  return out;
-}
-
-function toolCallsFromEvents(events: readonly AexEvent[]): TurnTrace["toolCalls"] {
-  const order: string[] = [];
-  const byId = new Map<string, Mutable<TurnTrace["toolCalls"][number]>>();
-  for (const event of events) {
-    const data = asRecord(event.data);
-    if (event.type === "TOOL_CALL_START") {
-      const id = typeof data.id === "string" ? data.id : undefined;
-      if (id === undefined) continue;
-      const trace: Mutable<TurnTrace["toolCalls"][number]> = {
-        id,
-        name: typeof data.name === "string" ? data.name : "",
-        args: asRecord(data.arguments)
-      };
-      const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
-      if (messageId !== undefined) trace.messageId = messageId;
-      if (typeof event.sequence === "number") trace.startSeq = event.sequence;
-      if (typeof event.time === "string") trace.startedAt = event.time;
-      if (!byId.has(id)) order.push(id);
-      byId.set(id, trace);
-      continue;
-    }
-    if (event.type === "TOOL_CALL_RESULT") {
-      const id = typeof data.id === "string" ? data.id : undefined;
-      if (id === undefined) continue;
-      const result: Mutable<NonNullable<TurnTrace["toolCalls"][number]["result"]>> = {
-        isError: data.isError === true,
-        content: data.content ?? null
-      };
-      if (typeof event.sequence === "number") result.seq = event.sequence;
-      if (typeof event.time === "string") result.recordedAt = event.time;
-      let trace = byId.get(id);
-      if (trace === undefined) {
-        trace = { id, name: "", args: {} };
-        order.push(id);
-        byId.set(id, trace);
-      }
-      trace.result = result;
-      const duration = durationMs(trace.startedAt, result.recordedAt);
-      if (duration !== undefined) trace.durationMs = duration;
-    }
-  }
-  return order.map((id) => byId.get(id)!);
-}
-
-function usageFromEvents(events: readonly AexEvent[]): UsageSummary {
-  const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
-  let seen = false;
-  for (const event of events) {
-    if (event.type !== "CUSTOM") continue;
-    const data = asRecord(event.data);
-    if (data.name !== "aex.usage") continue;
-    const value = asRecord(data.value);
-    const fields = [
-      ["input_tokens", "inputTokens"],
-      ["output_tokens", "outputTokens"],
-      ["cache_read_input_tokens", "cacheReadInputTokens"],
-      ["cache_creation_input_tokens", "cacheCreationInputTokens"]
-    ] as const;
-    for (const [wireName, apiName] of fields) {
-      const n = value[wireName];
-      if (typeof n === "number" && Number.isFinite(n)) {
-        totals[apiName] += n;
-        seen = true;
-      }
-    }
-  }
-  if (!seen) return {};
-  return {
-    inputTokens: totals.inputTokens,
-    outputTokens: totals.outputTokens,
-    cacheReadInputTokens: totals.cacheReadInputTokens,
-    cacheCreationInputTokens: totals.cacheCreationInputTokens,
-    totalTokens: totals.inputTokens + totals.outputTokens
-  };
-}
-
-interface MessageEventLike {
-  readonly id?: string;
-  readonly type?: string;
-  readonly seq?: number;
-  readonly sequence?: number;
-  readonly recordedAt?: string;
-  readonly time?: string;
-  readonly receivedAt?: number;
-  readonly data?: unknown;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function timestampFromEpochMs(value: unknown): string | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? new Date(value).toISOString()
-    : undefined;
-}
-
-type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-
-function durationMs(start: string | undefined, end: string | undefined): number | undefined {
-  if (start === undefined || end === undefined) return undefined;
-  const a = Date.parse(start);
-  const b = Date.parse(end);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return undefined;
-  const delta = b - a;
-  return delta >= 0 ? delta : undefined;
-}
-
-/**
- * The verdict carried by a run terminal event. Session lifecycle states never
- * appear here; a suspension or approval hold interrupts the run.
- */
-const SESSION_TERMINAL_READS = new Set<string>([
-  "succeeded",
-  "failed",
-  "timed_out",
-  "cancelled",
-  "interrupted"
-]);
-
-/** The terminal event's explicit outcome. */
-function carriedOutcome(event: AexEvent): SessionRunOutcome | undefined {
-  const outcome = event.data.outcome;
-  return typeof outcome === "string" && SESSION_TERMINAL_READS.has(outcome)
-    ? (outcome as SessionRunOutcome)
-    : undefined;
-}
-
-function isSessionRunTerminalEvent(event: AexEvent, runId: string): boolean {
-  return event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR");
-}
-
-/** Read and validate the committed terminal event's explicit run outcome. */
-function terminalSessionStatusFromEvents(events: readonly AexEvent[], runId: string): SessionRunOutcome {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (!isSessionRunTerminalEvent(event, runId)) continue;
-    const carried = carriedOutcome(event);
-    if (carried === undefined) {
-      throw new SessionStateError("RUN terminal is missing a valid explicit outcome", { runId });
-    }
-    if (event.type === "RUN_ERROR" && carried !== "failed") {
-      throw new SessionStateError("RUN_ERROR must carry outcome=failed", { runId });
-    }
-    if (event.type === "RUN_FINISHED" && carried === "failed") {
-      throw new SessionStateError("a failed run must terminate with RUN_ERROR", { runId });
-    }
-    return carried;
-  }
-  throw new SessionStateError(`run ${runId} ended without a matching RUN_FINISHED or RUN_ERROR event`, { runId });
-}
-
-/** True only for a completed successful run. */
-function isTerminalReadOk(read: SessionRunOutcome): boolean {
-  return read === "succeeded";
-}
-
-const PROGRESSING_SESSION_STATUSES = new Set<SessionStatus>([
-  "creating",
-  "running",
-  "suspending",
-  "cancelling",
-  "deleting"
-]);
-
-/** Validate the session projection observed immediately after a durable terminal. */
-function assertSessionCommittedAfterRun(
-  session: Session,
-  run: SessionRun,
-  outcome: SessionRunOutcome
-): void {
-  if (PROGRESSING_SESSION_STATUSES.has(session.status) || session.currentRun?.runId === run.runId) {
-    throw new SessionStateError("RUN terminal was observed before the session state was committed", {
-      sessionId: session.id,
-      runId: run.runId,
-      status: session.status
-    });
-  }
-  if (session.lastRun?.runId !== run.runId) {
-    throw new SessionStateError("RUN terminal does not match the session's lastRun", {
-      sessionId: session.id,
-      runId: run.runId,
-      lastRunId: session.lastRun?.runId
-    });
-  }
-  if (outcome === "succeeded" && (session.status !== "idle" || session.acceptsMessages !== true)) {
-    throw new SessionStateError("a succeeded RUN_FINISHED must leave the session idle and accepting messages", {
-      sessionId: session.id,
-      runId: run.runId,
-      status: session.status,
-      acceptsMessages: session.acceptsMessages
-    });
-  }
-}
-
-function runBillingFromEvents(
-  events: readonly AexEvent[],
-  runId: string
-): { readonly costUsd: number; readonly usage: UsageSummary } {
-  const terminal = [...events].reverse().find(
-    (event) => event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
-  );
-  if (terminal === undefined) {
-    throw new SessionStateError(`run ${runId} ended without a matching terminal event`, { runId });
-  }
-  const data = asRecord(terminal.data);
-  const costUsd = data.costUsd;
-  const providerUsage = data.providerUsage;
-  if (typeof costUsd !== "number" || !Number.isFinite(costUsd) || costUsd < 0 || !Array.isArray(providerUsage)) {
-    throw new SessionStateError("RUN terminal is missing valid per-run cost and provider usage", { runId });
-  }
-  return {
-    costUsd,
-    usage: usageFromProviderUsage(providerUsage as readonly SessionCostProviderUsage[])
-  };
-}
-
-/**
- * The IMMEDIATE authoritative failure text — the terminal `RUN_ERROR` event's
- * `data.failureMessage`. `result.error` reads this FIRST so a failed (e.g.
- * bad-BYOK) session's error is never empty even before the session-record mirror
- * exposes `errorMessage`.
- */
-function failureFromEvents(events: readonly AexEvent[]): string | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (event.type !== "RUN_ERROR") continue;
-    const data = asRecord(event.data);
-    for (const key of ["failureMessage", "message", "error"]) {
-      const value = data[key];
-      if (typeof value === "string" && value.length > 0) return value;
-    }
-  }
-  return undefined;
-}
-
-/** The typed schema-decode outcome from the terminal `aex.result.*` event, if any. */
-function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): TurnOutcome<T> | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (event.isResultDecoded()) {
-      const value = asRecord(event.data).value;
-      const decoded =
-        value && typeof value === "object" && !Array.isArray(value) && "value" in (value as object)
-          ? (value as { readonly value: unknown }).value
-          : value;
-      return { kind: "decoded", value: decoded as T };
-    }
-    if (event.isResultRefused()) {
-      const payload = asRecord(asRecord(event.data).value);
-      const reason = payload.reason;
-      const detail = typeof payload.detail === "string" ? payload.detail : undefined;
-      return {
-        kind: "refused",
-        reason: reason === "schema_violation" || reason === "uncertain" || reason === "refused" ? reason : "refused",
-        ...(detail !== undefined ? { detail } : {})
-      };
-    }
-  }
-  return undefined;
-}
-
-/**
- * Build the unified finished run result (shared by `session.messages.send().finished()`
- * and `Aex.start`): the terminal outcome `status`, `ok`, `costUsd` (>= 0),
- * `usage` (from the run terminal), and event-first `error`.
- */
-function buildTurnResult(
-  sessionId: string,
-  session: Session,
-  run: SessionRun,
-  events: readonly AexEventView[],
-  files: readonly SessionFile[],
-  checkpoint: SessionCheckpointRevision | undefined,
-  messages: readonly Message[],
-  read: SessionRunOutcome
-): SessionRunResult {
-  const status = read;
-  const ok = isTerminalReadOk(read);
-  const { usage, costUsd } = runBillingFromEvents(events, run.runId);
-  const error =
-    failureFromEvents(events) ??
-    (!ok && typeof session.errorMessage === "string" && session.errorMessage ? session.errorMessage : undefined);
-  const outcome = outcomeFromEvents(events);
-  return {
-    sessionId,
-    session,
-    run,
-    status,
-    ok,
-    costUsd,
-    usage,
-    ...(error !== undefined ? { error } : {}),
-    text: assistantTextFromEvents(events),
-    events,
-    files,
-    ...(checkpoint !== undefined ? { checkpoint } : {}),
-    messages,
-    ...(outcome !== undefined ? { outcome } : {})
-  };
-}
-
 export interface StreamEventsOptions {
   /** Starting cursor; only events with `sequence >= from` are considered. Default 0. */
   readonly from?: number;
@@ -1485,41 +960,6 @@ export interface SessionFilePathSelector {
 export interface SessionFileIdSelector {
   readonly id: string;
   readonly checkpointId: string;
-}
-
-function assertRunCheckpoint(
-  events: readonly AexEvent[],
-  runId: string,
-  revision: SessionCheckpointRevision
-): void {
-  const terminal = [...events].reverse().find(
-    (event) => event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
-  );
-  const checkpoint = terminal ? asRecord(terminal.data.checkpoint) : {};
-  if (
-    terminal === undefined ||
-    revision.runId !== runId ||
-    checkpoint.checkpointId !== revision.checkpointId
-  ) {
-    throw new SessionStateError("RUN terminal and session files resolved to different checkpoints", {
-      runId,
-      terminalCheckpointId: checkpoint.checkpointId,
-      fileCheckpointId: revision.checkpointId,
-      fileCheckpointRunId: revision.runId
-    });
-  }
-}
-
-function terminalCheckpointId(events: readonly AexEvent[], runId: string): string | undefined {
-  const terminal = [...events].reverse().find(
-    (event) => event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
-  );
-  const checkpointId = terminal ? asRecord(terminal.data.checkpoint).checkpointId : undefined;
-  if (typeof checkpointId !== "string" || checkpointId.length === 0) {
-    if (terminal?.type === "RUN_ERROR") return undefined;
-    throw new SessionStateError("RUN_FINISHED is missing its committed checkpoint", { runId });
-  }
-  return checkpointId;
 }
 
 export type SessionFileSelector = SessionFile | SessionFileIdSelector | SessionFilePathSelector;
@@ -2271,14 +1711,6 @@ function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
 }
 
 /**
- * Module-private factory for SDK validation errors. `details.field` is the only
- * stable machine-readable payload; messages are human guidance and may change.
- */
-function configError(surface: string, field: string, message: string): SessionConfigValidationError {
-  return new SessionConfigValidationError(`${surface}: ${message}`, { field });
-}
-
-/**
  * Extract a throttle-class {@link ProviderFault} from a failed session record.
  * Reads a structured `providerFault` / `error` field first (the shape the
  * runtime is expected to emit on a throttled turn), then falls back to a
@@ -2304,293 +1736,6 @@ function faultFromErrorMessage(message: string | undefined): ProviderFault | und
     return { kind: "overloaded", message };
   }
   return undefined;
-}
-
-function normaliseSessionInput(
-  input: string | readonly string[],
-  surface: string,
-  field: string
-): string | readonly string[] {
-  if (typeof input === "string") {
-    if (!input) {
-      throw configError(surface, field, `${field} must be a non-empty string`);
-    }
-    if (!input.trim()) {
-      throw configError(surface, field, `${field} must contain non-whitespace text`);
-    }
-    return input;
-  }
-  if (!Array.isArray(input) || input.length === 0) {
-    throw configError(surface, field, `${field} must be a non-empty string or string array`);
-  }
-  for (const segment of input) {
-    if (typeof segment !== "string" || !segment) {
-      throw configError(surface, field, `${field} segments must be non-empty strings`);
-    }
-  }
-  if (input.every((segment) => !segment.trim())) {
-    throw configError(surface, field, `${field} must contain non-whitespace text`);
-  }
-  return [...input];
-}
-
-function assertSupportedSessionFields(
-  options: SessionCreateOptions,
-  surface: string,
-  allowStartFields: boolean
-): void {
-  const record = options as unknown as Record<string, unknown>;
-  const allowed = new Set([
-    "provider", "model", "system", "assets", "mcpServers", "fileCapture",
-    "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
-    "idempotencyKey", "apiKeys", "environment", "runtime", "overrides", "webhook",
-    ...(allowStartFields ? ["message", "deleteAfter", "messageIdempotencyKey", "stream"] : [])
-  ]);
-  const guidance: Readonly<Record<string, string>> = {
-    runtimeSize: "use runtime.size",
-    runtimeKind: "use runtime.kind",
-    secretEnv: "use environment.secrets",
-    parentSessionId: "subagent lineage is assigned by the platform",
-    message: "sessions are created without a first message; use Aex.start or session.messages.send",
-    prompt: "use message",
-    instructions: "publish Instructions through aex.workspace.instructions and pass the returned ref in assets.instructions"
-  };
-  for (const field of Object.keys(record)) {
-    if (!allowed.has(field)) {
-      const detail = guidance[field];
-      throw configError(
-        surface,
-        field,
-        `${field} is not a supported option${detail === undefined ? "" : `; ${detail}`}`
-      );
-    }
-  }
-  const overrides = record.overrides;
-  if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
-    const overrideRecord = overrides as Record<string, unknown>;
-    if (Object.prototype.hasOwnProperty.call(overrideRecord, "idleSuspendAfter")) {
-      throw configError(
-        surface,
-        "overrides.idleSuspendAfter",
-        "overrides.idleSuspendAfter is not a supported option; use overrides.idleTtl."
-      );
-    }
-  }
-  const runtime = record.runtime;
-  if (runtime !== undefined) {
-    if (typeof runtime !== "object" || runtime === null || Array.isArray(runtime)) {
-      throw configError(surface, "runtime", "runtime must be an object like { kind, size }");
-    }
-    for (const key of Object.keys(runtime as Record<string, unknown>)) {
-      if (key !== "kind" && key !== "size") {
-        throw configError(surface, `runtime.${key}`, `runtime.${key} is not a supported option; use runtime.kind or runtime.size`);
-      }
-    }
-  }
-  assertStructuredSessionFields(record, surface, allowStartFields);
-}
-
-function assertSupportedSessionSendOptions(
-  options: unknown,
-  surface: string,
-  allowIdempotencyKey = true
-): void {
-  const record = options as Record<string, unknown> | undefined;
-  if (!record || typeof record !== "object") return;
-  const allowed = new Set([
-    "webSocketFactory",
-    "idleTimeoutMs",
-    "pingIntervalMs",
-    ...(allowIdempotencyKey ? ["idempotencyKey"] : [])
-  ]);
-  for (const field of Object.keys(record)) {
-    if (allowed.has(field)) continue;
-    const guidance = field === "from"
-      ? "use session.events.list(), stream(), or streamEnvelopes() for replay"
-      : field === "signal"
-        ? "use session.cancel() / session.suspend() for remote control"
-        : undefined;
-    throw configError(
-      surface,
-      field,
-      `${field} is not a supported option${guidance === undefined ? "" : `; ${guidance}`}`
-    );
-  }
-}
-
-function assertStructuredSessionFields(
-  record: Record<string, unknown>,
-  surface: string,
-  allowStartFields: boolean
-): void {
-  const overrides = assertAllowedObjectFields(
-    record.overrides,
-    surface,
-    "overrides",
-    ["idleTtl", "timeout", "maxSpendUsd", "maxTurns"]
-  );
-  void overrides;
-  assertAssetsFields(record.assets, surface);
-  assertAllowedObjectFields(
-    record.fileCapture,
-    surface,
-    "fileCapture",
-    ["allowedDirs", "deniedDirs", "captureTimeoutMs", "maxFileBytes", "maxTotalBytes", "maxFiles"]
-  );
-  assertEnvironmentFields(record.environment, surface);
-  assertAllowedObjectFields(record.webhook, surface, "webhook", ["url"]);
-
-  const responseFormat = assertRecord(record.responseFormat, surface, "responseFormat");
-  if (responseFormat !== undefined) {
-    const allowed = responseFormat.kind === "text"
-      ? ["kind"]
-      : ["kind", "schema", "strict", "name"];
-    assertAllowedKeys(responseFormat, surface, "responseFormat", allowed);
-  }
-  assertAllowedObjectFields(record.approvalGate, surface, "approvalGate", ["tools"]);
-  if (allowStartFields) {
-    assertAllowedObjectFields(
-      record.stream,
-      surface,
-      "stream",
-      ["webSocketFactory", "idleTimeoutMs", "pingIntervalMs"]
-    );
-  }
-}
-
-function assertAssetsFields(value: unknown, surface: string): void {
-  const assets = assertAllowedObjectFields(
-    value,
-    surface,
-    "assets",
-    ["files", "skills", "tools", "instructions"]
-  );
-  if (assets === undefined) return;
-  // Workspace publish methods return records that extend the reusable ref with
-  // immutable metadata. Accept those records directly so publish -> session is ergonomic.
-  const common = [
-    "kind", "resourceId", "version", "assetId", "contentHash",
-    "createdAt", "updatedAt", "sizeBytes", "contentType"
-  ];
-  const fields: Readonly<Record<string, readonly string[]>> = {
-    files: [...common, "name", "mountPath"],
-    skills: [...common, "name", "description"],
-    tools: [...common, "name", "description", "input_schema", "entry"],
-    instructions: [...common, "name"]
-  };
-  for (const [category, allowed] of Object.entries(fields)) {
-    const entries = assets[category];
-    if (entries === undefined) continue;
-    if (!Array.isArray(entries)) {
-      throw configError(surface, `assets.${category}`, `assets.${category} must be an array`);
-    }
-    entries.forEach((entry, index) => {
-      const field = `assets.${category}[${index}]`;
-      const item = assertRecord(entry, surface, field);
-      if (item !== undefined) assertAllowedKeys(item, surface, field, allowed);
-    });
-  }
-}
-
-function assertEnvironmentFields(value: unknown, surface: string): void {
-  const environment = assertAllowedObjectFields(
-    value,
-    surface,
-    "environment",
-    ["networking", "packages", "variables", "secrets"]
-  );
-  if (environment === undefined) return;
-  assertAllowedObjectFields(
-    environment.networking,
-    surface,
-    "environment.networking",
-    ["mode", "allowedHosts"]
-  );
-  for (const field of ["variables", "secrets"] as const) {
-    assertRecord(environment[field], surface, `environment.${field}`);
-  }
-  const packages = environment.packages;
-  if (packages === undefined) return;
-  if (!Array.isArray(packages)) {
-    throw configError(surface, "environment.packages", "environment.packages must be an array");
-  }
-  packages.forEach((entry, index) => {
-    const field = `environment.packages[${index}]`;
-    const item = assertRecord(entry, surface, field);
-    if (item !== undefined) assertAllowedKeys(item, surface, field, ["name", "version"]);
-  });
-}
-
-function assertAllowedObjectFields(
-  value: unknown,
-  surface: string,
-  field: string,
-  allowed: readonly string[]
-): Record<string, unknown> | undefined {
-  const record = assertRecord(value, surface, field);
-  if (record !== undefined) assertAllowedKeys(record, surface, field, allowed);
-  return record;
-}
-
-function assertRecord(
-  value: unknown,
-  surface: string,
-  field: string
-): Record<string, unknown> | undefined {
-  if (value === undefined) return undefined;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw configError(surface, field, `${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function assertAllowedKeys(
-  record: Record<string, unknown>,
-  surface: string,
-  field: string,
-  allowed: readonly string[]
-): void {
-  const allowedSet = new Set(allowed);
-  for (const key of Object.keys(record)) {
-    if (allowedSet.has(key)) continue;
-    const nested = `${field}.${key}`;
-    throw configError(surface, nested, `${nested} is not a supported option`);
-  }
-}
-
-function validateApiKeys(
-  apiKeys: Partial<Record<ProviderName, string>> | undefined,
-  provider: ProviderName,
-  surface: string
-): void {
-  const key = apiKeys?.[provider];
-  if (typeof key !== "string" || key.length === 0) {
-    throw configError(surface, `apiKeys.${provider}`, "a provider API key is required in apiKeys");
-  }
-}
-
-function fileCaptureForWire(fileCapture: SessionCreateOptions["fileCapture"]): PlatformSubmission["fileCapture"] | undefined {
-  if (fileCapture === undefined) {
-    return undefined;
-  }
-  const allowedDirs = fileCapture.allowedDirs?.filter((dir) => dir.length > 0);
-  const deniedDirs = fileCapture.deniedDirs?.filter((dir) => dir.length > 0);
-  const hasNumericOverride =
-    fileCapture.captureTimeoutMs !== undefined ||
-    fileCapture.maxFileBytes !== undefined ||
-    fileCapture.maxTotalBytes !== undefined ||
-    fileCapture.maxFiles !== undefined;
-  if ((allowedDirs?.length ?? 0) === 0 && (deniedDirs?.length ?? 0) === 0 && !hasNumericOverride) {
-    return undefined;
-  }
-  return {
-    ...(allowedDirs && allowedDirs.length > 0 ? { allowedDirs } : {}),
-    ...(deniedDirs && deniedDirs.length > 0 ? { deniedDirs } : {}),
-    ...(fileCapture.captureTimeoutMs !== undefined ? { captureTimeoutMs: fileCapture.captureTimeoutMs } : {}),
-    ...(fileCapture.maxFileBytes !== undefined ? { maxFileBytes: fileCapture.maxFileBytes } : {}),
-    ...(fileCapture.maxTotalBytes !== undefined ? { maxTotalBytes: fileCapture.maxTotalBytes } : {}),
-    ...(fileCapture.maxFiles !== undefined ? { maxFiles: fileCapture.maxFiles } : {})
-  };
 }
 
 type WorkspaceAssetPublisher = {
@@ -2712,66 +1857,6 @@ export class WorkspaceClient {
     this.instructions = new WorkspaceInstructionsClient(http, publisher);
     this.secrets = new SecretsClient(http);
   }
-}
-
-const DEFAULT_SESSION_IDLE_TTL = "3m";
-
-function sessionRetentionForWire(options: SessionCreateOptions): SessionRetentionPolicy {
-  return {
-    idleTtl: options.overrides?.idleTtl ?? DEFAULT_SESSION_IDLE_TTL
-  };
-}
-
-function sessionEnvironmentForWire(
-  environment: SessionEnvironmentOptions | undefined
-): PlatformEnvironmentInput | undefined {
-  if (environment === undefined) {
-    return undefined;
-  }
-  const { variables, secrets: _secrets, ...rest } = environment;
-  void _secrets;
-  const out: PlatformEnvironmentInput = {
-    ...rest,
-    ...(variables !== undefined ? { envVars: variables } : {})
-  };
-  return Object.keys(out).length === 0 ? undefined : out;
-}
-
-function mergeMcpServers(
-  inputs: readonly McpServer[],
-  explicitSecrets: readonly PlatformMcpServerSecret[]
-): {
-  submissionMcpServers: ReadonlyArray<McpServerRef | { readonly kind: "workspace"; readonly id: string }>;
-  mergedMcpSecrets: readonly PlatformMcpServerSecret[];
-} {
-  const submissionMcpServers: Array<McpServerRef | { readonly kind: "workspace"; readonly id: string }> = [];
-  const secretByName = new Map<string, PlatformMcpServerSecret>();
-  for (const secret of explicitSecrets) {
-    secretByName.set(secret.name, secret);
-  }
-  for (let i = 0; i < inputs.length; i++) {
-    const entry = inputs[i];
-    if (!(entry instanceof McpServer)) {
-      throw configError("aex", `mcpServers[${i}]`, `mcpServers[${i}] must be an McpServer instance`);
-    }
-    submissionMcpServers.push(entry.toSubmissionEntry());
-    const secret = entry.toSecretEntry();
-    if (secret) {
-      const existing = secretByName.get(secret.name);
-      if (existing && existing.url !== secret.url) {
-        throw configError(
-          "aex",
-          `mcpServers[${i}].url`,
-          `mcpServers[${i}].url conflicts with another MCP declaration`
-        );
-      }
-      secretByName.set(secret.name, secret);
-    }
-  }
-  return {
-    submissionMcpServers,
-    mergedMcpSecrets: Array.from(secretByName.values())
-  };
 }
 
 export type { SessionFileType, SessionFileLink, SessionFileLinkOptions, SessionFileQuery };

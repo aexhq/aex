@@ -5,7 +5,15 @@ import type {
   SessionClient,
   SessionHandle,
   SessionRunStream,
+  IdempotencyOptions,
+  Message,
+  SessionCreateOptions,
+  SessionEnvironmentOptions,
+  SessionInput,
+  SessionOverrides,
+  SessionRunResult,
   SessionSendOptions,
+  SessionStartOptions,
   WorkspaceClient,
   WorkspaceFilesClient,
   WorkspaceInstructionsClient,
@@ -13,6 +21,18 @@ import type {
   WorkspaceToolsClient,
   SessionResult
 } from "../../src/index.js";
+import type {
+  IdempotencyOptions as ClientIdempotencyOptions,
+  Message as ClientMessage,
+  SessionCreateOptions as ClientSessionCreateOptions,
+  SessionEnvironmentOptions as ClientSessionEnvironmentOptions,
+  SessionInput as ClientSessionInput,
+  SessionOverrides as ClientSessionOverrides,
+  SessionResult as ClientSessionResult,
+  SessionRunResult as ClientSessionRunResult,
+  SessionSendOptions as ClientSessionSendOptions,
+  SessionStartOptions as ClientSessionStartOptions
+} from "../../src/client.js";
 
 // @ts-expect-error Raw platform submission envelopes are not SDK input types.
 import type { PlatformSessionSubmissionRequest } from "../../src/index.js";
@@ -59,6 +79,24 @@ const aexHasNoRawUploadMethod: "_uploadAsset" extends keyof Aex ? false : true =
 const aexHasNoRawStreamUploadMethod: "_uploadAssetStream" extends keyof Aex ? false : true = true;
 const aexHasNoSecretPromotionMethod: "_createWorkspaceSecret" extends keyof Aex ? false : true = true;
 const sessionSendHasNoReplayCursor: "from" extends keyof SessionSendOptions ? false : true = true;
+type Equal<Left, Right> =
+  (<T>() => T extends Left ? 1 : 2) extends (<T>() => T extends Right ? 1 : 2)
+    ? (<T>() => T extends Right ? 1 : 2) extends (<T>() => T extends Left ? 1 : 2)
+      ? true
+      : false
+    : false;
+const movedTypeCompatibility: readonly true[] = [
+  true as Equal<IdempotencyOptions, ClientIdempotencyOptions>,
+  true as Equal<Message, ClientMessage>,
+  true as Equal<SessionCreateOptions, ClientSessionCreateOptions>,
+  true as Equal<SessionEnvironmentOptions, ClientSessionEnvironmentOptions>,
+  true as Equal<SessionInput, ClientSessionInput>,
+  true as Equal<SessionOverrides, ClientSessionOverrides>,
+  true as Equal<SessionResult, ClientSessionResult>,
+  true as Equal<SessionRunResult, ClientSessionRunResult>,
+  true as Equal<SessionSendOptions, ClientSessionSendOptions>,
+  true as Equal<SessionStartOptions, ClientSessionStartOptions>
+];
 void [
   sessionResultHasNoRecord,
   sessionResultRequiresSession,
@@ -66,7 +104,8 @@ void [
   aexHasNoRawUploadMethod,
   aexHasNoRawStreamUploadMethod,
   aexHasNoSecretPromotionMethod,
-  sessionSendHasNoReplayCursor
+  sessionSendHasNoReplayCursor,
+  movedTypeCompatibility
 ];
 
 describe("SDK root type boundary", () => {

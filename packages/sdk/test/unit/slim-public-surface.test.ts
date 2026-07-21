@@ -60,6 +60,16 @@ describe("slim launch root SDK surface", () => {
     for (const name of removedEventGuards) {
       expect(root[name], `${name} should be a method on the event, not a root SDK export`).toBeUndefined();
     }
+    for (const name of [
+      "buildTurnResult",
+      "projectAssistantMessages",
+      "normaliseSessionInput",
+      "assertSupportedSessionFields",
+      "fileCaptureForWire",
+      "mergeMcpServers"
+    ]) {
+      expect(root[name], `${name} is a private SDK implementation detail`).toBeUndefined();
+    }
   });
 
   it("constructs Aex with an API key string and optional client options", async () => {
