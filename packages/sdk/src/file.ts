@@ -8,7 +8,7 @@ import {
   bundleManifestIsEmpty,
   serializeBundleManifest
 } from "@aexhq/contracts";
-import { hashSkillBundle, type BundleMeta } from "./bundle.js";
+import { bundleSingleFile, hashSkillBundle, type BundleMeta } from "@aexhq/contracts/internal";
 import {
   frameCanonicalZipSync,
   streamBundleZip,
@@ -97,10 +97,8 @@ export class File {
     if (!(args.bytes instanceof Uint8Array) || args.bytes.byteLength === 0) {
       throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
     }
-    assertArchiveExpandedSize(args.bytes.byteLength, "File.fromBytes");
     const mountPath = resolveMountPath(args.mountPath, "File.fromBytes");
-    const zip = zipSync({ [filename]: [args.bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
-    assertArchiveCompressedSize(zip.byteLength, "File.fromBytes");
+    const zip = bundleSingleFile(filename, args.bytes, "File.fromBytes");
     const contentHash = await hashSkillBundle(zip);
     const ref: DraftFileRef = {
       kind: "draft",

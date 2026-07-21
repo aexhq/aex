@@ -11,6 +11,9 @@ import { ASSET_ARCHIVE_LIMITS } from "./session-config.js";
 // to the package `index`. Consumers reach it via the explicit
 // `@aexhq/contracts/internal` subpath.
 export * from "./connection-ticket.js";
+export * from "./archive-limits.js";
+export * from "./asset-authoring.js";
+export * from "./asset-bundle.js";
 export * from "./models.js";
 export * as operations from "./operations.js";
 export * from "./post-hook.js";

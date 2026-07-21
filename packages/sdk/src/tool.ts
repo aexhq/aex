@@ -1,9 +1,5 @@
-import {
-  TOOL_NAME_PATTERN,
-  normaliseSkillBundlePath,
-  type ToolInputSchema,
-  type ToolRef
-} from "@aexhq/contracts";
+import { type ToolInputSchema, type ToolRef } from "@aexhq/contracts";
+import { normalizeToolManifest } from "@aexhq/contracts/internal";
 import {
   bundleToolFiles,
   hashSkillBundle,
@@ -105,56 +101,4 @@ export class Tool {
 export interface DraftToolRef extends Omit<ToolRef, "kind"> {
   readonly kind: "draft";
   readonly contentHash: string;
-}
-
-
-function normalizeToolManifest(source: string, input: ToolManifestInput, files?: SkillFiles): ToolBundleManifest {
-  const name = input.name;
-  if (typeof name !== "string" || !TOOL_NAME_PATTERN.test(name)) {
-    throw new Error(`${source}: name must match ${TOOL_NAME_PATTERN.source}`);
-  }
-  if (name.includes("__")) {
-    throw new Error(`${source}: name must not contain "__"; that separator is reserved for MCP tools`);
-  }
-  const description = input.description;
-  if (typeof description !== "string" || description.trim().length === 0 || description.length > 2048) {
-    throw new Error(`${source}: description must be non-empty and <= 2048 chars`);
-  }
-  const inputSchema = input.inputSchema ?? input.input_schema;
-  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
-    throw new Error(`${source}: inputSchema must be a JSON Schema object`);
-  }
-  if ((inputSchema as { readonly type?: unknown }).type !== "object") {
-    throw new Error(`${source}: inputSchema.type must be "object"`);
-  }
-  const entry = normaliseSkillBundlePath(input.entry);
-  assertJsModuleEntry(source, entry, input.entry, files);
-  return {
-    name,
-    description,
-    input_schema: inputSchema,
-    entry
-  };
-}
-
-const JS_MODULE_ENTRY = /\.(?:js|mjs|cjs)$/i;
-
-/**
- * Validate the tool's ENTRY is a JS module at authoring time (fail-fast), not
- * mid-session when the runtime module-loader rejects a `run.sh`. The entry must end
- * in `.js`/`.mjs`/`.cjs` and — when the bundle files are known
- * ({@link Tool.fromFiles}) — must be present in `files`.
- */
-function assertJsModuleEntry(source: string, entry: string, rawEntry: string, files: SkillFiles | undefined): void {
-  const basename = entry.split("/").pop() ?? entry;
-  if (!JS_MODULE_ENTRY.test(basename)) {
-    throw new Error(
-      `${source}: entry must be a JS module (.js/.mjs/.cjs) that default-exports a function or { execute }; got ${JSON.stringify(rawEntry)}`
-    );
-  }
-  if (files !== undefined && !(entry in files) && !(rawEntry in files)) {
-    throw new Error(
-      `${source}: entry ${JSON.stringify(rawEntry)} is not present in files (keys: ${Object.keys(files).join(", ") || "(none)"})`
-    );
-  }
 }

@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { strToU8, zipSync } from "fflate";
-import { hashSkillBundle } from "./bundle.js";
-import { assertArchiveCompressedSize, assertArchiveExpandedSize } from "./archive-limits.js";
+import { strToU8 } from "fflate";
+import { bundleSingleFile, hashSkillBundle } from "@aexhq/contracts/internal";
 
 /** Draft instruction context published through `aex.workspace.instructions`. */
 export class Instructions {
@@ -28,9 +27,7 @@ export class Instructions {
       throw new Error(`Instructions.fromContent: name must match ${WORKSPACE_NAME_RE.source}`);
     }
     const bytes = strToU8(content);
-    assertArchiveExpandedSize(bytes.byteLength, "Instructions.fromContent");
-    const zip = zipSync({ "AGENTS.md": [bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
-    assertArchiveCompressedSize(zip.byteLength, "Instructions.fromContent");
+    const zip = bundleSingleFile("AGENTS.md", bytes, "Instructions.fromContent");
     return new Instructions(args.name, await hashSkillBundle(zip), zip);
   }
 
@@ -51,4 +48,3 @@ export class Instructions {
 }
 
 const WORKSPACE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));

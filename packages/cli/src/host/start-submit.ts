@@ -1,19 +1,11 @@
-import { zipSync, type Zippable } from "fflate";
-import { Buffer } from "node:buffer";
 import {
   ASSET_ARCHIVE_LIMITS,
   BUILTIN_TOOL_NAMES,
   DEFAULT_FILE_MOUNT_PATH,
-  SKILL_BUNDLE_LIMITS,
-  SKILL_NAME_PATTERN,
-  SKILL_RESERVED_NAMES,
-  TOOL_NAME_PATTERN,
-  normaliseSkillBundlePath,
   parseSessionLimits,
   parseSessionTimeout,
   parseSessionWebhook,
   resolveModelProvider,
-  validateSkillBundleEntry,
   type BuiltinToolName,
   type FetchLike,
   type HttpClient,
@@ -37,10 +29,20 @@ import {
   type WorkspaceSkillRef,
   type WorkspaceToolRef
 } from "@aexhq/contracts";
-import { operations, uploadAsset as uploadHostAsset } from "@aexhq/contracts/internal";
+import {
+  bundleSingleFile,
+  bundleSkillFiles,
+  bundleToolFiles,
+  deriveSkillName,
+  extractSkillFrontmatter,
+  hashSkillBundle,
+  normalizeToolManifest,
+  operations,
+  slugifyAssetName,
+  uploadAsset as uploadHostAsset
+} from "@aexhq/contracts/internal";
 
 const TEXT = new TextEncoder();
-const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
 const UPLOAD_CONCURRENCY = 5;
 
 export interface CliSkillDraft {
@@ -120,7 +122,7 @@ export async function submitCliRun(
 
 export async function buildCliSkill(content: string, source: string): Promise<CliSkillDraft> {
   const front = extractSkillFrontmatter("Skill.fromContent", { "SKILL.md": content });
-  const name = deriveSkillName("Skill.fromContent", front.name, undefined, undefined);
+  const name = deriveSkillName("Skill.fromContent", front.name, undefined, undefined, "cli");
   const description = front.description;
   if (typeof description !== "string" || description.trim().length === 0) {
     throw new Error(`${source}: a skill description is required in SKILL.md frontmatter`);
@@ -128,11 +130,11 @@ export async function buildCliSkill(content: string, source: string): Promise<Cl
   if (description.length > 2048) {
     throw new Error(`${source}: description must be <= 2048 chars`);
   }
-  const bytes = bundleSkillFiles({ "SKILL.md": content });
+  const bytes = bundleSkillFiles({ "SKILL.md": content }, undefined, "cli").zip;
   return {
     name,
     description,
-    contentHash: await hashBytes(bytes),
+    contentHash: await hashSkillBundle(bytes, "cli"),
     bytes
   };
 }
@@ -149,12 +151,12 @@ export async function buildCliTool(args: {
     description: args.description,
     input_schema: inputSchema,
     entry: args.entry
-  }, { [args.entry]: args.content });
-  const bytes = bundleToolFiles({ [args.entry]: args.content }, manifest);
+  }, { [args.entry]: args.content }, "cli");
+  const bytes = bundleToolFiles({ [args.entry]: args.content }, manifest, undefined, "cli").zip;
   return {
     ref: {
       kind: "asset",
-      contentHash: await hashBytes(bytes),
+      contentHash: await hashSkillBundle(bytes, "cli"),
       ...manifest
     },
     bytes
@@ -168,9 +170,8 @@ export async function buildCliInstructions(content: string, name: string): Promi
   if (!/^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name)) {
     throw new Error("Instructions.fromContent: name must be a lowercase workspace slug");
   }
-  assertCliExpandedSize(Buffer.byteLength(content, "utf8"), "Instructions.fromContent");
-  const bytes = zipSync({ "AGENTS.md": [TEXT.encode(content), { mtime: ZIP_EPOCH }] }, { level: 6 });
-  return { name, contentHash: await hashBytes(bytes), bytes };
+  const bytes = bundleSingleFile("AGENTS.md", TEXT.encode(content), "Instructions.fromContent", false);
+  return { name, contentHash: await hashSkillBundle(bytes, "cli"), bytes };
 }
 
 export async function buildCliFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<CliFileDraft> {
@@ -183,10 +184,10 @@ export async function buildCliFile(args: { readonly name: string; readonly bytes
     throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
   }
   assertCliExpandedSize(bytes.byteLength, "File.fromBytes");
-  const zip = zipSync({ [filename]: [bytes, { mtime: ZIP_EPOCH }] }, { level: 6 });
+  const zip = bundleSingleFile(filename, bytes, "File.fromBytes", false);
   return {
     name: slugFromFilename(filename),
-    contentHash: await hashBytes(zip),
+    contentHash: await hashSkillBundle(zip, "cli"),
     mountPath: DEFAULT_FILE_MOUNT_PATH,
     bytes: zip
   };
@@ -442,173 +443,6 @@ async function stageAsset(
   });
 }
 
-function bundleSkillFiles(files: Readonly<Record<string, string | Uint8Array>>): Uint8Array {
-  const collected = collectBundleFiles("Skill bundle", files, true);
-  return zipCollected(collected);
-}
-
-function bundleToolFiles(
-  files: Readonly<Record<string, string | Uint8Array>>,
-  manifest: ToolBundleManifest
-): Uint8Array {
-  const collected = collectBundleFiles("Tool bundle", files, false);
-  const entryPath = validateSkillBundleEntry({ path: manifest.entry, size: 0 }).path;
-  if (!collected.has(entryPath)) {
-    throw new Error(`Tool bundle entry "${entryPath}" must exist in files`);
-  }
-  if (collected.has("tool.json")) {
-    throw new Error('Tool bundle files must not include reserved "tool.json"; pass manifest fields instead');
-  }
-  collected.set("tool.json", TEXT.encode(`${JSON.stringify(manifest, null, 2)}\n`));
-  return zipCollected(collected);
-}
-
-function collectBundleFiles(
-  kind: string,
-  files: Readonly<Record<string, string | Uint8Array>>,
-  requireSkillMd: boolean
-): Map<string, Uint8Array> {
-  const entries = Object.entries(files);
-  if (entries.length === 0) throw new Error(`${kind} files map cannot be empty`);
-  if (entries.length > SKILL_BUNDLE_LIMITS.maxFiles) {
-    throw new Error(`${kind} exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit (got ${entries.length})`);
-  }
-  const collected = new Map<string, Uint8Array>();
-  let hasSkillMd = false;
-  let total = 0;
-  for (const [rawPath, contents] of entries) {
-    const bytes = typeof contents === "string" ? TEXT.encode(contents) : contents;
-    if (!(bytes instanceof Uint8Array)) throw new Error(`${kind} file "${rawPath}" must be a string or Uint8Array`);
-    const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
-    if (entry.path === "SKILL.md") hasSkillMd = true;
-    total += bytes.byteLength;
-    if (total > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
-      throw new Error(`${kind} exceeds decompressed cap of ${SKILL_BUNDLE_LIMITS.maxDecompressedBytes} bytes`);
-    }
-    if (collected.has(entry.path)) throw new Error(`${kind} contains duplicate path: ${entry.path}`);
-    collected.set(entry.path, bytes);
-  }
-  if (requireSkillMd && !hasSkillMd) {
-    throw new Error('Skill bundle must contain a "SKILL.md" file at the root.');
-  }
-  return collected;
-}
-
-function zipCollected(collected: Map<string, Uint8Array>): Uint8Array {
-  if (collected.size > ASSET_ARCHIVE_LIMITS.maxEntries) {
-    throw new Error(`bundle exceeds ${ASSET_ARCHIVE_LIMITS.maxEntries} materialized entries (got ${collected.size})`);
-  }
-  const expandedBytes = [...collected.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0);
-  if (expandedBytes > ASSET_ARCHIVE_LIMITS.maxDecompressedBytes) {
-    throw new Error(
-      `bundle exceeds expanded cap of ${ASSET_ARCHIVE_LIMITS.maxDecompressedBytes} bytes (got ${expandedBytes})`
-    );
-  }
-  const sorted = [...collected.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const zippable: Zippable = {};
-  for (const [path, bytes] of sorted) {
-    zippable[path] = [bytes, { mtime: ZIP_EPOCH }];
-  }
-  const zip = zipSync(zippable, { level: 6 });
-  if (zip.byteLength > SKILL_BUNDLE_LIMITS.maxCompressedBytes) {
-    throw new Error(`bundle exceeds compressed cap of ${SKILL_BUNDLE_LIMITS.maxCompressedBytes} bytes (got ${zip.byteLength})`);
-  }
-  return zip;
-}
-
-interface ToolBundleManifest {
-  readonly name: string;
-  readonly description: string;
-  readonly input_schema: ToolInputSchema;
-  readonly entry: string;
-}
-
-function normalizeToolManifest(
-  source: string,
-  input: ToolBundleManifest,
-  files: Readonly<Record<string, string | Uint8Array>>
-): ToolBundleManifest {
-  if (typeof input.name !== "string" || !TOOL_NAME_PATTERN.test(input.name)) {
-    throw new Error(`${source}: name must match ${TOOL_NAME_PATTERN.source}`);
-  }
-  if (input.name.includes("__")) {
-    throw new Error(`${source}: name must not contain "__"; that separator is reserved for MCP tools`);
-  }
-  if (typeof input.description !== "string" || input.description.trim().length === 0 || input.description.length > 2048) {
-    throw new Error(`${source}: description must be non-empty and <= 2048 chars`);
-  }
-  const inputSchema = input.input_schema;
-  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
-    throw new Error(`${source}: inputSchema must be a JSON Schema object`);
-  }
-  if ((inputSchema as { readonly type?: unknown }).type !== "object") {
-    throw new Error(`${source}: inputSchema.type must be "object"`);
-  }
-  const entry = normaliseSkillBundlePath(input.entry);
-  if (!/\.(?:js|mjs|cjs)$/i.test(entry.split("/").pop() ?? entry)) {
-    throw new Error(`${source}: entry must be a JS module (.js/.mjs/.cjs)`);
-  }
-  if (!(entry in files) && !(input.entry in files)) {
-    throw new Error(`${source}: entry ${JSON.stringify(input.entry)} is not present in files`);
-  }
-  return { ...input, entry };
-}
-
-function extractSkillFrontmatter(source: string, files: Readonly<Record<string, string | Uint8Array>>): { name?: string; description?: string } {
-  const raw = files["SKILL.md"];
-  if (raw === undefined) throw new Error(`${source}: the skill bundle must contain a SKILL.md at its root`);
-  const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-  return parseSkillFrontmatter(text);
-}
-
-function parseSkillFrontmatter(text: string): { name?: string; description?: string } {
-  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(src);
-  if (!match) return {};
-  const out: { name?: string; description?: string } = {};
-  for (const line of match[1]!.split(/\r?\n/)) {
-    const kv = /^([A-Za-z0-9_-]+)[ \t]*:[ \t]*(.*)$/.exec(line);
-    if (!kv) continue;
-    const key = kv[1]!.toLowerCase();
-    if (key !== "name" && key !== "description") continue;
-    let value = kv[2]!.trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (value.length > 0) out[key] = value;
-  }
-  return out;
-}
-
-function deriveSkillName(
-  source: string,
-  frontmatterName: string | undefined,
-  explicitName: string | undefined,
-  dirBasename: string | undefined
-): string {
-  let name: string | undefined = explicitName ?? frontmatterName;
-  if (name === undefined && dirBasename !== undefined) {
-    const slug = slugifyName(dirBasename);
-    if (slug.length > 0) name = slug;
-  }
-  if (typeof name !== "string" || name.length === 0) {
-    throw new Error(`${source}: a skill name is required`);
-  }
-  if (!SKILL_NAME_PATTERN.test(name)) {
-    throw new Error(`${source}: name ${JSON.stringify(name)} must match ${SKILL_NAME_PATTERN.source}`);
-  }
-  if (name.includes("__")) {
-    throw new Error(`${source}: name must not contain "__"; that separator is reserved for MCP tools`);
-  }
-  if (SKILL_RESERVED_NAMES.has(name)) {
-    throw new Error(`${source}: name ${JSON.stringify(name)} is reserved (${[...SKILL_RESERVED_NAMES].join(", ")})`);
-  }
-  return name;
-}
-
 function sanitiseFilename(name: string): string | undefined {
   if (typeof name !== "string" || name.length === 0 || name.length > 255) return undefined;
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) return undefined;
@@ -618,36 +452,8 @@ function sanitiseFilename(name: string): string | undefined {
 
 function slugFromFilename(filename: string): string {
   const stem = filename.includes(".") ? filename.slice(0, filename.lastIndexOf(".")) : filename;
-  const slug = slugifyName(stem);
+  const slug = slugifyAssetName(stem);
   return slug.length > 0 ? slug : "file";
-}
-
-function slugifyName(input: string): string {
-  return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-async function hashBytes(bytes: Uint8Array): Promise<string> {
-  return `sha256:${await sha256Hex(bytes)}`;
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const subtle = (globalThis as { crypto?: { subtle?: SubtleCrypto } }).crypto?.subtle;
-  if (!subtle) {
-    throw new Error("sha256: globalThis.crypto.subtle is not available");
-  }
-  const view = new Uint8Array(bytes.byteLength);
-  view.set(bytes);
-  const digest = await subtle.digest("SHA-256", view.buffer);
-  return bufferToHex(digest);
-}
-
-function bufferToHex(buffer: ArrayBuffer): string {
-  const view = new Uint8Array(buffer);
-  let out = "";
-  for (const byte of view) {
-    out += byte.toString(16).padStart(2, "0");
-  }
-  return out;
 }
 
 async function mapWithConcurrency<T, R>(
