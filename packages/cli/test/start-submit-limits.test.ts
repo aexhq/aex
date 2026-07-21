@@ -29,3 +29,30 @@ describe("CLI runtime asset archive limits", () => {
     });
   });
 });
+
+describe("CLI instruction resource names", () => {
+  it.each([
+    "a",
+    "a".repeat(64),
+    "a".repeat(128),
+    "UpperCase",
+    "repo.rules",
+    "repo_rules",
+    "repo-rules"
+  ])("preserves accepted name %j", async (name) => {
+    await expect(buildCliInstructions("instructions", name)).resolves.toMatchObject({ name });
+  });
+
+  it.each([
+    "",
+    "a".repeat(129),
+    "-leading",
+    "two words",
+    "slash/name",
+    "café",
+    "bad__name"
+  ])("rejects invalid name %j with authoring provenance", async (name) => {
+    await expect(buildCliInstructions("instructions", name))
+      .rejects.toThrow(/^Instructions\.fromContent: name /);
+  });
+});

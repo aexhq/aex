@@ -1,6 +1,47 @@
 import type { ToolInputSchema } from "./session-config.js";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
 
+/**
+ * Persisted workspace file resource names accepted by the public wire boundary.
+ *
+ * This is deliberately separate from filename validation and from the SDK's
+ * filename-to-storage-slug derivation. Equal syntax with instruction names
+ * today does not make those resource domains one contract.
+ */
+export const WORKSPACE_FILE_RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Persisted workspace instruction resource names accepted by the public wire
+ * boundary. Callers supply these names directly; consumers must not normalize,
+ * lowercase, trim, or otherwise rewrite an accepted value.
+ */
+export const WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** Assert a directly supplied persisted workspace file resource name. */
+export function assertWorkspaceFileResourceName(
+  value: unknown,
+  path: string
+): asserts value is string {
+  assertWorkspaceResourceName(value, path, WORKSPACE_FILE_RESOURCE_NAME_PATTERN);
+}
+
+/** Assert a directly supplied persisted workspace instruction resource name. */
+export function assertWorkspaceInstructionResourceName(
+  value: unknown,
+  path: string
+): asserts value is string {
+  assertWorkspaceResourceName(value, path, WORKSPACE_INSTRUCTION_RESOURCE_NAME_PATTERN);
+}
+
+function assertWorkspaceResourceName(value: unknown, path: string, pattern: RegExp): asserts value is string {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new Error(`${path} must match ${pattern.source}`);
+  }
+  if (value.includes("__")) {
+    throw new Error(`${path} must not contain "__"`);
+  }
+}
+
 /** Immutable bytes in the workspace content-addressed asset store. */
 export interface AssetIdentity {
   readonly assetId: string;

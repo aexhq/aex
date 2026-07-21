@@ -38,6 +38,14 @@ Published refs contain `resourceId`, `version`, `assetId`, and `contentHash`.
 Changing a logical resource creates a new version; an existing session remains
 pinned to the exact bytes it received.
 
+An `Instructions` name is the persisted workspace resource name supplied by
+the caller. It is preserved exactly—never trimmed, lowercased, or otherwise
+normalized—and must be 1–128 ASCII characters: an alphanumeric first character,
+then alphanumeric characters, `.`, `_`, or `-`. The `__` sequence is reserved.
+This direct-name contract is deliberately different from `File`, which accepts
+a filename-shaped input and derives a shorter lowercase storage slug while
+preserving the real mounted filename.
+
 Builtin capabilities stay in `builtinTools`, and remote MCP servers stay in
 `mcpServers`. Neither is mixed into `assets.tools`.
 
