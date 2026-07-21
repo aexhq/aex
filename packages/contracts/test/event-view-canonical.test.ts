@@ -52,6 +52,8 @@ describe("one canonical, guard-bearing event surface (WS2)", () => {
       time: "2026-07-05T00:00:00.000Z",
       replayable: false,
       liveSequence: 5,
+      receivedAt: Date.parse("2026-07-05T00:00:00.000Z"),
+      ephemeral: true,
       data: { text: "hi", delta: true }
     });
     expect(view.isTextMessage()).toBe(true);

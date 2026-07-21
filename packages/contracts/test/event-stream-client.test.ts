@@ -35,6 +35,8 @@ const liveEvt = (liveSequence: number, id = `r:live:${liveSequence}`): AexLiveEv
   time: new Date(liveSequence).toISOString(),
   replayable: false,
   liveSequence,
+  receivedAt: liveSequence,
+  ephemeral: true,
   data: { text: `delta-${liveSequence}`, delta: true }
 });
 
