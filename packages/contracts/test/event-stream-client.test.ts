@@ -598,7 +598,10 @@ describe("client-side filter + projection", () => {
   });
 
   it("mapStream projects to strict AG-UI", async () => {
-    const events = [evt(0, "TEXT_MESSAGE_CONTENT"), evt(1, "RUN_FINISHED")];
+    const events = [
+      { ...evt(0, "TEXT_MESSAGE_CONTENT"), data: { text: "hello" } },
+      { ...evt(1, "RUN_FINISHED"), data: { outcome: "succeeded" } }
+    ];
     const out: string[] = [];
     for await (const a of mapStream(arr(events), toAGUI)) out.push(a.type);
     expect(out).toEqual(["TEXT_MESSAGE_CONTENT", "RUN_FINISHED"]);

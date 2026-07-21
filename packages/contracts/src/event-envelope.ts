@@ -38,6 +38,7 @@
  */
 
 import type { JsonValue } from "./submission.js";
+import { SESSION_TERMINAL_OUTCOMES, type SessionTerminalOutcome } from "./status.js";
 import type { RunnerEvent } from "./runner-event.js";
 
 /** CloudEvents `specversion` the envelope conforms to. */
@@ -209,6 +210,151 @@ export interface AexLiveEvent extends AexEventBase {
 /** Events a live coordinator WebSocket may yield. */
 export type AexStreamEvent = AexEvent | AexLiveEvent;
 
+/** Payload carried by a valid public `RUN_STARTED` event. */
+export type AexRunStartedData = Readonly<Record<string, JsonValue>> & {
+  readonly source?: string;
+  readonly turnSeq?: number;
+  readonly mode?: string;
+  readonly provider?: string;
+  readonly model?: string;
+};
+
+/** Payload carried by a valid public `RUN_FINISHED` event. */
+export type AexRunFinishedData = Readonly<Record<string, JsonValue>> & {
+  readonly outcome: SessionTerminalOutcome;
+  readonly result?: JsonValue;
+};
+
+/** Payload carried by a valid public `RUN_ERROR` event. */
+export type AexRunErrorData = Readonly<Record<string, JsonValue>> & {
+  readonly outcome: SessionTerminalOutcome;
+  readonly failureClass: string;
+  readonly failureMessage: string;
+};
+
+/** Payload carried by a valid public assistant-text event. */
+export type AexTextMessageData = Readonly<Record<string, JsonValue>> & {
+  readonly text: string;
+  readonly messageId?: string;
+  readonly eventId?: string;
+  /** True only on a provisional, non-replayable live delta. */
+  readonly delta?: boolean;
+  readonly truncated?: boolean;
+};
+
+/** Payload carried by a valid public tool-call start. */
+export type AexToolCallStartData = Readonly<Record<string, JsonValue>> & {
+  readonly id: string;
+  readonly name: string;
+  readonly arguments?: Readonly<Record<string, JsonValue>>;
+  readonly messageId?: string;
+};
+
+/** Payload carried by a valid public tool-call result. */
+export type AexToolCallResultData = Readonly<Record<string, JsonValue>> & {
+  readonly id: string;
+  readonly content: JsonValue;
+  readonly isError?: boolean;
+  readonly messageId?: string;
+};
+
+/** Payload carried by AG-UI's CUSTOM carrier. */
+export type AexCustomData<Name extends string = string> = Readonly<Record<string, JsonValue>> & {
+  readonly name: Name;
+  readonly value: JsonValue;
+};
+
+/** Payload carried by a public log-channel record. */
+export type AexLogData = Readonly<Record<string, JsonValue>> & {
+  readonly level: AexLogLevel;
+  readonly message: string;
+  readonly fields?: Readonly<Record<string, JsonValue>>;
+};
+
+export type AexRunStartedEvent = AexEventBase & {
+  readonly type: "RUN_STARTED";
+  readonly data: AexRunStartedData;
+};
+export type AexRunFinishedEvent = AexEventBase & {
+  readonly type: "RUN_FINISHED";
+  readonly data: AexRunFinishedData;
+};
+export type AexRunErrorEvent = AexEventBase & {
+  readonly type: "RUN_ERROR";
+  readonly data: AexRunErrorData;
+};
+export type AexTextMessageEvent = AexEventBase & {
+  readonly type: "TEXT_MESSAGE_CONTENT";
+  readonly data: AexTextMessageData;
+};
+export type AexToolCallStartEvent = AexEventBase & {
+  readonly type: "TOOL_CALL_START";
+  readonly data: AexToolCallStartData;
+};
+export type AexToolCallResultEvent = AexEventBase & {
+  readonly type: "TOOL_CALL_RESULT";
+  readonly data: AexToolCallResultData;
+};
+export type AexCustomEvent<Name extends string = string> = AexEventBase & {
+  readonly type: "CUSTOM";
+  readonly data: AexCustomData<Name>;
+};
+export type AexLogEvent = AexEventBase & {
+  readonly type: "LOG";
+  readonly channel: "log";
+  readonly level: AexLogLevel;
+  readonly data: AexLogData;
+};
+
+/** All public event shapes this package currently understands. */
+export type KnownAexEventBase =
+  | AexRunStartedEvent
+  | AexRunFinishedEvent
+  | AexRunErrorEvent
+  | AexTextMessageEvent
+  | AexToolCallStartEvent
+  | AexToolCallResultEvent
+  | AexCustomEvent
+  | AexLogEvent;
+
+/** A validated known durable event. Raw {@link AexEvent} deliberately remains open. */
+export type KnownAexEvent = AexEvent & KnownAexEventBase;
+
+/** A validated known provisional event. */
+export type KnownAexLiveEvent = AexLiveEvent & KnownAexEventBase;
+
+/** A validated known durable or provisional stream event. */
+export type KnownAexStreamEvent = AexStreamEvent & KnownAexEventBase;
+
+/** Stable diagnostic for a recognized type whose payload violates its contract. */
+export interface MalformedAexEventIssue {
+  readonly code: "malformed_known_event";
+  readonly type: (typeof AEX_EVENT_TYPES)[number];
+  readonly path: string;
+  readonly expected: string;
+}
+
+/** Explicit failure thrown when a malformed known event is projected. */
+export class MalformedAexEventError extends Error {
+  readonly code = "malformed_known_event" as const;
+  readonly issue: MalformedAexEventIssue;
+
+  constructor(issue: MalformedAexEventIssue) {
+    super(`Malformed ${issue.type} event: ${issue.path} must be ${issue.expected}`);
+    this.name = "MalformedAexEventError";
+    this.issue = issue;
+  }
+}
+
+/**
+ * Result of classifying an open event without changing it. Unknown future types
+ * remain raw; malformed recognized types are a separate, explicit state.
+ */
+export type AexEventClassification<T extends AexEventBase = AexEventBase> =
+  | { readonly kind: "known"; readonly event: T & KnownAexEventBase }
+  | { readonly kind: "unknown"; readonly event: T }
+  | { readonly kind: "malformed_known"; readonly event: T; readonly issue: MalformedAexEventIssue };
+
 /** True only for a provisional frame outside the durable replay sequence. */
 export function isAexLiveEvent(event: AexStreamEvent): event is AexLiveEvent {
   return event.replayable === false;
@@ -249,7 +395,7 @@ interface Projection {
 export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): AexEvent | null {
   const projection = project(evt);
   if (projection === null) return null;
-  return {
+  const event: AexEvent = {
     specversion: AEX_EVENT_SPECVERSION,
     id: `${ctx.sessionId}:${evt.seq}`,
     source: projection.source,
@@ -264,6 +410,11 @@ export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): A
     ...(projection.message !== undefined ? { message: projection.message } : {}),
     data: Object.freeze(projection.data)
   };
+  const classified = classifyAexEvent(event);
+  if (classified.kind === "malformed_known") {
+    throw new MalformedAexEventError(classified.issue);
+  }
+  return event;
 }
 
 function project(evt: RunnerEvent): Projection | null {
@@ -272,7 +423,7 @@ function project(evt: RunnerEvent): Projection | null {
     case "runtime_started":
       return { type: "RUN_STARTED", source: "runtime", message: "turn started", data: { ...data } };
     case "assistant_text": {
-      const text = str(data.text);
+      const text = typeof data.text === "string" ? data.text : undefined;
       return {
         type: "TEXT_MESSAGE_CONTENT",
         source: "agent",
@@ -281,7 +432,7 @@ function project(evt: RunnerEvent): Projection | null {
       };
     }
     case "tool_request": {
-      const name = str(data.name);
+      const name = typeof data.name === "string" ? data.name : undefined;
       return {
         type: "TOOL_CALL_START",
         source: data.extension ? "mcp" : "agent",
@@ -300,9 +451,19 @@ function project(evt: RunnerEvent): Projection | null {
     case "file_uploaded":
       return custom("aex.file_uploaded", "aex", data, "file uploaded");
     case "notification":
-      return custom("aex.notification", "runtime", data, str(data.reason) || undefined);
+      return custom(
+        "aex.notification",
+        "runtime",
+        data,
+        typeof data.reason === "string" && data.reason.length > 0 ? data.reason : undefined
+      );
     case "stream_error":
-      return custom("aex.stream_error", "runtime", data, str(data.message) || "stream error");
+      return custom(
+        "aex.stream_error",
+        "runtime",
+        data,
+        typeof data.message === "string" && data.message.length > 0 ? data.message : "stream error"
+      );
     case "runtime_terminal":
       return null;
   }
@@ -376,37 +537,166 @@ function custom(
   };
 }
 
-// --- Honest guards over the emitted vocabulary --------------------------------
-// These match the vocabulary a consumer of the unified stream actually receives.
+// --- Known/unknown classification and honest guards ---------------------------
 
-export function isRunStarted(e: AexEventBase): boolean {
-  return e.type === "RUN_STARTED";
+const TERMINAL_OUTCOMES = new Set<string>(SESSION_TERMINAL_OUTCOMES);
+const LOG_LEVELS = new Set<string>(AEX_LOG_LEVELS);
+
+function malformed(
+  type: (typeof AEX_EVENT_TYPES)[number],
+  path: string,
+  expected: string
+): MalformedAexEventIssue {
+  return { code: "malformed_known_event", type, path, expected };
 }
-export function isRunFinished(e: AexEventBase): boolean {
-  return e.type === "RUN_FINISHED";
+
+function optionalString(data: Readonly<Record<string, JsonValue>>, key: string): boolean {
+  return data[key] === undefined || typeof data[key] === "string";
 }
-export function isRunError(e: AexEventBase): boolean {
-  return e.type === "RUN_ERROR";
+
+function optionalBoolean(data: Readonly<Record<string, JsonValue>>, key: string): boolean {
+  return data[key] === undefined || typeof data[key] === "boolean";
 }
-/** A terminal event of either flavour (finished or error). */
-export function isRunTerminal(e: AexEventBase): boolean {
-  return e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
+
+function isJsonRecord(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-export function isTextMessage(e: AexEventBase): boolean {
-  return e.type === "TEXT_MESSAGE_CONTENT";
+
+function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined {
+  const d = e.data;
+  switch (e.type) {
+    case "RUN_STARTED":
+      for (const key of ["source", "mode", "provider", "model"] as const) {
+        if (!optionalString(d, key)) {
+          return malformed("RUN_STARTED", `data.${key}`, "a string when present");
+        }
+      }
+      return d.turnSeq === undefined || (
+        typeof d.turnSeq === "number" && Number.isInteger(d.turnSeq) && d.turnSeq >= 0
+      )
+        ? undefined
+        : malformed("RUN_STARTED", "data.turnSeq", "a non-negative integer when present");
+    case "RUN_FINISHED":
+      return typeof d.outcome === "string" && TERMINAL_OUTCOMES.has(d.outcome)
+        ? undefined
+        : malformed("RUN_FINISHED", "data.outcome", `one of ${SESSION_TERMINAL_OUTCOMES.join(", ")}`);
+    case "RUN_ERROR":
+      if (typeof d.outcome !== "string" || !TERMINAL_OUTCOMES.has(d.outcome)) {
+        return malformed("RUN_ERROR", "data.outcome", `one of ${SESSION_TERMINAL_OUTCOMES.join(", ")}`);
+      }
+      if (typeof d.failureClass !== "string" || d.failureClass.length === 0) {
+        return malformed("RUN_ERROR", "data.failureClass", "a non-empty string");
+      }
+      return typeof d.failureMessage === "string" && d.failureMessage.length > 0
+        ? undefined
+        : malformed("RUN_ERROR", "data.failureMessage", "a non-empty string");
+    case "TEXT_MESSAGE_CONTENT":
+      if (typeof d.text !== "string") {
+        return malformed("TEXT_MESSAGE_CONTENT", "data.text", "a string");
+      }
+      if (!optionalString(d, "messageId")) {
+        return malformed("TEXT_MESSAGE_CONTENT", "data.messageId", "a string when present");
+      }
+      if (!optionalString(d, "eventId")) {
+        return malformed("TEXT_MESSAGE_CONTENT", "data.eventId", "a string when present");
+      }
+      if (!optionalBoolean(d, "delta")) {
+        return malformed("TEXT_MESSAGE_CONTENT", "data.delta", "a boolean when present");
+      }
+      return optionalBoolean(d, "truncated")
+        ? undefined
+        : malformed("TEXT_MESSAGE_CONTENT", "data.truncated", "a boolean when present");
+    case "TOOL_CALL_START":
+      if (typeof d.id !== "string" || d.id.length === 0) {
+        return malformed("TOOL_CALL_START", "data.id", "a non-empty string");
+      }
+      if (typeof d.name !== "string" || d.name.length === 0) {
+        return malformed("TOOL_CALL_START", "data.name", "a non-empty string");
+      }
+      if (d.arguments !== undefined && !isJsonRecord(d.arguments)) {
+        return malformed("TOOL_CALL_START", "data.arguments", "a JSON object when present");
+      }
+      return optionalString(d, "messageId")
+        ? undefined
+        : malformed("TOOL_CALL_START", "data.messageId", "a string when present");
+    case "TOOL_CALL_RESULT":
+      if (typeof d.id !== "string" || d.id.length === 0) {
+        return malformed("TOOL_CALL_RESULT", "data.id", "a non-empty string");
+      }
+      if (!Object.hasOwn(d, "content")) {
+        return malformed("TOOL_CALL_RESULT", "data.content", "present JSON data");
+      }
+      if (!optionalBoolean(d, "isError")) {
+        return malformed("TOOL_CALL_RESULT", "data.isError", "a boolean when present");
+      }
+      return optionalString(d, "messageId")
+        ? undefined
+        : malformed("TOOL_CALL_RESULT", "data.messageId", "a string when present");
+    case "CUSTOM":
+      if (typeof d.name !== "string" || d.name.length === 0) {
+        return malformed("CUSTOM", "data.name", "a non-empty string");
+      }
+      return Object.hasOwn(d, "value")
+        ? undefined
+        : malformed("CUSTOM", "data.value", "present JSON data");
+    case "LOG":
+      if (e.channel !== "log") return malformed("LOG", "channel", '"log"');
+      if (typeof e.level !== "string" || !LOG_LEVELS.has(e.level)) {
+        return malformed("LOG", "level", `one of ${AEX_LOG_LEVELS.join(", ")}`);
+      }
+      if (d.level !== e.level) return malformed("LOG", "data.level", "the first-class event level");
+      if (typeof d.message !== "string") return malformed("LOG", "data.message", "a string");
+      return d.fields === undefined || isJsonRecord(d.fields)
+        ? undefined
+        : malformed("LOG", "data.fields", "a JSON object when present");
+    default:
+      return null;
+  }
 }
-export function isToolCallStart(e: AexEventBase): boolean {
-  return e.type === "TOOL_CALL_START";
+
+/** Classify an open event without cloning or rewriting it. */
+export function classifyAexEvent<T extends AexEventBase>(event: T): AexEventClassification<T> {
+  const issue = knownIssue(event);
+  if (issue === null) return { kind: "unknown", event };
+  if (issue !== undefined) return { kind: "malformed_known", event, issue };
+  return { kind: "known", event: event as T & KnownAexEventBase };
 }
-export function isToolCallResult(e: AexEventBase): boolean {
-  return e.type === "TOOL_CALL_RESULT";
+
+/** True only for a currently understood event with a valid payload. */
+export function isKnownAexEvent<T extends AexEventBase>(e: T): e is T & KnownAexEventBase {
+  return knownIssue(e) === undefined;
 }
-export function isCustom(e: AexEventBase): boolean {
-  return e.type === "CUSTOM";
+
+export function isRunStarted<T extends AexEventBase>(e: T): e is T & AexRunStartedEvent {
+  return e.type === "RUN_STARTED" && knownIssue(e) === undefined;
 }
-/** The `aex.*` name of a CUSTOM event, or null for typed events. */
+export function isRunFinished<T extends AexEventBase>(e: T): e is T & AexRunFinishedEvent {
+  return e.type === "RUN_FINISHED" && knownIssue(e) === undefined;
+}
+export function isRunError<T extends AexEventBase>(e: T): e is T & AexRunErrorEvent {
+  return e.type === "RUN_ERROR" && knownIssue(e) === undefined;
+}
+/** A valid terminal event of either flavour (finished or error). */
+export function isRunTerminal<T extends AexEventBase>(
+  e: T
+): e is T & (AexRunFinishedEvent | AexRunErrorEvent) {
+  return (e.type === "RUN_FINISHED" || e.type === "RUN_ERROR") && knownIssue(e) === undefined;
+}
+export function isTextMessage<T extends AexEventBase>(e: T): e is T & AexTextMessageEvent {
+  return e.type === "TEXT_MESSAGE_CONTENT" && knownIssue(e) === undefined;
+}
+export function isToolCallStart<T extends AexEventBase>(e: T): e is T & AexToolCallStartEvent {
+  return e.type === "TOOL_CALL_START" && knownIssue(e) === undefined;
+}
+export function isToolCallResult<T extends AexEventBase>(e: T): e is T & AexToolCallResultEvent {
+  return e.type === "TOOL_CALL_RESULT" && knownIssue(e) === undefined;
+}
+export function isCustom<T extends AexEventBase>(e: T): e is T & AexCustomEvent {
+  return e.type === "CUSTOM" && knownIssue(e) === undefined;
+}
+/** The `aex.*` name of a valid CUSTOM event, or null otherwise. */
 export function customName(e: AexEventBase): string | null {
-  return e.type === "CUSTOM" ? str(e.data.name) || null : null;
+  return isCustom(e) ? e.data.name : null;
 }
 /**
  * The CUSTOM `data.name` of the HITL write-gate park: the session has reached the
@@ -420,16 +710,22 @@ export const AEX_RESULT_DECODED_NAME = "aex.result.decoded";
 export const AEX_RESULT_REFUSED_NAME = "aex.result.refused";
 
 /** True for the HITL `awaiting_approval` gate event. */
-export function isAwaitingApproval(e: AexEventBase): boolean {
-  return customName(e) === AEX_SESSION_AWAITING_APPROVAL_NAME;
+export function isAwaitingApproval<T extends AexEventBase>(
+  e: T
+): e is T & AexCustomEvent<typeof AEX_SESSION_AWAITING_APPROVAL_NAME> {
+  return isCustom(e) && e.data.name === AEX_SESSION_AWAITING_APPROVAL_NAME;
 }
 /** True for a schema-decoded terminal result event. */
-export function isResultDecoded(e: AexEventBase): boolean {
-  return customName(e) === AEX_RESULT_DECODED_NAME;
+export function isResultDecoded<T extends AexEventBase>(
+  e: T
+): e is T & AexCustomEvent<typeof AEX_RESULT_DECODED_NAME> {
+  return isCustom(e) && e.data.name === AEX_RESULT_DECODED_NAME;
 }
 /** True for a typed decode-refusal terminal result event. */
-export function isResultRefused(e: AexEventBase): boolean {
-  return customName(e) === AEX_RESULT_REFUSED_NAME;
+export function isResultRefused<T extends AexEventBase>(
+  e: T
+): e is T & AexCustomEvent<typeof AEX_RESULT_REFUSED_NAME> {
+  return isCustom(e) && e.data.name === AEX_RESULT_REFUSED_NAME;
 }
 export function isFromSource(e: AexEventBase, source: AexEventSource): boolean {
   return e.source === source;
@@ -438,9 +734,9 @@ export function isFromSource(e: AexEventBase, source: AexEventSource): boolean {
 export function channelOf(e: AexEventBase): AexEventChannel {
   return e.channel ?? "event";
 }
-/** True when a record is a log line (the `log` channel / `LOG` type). */
-export function isLog(e: AexEventBase): boolean {
-  return channelOf(e) === "log";
+/** True when a record is a valid log line (the `log` channel / `LOG` type). */
+export function isLog<T extends AexEventBase>(e: T): e is T & AexLogEvent {
+  return e.type === "LOG" && knownIssue(e) === undefined;
 }
 /** True when a record is a typed AG-UI event (the `event` channel). */
 export function isEventChannel(e: AexEventBase): boolean {
@@ -493,67 +789,64 @@ export type AguiEvent =
  */
 export function toAGUI(e: AexEventBase): AguiEvent {
   const timestamp = Date.parse(e.time);
-  const d = e.data;
-  switch (e.type) {
+  const classified = classifyAexEvent(e);
+  if (classified.kind === "malformed_known") {
+    throw new MalformedAexEventError(classified.issue);
+  }
+  if (classified.kind === "unknown") {
+    return { type: "CUSTOM", timestamp, name: e.type, value: { ...e.data } };
+  }
+  const known = classified.event;
+  switch (known.type) {
     case "RUN_STARTED":
-      return { type: "RUN_STARTED", timestamp, threadId: e.threadId, runId: e.runId };
+      return { type: "RUN_STARTED", timestamp, threadId: known.threadId, runId: known.runId };
     case "RUN_FINISHED": {
-      const result = d.result;
+      const result = known.data.result;
       return {
         type: "RUN_FINISHED",
         timestamp,
-        threadId: e.threadId,
-        runId: e.runId,
+        threadId: known.threadId,
+        runId: known.runId,
         ...(result !== undefined ? { result } : {})
       };
     }
-    case "RUN_ERROR": {
-      const code = str(d.failureClass);
+    case "RUN_ERROR":
       return {
         type: "RUN_ERROR",
         timestamp,
-        message: str(d.failureMessage) || e.message || "turn error",
-        ...(code ? { code } : {})
+        message: known.data.failureMessage,
+        code: known.data.failureClass
       };
-    }
     case "TEXT_MESSAGE_CONTENT":
       return {
         type: "TEXT_MESSAGE_CONTENT",
         timestamp,
-        messageId: str(d.messageId) || str(d.eventId) || e.id,
-        delta: str(d.text)
+        messageId: known.data.messageId ?? known.data.eventId ?? known.id,
+        delta: known.data.text
       };
     case "TOOL_CALL_START":
       return {
         type: "TOOL_CALL_START",
         timestamp,
-        toolCallId: str(d.id) || e.id,
-        toolCallName: str(d.name)
+        toolCallId: known.data.id,
+        toolCallName: known.data.name
       };
     case "TOOL_CALL_RESULT":
       return {
         type: "TOOL_CALL_RESULT",
         timestamp,
-        messageId: str(d.messageId) || e.id,
-        toolCallId: str(d.id) || e.id,
-        content: d.content ?? null
+        messageId: known.data.messageId ?? known.id,
+        toolCallId: known.data.id,
+        content: known.data.content
       };
     case "CUSTOM":
-      return { type: "CUSTOM", timestamp, name: str(d.name), value: d.value ?? null };
+      return { type: "CUSTOM", timestamp, name: known.data.name, value: known.data.value };
     case "LOG":
       // Logs ride the `log` channel and are normally filtered out before
       // projection. If a consumer projects one anyway, carry it under AG-UI's
       // reserved CUSTOM so the client still receives a valid record.
-      return { type: "CUSTOM", timestamp, name: "aex.log", value: { ...d } };
-    default:
-      // Raw AexEvent stays open and untouched for forward compatibility. AG-UI
-      // has a reserved CUSTOM carrier for event types a client does not know.
-      return { type: "CUSTOM", timestamp, name: e.type, value: { ...d } };
+      return { type: "CUSTOM", timestamp, name: "aex.log", value: { ...known.data } };
   }
-}
-
-function str(v: JsonValue | undefined): string {
-  return typeof v === "string" ? v : "";
 }
 
 function clip(s: string, max = 200): string {
