@@ -24,24 +24,18 @@ import {
   isSessionNonProgressing,
   makeHttpClient,
   parseDuration,
+  prepareHostCommand,
   rejectUnknownFlags,
-  refuseInsideManagedSession,
-  resolveCommonHostFlags,
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
 import { openEnvelopeStream, parseFilters, renderEnvelope } from "./stream-render.js";
 
 export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "tail")) return USAGE_ERR;
+  const common = await prepareHostCommand(io, argv, { verb: "tail", auth: "data" });
+  if (!common.ok) return common.exit;
 
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
-
-  // `--json` is consumed centrally by resolveCommonHostFlags (a global flag);
+  // `--json` is consumed centrally by authenticated preparation (a global flag);
   // read the resolved value rather than re-parsing it here.
   const json = common.flags.json;
   const logsFlag = takeBooleanFlag(common.rest, "--logs");

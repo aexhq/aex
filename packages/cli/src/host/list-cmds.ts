@@ -13,20 +13,14 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveCommonHostFlags,
-  refuseInsideManagedSession,
+  prepareHostCommand,
   takeOptionFlag
 } from "./common.js";
 import { parsePositiveLimit } from "./command-primitives.js";
 
 export async function executeSessionsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "sessions")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "sessions", auth: "data" });
+  if (!common.ok) return common.exit;
   const limitFlag = takeOptionFlag(common.rest, "--limit");
   const sinceFlag = takeOptionFlag(limitFlag.remaining, "--since");
   const optionError = limitFlag.error ?? sinceFlag.error;

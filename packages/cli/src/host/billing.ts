@@ -18,8 +18,7 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveCommonHostFlags,
-  refuseInsideManagedSession,
+  prepareHostCommand,
   takeOptionFlag
 } from "./common.js";
 import { parsePositiveLimit } from "./command-primitives.js";
@@ -33,13 +32,8 @@ function isPaidPlanKey(value: unknown): value is "pro" | "team" {
 }
 
 export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "billing")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "billing", auth: "data" });
+  if (!common.ok) return common.exit;
 
   if (common.rest[0] === "ledger") {
     return runBillingLedger(io, common.rest.slice(1), common.flags);
@@ -51,7 +45,7 @@ export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Pro
     return runBillingPortal(io, common.rest.slice(1), common.flags);
   }
 
-  // `--json` is a global flag consumed by resolveCommonHostFlags.
+  // `--json` is a global flag consumed by authenticated preparation.
   const json = common.flags.json;
   if (common.rest.length > 0) {
     io.stderr(`unexpected arguments: ${common.rest.join(" ")}\n`);

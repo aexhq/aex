@@ -19,9 +19,8 @@ import {
   emitApiError,
   emitJsonError,
   makeHttpClient,
+  prepareHostCommand,
   rejectUnknownFlags,
-  refuseInsideManagedSession,
-  resolveCommonHostFlags,
   takeOptionFlag
 } from "./common.js";
 import { portableBasename } from "./command-primitives.js";
@@ -29,13 +28,8 @@ import { portableBasename } from "./command-primitives.js";
 const SUBVERBS = new Set(["read", "download", "link", "find"]);
 
 export async function executeSessionFilesCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "files")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "files", auth: "data" });
+  if (!common.ok) return common.exit;
   const args = common.rest;
   const sub = args[0];
   const http = makeHttpClient(io, common.flags);

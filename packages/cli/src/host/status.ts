@@ -10,19 +10,13 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
+  prepareHostCommand,
   rejectUnknownFlags,
-  resolveCommonHostFlags,
-  refuseInsideManagedSession
 } from "./common.js";
 
 export async function executeStatusCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "status")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "status", auth: "data" });
+  if (!common.ok) return common.exit;
   const usage = "usage: aex status <session-id> [common flags]";
   const unknown = rejectUnknownFlags(io, common.rest, usage);
   if (unknown) return unknown;

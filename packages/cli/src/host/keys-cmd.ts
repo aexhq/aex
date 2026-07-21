@@ -20,8 +20,7 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveControlPlaneHostFlags,
-  refuseInsideManagedSession,
+  prepareHostCommand,
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
@@ -31,13 +30,8 @@ const USAGE =
   "aex keys create --account [--name N] | aex keys delete <keyId> [common flags]";
 
 export async function executeKeysCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "keys")) return USAGE_ERR;
-
-  const common = await resolveControlPlaneHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "keys", auth: "control" });
+  if (!common.ok) return common.exit;
   const sub = common.rest[0];
   if (sub === "create") {
     return runKeysCreate(io, common.rest.slice(1), common.flags, common.defaultWorkspaceId);
