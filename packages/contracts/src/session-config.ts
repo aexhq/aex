@@ -152,6 +152,12 @@ export {
   CANONICAL_SHA256_DIGEST_PATTERN as INLINE_CONTENT_HASH_PATTERN
 } from "./canonical-sha256.js";
 
+/**
+ * Checks the `AssetRef` discriminator on an already typed file reference.
+ *
+ * This compatibility predicate is not full validation for an untrusted value;
+ * use the owning parser when the complete asset-ref shape must be validated.
+ */
 export function isAssetRef(ref: FileRef): ref is AssetRef {
   return ref.kind === "asset";
 }
@@ -170,9 +176,8 @@ export const ASSET_ID_PATTERN = /^asset_[A-Za-z0-9_-]{8,128}$/;
 
 export type FileRef = AssetRef;
 
-export function isFileAssetRef(ref: FileRef): ref is AssetRef {
-  return ref.kind === "asset";
-}
+/** @deprecated Use `isAssetRef`. This direct alias remains for public compatibility. */
+export const isFileAssetRef: typeof isAssetRef = isAssetRef;
 
 /**
  * The default mount DIRECTORY a `File` unzips into when the caller does not set
