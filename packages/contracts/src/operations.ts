@@ -1,4 +1,3 @@
-import { strToU8, zipSync } from "fflate";
 import { createHash, randomUUID } from "node:crypto";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
 import { isRecord, isStringLiteral } from "./value-guards.js";
@@ -6,13 +5,23 @@ import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
 import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
 import {
-  assertSessionRecordArchivePublicSafeV1,
-  buildSessionRecordDownloadManifestV1,
-  type SessionRecordArchiveEntryForRedactionV1,
   type SessionRecordArtifactSummaryV1,
   type SessionRecordDownloadErrorV1
 } from "./session-record.js";
-import type { SessionCostTelemetry } from "./session-cost.js";
+import {
+  buildSessionArchive,
+  buildSessionEventsArchive,
+  buildSessionFilesArchive,
+  buildSessionMetadataArchive,
+  type SessionArchiveEntry
+} from "./session-archive.js";
+import {
+  classifySessionFile,
+  filterSessionFiles,
+  isPathSelector,
+  resolveSessionFileSelector,
+  toFilenameMatcher
+} from "./session-file-query.js";
 import type {
   BillingCheckoutRequest,
   BillingHostedSession,
@@ -27,8 +36,6 @@ import type {
   SessionFileDownload,
   SessionFilePathSelector,
   SessionFileSelector,
-  SessionFileType,
-  SessionFileQuery,
   SessionFilesQuery,
   SessionFilesSnapshot,
   SessionFileText,
@@ -60,7 +67,6 @@ import type {
   CreateOrgInviteRequest,
   OrgInvite
 } from "./runtime-types.js";
-import type { PlatformSubmission } from "./submission.js";
 import { RUNTIME_SIZES, parseRuntimeSize, type RuntimeSize } from "./runtime-sizes.js";
 import { RUNTIME_KINDS, type RuntimeKind } from "./runtime-kind.js";
 import { SESSION_STATUSES } from "./status.js";
@@ -73,6 +79,13 @@ import type {
   WorkspaceSkillRecord,
   WorkspaceToolRecord
 } from "./workspace-resources.js";
+
+export {
+  classifySessionFile,
+  filterSessionFiles,
+  resolveSessionFileSelector,
+  toFilenameMatcher
+} from "./session-file-query.js";
 
 /**
  * The single source of truth for SDK<->BFF transport. The SDK class
@@ -611,36 +624,6 @@ export async function eventArchiveLink(
     expiresInSeconds: effectiveExpiresIn,
     expiresAt: result.expiresAt ?? syntheticExpiresAt(effectiveExpiresIn)
   };
-}
-
-export function resolveSessionFileSelector(
-  files: readonly SessionFile[],
-  selector: SessionFilePathSelector,
-  sessionId?: string
-): SessionFile {
-  const target = normalizeSessionFileLookupPath(selector.path);
-  if (!target) {
-    throw new SessionStateError("files.download: file path must be non-empty", { sessionId, path: selector.path });
-  }
-  const matches = files.filter((file) => {
-    if (typeof file.filename !== "string") return false;
-    const filename = normalizeSessionFileLookupPath(file.filename);
-    if (selector.match === "suffix") {
-      return filename === target || filename.endsWith(`/${target}`);
-    }
-    return filename === target;
-  });
-  if (matches.length === 1) return matches[0]!;
-  if (matches.length > 1) {
-    throw new SessionStateError(
-      `files.download: file path "${selector.path}" matched multiple files`,
-      { sessionId, path: selector.path, matches: matches.map((file) => file.filename ?? file.id) }
-    );
-  }
-  throw new SessionStateError(`files.download: file path "${selector.path}" was not found`, {
-    sessionId,
-    path: selector.path
-  });
 }
 
 export async function downloadSessionFile(
@@ -1453,14 +1436,9 @@ export async function getWebhookSigningSecret(http: HttpClient): Promise<Webhook
 type ArtifactNamespace = "files";
 
 interface CollectedArtifacts {
-  readonly entries: readonly ZipEntry[];
+  readonly entries: readonly SessionArchiveEntry[];
   readonly captured: SessionRecordArtifactSummaryV1[];
   readonly errors: SessionRecordDownloadErrorV1[];
-}
-
-interface ZipEntry extends SessionRecordArchiveEntryForRedactionV1 {
-  readonly path: string;
-  readonly bytes: Uint8Array;
 }
 
 /**
@@ -1480,7 +1458,7 @@ async function collectArtifactBytes(
   namespace: ArtifactNamespace,
   timeoutMs = SESSION_FILE_TRANSFER_DEFAULT_TIMEOUT_MS
 ): Promise<CollectedArtifacts> {
-  const entries: ZipEntry[] = [];
+  const entries: SessionArchiveEntry[] = [];
   const captured: SessionRecordArtifactSummaryV1[] = [];
   const errors: SessionRecordDownloadErrorV1[] = [];
 
@@ -1507,83 +1485,6 @@ async function collectArtifactBytes(
   }
 
   return { entries: Object.freeze(entries), captured, errors };
-}
-
-function eventsJsonl(events: readonly AexEvent[]): Uint8Array {
-  return strToU8(events.map((event) => JSON.stringify(event)).join("\n"));
-}
-
-function isPathSelector(selector: SessionFileSelector): selector is SessionFilePathSelector {
-  return Boolean(selector && typeof selector === "object" && "path" in selector);
-}
-
-function normalizeSessionFileLookupPath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/^\/+/, "");
-}
-
-export function filterSessionFiles(files: readonly SessionFile[], query: SessionFileQuery): readonly SessionFile[] {
-  return files.filter((file) => sessionFileMatchesQuery(file, query));
-}
-
-/**
- * The single filename-matcher for cross-session / per-session file SEARCH. A
- * string is a case-insensitive SUBSTRING match; a RegExp is tested as given (and
- * reset to `lastIndex = 0` so a reused `/g` regex is safe). Sharing this SSoT is
- * what closes the T16 crash class: session-file search no longer assumes `filename`
- * is a string and passes a RegExp into `escapeRegExp(...).replace(...)`.
- */
-export function toFilenameMatcher(filename: string | RegExp): (name: string) => boolean {
-  if (typeof filename === "string") {
-    const needle = filename.toLowerCase();
-    return (name: string) => name.toLowerCase().includes(needle);
-  }
-  return (name: string) => {
-    filename.lastIndex = 0;
-    return filename.test(name);
-  };
-}
-
-export function classifySessionFile(file: Pick<SessionFile, "filename" | "contentType">): SessionFileType {
-  const contentType = normalizeContentType(file.contentType);
-  if (contentType) {
-    if (contentType === "application/json" || contentType.endsWith("+json") || contentType.includes("json")) {
-      return "json";
-    }
-    if (contentType.startsWith("text/")) return "text";
-    if (contentType.startsWith("image/")) return "image";
-    if (contentType.startsWith("audio/")) return "audio";
-    if (contentType.startsWith("video/")) return "video";
-    if (contentType === "application/pdf") return "pdf";
-    if (
-      contentType === "application/zip" ||
-      contentType === "application/gzip" ||
-      contentType === "application/x-gzip" ||
-      contentType === "application/x-tar" ||
-      contentType === "application/x-7z-compressed" ||
-      contentType === "application/vnd.rar" ||
-      contentType === "application/zstd"
-    ) {
-      return "archive";
-    }
-    if (contentType === "application/octet-stream") return "binary";
-    return "unknown";
-  }
-
-  const extension = extensionOf(file.filename);
-  if (!extension) return "unknown";
-  if (["json", "jsonl", "ndjson"].includes(extension)) return "json";
-  if (["txt", "log", "md", "markdown", "csv", "tsv", "xml", "html", "htm", "yaml", "yml"].includes(extension)) {
-    return "text";
-  }
-  if (["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "tif", "tiff", "svg"].includes(extension)) {
-    return "image";
-  }
-  if (["mp3", "wav", "flac", "m4a", "aac", "ogg", "oga", "opus"].includes(extension)) return "audio";
-  if (["mp4", "mov", "m4v", "webm", "mkv", "avi"].includes(extension)) return "video";
-  if (extension === "pdf") return "pdf";
-  if (["zip", "tar", "tgz", "gz", "bz2", "xz", "7z", "rar", "zst"].includes(extension)) return "archive";
-  if (["bin", "exe", "dll", "so", "dylib", "dmg", "iso"].includes(extension)) return "binary";
-  return "unknown";
 }
 
 export function normalizeSessionFileLinkExpiresIn(input: SessionFileLinkOptions["expiresIn"] = "1h"): number {
@@ -1632,35 +1533,6 @@ async function resolveSessionFileLinkTarget(
   throw new SessionStateError("sessionFileLink: file query matched no files", { sessionId });
 }
 
-function sessionFileMatchesQuery(file: SessionFile, query: SessionFileQuery): boolean {
-  const normalizedPath = typeof file.filename === "string" ? normalizeSessionFileQueryPath(file.filename) : "";
-  if (query.path !== undefined && normalizedPath !== normalizeSessionFileQueryPath(query.path)) {
-    return false;
-  }
-  if (query.filename !== undefined) {
-    const basename = basenameOf(normalizedPath);
-    if (typeof query.filename === "string") {
-      if (basename !== query.filename) return false;
-    } else {
-      query.filename.lastIndex = 0;
-      if (!query.filename.test(basename)) return false;
-    }
-  }
-  if (query.dir !== undefined && !directoryMatches(normalizedPath, query.dir, query.recursive ?? true)) {
-    return false;
-  }
-  if (query.extension !== undefined && extensionOf(normalizedPath) !== normalizeExtension(query.extension)) {
-    return false;
-  }
-  if (query.contentType !== undefined && !contentTypeMatches(file.contentType, query.contentType)) {
-    return false;
-  }
-  if (query.type !== undefined && classifySessionFile(file) !== query.type) {
-    return false;
-  }
-  return true;
-}
-
 function hasSessionFileIdProperty(
   value: SessionFileSelector | SessionFilesQuery
 ): value is (SessionFileSelector | SessionFilesQuery) & { readonly id: unknown } {
@@ -1669,52 +1541,6 @@ function hasSessionFileIdProperty(
     typeof value === "object" &&
     "id" in value
   );
-}
-
-function normalizeSessionFileQueryPath(path: string): string {
-  let normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
-  while (normalized === "files" || normalized.startsWith("files/")) {
-    normalized = normalized === "files" ? "" : normalized.slice("files/".length);
-  }
-  return normalized.replace(/\/+$/, "");
-}
-
-function basenameOf(path: string): string {
-  return path.split("/").filter(Boolean).pop() ?? "";
-}
-
-function directoryMatches(path: string, dir: string, recursive: boolean): boolean {
-  const normalizedDir = normalizeSessionFileQueryPath(dir);
-  if (normalizedDir.length === 0) return true;
-  const prefix = `${normalizedDir}/`;
-  if (!path.startsWith(prefix)) return false;
-  const remainder = path.slice(prefix.length);
-  return remainder.length > 0 && (recursive || !remainder.includes("/"));
-}
-
-function normalizeExtension(extension: string): string {
-  return extension.replace(/^\.+/, "").toLowerCase();
-}
-
-function extensionOf(path: string | undefined): string {
-  if (!path) return "";
-  const basename = basenameOf(normalizeSessionFileQueryPath(path));
-  const index = basename.lastIndexOf(".");
-  return index > 0 && index < basename.length - 1 ? basename.slice(index + 1).toLowerCase() : "";
-}
-
-function normalizeContentType(contentType: string | undefined): string {
-  return (contentType ?? "").split(";")[0]!.trim().toLowerCase();
-}
-
-function contentTypeMatches(actual: string | undefined, expected: string): boolean {
-  const normalizedActual = normalizeContentType(actual);
-  const normalizedExpected = normalizeContentType(expected);
-  if (!normalizedActual || !normalizedExpected) return false;
-  if (normalizedExpected.endsWith("/*")) {
-    return normalizedActual.startsWith(normalizedExpected.slice(0, -1));
-  }
-  return normalizedActual === normalizedExpected;
 }
 
 /**
@@ -1734,25 +1560,7 @@ export async function download(http: HttpClient, sessionId: string): Promise<Uin
   ]);
 
   const collectedFiles = await collectArtifactBytes(http, sessionId, snapshot.files, "files/", "files");
-  const submissionSnapshot = extractSubmissionSnapshot(session);
-  const costTelemetry = extractCostTelemetry(session);
-  const manifest = buildSessionRecordDownloadManifestV1({
-    sessionId,
-    sessionFiles: collectedFiles.captured,
-    errors: collectedFiles.errors,
-    typedEventCount: events.length,
-    ...(submissionSnapshot ? { submission: { status: "present" } } : {}),
-    ...(costTelemetry ? { cost: { status: "present" } } : {})
-  });
-
-  return zipEntries([
-    jsonEntry("metadata/session.json", session),
-    ...(submissionSnapshot ? [jsonEntry("metadata/submission.json", submissionSnapshot)] : []),
-    ...(costTelemetry ? [jsonEntry("metadata/cost.json", costTelemetry)] : []),
-    jsonlEntry("events/events.jsonl", events),
-    ...collectedFiles.entries,
-    jsonEntry("manifest.json", manifest)
-  ]);
+  return buildSessionArchive(sessionId, session, events, collectedFiles);
 }
 
 /**
@@ -1774,7 +1582,7 @@ export async function downloadSessionFiles(
     sessionId,
     requestedCheckpointId === undefined ? undefined : { checkpointId: requestedCheckpointId }
   );
-  const { entries, captured, errors } = await collectArtifactBytes(
+  const collectedFiles = await collectArtifactBytes(
     http,
     sessionId,
     snapshot.files,
@@ -1782,10 +1590,7 @@ export async function downloadSessionFiles(
     "files",
     timeoutMs
   );
-  return zipEntries([
-    ...entries,
-    jsonEntry("manifest.json", { sessionId, namespace: "files", files: captured, errors })
-  ]);
+  return buildSessionFilesArchive(sessionId, collectedFiles);
 }
 
 /**
@@ -1794,15 +1599,7 @@ export async function downloadSessionFiles(
  */
 export async function downloadEvents(http: HttpClient, sessionId: string): Promise<Uint8Array> {
   const events = await listSessionEvents(http, sessionId);
-  return zipEntries([
-    jsonlEntry("events.jsonl", events),
-    jsonEntry("manifest.json", {
-      sessionId,
-      namespace: "events",
-      files: [{ path: "events.jsonl", role: "typed_events", status: "present", recordCount: events.length }],
-      errors: []
-    })
-  ]);
+  return buildSessionEventsArchive(sessionId, events);
 }
 
 /**
@@ -1811,54 +1608,7 @@ export async function downloadEvents(http: HttpClient, sessionId: string): Promi
  */
 export async function downloadMetadata(http: HttpClient, sessionId: string): Promise<Uint8Array> {
   const session = await getSession(http, sessionId);
-  return zipEntries([
-    jsonEntry("session.json", session),
-    jsonEntry("manifest.json", {
-      sessionId,
-      namespace: "metadata",
-      files: [{ path: "session.json", role: "session_metadata", status: "present" }],
-      errors: []
-    })
-  ]);
-}
-
-function zipEntries(entries: readonly ZipEntry[]): Uint8Array {
-  assertSessionRecordArchivePublicSafeV1(entries);
-  const files: Record<string, Uint8Array> = {};
-  for (const entry of entries) {
-    files[entry.path] = entry.bytes;
-  }
-  return zipSync(files);
-}
-
-function jsonEntry(path: string, value: unknown): ZipEntry {
-  return {
-    path,
-    bytes: strToU8(JSON.stringify(value, null, 2)),
-    contentType: "application/json; charset=utf-8"
-  };
-}
-
-function jsonlEntry(path: string, events: readonly AexEvent[]): ZipEntry {
-  return {
-    path,
-    bytes: eventsJsonl(events),
-    contentType: "application/jsonl; charset=utf-8"
-  };
-}
-
-function extractSubmissionSnapshot(session: Session): { readonly submission: PlatformSubmission } | undefined {
-  const raw = (session as Session & { readonly submission?: unknown }).submission;
-  if (!isRecord(raw) || raw.kind !== "submission" || !isRecord(raw.submission)) {
-    return undefined;
-  }
-  return {
-    submission: raw.submission as unknown as PlatformSubmission
-  };
-}
-
-function extractCostTelemetry(session: Session): SessionCostTelemetry | undefined {
-  return session.costTelemetry;
+  return buildSessionMetadataArchive(sessionId, session);
 }
 
 // ===========================================================================

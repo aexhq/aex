@@ -79,6 +79,16 @@ describe("operations file discovery", () => {
     expect(operations.classifySessionFile({ filename: "bundle.tar.gz" })).toBe("archive");
   });
 
+  it("preserves source ordering, reusable global regexes, and open-world classification", () => {
+    const reusable = /\.txt$/g;
+
+    expect(operations.filterSessionFiles(files, { filename: reusable }).map((file) => file.id)).toEqual(["txt"]);
+    expect(operations.filterSessionFiles(files, { filename: reusable }).map((file) => file.id)).toEqual(["txt"]);
+    expect(operations.filterSessionFiles(files, { type: "archive" }).map((file) => file.id)).toEqual(["zip"]);
+    expect(operations.classifySessionFile({ filename: "future.aex", contentType: "application/vnd.aex.future" })).toBe("unknown");
+    expect(operations.classifySessionFile({ filename: "future.aex" })).toBe("unknown");
+  });
+
   it("returns null for no match and throws SessionStateError for ambiguous single-file lookup", async () => {
     const { http } = clientFor({
       "/api/sessions/session-1/files": () =>
