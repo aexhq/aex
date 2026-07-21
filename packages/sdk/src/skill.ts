@@ -1,9 +1,8 @@
 import {
   SKILL_BUNDLE_LIMITS,
-  SKILL_NAME_PATTERN,
-  SKILL_RESERVED_NAMES,
   type FetchLike
 } from "@aexhq/contracts";
+import { deriveSkillName, extractSkillFrontmatter } from "@aexhq/contracts/internal";
 import {
   bundleSkillFiles,
   hashSkillBundle,
@@ -224,98 +223,8 @@ export interface DraftSkillRef {
   readonly contentHash: string;
 }
 
-/**
- * Resolve a skill name: `{ name }` arg → SKILL.md frontmatter `name:` →
- * (fromDir only) slugified directory basename; else error. Then validate the
- * pattern, reject the `__` MCP separator, and reject reserved names. Never
- * returns an invalid name silently — an underivable / non-conforming name throws.
- */
-function deriveSkillName(
-  source: string,
-  frontmatterName: string | undefined,
-  explicitName: string | undefined,
-  dirBasename: string | undefined
-): string {
-  let name: string | undefined = explicitName ?? frontmatterName;
-  if (name === undefined && dirBasename !== undefined) {
-    const slug = slugifyName(dirBasename);
-    if (slug.length > 0) {
-      name = slug;
-    }
-  }
-  if (typeof name !== "string" || name.length === 0) {
-    throw new Error(
-      `${source}: a skill name is required — pass { name }, add a \`name:\` field to the SKILL.md ` +
-        `YAML frontmatter, or (for fromDir) use a directory whose basename slugifies to a valid name`
-    );
-  }
-  if (!SKILL_NAME_PATTERN.test(name)) {
-    throw new Error(`${source}: name ${JSON.stringify(name)} must match ${SKILL_NAME_PATTERN.source}`);
-  }
-  if (name.includes("__")) {
-    throw new Error(`${source}: name must not contain "__"; that separator is reserved for MCP tools`);
-  }
-  if (SKILL_RESERVED_NAMES.has(name)) {
-    throw new Error(
-      `${source}: name ${JSON.stringify(name)} is reserved (${[...SKILL_RESERVED_NAMES].join(", ")}); pick another`
-    );
-  }
-  return name;
-}
-
-/** Lowercase, collapse non-`[a-z0-9]` runs to `-`, trim leading/trailing `-`. */
-function slugifyName(input: string): string {
-  return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
 /** Directory basename of a filesystem path (handles `/` and `\`, trailing slashes). */
 function dirBasename(path: string): string {
   const normalised = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return normalised.split("/").at(-1) ?? "";
-}
-
-/**
- * Read `SKILL.md` from a bundle files map and parse its YAML frontmatter for
- * `name` + `description`. Throws when the bundle has no root `SKILL.md` (that is
- * what makes a bundle a skill).
- */
-function extractSkillFrontmatter(source: string, files: SkillFiles): { name?: string; description?: string } {
-  const raw = files["SKILL.md"];
-  if (raw === undefined) {
-    throw new Error(`${source}: the skill bundle must contain a SKILL.md at its root`);
-  }
-  const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-  return parseSkillFrontmatter(text);
-}
-
-/**
- * Minimal YAML-frontmatter reader: pulls the `name` and `description` scalar
- * values out of the leading `--- … ---` block. Only simple single-line
- * `key: value` entries are supported (surrounding single/double quotes are
- * stripped); anything else is ignored.
- */
-function parseSkillFrontmatter(text: string): { name?: string; description?: string } {
-  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(src);
-  if (!match) {
-    return {};
-  }
-  const out: { name?: string; description?: string } = {};
-  for (const line of match[1]!.split(/\r?\n/)) {
-    const kv = /^([A-Za-z0-9_-]+)[ \t]*:[ \t]*(.*)$/.exec(line);
-    if (!kv) continue;
-    const key = kv[1]!.toLowerCase();
-    if (key !== "name" && key !== "description") continue;
-    let value = kv[2]!.trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (value.length > 0) {
-      out[key] = value;
-    }
-  }
-  return out;
 }

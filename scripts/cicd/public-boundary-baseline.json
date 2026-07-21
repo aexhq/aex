@@ -50,6 +50,9 @@
     "sdkPackedPrefix": "dist/_contracts/",
     "allowedModuleFiles": [
       "./api-key.js",
+      "./archive-limits.js",
+      "./asset-authoring.js",
+      "./asset-bundle.js",
       "./asset-upload-helper.js",
       "./bundle-manifest.js",
       "./canonical-sha256.js",

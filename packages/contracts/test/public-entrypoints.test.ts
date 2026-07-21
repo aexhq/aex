@@ -42,10 +42,15 @@ void (undefined as unknown as InternalSurface);
 const removedRuntimeExports = [
   "CLEANUP_STATUSES",
   "CUSTODY_MANIFEST_SCHEMA_VERSION",
+  "bundleSingleFile",
+  "deriveSkillName",
+  "extractSkillFrontmatter",
+  "hashSkillBundle",
   "RUNTIME_SECURITY_PROFILES",
   "SESSION_RETENTION_SCHEMA_VERSION",
   "SIDE_EFFECT_AUDIT_SCHEMA_VERSION",
   "mintConnectionTicket",
+  "normalizeToolManifest",
   "operations",
   "parseSessionSubmissionRequest",
   "sha256",
@@ -74,5 +79,8 @@ describe("contracts entrypoint boundary", () => {
     expect(internalContracts.CLEANUP_STATUSES).toContain("running");
     expect(internalContracts.SESSION_RETENTION_SCHEMA_VERSION).toBe(1);
     expect(internalContracts.CUSTODY_MANIFEST_SCHEMA_VERSION).toBe(1);
+    expect(internalContracts.bundleSkillFiles).toBeTypeOf("function");
+    expect(internalContracts.hashSkillBundle).toBeTypeOf("function");
+    expect(internalContracts.normalizeToolManifest).toBeTypeOf("function");
   });
 });
