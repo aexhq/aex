@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sdkRoot = resolve(here, "..", "..");
+const PRE_EXTRACTION_ROOT_JS_BYTES = 209_283;
+const ROOT_JS_SPLIT_ALLOWANCE = Math.max(Math.ceil(PRE_EXTRACTION_ROOT_JS_BYTES * 0.02), 4_096);
 
 interface PackageJson {
   readonly name?: string;
@@ -29,5 +31,20 @@ describe("aex package: agent-first export surface", () => {
     const exportsField = pkg.exports ?? {};
     const keys = Object.keys(exportsField);
     expect(keys).toEqual(["."]);
+  });
+
+  it("emits private client leaves without publishing package subpaths", () => {
+    for (const module of ["client-types", "event-projection", "session-validate", "submission-wire"]) {
+      expect(existsSync(resolve(sdkRoot, "dist", `${module}.js`)), `${module}.js`).toBe(true);
+      expect(existsSync(resolve(sdkRoot, "dist", `${module}.d.ts`)), `${module}.d.ts`).toBe(true);
+    }
+  });
+
+  it("keeps aggregate emitted SDK runtime bytes within the split-module allowance", () => {
+    const dist = resolve(sdkRoot, "dist");
+    const rootJsBytes = readdirSync(dist)
+      .filter((name) => name.endsWith(".js"))
+      .reduce((total, name) => total + statSync(resolve(dist, name)).size, 0);
+    expect(rootJsBytes).toBeLessThanOrEqual(PRE_EXTRACTION_ROOT_JS_BYTES + ROOT_JS_SPLIT_ALLOWANCE);
   });
 });
