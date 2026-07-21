@@ -264,6 +264,208 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
     expect(listCount).toBe(1);
   });
 
+  it("scans the full terminal snapshot and filters before reserving a duplicate id", async () => {
+    let listCount = 0;
+    const hiddenTerminal = {
+      ...evt(4, "RUN_FINISHED", {
+        outcome: "succeeded",
+        costUsd: 0,
+        providerUsage: [],
+        checkpoint: { checkpointId: "cp-current" }
+      }),
+      id: "shared-id"
+    };
+    const laterWithSameId = {
+      ...evt(10, "TEXT_MESSAGE_CONTENT", { text: "visible", messageId: "current" }),
+      id: "shared-id"
+    };
+    const afterTerminal = evt(11, "TEXT_MESSAGE_CONTENT", { text: "also visible", messageId: "current" });
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/events$/,
+        respond: () => {
+          listCount += 1;
+          return jsonResponse({ events: [hiddenTerminal, laterWithSameId, afterTerminal] });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({
+          session: {
+            id: "session-abc",
+            status: "running",
+            acceptsMessages: false,
+            currentRun: { sessionId: "session-abc", runId: "run-1", turnSeq: 1, phase: "running" }
+          }
+        })
+      }
+    ]);
+
+    const session = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+    const yielded: Array<{ readonly id: string; readonly sequence: number }> = [];
+    for await (const event of session.events.stream({ from: 10, intervalMs: 60_000 })) {
+      yielded.push({ id: event.id, sequence: event.sequence });
+    }
+
+    expect(yielded).toEqual([
+      { id: "shared-id", sequence: 10 },
+      { id: "session-abc:11", sequence: 11 }
+    ]);
+    expect(listCount).toBe(1);
+  });
+
+  it("does not resolve or fetch a parent snapshot when already aborted", async () => {
+    let sessionReads = 0;
+    let eventReads = 0;
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/events$/,
+        respond: () => {
+          eventReads += 1;
+          return jsonResponse({ events: [] });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => {
+          sessionReads += 1;
+          return jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } });
+        }
+      }
+    ]);
+    const session = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(session.events.stream({ signal: controller.signal })[Symbol.asyncIterator]().next()).resolves.toEqual({
+      done: true,
+      value: undefined
+    });
+    expect(sessionReads).toBe(1);
+    expect(eventReads).toBe(0);
+  });
+
+  it("ends cleanly without a second request when abort rejects the sleep", async () => {
+    let listCount = 0;
+    const controller = new AbortController();
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/events$/,
+        respond: () => {
+          listCount += 1;
+          queueMicrotask(() => controller.abort());
+          return jsonResponse({ events: [] });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } })
+      }
+    ]);
+    const session = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+
+    const events: AexEvent[] = [];
+    for await (const event of session.events.stream({ signal: controller.signal, intervalMs: 60_000 })) events.push(event);
+
+    expect(events).toEqual([]);
+    expect(listCount).toBe(1);
+  });
+
+  it("finishes yielding an in-flight snapshot when abort occurs during its request", async () => {
+    let releaseEvents!: (response: Response) => void;
+    const pendingEvents = new Promise<Response>((resolve) => {
+      releaseEvents = resolve;
+    });
+    let markRequested!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      markRequested = resolve;
+    });
+    const fetchStub: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (url.endsWith("/events")) {
+        markRequested();
+        return pendingEvents;
+      }
+      return jsonResponse({ session: { id: "session-abc", status: "running", acceptsMessages: false } });
+    };
+    const session = await new Aex({
+      apiKey: "tk",
+      baseUrl: "https://dash.test",
+      fetch: fetchStub,
+      retry: false
+    }).sessions.open("session-abc");
+    const controller = new AbortController();
+    const iterator = session.events.stream({ signal: controller.signal, intervalMs: 60_000 })[Symbol.asyncIterator]();
+    const first = iterator.next();
+    await requested;
+    controller.abort();
+    releaseEvents(jsonResponse({
+      events: [
+        evt(1, "TEXT_MESSAGE_CONTENT", { text: "one", messageId: "m1" }),
+        evt(2, "RUN_FINISHED", {
+          outcome: "succeeded",
+          costUsd: 0,
+          providerUsage: [],
+          checkpoint: { checkpointId: "cp-current" }
+        }),
+        evt(3, "TEXT_MESSAGE_CONTENT", { text: "three", messageId: "m1" })
+      ]
+    }));
+
+    await expect(first).resolves.toMatchObject({ done: false, value: { sequence: 1 } });
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { sequence: 2 } });
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { sequence: 3 } });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("bounds parent and child runless non-progressing streams to one snapshot", async () => {
+    let parentLists = 0;
+    let childLists = 0;
+    const { fetch: f } = makeFetch([
+      {
+        match: /\/sessions\/session-abc\/children$/,
+        respond: () => jsonResponse({
+          children: [{
+            id: "child-abc",
+            parentSessionId: "session-abc",
+            status: "idle",
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:01:00.000Z"
+          }]
+        })
+      },
+      {
+        match: /\/sessions\/child-abc\/events$/,
+        respond: () => {
+          childLists += 1;
+          return jsonResponse({ events: [childEvt(10, "TEXT_MESSAGE_CONTENT", { text: "child", messageId: "child" })] });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc\/events$/,
+        respond: () => {
+          parentLists += 1;
+          return jsonResponse({ events: [evt(10, "TEXT_MESSAGE_CONTENT", { text: "parent", messageId: "parent" })] });
+        }
+      },
+      {
+        match: /\/sessions\/session-abc$/,
+        respond: () => jsonResponse({ session: { id: "session-abc", status: "idle", acceptsMessages: true } })
+      }
+    ]);
+    const parent = await new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: f }).sessions.open("session-abc");
+
+    const parentEvents: string[] = [];
+    for await (const event of parent.events.stream({ intervalMs: 60_000 })) parentEvents.push(event.id);
+    const child = (await parent.children())[0]!;
+    const childEvents: string[] = [];
+    for await (const event of child.events.stream({ intervalMs: 60_000 })) childEvents.push(event.id);
+
+    expect(parentEvents).toEqual(["session-abc:10"]);
+    expect(childEvents).toEqual(["child-abc:10"]);
+    expect({ parentLists, childLists }).toEqual({ parentLists: 1, childLists: 1 });
+  });
+
   it("applies the same from boundary to read-only child polling", async () => {
     let listCount = 0;
     const oldTerminal = childEvt(4, "RUN_FINISHED", {

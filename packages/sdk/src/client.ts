@@ -637,25 +637,28 @@ async function* iterateSessionEventViews(
   }
 }
 
-/**
- * Poll a child session's events until a committed RUN terminal is visible, the
- * signal aborts, or the caller breaks the iterator.
- */
-async function* streamChildSessionEventsPolling(
+interface ResolvedSessionEventPolling {
+  readonly boundedRunlessSnapshot: boolean;
+  readonly isTerminal: (event: AexEvent) => boolean;
+}
+
+type ResolveSessionEventPolling = (
+  from: number
+) => ResolvedSessionEventPolling | PromiseLike<ResolvedSessionEventPolling>;
+
+/** One snapshot-polling engine shared by root and child session event streams. */
+async function* pollSessionEventViews(
   http: HttpClient,
-  ref: ChildSessionRef,
-  options: StreamEventsOptions
+  id: string,
+  options: StreamEventsOptions,
+  resolvePolling: ResolveSessionEventPolling
 ): AsyncIterable<AexEventView> {
-  const id = ref.id;
   const from = validateStreamEventsFrom(options.from);
   if (options.signal?.aborted) return;
   const seenIds = new Set<string>();
   const intervalMs = options.intervalMs ?? 1_000;
   const signal = options.signal;
-  const progressing = PROGRESSING_SESSION_STATUSES.has(ref.status);
-  const targetRunId = progressing ? undefined : ref.lastRun?.runId;
-  const priorRunId = progressing ? ref.lastRun?.runId : undefined;
-  const boundedRunlessSnapshot = !progressing && targetRunId === undefined;
+  const { boundedRunlessSnapshot, isTerminal } = await resolvePolling(from);
   while (!signal?.aborted) {
     const events = await operations.listSessionEvents(http, id);
     let terminalSeen = false;
@@ -664,19 +667,38 @@ async function* streamChildSessionEventsPolling(
         seenIds.add(event.id);
         yield asAexEventView(event);
       }
-      if (targetRunId !== undefined
-        ? isSessionRunTerminalEvent(event, targetRunId)
-        : hasRunTerminalType(event) && event.sequence >= from && event.runId !== priorRunId) {
-        terminalSeen = true;
-      }
+      if (isTerminal(event)) terminalSeen = true;
     }
     if (terminalSeen || boundedRunlessSnapshot) return;
+    // `sleep` rejects on abort — treat that as a graceful stop.
     try {
       await sleep(intervalMs, signal);
     } catch {
       return;
     }
   }
+}
+
+/**
+ * Poll a child session's events until a committed RUN terminal is visible, the
+ * signal aborts, or the caller breaks the iterator.
+ */
+function streamChildSessionEventsPolling(
+  http: HttpClient,
+  ref: ChildSessionRef,
+  options: StreamEventsOptions
+): AsyncIterable<AexEventView> {
+  return pollSessionEventViews(http, ref.id, options, (from) => {
+    const progressing = PROGRESSING_SESSION_STATUSES.has(ref.status);
+    const targetRunId = progressing ? undefined : ref.lastRun?.runId;
+    const priorRunId = progressing ? ref.lastRun?.runId : undefined;
+    return {
+      boundedRunlessSnapshot: !progressing && targetRunId === undefined,
+      isTerminal: targetRunId !== undefined
+        ? (event) => isSessionRunTerminalEvent(event, targetRunId)
+        : (event) => hasRunTerminalType(event) && event.sequence >= from && event.runId !== priorRunId
+    };
+  });
 }
 
 async function* streamSessionRunEvents(
@@ -712,41 +734,21 @@ function isDurableEventView(event: AexStreamEventView): event is AexEventView {
  * event surface). Module-level so `SessionHandle.events` can hand it to its
  * accessor object literal.
  */
-async function* streamSessionEventsPolling(
+function streamSessionEventsPolling(
   http: HttpClient,
   id: string,
   options: StreamEventsOptions
 ): AsyncIterable<AexEventView> {
-  const from = validateStreamEventsFrom(options.from);
-  if (options.signal?.aborted) return;
-  const seenIds = new Set<string>();
-  const intervalMs = options.intervalMs ?? 1_000;
-  const signal = options.signal;
-  const initial = await operations.getSession(http, id);
-  const targetRunId = initial.currentRun?.runId ?? initial.lastRun?.runId;
-  const boundedRunlessSnapshot = targetRunId === undefined && !PROGRESSING_SESSION_STATUSES.has(initial.status);
-  while (!signal?.aborted) {
-    const events = await operations.listSessionEvents(http, id);
-    let terminalSeen = false;
-    for (const event of events) {
-      if (event.sequence >= from && !seenIds.has(event.id)) {
-        seenIds.add(event.id);
-        yield asAexEventView(event);
-      }
-      if (targetRunId === undefined
-        ? hasRunTerminalType(event) && event.sequence >= from
-        : isSessionRunTerminalEvent(event, targetRunId)) {
-        terminalSeen = true;
-      }
-    }
-    if (terminalSeen || boundedRunlessSnapshot) return;
-    // `sleep` rejects on abort — treat that as a graceful stop.
-    try {
-      await sleep(intervalMs, signal);
-    } catch {
-      return;
-    }
-  }
+  return pollSessionEventViews(http, id, options, async (from) => {
+    const initial = await operations.getSession(http, id);
+    const targetRunId = initial.currentRun?.runId ?? initial.lastRun?.runId;
+    return {
+      boundedRunlessSnapshot: targetRunId === undefined && !PROGRESSING_SESSION_STATUSES.has(initial.status),
+      isTerminal: targetRunId === undefined
+        ? (event) => hasRunTerminalType(event) && event.sequence >= from
+        : (event) => isSessionRunTerminalEvent(event, targetRunId)
+    };
+  });
 }
 
 /**
