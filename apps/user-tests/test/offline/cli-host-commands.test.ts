@@ -582,7 +582,11 @@ describe("installed CLI host commands", () => {
       "start", "unexpected-position", "--unknown",
       "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl
     ], { cwd: install.installDir, timeoutMs: 30_000 });
-    expect(negative).toMatchObject({ exitCode: 2, stdout: "", stderr: "unknown flag: --unknown\n" });
+    expect(negative).toMatchObject({
+      exitCode: 2,
+      stdout: "",
+      stderr: "aex start --unknown: unknown flag\n"
+    });
     expect(api.requests).toHaveLength(negativeBefore);
   });
 });

@@ -104,25 +104,25 @@ describe("installed aex CLI — offline edge cases", () => {
       "--totally-bogus"
     ]);
     expect(r.exitCode, diag("aex start --totally-bogus", r)).toBe(2);
-    expect(r.stderr).toMatch(/unknown flag: --totally-bogus/);
+    expect(r.stderr).toBe("aex start --totally-bogus: unknown flag\n");
   });
 
   it("session without the selected provider's key exits 2 with an actionable message", async () => {
     const r = await executeCli(["start", "--model", "claude-haiku-4-5", "--prompt", "hi", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex start (no provider key)", r)).toBe(2);
-    expect(r.stderr).toMatch(/--anthropic-api-key is required/);
+    expect(r.stderr).toMatch(/aex start --anthropic-api-key: is required/);
   });
 
   it("session without --model exits 2", async () => {
     const r = await executeCli(["start", "--anthropic-api-key", "k", "--prompt", "hi", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex start (no model)", r)).toBe(2);
-    expect(r.stderr).toMatch(/--model is required/);
+    expect(r.stderr).toBe("aex start --model: is required when --config is not provided\n");
   });
 
   it("session without --prompt exits 2", async () => {
     const r = await executeCli(["start", "--anthropic-api-key", "k", "--model", "claude-haiku-4-5", "--api-key", "dummy"]);
     expect(r.exitCode, diag("aex start (no prompt)", r)).toBe(2);
-    expect(r.stderr).toMatch(/--prompt is required/);
+    expect(r.stderr).toBe("aex start --prompt: is required (repeatable)\n");
   });
 
   it("session with a near-miss model suggests the correct one (exit 2)", async () => {
@@ -149,8 +149,11 @@ describe("installed aex CLI — offline edge cases", () => {
       "--api-key", "dummy"
     ]);
     expect(r.exitCode, diag("aex start bad provider", r)).toBe(2);
-    expect(r.stderr).toMatch(/--provider must be one of/);
-    expect(r.stderr).toMatch(/did you mean "anthropic"/);
+    expect(r.stderr).toBe(
+      'aex start --provider: must be one of: anthropic, deepseek, openai, gemini, mistral, openrouter, doubao ' +
+      '(got: anthropicc); did you mean "anthropic"?\n'
+    );
+    expect(r.stderr).not.toMatch(/Aex\.start|Skill\.fromContent|Tool\.fromFiles/);
   });
 
   it("removed --proxy-endpoint flag on start exits 2 with a migration hint", async () => {

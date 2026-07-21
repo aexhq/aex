@@ -42,6 +42,7 @@ import {
   slugifyAssetName,
   uploadAsset as uploadHostAsset
 } from "@aexhq/contracts/internal";
+import { StartValidationError, startValidationError, type StartFlag } from "./start-validation.js";
 
 const TEXT = new TextEncoder();
 const UPLOAD_CONCURRENCY = 5;
@@ -122,8 +123,8 @@ export async function submitCliRun(
 }
 
 export async function buildCliSkill(content: string, source: string): Promise<CliSkillDraft> {
-  const front = extractSkillFrontmatter("Skill.fromContent", { "SKILL.md": content });
-  const name = deriveSkillName("Skill.fromContent", front.name, undefined, undefined, "cli");
+  const front = extractSkillFrontmatter(source, { "SKILL.md": content });
+  const name = deriveSkillName(source, front.name, undefined, undefined, "cli");
   const description = front.description;
   if (typeof description !== "string" || description.trim().length === 0) {
     throw new Error(`${source}: a skill description is required in SKILL.md frontmatter`);
@@ -145,9 +146,9 @@ export async function buildCliTool(args: {
   readonly description: string;
   readonly entry: string;
   readonly content: string;
-}): Promise<CliToolDraft> {
+}, source = "Tool.fromFiles"): Promise<CliToolDraft> {
   const inputSchema: ToolInputSchema = { type: "object", properties: {}, additionalProperties: true };
-  const manifest = normalizeToolManifest("Tool.fromFiles", {
+  const manifest = normalizeToolManifest(source, {
     name: args.name,
     description: args.description,
     input_schema: inputSchema,
@@ -164,26 +165,33 @@ export async function buildCliTool(args: {
   };
 }
 
-export async function buildCliInstructions(content: string, name: string): Promise<CliInstructionsDraft> {
+export async function buildCliInstructions(
+  content: string,
+  name: string,
+  source = "Instructions.fromContent"
+): Promise<CliInstructionsDraft> {
   if (typeof content !== "string" || content.length === 0) {
-    throw new Error("Instructions.fromContent: content must be a non-empty string");
+    throw new Error(`${source}: content must be a non-empty string`);
   }
-  assertWorkspaceInstructionResourceName(name, "Instructions.fromContent: name");
-  const bytes = bundleSingleFile("AGENTS.md", TEXT.encode(content), "Instructions.fromContent", false);
+  assertWorkspaceInstructionResourceName(name, `${source}: name`);
+  const bytes = bundleSingleFile("AGENTS.md", TEXT.encode(content), source, false);
   return { name, contentHash: await hashSkillBundle(bytes, "cli"), bytes };
 }
 
-export async function buildCliFile(args: { readonly name: string; readonly bytes: Uint8Array }): Promise<CliFileDraft> {
+export async function buildCliFile(
+  args: { readonly name: string; readonly bytes: Uint8Array },
+  source = "File.fromBytes"
+): Promise<CliFileDraft> {
   const filename = sanitiseFilename(args.name);
   if (filename === undefined) {
-    throw new Error(`File.fromBytes: name ${JSON.stringify(args.name)} is not a valid filename`);
+    throw new Error(`${source}: name ${JSON.stringify(args.name)} is not a valid filename`);
   }
   const bytes = args.bytes;
   if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) {
-    throw new Error("File.fromBytes: bytes must be a non-empty Uint8Array");
+    throw new Error(`${source}: bytes must be a non-empty Uint8Array`);
   }
-  assertCliExpandedSize(bytes.byteLength, "File.fromBytes");
-  const zip = bundleSingleFile(filename, bytes, "File.fromBytes", false);
+  assertCliExpandedSize(bytes.byteLength, source);
+  const zip = bundleSingleFile(filename, bytes, source, false);
   return {
     name: slugFromFilename(filename),
     contentHash: await hashSkillBundle(zip, "cli"),
@@ -213,14 +221,23 @@ async function buildSessionCreateRequest(
   fetchImpl: FetchLike | undefined,
   options: CliSessionSubmitOptions
 ): Promise<SessionCreateRequest> {
-  const provider = resolveModelProvider(options.model, options.provider);
+  let provider: ProviderName;
+  try {
+    provider = resolveModelProvider(options.model, options.provider);
+  } catch (err) {
+    throw startValidationError("--model", err);
+  }
   validateApiKeys(options.apiKeys, provider);
 
   try {
     parseSessionTimeout(options.overrides?.timeout);
+  } catch (err) {
+    throw startValidationError("--session-timeout", err);
+  }
+  try {
     if (options.webhook !== undefined) parseSessionWebhook(options.webhook);
   } catch (err) {
-    throw new Error(err instanceof Error ? err.message : String(err));
+    throw startValidationError("--webhook", err);
   }
 
   const limitsInput: { maxSpendUsd?: number; maxTurns?: number } = {};
@@ -265,15 +282,15 @@ async function buildSessionCreateRequest(
 
 function normaliseSessionInput(input: string | readonly string[]): string | readonly string[] {
   if (typeof input === "string") {
-    if (!input) throw new Error("Aex.start: message must be a non-empty string");
+    if (!input) throw new StartValidationError("--prompt", "message must be a non-empty string");
     return input;
   }
   if (!Array.isArray(input) || input.length === 0) {
-    throw new Error("Aex.start: message must be a non-empty string or string array");
+    throw new StartValidationError("--prompt", "message must be a non-empty string or string array");
   }
   for (const segment of input) {
     if (typeof segment !== "string" || !segment) {
-      throw new Error("Aex.start: message segments must be non-empty strings");
+      throw new StartValidationError("--prompt", "message segments must be non-empty strings");
     }
   }
   return [...input];
@@ -282,8 +299,9 @@ function normaliseSessionInput(input: string | readonly string[]): string | read
 function validateApiKeys(apiKeys: Partial<Record<ProviderName, string>> | undefined, provider: ProviderName): void {
   const key = apiKeys?.[provider];
   if (typeof key !== "string" || key.length === 0) {
-    throw new Error(
-      `Aex.start: a provider API key is required for provider ${provider}; pass apiKeys.${provider}`
+    throw new StartValidationError(
+      `--${provider}-api-key` as StartFlag,
+      `a provider API key is required for provider ${provider}`
     );
   }
 }
@@ -296,7 +314,10 @@ async function prepareTools(
   const prepared = await mapWithConcurrency(tools, UPLOAD_CONCURRENCY, async (entry, i) => {
     if (typeof entry === "string") {
       if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(entry)) {
-        throw new Error(`aex: tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name`);
+        throw new StartValidationError(
+          "--tool",
+          `tools[${i}] (${JSON.stringify(entry)}) is not a builtin tool name`
+        );
       }
       return { kind: "builtin" as const, name: entry };
     }
@@ -340,7 +361,7 @@ async function prepareSkills(
 ): Promise<readonly WorkspaceSkillRef[]> {
   const seen = new Set<string>();
   for (const skill of skills) {
-    if (seen.has(skill.name)) throw new Error(`aex: skills duplicate name: ${skill.name}`);
+    if (seen.has(skill.name)) throw new StartValidationError("--skill", `skills duplicate name: ${skill.name}`);
     seen.add(skill.name);
   }
   return mapWithConcurrency(skills, UPLOAD_CONCURRENCY, async (skill) => {
