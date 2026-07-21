@@ -131,10 +131,16 @@ describe("parseSessionTimeout", () => {
 });
 
 describe("resolveSessionTimeoutMs + orchestrationTimeoutString", () => {
-  it("applies the 8h default only when absent", () => {
+  it("pins the independent omission default and accepted-input maximum", () => {
+    expect(DEFAULT_SESSION_TIMEOUT_MS).toBe(28_800_000);
+    expect(MAX_SESSION_TIMEOUT_MS).toBe(28_800_000);
     expect(resolveSessionTimeoutMs(undefined)).toBe(DEFAULT_SESSION_TIMEOUT_MS);
-    expect(DEFAULT_SESSION_TIMEOUT_MS).toBe(8 * 60 * 60 * 1000);
     expect(resolveSessionTimeoutMs(123_000)).toBe(123_000);
+  });
+
+  it("accepts the exact maximum and rejects one millisecond above it", () => {
+    expect(parseSessionTimeout(`${MAX_SESSION_TIMEOUT_MS}`)).toBe(MAX_SESSION_TIMEOUT_MS);
+    expect(() => parseSessionTimeout(`${MAX_SESSION_TIMEOUT_MS + 1}`)).toThrow(/at most/);
   });
 
   it("formats ms as a second-granularity duration", () => {
@@ -145,10 +151,10 @@ describe("resolveSessionTimeoutMs + orchestrationTimeoutString", () => {
 });
 
 describe("graceful termination constants", () => {
-  it("orchestrator grace outlasts runtime process kill grace", () => {
+  it("pins each grace policy and keeps cleanup later than force-kill", () => {
+    expect(SESSION_PROCESS_KILL_GRACE_MS).toBe(60_000);
+    expect(SESSION_TERMINAL_GRACE_MS).toBe(90_000);
     expect(SESSION_TERMINAL_GRACE_MS).toBeGreaterThan(SESSION_PROCESS_KILL_GRACE_MS);
-    expect(SESSION_PROCESS_KILL_GRACE_MS).toBe(60 * 1000);
-    expect(SESSION_TERMINAL_GRACE_MS).toBe(90 * 1000);
   });
 });
 
