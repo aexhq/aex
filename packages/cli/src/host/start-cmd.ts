@@ -59,7 +59,6 @@ import {
   refuseInsideManagedSession,
   suggest,
   takeBooleanFlag,
-  takeFlagValue,
   takeOptionFlag
 } from "./common.js";
 import {
@@ -91,11 +90,11 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   }
   let rest = common.rest;
 
-  const providerFlag = takeFlagValue(rest, "--provider");
+  const providerFlag = takeOptionFlag(rest, "--provider");
   if (providerFlag.error) { io.stderr(`${providerFlag.error}\n`); return USAGE_ERR; }
   rest = providerFlag.remaining;
   let explicitProvider: ProviderName | undefined;
-  if (providerFlag.value !== null) {
+  if (providerFlag.value !== undefined) {
     if (!(PROVIDERS as readonly string[]).includes(providerFlag.value)) {
       const hint = suggest(providerFlag.value, PROVIDERS);
       io.stderr(
@@ -112,21 +111,21 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   // inheritance). Collected into `apiKeys`; the SDK re-validates the required key.
   const providerKeyValues: Partial<Record<ProviderName, string>> = {};
   for (const p of PROVIDERS) {
-    const flag = takeFlagValue(rest, `--${p}-api-key`);
+    const flag = takeOptionFlag(rest, `--${p}-api-key`);
     if (flag.error) { io.stderr(`${flag.error}\n`); return USAGE_ERR; }
     rest = flag.remaining;
-    if (flag.value !== null) providerKeyValues[p] = flag.value;
+    if (flag.value !== undefined) providerKeyValues[p] = flag.value;
   }
 
-  const idempotency = takeFlagValue(rest, "--idempotency-key");
+  const idempotency = takeOptionFlag(rest, "--idempotency-key");
   if (idempotency.error) { io.stderr(`${idempotency.error}\n`); return USAGE_ERR; }
   rest = idempotency.remaining;
 
-  const webhookFlag = takeFlagValue(rest, "--webhook");
+  const webhookFlag = takeOptionFlag(rest, "--webhook");
   if (webhookFlag.error) { io.stderr(`${webhookFlag.error}\n`); return USAGE_ERR; }
   rest = webhookFlag.remaining;
 
-  const runtimeSizeFlag = takeFlagValue(rest, "--runtime-size");
+  const runtimeSizeFlag = takeOptionFlag(rest, "--runtime-size");
   if (runtimeSizeFlag.error) { io.stderr(`${runtimeSizeFlag.error}\n`); return USAGE_ERR; }
   rest = runtimeSizeFlag.remaining;
   if (runtimeSizeFlag.value && !(RUNTIME_SIZES as readonly string[]).includes(runtimeSizeFlag.value)) {
@@ -137,7 +136,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
 
   // `--runtime` selects the execution backend (container | spot_container |
   // lambda); distinct from `--runtime-size` (the box preset). Default container.
-  const runtimeFlag = takeFlagValue(rest, "--runtime");
+  const runtimeFlag = takeOptionFlag(rest, "--runtime");
   if (runtimeFlag.error) { io.stderr(`${runtimeFlag.error}\n`); return USAGE_ERR; }
   rest = runtimeFlag.remaining;
   if (runtimeFlag.value && !(RUNTIME_KINDS as readonly string[]).includes(runtimeFlag.value)) {
@@ -150,7 +149,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   // the SAME SSoT parser the SDK uses (`parseSessionTimeout`: format AND the [1m,8h]
   // floor), synchronously, BEFORE any network call — no `parseDuration`-only
   // format check that lets a sub-1m value die async server-side.
-  const sessionTimeoutFlag = takeFlagValue(rest, "--session-timeout");
+  const sessionTimeoutFlag = takeOptionFlag(rest, "--session-timeout");
   if (sessionTimeoutFlag.error) { io.stderr(`${sessionTimeoutFlag.error}\n`); return USAGE_ERR; }
   rest = sessionTimeoutFlag.remaining;
   if (sessionTimeoutFlag.value) {
@@ -177,15 +176,15 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
     followTimeoutMs = parsed.ms;
   }
 
-  const config = takeFlagValue(rest, "--config");
+  const config = takeOptionFlag(rest, "--config");
   if (config.error) { io.stderr(`${config.error}\n`); return USAGE_ERR; }
   rest = config.remaining;
 
-  const modelFlag = takeFlagValue(rest, "--model");
+  const modelFlag = takeOptionFlag(rest, "--model");
   if (modelFlag.error) { io.stderr(`${modelFlag.error}\n`); return USAGE_ERR; }
   rest = modelFlag.remaining;
 
-  const systemFlag = takeFlagValue(rest, "--system");
+  const systemFlag = takeOptionFlag(rest, "--system");
   if (systemFlag.error) { io.stderr(`${systemFlag.error}\n`); return USAGE_ERR; }
   rest = systemFlag.remaining;
 
@@ -295,7 +294,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
       io.stderr(`failed to read --prompt file: ${(err as Error).message}\n`);
       return USAGE_ERR;
     }
-    if (systemFlag.value !== null) {
+    if (systemFlag.value !== undefined) {
       try {
         system = await readMaybeFile(io, systemFlag.value);
       } catch (err) {

@@ -22,7 +22,7 @@ import {
   rejectUnknownFlags,
   refuseInsideManagedSession,
   resolveCommonHostFlags,
-  takeFlagValue
+  takeOptionFlag
 } from "./common.js";
 
 const SUBVERBS = new Set(["read", "download", "link", "find"]);
@@ -95,7 +95,7 @@ async function filesRead(io: CliIO, http: HttpClient, args: readonly string[]): 
 
 /** `aex files download <session-id> <path> [--out file]` — one file's raw bytes. */
 async function filesDownload(io: CliIO, http: HttpClient, args: readonly string[], flags: CommonHostFlags): Promise<CliExitCode> {
-  const outFlag = takeFlagValue(args, "--out");
+  const outFlag = takeOptionFlag(args, "--out");
   if (outFlag.error) { io.stderr(`${outFlag.error}\n`); return USAGE_ERR; }
   void flags;
   const usage = "usage: aex files download <session-id> <path> [--out file] [common flags]";
@@ -145,10 +145,10 @@ async function filesLink(io: CliIO, http: HttpClient, args: readonly string[]): 
 
 /** `aex files find <session-id> [--name S] [--ext E] [--type T] [--content-type CT]`. */
 async function filesFind(io: CliIO, http: HttpClient, args: readonly string[]): Promise<CliExitCode> {
-  const name = takeFlagValue(args, "--name");
-  const ext = takeFlagValue(name.remaining, "--ext");
-  const type = takeFlagValue(ext.remaining, "--type");
-  const contentType = takeFlagValue(type.remaining, "--content-type");
+  const name = takeOptionFlag(args, "--name");
+  const ext = takeOptionFlag(name.remaining, "--ext");
+  const type = takeOptionFlag(ext.remaining, "--type");
+  const contentType = takeOptionFlag(type.remaining, "--content-type");
   const err = name.error ?? ext.error ?? type.error ?? contentType.error;
   if (err) { io.stderr(`${err}\n`); return USAGE_ERR; }
   const usage = "usage: aex files find <session-id> [--name S] [--ext E] [--type T] [--content-type CT] [common flags]";
@@ -161,10 +161,10 @@ async function filesFind(io: CliIO, http: HttpClient, args: readonly string[]): 
   }
   const sessionId = positional[0]!;
   const query: SessionFileQuery = {
-    ...(name.value !== null ? { filename: name.value } : {}),
-    ...(ext.value !== null ? { extension: ext.value } : {}),
-    ...(type.value !== null ? { type: type.value as SessionFileType } : {}),
-    ...(contentType.value !== null ? { contentType: contentType.value } : {})
+    ...(name.value !== undefined ? { filename: name.value } : {}),
+    ...(ext.value !== undefined ? { extension: ext.value } : {}),
+    ...(type.value !== undefined ? { type: type.value as SessionFileType } : {}),
+    ...(contentType.value !== undefined ? { contentType: contentType.value } : {})
   };
   try {
     const hits = await searchSessionFiles(http, sessionId, query);
