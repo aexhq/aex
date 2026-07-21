@@ -172,8 +172,8 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           apiKeys: { deepseek: deepseekKey },
           runtime: { kind: runtimeKind }
         });
-        if (session.runtime?.kind !== runtimeKind) {
-          throw new Error("runtime identity mismatch: requested=" + runtimeKind + " observed=" + String(session.runtime?.kind));
+        if (session.record.runtime?.kind !== runtimeKind) {
+          throw new Error("runtime identity mismatch: requested=" + runtimeKind + " observed=" + String(session.record.runtime?.kind));
         }
         process.stderr.write(JSON.stringify({ eventStreamSessionId: session.id }) + "\\n");
         const turn = session.messages.send(
@@ -258,7 +258,7 @@ describe("live api.aex.dev — event stream: listen (WS) + snapshot + hosted arc
           runId: result.run.runId,
           runStatus: run.status,
           requestedRuntimeKind: runtimeKind,
-          observedRuntimeKind: session.runtime?.kind ?? null,
+          observedRuntimeKind: session.record.runtime?.kind ?? null,
           streamedCount: streamed.length,
           streamedTypes: [...new Set(streamed)],
           streamedCustomNames: [...new Set(streamedCustomNames)],
