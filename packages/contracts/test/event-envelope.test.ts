@@ -115,19 +115,19 @@ describe("runnerEventToAexEvent — per-kind projection (type + source)", () => 
 
 describe("honest guards close the Phase-0 gap", () => {
   it("a guard fires on every emitted kind (the dead raw-provider guards never did)", () => {
-    const kinds: RunnerEvent["kind"][] = [
-      "runtime_started",
-      "assistant_text",
-      "tool_request",
-      "tool_response",
-      "skill_loaded",
-      "file_uploaded",
-      "notification",
-      "stream_error"
+    const events: RunnerEvent[] = [
+      ev(0, "runtime_started"),
+      ev(1, "assistant_text", { text: "hello" }),
+      ev(2, "tool_request", { id: "call_1", name: "read_file" }),
+      ev(3, "tool_response", { id: "call_1", content: null }),
+      ev(4, "skill_loaded"),
+      ev(5, "file_uploaded"),
+      ev(6, "notification"),
+      ev(7, "stream_error")
     ];
     const guards = [isRunStarted, isRunFinished, isRunError, isTextMessage, isToolCallStart, isToolCallResult, isCustom];
-    for (const kind of kinds) {
-      const out = map(ev(0, kind));
+    for (const event of events) {
+      const out = map(event);
       expect(guards.some((g) => g(out))).toBe(true);
     }
   });
@@ -149,7 +149,7 @@ describe("toAGUI — strict AG-UI projection", () => {
       ...map(ev(3, "stream_error", {})),
       type: "RUN_ERROR",
       message: "boom",
-      data: { failureClass: "session_failed", failureMessage: "boom" }
+      data: { outcome: "failed", failureClass: "session_failed", failureMessage: "boom" }
     });
     expect(out).toEqual({ type: "RUN_ERROR", timestamp: ctx.baseMs + 3, message: "boom", code: "session_failed" });
   });
