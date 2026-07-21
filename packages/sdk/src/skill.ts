@@ -15,6 +15,7 @@ import { readDirectoryWithFidelity } from "./node-fs.js";
 import type { IgnoreOptions } from "./node-walk.js";
 import { unzipSync } from "fflate";
 import { assertArchiveCompressedSize, assertArchiveExpandedSize } from "./archive-limits.js";
+import { crossPlatformBasename } from "./path-basename.js";
 
 /**
  * A Skill is a draft workspace bundle of instructional /
@@ -76,7 +77,7 @@ export class Skill {
     args: { readonly name?: string; readonly ignore?: IgnoreOptions } = {}
   ): Promise<Skill> {
     const { files, meta } = await readDirectoryWithFidelity(rootDir, args.ignore);
-    return Skill.#fromFiles("Skill.fromDir", files, args.name, dirBasename(rootDir), meta);
+    return Skill.#fromFiles("Skill.fromDir", files, args.name, crossPlatformBasename(rootDir), meta);
   }
 
   /**
@@ -221,10 +222,4 @@ export interface DraftSkillRef {
   readonly name: string;
   readonly description: string;
   readonly contentHash: string;
-}
-
-/** Directory basename of a filesystem path (handles `/` and `\`, trailing slashes). */
-function dirBasename(path: string): string {
-  const normalised = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalised.split("/").at(-1) ?? "";
 }
