@@ -147,7 +147,9 @@ export interface ToolRef extends AssetRef {
 }
 
 /** Content-hash format: `sha256:<64 lowercase hex>`. */
-export const INLINE_CONTENT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
+export {
+  CANONICAL_SHA256_DIGEST_PATTERN as INLINE_CONTENT_HASH_PATTERN
+} from "./canonical-sha256.js";
 
 export function isAssetRef(ref: FileRef): ref is AssetRef {
   return ref.kind === "asset";

@@ -1,5 +1,6 @@
 import { strToU8, zipSync } from "fflate";
 import { createHash, randomUUID } from "node:crypto";
+import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
 import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
@@ -1217,7 +1218,6 @@ function parseWhoAmI(value: unknown): WhoAmI {
   };
 }
 
-const CAPABILITY_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const RUNTIME_KIND_SET = new Set<string>(RUNTIME_KINDS);
 const RUNTIME_SIZE_SET = new Set<string>(RUNTIME_SIZES);
 
@@ -1228,7 +1228,7 @@ function parseRuntimeCapabilities(value: unknown): WhoAmI["runtimeCapabilities"]
   if (typeof value.capabilityVersion !== "string" || value.capabilityVersion.length === 0) {
     throw new SessionStateError(`${field}.capabilityVersion must be a non-empty string`);
   }
-  if (typeof value.capabilityHash !== "string" || !CAPABILITY_SHA256_PATTERN.test(value.capabilityHash)) {
+  if (typeof value.capabilityHash !== "string" || !CANONICAL_SHA256_DIGEST_PATTERN.test(value.capabilityHash)) {
     throw new SessionStateError(`${field}.capabilityHash must be a canonical SHA-256 digest`);
   }
   if (!Array.isArray(value.availableRuntimeKinds)) {
