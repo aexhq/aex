@@ -71,10 +71,21 @@ export function parseRuntimeSize(input: unknown): RuntimeSize | undefined {
 // Session timeout
 // ===========================================================================
 
-/** Default session deadline when `timeout` is omitted (8 hours). */
+/**
+ * Session deadline selected only when `timeout` is omitted (8 hours).
+ *
+ * This is independent from {@link MAX_SESSION_TIMEOUT_MS}: omission policy and
+ * the accepted-input ceiling merely have the same value today and may evolve
+ * separately. Keep both values explicitly declared rather than aliasing one to
+ * the other.
+ */
 export const DEFAULT_SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
-/** Hard ceiling on a session deadline (8 hours). */
+/**
+ * Hard ceiling for an explicitly supplied session deadline (8 hours).
+ * This bounds accepted customer input and lifetime reasoning; it is not the
+ * omission default even while both policies currently resolve to eight hours.
+ */
 export const MAX_SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 
 /** Floor on a session deadline (1 minute). */
@@ -134,11 +145,12 @@ export function orchestrationTimeoutString(ms: number): string {
   return `${Math.max(1, Math.ceil(ms / 1000))}s`;
 }
 
-/** Runtime process: time to wait after graceful interrupt before hard kill. */
+/** Runtime process budget after graceful interrupt and before a forced kill. */
 export const SESSION_PROCESS_KILL_GRACE_MS = 60 * 1000;
 
 /**
- * Orchestrator: extra window past `timeoutMs` to wait for terminal callback
- * before host-level cleanup.
+ * Orchestrator budget after `timeoutMs` for a terminal callback before
+ * host-level cleanup. This is later and intentionally longer than the runtime
+ * process-kill grace.
  */
 export const SESSION_TERMINAL_GRACE_MS = 90 * 1000;
