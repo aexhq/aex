@@ -75,7 +75,16 @@ export * from "./runtime-kind.js";
 export * from "./runner-event.js";
 export * from "./event-envelope.js";
 export * from "./event-view.js";
-export * from "./event-stream-client.js";
+export {
+  filterStream,
+  mapStream,
+  streamCoordinatorEvents
+} from "./event-stream-client.js";
+export type {
+  CoordinatorStreamOptions,
+  WebSocketFactory,
+  WebSocketLike
+} from "./event-stream-client.js";
 export type {
   AssistantTextEntry,
   TurnTrace,

@@ -84,7 +84,7 @@ import {
   type WebSocketFactory,
   type WhoAmI
 } from "@aexhq/contracts";
-import { operations, type AssetUploadRetryOptions } from "@aexhq/contracts/internal";
+import { hasRunTerminalType, operations, type AssetUploadRetryOptions } from "@aexhq/contracts/internal";
 import { Instructions } from "./instructions.js";
 import { uploadAsset, uploadAssetMultipart, type AssetFetch, type UploadedAsset } from "./asset-upload.js";
 import { File, type ZipStreamDriver } from "./file.js";
@@ -664,12 +664,9 @@ async function* streamChildSessionEventsPolling(
         seenIds.add(event.id);
         yield asAexEventView(event);
       }
-      if (
-        (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") &&
-        (targetRunId !== undefined
-          ? event.runId === targetRunId
-          : event.sequence >= from && event.runId !== priorRunId)
-      ) {
+      if (targetRunId !== undefined
+        ? isSessionRunTerminalEvent(event, targetRunId)
+        : hasRunTerminalType(event) && event.sequence >= from && event.runId !== priorRunId) {
         terminalSeen = true;
       }
     }
@@ -736,10 +733,9 @@ async function* streamSessionEventsPolling(
         seenIds.add(event.id);
         yield asAexEventView(event);
       }
-      if (
-        (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") &&
-        (targetRunId === undefined ? event.sequence >= from : event.runId === targetRunId)
-      ) {
+      if (targetRunId === undefined
+        ? hasRunTerminalType(event) && event.sequence >= from
+        : isSessionRunTerminalEvent(event, targetRunId)) {
         terminalSeen = true;
       }
     }
@@ -769,7 +765,7 @@ async function* streamSessionEnvelopes(
     wsUrl: first.wsUrl,
     from: options.from ?? 0,
     fetchTicket: async () => (await operations.getSessionCoordinatorTicket(http, id)).ticket,
-    isTerminal: isSessionEnvelopeTerminal,
+    isTerminal: hasRunTerminalType,
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.pingIntervalMs !== undefined ? { pingIntervalMs: options.pingIntervalMs } : {}),
@@ -777,10 +773,6 @@ async function* streamSessionEnvelopes(
   })) {
     yield asAexStreamEventView(event);
   }
-}
-
-function isSessionEnvelopeTerminal(event: AexEvent): boolean {
-  return event.type === "RUN_FINISHED" || event.type === "RUN_ERROR";
 }
 
 /**

@@ -62,6 +62,8 @@ describe("slim launch root SDK surface", () => {
     }
     for (const name of [
       "buildTurnResult",
+      "isSessionRunTerminalEvent",
+      "latestRunTerminalEvent",
       "projectAssistantMessages",
       "normaliseSessionInput",
       "assertSupportedSessionFields",

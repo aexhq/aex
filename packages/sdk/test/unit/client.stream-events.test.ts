@@ -298,6 +298,7 @@ describe("SessionHandle.streamEvents — polling the coordinator-backed /events"
                   childEvt(10, "TEXT_MESSAGE_CONTENT", { text: "current", messageId: "current" }),
                   childEvt(11, "RUN_ERROR", {
                     outcome: "failed",
+                    failureClass: "provider_permanent",
                     failureMessage: "current failed",
                     costUsd: 0,
                     providerUsage: []

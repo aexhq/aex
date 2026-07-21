@@ -24,6 +24,8 @@ export * from "./stable.js";
 export * from "./status.js";
 export * from "./submission.js";
 export * from "./workflow-status.js";
+export { hasRunTerminalType } from "./event-stream-client.js";
+export type { RunTerminalTypeEvent } from "./event-stream-client.js";
 export {
   DIRECT_UPLOAD_MAX_ATTEMPTS,
   DIRECT_UPLOAD_INITIAL_DELAY_MS,
