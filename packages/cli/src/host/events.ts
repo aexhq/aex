@@ -23,6 +23,7 @@ import {
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
+import { pollingDelay } from "./command-primitives.js";
 
 export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedSession(io, "events")) return USAGE_ERR;
@@ -90,7 +91,7 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
     const latest = events.at(-1);
     if (latest?.type === "RUN_FINISHED" || latest?.type === "RUN_ERROR") return SUCCESS;
     if (Date.now() >= deadline) return emitTimeout(io, sessionId, timeoutMs);
-    await sleep(2000);
+    await pollingDelay(2000);
   }
 }
 
@@ -100,8 +101,4 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
 function emitTimeout(io: CliIO, sessionId: string, timeoutMs: number | null): CliExitCode {
   emitJsonError(io, "events_follow_timeout", `timed out after ${timeoutMs}ms following session events`, { sessionId });
   return TIMEOUT_ERR;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

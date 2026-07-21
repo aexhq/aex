@@ -17,16 +17,7 @@ import {
   refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
-
-function parseLimit(io: CliIO, raw: string | undefined): { ok: true; limit: number | undefined } | { ok: false } {
-  if (raw === undefined) return { ok: true, limit: undefined };
-  const limit = Number(raw);
-  if (!Number.isInteger(limit) || limit < 1) {
-    io.stderr(`--limit must be a positive integer (got: ${raw})\n`);
-    return { ok: false };
-  }
-  return { ok: true, limit };
-}
+import { parsePositiveLimit } from "./command-primitives.js";
 
 export async function executeSessionsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedSession(io, "sessions")) return USAGE_ERR;
@@ -47,7 +38,7 @@ export async function executeSessionsCmd(io: CliIO, argv: readonly string[]): Pr
     io.stderr("usage: aex sessions [--limit N] [--since ISO-8601] [common flags]\n");
     return USAGE_ERR;
   }
-  const parsed = parseLimit(io, rawLimit);
+  const parsed = parsePositiveLimit(io, rawLimit);
   if (!parsed.ok) return USAGE_ERR;
   if (since !== undefined && Number.isNaN(Date.parse(since))) {
     io.stderr(`--since must be an ISO-8601 timestamp (got: ${since})\n`);
