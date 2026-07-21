@@ -31,9 +31,14 @@ import {
   assertWorkspaceInstructionResourceName
 } from "./workspace-resources.js";
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
+import {
+  isJsonValue,
+  isRecord,
+  isStringLiteral,
+  type JsonValue
+} from "./value-guards.js";
 
-export type JsonPrimitive = string | number | boolean | null;
-export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
+export type { JsonPrimitive, JsonValue } from "./value-guards.js";
 
 /**
  * Networking + runtime-package snapshot carried inside a flat submission
@@ -634,10 +639,6 @@ export function requireRecord(input: unknown, field: string): Record<string, unk
   return input;
 }
 
-function isRecord(input: unknown): input is Record<string, unknown> {
-  return typeof input === "object" && input !== null && !Array.isArray(input);
-}
-
 export function requireString(input: unknown, field: string): string {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error(`${field} must be a non-empty string`);
@@ -656,7 +657,7 @@ export function optionalEnum<const T extends readonly string[]>(input: unknown, 
   if (input === undefined) {
     return undefined;
   }
-  if (typeof input !== "string" || !allowed.includes(input)) {
+  if (!isStringLiteral(input, allowed)) {
     throw new Error(`${field} must be one of: ${allowed.join(", ")}`);
   }
   return input;
@@ -717,22 +718,6 @@ export function optionalPositiveNumber(input: unknown, field: string): number | 
     throw new Error(`${field} must be a positive finite number`);
   }
   return input;
-}
-
-function isJsonValue(input: unknown): input is JsonValue {
-  if (typeof input === "number") {
-    return Number.isFinite(input);
-  }
-  if (input === null || typeof input === "string" || typeof input === "boolean") {
-    return true;
-  }
-  if (Array.isArray(input)) {
-    return input.every(isJsonValue);
-  }
-  if (isRecord(input)) {
-    return Object.values(input).every(isJsonValue);
-  }
-  return false;
 }
 
 // ===========================================================================
