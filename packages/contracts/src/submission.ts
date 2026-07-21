@@ -31,6 +31,7 @@ import {
   assertWorkspaceInstructionResourceName
 } from "./workspace-resources.js";
 import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
+import { UnknownFieldError } from "./unknown-field-error.js";
 import {
   isJsonValue,
   isRecord,
@@ -305,7 +306,7 @@ function parseEnvironment(input: unknown): PlatformEnvironment | undefined {
   assertAllowedKeys(
     value,
     allowed,
-    (key) => `submission.environment.${key} is not an allowed field; permitted: networking, packages, envVars`
+    (key) => new Error(`submission.environment.${key} is not an allowed field; permitted: networking, packages, envVars`)
   );
   const networking = parseNetworking(value.networking);
   const packages = parsePackages(value.packages);
@@ -402,7 +403,7 @@ function parseNetworking(input: unknown): PlatformNetworking | undefined {
   assertAllowedKeys(
     value,
     allowed,
-    (key) => `submission.environment.networking.${key} is not an allowed field; permitted: mode, allowedHosts`
+    (key) => new Error(`submission.environment.networking.${key} is not an allowed field; permitted: mode, allowedHosts`)
   );
   const mode = optionalEnum(value.mode, "submission.environment.networking.mode", ["limited", "open"]);
   if (!mode) {
@@ -446,7 +447,7 @@ function parsePackages(input: unknown): readonly PlatformPackage[] | undefined {
     assertAllowedKeys(
       value,
       allowed,
-      (key) => `submission.environment.packages[${index}].${key} is not an allowed field; permitted: name, version`
+      (key) => new Error(`submission.environment.packages[${index}].${key} is not an allowed field; permitted: name, version`)
     );
     const rawName = requireString(value.name, `submission.environment.packages[${index}].name`);
     const version = optionalString(value.version, `submission.environment.packages[${index}].version`);
@@ -532,8 +533,8 @@ export function parseInlineSecrets(input: unknown): PlatformInlineSecrets {
     value,
     allowedTopLevel,
     (key, orderedKeys) => key.startsWith("__aex_")
-      ? `secrets.${key} uses the platform-internal __aex_ namespace and may not be set by callers`
-      : `secrets.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+      ? new Error(`secrets.${key} uses the platform-internal __aex_ namespace and may not be set by callers`)
+      : new UnknownFieldError("secrets", key, orderedKeys)
   );
   const apiKeys = parseApiKeys(value.apiKeys);
   const mcpServers = parseMcpServerSecrets(value.mcpServers);
@@ -608,7 +609,7 @@ function parseMcpServerSecrets(input: unknown): readonly PlatformMcpServerSecret
 function parseMcpServerSecret(input: unknown, path: string): PlatformMcpServerSecret {
   const value = requireRecord(input, path);
   const allowed = defineAllowedKeys<PlatformMcpServerSecret>()("name", "url", "headers");
-  assertAllowedKeys(value, allowed, (key) => `${path}.${key} is not an allowed field; permitted: name, url, headers`);
+  assertAllowedKeys(value, allowed, (key) => new Error(`${path}.${key} is not an allowed field; permitted: name, url, headers`));
   const name = requireString(value.name, `${path}.name`);
   const url = requireString(value.url, `${path}.url`);
   const headers = optionalStringRecord(value.headers, `${path}.headers`);
@@ -984,7 +985,7 @@ export function parseSessionSubmissionRequest(
   assertAllowedKeys(
     value,
     allowedTopLevelFields,
-    (key, orderedKeys) => `submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    (key, orderedKeys) => new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   // Defence in depth: scan every non-secrets field for credential-named
   // keys. The `secrets` key is
@@ -1069,7 +1070,7 @@ export function parseSessionWebhook(input: unknown): SessionWebhookSpec | undefi
   const value = requireRecord(input, "webhook");
   const allowed = defineAllowedKeys<SessionWebhookSpec>()("url");
   assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    `webhook.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    new Error(`webhook.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   const url = requireString(value.url, "webhook.url");
   let parsed: URL;
@@ -1111,7 +1112,7 @@ export function parseSessionLimits(input: unknown): SessionLimits | undefined {
     "maxStepsPerTurn"
   );
   assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    `limits.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    new Error(`limits.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   const maxConcurrentChildSessions = optionalPositiveInt(
     value.maxConcurrentChildSessions,
@@ -1186,7 +1187,7 @@ export function parseSessionMachine(input: unknown): SessionMachine | undefined 
   const value = requireRecord(input, "machine");
   const allowed = defineAllowedKeys<SessionMachine>()("spot");
   assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    `machine.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    new Error(`machine.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   if (value.spot !== undefined && typeof value.spot !== "boolean") {
     throw new Error("machine.spot must be a boolean");
@@ -1254,7 +1255,7 @@ export function parseSubmission(input: unknown): PlatformSubmission {
     "platform"
   );
   assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    `submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    new Error(`submission.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   const model = parseModelName(value.model, "submission.model");
   const system = optionalString(value.system, "submission.system");
@@ -1297,7 +1298,7 @@ function parseSubmissionAssets(input: unknown): SubmissionAssets {
   assertAllowedKeys(
     value,
     allowed,
-    (key) => `submission.assets.${key} is not allowed; permitted: files, skills, tools, instructions`
+    (key) => new Error(`submission.assets.${key} is not allowed; permitted: files, skills, tools, instructions`)
   );
   return {
     files: parseWorkspaceFiles(value.files),
@@ -1409,7 +1410,7 @@ function parseWorkspaceResourceArray<T extends WorkspaceFileRef | WorkspaceSkill
   return input.map((item, index) => {
     const path = `submission.assets.${field}[${index}]`;
     const raw = requireRecord(item, path);
-    assertAllowedKeys(raw, allowedFields, (key) => `${path}.${key} is not allowed`);
+    assertAllowedKeys(raw, allowedFields, (key) => new Error(`${path}.${key} is not allowed`));
     if (raw.kind !== kind) throw new Error(`${path}.kind must be '${kind}'`);
     const base: PinnedResourceBase = {
       resourceId: requireString(raw.resourceId, `${path}.resourceId`),
@@ -1482,7 +1483,7 @@ function parsePlatformConfig(input: unknown): PlatformInjectionConfig | undefine
   assertAllowedKeys(
     value,
     allowed,
-    (key) => `submission.platform.${key} is not an allowed field; permitted: systemPrompt`
+    (key) => new Error(`submission.platform.${key} is not an allowed field; permitted: systemPrompt`)
   );
   if (value.systemPrompt === undefined) return undefined;
   if (value.systemPrompt !== "default" && value.systemPrompt !== "off") {
@@ -1593,7 +1594,7 @@ export function parseResponseFormat(input: unknown): ResponseFormat | undefined 
     assertAllowedKeys(
       value,
       allowed,
-      (key) => `submission.responseFormat.${key} is not allowed when kind is 'text'`
+      (key) => new Error(`submission.responseFormat.${key} is not allowed when kind is 'text'`)
     );
     return { kind: "text" };
   }
@@ -1606,7 +1607,7 @@ export function parseResponseFormat(input: unknown): ResponseFormat | undefined 
   assertAllowedKeys(
     value,
     allowed,
-    (key, orderedKeys) => `submission.responseFormat.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    (key, orderedKeys) => new Error(`submission.responseFormat.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   if (!isRecord(value.schema) || !isJsonValue(value.schema)) {
     throw new Error("submission.responseFormat.schema must be a JSON-serializable object");
@@ -1645,7 +1646,7 @@ export function parseApprovalGate(input: unknown): ApprovalGate | undefined {
   assertAllowedKeys(
     value,
     allowed,
-    (key) => `submission.approvalGate.${key} is not an allowed field; permitted: tools`
+    (key) => new Error(`submission.approvalGate.${key} is not an allowed field; permitted: tools`)
   );
   if (!Array.isArray(value.tools)) {
     throw new Error("submission.approvalGate.tools must be an array of tool names");
@@ -1852,7 +1853,7 @@ function parseFileCapture(input: unknown): PlatformFileCaptureConfig | undefined
     "maxFiles"
   );
   assertAllowedKeys(value, allowed, (key, orderedKeys) =>
-    `submission.fileCapture.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`
+    new Error(`submission.fileCapture.${key} is not an allowed field; permitted: ${orderedKeys.join(", ")}`)
   );
   const allowedDirs = parseFileCaptureAllowedDirs(value.allowedDirs);
   const deniedDirs = parseFileCaptureDeniedDirs(value.deniedDirs);

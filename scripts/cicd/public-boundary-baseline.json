@@ -113,6 +113,7 @@
       "./status.js",
       "./submission.js",
       "./suggest.js",
+      "./unknown-field-error.js",
       "./value-guards.js",
       "./webhook-verify.js",
       "./workflow-status.js",

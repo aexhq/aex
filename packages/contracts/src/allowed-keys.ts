@@ -24,11 +24,11 @@ export function defineAllowedKeys<T>() {
 export function assertAllowedKeys(
   record: object,
   allowedKeys: readonly string[],
-  errorForKey: (key: string, orderedKeys: readonly string[]) => string
+  errorForKey: (key: string, orderedKeys: readonly string[]) => Error
 ): void {
   for (const key of Object.keys(record)) {
     if (!allowedKeys.includes(key)) {
-      throw new Error(errorForKey(key, allowedKeys));
+      throw errorForKey(key, allowedKeys);
     }
   }
 }

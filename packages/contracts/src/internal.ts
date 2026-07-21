@@ -26,6 +26,7 @@ export * from "./side-effect-audit.js";
 export * from "./stable.js";
 export * from "./status.js";
 export * from "./submission.js";
+export * from "./unknown-field-error.js";
 export * from "./workflow-status.js";
 export { hasRunTerminalType } from "./event-stream-client.js";
 export type { RunTerminalTypeEvent } from "./event-stream-client.js";

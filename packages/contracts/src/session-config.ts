@@ -229,7 +229,7 @@ export function parseAssetRefFields(
   path: string
 ): AssetRef {
   const allowed = defineAllowedKeys<AssetRef>()("kind", "assetId", "name", "mountPath");
-  assertAllowedKeys(record, allowed, (key) => `${path} contains unexpected field for asset ref: ${key}`);
+  assertAllowedKeys(record, allowed, (key) => new Error(`${path} contains unexpected field for asset ref: ${key}`));
   const assetId = record.assetId;
   if (typeof assetId !== "string" || !ASSET_ID_PATTERN.test(assetId)) {
     throw new Error(`${path}.assetId must match ${ASSET_ID_PATTERN.source}`);
@@ -526,7 +526,7 @@ export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
   assertAllowedKeys(
     record,
     allowed,
-    (key) => `${path}.${key} is not an allowed field for McpServerRef; permitted: name, url, transport`
+    (key) => new Error(`${path}.${key} is not an allowed field for McpServerRef; permitted: name, url, transport`)
   );
   const name = record.name;
   if (typeof name !== "string" || !MCP_SERVER_NAME_PATTERN.test(name)) {
@@ -720,7 +720,7 @@ function parseSessionConfigMcpServerRef(input: unknown, path: string): SessionCo
   assertAllowedKeys(
     record,
     allowed,
-    (key) => `${path}.${key} is not an allowed field for SessionConfigMcpServer; permitted: name, url, transport, headers`
+    (key) => new Error(`${path}.${key} is not an allowed field for SessionConfigMcpServer; permitted: name, url, transport, headers`)
   );
   // Reuse the {name,url,transport} validator by passing the stripped object.
   const stripped: Record<string, unknown> = { name: record.name, url: record.url };
@@ -790,7 +790,7 @@ export function parseSessionRequestConfig(input: unknown): SessionRequestConfig 
     "timeout",
     "metadata"
   );
-  assertAllowedKeys(record, allowed, (key) => `session request config contains unexpected field: ${key}`);
+  assertAllowedKeys(record, allowed, (key) => new Error(`session request config contains unexpected field: ${key}`));
   const model = parseModelName(record.model, "session request config model");
   const system = record.system;
   if (system !== undefined && typeof system !== "string") {
