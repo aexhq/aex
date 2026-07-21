@@ -30,7 +30,6 @@ export {
   USAGE_ERR,
   RUNTIME_ERR,
   TIMEOUT_ERR,
-  parseCommonHostFlags,
   resolveCommonHostFlags,
   describeApiError,
   suggest,

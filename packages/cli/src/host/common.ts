@@ -89,10 +89,9 @@ export type ExtractCommonResult =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * Pure, synchronous extraction of the common host flags from argv. Unlike
- * {@link parseCommonHostFlags} this does NOT require a token — it leaves
- * `apiKey`/`aexUrl` as `null` when absent so {@link resolveCommonHostFlags}
- * can fall back to the stored config. Touches no IO and reads no env.
+ * Pure, synchronous extraction of the common host flags from argv. It leaves
+ * `apiKey`/`aexUrl` as `null` when absent so the live resolvers can apply their
+ * respective stored-config policies. Touches no IO and reads no env.
  *
  * There is no `--workspace` flag: workspace identity is derived server-side
  * from the API key.
@@ -150,28 +149,6 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
   }
 
   return { ok: true, flags: { apiKey, aexUrl, debug, json, rest } };
-}
-
-/**
- * Parse and remove the common flags every host-side subcommand needs,
- * leaving the rest for the caller. SYNCHRONOUS, token REQUIRED — retained for
- * back-compat. New code should call {@link resolveCommonHostFlags}, which adds
- * the stored-config fallback so a token persisted by `aex login` is honored.
- *
- * The CLI is `flags_only` — no `AEX_*` env reads. `--api-key` is
- * required; `--aex-url` defaults to `AEX_DEFAULT_BASE_URL`
- * (`https://api.aex.dev`) so SaaS users never need to supply it.
- */
-export function parseCommonHostFlags(argv: readonly string[]): ParseCommonResult {
-  const extracted = extractCommonHostFlags(argv);
-  if (!extracted.ok) return extracted;
-  const { apiKey, aexUrl, debug, json, rest } = extracted.flags;
-  if (!apiKey) return { ok: false, reason: "--api-key is required" };
-  return {
-    ok: true,
-    flags: { apiKey, aexUrl: aexUrl ?? AEX_DEFAULT_BASE_URL, debug, json },
-    rest
-  };
 }
 
 export function rejectUnknownFlags(io: CliIO, rest: readonly string[], usage: string): CliExitCode | null {
