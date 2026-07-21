@@ -254,69 +254,95 @@ function assertNoLeafPrefixConflicts(
   }
 }
 
+type BundleKind = "Skill" | "Tool";
+
+interface BundlePolicy<State> {
+  readonly kind: BundleKind;
+  readonly prepare: () => State;
+  readonly visitEntry: (state: State, path: string) => void;
+  readonly complete: (state: State, collected: Map<string, Uint8Array>) => number;
+}
+
+/**
+ * Canonical pipeline shared by skill and tool authoring. Kind policies own only
+ * their required-root checks and any generated regular file; entry coercion,
+ * validation, accounting, collection, archive finalization, and counting stay
+ * byte-for-byte coupled here.
+ */
+function bundleCanonicalFiles<State>(
+  files: SkillFiles,
+  meta: BundleMeta | undefined,
+  diagnostics: "sdk" | "cli",
+  policy: BundlePolicy<State>
+): BundledSkill {
+  const { kind } = policy;
+  const source = `${kind} bundle`;
+  if (!files || typeof files !== "object") {
+    throw new Error(`${kind} files map is required`);
+  }
+  const entries = Object.entries(files);
+  if (entries.length === 0) {
+    throw new Error(`${kind} files map cannot be empty`);
+  }
+  if (entries.length > SKILL_BUNDLE_LIMITS.maxFiles) {
+    throw new Error(`${source} exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit (got ${entries.length})`);
+  }
+
+  const state = policy.prepare();
+  const collected = new Map<string, Uint8Array>();
+  let totalDecompressed = 0;
+  for (const [rawPath, contents] of entries) {
+    const bytes = typeof contents === "string" ? TEXT.encode(contents) : contents;
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error(`${kind} file "${rawPath}" must be a string or Uint8Array`);
+    }
+    const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
+    assertNotReservedMetaPath(entry.path, source);
+    totalDecompressed += bytes.byteLength;
+    if (totalDecompressed > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
+      throw new Error(
+        `${source} exceeds decompressed cap of ${SKILL_BUNDLE_LIMITS.maxDecompressedBytes} bytes`
+      );
+    }
+    if (collected.has(entry.path)) {
+      throw new Error(`${source} contains duplicate path: ${entry.path}`);
+    }
+    policy.visitEntry(state, entry.path);
+    collected.set(entry.path, bytes);
+  }
+
+  totalDecompressed += policy.complete(state, collected);
+  const validatedMeta = validateBundleGraph(collected, meta, source);
+  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, validatedMeta);
+  assertArchiveExpandedSize(totalDecompressed + sidecarBytes, source);
+
+  const zip = zipSync(zippable, { level: 6 });
+  assertBundleCompressedSize(zip.byteLength, source, diagnostics);
+  return { zip, fileCount: collected.size, compressedSize: zip.byteLength };
+}
+
 export function bundleSkillFiles(
   files: SkillFiles,
   meta?: BundleMeta,
   diagnostics: "sdk" | "cli" = "sdk"
 ): BundledSkill {
-  if (!files || typeof files !== "object") {
-    throw new Error("Skill files map is required");
-  }
-  const entries = Object.entries(files);
-  if (entries.length === 0) {
-    throw new Error("Skill files map cannot be empty");
-  }
-  if (entries.length > SKILL_BUNDLE_LIMITS.maxFiles) {
-    throw new Error(`Skill bundle exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit (got ${entries.length})`);
-  }
-
-  const collected = new Map<string, Uint8Array>();
-  let hasSkillMd = false;
-  let totalDecompressed = 0;
-
-  for (const [rawPath, contents] of entries) {
-    const bytes = typeof contents === "string" ? TEXT.encode(contents) : contents;
-    if (!(bytes instanceof Uint8Array)) {
-      throw new Error(`Skill file "${rawPath}" must be a string or Uint8Array`);
+  return bundleCanonicalFiles(files, meta, diagnostics, {
+    kind: "Skill",
+    prepare: () => ({ hasSkillMd: false }),
+    visitEntry: (state, path) => {
+      if (path === "SKILL.md") state.hasSkillMd = true;
+    },
+    complete: (state) => {
+      if (!state.hasSkillMd) {
+        throw new Error(
+          'Skill bundle must contain a "SKILL.md" file at the root. ' +
+            "If you want to upload an instructions file or generic agent context, " +
+            "use Instructions.fromPath / File.fromPath instead."
+        );
+      }
+      return 0;
     }
-    const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
-    assertNotReservedMetaPath(entry.path, "Skill bundle");
-    if (entry.path === "SKILL.md") {
-      hasSkillMd = true;
-    }
-    totalDecompressed += bytes.byteLength;
-    if (totalDecompressed > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
-      throw new Error(
-        `Skill bundle exceeds decompressed cap of ${SKILL_BUNDLE_LIMITS.maxDecompressedBytes} bytes`
-      );
-    }
-    if (collected.has(entry.path)) {
-      throw new Error(`Skill bundle contains duplicate path: ${entry.path}`);
-    }
-    collected.set(entry.path, bytes);
-  }
-
-  if (!hasSkillMd) {
-    throw new Error(
-      'Skill bundle must contain a "SKILL.md" file at the root. ' +
-        "If you want to upload an instructions file or generic agent context, " +
-        "use Instructions.fromPath / File.fromPath instead."
-    );
-  }
-
-  // Sort entries and pin every mtime to the epoch so the byte output is
-  // identical across machines and re-runs (the BFF re-canonicalises and
-  // recomputes the canonical hash, so this is for retry-safety / debug
-  // reproducibility rather than a wire-shape contract). The fidelity sidecar,
-  // when present, is appended LAST so a metadata-free bundle is byte-identical.
-  const validatedMeta = validateBundleGraph(collected, meta, "Skill bundle");
-  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, validatedMeta);
-  assertArchiveExpandedSize(totalDecompressed + sidecarBytes, "Skill bundle");
-
-  const zip = zipSync(zippable, { level: 6 });
-  assertBundleCompressedSize(zip.byteLength, "Skill bundle", diagnostics);
-
-  return { zip, fileCount: entries.length, compressedSize: zip.byteLength };
+  });
 }
 
 export interface BundledTool {
@@ -338,60 +364,28 @@ export function bundleToolFiles(
   meta?: BundleMeta,
   diagnostics: "sdk" | "cli" = "sdk"
 ): BundledTool {
-  if (!files || typeof files !== "object") {
-    throw new Error("Tool files map is required");
-  }
-  const entries = Object.entries(files);
-  if (entries.length === 0) {
-    throw new Error("Tool files map cannot be empty");
-  }
-  if (entries.length > SKILL_BUNDLE_LIMITS.maxFiles) {
-    throw new Error(`Tool bundle exceeds ${SKILL_BUNDLE_LIMITS.maxFiles} file limit (got ${entries.length})`);
-  }
+  return bundleCanonicalFiles(files, meta, diagnostics, {
+    kind: "Tool",
+    prepare: () => ({
+      entryPath: validateSkillBundleEntry({ path: manifest.entry, size: 0 }).path,
+      hasEntry: false
+    }),
+    visitEntry: (state, path) => {
+      if (path === state.entryPath) state.hasEntry = true;
+    },
+    complete: (state, collected) => {
+      if (!state.hasEntry) {
+        throw new Error(`Tool bundle entry "${state.entryPath}" must exist in files`);
+      }
 
-  const collected = new Map<string, Uint8Array>();
-  let totalDecompressed = 0;
-  let hasEntry = false;
-  const entryPath = validateSkillBundleEntry({ path: manifest.entry, size: 0 }).path;
-
-  for (const [rawPath, contents] of entries) {
-    const bytes = typeof contents === "string" ? TEXT.encode(contents) : contents;
-    if (!(bytes instanceof Uint8Array)) {
-      throw new Error(`Tool file "${rawPath}" must be a string or Uint8Array`);
+      const manifestBytes = TEXT.encode(`${JSON.stringify(manifest, null, 2)}\n`);
+      if (collected.has("tool.json")) {
+        throw new Error('Tool bundle files must not include reserved "tool.json"; pass manifest fields to Tool.fromFiles instead');
+      }
+      collected.set("tool.json", manifestBytes);
+      return manifestBytes.byteLength;
     }
-    const entry = validateSkillBundleEntry({ path: rawPath, size: bytes.byteLength });
-    assertNotReservedMetaPath(entry.path, "Tool bundle");
-    totalDecompressed += bytes.byteLength;
-    if (totalDecompressed > SKILL_BUNDLE_LIMITS.maxDecompressedBytes) {
-      throw new Error(
-        `Tool bundle exceeds decompressed cap of ${SKILL_BUNDLE_LIMITS.maxDecompressedBytes} bytes`
-      );
-    }
-    if (collected.has(entry.path)) {
-      throw new Error(`Tool bundle contains duplicate path: ${entry.path}`);
-    }
-    if (entry.path === entryPath) hasEntry = true;
-    collected.set(entry.path, bytes);
-  }
-
-  if (!hasEntry) {
-    throw new Error(`Tool bundle entry "${entryPath}" must exist in files`);
-  }
-
-  const manifestBytes = TEXT.encode(`${JSON.stringify(manifest, null, 2)}\n`);
-  if (collected.has("tool.json")) {
-    throw new Error('Tool bundle files must not include reserved "tool.json"; pass manifest fields to Tool.fromFiles instead');
-  }
-  collected.set("tool.json", manifestBytes);
-
-  const validatedMeta = validateBundleGraph(collected, meta, "Tool bundle");
-  const { zippable, sidecarBytes } = buildCanonicalZippable(collected, validatedMeta);
-  assertArchiveExpandedSize(totalDecompressed + manifestBytes.byteLength + sidecarBytes, "Tool bundle");
-
-  const zip = zipSync(zippable, { level: 6 });
-  assertBundleCompressedSize(zip.byteLength, "Tool bundle", diagnostics);
-
-  return { zip, fileCount: collected.size, compressedSize: zip.byteLength };
+  });
 }
 
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
