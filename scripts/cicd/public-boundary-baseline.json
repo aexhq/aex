@@ -79,12 +79,14 @@
       "./post-hook.js",
       "./provider-support.js",
       "./session-artifacts.js",
+      "./session-archive.js",
       "./session-cost.js",
       "./session-custody.js",
       "./session-record.js",
       "./session-retention.js",
       "./turn-trace.js",
       "./session-config.js",
+      "./session-file-query.js",
       "./runner-event.js",
       "./runtime-manifest.js",
       "./runtime-security-profile.js",
@@ -105,6 +107,8 @@
     ],
     "privateModuleMaxBytes": {
       "allowed-keys.js": 1024,
+      "session-archive.js": 8192,
+      "session-file-query.js": 12288,
       "value-guards.js": 2048
     },
     "contractsBarrelExportSpecifiers": [

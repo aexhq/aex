@@ -3,7 +3,7 @@
  * endpoints. The public archive contains metadata, typed events, and files.
  * Internal diagnostics are not downloaded through this surface.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { unzipSync } from "fflate";
 import { createHash } from "node:crypto";
 import { HttpClient } from "../src/http.js";
@@ -65,6 +65,29 @@ function runWithSessionFile() {
 }
 
 describe("operations.download", () => {
+  it("keeps every deterministic archive byte-for-byte stable", async () => {
+    const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+    const http = runWithSessionFile();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T12:00:00.000Z"));
+    try {
+      await expect(Promise.all([
+        operations.download(http, "session-1"),
+        operations.downloadSessionFiles(http, "session-1"),
+        operations.downloadEvents(http, "session-1"),
+        operations.downloadMetadata(http, "session-1")
+      ]).then((archives) => archives.map(digest))).resolves.toEqual([
+        "e30fde649cdbabf9273d9bc88bf4c257aa35712051c76c9b42aaafcfff1ace8b",
+        "9d04149253bb9de08235255a5ac66221a78356be6c0c38a7917369e880da2698",
+        "b666e9aa89070fefc40b8e1e8b56f72fc01bee6b31619ddffa4307eb7774b639",
+        "b0fa8254b6db99de855de16945f52e9c32e5b07532c0ef370ed6a8989a12ff1d"
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("bundles public metadata, typed events, files, and manifest", async () => {
     const entries = unzipSync(await operations.download(runWithSessionFile(), "session-1"));
 
