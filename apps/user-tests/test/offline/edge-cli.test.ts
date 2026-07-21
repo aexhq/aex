@@ -216,12 +216,29 @@ describe("installed aex CLI — offline edge cases", () => {
     expect(r.stdout).toMatch(/claude-haiku-4-5/);
   });
 
-  it("providers list --json emits a parseable JSON array", async () => {
-    const r = await executeCli(["providers", "list", "--json"]);
-    expect(r.exitCode, diag("aex providers list --json", r)).toBe(0);
-    const parsed = JSON.parse(r.stdout.trim()) as Array<{ provider: string }>;
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed.some((p) => p.provider === "anthropic")).toBe(true);
+  it("all discovery verbs accept installed --json in every optional-list position", async () => {
+    for (const verb of ["models", "providers", "tools", "runtime-sizes"] as const) {
+      for (const tail of [
+        ["--json"],
+        ["--json", "list"],
+        ["list", "--json"],
+        ["--json", "list", "--json"]
+      ] as const) {
+        const r = await executeCli([verb, ...tail]);
+        expect(r.exitCode, diag(`aex ${verb} ${tail.join(" ")}`, r)).toBe(0);
+        expect(Array.isArray(JSON.parse(r.stdout.trim()))).toBe(true);
+        expect(r.stderr).toBe("");
+      }
+    }
+  });
+
+  it("the installed global parser leaves near-prefix, equals-like, and -- tokens command-owned", async () => {
+    for (const arg of ["--jsonish", "--json=true", "--"] as const) {
+      const r = await executeCli(["models", arg, "--json"]);
+      expect(r.exitCode, diag(`aex models ${arg} --json`, r)).toBe(2);
+      expect(r.stdout).toBe("");
+      expect(r.stderr).toBe(`unknown flag: ${arg}\nusage: aex models list [--json]\n`);
+    }
   });
 
   it("a discovery verb with a stray positional arg exits 2", async () => {

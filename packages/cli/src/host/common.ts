@@ -91,6 +91,29 @@ export type ExtractCommonResult =
   | { readonly ok: true; readonly flags: ExtractedCommonHostFlags }
   | { readonly ok: false; readonly reason: string };
 
+export interface ExtractedGlobalFlags {
+  readonly json: boolean;
+  readonly rest: readonly string[];
+}
+
+/**
+ * Pure extraction for flags that are global after the top-level verb.
+ * Exact `--json` tokens are recognized in every position and every occurrence;
+ * all other tokens retain their order for the owning command parser.
+ */
+export function extractGlobalFlags(argv: readonly string[]): ExtractedGlobalFlags {
+  const rest: string[] = [];
+  let json = false;
+  for (const arg of argv) {
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { json, rest };
+}
+
 /**
  * Pure, synchronous extraction of the common host flags from argv. It leaves
  * `apiKey`/`aexUrl` as `null` when absent so the live resolvers can apply their
@@ -103,19 +126,12 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
   let apiKey: string | null = null;
   let aexUrl: string | null = null;
   let debug = false;
-  let json = false;
   const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--debug") {
       debug = true;
-      continue;
-    }
-    if (arg === "--json") {
-      // Globally recognized + consumed so no verb ever treats it as an
-      // "unexpected argument"; render-toggling verbs read `flags.json`.
-      json = true;
       continue;
     }
     if (arg === "--api-key") {
@@ -151,7 +167,8 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
     rest.push(arg);
   }
 
-  return { ok: true, flags: { apiKey, aexUrl, debug, json, rest } };
+  const global = extractGlobalFlags(rest);
+  return { ok: true, flags: { apiKey, aexUrl, debug, json: global.json, rest: global.rest } };
 }
 
 export function rejectUnknownFlags(io: CliIO, rest: readonly string[], usage: string): CliExitCode | null {

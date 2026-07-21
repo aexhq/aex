@@ -21,7 +21,7 @@ import {
   type ProviderName
 } from "@aexhq/contracts";
 import type { CliIO } from "../internal.js";
-import { type CliExitCode, SUCCESS, USAGE_ERR, rejectUnknownFlags, takeBooleanFlag } from "./common.js";
+import { type CliExitCode, SUCCESS, USAGE_ERR, extractGlobalFlags, rejectUnknownFlags } from "./common.js";
 
 const DEFAULT_BUILTIN_SET = new Set<string>(DEFAULT_BUILTIN_TOOLS);
 
@@ -37,13 +37,13 @@ function renderTable(io: CliIO, headers: readonly string[], rows: readonly (read
   for (const row of rows) io.stdout(line(row) + "\n");
 }
 
-function wantsJson(argv: readonly string[]): { json: boolean; rest: readonly string[] } {
-  const { present, remaining } = takeBooleanFlag(argv, "--json");
-  return { json: present, rest: remaining };
+function discoveryArgs(argv: readonly string[]): { json: boolean; rest: readonly string[] } {
+  const global = extractGlobalFlags(argv);
+  return { json: global.json, rest: stripListSubcommand(global.rest) };
 }
 
 export function modelNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
-  const { json, rest } = wantsJson(stripListSubcommand(argv));
+  const { json, rest } = discoveryArgs(argv);
   if (hasUnknown(io, rest, "models")) return USAGE_ERR;
   const entries = SUPPORTED_MODELS.map((model) => ({
     model,
@@ -63,7 +63,7 @@ export function modelNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
 }
 
 export function providerNamesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
-  const { json, rest } = wantsJson(stripListSubcommand(argv));
+  const { json, rest } = discoveryArgs(argv);
   if (hasUnknown(io, rest, "providers")) return USAGE_ERR;
   const entries = PROVIDERS.map((provider) => ({
     provider,
@@ -83,7 +83,7 @@ export function providerNamesCmd(io: CliIO, argv: readonly string[]): CliExitCod
 }
 
 export function executeToolsCmd(io: CliIO, argv: readonly string[]): CliExitCode {
-  const { json, rest } = wantsJson(stripListSubcommand(argv));
+  const { json, rest } = discoveryArgs(argv);
   if (hasUnknown(io, rest, "tools")) return USAGE_ERR;
   const entries = BUILTIN_TOOL_NAMES.map((name) => ({
     tool: name,
@@ -102,7 +102,7 @@ export function executeToolsCmd(io: CliIO, argv: readonly string[]): CliExitCode
 }
 
 export function executeRuntimeSizesCmd(io: CliIO, argv: readonly string[]): CliExitCode {
-  const { json, rest } = wantsJson(stripListSubcommand(argv));
+  const { json, rest } = discoveryArgs(argv);
   if (hasUnknown(io, rest, "runtime-sizes")) return USAGE_ERR;
   const entries = RUNTIME_SIZES.map((size) => ({
     size,
