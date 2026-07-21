@@ -316,15 +316,18 @@ function shortCauseMessage(cause: unknown, causeCode: string | undefined): strin
 
 /**
  * Best-effort transport error code (`ECONNREFUSED`, `ENOTFOUND`, …): checks
- * `err.code`, then `err.cause.code` (where undici hides it), then falls back
- * to an `E…`-shaped token in the message.
+ * `err.code`, then a bounded native `cause` chain (where undici and database
+ * drivers hide it), then falls back to an `E…`-shaped token in the outer
+ * message. Five inspected values matches the platform diagnostic boundary and
+ * prevents malformed/cyclic cause graphs from becoming unbounded work.
  */
 export function extractErrorCode(err: unknown): string | undefined {
-  const code = stringProperty(err, "code");
-  if (code) return code;
-  const cause = objectProperty(err, "cause");
-  const causeCode = stringProperty(cause, "code");
-  if (causeCode) return causeCode;
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth += 1) {
+    const code = stringProperty(current, "code");
+    if (code) return code;
+    current = (current as Record<string, unknown>).cause;
+  }
   const match = /\bE[A-Z0-9_]+\b/.exec(errorMessageOf(err));
   return match?.[0];
 }
@@ -351,12 +354,6 @@ function errorMessageOf(err: unknown): string {
   if (err instanceof Error) return err.message || err.name;
   if (typeof err === "string") return err;
   return String(err);
-}
-
-function objectProperty(value: unknown, key: string): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const prop = (value as Record<string, unknown>)[key];
-  return prop && typeof prop === "object" ? (prop as Record<string, unknown>) : undefined;
 }
 
 function stringProperty(value: unknown, key: string): string | undefined {
