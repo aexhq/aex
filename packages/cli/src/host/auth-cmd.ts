@@ -32,6 +32,7 @@ import {
   rejectUnknownFlags,
   refuseInsideManagedSession
 } from "./common.js";
+import { pollingDelay } from "./command-primitives.js";
 import { AEX_DEFAULT_BASE_URL } from "@aexhq/contracts";
 
 const CONFIG_SCHEMA_VERSION = 1;
@@ -41,8 +42,6 @@ const ACCOUNT_PAT_PREFIX = "aexu_";
 const DEVICE_DEFAULT_INTERVAL_SEC = 5;
 const DEVICE_DEFAULT_EXPIRES_SEC = 900;
 const DEVICE_SLOW_DOWN_BUMP_SEC = 5;
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
 export async function executeLoginCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
   if (await refuseInsideManagedSession(io, "login")) return USAGE_ERR;
@@ -239,7 +238,7 @@ async function deviceFlowLogin(
         // No token and no recognized error: keep polling until the deadline.
         break;
     }
-    await sleep(intervalSec * 1000);
+    await pollingDelay(Math.max(0, intervalSec * 1000));
   }
   return emitJsonError(io, "login_timeout", "timed out waiting for device approval — run `aex login` again");
 }

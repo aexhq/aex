@@ -61,6 +61,7 @@ import {
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
+import { portableBasename } from "./command-primitives.js";
 import {
   buildCliInstructions,
   buildCliFile,
@@ -545,7 +546,7 @@ async function buildSkill(io: CliIO, ref: string): Promise<CliSkillDraft> {
 
 async function buildTool(io: CliIO, ref: string): Promise<CliToolDraft> {
   const content = await readAtFile(io, ref);
-  const entry = baseName(stripAt(ref));
+  const entry = portableBasename(stripAt(ref));
   const name = deriveName(ref, 1);
   return buildCliTool({
     name,
@@ -565,7 +566,7 @@ async function buildFile(io: CliIO, ref: string): Promise<CliFileDraft> {
     throw new Error("binary file reads are unavailable in this CLI host");
   }
   const bytes = await io.readFileBytes(resolvePath(io.cwd(), stripAt(ref)));
-  const name = baseName(stripAt(ref));
+  const name = portableBasename(stripAt(ref));
   return buildCliFile({ name, bytes });
 }
 
@@ -579,12 +580,6 @@ async function readAtFile(io: CliIO, value: string): Promise<string> {
 
 function stripAt(value: string): string {
   return value.startsWith("@") ? value.slice(1) : value;
-}
-
-function baseName(p: string): string {
-  const trimmed = p.replace(/[\\/]+$/, "");
-  const i = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return i >= 0 ? trimmed.slice(i + 1) : trimmed;
 }
 
 function followTimeoutContext(
@@ -603,7 +598,7 @@ function followTimeoutContext(
  * pattern; the factory revalidates and throws on a truly bad name.
  */
 function deriveName(ref: string, minLen: number): string {
-  const base = baseName(stripAt(ref));
+  const base = portableBasename(stripAt(ref));
   const noExt = base.includes(".") ? base.slice(0, base.lastIndexOf(".")) : base;
   let slug = noExt.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   while (slug.length < minLen) slug += "x";

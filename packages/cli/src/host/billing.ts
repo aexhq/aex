@@ -22,6 +22,7 @@ import {
   refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
+import { parsePositiveLimit } from "./command-primitives.js";
 
 function usd(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : "-";
@@ -29,17 +30,6 @@ function usd(value: unknown): string {
 
 function isPaidPlanKey(value: unknown): value is "pro" | "team" {
   return value === "pro" || value === "team";
-}
-
-/** Parse a positive-integer `--limit` value; returns null (after printing) when invalid. */
-function parseLimit(io: CliIO, raw: string | undefined): { ok: true; limit: number | undefined } | { ok: false } {
-  if (raw === undefined) return { ok: true, limit: undefined };
-  const limit = Number(raw);
-  if (!Number.isInteger(limit) || limit < 1) {
-    io.stderr(`--limit must be a positive integer (got: ${raw})\n`);
-    return { ok: false };
-  }
-  return { ok: true, limit };
 }
 
 export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
@@ -165,7 +155,7 @@ async function runBillingLedger(
     io.stderr("usage: aex billing ledger [--limit N] [common flags]\n");
     return USAGE_ERR;
   }
-  const parsed = parseLimit(io, rawLimit);
+  const parsed = parsePositiveLimit(io, rawLimit);
   if (!parsed.ok) return USAGE_ERR;
 
   const http = makeHttpClient(io, flags);

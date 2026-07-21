@@ -24,6 +24,7 @@ import {
   resolveCommonHostFlags,
   takeOptionFlag
 } from "./common.js";
+import { portableBasename } from "./command-primitives.js";
 
 const SUBVERBS = new Set(["read", "download", "link", "find"]);
 
@@ -113,7 +114,7 @@ async function filesDownload(io: CliIO, http: HttpClient, args: readonly string[
   } catch (err) {
     return emitApiError(io, "files_download_failed", err, { sessionId, path: selector });
   }
-  const destination = resolvePath(io.cwd(), outFlag.value ?? baseName(selector));
+  const destination = resolvePath(io.cwd(), outFlag.value ?? portableBasename(selector));
   try {
     await io.writeFile(destination, bytes);
   } catch (err) {
@@ -188,10 +189,4 @@ async function searchSessionFiles(
   if (query.filename === undefined) return snapshot.files;
   const match = operations.toFilenameMatcher(query.filename);
   return snapshot.files.filter((file) => typeof file.filename === "string" && match(file.filename));
-}
-
-function baseName(p: string): string {
-  const trimmed = p.replace(/[\\/]+$/, "");
-  const i = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return i >= 0 ? trimmed.slice(i + 1) : trimmed;
 }

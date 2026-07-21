@@ -28,6 +28,7 @@ import {
   refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
+import { pollingDelay } from "./command-primitives.js";
 
 const DEFAULT_INTERVAL_MS = 2_000;
 
@@ -99,10 +100,6 @@ export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promis
     }
 
     if (Date.now() >= deadline) return timeout({ lastStatus: session.status });
-    await sleep(intervalMs);
+    await pollingDelay(intervalMs);
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
