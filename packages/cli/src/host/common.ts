@@ -75,6 +75,9 @@ export type ParseCommonResult =
   | { readonly ok: true; readonly flags: CommonHostFlags; readonly rest: readonly string[] }
   | { readonly ok: false; readonly reason: string };
 
+/** Auth policy for an authenticated host command. Keep the planes explicit. */
+export type HostAuthPolicy = "data" | "control";
+
 /** Raw, pre-resolution extraction: token/url may be `null` (no required check). */
 export interface ExtractedCommonHostFlags {
   readonly apiKey: string | null;
@@ -173,41 +176,10 @@ export async function resolveCommonHostFlags(
   io: CliIO,
   argv: readonly string[]
 ): Promise<ParseCommonResult> {
-  const extracted = extractCommonHostFlags(argv);
-  if (!extracted.ok) return extracted;
-  const { apiKey: flagToken, aexUrl: flagUrl, debug, json, rest } = extracted.flags;
-
-  let token = flagToken;
-  let url = flagUrl;
-  let source: "flag" | "stored" | "none" = flagToken ? "flag" : "none";
-  let storedLocation = "";
-
-  if (!token && io.configStore) {
-    const stored = await io.configStore.read();
-    storedLocation = io.configStore.location();
-    if (stored?.apiKey) {
-      token = stored.apiKey;
-      source = "stored";
-      if (!url && stored.aexUrl) url = stored.aexUrl;
-    }
-  }
-
-  const resolvedUrl = url ?? AEX_DEFAULT_BASE_URL;
-
-  if (debug) {
-    const where =
-      source === "flag"
-        ? "--api-key flag"
-        : source === "stored"
-          ? `stored token (${storedLocation})`
-          : "none";
-    io.stderr(`[aex] auth: ${where}; aex-url=${resolvedUrl}\n`);
-  }
-
-  if (!token) {
-    return { ok: false, reason: "no API key — pass --api-key or run `aex login`" };
-  }
-  return { ok: true, flags: { apiKey: token, aexUrl: resolvedUrl, debug, json }, rest };
+  const resolved = await resolveHostAuth(io, argv, "data");
+  if (!resolved.ok) return resolved;
+  const { auth: _auth, ...compatible } = resolved;
+  return compatible;
 }
 
 /** Which credential a control-plane resolution selected. */
@@ -241,9 +213,84 @@ export async function resolveControlPlaneHostFlags(
   io: CliIO,
   argv: readonly string[]
 ): Promise<ResolveControlPlaneResult> {
+  const resolved = await resolveHostAuth(io, argv, "control");
+  if (!resolved.ok) return resolved;
+  const { auth: _auth, ...compatible } = resolved;
+  return compatible;
+}
+
+type ResolvedDataHostAuth = {
+  readonly ok: true;
+  readonly auth: "data";
+  readonly flags: CommonHostFlags;
+  readonly rest: readonly string[];
+};
+
+type ResolvedControlHostAuth = {
+  readonly ok: true;
+  readonly auth: "control";
+  readonly flags: CommonHostFlags;
+  readonly rest: readonly string[];
+  readonly source: ControlPlaneAuthSource;
+  readonly defaultOrgId?: string;
+  readonly defaultWorkspaceId?: string;
+};
+
+type ResolveHostAuthFailure = { readonly ok: false; readonly reason: string };
+
+async function resolveHostAuth(
+  io: CliIO,
+  argv: readonly string[],
+  auth: "data"
+): Promise<ResolvedDataHostAuth | ResolveHostAuthFailure>;
+async function resolveHostAuth(
+  io: CliIO,
+  argv: readonly string[],
+  auth: "control"
+): Promise<ResolvedControlHostAuth | ResolveHostAuthFailure>;
+async function resolveHostAuth(
+  io: CliIO,
+  argv: readonly string[],
+  auth: HostAuthPolicy
+): Promise<ResolvedDataHostAuth | ResolvedControlHostAuth | ResolveHostAuthFailure>;
+async function resolveHostAuth(
+  io: CliIO,
+  argv: readonly string[],
+  auth: HostAuthPolicy
+): Promise<ResolvedDataHostAuth | ResolvedControlHostAuth | ResolveHostAuthFailure> {
   const extracted = extractCommonHostFlags(argv);
   if (!extracted.ok) return extracted;
   const { apiKey: flagToken, aexUrl: flagUrl, debug, json, rest } = extracted.flags;
+
+  if (auth === "data") {
+    let token = flagToken;
+    let url = flagUrl;
+    let source: "flag" | "stored" | "none" = flagToken ? "flag" : "none";
+    let storedLocation = "";
+
+    if (!token && io.configStore) {
+      const stored = await io.configStore.read();
+      storedLocation = io.configStore.location();
+      if (stored?.apiKey) {
+        token = stored.apiKey;
+        source = "stored";
+        if (!url && stored.aexUrl) url = stored.aexUrl;
+      }
+    }
+
+    const resolvedUrl = url ?? AEX_DEFAULT_BASE_URL;
+    if (debug) {
+      const where =
+        source === "flag"
+          ? "--api-key flag"
+          : source === "stored"
+            ? `stored token (${storedLocation})`
+            : "none";
+      io.stderr(`[aex] auth: ${where}; aex-url=${resolvedUrl}\n`);
+    }
+    if (!token) return { ok: false, reason: "no API key — pass --api-key or run `aex login`" };
+    return { ok: true, auth, flags: { apiKey: token, aexUrl: resolvedUrl, debug, json }, rest };
+  }
 
   let token = flagToken;
   let url = flagUrl;
@@ -289,12 +336,62 @@ export async function resolveControlPlaneHostFlags(
   }
   return {
     ok: true,
+    auth,
     flags: { apiKey: token, aexUrl: resolvedUrl, debug, json },
     rest,
     source,
     ...(defaultOrgId ? { defaultOrgId } : {}),
     ...(defaultWorkspaceId ? { defaultWorkspaceId } : {})
   };
+}
+
+export interface PrepareHostCommandOptions<Auth extends HostAuthPolicy> {
+  readonly verb: string;
+  readonly auth: Auth;
+  /** Command-owned presentation for an otherwise shared preparation failure. */
+  readonly formatResolutionError?: (reason: string) => string;
+}
+
+export type PrepareHostCommandFailure = {
+  readonly ok: false;
+  readonly exit: CliExitCode;
+};
+
+/**
+ * Prepare one authenticated host command before its business parsing begins.
+ * Refusal runs first and fails closed; credential resolution then follows the
+ * explicit data/control policy. Neither step performs a network request.
+ */
+export function prepareHostCommand(
+  io: CliIO,
+  argv: readonly string[],
+  options: PrepareHostCommandOptions<"data">
+): Promise<ResolvedDataHostAuth | PrepareHostCommandFailure>;
+export function prepareHostCommand(
+  io: CliIO,
+  argv: readonly string[],
+  options: PrepareHostCommandOptions<"control">
+): Promise<ResolvedControlHostAuth | PrepareHostCommandFailure>;
+export function prepareHostCommand(
+  io: CliIO,
+  argv: readonly string[],
+  options: PrepareHostCommandOptions<HostAuthPolicy>
+): Promise<ResolvedDataHostAuth | ResolvedControlHostAuth | PrepareHostCommandFailure>;
+export async function prepareHostCommand(
+  io: CliIO,
+  argv: readonly string[],
+  options: PrepareHostCommandOptions<HostAuthPolicy>
+): Promise<ResolvedDataHostAuth | ResolvedControlHostAuth | PrepareHostCommandFailure> {
+  if (await refuseInsideManagedSession(io, options.verb)) {
+    return { ok: false, exit: USAGE_ERR };
+  }
+  const resolved = await resolveHostAuth(io, argv, options.auth);
+  if (!resolved.ok) {
+    const message = options.formatResolutionError?.(resolved.reason) ?? resolved.reason;
+    io.stderr(`${message}\n`);
+    return { ok: false, exit: USAGE_ERR };
+  }
+  return resolved;
 }
 
 /**

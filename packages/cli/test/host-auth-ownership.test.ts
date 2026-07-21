@@ -64,41 +64,81 @@ describe("CLI host-auth resolver ownership", () => {
     expect(synchronousCommonFlagFunctions).toEqual(["extractCommonHostFlags"]);
   });
 
-  it("routes every registered authenticated verb through its intended live resolver", () => {
+  it("routes the exhaustive 19-verb authenticated matrix through one typed preparation owner", () => {
     const main = read(resolve(srcRoot, "main.ts"));
     const hostIndex = read(resolve(srcRoot, "host", "index.ts"));
     const handlerModules = exportedHostHandlers(hostIndex);
     const dispatch = dispatchedHandlers(main);
-    const controlPlane = new Set(["orgs", "workspaces", "keys"]);
+    const authenticated = new Map<string, "data" | "control">([
+      ["start", "data"],
+      ["status", "data"],
+      ["deliveries", "data"],
+      ["wait", "data"],
+      ["events", "data"],
+      ["tail", "data"],
+      ["inspect", "data"],
+      ["files", "data"],
+      ["download", "data"],
+      ["cancel", "data"],
+      ["delete", "data"],
+      ["delete-asset", "data"],
+      ["sessions", "data"],
+      ["whoami", "data"],
+      ["billing", "data"],
+      ["webhooks", "data"],
+      ["orgs", "control"],
+      ["workspaces", "control"],
+      ["keys", "control"]
+    ]);
     const authOnly = new Set(["login", "logout", "auth"]);
     const unauthenticated = new Set(["models", "providers", "tools", "runtime-sizes"]);
 
     expect([...dispatch.keys()].sort()).toEqual(CLI_VERBS.map((verb) => verb.name).sort());
+    expect([...authenticated.values()].filter((policy) => policy === "data")).toHaveLength(16);
+    expect([...authenticated.values()].filter((policy) => policy === "control")).toHaveLength(3);
+    expect([...authenticated.keys(), ...authOnly, ...unauthenticated].sort()).toEqual(
+      CLI_VERBS.map((verb) => verb.name).sort()
+    );
 
-    for (const { name } of CLI_VERBS) {
+    for (const [name, policy] of authenticated) {
       const candidates = (dispatch.get(name) ?? [])
         .map((handler) => ({ handler, moduleName: handlerModules.get(handler) }))
         .filter((candidate): candidate is { handler: string; moduleName: string } => candidate.moduleName !== undefined);
       expect(candidates.length, `${name} must dispatch through the host implementation barrel`).toBeGreaterThan(0);
-
-      const expectedResolver = controlPlane.has(name)
-        ? "resolveControlPlaneHostFlags"
-        : authOnly.has(name)
-          ? "extractCommonHostFlags"
-          : unauthenticated.has(name)
-            ? null
-            : "resolveCommonHostFlags";
       for (const candidate of candidates) {
         const source = read(resolve(srcRoot, "host", `${candidate.moduleName}.ts`));
-        if (expectedResolver === null) {
-          expect(source, `${name} is an unauthenticated discovery verb`).not.toMatch(/resolve(?:Common|ControlPlane)HostFlags/);
-          continue;
-        }
-        expect(source, `${name} (${candidate.handler}) must use ${expectedResolver}`).toContain(expectedResolver);
-        if (expectedResolver.startsWith("resolve")) {
-          const calls = source.match(new RegExp(`await\\s+${expectedResolver}\\(io,\\s*argv\\)`, "g")) ?? [];
-          expect(calls, `${name} must resolve host auth exactly once`).toHaveLength(1);
-        }
+        expect(source, `${name} (${candidate.handler}) must use the preparation owner`).toContain("prepareHostCommand");
+        expect(
+          source.match(/await\s+prepareHostCommand\(io,\s*argv,/g) ?? [],
+          `${name} must prepare exactly once`
+        ).toHaveLength(1);
+        expect(source, `${name} must keep its explicit auth policy`).toMatch(
+          new RegExp(`verb:\\s*["']${name}["'][\\s\\S]{0,80}auth:\\s*["']${policy}["']`)
+        );
+        expect(source, `${name} may not bypass preparation refusal`).not.toContain("refuseInsideManagedSession");
+        expect(source, `${name} may not bypass preparation auth`).not.toMatch(/resolve(?:Common|ControlPlane)HostFlags/);
+      }
+    }
+
+    for (const name of authOnly) {
+      const modules = (dispatch.get(name) ?? []).map((handler) => handlerModules.get(handler));
+      expect(modules.every((moduleName) => moduleName !== undefined), name).toBe(true);
+      for (const moduleName of modules) {
+        const source = read(resolve(srcRoot, "host", `${moduleName}.ts`));
+        expect(source, `${name} keeps its no-auth extractor`).toContain("extractCommonHostFlags");
+        expect(source, `${name} remains host-only`).toContain("refuseInsideManagedSession");
+        expect(source, `${name} is not an authenticated host command`).not.toContain("prepareHostCommand");
+      }
+    }
+
+    for (const name of unauthenticated) {
+      const modules = (dispatch.get(name) ?? []).map((handler) => handlerModules.get(handler));
+      expect(modules.every((moduleName) => moduleName !== undefined), name).toBe(true);
+      for (const moduleName of modules) {
+        const source = read(resolve(srcRoot, "host", `${moduleName}.ts`));
+        expect(source, `${name} is an unauthenticated discovery verb`).not.toMatch(
+          /prepareHostCommand|refuseInsideManagedSession|resolve(?:Common|ControlPlane)HostFlags/
+        );
       }
     }
   });

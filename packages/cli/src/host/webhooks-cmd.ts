@@ -21,19 +21,13 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveCommonHostFlags,
-  refuseInsideManagedSession,
+  prepareHostCommand,
   takeBooleanFlag
 } from "./common.js";
 
 export async function sessionWebhooksCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "webhooks")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "webhooks", auth: "data" });
+  if (!common.ok) return common.exit;
 
   const [sub, ...rest] = common.rest;
   if (sub !== "secret") {

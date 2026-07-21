@@ -17,8 +17,7 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveControlPlaneHostFlags,
-  refuseInsideManagedSession,
+  prepareHostCommand,
   takeOptionFlag
 } from "./common.js";
 
@@ -27,13 +26,8 @@ const USAGE =
   "aex orgs invite <orgId> --email <email> [--role admin|member] [common flags]";
 
 export async function executeOrgsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "orgs")) return USAGE_ERR;
-
-  const common = await resolveControlPlaneHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "orgs", auth: "control" });
+  if (!common.ok) return common.exit;
   const sub = common.rest[0];
   if (sub === "create") return runOrgsCreate(io, common.rest.slice(1), common.flags);
   if (sub === "members") return runOrgsMembers(io, common.rest.slice(1), common.flags);

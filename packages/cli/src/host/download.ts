@@ -25,9 +25,8 @@ import {
   emitApiError,
   emitJsonError,
   makeHttpClient,
+  prepareHostCommand,
   rejectUnknownFlags,
-  resolveCommonHostFlags,
-  refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
 
@@ -40,13 +39,8 @@ const NAMESPACE_DOWNLOADERS = {
 } satisfies Record<Namespace, typeof operations.download>;
 
 export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "download")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "download", auth: "data" });
+  if (!common.ok) return common.exit;
   const outFlag = takeOptionFlag(common.rest, "--out");
   if (outFlag.error) {
     io.stderr(`${outFlag.error}\n`);

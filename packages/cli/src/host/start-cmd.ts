@@ -17,8 +17,7 @@ import {
   emitJsonError,
   isSessionNonProgressing,
   makeHttpClient,
-  refuseInsideManagedSession,
-  resolveCommonHostFlags
+  prepareHostCommand
 } from "./common.js";
 import { parseStartArguments } from "./start-arguments.js";
 import { buildStartAttachments } from "./start-attachments.js";
@@ -34,13 +33,12 @@ import { openEnvelopeStream } from "./stream-render.js";
 type AcceptedStart = Awaited<ReturnType<typeof submitCliRun>>;
 
 export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "start")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${startCommonValidationMessage(argv, common.reason)}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, {
+    verb: "start",
+    auth: "data",
+    formatResolutionError: (reason) => startCommonValidationMessage(argv, reason)
+  });
+  if (!common.ok) return common.exit;
   const parsed = parseStartArguments(common.rest);
   if (!parsed.ok) {
     io.stderr(`${parsed.error}\n`);

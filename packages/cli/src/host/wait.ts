@@ -22,10 +22,9 @@ import {
   emitJsonError,
   isSessionNonProgressing,
   makeHttpClient,
-  resolveCommonHostFlags,
   parseDuration,
+  prepareHostCommand,
   rejectUnknownFlags,
-  refuseInsideManagedSession,
   takeOptionFlag
 } from "./common.js";
 import { pollingDelay } from "./command-primitives.js";
@@ -33,13 +32,8 @@ import { pollingDelay } from "./command-primitives.js";
 const DEFAULT_INTERVAL_MS = 2_000;
 
 export async function executeWaitCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "wait")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "wait", auth: "data" });
+  if (!common.ok) return common.exit;
 
   const timeoutFlag = takeOptionFlag(common.rest, "--timeout");
   const intervalFlag = takeOptionFlag(timeoutFlag.remaining, "--interval");

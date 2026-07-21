@@ -9,7 +9,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { strToU8, unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -164,6 +164,12 @@ async function startFakeApi(): Promise<FakeApi> {
       json(res, 200, {
         sessions: [{ id: "session-cli-1", status: "idle", acceptsMessages: true, createdAt: "2026-07-02T10:00:00Z", updatedAt: "2026-07-02T10:05:00Z" }]
       });
+      return;
+    }
+
+    // --- account/control-plane endpoint ---
+    if (req.method === "GET" && url.pathname === "/api/orgs") {
+      json(res, 200, { orgs: [{ id: "org-packed", name: "Packed", role: "admin" }] });
       return;
     }
 
@@ -413,6 +419,84 @@ describe("installed CLI host commands", () => {
     expect(wait.stderr).toBe(
       '{"error":"wait_failed","message":"insufficient_scope: the token does not carry sessions:read — {\\"requestId\\":\\"req-packed-cli-error\\"}","sessionId":"session-denied","status":403,"remedy":"token lacks permission for this workspace/action"}\n'
     );
+  });
+
+  it("preserves typed data/control preparation and no-network failures in the packed CLI", async () => {
+    const configHome = join(install.installDir, "packed-preparation-config");
+    mkdirSync(join(configHome, "aex"), { recursive: true });
+    writeFileSync(join(configHome, "aex", "config.json"), JSON.stringify({
+      schemaVersion: 1,
+      apiKey: "stored-data-packed-secret",
+      accountToken: "stored-control-packed-secret",
+      aexUrl: api.baseUrl
+    }));
+    const storedEnv = { ...process.env, XDG_CONFIG_HOME: configHome };
+
+    const beforeStoredData = api.requests.length;
+    const storedData = await runCommand(binPath, ["status", "session-cli-1", "--debug", "--json"], {
+      cwd: install.installDir,
+      timeoutMs: 30_000,
+      env: storedEnv
+    });
+    expect(storedData.exitCode, `stdout:\n${storedData.stdout}\nstderr:\n${storedData.stderr}`).toBe(0);
+    expect(storedData.stderr).toContain("[aex] auth: stored token (");
+    expect(storedData.stderr).not.toContain("stored-data-packed-secret");
+    expect(api.requests.slice(beforeStoredData)).toHaveLength(1);
+    expect(api.requests.at(-1)?.authorization).toBe("Bearer stored-data-packed-secret");
+
+    const beforeStoredControl = api.requests.length;
+    const storedControl = await runCommand(binPath, ["orgs", "--debug", "--json"], {
+      cwd: install.installDir,
+      timeoutMs: 30_000,
+      env: storedEnv
+    });
+    expect(storedControl.exitCode, `stdout:\n${storedControl.stdout}\nstderr:\n${storedControl.stderr}`).toBe(0);
+    expect(storedControl.stderr).toContain("[aex] control-plane auth: stored account token (");
+    expect(storedControl.stderr).not.toContain("stored-control-packed-secret");
+    expect(api.requests.slice(beforeStoredControl)).toHaveLength(1);
+    expect(api.requests.at(-1)?.authorization).toBe("Bearer stored-control-packed-secret");
+
+    const beforeData = api.requests.length;
+    const data = await runCommand(
+      binPath,
+      ["status", "session-cli-1", "--api-key=data-packed-secret", `--aex-url=${api.baseUrl}`, "--debug", "--json"],
+      { cwd: install.installDir, timeoutMs: 30_000 }
+    );
+    expect(data.exitCode, `stdout:\n${data.stdout}\nstderr:\n${data.stderr}`).toBe(0);
+    expect(data.stderr).toContain(`[aex] auth: --api-key flag; aex-url=${api.baseUrl}`);
+    expect(data.stderr).not.toContain("data-packed-secret");
+    expect(api.requests.slice(beforeData)).toHaveLength(1);
+    expect(api.requests.at(-1)?.authorization).toBe("Bearer data-packed-secret");
+
+    const beforeControl = api.requests.length;
+    const control = await runCommand(
+      binPath,
+      ["orgs", "--api-key", "control-packed-secret", "--aex-url", api.baseUrl, "--debug", "--json"],
+      {
+        cwd: install.installDir,
+        timeoutMs: 30_000,
+        env: { ...process.env, XDG_CONFIG_HOME: join(install.installDir, "isolated-config") }
+      }
+    );
+    expect(control.exitCode, `stdout:\n${control.stdout}\nstderr:\n${control.stderr}`).toBe(0);
+    expect(JSON.parse(control.stdout.trim())).toEqual([{ id: "org-packed", name: "Packed", role: "admin" }]);
+    expect(control.stderr).toContain(`[aex] control-plane auth: --api-key flag; aex-url=${api.baseUrl}`);
+    expect(control.stderr).not.toContain("control-packed-secret");
+    expect(api.requests.slice(beforeControl)).toHaveLength(1);
+    expect(api.requests.at(-1)?.authorization).toBe("Bearer control-packed-secret");
+
+    const beforeMissing = api.requests.length;
+    const missing = await runCommand(binPath, ["orgs"], {
+      cwd: install.installDir,
+      timeoutMs: 30_000,
+      env: { ...process.env, XDG_CONFIG_HOME: join(install.installDir, "isolated-empty-config") }
+    });
+    expect(missing).toMatchObject({
+      exitCode: 2,
+      stdout: "",
+      stderr: "no account credential — run `aex login` (device flow) or pass an account PAT via --api-key\n"
+    });
+    expect(api.requests).toHaveLength(beforeMissing);
   });
 
   it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {

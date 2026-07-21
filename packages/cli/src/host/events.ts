@@ -16,23 +16,17 @@ import {
   emitApiError,
   emitJsonError,
   makeHttpClient,
-  resolveCommonHostFlags,
   parseDuration,
+  prepareHostCommand,
   rejectUnknownFlags,
-  refuseInsideManagedSession,
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
 import { pollingDelay } from "./command-primitives.js";
 
 export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "events")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "events", auth: "data" });
+  if (!common.ok) return common.exit;
   const followResult = takeBooleanFlag(common.rest, "--follow");
   const timeoutFlag = takeOptionFlag(followResult.remaining, "--timeout");
   if (timeoutFlag.error) { io.stderr(`${timeoutFlag.error}\n`); return USAGE_ERR; }

@@ -12,18 +12,12 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveCommonHostFlags,
-  refuseInsideManagedSession
+  prepareHostCommand
 } from "./common.js";
 
 export async function executeWhoamiCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "whoami")) return USAGE_ERR;
-
-  const common = await resolveCommonHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "whoami", auth: "data" });
+  if (!common.ok) return common.exit;
   if (common.rest.length > 0) {
     io.stderr(`unexpected arguments: ${common.rest.join(" ")}\n`);
     return USAGE_ERR;

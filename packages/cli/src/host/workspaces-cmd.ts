@@ -20,8 +20,7 @@ import {
   USAGE_ERR,
   emitApiError,
   makeHttpClient,
-  resolveControlPlaneHostFlags,
-  refuseInsideManagedSession,
+  prepareHostCommand,
   takeOptionFlag
 } from "./common.js";
 
@@ -30,13 +29,8 @@ const USAGE =
   "aex workspaces delete <workspaceId> [common flags]";
 
 export async function executeWorkspacesCmd(io: CliIO, argv: readonly string[]): Promise<CliExitCode> {
-  if (await refuseInsideManagedSession(io, "workspaces")) return USAGE_ERR;
-
-  const common = await resolveControlPlaneHostFlags(io, argv);
-  if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
-    return USAGE_ERR;
-  }
+  const common = await prepareHostCommand(io, argv, { verb: "workspaces", auth: "control" });
+  if (!common.ok) return common.exit;
   const sub = common.rest[0];
   if (sub === "create") {
     return runWorkspacesCreate(io, common.rest.slice(1), common.flags, common.defaultOrgId);
