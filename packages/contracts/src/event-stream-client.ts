@@ -26,7 +26,14 @@
  * (Bun and Node 22+ ship it; no dependency) and tests drive a fake.
  */
 
-import { isReplayableEvent, type AexEvent, type AexStreamEvent } from "./event-envelope.js";
+import {
+  isReplayableEvent,
+  type AexEvent,
+  type AexEventBase,
+  type AexRunErrorEvent,
+  type AexRunFinishedEvent,
+  type AexStreamEvent
+} from "./event-envelope.js";
 
 /** The slice of the WHATWG WebSocket this client depends on. */
 export interface WebSocketLike {
@@ -84,8 +91,22 @@ export interface CoordinatorStreamOptions {
   readonly eventQuietRecheckMs?: number;
 }
 
-const isTerminalType = (e: AexEvent): boolean =>
-  e.type === "RUN_FINISHED" || e.type === "RUN_ERROR";
+/** An open event narrowed only to a run-terminal discriminant, not a validated payload. */
+export type RunTerminalTypeEvent<T extends AexEventBase = AexEventBase> = T & {
+  readonly type: AexRunFinishedEvent["type"] | AexRunErrorEvent["type"];
+};
+
+/**
+ * True for either run-terminal discriminant, including a malformed payload.
+ *
+ * Streaming uses this weaker boundary so a malformed terminal still ends the
+ * read loop and reaches the canonical payload validation/error path. Consumers
+ * that need validated terminal data must use `isRunTerminal` instead.
+ * Internal-only: intentionally omitted from the public contracts barrel.
+ */
+export function hasRunTerminalType<T extends AexEventBase>(event: T): event is RunTerminalTypeEvent<T> {
+  return event.type === "RUN_FINISHED" || event.type === "RUN_ERROR";
+}
 
 /**
  * Keep-alive ping the client sends; the coordinator answers it with the matching
@@ -109,7 +130,7 @@ export async function* streamCoordinatorEvents(
 ): AsyncGenerator<AexStreamEvent, void, void> {
   const makeWs =
     opts.webSocketFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
-  const isTerminal = opts.isTerminal ?? isTerminalType;
+  const isTerminal = opts.isTerminal ?? hasRunTerminalType;
   const reconnectDelayMs = opts.reconnectDelayMs ?? 500;
   const maxReconnects = opts.maxReconnects ?? Number.POSITIVE_INFINITY;
   const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;

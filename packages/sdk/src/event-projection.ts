@@ -15,6 +15,10 @@ import {
   type TurnTrace,
   type UsageSummary
 } from "@aexhq/contracts";
+import {
+  hasRunTerminalType,
+  type RunTerminalTypeEvent
+} from "@aexhq/contracts/internal";
 import type { Message, SessionRunResult } from "./client-types.js";
 
 export function messageFromWire(message: SessionMessage): Message {
@@ -229,28 +233,39 @@ function carriedOutcome(event: AexEvent): SessionRunOutcome | undefined {
     : undefined;
 }
 
-export function isSessionRunTerminalEvent(event: AexEvent, runId: string): boolean {
-  return event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR");
+export function isSessionRunTerminalEvent(
+  event: AexEvent,
+  runId: string
+): event is RunTerminalTypeEvent<AexEvent> {
+  return event.runId === runId && hasRunTerminalType(event);
+}
+
+/** Return the newest run-terminal discriminant for one run without copying the event list. */
+export function latestRunTerminalEvent(events: readonly AexEvent[], runId: string) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (isSessionRunTerminalEvent(event, runId)) return event;
+  }
+  return undefined;
 }
 
 /** Read and validate the committed terminal event's explicit run outcome. */
 export function terminalSessionStatusFromEvents(events: readonly AexEvent[], runId: string): SessionRunOutcome {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (!isSessionRunTerminalEvent(event, runId)) continue;
-    const carried = carriedOutcome(event);
-    if (carried === undefined) {
-      throw new SessionStateError("RUN terminal is missing a valid explicit outcome", { runId });
-    }
-    if (event.type === "RUN_ERROR" && carried !== "failed") {
-      throw new SessionStateError("RUN_ERROR must carry outcome=failed", { runId });
-    }
-    if (event.type === "RUN_FINISHED" && carried === "failed") {
-      throw new SessionStateError("a failed run must terminate with RUN_ERROR", { runId });
-    }
-    return carried;
+  const terminal = latestRunTerminalEvent(events, runId);
+  if (terminal === undefined) {
+    throw new SessionStateError(`run ${runId} ended without a matching RUN_FINISHED or RUN_ERROR event`, { runId });
   }
-  throw new SessionStateError(`run ${runId} ended without a matching RUN_FINISHED or RUN_ERROR event`, { runId });
+  const carried = carriedOutcome(terminal);
+  if (carried === undefined) {
+    throw new SessionStateError("RUN terminal is missing a valid explicit outcome", { runId });
+  }
+  if (terminal.type === "RUN_ERROR" && carried !== "failed") {
+    throw new SessionStateError("RUN_ERROR must carry outcome=failed", { runId });
+  }
+  if (terminal.type === "RUN_FINISHED" && carried === "failed") {
+    throw new SessionStateError("a failed run must terminate with RUN_ERROR", { runId });
+  }
+  return carried;
 }
 
 /** True only for a completed successful run. */
@@ -300,9 +315,7 @@ function runBillingFromEvents(
   events: readonly AexEvent[],
   runId: string
 ): { readonly costUsd: number; readonly usage: UsageSummary } {
-  const terminal = [...events].reverse().find(
-    (event) => event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
-  );
+  const terminal = latestRunTerminalEvent(events, runId);
   if (terminal === undefined) {
     throw new SessionStateError(`run ${runId} ended without a matching terminal event`, { runId });
   }
@@ -408,9 +421,7 @@ export function assertRunCheckpoint(
   runId: string,
   revision: SessionCheckpointRevision
 ): void {
-  const terminal = [...events].reverse().find(
-    (event) => event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
-  );
+  const terminal = latestRunTerminalEvent(events, runId);
   const checkpoint = terminal ? asRecord(terminal.data.checkpoint) : {};
   if (
     terminal === undefined ||
@@ -427,9 +438,7 @@ export function assertRunCheckpoint(
 }
 
 export function terminalCheckpointId(events: readonly AexEvent[], runId: string): string | undefined {
-  const terminal = [...events].reverse().find(
-    (event) => event.runId === runId && (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR")
-  );
+  const terminal = latestRunTerminalEvent(events, runId);
   const checkpointId = terminal ? asRecord(terminal.data.checkpoint).checkpointId : undefined;
   if (typeof checkpointId !== "string" || checkpointId.length === 0) {
     if (terminal?.type === "RUN_ERROR") return undefined;
