@@ -64,7 +64,7 @@ export const AEX_EVENT_MAP_VERSION = 2 as const;
  *                 runtime process itself.
  */
 export const AEX_EVENT_SOURCES = ["agent", "api", "runtime", "mcp", "aex", "workflow", "host"] as const;
-export type AexEventSource = (typeof AEX_EVENT_SOURCES)[number];
+export type AexEventSource = (typeof AEX_EVENT_SOURCES)[number] | string;
 
 /**
  * The channel a record rides on the unified per-session stream:
@@ -105,7 +105,19 @@ export const AEX_EVENT_TYPES = [
   // off-the-shelf AG-UI client filters logs out by `channel`.
   "LOG"
 ] as const;
-export type AexEventType = (typeof AEX_EVENT_TYPES)[number];
+export type AexEventType = (typeof AEX_EVENT_TYPES)[number] | string;
+
+/**
+ * Opt-in producer identity for at-least-once ingest. This is distinct from the
+ * coarse envelope `source`/`sourceSeq`: only producers maintaining a
+ * session-scoped monotonic counter set this pair.
+ */
+export interface AexEventDedup {
+  /** Free-form producer identity, not the coarse envelope source. */
+  readonly source: string;
+  /** Producer-monotonic integer scoped to `source` within the session. */
+  readonly sourceSeq: number;
+}
 
 /** Fields shared by durable events and provisional live-only stream frames. */
 export interface AexEventBase {
@@ -159,6 +171,10 @@ export interface AexEventBase {
   readonly level?: AexLogLevel;
   /** Optional human-readable summary for log / CLI / dashboard rendering. */
   readonly message?: string;
+  /** Optional producer identity used by the coordinator's idempotent ingest. */
+  readonly dedup?: AexEventDedup;
+  /** True only for producer-authored broadcast-only frames. */
+  readonly ephemeral?: boolean;
   /**
    * Typed payload. For `CUSTOM` events this is `{ name, value }` (AG-UI's
    * custom carrier, `name` = `aex.<kind>`); for typed events it is the
@@ -186,15 +202,25 @@ export interface AexLiveEvent extends AexEventBase {
   readonly replayable: false;
   readonly liveSequence: number;
   readonly sequence?: never;
+  readonly receivedAt: number;
+  readonly ephemeral: true;
 }
 
 /** Events a live coordinator WebSocket may yield. */
 export type AexStreamEvent = AexEvent | AexLiveEvent;
 
+/** True only for a provisional frame outside the durable replay sequence. */
+export function isAexLiveEvent(event: AexStreamEvent): event is AexLiveEvent {
+  return event.replayable === false;
+}
+
 /** True only for a durable event carrying a replay cursor. */
 export function isReplayableEvent(event: AexStreamEvent): event is AexEvent {
   return event.replayable !== false && typeof event.sequence === "number";
 }
+
+/** Compatibility spelling used by the hosted platform. */
+export const isReplayableAexEvent = isReplayableEvent;
 
 /** Context the mapper needs to stamp absolute identity/time onto an event. */
 export interface AexEventContext {
@@ -233,6 +259,8 @@ export function runnerEventToAexEvent(evt: RunnerEvent, ctx: AexEventContext): A
     runId: ctx.runId,
     time: new Date(ctx.baseMs + evt.tMs).toISOString(),
     sequence: evt.seq,
+    ...(evt.sourceSeq !== undefined ? { sourceSeq: evt.sourceSeq } : {}),
+    ...(evt.emittedAt !== undefined ? { emittedAt: evt.emittedAt } : {}),
     ...(projection.message !== undefined ? { message: projection.message } : {}),
     data: Object.freeze(projection.data)
   };
@@ -242,7 +270,7 @@ function project(evt: RunnerEvent): Projection | null {
   const data = evt.data;
   switch (evt.kind) {
     case "runtime_started":
-      return { type: "RUN_STARTED", source: "runtime", message: "run started", data: { ...data } };
+      return { type: "RUN_STARTED", source: "runtime", message: "turn started", data: { ...data } };
     case "assistant_text": {
       const text = str(data.text);
       return {
@@ -517,6 +545,10 @@ export function toAGUI(e: AexEventBase): AguiEvent {
       // projection. If a consumer projects one anyway, carry it under AG-UI's
       // reserved CUSTOM so the client still receives a valid record.
       return { type: "CUSTOM", timestamp, name: "aex.log", value: { ...d } };
+    default:
+      // Raw AexEvent stays open and untouched for forward compatibility. AG-UI
+      // has a reserved CUSTOM carrier for event types a client does not know.
+      return { type: "CUSTOM", timestamp, name: e.type, value: { ...d } };
   }
 }
 

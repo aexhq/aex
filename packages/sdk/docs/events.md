@@ -6,6 +6,11 @@ title: Events
 
 Durable event reads use one `AexEventView` shape with CloudEvents identity,
 monotonic `sequence`, real AG-UI `threadId`, and real `runId`.
+The `AEX_EVENT_TYPES` and `AEX_EVENT_SOURCES` arrays list the events authored by
+the current SDK, but the raw envelope accepts future type and source strings.
+Unknown events are yielded with their original fields and data intact; `toAGUI`
+projects an unknown type through AG-UI's `CUSTOM` carrier without changing the
+raw event.
 
 ```ts
 const session = await aex.sessions.open(sessionId);
@@ -74,7 +79,8 @@ for await (const event of session.events.streamEnvelopes({ from: 0 })) {
   returned by `events.iterate()`, `events.list()`, polling streams, archives,
   and finished results.
 - Provisional live events have `replayable: false`, a per-run `liveSequence`,
-  and no durable `sequence`. They are not replayed from storage.
+  `ephemeral: true`, the coordinator `receivedAt` time, and no durable
+  `sequence`. They are not replayed from storage.
 
 The SDK mints a short-lived coordinator ticket, reconnects durable events from
 the last sequence after transient transport loss, deduplicates repeated live

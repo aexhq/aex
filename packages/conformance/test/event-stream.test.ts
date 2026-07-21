@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { expectEventStream } from "../src/event-stream.js";
 
 describe("expectEventStream", () => {
+  it("accepts and does not mutate an unknown future event inside a run", () => {
+    const future = {
+      type: "STATE_SNAPSHOT_V2",
+      data: { revision: 2, opaque: ["keep", "this"] },
+      futureEnvelopeField: { untouched: true }
+    };
+    const before = JSON.stringify(future);
+    const events = [{ type: "RUN_STARTED" }, future, { type: "RUN_FINISHED" }];
+
+    expect(expectEventStream(events)).toEqual({ startedIdx: 0, terminalIdx: 2 });
+    expect(JSON.stringify(future)).toBe(before);
+  });
+
   it("returns start and terminal indices on a well-formed run", () => {
     const events = [
       { type: "RUN_STARTED" },

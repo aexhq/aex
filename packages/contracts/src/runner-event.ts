@@ -73,6 +73,10 @@ export type RunnerEventKind = (typeof RUNNER_EVENT_KINDS)[number];
 export interface RunnerEvent {
   readonly seq: number;
   readonly tMs: number;
+  /** Optional per-source ordering counter carried through to AexEvent. */
+  readonly sourceSeq?: number;
+  /** Optional producer wall-clock time in milliseconds. */
+  readonly emittedAt?: number;
   readonly kind: RunnerEventKind;
   readonly data: Readonly<Record<string, JsonValue>>;
 }
@@ -189,6 +193,24 @@ export function validateRunnerEventBatch(input: unknown): RunnerEventBatchValida
         `events[${i}].kind must be one of: ${RUNNER_EVENT_KINDS.join(", ")} (got ${JSON.stringify(evt.kind)})`
       );
     }
+    if (
+      evt.sourceSeq !== undefined &&
+      (typeof evt.sourceSeq !== "number" ||
+        !Number.isFinite(evt.sourceSeq) ||
+        !Number.isInteger(evt.sourceSeq) ||
+        evt.sourceSeq < 0)
+    ) {
+      return invalid("invalid_event", `events[${i}].sourceSeq must be a non-negative integer when present`);
+    }
+    if (
+      evt.emittedAt !== undefined &&
+      (typeof evt.emittedAt !== "number" ||
+        !Number.isFinite(evt.emittedAt) ||
+        !Number.isInteger(evt.emittedAt) ||
+        evt.emittedAt < 0)
+    ) {
+      return invalid("invalid_event", `events[${i}].emittedAt must be a non-negative integer when present`);
+    }
     if (!isRecord(evt.data)) {
       return invalid("invalid_event", `events[${i}].data must be a JSON object`);
     }
@@ -212,6 +234,8 @@ export function validateRunnerEventBatch(input: unknown): RunnerEventBatchValida
     events.push({
       seq: evt.seq,
       tMs: evt.tMs,
+      ...(evt.sourceSeq !== undefined ? { sourceSeq: evt.sourceSeq } : {}),
+      ...(evt.emittedAt !== undefined ? { emittedAt: evt.emittedAt } : {}),
       kind: evt.kind as RunnerEventKind,
       data: Object.freeze({ ...evt.data }) as Readonly<Record<string, JsonValue>>
     });

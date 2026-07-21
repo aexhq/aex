@@ -242,6 +242,8 @@ export class FakePlatform {
           time: new Date(seq + liveSequence).toISOString(),
           replayable: false,
           liveSequence,
+          receivedAt: seq + liveSequence,
+          ephemeral: true,
           data: { text: chunk, messageId: "m1", delta: true }
         };
         ws.message(event);
