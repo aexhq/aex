@@ -15,10 +15,15 @@ an asset, logical resource ID, version, hash, name, and mount path.
 `mountPath` is always a destination directory. The runtime preserves each
 source/archive filename inside that directory, so an `input.csv` published
 with `mountPath: "/workspace/input"` appears at
-`/workspace/input/input.csv`. A `name` passed to `File.fromPath` is only the
-resource's storage slug; it never renames the mounted file. Multiple files can
-intentionally share one mount directory as long as their resulting paths do
-not collide.
+`/workspace/input/input.csv`. `File.fromBytes({ name })` accepts the filename
+stored in the archive; the optional `File.fromPath(path, { name })` override is
+a filename-shaped label used only for resource identity while the source
+basename remains in the archive. The SDK derives a lowercase, hyphenated 2–64
+character value from either input. The result is the resource's storage slug; it never renames the mounted file.
+This compatibility slug is distinct from the
+directly supplied persisted name used by instructions. Multiple files can
+intentionally share one mount directory as long as their resulting paths do not
+collide.
 
 ## Reusable workspace files
 

@@ -67,6 +67,28 @@ describe("File.fromBytes", () => {
     expect(name).toBe("source-video"); // slug: lowercased, ext dropped, kebab
   });
 
+  it.each([
+    ["a", "f-a"],
+    ["a".repeat(63), "a".repeat(63)],
+    ["a".repeat(64), "a".repeat(64)],
+    ["Report_Final.TXT", "report-final"]
+  ])("preserves the filename-to-storage-slug compatibility rule for %j", async (filename, storageSlug) => {
+    const file = await File.fromBytes({ name: filename, bytes: TEXT.encode("x") });
+    const { name, entries } = takeBundle(file);
+    expect(name).toBe(storageSlug);
+    expect(Object.keys(entries)).toEqual([filename]);
+  });
+
+  it.each(["a".repeat(65), "a".repeat(128), "a".repeat(129), "___"])(
+    "keeps fallback storage slug generation distinct from persisted-name admission for %j",
+    async (filename) => {
+      const file = await File.fromBytes({ name: filename, bytes: TEXT.encode("x") });
+      const { name, entries } = takeBundle(file);
+      expect(name).toMatch(/^file-[a-z0-9]+$/);
+      expect(Object.keys(entries)).toEqual([filename]);
+    }
+  );
+
   it("rejects a filename containing a path separator", async () => {
     await expect(
       File.fromBytes({ name: "a/b.txt", bytes: TEXT.encode("x") })

@@ -25,7 +25,11 @@ import type {
   WorkspaceSkillRef,
   WorkspaceToolRef
 } from "./workspace-resources.js";
-import { assertPinnedWorkspaceResource } from "./workspace-resources.js";
+import {
+  assertPinnedWorkspaceResource,
+  assertWorkspaceFileResourceName,
+  assertWorkspaceInstructionResourceName
+} from "./workspace-resources.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
@@ -1341,7 +1345,8 @@ function parseSubmissionAssets(input: unknown): SubmissionAssets {
 
 function parseWorkspaceFiles(input: unknown): readonly WorkspaceFileRef[] {
   return parseWorkspaceResourceArray(input, "files", "file", ["name", "mountPath"], (raw, base, path) => {
-    const name = requireResourceName(raw.name, `${path}.name`);
+    const name = requireString(raw.name, `${path}.name`);
+    assertWorkspaceFileResourceName(name, `${path}.name`);
     const mountPath = requireString(raw.mountPath, `${path}.mountPath`);
     assertValidMountPath(mountPath, `${path}.mountPath`);
     return { ...base, kind: "file", name, mountPath };
@@ -1387,11 +1392,11 @@ function parseWorkspaceTools(input: unknown): readonly WorkspaceToolRef[] {
 }
 
 function parseWorkspaceInstructions(input: unknown): readonly WorkspaceInstructionRef[] {
-  return parseWorkspaceResourceArray(input, "instructions", "instruction", ["name"], (raw, base, path) => ({
-    ...base,
-    kind: "instruction",
-    name: requireResourceName(raw.name, `${path}.name`)
-  }));
+  return parseWorkspaceResourceArray(input, "instructions", "instruction", ["name"], (raw, base, path) => {
+    const name = requireString(raw.name, `${path}.name`);
+    assertWorkspaceInstructionResourceName(name, `${path}.name`);
+    return { ...base, kind: "instruction", name };
+  });
 }
 
 type PinnedResourceBase = Pick<
@@ -1437,12 +1442,6 @@ function requirePositiveInteger(input: unknown, path: string): number {
     throw new Error(`${path} must be a positive integer`);
   }
   return input as number;
-}
-
-function requireResourceName(input: unknown, path: string): string {
-  const value = requireString(input, path);
-  if (value.length > 128) throw new Error(`${path} must be <= 128 chars`);
-  return value;
 }
 
 function requireResourceDescription(input: unknown, path: string): string {

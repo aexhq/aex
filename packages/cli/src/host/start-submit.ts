@@ -2,6 +2,7 @@ import {
   ASSET_ARCHIVE_LIMITS,
   BUILTIN_TOOL_NAMES,
   DEFAULT_FILE_MOUNT_PATH,
+  assertWorkspaceInstructionResourceName,
   parseSessionLimits,
   parseSessionTimeout,
   parseSessionWebhook,
@@ -167,9 +168,7 @@ export async function buildCliInstructions(content: string, name: string): Promi
   if (typeof content !== "string" || content.length === 0) {
     throw new Error("Instructions.fromContent: content must be a non-empty string");
   }
-  if (!/^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name)) {
-    throw new Error("Instructions.fromContent: name must be a lowercase workspace slug");
-  }
+  assertWorkspaceInstructionResourceName(name, "Instructions.fromContent: name");
   const bytes = bundleSingleFile("AGENTS.md", TEXT.encode(content), "Instructions.fromContent", false);
   return { name, contentHash: await hashSkillBundle(bytes, "cli"), bytes };
 }

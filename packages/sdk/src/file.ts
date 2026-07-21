@@ -259,7 +259,9 @@ export interface DraftFileRef {
 export type ZipStreamDriver = (sink: ByteSink) => Promise<void>;
 
 const ZIP_EPOCH = new Date(Date.UTC(1980, 0, 1));
-const WORKSPACE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
+// Private compatibility rule for a filename-derived storage slug. This is not
+// the persisted workspace file/instruction resource-name admission contract.
+const DERIVED_FILE_STORAGE_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
 
 /**
  * Total raw input size (via `stat`, before reading bytes) above which
@@ -329,7 +331,7 @@ function sanitiseFilename(name: string): string | undefined {
 function slugFromFilename(filename: string): string {
   const stem = filename.replace(/\.[^.]+$/, "").toLowerCase();
   const slug = stem.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  if (slug.length >= 2 && WORKSPACE_NAME_RE.test(slug)) return slug;
+  if (slug.length >= 2 && DERIVED_FILE_STORAGE_SLUG_PATTERN.test(slug)) return slug;
   if (slug.length === 1) return `f-${slug}`;
   return `file-${Date.now().toString(36)}`;
 }

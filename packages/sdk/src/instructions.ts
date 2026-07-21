@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { strToU8 } from "fflate";
+import { assertWorkspaceInstructionResourceName } from "@aexhq/contracts";
 import { bundleSingleFile, hashSkillBundle } from "@aexhq/contracts/internal";
 
 /** Draft instruction context published through `aex.workspace.instructions`. */
@@ -23,12 +24,11 @@ export class Instructions {
     if (typeof content !== "string" || content.length === 0) {
       throw new Error("Instructions.fromContent: content must be a non-empty string");
     }
-    if (!args || typeof args.name !== "string" || !WORKSPACE_NAME_RE.test(args.name)) {
-      throw new Error(`Instructions.fromContent: name must match ${WORKSPACE_NAME_RE.source}`);
-    }
+    const name = args?.name;
+    assertWorkspaceInstructionResourceName(name, "Instructions.fromContent: name");
     const bytes = strToU8(content);
     const zip = bundleSingleFile("AGENTS.md", bytes, "Instructions.fromContent");
-    return new Instructions(args.name, await hashSkillBundle(zip), zip);
+    return new Instructions(name, await hashSkillBundle(zip), zip);
   }
 
   static async fromPath(path: string, args: { readonly name: string }): Promise<Instructions> {
@@ -46,5 +46,3 @@ export class Instructions {
     );
   }
 }
-
-const WORKSPACE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
