@@ -32,6 +32,26 @@ async function expectConfigError(
   expect(calls).toHaveLength(0);
 }
 
+async function expectExactConfigError(
+  operation: () => Promise<unknown>,
+  field: string,
+  message: string,
+  calls: readonly string[]
+): Promise<void> {
+  const error = await operation().then(
+    () => undefined,
+    (caught: unknown) => caught
+  );
+  expect(error).toBeInstanceOf(SessionConfigValidationError);
+  expect(error).toMatchObject({
+    name: "SessionConfigValidationError",
+    code: "SESSION_CONFIG_INVALID",
+    message,
+    details: { field }
+  });
+  expect(calls).toHaveLength(0);
+}
+
 describe("aex.sessions.create — removed field validation", () => {
   it("rejects the legacy runtimeSize field without an HTTP call", async () => {
     const rec = recordingFetch();
@@ -109,6 +129,22 @@ describe("aex.sessions.create — removed field validation", () => {
 });
 
 describe("aex.sessions.create — submit-boundary validation (Theme A, pre-network)", () => {
+  it("rejects the first unknown top-level key with the exact fail-fast error", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expectExactConfigError(
+      () => client.sessions.create({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        futureFirst: true,
+        futureSecond: true
+      } as never),
+      "futureFirst",
+      "aex.sessions.create: futureFirst is not a supported option",
+      rec.calls
+    );
+  });
+
   it("rejects an invalid runtime.size token without an HTTP call (F11)", async () => {
     const rec = recordingFetch();
     const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
@@ -259,6 +295,66 @@ describe("aex.sessions.create — submit-boundary validation (Theme A, pre-netwo
       field,
       rec.calls
     );
+  });
+
+  it.each([
+    ["asset file", { assets: { files: [{ future: true }] } }, "assets.files[0].future"],
+    ["asset skill", { assets: { skills: [{ future: true }] } }, "assets.skills[0].future"],
+    ["asset tool", { assets: { tools: [{ future: true }] } }, "assets.tools[0].future"],
+    ["asset instruction", { assets: { instructions: [{ future: true }] } }, "assets.instructions[0].future"],
+    ["text response", { responseFormat: { kind: "text", schema: {} } }, "responseFormat.schema"]
+  ] as const)("pins the exact unknown-key error for %s", async (_label, extra, field) => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    await expectExactConfigError(
+      () => client.sessions.create({
+        model: "claude-haiku-4-5",
+        apiKeys: { anthropic: "sk-x" },
+        ...extra
+      } as never),
+      field,
+      `aex.sessions.create: ${field} is not a supported option`,
+      rec.calls
+    );
+  });
+
+  it("accepts published resource metadata and arbitrary keys in intentionally open maps", async () => {
+    const rec = recordingFetch();
+    const client = new Aex({ apiKey: "tk", baseUrl: "https://dash.test", fetch: rec.fetch });
+    const common = {
+      resourceId: `wres_${"1".repeat(32)}`,
+      version: 1,
+      assetId: `asset_${"a".repeat(64)}`,
+      contentHash: `sha256:${"a".repeat(64)}`,
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T01:00:00.000Z",
+      sizeBytes: 42,
+      contentType: "application/zip"
+    } as const;
+    await client.sessions.create({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-x", future_provider: "future-key" } as never,
+      metadata: { callerDefined: { nested: true } },
+      assets: {
+        files: [{ ...common, kind: "file", name: "input.txt", mountPath: "/workspace/input.txt" }],
+        skills: [{ ...common, kind: "skill", name: "skill", description: "A skill" }],
+        tools: [{
+          ...common,
+          kind: "tool",
+          name: "tool",
+          description: "A tool",
+          input_schema: { type: "object", callerKeyword: true },
+          entry: "index.js"
+        }],
+        instructions: [{ ...common, kind: "instruction", name: "guide" }]
+      },
+      environment: { variables: { CALLER_DEFINED: "yes" } },
+      responseFormat: {
+        kind: "json_schema",
+        schema: { type: "object", properties: { callerDefined: { type: "string" } } }
+      }
+    } as never);
+    expect(rec.calls).toHaveLength(1);
   });
 });
 

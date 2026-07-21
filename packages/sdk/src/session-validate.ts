@@ -2,9 +2,169 @@ import {
   containsSecretLikeValue,
   redactString,
   SessionConfigValidationError,
-  type ProviderName
+  type ApprovalGate,
+  type PlatformNetworking,
+  type PlatformPackageInput,
+  type ProviderName,
+  type ResponseFormat,
+  type SessionRuntime,
+  type SubmissionAssets,
+  type WorkspaceFileRecord,
+  type WorkspaceInstructionRecord,
+  type WorkspaceSkillRecord,
+  type WorkspaceToolRecord
 } from "@aexhq/contracts";
-import type { SessionCreateOptions, SessionInput } from "./client-types.js";
+import type {
+  SessionCreateOptions,
+  SessionEnvironmentOptions,
+  SessionInput,
+  SessionOverrides,
+  SessionSendOptions,
+  SessionStartOptions,
+  StartSessionOptions
+} from "./client-types.js";
+
+type ExactKeys<Shape, Keys extends PropertyKey> =
+  [Exclude<keyof Shape, Keys>] extends [never]
+    ? [Exclude<Keys, keyof Shape>] extends [never]
+      ? true
+      : false
+    : false;
+
+/** Package-private compile-time proof that a runtime tuple's key set equals the public shape. */
+export type ExactKeySet<Shape, Keys extends readonly PropertyKey[]> = ExactKeys<Shape, Keys[number]>;
+type Assert<T extends true> = T;
+
+const SESSION_CREATE_KEYS = [
+  "provider", "model", "system", "assets", "mcpServers", "fileCapture",
+  "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
+  "idempotencyKey", "apiKeys", "environment", "runtime", "overrides", "webhook"
+] as const satisfies readonly (keyof SessionCreateOptions)[];
+type SessionCreateKeysAreExact = Assert<ExactKeySet<SessionCreateOptions, typeof SESSION_CREATE_KEYS>>;
+
+const SESSION_START_KEYS = [
+  ...SESSION_CREATE_KEYS,
+  "message", "deleteAfter", "messageIdempotencyKey", "stream"
+] as const satisfies readonly (keyof SessionStartOptions)[];
+type SessionStartKeysAreExact = Assert<ExactKeySet<SessionStartOptions, typeof SESSION_START_KEYS>>;
+
+const START_CONTROL_KEYS = [
+  "timeoutMs", "webSocketFactory", "idleTimeoutMs", "pingIntervalMs", "throwOnFailure"
+] as const satisfies readonly (keyof StartSessionOptions)[];
+type StartControlKeysAreExact = Assert<ExactKeySet<StartSessionOptions, typeof START_CONTROL_KEYS>>;
+
+const SESSION_SEND_KEYS = [
+  "webSocketFactory", "idleTimeoutMs", "pingIntervalMs", "idempotencyKey"
+] as const satisfies readonly (keyof SessionSendOptions)[];
+type SessionSendKeysAreExact = Assert<ExactKeySet<SessionSendOptions, typeof SESSION_SEND_KEYS>>;
+
+type SessionStreamOptions = Omit<SessionSendOptions, "idempotencyKey">;
+const SESSION_STREAM_KEYS = [
+  "webSocketFactory", "idleTimeoutMs", "pingIntervalMs"
+] as const satisfies readonly (keyof SessionStreamOptions)[];
+type SessionStreamKeysAreExact = Assert<ExactKeySet<SessionStreamOptions, typeof SESSION_STREAM_KEYS>>;
+
+const SESSION_OVERRIDE_KEYS = [
+  "idleTtl", "timeout", "maxSpendUsd", "maxTurns"
+] as const satisfies readonly (keyof SessionOverrides)[];
+type SessionOverrideKeysAreExact = Assert<ExactKeySet<SessionOverrides, typeof SESSION_OVERRIDE_KEYS>>;
+
+const SESSION_RUNTIME_KEYS = ["kind", "size"] as const satisfies readonly (keyof SessionRuntime)[];
+type SessionRuntimeKeysAreExact = Assert<ExactKeySet<SessionRuntime, typeof SESSION_RUNTIME_KEYS>>;
+
+type FileCaptureOptions = NonNullable<SessionCreateOptions["fileCapture"]>;
+const FILE_CAPTURE_KEYS = [
+  "allowedDirs", "deniedDirs", "captureTimeoutMs", "maxFileBytes", "maxTotalBytes", "maxFiles"
+] as const satisfies readonly (keyof FileCaptureOptions)[];
+type FileCaptureKeysAreExact = Assert<ExactKeySet<FileCaptureOptions, typeof FILE_CAPTURE_KEYS>>;
+
+type SessionWebhookOptions = NonNullable<SessionCreateOptions["webhook"]>;
+const SESSION_WEBHOOK_KEYS = ["url"] as const satisfies readonly (keyof SessionWebhookOptions)[];
+type SessionWebhookKeysAreExact = Assert<ExactKeySet<SessionWebhookOptions, typeof SESSION_WEBHOOK_KEYS>>;
+
+const SESSION_ENVIRONMENT_KEYS = [
+  "networking", "packages", "variables", "secrets"
+] as const satisfies readonly (keyof SessionEnvironmentOptions)[];
+type SessionEnvironmentKeysAreExact = Assert<ExactKeySet<SessionEnvironmentOptions, typeof SESSION_ENVIRONMENT_KEYS>>;
+
+const PLATFORM_NETWORKING_KEYS = [
+  "mode", "allowedHosts"
+] as const satisfies readonly (keyof PlatformNetworking)[];
+type PlatformNetworkingKeysAreExact = Assert<ExactKeySet<PlatformNetworking, typeof PLATFORM_NETWORKING_KEYS>>;
+
+const PLATFORM_PACKAGE_INPUT_KEYS = [
+  "name", "version"
+] as const satisfies readonly (keyof PlatformPackageInput)[];
+type PlatformPackageInputKeysAreExact = Assert<ExactKeySet<PlatformPackageInput, typeof PLATFORM_PACKAGE_INPUT_KEYS>>;
+
+type TextResponseFormat = Extract<ResponseFormat, { readonly kind: "text" }>;
+const TEXT_RESPONSE_FORMAT_KEYS = ["kind"] as const satisfies readonly (keyof TextResponseFormat)[];
+type TextResponseFormatKeysAreExact = Assert<ExactKeySet<TextResponseFormat, typeof TEXT_RESPONSE_FORMAT_KEYS>>;
+
+type JsonSchemaResponseFormat = Extract<ResponseFormat, { readonly kind: "json_schema" }>;
+const JSON_SCHEMA_RESPONSE_FORMAT_KEYS = [
+  "kind", "schema", "strict", "name"
+] as const satisfies readonly (keyof JsonSchemaResponseFormat)[];
+type JsonSchemaResponseFormatKeysAreExact = Assert<ExactKeySet<JsonSchemaResponseFormat, typeof JSON_SCHEMA_RESPONSE_FORMAT_KEYS>>;
+
+const APPROVAL_GATE_KEYS = ["tools"] as const satisfies readonly (keyof ApprovalGate)[];
+type ApprovalGateKeysAreExact = Assert<ExactKeySet<ApprovalGate, typeof APPROVAL_GATE_KEYS>>;
+
+const ASSET_CATEGORY_KEYS = [
+  "files", "skills", "tools", "instructions"
+] as const satisfies readonly (keyof SubmissionAssets)[];
+type AssetCategoryKeysAreExact = Assert<ExactKeySet<SubmissionAssets, typeof ASSET_CATEGORY_KEYS>>;
+
+const ASSET_ITEM_KEYS = {
+  files: [
+    "kind", "resourceId", "version", "assetId", "contentHash", "createdAt", "updatedAt",
+    "sizeBytes", "contentType", "name", "mountPath"
+  ],
+  skills: [
+    "kind", "resourceId", "version", "assetId", "contentHash", "createdAt", "updatedAt",
+    "sizeBytes", "contentType", "name", "description"
+  ],
+  tools: [
+    "kind", "resourceId", "version", "assetId", "contentHash", "createdAt", "updatedAt",
+    "sizeBytes", "contentType", "name", "description", "input_schema", "entry"
+  ],
+  instructions: [
+    "kind", "resourceId", "version", "assetId", "contentHash", "createdAt", "updatedAt",
+    "sizeBytes", "contentType", "name"
+  ]
+} as const satisfies {
+  readonly files: readonly (keyof WorkspaceFileRecord)[];
+  readonly skills: readonly (keyof WorkspaceSkillRecord)[];
+  readonly tools: readonly (keyof WorkspaceToolRecord)[];
+  readonly instructions: readonly (keyof WorkspaceInstructionRecord)[];
+};
+type AssetFileKeysAreExact = Assert<ExactKeySet<WorkspaceFileRecord, typeof ASSET_ITEM_KEYS.files>>;
+type AssetSkillKeysAreExact = Assert<ExactKeySet<WorkspaceSkillRecord, typeof ASSET_ITEM_KEYS.skills>>;
+type AssetToolKeysAreExact = Assert<ExactKeySet<WorkspaceToolRecord, typeof ASSET_ITEM_KEYS.tools>>;
+type AssetInstructionKeysAreExact = Assert<ExactKeySet<WorkspaceInstructionRecord, typeof ASSET_ITEM_KEYS.instructions>>;
+
+export type SessionOptionKeyAssertions = readonly [
+  SessionCreateKeysAreExact,
+  SessionStartKeysAreExact,
+  StartControlKeysAreExact,
+  SessionSendKeysAreExact,
+  SessionStreamKeysAreExact,
+  SessionOverrideKeysAreExact,
+  SessionRuntimeKeysAreExact,
+  FileCaptureKeysAreExact,
+  SessionWebhookKeysAreExact,
+  SessionEnvironmentKeysAreExact,
+  PlatformNetworkingKeysAreExact,
+  PlatformPackageInputKeysAreExact,
+  TextResponseFormatKeysAreExact,
+  JsonSchemaResponseFormatKeysAreExact,
+  ApprovalGateKeysAreExact,
+  AssetCategoryKeysAreExact,
+  AssetFileKeysAreExact,
+  AssetSkillKeysAreExact,
+  AssetToolKeysAreExact,
+  AssetInstructionKeysAreExact
+];
 
 const VALIDATION_DIAGNOSTIC_MAX_LENGTH = 512;
 const VALIDATION_DIAGNOSTIC_SOURCE_MAX_LENGTH = 4_096;
@@ -144,12 +304,7 @@ export function assertSupportedSessionFields(
   allowStartFields: boolean
 ): void {
   const record = options as unknown as Record<string, unknown>;
-  const allowed = new Set([
-    "provider", "model", "system", "assets", "mcpServers", "fileCapture",
-    "builtinTools", "outputMode", "responseFormat", "approvalGate", "metadata",
-    "idempotencyKey", "apiKeys", "environment", "runtime", "overrides", "webhook",
-    ...(allowStartFields ? ["message", "deleteAfter", "messageIdempotencyKey", "stream"] : [])
-  ]);
+  const allowed = new Set<string>(allowStartFields ? SESSION_START_KEYS : SESSION_CREATE_KEYS);
   const guidance: Readonly<Record<string, string>> = {
     runtimeSize: "use runtime.size",
     runtimeKind: "use runtime.kind",
@@ -186,7 +341,7 @@ export function assertSupportedSessionFields(
       throw configError(surface, "runtime", "runtime must be an object like { kind, size }");
     }
     for (const key of Object.keys(runtime as Record<string, unknown>)) {
-      if (key !== "kind" && key !== "size") {
+      if (!(SESSION_RUNTIME_KEYS as readonly string[]).includes(key)) {
         throw configError(surface, `runtime.${key}`, `runtime.${key} is not a supported option; use runtime.kind or runtime.size`);
       }
     }
@@ -201,12 +356,7 @@ export function assertSupportedSessionSendOptions(
 ): void {
   const record = options as Record<string, unknown> | undefined;
   if (!record || typeof record !== "object") return;
-  const allowed = new Set([
-    "webSocketFactory",
-    "idleTimeoutMs",
-    "pingIntervalMs",
-    ...(allowIdempotencyKey ? ["idempotencyKey"] : [])
-  ]);
+  const allowed = new Set<string>(allowIdempotencyKey ? SESSION_SEND_KEYS : SESSION_STREAM_KEYS);
   for (const field of Object.keys(record)) {
     if (allowed.has(field)) continue;
     const guidance = field === "from"
@@ -222,6 +372,10 @@ export function assertSupportedSessionSendOptions(
   }
 }
 
+export function assertStartSessionOptions(options: unknown, surface: string): void {
+  assertAllowedObjectFields(options, surface, "options", START_CONTROL_KEYS);
+}
+
 function assertStructuredSessionFields(
   record: Record<string, unknown>,
   surface: string,
@@ -231,7 +385,7 @@ function assertStructuredSessionFields(
     record.overrides,
     surface,
     "overrides",
-    ["idleTtl", "timeout", "maxSpendUsd", "maxTurns"]
+    SESSION_OVERRIDE_KEYS
   );
   void overrides;
   assertAssetsFields(record.assets, surface);
@@ -239,25 +393,25 @@ function assertStructuredSessionFields(
     record.fileCapture,
     surface,
     "fileCapture",
-    ["allowedDirs", "deniedDirs", "captureTimeoutMs", "maxFileBytes", "maxTotalBytes", "maxFiles"]
+    FILE_CAPTURE_KEYS
   );
   assertEnvironmentFields(record.environment, surface);
-  assertAllowedObjectFields(record.webhook, surface, "webhook", ["url"]);
+  assertAllowedObjectFields(record.webhook, surface, "webhook", SESSION_WEBHOOK_KEYS);
 
   const responseFormat = assertRecord(record.responseFormat, surface, "responseFormat");
   if (responseFormat !== undefined) {
     const allowed = responseFormat.kind === "text"
-      ? ["kind"]
-      : ["kind", "schema", "strict", "name"];
+      ? TEXT_RESPONSE_FORMAT_KEYS
+      : JSON_SCHEMA_RESPONSE_FORMAT_KEYS;
     assertAllowedKeys(responseFormat, surface, "responseFormat", allowed);
   }
-  assertAllowedObjectFields(record.approvalGate, surface, "approvalGate", ["tools"]);
+  assertAllowedObjectFields(record.approvalGate, surface, "approvalGate", APPROVAL_GATE_KEYS);
   if (allowStartFields) {
     assertAllowedObjectFields(
       record.stream,
       surface,
       "stream",
-      ["webSocketFactory", "idleTimeoutMs", "pingIntervalMs"]
+      SESSION_STREAM_KEYS
     );
   }
 }
@@ -267,22 +421,13 @@ function assertAssetsFields(value: unknown, surface: string): void {
     value,
     surface,
     "assets",
-    ["files", "skills", "tools", "instructions"]
+    ASSET_CATEGORY_KEYS
   );
   if (assets === undefined) return;
   // Workspace publish methods return records that extend the reusable ref with
   // immutable metadata. Accept those records directly so publish -> session is ergonomic.
-  const common = [
-    "kind", "resourceId", "version", "assetId", "contentHash",
-    "createdAt", "updatedAt", "sizeBytes", "contentType"
-  ];
-  const fields: Readonly<Record<string, readonly string[]>> = {
-    files: [...common, "name", "mountPath"],
-    skills: [...common, "name", "description"],
-    tools: [...common, "name", "description", "input_schema", "entry"],
-    instructions: [...common, "name"]
-  };
-  for (const [category, allowed] of Object.entries(fields)) {
+  for (const category of ASSET_CATEGORY_KEYS) {
+    const allowed = ASSET_ITEM_KEYS[category];
     const entries = assets[category];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) {
@@ -301,14 +446,14 @@ function assertEnvironmentFields(value: unknown, surface: string): void {
     value,
     surface,
     "environment",
-    ["networking", "packages", "variables", "secrets"]
+    SESSION_ENVIRONMENT_KEYS
   );
   if (environment === undefined) return;
   assertAllowedObjectFields(
     environment.networking,
     surface,
     "environment.networking",
-    ["mode", "allowedHosts"]
+    PLATFORM_NETWORKING_KEYS
   );
   for (const field of ["variables", "secrets"] as const) {
     assertRecord(environment[field], surface, `environment.${field}`);
@@ -321,7 +466,7 @@ function assertEnvironmentFields(value: unknown, surface: string): void {
   packages.forEach((entry, index) => {
     const field = `environment.packages[${index}]`;
     const item = assertRecord(entry, surface, field);
-    if (item !== undefined) assertAllowedKeys(item, surface, field, ["name", "version"]);
+    if (item !== undefined) assertAllowedKeys(item, surface, field, PLATFORM_PACKAGE_INPUT_KEYS);
   });
 }
 
