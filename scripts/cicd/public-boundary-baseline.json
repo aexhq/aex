@@ -98,12 +98,14 @@
       "./status.js",
       "./submission.js",
       "./suggest.js",
+      "./value-guards.js",
       "./webhook-verify.js",
       "./workflow-status.js",
       "./workspace-resources.js"
     ],
     "privateModuleMaxBytes": {
-      "allowed-keys.js": 1024
+      "allowed-keys.js": 1024,
+      "value-guards.js": 2048
     },
     "contractsBarrelExportSpecifiers": [
       "./provider-support.js",

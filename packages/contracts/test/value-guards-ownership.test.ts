@@ -1,0 +1,58 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const consumers = ["submission.ts", "runner-event.ts", "operations.ts"] as const;
+
+function source(name: string): string {
+  return readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8");
+}
+
+describe("value guard ownership", () => {
+  it("has one dependency-free private implementation owner", () => {
+    const owner = source("value-guards.ts");
+    expect(owner).not.toMatch(/^import /m);
+    expect(owner.match(/function isRecord\(/g)).toHaveLength(1);
+    expect(owner.match(/function isJsonValue\(/g)).toHaveLength(1);
+    expect(owner.match(/function isJsonRecord\(/g)).toHaveLength(1);
+    expect(owner.match(/function isStringLiteral</g)).toHaveLength(1);
+    expect(owner).not.toMatch(/throw\s+new|\bclass\s+\w|Object\.freeze|new Set/);
+
+    for (const file of consumers) {
+      const text = source(file);
+      expect(text, file).not.toMatch(/function isRecord\(/);
+      expect(text, file).not.toMatch(/function isJsonValue\(/);
+      expect(text, file).not.toMatch(/function isJsonRecord\(/);
+      expect(text, file).toMatch(/from "\.\/value-guards\.js"/);
+    }
+  });
+
+  it("routes domain enum checks through the neutral literal predicate", () => {
+    const submission = source("submission.ts");
+    const runner = source("runner-event.ts");
+    const operations = source("operations.ts");
+
+    expect(submission).toMatch(/function optionalEnum[\s\S]*?isStringLiteral\(input, allowed\)/);
+    expect(runner).toMatch(/isStringLiteral\(evt\.kind, RUNNER_EVENT_KINDS\)/);
+    expect(operations).toMatch(/function assertOneOf[\s\S]*?isStringLiteral\(value, allowed\)/);
+  });
+
+  it("keeps the runtime helpers off supported barrels and dependencies unchanged", () => {
+    expect(source("index.ts")).not.toMatch(/value-guards/);
+    expect(source("internal.ts")).not.toMatch(/value-guards/);
+    const packageJson = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8")
+    ) as { readonly dependencies?: Readonly<Record<string, string>> };
+    expect(Object.keys(packageJson.dependencies ?? {})).toEqual(["fflate"]);
+
+    const boundary = JSON.parse(
+      readFileSync(new URL("../../../scripts/cicd/public-boundary-baseline.json", import.meta.url), "utf8")
+    ) as {
+      readonly contractsInline?: {
+        readonly allowedModuleFiles?: readonly string[];
+        readonly privateModuleMaxBytes?: Readonly<Record<string, number>>;
+      };
+    };
+    expect(boundary.contractsInline?.allowedModuleFiles).toContain("./value-guards.js");
+    expect(boundary.contractsInline?.privateModuleMaxBytes?.["value-guards.js"]).toBe(2048);
+  });
+});

@@ -558,7 +558,7 @@ function optionalBoolean(data: Readonly<Record<string, JsonValue>>, key: string)
   return data[key] === undefined || typeof data[key] === "boolean";
 }
 
-function isJsonRecord(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
+function isJsonObjectShape(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -613,7 +613,7 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       if (typeof d.name !== "string" || d.name.length === 0) {
         return malformed("TOOL_CALL_START", "data.name", "a non-empty string");
       }
-      if (d.arguments !== undefined && !isJsonRecord(d.arguments)) {
+      if (d.arguments !== undefined && !isJsonObjectShape(d.arguments)) {
         return malformed("TOOL_CALL_START", "data.arguments", "a JSON object when present");
       }
       return optionalString(d, "messageId")
@@ -646,7 +646,7 @@ function knownIssue(e: AexEventBase): MalformedAexEventIssue | null | undefined 
       }
       if (d.level !== e.level) return malformed("LOG", "data.level", "the first-class event level");
       if (typeof d.message !== "string") return malformed("LOG", "data.message", "a string");
-      return d.fields === undefined || isJsonRecord(d.fields)
+      return d.fields === undefined || isJsonObjectShape(d.fields)
         ? undefined
         : malformed("LOG", "data.fields", "a JSON object when present");
     default:

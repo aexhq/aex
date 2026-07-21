@@ -1,6 +1,7 @@
 import { strToU8, zipSync } from "fflate";
 import { createHash, randomUUID } from "node:crypto";
 import { CANONICAL_SHA256_DIGEST_PATTERN } from "./canonical-sha256.js";
+import { isRecord, isStringLiteral } from "./value-guards.js";
 import type { HttpClient } from "./http.js";
 import type { AexEvent } from "./event-envelope.js";
 import { AexNetworkError, SessionConfigValidationError, SessionStateError } from "./sdk-errors.js";
@@ -1353,7 +1354,7 @@ function assertOneOf<const TAllowed extends readonly string[]>(
   allowed: TAllowed,
   field: string
 ): asserts value is TAllowed[number] {
-  if (typeof value !== "string" || !allowed.includes(value)) {
+  if (!isStringLiteral(value, allowed)) {
     throw new SessionStateError(`whoami response ${field} is invalid`);
   }
 }
@@ -1858,10 +1859,6 @@ function extractSubmissionSnapshot(session: Session): { readonly submission: Pla
 
 function extractCostTelemetry(session: Session): SessionCostTelemetry | undefined {
   return session.costTelemetry;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ===========================================================================

@@ -13,7 +13,12 @@
  * This is the public event contract consumed by SDK and CLI clients.
  */
 
-import type { JsonValue } from "./submission.js";
+import {
+  isJsonRecord,
+  isRecord,
+  isStringLiteral,
+  type JsonValue
+} from "./value-guards.js";
 
 /**
  * Schema version. Bump when the shape of `RunnerEvent`, its kind set,
@@ -185,8 +190,7 @@ export function validateRunnerEventBatch(input: unknown): RunnerEventBatchValida
       return invalid("invalid_event", `events[${i}].tMs must be a non-negative integer`);
     }
     if (
-      typeof evt.kind !== "string" ||
-      !(RUNNER_EVENT_KINDS as readonly string[]).includes(evt.kind)
+      !isStringLiteral(evt.kind, RUNNER_EVENT_KINDS)
     ) {
       return invalid(
         "invalid_event",
@@ -248,30 +252,4 @@ export function validateRunnerEventBatch(input: unknown): RunnerEventBatchValida
 
 function invalid(code: RunnerEventBatchValidationCode, message: string): RunnerEventBatchValidation {
   return { ok: false, code, message };
-}
-
-function isRecord(input: unknown): input is Record<string, unknown> {
-  return typeof input === "object" && input !== null && !Array.isArray(input);
-}
-
-function isJsonRecord(input: Record<string, unknown>): input is Record<string, JsonValue> {
-  for (const value of Object.values(input)) {
-    if (!isJsonValue(value)) return false;
-  }
-  return true;
-}
-
-function isJsonValue(input: unknown): input is JsonValue {
-  if (input === null) return true;
-  const t = typeof input;
-  if (t === "string" || t === "boolean") return true;
-  if (t === "number") return Number.isFinite(input as number);
-  if (Array.isArray(input)) return input.every(isJsonValue);
-  if (isRecord(input)) {
-    for (const v of Object.values(input)) {
-      if (!isJsonValue(v)) return false;
-    }
-    return true;
-  }
-  return false;
 }
