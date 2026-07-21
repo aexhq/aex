@@ -72,7 +72,9 @@ describe("SDK client module architecture", () => {
       client: 1_900,
       "client-types": 210,
       "event-projection": 475,
-      "session-validate": 390,
+      // Includes the one named runtime tuple plus erased exact-set proof for
+      // every closed public submission shape; no second validator/schema leaf.
+      "session-validate": 540,
       "submission-wire": 125
     };
     for (const [name, budget] of Object.entries(budgets)) {

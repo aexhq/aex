@@ -269,6 +269,22 @@ function checkSdkBunPack() {
     return;
   }
 
+  const packedPublicDeclarations = readFileSync(resolve(pkgDir, "dist/index.d.ts"), "utf8");
+  const missingPublicDeclarations = (baseline.sdkPackage.requiredPackedPublicDeclarationTerms ?? [])
+    .filter((term) => !new RegExp(`\\b${escapeRegex(term)}\\b`).test(packedPublicDeclarations));
+  if (missingPublicDeclarations.length > 0) {
+    failures.push(
+      `SDK packed public declarations are missing required term(s): ${missingPublicDeclarations.join(", ")}`
+    );
+  }
+  const leakedPrivateDeclarations = (baseline.sdkPackage.forbiddenPackedPublicDeclarationTerms ?? [])
+    .filter((term) => new RegExp(`\\b${escapeRegex(term)}\\b`).test(packedPublicDeclarations));
+  if (leakedPrivateDeclarations.length > 0) {
+    failures.push(
+      `SDK packed public declarations expose private term(s): ${leakedPrivateDeclarations.join(", ")}`
+    );
+  }
+
   const contractsPrefix = baseline.contractsInline.sdkPackedPrefix;
   const contractsJsModules = files
     .filter((file) => file.startsWith(contractsPrefix) && file.endsWith(".js"))
@@ -439,6 +455,10 @@ function removedSlimSurfaceTerms() {
 function normalizePackPath(path) {
   const normalized = path.split("\\").join("/");
   return normalized.startsWith("package/") ? normalized.slice("package/".length) : normalized;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function listTarballFiles(path) {

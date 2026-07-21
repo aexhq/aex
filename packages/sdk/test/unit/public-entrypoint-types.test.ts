@@ -17,6 +17,7 @@ import type {
   SessionRunResult,
   SessionSendOptions,
   SessionStartOptions,
+  StartSessionOptions,
   WorkspaceClient,
   WorkspaceFilesClient,
   WorkspaceInstructionsClient,
@@ -34,13 +35,20 @@ import type {
   SessionResult as ClientSessionResult,
   SessionRunResult as ClientSessionRunResult,
   SessionSendOptions as ClientSessionSendOptions,
-  SessionStartOptions as ClientSessionStartOptions
+  SessionStartOptions as ClientSessionStartOptions,
+  StartSessionOptions as ClientStartSessionOptions
 } from "../../src/client.js";
 
 // @ts-expect-error The validation adapter is a package-private implementation detail.
 import { validatedSessionConfig } from "../../src/index.js";
 // @ts-expect-error Diagnostic policy is not part of the supported SDK type surface.
 import type { SessionConfigDiagnosticPolicy } from "../../src/index.js";
+// @ts-expect-error Exact option-key proofs are private validation machinery.
+import type { ExactKeySet } from "../../src/index.js";
+// @ts-expect-error The aggregate equality proof is private validation machinery.
+import type { SessionOptionKeyAssertions } from "../../src/index.js";
+// @ts-expect-error The start-options validator is not a supported SDK export.
+import { assertStartSessionOptions } from "../../src/index.js";
 
 // @ts-expect-error Raw platform submission envelopes are not SDK input types.
 import type { PlatformSessionSubmissionRequest } from "../../src/index.js";
@@ -81,6 +89,9 @@ void (undefined as unknown as ReturnSurface);
 void (undefined as unknown as RemovedSurface);
 void validatedSessionConfig;
 void (undefined as unknown as SessionConfigDiagnosticPolicy);
+void (undefined as unknown as ExactKeySet<object, readonly []>);
+void (undefined as unknown as SessionOptionKeyAssertions);
+void assertStartSessionOptions;
 
 const legacyValidationError = new SessionConfigValidationError("invalid", { field: "runtime.size" });
 const diagnosticValidationError = new SessionConfigValidationError(
@@ -99,6 +110,14 @@ const aexHasNoRawUploadMethod: "_uploadAsset" extends keyof Aex ? false : true =
 const aexHasNoRawStreamUploadMethod: "_uploadAssetStream" extends keyof Aex ? false : true = true;
 const aexHasNoSecretPromotionMethod: "_createWorkspaceSecret" extends keyof Aex ? false : true = true;
 const sessionSendHasNoReplayCursor: "from" extends keyof SessionSendOptions ? false : true = true;
+const sessionSendHasNoSignal: "signal" extends keyof SessionSendOptions ? false : true = true;
+const sessionStreamHasNoIdempotencyKey:
+  "idempotencyKey" extends keyof NonNullable<SessionStartOptions["stream"]> ? false : true = true;
+const environmentHasNoWireEnvVars:
+  "envVars" extends keyof SessionEnvironmentOptions ? false : true = true;
+type SessionPackageInput = NonNullable<SessionEnvironmentOptions["packages"]>[number];
+const packageInputHasNoParsedEcosystem:
+  "ecosystem" extends keyof SessionPackageInput ? false : true = true;
 type Equal<Left, Right> =
   (<T>() => T extends Left ? 1 : 2) extends (<T>() => T extends Right ? 1 : 2)
     ? (<T>() => T extends Right ? 1 : 2) extends (<T>() => T extends Left ? 1 : 2)
@@ -115,7 +134,8 @@ const movedTypeCompatibility: readonly true[] = [
   true as Equal<SessionResult, ClientSessionResult>,
   true as Equal<SessionRunResult, ClientSessionRunResult>,
   true as Equal<SessionSendOptions, ClientSessionSendOptions>,
-  true as Equal<SessionStartOptions, ClientSessionStartOptions>
+  true as Equal<SessionStartOptions, ClientSessionStartOptions>,
+  true as Equal<StartSessionOptions, ClientStartSessionOptions>
 ];
 void [
   sessionResultHasNoRecord,
@@ -125,6 +145,10 @@ void [
   aexHasNoRawStreamUploadMethod,
   aexHasNoSecretPromotionMethod,
   sessionSendHasNoReplayCursor,
+  sessionSendHasNoSignal,
+  sessionStreamHasNoIdempotencyKey,
+  environmentHasNoWireEnvVars,
+  packageInputHasNoParsedEcosystem,
   movedTypeCompatibility
 ];
 
@@ -134,5 +158,7 @@ describe("SDK root type boundary", () => {
     expect(sdk.Aex).toBeTypeOf("function");
     expect(sdk).not.toHaveProperty("SessionClient");
     expect(sdk).not.toHaveProperty("WorkspaceClient");
+    expect(sdk).not.toHaveProperty("assertStartSessionOptions");
+    expect(sdk).not.toHaveProperty("ExactKeySet");
   });
 });

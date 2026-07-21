@@ -37,6 +37,16 @@ function expectConfigError(error: unknown, field: string): void {
   expect((error as Error).message.trim().length).toBeGreaterThan(0);
 }
 
+function expectExactConfigError(error: unknown, field: string, message: string): void {
+  expect(error).toBeInstanceOf(SessionConfigValidationError);
+  expect(error).toMatchObject({
+    name: "SessionConfigValidationError",
+    code: "SESSION_CONFIG_INVALID",
+    message,
+    details: { field }
+  });
+}
+
 function event(sequence: number, patch: Partial<AexEvent> = {}): AexEvent {
   return {
     specversion: "1.0",
@@ -455,8 +465,45 @@ describe("Aex sessions", () => {
         apiKeys: { anthropic: "sk-ant" },
         totallyUnknownOption: { nope: true }
       } as never));
-    expectConfigError(error, "totallyUnknownOption");
+    expectExactConfigError(
+      error,
+      "totallyUnknownOption",
+      "Aex.start: totallyUnknownOption is not a supported option"
+    );
     expect(calls).toHaveLength(0);
+  });
+
+  it("rejects unknown Aex.start control and stream keys with exact pre-transport errors", async () => {
+    const { client, calls, sockets } = makeClient();
+    const input = {
+      model: "claude-haiku-4-5",
+      message: "hello",
+      apiKeys: { anthropic: "sk-ant" }
+    } as const;
+
+    const controlError = await captureRejected(() => client.start(
+      input,
+      { futureControl: true } as never
+    ));
+    expectExactConfigError(
+      controlError,
+      "options.futureControl",
+      "Aex.start: options.futureControl is not a supported option"
+    );
+    expect(calls).toHaveLength(0);
+    expect(sockets).toHaveLength(0);
+
+    const streamError = await captureRejected(() => client.start({
+      ...input,
+      stream: { idempotencyKey: "wire-only-here" } as never
+    }));
+    expectExactConfigError(
+      streamError,
+      "stream.idempotencyKey",
+      "Aex.start: stream.idempotencyKey is not a supported option"
+    );
+    expect(calls).toHaveLength(0);
+    expect(sockets).toHaveLength(0);
   });
 
   it("rejects invalid one-shot messages before any HTTP request", async () => {
@@ -529,5 +576,23 @@ describe("Aex sessions", () => {
 
     expectConfigError(captureThrown(() => session.messages.send("continue", { from: 0 } as never)), "from");
     expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an unknown send key with the exact synchronous error", async () => {
+    const { client, calls, sockets } = makeClient();
+    const session = await client.sessions.create({
+      model: "claude-haiku-4-5",
+      apiKeys: { anthropic: "sk-ant" }
+    });
+    calls.length = 0;
+
+    const error = captureThrown(() => session.messages.send("continue", { futureSend: true } as never));
+    expectExactConfigError(
+      error,
+      "futureSend",
+      "session.messages.send: futureSend is not a supported option"
+    );
+    expect(calls).toHaveLength(0);
+    expect(sockets).toHaveLength(0);
   });
 });

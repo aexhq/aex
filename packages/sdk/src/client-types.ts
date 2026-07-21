@@ -150,6 +150,17 @@ export interface SessionStartOptions extends SessionCreateOptions {
   readonly stream?: Omit<SessionSendOptions, "idempotencyKey">;
 }
 
+/** Options for {@link Aex.start}. */
+export interface StartSessionOptions {
+  /** Overall wait budget (ms) for the one-shot run to finish. */
+  readonly timeoutMs?: number;
+  readonly webSocketFactory?: WebSocketFactory;
+  readonly idleTimeoutMs?: number;
+  readonly pingIntervalMs?: number;
+  /** Throw a {@link SessionStateError} when the session does not succeed. Default false. */
+  readonly throwOnFailure?: boolean;
+}
+
 /**
  * The unified finished result of one run (`session.messages.send(...).finished()`). Extends
  * the contracts {@link TurnResult}, so `finished()` returns the SAME shape as

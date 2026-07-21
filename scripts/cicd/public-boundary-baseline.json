@@ -38,6 +38,19 @@
       "fflate",
       "ignore"
     ],
+    "requiredPackedPublicDeclarationTerms": [
+      "StartSessionOptions",
+      "SessionCreateOptions",
+      "SessionStartOptions",
+      "SessionSendOptions"
+    ],
+    "forbiddenPackedPublicDeclarationTerms": [
+      "ExactKeySet",
+      "SessionOptionKeyAssertions",
+      "assertStartSessionOptions",
+      "SESSION_CREATE_KEYS",
+      "ASSET_ITEM_KEYS"
+    ],
     "allowedPackedPathPrefixes": [
       "package.json",
       "README.md",

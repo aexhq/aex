@@ -108,7 +108,8 @@ import type {
   SessionResult,
   SessionRunResult,
   SessionSendOptions,
-  SessionStartOptions
+  SessionStartOptions,
+  StartSessionOptions
 } from "./client-types.js";
 import {
   assertRunCheckpoint,
@@ -123,7 +124,7 @@ import {
   turnTraceFromEvents
 } from "./event-projection.js";
 import {
-  assertAllowedObjectFields,
+  assertStartSessionOptions,
   assertSupportedSessionFields,
   assertSupportedSessionSendOptions,
   configError,
@@ -148,7 +149,8 @@ export type {
   SessionResult,
   SessionRunResult,
   SessionSendOptions,
-  SessionStartOptions
+  SessionStartOptions,
+  StartSessionOptions
 } from "./client-types.js";
 
 export interface AexOptions {
@@ -179,17 +181,6 @@ export interface AexOptions {
    * tune `maxAttempts` / delays / `maxElapsedMs`; pass `false` to disable.
    */
   readonly retry?: RetryOptions | false;
-}
-
-/** Options for {@link Aex.start}. */
-export interface StartSessionOptions {
-  /** Overall wait budget (ms) for the one-shot run to finish. */
-  readonly timeoutMs?: number;
-  readonly webSocketFactory?: WebSocketFactory;
-  readonly idleTimeoutMs?: number;
-  readonly pingIntervalMs?: number;
-  /** Throw a {@link SessionStateError} when the session does not succeed. Default false. */
-  readonly throwOnFailure?: boolean;
 }
 
 interface InternalSessionSendOptions extends SessionSendOptions {
@@ -1307,12 +1298,7 @@ export class Aex {
     if (!options || typeof options !== "object" || Array.isArray(options)) {
       throw configError("Aex.start", "options", "options are required");
     }
-    assertAllowedObjectFields(
-      opts,
-      "Aex.start",
-      "options",
-      ["timeoutMs", "webSocketFactory", "idleTimeoutMs", "pingIntervalMs", "throwOnFailure"]
-    );
+    assertStartSessionOptions(opts, "Aex.start");
     const scopedSignal = scopedAbortSignal(opts.timeoutMs);
     try {
       const { message, deleteAfter, messageIdempotencyKey, stream, ...createOptions } = options;
