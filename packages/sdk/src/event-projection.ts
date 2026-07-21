@@ -1,5 +1,10 @@
 import {
   SessionStateError,
+  isCustom,
+  isRunError,
+  isTextMessage,
+  isToolCallResult,
+  isToolCallStart,
   usageFromProviderUsage,
   type AexEvent,
   type AexEventView,
@@ -36,9 +41,9 @@ export function projectAssistantMessages(events: readonly AexEvent[]): readonly 
   const out: Message[] = [];
   const byMessageId = new Map<string, number>();
   for (let i = 0; i < events.length; i++) {
-    const event = events[i] as MessageEventLike;
-    if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
-    const data = asRecord(event.data);
+    const event = events[i] as AexEvent & MessageEventLike;
+    if (!isTextMessage(event)) continue;
+    const data = event.data;
     if (data.delta === true) continue;
     const text = typeof data.text === "string" ? data.text : undefined;
     if (text === undefined) continue;
@@ -88,8 +93,8 @@ export function turnTraceFromEvents(events: readonly AexEvent[]): TurnTrace {
 function assistantTextEntriesFromEvents(events: readonly AexEvent[]): TurnTrace["text"] {
   const out: Array<Mutable<TurnTrace["text"][number]>> = [];
   for (const event of events) {
-    if (event.type !== "TEXT_MESSAGE_CONTENT") continue;
-    const data = asRecord(event.data);
+    if (!isTextMessage(event)) continue;
+    const data = event.data;
     if (data.delta === true) continue;
     const text = typeof data.text === "string" ? data.text : undefined;
     if (text === undefined) continue;
@@ -107,16 +112,15 @@ function toolCallsFromEvents(events: readonly AexEvent[]): TurnTrace["toolCalls"
   const order: string[] = [];
   const byId = new Map<string, Mutable<TurnTrace["toolCalls"][number]>>();
   for (const event of events) {
-    const data = asRecord(event.data);
-    if (event.type === "TOOL_CALL_START") {
-      const id = typeof data.id === "string" ? data.id : undefined;
-      if (id === undefined) continue;
+    if (isToolCallStart(event)) {
+      const data = event.data;
+      const id = data.id;
       const trace: Mutable<TurnTrace["toolCalls"][number]> = {
         id,
-        name: typeof data.name === "string" ? data.name : "",
-        args: asRecord(data.arguments)
+        name: data.name,
+        args: data.arguments ?? {}
       };
-      const messageId = typeof data.messageId === "string" ? data.messageId : undefined;
+      const messageId = data.messageId;
       if (messageId !== undefined) trace.messageId = messageId;
       if (typeof event.sequence === "number") trace.startSeq = event.sequence;
       if (typeof event.time === "string") trace.startedAt = event.time;
@@ -124,12 +128,12 @@ function toolCallsFromEvents(events: readonly AexEvent[]): TurnTrace["toolCalls"
       byId.set(id, trace);
       continue;
     }
-    if (event.type === "TOOL_CALL_RESULT") {
-      const id = typeof data.id === "string" ? data.id : undefined;
-      if (id === undefined) continue;
+    if (isToolCallResult(event)) {
+      const data = event.data;
+      const id = data.id;
       const result: Mutable<NonNullable<TurnTrace["toolCalls"][number]["result"]>> = {
         isError: data.isError === true,
-        content: data.content ?? null
+        content: data.content
       };
       if (typeof event.sequence === "number") result.seq = event.sequence;
       if (typeof event.time === "string") result.recordedAt = event.time;
@@ -151,10 +155,8 @@ function usageFromEvents(events: readonly AexEvent[]): UsageSummary {
   const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
   let seen = false;
   for (const event of events) {
-    if (event.type !== "CUSTOM") continue;
-    const data = asRecord(event.data);
-    if (data.name !== "aex.usage") continue;
-    const value = asRecord(data.value);
+    if (!isCustom(event) || event.data.name !== "aex.usage") continue;
+    const value = asRecord(event.data.value);
     const fields = [
       ["input_tokens", "inputTokens"],
       ["output_tokens", "outputTokens"],
@@ -340,12 +342,7 @@ function runBillingFromEvents(
 function failureFromEvents(events: readonly AexEvent[]): string | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]!;
-    if (event.type !== "RUN_ERROR") continue;
-    const data = asRecord(event.data);
-    for (const key of ["failureMessage", "message", "error"]) {
-      const value = data[key];
-      if (typeof value === "string" && value.length > 0) return value;
-    }
+    if (isRunError(event)) return event.data.failureMessage;
   }
   return undefined;
 }
@@ -355,7 +352,7 @@ function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): TurnOu
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]!;
     if (event.isResultDecoded()) {
-      const value = asRecord(event.data).value;
+      const value = event.data.value;
       const decoded =
         value && typeof value === "object" && !Array.isArray(value) && "value" in (value as object)
           ? (value as { readonly value: unknown }).value
@@ -363,7 +360,7 @@ function outcomeFromEvents<T = unknown>(events: readonly AexEventView[]): TurnOu
       return { kind: "decoded", value: decoded as T };
     }
     if (event.isResultRefused()) {
-      const payload = asRecord(asRecord(event.data).value);
+      const payload = asRecord(event.data.value);
       const reason = payload.reason;
       const detail = typeof payload.detail === "string" ? payload.detail : undefined;
       return {
