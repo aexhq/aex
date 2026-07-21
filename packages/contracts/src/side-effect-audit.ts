@@ -1,4 +1,13 @@
 import type { ProviderName } from "./submission.js";
+import {
+  createForbiddenFieldNamePredicate,
+  isPlatformContentDigest,
+  privateResourceHandlePattern,
+  PUBLIC_SAFE_SECRET_PATTERNS,
+  scanPublicSafePayload,
+  underscoredHighEntropyPattern,
+  type PublicSafeStringPattern
+} from "./sdk-secrets.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
@@ -247,6 +256,7 @@ export interface SideEffectAuditSessionScopedInput {
 
 export type SideEffectAuditRedactionReason =
   | "forbidden_field_name"
+  | "uninspectable_value"
   | "bearer_token"
   | "provider_key"
   | "signed_url"
@@ -372,9 +382,14 @@ export function redactSideEffectAuditMetadata(
 export function scanSideEffectAuditPayloadForSensitiveValues(
   input: unknown
 ): readonly SideEffectAuditRedactionFinding[] {
-  const findings: SideEffectAuditRedactionFinding[] = [];
-  visitAuditValue(input, "$", findings);
-  return Object.freeze(findings);
+  return scanPublicSafePayload(input, {
+    patterns: auditStringPatterns,
+    isForbiddenFieldName: isForbiddenAuditFieldName,
+    isPatternExempt: ({ reason, path, match }) =>
+      reason === "high_entropy_token" &&
+      path === "$.target.id" &&
+      isPlatformContentDigest(match)
+  });
 }
 
 export function assertPublicSafeSideEffectAuditPayload(input: unknown): void {
@@ -596,78 +611,81 @@ function isDeletionAction(action: SideEffectAuditAction | undefined): boolean {
   return action === "session.delete.requested" || action === "session.delete.completed" || action === "session.delete.failed";
 }
 
-function visitAuditValue(
-  input: unknown,
-  path: string,
-  findings: SideEffectAuditRedactionFinding[]
-): void {
-  if (typeof input === "string") {
-    scanStringValue(input, path, findings);
-    return;
-  }
-  if (Array.isArray(input)) {
-    input.forEach((value, index) => visitAuditValue(value, `${path}[${index}]`, findings));
-    return;
-  }
-  if (!input || typeof input !== "object") {
-    return;
-  }
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    const childPath = `${path}.${key}`;
-    if (isForbiddenAuditFieldName(key)) {
-      findings.push(Object.freeze({ path: childPath, reason: "forbidden_field_name" }));
-    }
-    visitAuditValue(value, childPath, findings);
-  }
-}
-
-function scanStringValue(
-  value: string,
-  path: string,
-  findings: SideEffectAuditRedactionFinding[]
-): void {
-  for (const pattern of forbiddenStringPatterns) {
-    if (pattern.regex.test(value)) {
-      findings.push(Object.freeze({
-        path,
-        reason: pattern.reason,
-        valueLength: value.length
-      }));
-    }
-  }
-}
-
-const forbiddenStringPatterns: readonly {
-  readonly reason: Exclude<SideEffectAuditRedactionReason, "forbidden_field_name">;
-  readonly regex: RegExp;
-}[] = Object.freeze([
-  { reason: "bearer_token", regex: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
-  {
-    reason: "provider_key",
-    regex: /\b(?:sk-(?:ant|proj|live|test|deepseek|openai)|xox[baprs]-|AIza)[A-Za-z0-9_-]{8,}/i
-  },
-  { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "object_store_key", regex: /(^|[\s"'`])(?:sessions|assets)\/[^?<#\s"'`]+/i },
-  { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
-  {
-    reason: "private_resource_handle",
-    regex: /\b(?:machine|agent|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
-  },
-  { reason: "raw_url", regex: /\bhttps?:\/\/\S+/i },
-  { reason: "raw_path", regex: /(^|[\s"'`])\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+(?:[/?#][^\s"'`]*)?/ },
-  { reason: "high_entropy_token", regex: /\b(?=[A-Za-z0-9_-]{40,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{40,}\b/ }
+const auditStringPatterns: readonly PublicSafeStringPattern<
+  Exclude<SideEffectAuditRedactionReason, "forbidden_field_name" | "uninspectable_value">
+>[] = Object.freeze([
+  ...PUBLIC_SAFE_SECRET_PATTERNS,
+  underscoredHighEntropyPattern(),
+  privateResourceHandlePattern([
+    "machine",
+    "agent",
+    "resource",
+    "handle",
+    "token_hash",
+    "bearer_hash"
+  ]),
+  Object.freeze({ reason: "raw_url" as const, regex: /\bhttps?:\/\/\S+/i }),
+  Object.freeze({
+    reason: "raw_path" as const,
+    regex: /(^|[\s"'`])\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+(?:[/?#][^\s"'`]*)?/
+  })
 ]);
 
-function isForbiddenAuditFieldName(key: string): boolean {
-  return /^(authorization|headers?|requestHeaders?|responseHeaders?|body|requestBody|responseBody|rawBody|prompt|url|rawUrl|href|query|queryString|path|rawPath|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|providerAccountId|providerDeployment|rateCard|rateCardVersion|margin|discount|calculator|reconciliation|resourceHandle|privateResourceHandle|bearerHash|tokenHash|apiKey|apiKeys|secretValue|providerSessionId|agentId|customerId|endUserId|identity|email)$/i.test(
-    key
-  );
-}
+const isForbiddenAuditFieldName = createForbiddenFieldNamePredicate([
+  "authorization",
+  "header",
+  "headers",
+  "requestHeader",
+  "requestHeaders",
+  "responseHeader",
+  "responseHeaders",
+  "body",
+  "requestBody",
+  "responseBody",
+  "rawBody",
+  "prompt",
+  "url",
+  "rawUrl",
+  "href",
+  "query",
+  "queryString",
+  "path",
+  "rawPath",
+  "signedUrl",
+  "objectStoreKey",
+  "objectKey",
+  "vaultId",
+  "providerResponseBody",
+  "providerAccountId",
+  "providerDeployment",
+  "rateCard",
+  "rateCardVersion",
+  "margin",
+  "discount",
+  "calculator",
+  "reconciliation",
+  "resourceHandle",
+  "privateResourceHandle",
+  "bearerHash",
+  "tokenHash",
+  "apiKey",
+  "apiKeys",
+  "secretValue",
+  "providerSessionId",
+  "agentId",
+  "customerId",
+  "endUserId",
+  "identity",
+  "email"
+]);
 
 function assertSafeIdentifier(value: string, field: string): string {
   assertNonEmptyString(value, field);
   if (!/^[A-Za-z0-9._:-]+$/.test(value)) {
     throw new Error(`side-effect audit ${field} must be an opaque identifier without path separators`);
+  }
+  if (field === "target.id" && isPlatformContentDigest(value)) {
+    return value;
   }
   assertPublicSafeSideEffectAuditPayload(value);
   return value;
