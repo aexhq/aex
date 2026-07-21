@@ -72,7 +72,7 @@ describe("SDK client module architecture", () => {
       client: 1_900,
       "client-types": 210,
       "event-projection": 475,
-      "session-validate": 300,
+      "session-validate": 390,
       "submission-wire": 125
     };
     for (const [name, budget] of Object.entries(budgets)) {

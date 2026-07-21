@@ -1,15 +1,113 @@
 import {
+  containsSecretLikeValue,
+  redactString,
   SessionConfigValidationError,
   type ProviderName
 } from "@aexhq/contracts";
 import type { SessionCreateOptions, SessionInput } from "./client-types.js";
 
+const VALIDATION_DIAGNOSTIC_MAX_LENGTH = 512;
+const VALIDATION_DIAGNOSTIC_SOURCE_MAX_LENGTH = 4_096;
+const VALIDATION_DIAGNOSTIC_MAX_TOKENS = 64;
+const VALIDATION_DIAGNOSTIC_MAX_TOKEN_LENGTH = 1_024;
+
+export type SessionConfigDiagnosticPolicy =
+  | { readonly kind: "scalar"; readonly rejectedValues: readonly unknown[] }
+  | { readonly kind: "redacted" };
+
+function fallbackValidationDiagnostic(field: string): string {
+  return `underlying validator rejected ${field}; diagnostic redacted`;
+}
+
+/**
+ * Produce lossy diagnostic prose without retaining the caught value, its
+ * properties, stack, or causal chain. Any uncertainty falls back to field-only
+ * evidence rather than risking caller data in diagnostic-aware logging.
+ */
+function safeValidationDiagnostic(
+  caught: unknown,
+  field: string,
+  policy: SessionConfigDiagnosticPolicy
+): string {
+  const fallback = fallbackValidationDiagnostic(field);
+  if (policy.kind === "redacted") return fallback;
+  try {
+    const values = Array.from(policy.rejectedValues);
+    if (values.length > VALIDATION_DIAGNOSTIC_MAX_TOKENS) return fallback;
+    const tokens = values.filter((value): value is string => typeof value === "string" && value.length > 0);
+    if (tokens.some((token) => token.length > VALIDATION_DIAGNOSTIC_MAX_TOKEN_LENGTH)) return fallback;
+
+    const raw = typeof caught === "string"
+      ? caught
+      : caught instanceof Error
+        ? caught.message
+        : undefined;
+    if (!raw) return fallback;
+    let diagnostic = raw.slice(0, VALIDATION_DIAGNOSTIC_SOURCE_MAX_LENGTH);
+    for (const token of tokens) {
+      diagnostic = diagnostic.split(token).join("<redacted-value>");
+    }
+    diagnostic = diagnostic.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ");
+    diagnostic = redactString(diagnostic).trim();
+    if (
+      diagnostic.length === 0 ||
+      containsSecretLikeValue(diagnostic) ||
+      tokens.some((token) => diagnostic.includes(token))
+    ) {
+      return fallback;
+    }
+    return diagnostic.length <= VALIDATION_DIAGNOSTIC_MAX_LENGTH
+      ? diagnostic
+      : `${diagnostic.slice(0, VALIDATION_DIAGNOSTIC_MAX_LENGTH - 3)}...`;
+  } catch {
+    return fallback;
+  }
+}
+
+function validationDiagnosticError(message: string): Error {
+  const diagnostic = new Error(message);
+  Object.defineProperty(diagnostic, "name", {
+    configurable: true,
+    value: "SessionConfigDiagnosticError"
+  });
+  return diagnostic;
+}
+
+/** Package-private catch-and-translate owner for canonical session validators. */
+export function validatedSessionConfig<T>(
+  surface: string,
+  field: string,
+  message: string,
+  validate: () => T,
+  policy: SessionConfigDiagnosticPolicy
+): T {
+  try {
+    return validate();
+  } catch (caught) {
+    throw configError(
+      surface,
+      field,
+      message,
+      validationDiagnosticError(safeValidationDiagnostic(caught, field, policy))
+    );
+  }
+}
+
 /**
  * Package-private factory for SDK validation errors. `details.field` is the only
  * stable machine-readable payload; messages are human guidance and may change.
  */
-export function configError(surface: string, field: string, message: string): SessionConfigValidationError {
-  return new SessionConfigValidationError(`${surface}: ${message}`, { field });
+export function configError(
+  surface: string,
+  field: string,
+  message: string,
+  cause?: Error
+): SessionConfigValidationError {
+  return new SessionConfigValidationError(
+    `${surface}: ${message}`,
+    { field },
+    cause === undefined ? undefined : { cause }
+  );
 }
 
 export function normaliseSessionInput(

@@ -31,8 +31,21 @@ export interface SessionConfigValidationDetails {
 export class SessionConfigValidationError extends AexError {
   declare readonly details: SessionConfigValidationDetails;
 
-  constructor(message: string, details: SessionConfigValidationDetails) {
-    super("SESSION_CONFIG_INVALID", message, Object.freeze({ field: details.field }));
+  /**
+   * `code` and `details.field` are the stable machine contract. An optional
+   * cause is best-effort diagnostic context and must not be used for branching.
+   */
+  constructor(
+    message: string,
+    details: SessionConfigValidationDetails,
+    options?: { readonly cause?: unknown }
+  ) {
+    super(
+      "SESSION_CONFIG_INVALID",
+      message,
+      Object.freeze({ field: details.field }),
+      options?.cause === undefined ? undefined : { cause: options.cause }
+    );
   }
 }
 
