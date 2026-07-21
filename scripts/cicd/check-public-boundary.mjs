@@ -13,6 +13,7 @@ const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
 const failures = [];
 
 checkSdkPackageManifest();
+checkContractsPackageManifest();
 checkContractsInlineBaseline();
 checkPublicImportDirection();
 checkPublicDeploymentClaims();
@@ -55,6 +56,21 @@ function checkSdkPackageManifest() {
       failures.push(`packages/sdk runtime dependency ${dep} is not in public-boundary-baseline.json`);
     }
   }
+}
+
+function checkContractsPackageManifest() {
+  const pkgPath = resolve(repoRoot, baseline.contractsPackage.dir, "package.json");
+  const pkg = readJson(pkgPath);
+  const runtimeDeps = [
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.peerDependencies ?? {}),
+    ...Object.keys(pkg.optionalDependencies ?? {})
+  ].sort();
+  expectEqual(
+    "packages/contracts runtime dependencies",
+    runtimeDeps,
+    [...baseline.contractsPackage.allowedRuntimeDependencies].sort()
+  );
 }
 
 function checkContractsInlineBaseline() {
@@ -273,6 +289,20 @@ function checkSdkBunPack() {
     contractsDtsModules,
     [...baseline.contractsInline.allowedModuleFiles].sort()
   );
+
+  for (const [module, maxBytes] of Object.entries(baseline.contractsInline.privateModuleMaxBytes ?? {})) {
+    const path = resolve(pkgDir, contractsPrefix, module);
+    let bytes;
+    try {
+      bytes = statSync(path).size;
+    } catch {
+      failures.push(`SDK packed private contracts module is missing: ${contractsPrefix}${module}`);
+      continue;
+    }
+    if (bytes > maxBytes) {
+      failures.push(`SDK packed private contracts module ${module} is ${bytes} bytes; max is ${maxBytes}`);
+    }
+  }
 
   const secretOffenders = [];
   const surfaceOffenders = [];

@@ -16,6 +16,12 @@
     "@aexhq/contracts",
     "@aexhq/contracts/internal"
   ],
+  "contractsPackage": {
+    "dir": "packages/contracts",
+    "allowedRuntimeDependencies": [
+      "fflate"
+    ]
+  },
   "sdkPackage": {
     "dir": "packages/sdk",
     "name": "@aexhq/sdk",
@@ -49,6 +55,7 @@
     "sourcePackage": "@aexhq/contracts",
     "sdkPackedPrefix": "dist/_contracts/",
     "allowedModuleFiles": [
+      "./allowed-keys.js",
       "./api-key.js",
       "./archive-limits.js",
       "./asset-authoring.js",
@@ -95,6 +102,9 @@
       "./workflow-status.js",
       "./workspace-resources.js"
     ],
+    "privateModuleMaxBytes": {
+      "allowed-keys.js": 1024
+    },
     "contractsBarrelExportSpecifiers": [
       "./provider-support.js",
       "./models.js",

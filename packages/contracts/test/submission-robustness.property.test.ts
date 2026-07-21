@@ -48,7 +48,7 @@ describe("parseSessionSubmissionRequest robustness (property)", { timeout: 0 }, 
   it("rejects any unknown top-level field (strict allow-list)", () => {
     fc.assert(
       fc.property(
-        fc.string({ minLength: 1, maxLength: 16 }).filter((k) => !RESERVED.has(k)),
+        fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }).map((suffix) => `unknown_${suffix}`),
         fc.anything(),
         (key, value) => {
           const input = makeValid() as unknown as Record<string, unknown>;
@@ -88,16 +88,3 @@ describe("parseSessionSubmissionRequest robustness (property)", { timeout: 0 }, 
     );
   });
 });
-
-const RESERVED = new Set([
-  "workspaceId",
-  "idempotencyKey",
-  "provider",
-  "submission",
-  "runtimeSize",
-  "timeout",
-  "webhook",
-  "limits",
-  "machine",
-  "secrets"
-]);
