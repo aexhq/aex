@@ -29,7 +29,7 @@ export const MODEL_PROVIDER_IDS = {
   "gpt-4.1": { openai: "gpt-4.1" },
   "gpt-4o-mini": { openai: "gpt-4o-mini", openrouter: "openai/gpt-4o-mini" },
   "gpt-4o": { openrouter: "openai/gpt-4o" },
-  "gemini-2.0-flash": { gemini: "gemini-2.0-flash", openrouter: "google/gemini-2.0-flash-001" },
+  "gemini-2.0-flash": { openrouter: "google/gemini-2.0-flash-001" },
   "gemini-2.5-flash": { gemini: "gemini-2.5-flash" },
   "mistral-large-latest": { mistral: "mistral-large-latest" },
   "mistral-small-latest": { mistral: "mistral-small-latest" },
@@ -78,7 +78,7 @@ export const Models = {
   GPT_4O_MINI: "gpt-4o-mini",
   /** GPT-4o — via OpenRouter (`provider: Providers.OPENROUTER`). */
   GPT_4O: "gpt-4o",
-  /** Gemini 2.0 Flash — Gemini, or via OpenRouter (`provider: Providers.OPENROUTER`). */
+  /** Gemini 2.0 Flash — via OpenRouter (`provider: Providers.OPENROUTER`). */
   GEMINI_2_0_FLASH: "gemini-2.0-flash",
   /** Gemini 2.5 Flash — Gemini. */
   GEMINI_2_5_FLASH: "gemini-2.5-flash",

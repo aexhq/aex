@@ -270,10 +270,11 @@ describe("providerForModel / providersForModel", () => {
     }
   });
 
-  it("exposes every provider that can serve a multi-provider model", () => {
+  it("exposes the exact supported provider routes for canonical models", () => {
     expect(providersForModel(Models.GPT_4O_MINI)).toEqual(["openai", "openrouter"]);
     expect(providerForModel(Models.GPT_4O_MINI)).toBe("openai");
-    expect(providersForModel(Models.GEMINI_2_0_FLASH)).toEqual(["gemini", "openrouter"]);
+    expect(providersForModel(Models.GEMINI_2_0_FLASH)).toEqual(["openrouter"]);
+    expect(providerForModel(Models.GEMINI_2_0_FLASH)).toBe("openrouter");
     expect(providersForModel(Models.GPT_4O)).toEqual(["openrouter"]);
   });
 
@@ -307,6 +308,9 @@ describe("resolveProviderModelId", () => {
   it("throws when the provider does not serve the model", () => {
     expect(() => resolveProviderModelId(Models.GPT_4O_MINI, "anthropic")).toThrow(/not available for provider/);
     expect(() => resolveProviderModelId(Models.CLAUDE_HAIKU_4_5, "openrouter")).toThrow(/not available for provider/);
+    expect(() => resolveProviderModelId(Models.GEMINI_2_0_FLASH, "gemini")).toThrow(
+      'resolveProviderModelId: model "gemini-2.0-flash" is not available for provider "gemini"; available: openrouter'
+    );
   });
 });
 
@@ -318,6 +322,9 @@ describe("assertModelNameMatchesProvider", () => {
 
   it("rejects a provider that does not serve the model", () => {
     expect(() => assertModelNameMatchesProvider("anthropic", Models.GPT_4O_MINI)).toThrow(/not supported for provider/);
+    expect(() => assertModelNameMatchesProvider("gemini", Models.GEMINI_2_0_FLASH)).toThrow(
+      'submission.model "gemini-2.0-flash" is not supported for provider gemini; expected one of: openrouter'
+    );
   });
 });
 
