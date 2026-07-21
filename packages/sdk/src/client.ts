@@ -128,6 +128,7 @@ import {
   assertSupportedSessionSendOptions,
   configError,
   normaliseSessionInput,
+  validatedSessionConfig,
   validateApiKeys
 } from "./session-validate.js";
 import {
@@ -1402,29 +1403,31 @@ export class Aex {
     // explicit provider (forward-compat: an unknown model is allowed through so a
     // slightly-old SDK can still run a newly-launched model), infers the default
     // provider for a known model, and rejects an unknown model without a provider.
-    let provider: ProviderName;
-    try {
-      provider = resolveModelProvider(options.model, options.provider);
-    } catch (err) {
-      void err;
-      throw configError(
-        "aex.sessions.create",
-        options.provider === undefined ? "model" : "provider",
-        options.provider === undefined
-          ? "model must be recognized unless provider is supplied explicitly"
-          : "provider cannot serve the selected model"
-      );
-    }
+    const selectedModel = options.model;
+    const selectedProvider = options.provider;
+    const providerField = selectedProvider === undefined ? "model" : "provider";
+    const providerMessage = selectedProvider === undefined
+      ? "model must be recognized unless provider is supplied explicitly"
+      : "provider cannot serve the selected model";
+    const provider = validatedSessionConfig(
+      "aex.sessions.create",
+      providerField,
+      providerMessage,
+      () => resolveModelProvider(selectedModel, selectedProvider),
+      { kind: "scalar", rejectedValues: [selectedModel, selectedProvider] }
+    );
     validateApiKeys(options.apiKeys, provider, "aex.sessions.create");
     // WS9 fail-closed: `outputMode:'stream'` on a NON-streamable provider is a
     // hard reject at the earliest seam (no silent downgrade to buffered).
     if (options.outputMode !== undefined) {
-      try {
-        assertStreamableOutputMode(options.outputMode, provider);
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "outputMode", "outputMode is not supported for the selected provider");
-      }
+      const outputMode = options.outputMode;
+      validatedSessionConfig(
+        "aex.sessions.create",
+        "outputMode",
+        "outputMode is not supported for the selected provider",
+        () => assertStreamableOutputMode(outputMode, provider),
+        { kind: "scalar", rejectedValues: [outputMode, provider] }
+      );
     }
     // Fast client-side validation via the contract parsers (the SSoT). runtimeSize
     // and timeout are STABLE closed sets whose invalid values the create endpoint
@@ -1434,82 +1437,90 @@ export class Aex {
     // deliberately NOT hard-rejected here to preserve forward-compat with models
     // added server-side before an SDK upgrade (an unknown model still fails on the
     // server).
-    try {
-      parseRuntimeSize(options.runtime?.size);
-    } catch (err) {
-      void err;
-      throw configError("aex.sessions.create", "runtime.size", "runtime.size must be a supported size preset");
-    }
-    try {
-      parseRuntimeKind(options.runtime?.kind);
-    } catch (err) {
-      void err;
-      throw configError(
+    const runtimeSize = options.runtime?.size;
+    validatedSessionConfig(
+      "aex.sessions.create",
+      "runtime.size",
+      "runtime.size must be a supported size preset",
+      () => parseRuntimeSize(runtimeSize),
+      { kind: "scalar", rejectedValues: [runtimeSize] }
+    );
+    const runtimeKind = options.runtime?.kind;
+    validatedSessionConfig(
+      "aex.sessions.create",
+      "runtime.kind",
+      "runtime.kind must be one of: container, spot_container, lambda",
+      () => parseRuntimeKind(runtimeKind),
+      { kind: "scalar", rejectedValues: [runtimeKind] }
+    );
+    const sessionTimeout = options.overrides?.timeout;
+    validatedSessionConfig(
+      "aex.sessions.create",
+      "overrides.timeout",
+      "overrides.timeout must be a supported duration",
+      () => parseSessionTimeout(sessionTimeout),
+      { kind: "scalar", rejectedValues: [sessionTimeout] }
+    );
+    if (options.webhook !== undefined) {
+      validatedSessionConfig(
         "aex.sessions.create",
-        "runtime.kind",
-        "runtime.kind must be one of: container, spot_container, lambda"
+        "webhook.url",
+        "webhook.url must be a valid HTTPS URL",
+        () => parseSessionWebhook(options.webhook),
+        { kind: "redacted" }
       );
     }
-    try {
-      parseSessionTimeout(options.overrides?.timeout);
-    } catch (err) {
-      void err;
-      throw configError("aex.sessions.create", "overrides.timeout", "overrides.timeout must be a supported duration");
-    }
-    if (options.webhook !== undefined) {
-      try {
-        parseSessionWebhook(options.webhook);
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "webhook.url", "webhook.url must be a valid HTTPS URL");
-      }
-    }
     if (options.responseFormat !== undefined) {
-      try {
-        parseResponseFormat(options.responseFormat);
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "responseFormat", "responseFormat is invalid");
-      }
+      validatedSessionConfig(
+        "aex.sessions.create",
+        "responseFormat",
+        "responseFormat is invalid",
+        () => parseResponseFormat(options.responseFormat),
+        { kind: "redacted" }
+      );
     }
     if (options.approvalGate !== undefined) {
-      try {
-        parseApprovalGate(options.approvalGate);
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "approvalGate", "approvalGate is invalid");
-      }
+      validatedSessionConfig(
+        "aex.sessions.create",
+        "approvalGate",
+        "approvalGate is invalid",
+        () => parseApprovalGate(options.approvalGate),
+        { kind: "redacted" }
+      );
     }
-    let secretEnvDeclarations: ReturnType<typeof splitSecretEnv>["declarations"];
-    let envSecretValues: ReturnType<typeof splitSecretEnv>["values"];
-    try {
-      const split = splitSecretEnv(options.environment?.secrets);
-      secretEnvDeclarations = split.declarations;
-      envSecretValues = split.values;
-    } catch (err) {
-      void err;
-      throw configError("aex.sessions.create", "environment.secrets", "environment.secrets is invalid");
-    }
+    const splitEnvironmentSecrets = validatedSessionConfig(
+      "aex.sessions.create",
+      "environment.secrets",
+      "environment.secrets is invalid",
+      () => splitSecretEnv(options.environment?.secrets),
+      { kind: "redacted" }
+    );
+    const secretEnvDeclarations = splitEnvironmentSecrets.declarations;
+    const envSecretValues = splitEnvironmentSecrets.values;
 
     let limits: SessionLimits | undefined;
     const limitsInput: { maxSpendUsd?: number; maxTurns?: number } = {};
     if (options.overrides?.maxSpendUsd !== undefined) {
-      try {
-        parseSessionLimits({ maxSpendUsd: options.overrides.maxSpendUsd });
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "overrides.maxSpendUsd", "overrides.maxSpendUsd must be valid");
-      }
-      limitsInput.maxSpendUsd = options.overrides.maxSpendUsd;
+      const maxSpendUsd = options.overrides.maxSpendUsd;
+      validatedSessionConfig(
+        "aex.sessions.create",
+        "overrides.maxSpendUsd",
+        "overrides.maxSpendUsd must be valid",
+        () => parseSessionLimits({ maxSpendUsd }),
+        { kind: "scalar", rejectedValues: [maxSpendUsd] }
+      );
+      limitsInput.maxSpendUsd = maxSpendUsd;
     }
     if (options.overrides?.maxTurns !== undefined) {
-      try {
-        parseSessionLimits({ maxTurns: options.overrides.maxTurns });
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "overrides.maxTurns", "overrides.maxTurns must be valid");
-      }
-      limitsInput.maxTurns = options.overrides.maxTurns;
+      const maxTurns = options.overrides.maxTurns;
+      validatedSessionConfig(
+        "aex.sessions.create",
+        "overrides.maxTurns",
+        "overrides.maxTurns must be valid",
+        () => parseSessionLimits({ maxTurns }),
+        { kind: "scalar", rejectedValues: [maxTurns] }
+      );
+      limitsInput.maxTurns = maxTurns;
     }
     limits = parseSessionLimits(Object.keys(limitsInput).length > 0 ? limitsInput : undefined);
 
@@ -1517,28 +1528,30 @@ export class Aex {
       options.mcpServers ?? [],
       []
     );
-    let fileCapture: PlatformSubmission["fileCapture"] | undefined;
-    try {
-      fileCapture = fileCaptureForWire(options.fileCapture);
-    } catch (err) {
-      void err;
-      throw configError("aex.sessions.create", "fileCapture", "fileCapture is invalid");
-    }
-    let environment: PlatformEnvironmentInput | undefined;
-    try {
-      environment = sessionEnvironmentForWire(options.environment);
-    } catch (err) {
-      void err;
-      throw configError("aex.sessions.create", "environment", "environment is invalid");
-    }
+    const fileCapture: PlatformSubmission["fileCapture"] | undefined = validatedSessionConfig(
+      "aex.sessions.create",
+      "fileCapture",
+      "fileCapture is invalid",
+      () => fileCaptureForWire(options.fileCapture),
+      { kind: "redacted" }
+    );
+    const environment: PlatformEnvironmentInput | undefined = validatedSessionConfig(
+      "aex.sessions.create",
+      "environment",
+      "environment is invalid",
+      () => sessionEnvironmentForWire(options.environment),
+      { kind: "redacted" }
+    );
     let builtinTools = options.builtinTools ?? "default";
     if (Array.isArray(builtinTools)) {
-      try {
-        builtinTools = resolveBuiltinToolNames(builtinTools);
-      } catch (err) {
-        void err;
-        throw configError("aex.sessions.create", "builtinTools", "builtinTools contains an unsupported tool name");
-      }
+      const selectedBuiltinTools = builtinTools;
+      builtinTools = validatedSessionConfig(
+        "aex.sessions.create",
+        "builtinTools",
+        "builtinTools contains an unsupported tool name",
+        () => resolveBuiltinToolNames(selectedBuiltinTools),
+        { kind: "scalar", rejectedValues: selectedBuiltinTools }
+      );
     }
 
     const submission: SessionCreateRequest["submission"] = {

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import {
+  SessionConfigValidationError
+} from "../../src/index.js";
 import type {
   Aex,
   ChildSessionHandle,
@@ -33,6 +36,11 @@ import type {
   SessionSendOptions as ClientSessionSendOptions,
   SessionStartOptions as ClientSessionStartOptions
 } from "../../src/client.js";
+
+// @ts-expect-error The validation adapter is a package-private implementation detail.
+import { validatedSessionConfig } from "../../src/index.js";
+// @ts-expect-error Diagnostic policy is not part of the supported SDK type surface.
+import type { SessionConfigDiagnosticPolicy } from "../../src/index.js";
 
 // @ts-expect-error Raw platform submission envelopes are not SDK input types.
 import type { PlatformSessionSubmissionRequest } from "../../src/index.js";
@@ -71,6 +79,18 @@ type RemovedSurface =
 
 void (undefined as unknown as ReturnSurface);
 void (undefined as unknown as RemovedSurface);
+void validatedSessionConfig;
+void (undefined as unknown as SessionConfigDiagnosticPolicy);
+
+const legacyValidationError = new SessionConfigValidationError("invalid", { field: "runtime.size" });
+const diagnosticValidationError = new SessionConfigValidationError(
+  "invalid",
+  { field: "runtime.size" },
+  { cause: new Error("bounded diagnostic") }
+);
+type SessionConfigValidationDetails = ConstructorParameters<typeof SessionConfigValidationError>[1];
+const validationDetailsHasOnlyField: Equal<keyof SessionConfigValidationDetails, "field"> = true;
+void [legacyValidationError, diagnosticValidationError, validationDetailsHasOnlyField];
 
 const sessionResultHasNoRecord: "record" extends keyof SessionResult ? false : true = true;
 const sessionResultRequiresSession: {} extends Pick<SessionResult, "session"> ? false : true = true;
