@@ -13,7 +13,7 @@ import {
   SUCCESS,
   TIMEOUT_ERR,
   USAGE_ERR,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   makeHttpClient,
   resolveCommonHostFlags,
@@ -64,12 +64,7 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
       }
       return SUCCESS;
     } catch (err) {
-      const d = describeApiError(err);
-      return emitJsonError(io, "events_failed", d.message, {
-        sessionId,
-        ...(d.status !== undefined ? { status: d.status } : {}),
-        ...(d.remedy ? { remedy: d.remedy } : {})
-      });
+      return emitApiError(io, "events_failed", err, { sessionId });
     }
   }
 
@@ -83,12 +78,7 @@ export async function executeEventsCmd(io: CliIO, argv: readonly string[]): Prom
     try {
       events = await operations.listSessionEvents(http, sessionId);
     } catch (err) {
-      const d = describeApiError(err);
-      return emitJsonError(io, "events_failed", d.message, {
-        sessionId,
-        ...(d.status !== undefined ? { status: d.status } : {}),
-        ...(d.remedy ? { remedy: d.remedy } : {})
-      });
+      return emitApiError(io, "events_failed", err, { sessionId });
     }
     for (const event of events) {
       if (!seen.has(event.id)) {

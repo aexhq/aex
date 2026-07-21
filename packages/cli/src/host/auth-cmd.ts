@@ -25,7 +25,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   extractCommonHostFlags,
   makeHttpClient,
@@ -93,11 +93,7 @@ export async function executeLoginCmd(io: CliIO, argv: readonly string[]): Promi
     if (debug) io.stderr(`[aex] login: whoami ok workspace=${workspaceId ?? "(unknown)"}\n`);
   } catch (err) {
     if (debug) io.stderr("[aex] login: whoami failed — not persisting token\n");
-    const described = describeApiError(err);
-    return emitJsonError(io, "login_failed", described.message, {
-      ...(described.status !== undefined ? { status: described.status } : {}),
-      ...(described.remedy ? { remedy: described.remedy } : {})
-    });
+    return emitApiError(io, "login_failed", err);
   }
 
   await io.configStore.write({
@@ -139,11 +135,7 @@ async function accountPatLogin(
     if (opts.debug) io.stderr(`[aex] login: account whoami ok user=${me.appUserId}\n`);
   } catch (err) {
     if (opts.debug) io.stderr("[aex] login: account whoami failed — not persisting token\n");
-    const described = describeApiError(err);
-    return emitJsonError(io, "login_failed", described.message, {
-      ...(described.status !== undefined ? { status: described.status } : {}),
-      ...(described.remedy ? { remedy: described.remedy } : {})
-    });
+    return emitApiError(io, "login_failed", err);
   }
 
   await io.configStore!.write({

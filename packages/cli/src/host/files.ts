@@ -16,7 +16,7 @@ import {
   type CommonHostFlags,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   makeHttpClient,
   rejectUnknownFlags,
@@ -69,7 +69,7 @@ async function filesList(io: CliIO, http: HttpClient, args: readonly string[]): 
     for (const file of snapshot.files) io.stdout(JSON.stringify(file) + "\n");
     return SUCCESS;
   } catch (err) {
-    return filesError(io, "files_failed", err, { sessionId });
+    return emitApiError(io, "files_failed", err, { sessionId });
   }
 }
 
@@ -89,7 +89,7 @@ async function filesRead(io: CliIO, http: HttpClient, args: readonly string[]): 
     io.stdout(JSON.stringify(text) + "\n");
     return SUCCESS;
   } catch (err) {
-    return filesError(io, "files_read_failed", err, { sessionId, path: selector });
+    return emitApiError(io, "files_read_failed", err, { sessionId, path: selector });
   }
 }
 
@@ -111,7 +111,7 @@ async function filesDownload(io: CliIO, http: HttpClient, args: readonly string[
   try {
     bytes = (await operations.downloadSessionFile(http, sessionId, { path: selector })).bytes;
   } catch (err) {
-    return filesError(io, "files_download_failed", err, { sessionId, path: selector });
+    return emitApiError(io, "files_download_failed", err, { sessionId, path: selector });
   }
   const destination = resolvePath(io.cwd(), outFlag.value ?? baseName(selector));
   try {
@@ -139,7 +139,7 @@ async function filesLink(io: CliIO, http: HttpClient, args: readonly string[]): 
     io.stdout(JSON.stringify(link) + "\n");
     return SUCCESS;
   } catch (err) {
-    return filesError(io, "files_link_failed", err, { sessionId, path: selector });
+    return emitApiError(io, "files_link_failed", err, { sessionId, path: selector });
   }
 }
 
@@ -171,17 +171,8 @@ async function filesFind(io: CliIO, http: HttpClient, args: readonly string[]): 
     for (const hit of hits) io.stdout(JSON.stringify(hit) + "\n");
     return SUCCESS;
   } catch (err2) {
-    return filesError(io, "files_find_failed", err2, { sessionId });
+    return emitApiError(io, "files_find_failed", err2, { sessionId });
   }
-}
-
-function filesError(io: CliIO, code: string, err: unknown, extra: Record<string, unknown>): CliExitCode {
-  const d = describeApiError(err);
-  return emitJsonError(io, code, d.message, {
-    ...extra,
-    ...(d.status !== undefined ? { status: d.status } : {}),
-    ...(d.remedy ? { remedy: d.remedy } : {})
-  });
 }
 
 async function searchSessionFiles(

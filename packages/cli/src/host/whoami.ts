@@ -10,8 +10,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedSession
@@ -36,10 +35,6 @@ export async function executeWhoamiCmd(io: CliIO, argv: readonly string[]): Prom
     io.stdout(JSON.stringify(me) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "whoami_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "whoami_failed", err);
   }
 }

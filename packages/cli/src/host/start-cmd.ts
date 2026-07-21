@@ -50,7 +50,7 @@ import {
   collectRepeated,
   collectRepeatedKv,
   collectRepeatedKvList,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   isSessionNonProgressing,
   makeHttpClient,
@@ -429,11 +429,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   try {
     accepted = await submitCliRun(http, io.fetchImpl, options);
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "session_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "session_failed", err);
   }
 
   const session = accepted.session;

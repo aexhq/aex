@@ -18,7 +18,7 @@ import {
   TIMEOUT_ERR,
   USAGE_ERR,
   collectRepeated,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   isSessionNonProgressing,
   makeHttpClient,
@@ -84,12 +84,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
   try {
     header = await operations.getSession(http, sessionId);
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "inspect_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "inspect_failed", err, { sessionId });
   }
   if (!json) {
     const model = typeof header.model === "string" ? ` · ${header.model}` : "";
@@ -149,12 +144,7 @@ export async function executeInspectCmd(io: CliIO, argv: readonly string[]): Pro
     }
   } catch (err) {
     if (timer) clearTimeout(timer);
-    const d = describeApiError(err);
-    return emitJsonError(io, "inspect_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "inspect_failed", err, { sessionId });
   }
   if (timer) clearTimeout(timer);
 

@@ -16,8 +16,7 @@ import {
   type CommonHostFlags,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedSession,
@@ -83,11 +82,7 @@ export async function executeBillingCmd(io: CliIO, argv: readonly string[]): Pro
     io.stdout(`Plan:         ${billing.planKey} (subscription: ${billing.subscriptionStatus})\n`);
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "billing_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "billing_failed", err);
   }
 }
 
@@ -121,11 +116,7 @@ async function runBillingUpgrade(
     io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "billing_checkout_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "billing_checkout_failed", err);
   }
 }
 
@@ -157,11 +148,7 @@ async function runBillingPortal(
     io.stdout(json ? `${JSON.stringify(session)}\n` : `${session.url}\n`);
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "billing_portal_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "billing_portal_failed", err);
   }
 }
 
@@ -190,10 +177,6 @@ async function runBillingLedger(
     io.stdout(JSON.stringify(page.entries) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "billing_ledger_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "billing_ledger_failed", err);
   }
 }

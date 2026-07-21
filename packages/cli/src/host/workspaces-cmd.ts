@@ -18,8 +18,7 @@ import {
   type CommonHostFlags,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveControlPlaneHostFlags,
   refuseInsideManagedSession,
@@ -61,7 +60,7 @@ async function runWorkspacesList(io: CliIO, rest: readonly string[], flags: Comm
     io.stdout(JSON.stringify(await operations.listWorkspaces(http)) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "workspaces_list_failed", err);
+    return emitApiError(io, "workspaces_list_failed", err);
   }
 }
 
@@ -89,7 +88,7 @@ async function runWorkspacesCreate(
     io.stdout(JSON.stringify(await operations.createWorkspace(http, { orgId, name })) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "workspace_create_failed", err);
+    return emitApiError(io, "workspace_create_failed", err);
   }
 }
 
@@ -105,14 +104,6 @@ async function runWorkspacesDelete(io: CliIO, argv: readonly string[], flags: Co
     io.stdout(JSON.stringify({ ok: true, deleted: workspaceId }) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "workspace_delete_failed", err);
+    return emitApiError(io, "workspace_delete_failed", err);
   }
-}
-
-function emitControlError(io: CliIO, code: string, err: unknown): CliExitCode {
-  const d = describeApiError(err);
-  return emitJsonError(io, code, d.message, {
-    ...(d.status !== undefined ? { status: d.status } : {}),
-    ...(d.remedy ? { remedy: d.remedy } : {})
-  });
 }

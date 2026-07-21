@@ -18,8 +18,7 @@ import {
   type CommonHostFlags,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveControlPlaneHostFlags,
   refuseInsideManagedSession,
@@ -62,7 +61,7 @@ async function runKeysList(io: CliIO, rest: readonly string[], flags: CommonHost
     io.stdout(JSON.stringify(await operations.listApiKeys(http)) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "keys_list_failed", err);
+    return emitApiError(io, "keys_list_failed", err);
   }
 }
 
@@ -101,7 +100,7 @@ async function runKeysCreate(
     io.stdout(JSON.stringify(await operations.createApiKey(http, request)) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "key_create_failed", err);
+    return emitApiError(io, "key_create_failed", err);
   }
 }
 
@@ -117,14 +116,6 @@ async function runKeysDelete(io: CliIO, argv: readonly string[], flags: CommonHo
     io.stdout(JSON.stringify({ ok: true, deleted: keyId }) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "key_delete_failed", err);
+    return emitApiError(io, "key_delete_failed", err);
   }
-}
-
-function emitControlError(io: CliIO, code: string, err: unknown): CliExitCode {
-  const d = describeApiError(err);
-  return emitJsonError(io, code, d.message, {
-    ...(d.status !== undefined ? { status: d.status } : {}),
-    ...(d.remedy ? { remedy: d.remedy } : {})
-  });
 }

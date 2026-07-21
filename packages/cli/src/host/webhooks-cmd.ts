@@ -19,8 +19,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedSession,
@@ -62,10 +61,6 @@ export async function sessionWebhooksCmd(io: CliIO, argv: readonly string[]): Pr
     io.stdout(`${whsec}\n`);
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "webhooks_secret_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "webhooks_secret_failed", err);
   }
 }

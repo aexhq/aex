@@ -117,6 +117,14 @@ async function startFakeApi(): Promise<FakeApi> {
       });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/sessions/session-denied") {
+      json(res, 403, {
+        error: "insufficient_scope",
+        message: "the token does not carry sessions:read",
+        requestId: "req-packed-cli-error"
+      });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/sessions/session-cli-1/events") {
       json(res, 200, {
         events: [
@@ -379,6 +387,20 @@ describe("installed CLI host commands", () => {
     expect(submit.submission).not.toHaveProperty("prompt");
     expect(messageReq.idempotencyKey).toBe("cli-host-installed-shape:message");
     expect(messageReq.body).toEqual({ input: ["hello_from_installed_cli"] });
+  });
+
+  it("preserves the described API error envelope in the packed CLI binary", async () => {
+    const result = await runCommand(
+      binPath,
+      ["status", "session-denied", "--api-key", "tok-installed-cli", "--aex-url", api.baseUrl],
+      { cwd: install.installDir, timeoutMs: 30_000 }
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      '{"error":"status_failed","message":"insufficient_scope: the token does not carry sessions:read — {\\"requestId\\":\\"req-packed-cli-error\\"}","sessionId":"session-denied","status":403,"remedy":"token lacks permission for this workspace/action"}\n'
+    );
   });
 
   it("reads billing, the webhook signing secret, and the workspace lists through the installed binary", async () => {

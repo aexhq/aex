@@ -10,8 +10,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
@@ -42,11 +41,6 @@ export async function executeDeliveriesCmd(io: CliIO, argv: readonly string[]): 
     io.stdout(JSON.stringify(deliveries) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "deliveries_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "deliveries_failed", err, { sessionId });
   }
 }
