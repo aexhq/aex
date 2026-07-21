@@ -41,12 +41,16 @@ describe("asAexEventView — one type-predicate method per standardized event ty
     expect(started.isRunStarted()).toBe(true);
     expect(started.isRunTerminal()).toBe(false);
 
-    const finished = asAexEventView(envelope({ type: "RUN_FINISHED" }));
+    const finished = asAexEventView(envelope({ type: "RUN_FINISHED", data: { outcome: "succeeded" } }));
     expect(finished.isRunFinished()).toBe(true);
     expect(finished.isRunError()).toBe(false);
     expect(finished.isRunTerminal()).toBe(true);
 
-    const errored = asAexEventView(envelope({ type: "RUN_ERROR", message: "boom" }));
+    const errored = asAexEventView(envelope({
+      type: "RUN_ERROR",
+      message: "boom",
+      data: { outcome: "failed", failureClass: "internal", failureMessage: "boom" }
+    }));
     expect(errored.isRunError()).toBe(true);
     expect(errored.isRunFinished()).toBe(false);
     expect(errored.isRunTerminal()).toBe(true);
@@ -62,7 +66,12 @@ describe("asAexEventView — one type-predicate method per standardized event ty
     expect(typed.isLog()).toBe(false);
     expect(typed.isEventChannel()).toBe(true);
 
-    const log = asAexEventView(envelope({ type: "LOG", channel: "log", level: "warn", data: { message: "retry" } }));
+    const log = asAexEventView(envelope({
+      type: "LOG",
+      channel: "log",
+      level: "warn",
+      data: { level: "warn", message: "retry" }
+    }));
     expect(log.isLog()).toBe(true);
     expect(log.isEventChannel()).toBe(false);
   });

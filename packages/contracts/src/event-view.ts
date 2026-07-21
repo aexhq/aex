@@ -1,92 +1,91 @@
 /** Guard-bearing views over durable and provisional coordinator events. */
 
 import type {
+  AexCustomEvent,
   AexEvent,
   AexEventBase,
   AexEventSource,
   AexLiveEvent,
-  AexStreamEvent
+  AexLogEvent,
+  AexRunErrorEvent,
+  AexRunFinishedEvent,
+  AexRunStartedEvent,
+  AexStreamEvent,
+  AexTextMessageEvent,
+  AexToolCallResultEvent,
+  AexToolCallStartEvent
 } from "./event-envelope.js";
-import { channelOf, isAwaitingApproval, isResultDecoded, isResultRefused } from "./event-envelope.js";
-import type { JsonValue } from "./submission.js";
+import {
+  AEX_RESULT_DECODED_NAME,
+  AEX_RESULT_REFUSED_NAME,
+  AEX_SESSION_AWAITING_APPROVAL_NAME,
+  isAwaitingApproval as canonicalIsAwaitingApproval,
+  isCustom as canonicalIsCustom,
+  isEventChannel as canonicalIsEventChannel,
+  isFromSource as canonicalIsFromSource,
+  isLog as canonicalIsLog,
+  isResultDecoded as canonicalIsResultDecoded,
+  isResultRefused as canonicalIsResultRefused,
+  isRunError as canonicalIsRunError,
+  isRunFinished as canonicalIsRunFinished,
+  isRunStarted as canonicalIsRunStarted,
+  isRunTerminal as canonicalIsRunTerminal,
+  isTextMessage as canonicalIsTextMessage,
+  isToolCallResult as canonicalIsToolCallResult,
+  isToolCallStart as canonicalIsToolCallStart
+} from "./event-envelope.js";
 
-type TextMessageFields = {
-  readonly type: "TEXT_MESSAGE_CONTENT";
-  readonly data: Readonly<Record<string, JsonValue>> & {
-    readonly text: string;
-    readonly messageId?: string;
-    /** True only on a provisional, non-replayable live delta. */
-    readonly delta?: boolean;
-  };
-};
-
-type ToolCallStartFields = {
-  readonly type: "TOOL_CALL_START";
-  readonly data: Readonly<Record<string, JsonValue>> & {
-    readonly id: string;
-    readonly name: string;
-    readonly arguments?: { readonly [key: string]: JsonValue };
-  };
-  toolCallId(): string;
-};
-
-type ToolCallResultFields = {
-  readonly type: "TOOL_CALL_RESULT";
-  readonly data: Readonly<Record<string, JsonValue>> & {
-    readonly id: string;
-    readonly content?: JsonValue;
-    readonly isError?: boolean;
-  };
+type ToolCallIdMethod = {
   toolCallId(): string;
 };
 
 /** Shared methods mixed into both durable and live-only event views. */
 class EventViewPrototype {
-  isRunStarted(): boolean {
-    return this.type === "RUN_STARTED";
+  isRunStarted(): this is EventViewPrototype & AexRunStartedEvent {
+    return canonicalIsRunStarted(this);
   }
-  isRunFinished(): boolean {
-    return this.type === "RUN_FINISHED";
+  isRunFinished(): this is EventViewPrototype & AexRunFinishedEvent {
+    return canonicalIsRunFinished(this);
   }
-  isRunError(): boolean {
-    return this.type === "RUN_ERROR";
+  isRunError(): this is EventViewPrototype & AexRunErrorEvent {
+    return canonicalIsRunError(this);
   }
-  isRunTerminal(): boolean {
-    return this.type === "RUN_FINISHED" || this.type === "RUN_ERROR";
+  isRunTerminal(): this is EventViewPrototype & (AexRunFinishedEvent | AexRunErrorEvent) {
+    return canonicalIsRunTerminal(this);
   }
-  isTextMessage(): this is EventViewPrototype & TextMessageFields {
-    return this.type === "TEXT_MESSAGE_CONTENT";
+  isTextMessage(): this is EventViewPrototype & AexTextMessageEvent {
+    return canonicalIsTextMessage(this);
   }
-  isToolCallStart(): this is EventViewPrototype & ToolCallStartFields {
-    return this.type === "TOOL_CALL_START";
+  isToolCallStart(): this is EventViewPrototype & AexToolCallStartEvent & ToolCallIdMethod {
+    return canonicalIsToolCallStart(this);
   }
-  isToolCallResult(): this is EventViewPrototype & ToolCallResultFields {
-    return this.type === "TOOL_CALL_RESULT";
+  isToolCallResult(): this is EventViewPrototype & AexToolCallResultEvent & ToolCallIdMethod {
+    return canonicalIsToolCallResult(this);
   }
   toolCallId(): string | undefined {
     const id = this.data.id;
     return typeof id === "string" ? id : undefined;
   }
-  isCustom(): boolean {
-    return this.type === "CUSTOM";
+  isCustom(): this is EventViewPrototype & AexCustomEvent {
+    return canonicalIsCustom(this);
   }
-  isAwaitingApproval(): boolean {
-    return isAwaitingApproval(this);
+  isAwaitingApproval(): this is EventViewPrototype & AexCustomEvent<typeof AEX_SESSION_AWAITING_APPROVAL_NAME> {
+    return canonicalIsAwaitingApproval(this);
   }
-  isResultDecoded(): boolean {
-    return isResultDecoded(this);
+  isResultDecoded(): this is EventViewPrototype & AexCustomEvent<typeof AEX_RESULT_DECODED_NAME> {
+    return canonicalIsResultDecoded(this);
   }
-  isResultRefused(): boolean {
-    return isResultRefused(this);
+  isResultRefused(): this is EventViewPrototype & AexCustomEvent<typeof AEX_RESULT_REFUSED_NAME> {
+    return canonicalIsResultRefused(this);
   }
-  isLog(): boolean {
-    return channelOf(this) === "log";
+  isLog(): this is EventViewPrototype & AexLogEvent {
+    return canonicalIsLog(this);
   }
   isEventChannel(): boolean {
-    return channelOf(this) === "event";
+    return canonicalIsEventChannel(this);
   }
   isFromSource(source: AexEventSource): boolean {
-    return this.source === source;
+    return canonicalIsFromSource(this, source);
   }
 }
 
@@ -101,9 +100,9 @@ export type AexLiveEventView = EventViewPrototype & AexLiveEvent;
 /** A view yielded by live coordinator streams. */
 export type AexStreamEventView = AexEventView | AexLiveEventView;
 
-export type TextMessageEventView = AexStreamEventView & TextMessageFields;
-export type ToolCallStartEventView = AexStreamEventView & ToolCallStartFields;
-export type ToolCallResultEventView = AexStreamEventView & ToolCallResultFields;
+export type TextMessageEventView = AexStreamEventView & AexTextMessageEvent;
+export type ToolCallStartEventView = AexStreamEventView & AexToolCallStartEvent & ToolCallIdMethod;
+export type ToolCallResultEventView = AexStreamEventView & AexToolCallResultEvent & ToolCallIdMethod;
 
 /** Constructor value for `instanceof`; event fields are mixed in. */
 export const AexEventView = EventViewPrototype;
