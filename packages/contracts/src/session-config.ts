@@ -36,6 +36,7 @@ import {
 } from "./submission.js";
 import { parseModelName, type ModelName } from "./models.js";
 import type { RuntimeSize } from "./runtime-sizes.js";
+import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 
 // ---------------------------------------------------------------------------
 // Skill ID + name format
@@ -222,16 +223,8 @@ export function parseAssetRefFields(
   record: Record<string, unknown>,
   path: string
 ): AssetRef {
-  for (const key of Object.keys(record)) {
-    if (
-      key !== "kind" &&
-      key !== "assetId" &&
-      key !== "name" &&
-      key !== "mountPath"
-    ) {
-      throw new Error(`${path} contains unexpected field for asset ref: ${key}`);
-    }
-  }
+  const allowed = defineAllowedKeys<AssetRef>()("kind", "assetId", "name", "mountPath");
+  assertAllowedKeys(record, allowed, (key) => `${path} contains unexpected field for asset ref: ${key}`);
   const assetId = record.assetId;
   if (typeof assetId !== "string" || !ASSET_ID_PATTERN.test(assetId)) {
     throw new Error(`${path}.assetId must match ${ASSET_ID_PATTERN.source}`);
@@ -524,13 +517,12 @@ export function parseMcpServerRef(input: unknown, path: string): McpServerRef {
   // loudly instead of silently dropping the field.
   // `parseSessionConfigMcpServerRef` handles the headers case separately for
   // session-config entries.
-  for (const key of Object.keys(record)) {
-    if (key !== "name" && key !== "url" && key !== "transport") {
-      throw new Error(
-        `${path}.${key} is not an allowed field for McpServerRef; permitted: name, url, transport`
-      );
-    }
-  }
+  const allowed = defineAllowedKeys<McpServerRef>()("name", "url", "transport");
+  assertAllowedKeys(
+    record,
+    allowed,
+    (key) => `${path}.${key} is not an allowed field for McpServerRef; permitted: name, url, transport`
+  );
   const name = record.name;
   if (typeof name !== "string" || !MCP_SERVER_NAME_PATTERN.test(name)) {
     throw new Error(`${path}.name must match ${MCP_SERVER_NAME_PATTERN.source}`);
@@ -719,13 +711,12 @@ function parseSessionConfigMcpServerRef(input: unknown, path: string): SessionCo
   }
   const record = input as Record<string, unknown>;
   rejectStdioMcpShape(record);
-  for (const key of Object.keys(record)) {
-    if (key !== "name" && key !== "url" && key !== "headers" && key !== "transport") {
-      throw new Error(
-        `${path}.${key} is not an allowed field for SessionConfigMcpServer; permitted: name, url, transport, headers`
-      );
-    }
-  }
+  const allowed = defineAllowedKeys<SessionConfigMcpServer>()("name", "url", "transport", "headers");
+  assertAllowedKeys(
+    record,
+    allowed,
+    (key) => `${path}.${key} is not an allowed field for SessionConfigMcpServer; permitted: name, url, transport, headers`
+  );
   // Reuse the {name,url,transport} validator by passing the stripped object.
   const stripped: Record<string, unknown> = { name: record.name, url: record.url };
   if (record.transport !== undefined) stripped.transport = record.transport;
@@ -784,7 +775,7 @@ export function parseSessionRequestConfig(input: unknown): SessionRequestConfig 
     throw new Error("session request config must be an object");
   }
   const record = input as Record<string, unknown>;
-  const allowed = new Set([
+  const allowed = defineAllowedKeys<SessionRequestConfig>()(
     "model",
     "system",
     "prompt",
@@ -793,12 +784,8 @@ export function parseSessionRequestConfig(input: unknown): SessionRequestConfig 
     "runtimeSize",
     "timeout",
     "metadata"
-  ]);
-  for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) {
-      throw new Error(`session request config contains unexpected field: ${key}`);
-    }
-  }
+  );
+  assertAllowedKeys(record, allowed, (key) => `session request config contains unexpected field: ${key}`);
   const model = parseModelName(record.model, "session request config model");
   const system = record.system;
   if (system !== undefined && typeof system !== "string") {

@@ -1,4 +1,5 @@
 import { parseDurationToMs } from "./runtime-sizes.js";
+import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 
 /** Default post-agent-run hook timeout (5 minutes). */
 export const DEFAULT_POST_HOOK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -36,12 +37,12 @@ export function parsePostHook(input: unknown, path = "postHook"): PlatformPostHo
     return undefined;
   }
   const value = requirePostHookRecord(input, path);
-  const allowed = new Set(["command", "timeout", "maxTurns", "maxChars"]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) {
-      throw new Error(`${path}.${key} is not an allowed field; permitted: command, timeout, maxTurns, maxChars`);
-    }
-  }
+  const allowed = defineAllowedKeys<PlatformPostHookInput>()("command", "timeout", "maxTurns", "maxChars");
+  assertAllowedKeys(
+    value,
+    allowed,
+    (key) => `${path}.${key} is not an allowed field; permitted: command, timeout, maxTurns, maxChars`
+  );
   if (typeof value.command !== "string") {
     throw new Error(`${path}.command must be a string`);
   }

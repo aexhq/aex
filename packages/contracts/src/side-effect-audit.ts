@@ -8,6 +8,7 @@ import {
   underscoredHighEntropyPattern,
   type PublicSafeStringPattern
 } from "./sdk-secrets.js";
+import { assertAllowedKeys, defineAllowedKeys } from "./allowed-keys.js";
 
 export const SIDE_EFFECT_AUDIT_SCHEMA_VERSION = 1;
 export const SIDE_EFFECT_AUDIT_REDACTION_SCANNER_VERSION = 1;
@@ -238,6 +239,12 @@ export type SideEffectAuditMetadataInput = Omit<SideEffectAuditMetadataV1, "reda
   readonly redaction?: never;
 };
 
+type SupportedSideEffectAuditMetadataInput = Omit<SideEffectAuditMetadataInput, "redaction">;
+type DeletionSideEffectAuditMetadataInput = Pick<
+  SupportedSideEffectAuditMetadataInput,
+  "status" | "counts" | "timestamps"
+>;
+
 export type SideEffectAuditEventInput = Omit<
   SideEffectAuditEventV1,
   "schemaVersion" | "kind" | "metadata"
@@ -460,7 +467,18 @@ function normalizeCorrelation(input: SideEffectAuditCorrelationInput): SideEffec
 function normalizeStatusMetadata(
   input: SideEffectAuditStatusMetadataV1
 ): SideEffectAuditStatusMetadataV1 {
-  assertSupportedNestedKeys(input, ["status", "statusCode", "errorClass", "denialReason", "followUpRequired"], "metadata.status");
+  const allowed = defineAllowedKeys<SideEffectAuditStatusMetadataV1>()(
+    "status",
+    "statusCode",
+    "errorClass",
+    "denialReason",
+    "followUpRequired"
+  );
+  assertAllowedKeys(
+    input,
+    allowed,
+    (key) => `side-effect audit metadata.status.${key} is not supported`
+  );
   return Object.freeze({
     ...(input.status ? { status: assertSafeMetadataString(input.status, "metadata.status.status") } : {}),
     ...(input.statusCode !== undefined
@@ -509,10 +527,16 @@ function normalizeTimestamps(
 function normalizeDimensions(
   input: SideEffectAuditDimensionsMetadataV1
 ): SideEffectAuditDimensionsMetadataV1 {
-  assertSupportedNestedKeys(
+  const allowed = defineAllowedKeys<SideEffectAuditDimensionsMetadataV1>()(
+    "provider",
+    "namespace",
+    "method",
+    "surface"
+  );
+  assertAllowedKeys(
     input,
-    ["provider", "namespace", "method", "surface"],
-    "metadata.dimensions"
+    allowed,
+    (key) => `side-effect audit metadata.dimensions.${key} is not supported`
   );
   return Object.freeze({
     ...(input.provider ? { provider: assertSafeMetadataString(input.provider, "metadata.dimensions.provider") } : {}),
@@ -527,17 +551,9 @@ function assertSupportedMetadataKeys(
   action: SideEffectAuditAction | undefined
 ): void {
   const allowed = isDeletionAction(action)
-    ? ["status", "counts", "timestamps"]
-    : ["status", "counts", "timestamps", "dimensions"];
-  assertSupportedNestedKeys(input, allowed, "metadata");
-}
-
-function assertSupportedNestedKeys(input: object, allowed: readonly string[], field: string): void {
-  for (const key of Object.keys(input)) {
-    if (!allowed.includes(key)) {
-      throw new Error(`side-effect audit ${field}.${key} is not supported`);
-    }
-  }
+    ? defineAllowedKeys<DeletionSideEffectAuditMetadataInput>()("status", "counts", "timestamps")
+    : defineAllowedKeys<SupportedSideEffectAuditMetadataInput>()("status", "counts", "timestamps", "dimensions");
+  assertAllowedKeys(input, allowed, (key) => `side-effect audit metadata.${key} is not supported`);
 }
 
 function buildSessionScopedAuditEvent(
