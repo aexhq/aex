@@ -22,6 +22,7 @@ import {
   assertArchiveEntryCount,
   assertArchiveExpandedSize
 } from "./archive-limits.js";
+import { crossPlatformBasename } from "./path-basename.js";
 
 /**
  * File — arbitrary bytes (single file or zipped folder) delivered to
@@ -180,7 +181,7 @@ export class File {
     size: number,
     isExecutable: boolean
   ): Promise<File> {
-    const basename = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").at(-1) ?? "";
+    const basename = crossPlatformBasename(path);
     const filename = sanitiseFilename(basename) ?? `${slug}`;
     const sidecar = isExecutable
       ? serializeBundleManifest({ v: 1, exec: [filename], symlinks: [] })
@@ -337,7 +338,5 @@ function slugFromFilename(filename: string): string {
 }
 
 function inferNameFromPath(path: string): string {
-  const normalised = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const base = normalised.split("/").at(-1) ?? "";
-  return slugFromFilename(base);
+  return slugFromFilename(crossPlatformBasename(path));
 }
