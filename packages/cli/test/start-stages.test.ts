@@ -143,18 +143,19 @@ describe("start-specific parser", () => {
   ])("rejects a missing value for %s", (flag) => {
     const parsed = parseStartArguments([flag]);
     expect(parsed).toMatchObject({ ok: false, error: expect.stringContaining("requires") });
+    if (!parsed.ok) expect(parsed.error).toMatch(new RegExp(`^aex start ${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`));
   });
 
   it.each([
-    [["--provider", "anthropc"], "--provider must be one of:"],
-    [["--runtime-size", "tiny"], "--runtime-size must be one of:"],
-    [["--runtime", "fargate"], "--runtime must be one of:"],
-    [["--session-timeout", "1s"], "--session-timeout:"],
-    [["--timeout", "soon"], "--timeout: invalid duration"],
-    [["--mcp", "missing-equals"], "--mcp must be in the form KEY=VALUE"],
-    [["--proxy-auth", "old=value"], "--proxy-endpoint and --proxy-auth are no longer supported"],
-    [["position", "--unknown"], "unknown flag: --unknown"],
-    [["position"], "aex start takes no positional arguments"]
+    [["--provider", "anthropc"], "aex start --provider: must be one of:"],
+    [["--runtime-size", "tiny"], "aex start --runtime-size: must be one of:"],
+    [["--runtime", "fargate"], "aex start --runtime: must be one of:"],
+    [["--session-timeout", "1s"], "aex start --session-timeout:"],
+    [["--timeout", "soon"], "aex start --timeout: invalid duration"],
+    [["--mcp", "missing-equals"], "aex start --mcp: must be in the form KEY=VALUE"],
+    [["--proxy-auth", "old=value"], "aex start --proxy-auth: is no longer supported"],
+    [["position", "--unknown"], "aex start --unknown: unknown flag"],
+    [["position"], "aex start: takes no positional arguments"]
   ])("preserves negative parsing for %j", (argv, error) => {
     expect(parseStartArguments(argv)).toEqual({ ok: false, error: expect.stringContaining(error) });
   });
@@ -203,20 +204,20 @@ describe("start config, attachment, and submission stages", () => {
       "--config", "config.json", "--model", MODEL, "--anthropic-api-key", "secret"
     ]))).resolves.toEqual({
       ok: false,
-      error: "--config cannot be combined with --model/--system/--prompt/--mcp/--metadata"
+      error: "aex start --config: cannot be combined with --model/--system/--prompt/--mcp/--metadata"
     });
     await expect(resolveStartConfig(noReads, parseOk([
       "--model", MODEL, "--prompt", "hello"
     ]))).resolves.toEqual({
       ok: false,
-      error: expect.stringContaining("--anthropic-api-key is required")
+      error: expect.stringContaining("aex start --anthropic-api-key: is required")
     });
     await expect(resolveStartConfig(noReads, parseOk([
       "--model", MODEL, "--prompt", "hello", "--anthropic-api-key", "secret",
       "--mcp-auth", "missing=Authorization:token"
     ]))).resolves.toEqual({
       ok: false,
-      error: "--mcp-auth missing: no matching --mcp / mcpServers entry declared"
+      error: "aex start --mcp-auth: missing: no matching --mcp / mcpServers entry declared"
     });
   });
 

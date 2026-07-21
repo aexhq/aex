@@ -12,6 +12,12 @@ import {
   type CliSkillDraft,
   type CliToolDraft
 } from "./start-submit.js";
+import {
+  startValidationError,
+  startValidationSource,
+  startSourceValidationError,
+  type StartFlag
+} from "./start-validation.js";
 
 export interface StartAttachments {
   readonly skills: readonly CliSkillDraft[];
@@ -30,28 +36,62 @@ export async function buildStartAttachments(io: CliIO, args: StartArguments): Pr
 }
 
 async function buildSkill(io: CliIO, ref: string): Promise<CliSkillDraft> {
-  return buildCliSkill(await readAtFile(io, ref), ref);
+  const content = await readTextAttachment(io, ref, "--skill");
+  return buildValidatedAttachment(
+    "--skill",
+    () => buildCliSkill(content, startValidationSource("--skill"))
+  );
 }
 
 async function buildTool(io: CliIO, ref: string): Promise<CliToolDraft> {
-  const content = await readAtFile(io, ref);
+  const content = await readTextAttachment(io, ref, "--tool");
   const entry = portableBasename(stripAt(ref));
   const name = deriveName(ref, 1);
-  return buildCliTool({ name, description: `Custom tool ${name}`, entry, content });
+  return buildValidatedAttachment(
+    "--tool",
+    () => buildCliTool(
+      { name, description: `Custom tool ${name}`, entry, content },
+      startValidationSource("--tool")
+    )
+  );
 }
 
 async function buildInstructions(io: CliIO, ref: string): Promise<CliInstructionsDraft> {
-  return buildCliInstructions(await readAtFile(io, ref), deriveName(ref, 2));
+  const content = await readTextAttachment(io, ref, "--instructions");
+  return buildValidatedAttachment(
+    "--instructions",
+    () => buildCliInstructions(content, deriveName(ref, 2), startValidationSource("--instructions"))
+  );
 }
 
 async function buildFile(io: CliIO, ref: string): Promise<CliFileDraft> {
-  if (!io.readFileBytes) throw new Error("binary file reads are unavailable in this CLI host");
-  const bytes = await io.readFileBytes(resolvePath(io.cwd(), stripAt(ref)));
-  return buildCliFile({ name: portableBasename(stripAt(ref)), bytes });
+  let bytes: Uint8Array;
+  try {
+    if (!io.readFileBytes) throw new Error("binary file reads are unavailable in this CLI host");
+    bytes = await io.readFileBytes(resolvePath(io.cwd(), stripAt(ref)));
+  } catch (err) {
+    throw startValidationError("--file", err, "failed to attach asset: ");
+  }
+  return buildValidatedAttachment(
+    "--file",
+    () => buildCliFile({ name: portableBasename(stripAt(ref)), bytes }, startValidationSource("--file"))
+  );
 }
 
-async function readAtFile(io: CliIO, value: string): Promise<string> {
-  return io.readFile(resolvePath(io.cwd(), stripAt(value)));
+async function buildValidatedAttachment<T>(flag: StartFlag, build: () => Promise<T>): Promise<T> {
+  try {
+    return await build();
+  } catch (err) {
+    throw startSourceValidationError(flag, err);
+  }
+}
+
+async function readTextAttachment(io: CliIO, value: string, flag: StartFlag): Promise<string> {
+  try {
+    return await io.readFile(resolvePath(io.cwd(), stripAt(value)));
+  } catch (err) {
+    throw startValidationError(flag, err, "failed to attach asset: ");
+  }
 }
 
 function stripAt(value: string): string {

@@ -1012,7 +1012,7 @@ describe("aex start", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--proxy-endpoint and --proxy-auth are no longer supported");
+    expect(cap.stderr).toContain("aex start --proxy-endpoint: is no longer supported");
     expect(cap.calls).toHaveLength(0);
   });
 
@@ -1033,7 +1033,7 @@ describe("aex start", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--proxy-endpoint and --proxy-auth are no longer supported");
+    expect(cap.stderr).toContain("aex start --proxy-auth: is no longer supported");
   });
 
   it("rejects --mcp-auth that does not match a declared --mcp", async () => {
@@ -1055,7 +1055,7 @@ describe("aex start", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--mcp-auth gitlab");
+    expect(cap.stderr).toContain("aex start --mcp-auth: gitlab");
   });
 
   it("merges multiple --mcp-auth flags for the same server (does not collapse)", async () => {

@@ -48,6 +48,36 @@ describe("managed-only provider surface (published package)", () => {
     });
   });
 
+  it("keeps exact SDK factory provenance in the packed artifact", async () => {
+    const script = `
+      const { Skill, Tool } = await import("@aexhq/sdk");
+      const messages = [];
+      try {
+        await Skill.fromContent("no frontmatter");
+      } catch (error) {
+        messages.push(error.message);
+      }
+      try {
+        await Tool.fromFiles({
+          name: "packed_tool",
+          description: "Packed tool",
+          input_schema: { type: "object", properties: {} },
+          entry: "tool.ts",
+          files: { "tool.ts": "export default async function () {}" }
+        });
+      } catch (error) {
+        messages.push(error.message);
+      }
+      console.log(JSON.stringify(messages));
+    `;
+    const { exitCode, stdout, stderr } = await runChild(script, "sdk-factory-provenance.mjs");
+    expect(exitCode, stderr).toBe(0);
+    expect(JSON.parse(stdout.trim())).toEqual([
+      "Skill.fromContent: a skill name is required — pass { name }, add a `name:` field to the SKILL.md YAML frontmatter, or (for fromDir) use a directory whose basename slugifies to a valid name",
+      'Tool.fromFiles: entry must be a JS module (.js/.mjs/.cjs) that default-exports a function or { execute }; got "tool.ts"'
+    ]);
+  });
+
   it("openSession rejects removed legacy options before any HTTP call", async () => {
     const script = `
       const { Aex } = await import("@aexhq/sdk");

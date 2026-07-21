@@ -65,14 +65,27 @@ describe("CLI/SDK asset authoring conformance", () => {
     expect(sdkAdapter).not.toContain("zipSync");
   });
 
-  it("preserves CLI-specific authoring diagnostics", async () => {
-    await expect(buildCliSkill("no frontmatter", "skill.md"))
-      .rejects.toThrow(/^Skill\.fromContent: a skill name is required$/);
+  it("gives CLI authoring diagnostics start-flag provenance without changing SDK factories", async () => {
+    await expect(buildCliSkill("no frontmatter", "aex start --skill"))
+      .rejects.toThrow(/^aex start --skill: a skill name is required$/);
     await expect(buildCliTool({
       name: "parity_tool",
       description: "Canonical parity tool",
       entry: "tool.ts",
       content: "export default async function () {}\n"
-    })).rejects.toThrow(/^Tool\.fromFiles: entry must be a JS module \(\.js\/\.mjs\/\.cjs\)$/);
+    }, "aex start --tool")).rejects.toThrow(/^aex start --tool: entry must be a JS module \(\.js\/\.mjs\/\.cjs\)$/);
+
+    await expect(Skill.fromContent("no frontmatter")).rejects.toThrow(
+      /^Skill\.fromContent: a skill name is required — pass \{ name \}/
+    );
+    await expect(Tool.fromFiles({
+      name: "parity_tool",
+      description: "Canonical parity tool",
+      input_schema: { type: "object", properties: {} },
+      entry: "tool.ts",
+      files: { "tool.ts": "export default async function () {}\n" }
+    })).rejects.toThrow(
+      /^Tool\.fromFiles: entry must be a JS module \(\.js\/\.mjs\/\.cjs\) that default-exports a function or \{ execute \}; got "tool\.ts"$/
+    );
   });
 });

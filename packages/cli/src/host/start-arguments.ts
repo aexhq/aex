@@ -14,6 +14,11 @@ import {
   takeBooleanFlag,
   takeOptionFlag
 } from "./common.js";
+import {
+  startParserValidationMessage,
+  startValidationMessage,
+  type StartFlag
+} from "./start-validation.js";
 
 export interface StartArguments {
   readonly explicitProvider?: ProviderName;
@@ -45,32 +50,32 @@ export type StartArgumentsResult =
 /** Parse and validate only the flags owned by `aex start`. */
 export function parseStartArguments(argv: readonly string[]): StartArgumentsResult {
   const state: { rest: readonly string[]; error: string | null } = { rest: argv, error: null };
-  const option = (flag: string): string | undefined => {
+  const option = (flag: StartFlag): string | undefined => {
     if (state.error) return undefined;
     const parsed = takeOptionFlag(state.rest, flag);
     state.rest = parsed.remaining;
-    state.error = parsed.error;
+    state.error = parsed.error === null ? null : startParserValidationMessage(flag, parsed.error);
     return parsed.value;
   };
-  const repeated = (flag: string): readonly string[] => {
+  const repeated = (flag: StartFlag): readonly string[] => {
     if (state.error) return [];
     const parsed = collectRepeated(state.rest, flag);
     state.rest = parsed.remaining;
-    state.error = parsed.error;
+    state.error = parsed.error === null ? null : startParserValidationMessage(flag, parsed.error);
     return parsed.values;
   };
-  const repeatedKv = (flag: string): Readonly<Record<string, string>> => {
+  const repeatedKv = (flag: StartFlag): Readonly<Record<string, string>> => {
     if (state.error) return {};
     const parsed = collectRepeatedKv(state.rest, flag);
     state.rest = parsed.remaining;
-    state.error = parsed.error;
+    state.error = parsed.error === null ? null : startParserValidationMessage(flag, parsed.error);
     return parsed.entries;
   };
-  const repeatedKvList = (flag: string): ReadonlyArray<readonly [string, string]> => {
+  const repeatedKvList = (flag: StartFlag): ReadonlyArray<readonly [string, string]> => {
     if (state.error) return [];
     const parsed = collectRepeatedKvList(state.rest, flag);
     state.rest = parsed.remaining;
-    state.error = parsed.error;
+    state.error = parsed.error === null ? null : startParserValidationMessage(flag, parsed.error);
     return parsed.entries;
   };
   const failed = (): StartArgumentsResult | undefined =>
@@ -84,9 +89,11 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
       const hint = suggest(providerValue, PROVIDERS);
       return {
         ok: false,
-        error:
-          `--provider must be one of: ${PROVIDERS.join(", ")} (got: ${providerValue})` +
+        error: startValidationMessage(
+          "--provider",
+          `must be one of: ${PROVIDERS.join(", ")} (got: ${providerValue})` +
           `${hint ? `; did you mean "${hint}"?` : ""}`
+        )
       };
     }
     explicitProvider = providerValue as ProviderName;
@@ -107,7 +114,10 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
     const hint = suggest(runtimeSize, RUNTIME_SIZES);
     return {
       ok: false,
-      error: `--runtime-size must be one of: ${RUNTIME_SIZES.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}`
+      error: startValidationMessage(
+        "--runtime-size",
+        `must be one of: ${RUNTIME_SIZES.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}`
+      )
     };
   }
 
@@ -117,7 +127,10 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
     const hint = suggest(runtimeKind, RUNTIME_KINDS);
     return {
       ok: false,
-      error: `--runtime must be one of: ${RUNTIME_KINDS.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}`
+      error: startValidationMessage(
+        "--runtime",
+        `must be one of: ${RUNTIME_KINDS.join(", ")}${hint ? `; did you mean "${hint}"?` : ""}`
+      )
     };
   }
 
@@ -127,7 +140,7 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
     try {
       parseSessionTimeout(sessionTimeout);
     } catch (err) {
-      return { ok: false, error: `--session-timeout: ${(err as Error).message}` };
+      return { ok: false, error: startValidationMessage("--session-timeout", (err as Error).message) };
     }
   }
 
@@ -138,7 +151,7 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
   let followTimeoutMs: number | null = null;
   if (timeout !== undefined) {
     const parsed = parseDuration(timeout);
-    if (parsed.error) return { ok: false, error: `--timeout: ${parsed.error}` };
+    if (parsed.error) return { ok: false, error: startValidationMessage("--timeout", parsed.error) };
     followTimeoutMs = parsed.ms;
   }
 
@@ -159,15 +172,20 @@ export function parseStartArguments(argv: readonly string[]): StartArgumentsResu
   if (removedEndpointValues.length > 0 || Object.keys(proxyAuth).length > 0) {
     return {
       ok: false,
-      error: "--proxy-endpoint and --proxy-auth are no longer supported; make HTTP calls from your code and pass credentials via secrets."
+      error: startValidationMessage(
+        removedEndpointValues.length > 0 ? "--proxy-endpoint" : "--proxy-auth",
+        "is no longer supported; make HTTP calls from your code and pass credentials via secrets."
+      )
     };
   }
 
   const positional = state.rest.filter((arg) => !arg.startsWith("--"));
   const unknownFlags = state.rest.filter((arg) => arg.startsWith("--"));
-  if (unknownFlags.length > 0) return { ok: false, error: `unknown flag: ${unknownFlags[0]}` };
+  if (unknownFlags.length > 0) {
+    return { ok: false, error: startValidationMessage(unknownFlags[0] as StartFlag, "unknown flag") };
+  }
   if (positional.length > 0) {
-    return { ok: false, error: `aex start takes no positional arguments (got: ${positional.join(" ")})` };
+    return { ok: false, error: startValidationMessage(null, `takes no positional arguments (got: ${positional.join(" ")})`) };
   }
 
   return {

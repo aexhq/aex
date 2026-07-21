@@ -25,6 +25,10 @@ import { buildStartAttachments } from "./start-attachments.js";
 import { resolveStartConfig } from "./start-config.js";
 import { buildStartSubmission } from "./start-submission.js";
 import { submitCliRun } from "./start-submit.js";
+import {
+  adaptStartSubmissionError,
+  startCommonValidationMessage
+} from "./start-validation.js";
 import { openEnvelopeStream } from "./stream-render.js";
 
 type AcceptedStart = Awaited<ReturnType<typeof submitCliRun>>;
@@ -34,7 +38,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
 
   const common = await resolveCommonHostFlags(io, argv);
   if (!common.ok) {
-    io.stderr(`${common.reason}\n`);
+    io.stderr(`${startCommonValidationMessage(argv, common.reason)}\n`);
     return USAGE_ERR;
   }
   const parsed = parseStartArguments(common.rest);
@@ -51,7 +55,7 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   try {
     attachments = await buildStartAttachments(io, parsed.value);
   } catch (err) {
-    io.stderr(`failed to attach asset: ${(err as Error).message}\n`);
+    io.stderr(`${err instanceof Error ? err.message : String(err)}\n`);
     return USAGE_ERR;
   }
   const options = buildStartSubmission(parsed.value, resolved.value, attachments);
@@ -70,7 +74,8 @@ export async function executeStartCmd(io: CliIO, argv: readonly string[]): Promi
   let accepted: AcceptedStart;
   try {
     accepted = await submitCliRun(http, io.fetchImpl, options);
-  } catch (err) {
+  } catch (caught) {
+    const err = adaptStartSubmissionError(caught);
     return emitApiError(io, "session_failed", err);
   }
   io.stdout(JSON.stringify(accepted.session) + "\n");

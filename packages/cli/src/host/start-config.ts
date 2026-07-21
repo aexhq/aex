@@ -12,6 +12,7 @@ import { resolve as resolvePath } from "node:path";
 import type { CliIO } from "../internal.js";
 import type { StartArguments } from "./start-arguments.js";
 import type { CliMcpServer } from "./start-submit.js";
+import { startValidationMessage } from "./start-validation.js";
 
 export interface ResolvedStartConfig {
   readonly model: ModelName;
@@ -51,7 +52,10 @@ export async function resolveStartConfig(
     ) {
       return {
         ok: false,
-        error: "--config cannot be combined with --model/--system/--prompt/--mcp/--metadata"
+        error: startValidationMessage(
+          "--config",
+          "cannot be combined with --model/--system/--prompt/--mcp/--metadata"
+        )
       };
     }
     let sessionConfig;
@@ -63,7 +67,7 @@ export async function resolveStartConfig(
       for (const [name, headers] of mcpHeaders) mcpHeaderBag.set(name, headers);
       sessionConfig = parseSessionRequestConfig(normalised);
     } catch (err) {
-      return { ok: false, error: `failed to load --config: ${(err as Error).message}` };
+      return { ok: false, error: startValidationMessage("--config", `failed to load: ${(err as Error).message}`) };
     }
     model = sessionConfig.model;
     system = sessionConfig.system;
@@ -75,20 +79,20 @@ export async function resolveStartConfig(
     metadata = sessionConfig.metadata ? { ...sessionConfig.metadata } : undefined;
   } else {
     if (!args.model) {
-      return { ok: false, error: "--model is required when --config is not provided" };
+      return { ok: false, error: startValidationMessage("--model", "is required when --config is not provided") };
     }
     model = args.model as ModelName;
-    if (args.prompts.length === 0) return { ok: false, error: "--prompt is required (repeatable)" };
+    if (args.prompts.length === 0) return { ok: false, error: startValidationMessage("--prompt", "is required (repeatable)") };
     try {
       message = await Promise.all(args.prompts.map((value) => readMaybeFile(io, value)));
     } catch (err) {
-      return { ok: false, error: `failed to read --prompt file: ${(err as Error).message}` };
+      return { ok: false, error: startValidationMessage("--prompt", `failed to read file: ${(err as Error).message}`) };
     }
     if (args.system !== undefined) {
       try {
         system = await readMaybeFile(io, args.system);
       } catch (err) {
-        return { ok: false, error: `failed to read --system file: ${(err as Error).message}` };
+        return { ok: false, error: startValidationMessage("--system", `failed to read file: ${(err as Error).message}`) };
       }
     }
     configMcpServers = Object.entries(args.mcpEntries).map(([name, url]) => ({ name, url }));
@@ -99,16 +103,18 @@ export async function resolveStartConfig(
   try {
     provider = resolveModelProvider(model, args.explicitProvider);
   } catch (err) {
-    return { ok: false, error: `--model: ${(err as Error).message}` };
+    return { ok: false, error: startValidationMessage("--model", (err as Error).message) };
   }
   if (!args.providerApiKeys[provider]) {
     const inferred = args.explicitProvider === undefined && providersForModel(model).length > 0;
     return {
       ok: false,
-      error:
-        `--${provider}-api-key is required for provider ${provider}` +
+      error: startValidationMessage(
+        `--${provider}-api-key`,
+        `is required for provider ${provider}` +
         `${inferred ? ` (inferred from --model ${model})` : ""}` +
         " (the platform does not store provider keys on your behalf)"
+      )
     };
   }
 
@@ -117,19 +123,22 @@ export async function resolveStartConfig(
     if (colon <= 0 || colon >= headerSpec.length - 1) {
       return {
         ok: false,
-        error: `--mcp-auth ${name}: expected 'HeaderName:Value' (got: ${headerSpec})`
+        error: startValidationMessage("--mcp-auth", `${name}: expected 'HeaderName:Value' (got: ${headerSpec})`)
       };
     }
     const headerName = headerSpec.slice(0, colon).trim();
     const headerValue = headerSpec.slice(colon + 1).trim();
     if (!headerName || !headerValue) {
-      return { ok: false, error: `--mcp-auth ${name}: header name and value must be non-empty` };
+      return { ok: false, error: startValidationMessage("--mcp-auth", `${name}: header name and value must be non-empty`) };
     }
     const existing = mcpHeaderBag.get(name) ?? {};
     if (Object.prototype.hasOwnProperty.call(existing, headerName)) {
       return {
         ok: false,
-        error: `--mcp-auth ${name}: duplicate header "${headerName}" — each header may be set only once per server`
+        error: startValidationMessage(
+          "--mcp-auth",
+          `${name}: duplicate header "${headerName}" — each header may be set only once per server`
+        )
       };
     }
     existing[headerName] = headerValue;
@@ -139,7 +148,7 @@ export async function resolveStartConfig(
     if (!configMcpServers.some((server) => server.name === name)) {
       return {
         ok: false,
-        error: `--mcp-auth ${name}: no matching --mcp / mcpServers entry declared`
+        error: startValidationMessage("--mcp-auth", `${name}: no matching --mcp / mcpServers entry declared`)
       };
     }
   }

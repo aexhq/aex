@@ -143,7 +143,7 @@ describe("aex start provider inference (SDK parity)", () => {
     });
     await executeCli(cap.io);
     expect(cap.exitCode).toBe(2);
-    expect(cap.stderr).toContain("--deepseek-api-key is required");
+    expect(cap.stderr).toContain("aex start --deepseek-api-key: is required");
   });
 });
 
