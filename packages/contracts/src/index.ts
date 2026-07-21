@@ -90,7 +90,13 @@ export {
   AEX_DEV_BASE_URL,
   PLANE_BASE_URLS
 } from "./stable.js";
-export * from "./sdk-secrets.js";
+export {
+  SecretString,
+  containsSecretLikeValue,
+  createRedactingStream,
+  redactSecrets,
+  redactString
+} from "./sdk-secrets.js";
 export * from "./sdk-errors.js";
 export * from "./canonical-sha256.js";
 export * from "./session-config.js";

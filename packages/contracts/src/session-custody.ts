@@ -1,4 +1,12 @@
 import type { ProviderName } from "./submission.js";
+import {
+  createForbiddenFieldNamePredicate,
+  isPlatformContentDigest,
+  privateResourceHandlePattern,
+  PUBLIC_SAFE_SECRET_PATTERNS,
+  scanPublicSafePayload,
+  type PublicSafeStringPattern
+} from "./sdk-secrets.js";
 
 export const CUSTODY_MANIFEST_SCHEMA_VERSION = 1;
 export const CUSTODY_REDACTION_SCANNER_VERSION = 1;
@@ -249,6 +257,7 @@ export interface CustodyManifestWriter {
 
 export type CustodyRedactionReason =
   | "forbidden_field_name"
+  | "uninspectable_value"
   | "bearer_token"
   | "provider_key"
   | "signed_url"
@@ -357,9 +366,12 @@ export function buildCustodyManifest(input: CustodyManifestInput): CustodyManife
 }
 
 export function scanCustodyPayloadForSensitiveValues(input: unknown): readonly CustodyRedactionFinding[] {
-  const findings: CustodyRedactionFinding[] = [];
-  visitCustodyValue(input, "$", findings);
-  return Object.freeze(findings);
+  return scanPublicSafePayload(input, {
+    patterns: custodyStringPatterns,
+    isForbiddenFieldName: isForbiddenCustodyFieldName,
+    isPatternExempt: ({ reason, match }) =>
+      reason === "high_entropy_token" && isPlatformContentDigest(match)
+  });
 }
 
 export function assertPublicSafeCustodyPayload(input: unknown): void {
@@ -525,179 +537,35 @@ function normalizeSummary(input: CustodyManifestSummaryV1): CustodyManifestSumma
   });
 }
 
-function visitCustodyValue(
-  input: unknown,
-  path: string,
-  findings: CustodyRedactionFinding[]
-): void {
-  if (typeof input === "string") {
-    scanStringValue(input, path, findings);
-    return;
-  }
-  if (Array.isArray(input)) {
-    input.forEach((value, index) => visitCustodyValue(value, `${path}[${index}]`, findings));
-    return;
-  }
-  if (!input || typeof input !== "object") {
-    return;
-  }
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    const childPath = `${path}.${key}`;
-    if (isForbiddenCustodyFieldName(key)) {
-      findings.push(Object.freeze({ path: childPath, reason: "forbidden_field_name" }));
-    }
-    visitCustodyValue(value, childPath, findings);
-  }
-}
-
-function scanStringValue(
-  value: string,
-  path: string,
-  findings: CustodyRedactionFinding[]
-): void {
-  for (const pattern of forbiddenStringPatterns) {
-    if (matchesForbiddenPattern(pattern, value)) {
-      findings.push(Object.freeze({
-        path,
-        reason: pattern.reason,
-        valueLength: value.length
-      }));
-    }
-  }
-}
-
-/**
- * A pattern fires on a value if its `regex` matches AND — when the pattern
- * carries an `accept` predicate — at least one matched sequence is accepted by it.
- * The predicate lets a shape-matched sequence be VETOED per-match (the entropy
- * catch-all uses it to skip content-addressed hashes and low-entropy slugs that
- * its coarse regex would otherwise flag); shape-only patterns have no predicate.
- */
-function matchesForbiddenPattern(
-  pattern: { readonly regex: RegExp; readonly accept?: (match: string) => boolean },
-  value: string
-): boolean {
-  if (!pattern.accept) {
-    return pattern.regex.test(value);
-  }
-  const scan = pattern.regex.global ? pattern.regex : new RegExp(pattern.regex.source, `${pattern.regex.flags}g`);
-  scan.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = scan.exec(value)) !== null) {
-    if (pattern.accept(match[0])) {
-      return true;
-    }
-    if (match.index === scan.lastIndex) {
-      scan.lastIndex++;
-    }
-  }
-  return false;
-}
-
-const forbiddenStringPatterns: readonly {
-  readonly reason: Exclude<CustodyRedactionReason, "forbidden_field_name">;
-  readonly regex: RegExp;
-  readonly accept?: (match: string) => boolean;
-}[] = Object.freeze([
-  { reason: "bearer_token", regex: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
-  {
-    reason: "provider_key",
-    // Prefixed provider keys (`sk-…`, Slack `xox*-…`, Google `AIza…`). The bare
-    // `sk-` body is intentionally generic so an unrecognised vendor's `sk-` key
-    // (e.g. DeepSeek `sk-<hex>`, OpenRouter `sk-or-…`) is still caught by shape,
-    // not left to the narrowed entropy catch-all below.
-    regex: /\b(?:sk-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{8,})/i
-  },
-  { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "object_store_key", regex: /(^|[\s"'`])(?:sessions|assets)\/[^?<#\s"'`]+/i },
-  { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
-  {
-    reason: "private_resource_handle",
-    // `<keyword><sep><id>` opaque handles (`machine_a1B2c3D4e5`, `resource_9f8e7d...`).
-    // The keyword set overlaps ordinary prose, so require the id segment to
-    // carry a digit. That keeps genuine minted handles flagged while avoiding
-    // dictionary-word chains such as `agent_decision_failure`.
-    regex: /\b(?:machine|agent|resource|handle|token_hash|bearer_hash)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i,
-    accept: isMintedResourceHandle
-  },
-  {
-    reason: "high_entropy_token",
-    // Catch-all for an unrecognised opaque secret blob. The candidate sequence
-    // EXCLUDES `_` (so `SCREAMING_SNAKE` env names and `slug_with_words` URL
-    // segments split instead of fusing into a phantom 40-char sequence — the live
-    // false positive was `ted_season_2_peacock_official_discussion_thread` in
-    // web-search result text and a fetched URL), and the `accept` predicate
-    // vetoes content-addressed hashes (md5/sha1/sha256 digests — the platform's
-    // OWN asset filenames) and low-entropy / single-class sessions so only genuine
-    // opaque secrets remain. Slash-bearing secrets (signed URLs, connection
-    // strings, `Bearer …`) are covered by the named patterns above.
-    regex: /\b[A-Za-z0-9-]{40,}\b/,
-    accept: isHighEntropySecretSequence
-  }
+const custodyStringPatterns: readonly PublicSafeStringPattern<
+  Exclude<CustodyRedactionReason, "forbidden_field_name" | "uninspectable_value">
+>[] = Object.freeze([
+  ...PUBLIC_SAFE_SECRET_PATTERNS,
+  privateResourceHandlePattern([
+    "machine",
+    "agent",
+    "resource",
+    "handle",
+    "token_hash",
+    "bearer_hash"
+  ])
 ]);
 
-/** A content-addressed hash (md5/sha1/sha256 hex digest) — the platform's own
- * asset filenames and content references. Exempt from the entropy catch-all so
- * a captured file named after its sha256 (or a hash echoed in tool-result text)
- * is not misclassified as a leaked secret. */
-const CONTENT_HASH_SEQUENCE = /^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i;
-
-/**
- * Decide whether a coarse `[A-Za-z0-9-]{40,}` sequence is a genuine opaque secret.
- * Rejects content-addressed hashes, then requires both character-class
- * diversity (≥2 of lower/upper/digit) and high Shannon entropy — the property
- * that separates an opaque key blob from a long dictionary-ish identifier. A
- * real prefixless secret (base64url/alnum-mixed) clears both gates; a hash, a
- * hyphenated slug, or a single-class sequence does not.
- */
-function isHighEntropySecretSequence(sequence: string): boolean {
-  if (CONTENT_HASH_SEQUENCE.test(sequence)) {
-    return false;
-  }
-  if (!/[A-Za-z]/.test(sequence) || !/\d/.test(sequence)) {
-    return false;
-  }
-  if (highEntropyCharClassCount(sequence) < 2) {
-    return false;
-  }
-  return highEntropyShannonBits(sequence) >= 3.0;
-}
-
-function isMintedResourceHandle(match: string): boolean {
-  const separatorIndex = match.search(/[_:-]/);
-  const id = match.slice(separatorIndex + 1);
-  return /\d/.test(id);
-}
-
-function highEntropyCharClassCount(value: string): number {
-  let count = 0;
-  if (/[a-z]/.test(value)) count++;
-  if (/[A-Z]/.test(value)) count++;
-  if (/[0-9]/.test(value)) count++;
-  return count;
-}
-
-function highEntropyShannonBits(value: string): number {
-  if (value.length === 0) {
-    return 0;
-  }
-  const counts = new Map<string, number>();
-  for (const char of value) {
-    counts.set(char, (counts.get(char) ?? 0) + 1);
-  }
-  let bits = 0;
-  for (const count of counts.values()) {
-    const p = count / value.length;
-    bits -= p * Math.log2(p);
-  }
-  return bits;
-}
-
-function isForbiddenCustodyFieldName(key: string): boolean {
-  return /^(apiKey|apiKeys|secretValue|bearerHash|signedUrl|objectStoreKey|objectKey|vaultId|providerResponseBody|responseBody|privateResourceHandle|resourceHandle|rawBody)$/i.test(
-    key
-  );
-}
+const isForbiddenCustodyFieldName = createForbiddenFieldNamePredicate([
+  "apiKey",
+  "apiKeys",
+  "secretValue",
+  "bearerHash",
+  "signedUrl",
+  "objectStoreKey",
+  "objectKey",
+  "vaultId",
+  "providerResponseBody",
+  "responseBody",
+  "privateResourceHandle",
+  "resourceHandle",
+  "rawBody"
+]);
 
 function assertSafeIdentifier(value: string, field: string): string {
   assertNonEmptyString(value, field);

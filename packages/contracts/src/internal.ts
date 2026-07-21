@@ -16,6 +16,7 @@ export * as operations from "./operations.js";
 export * from "./post-hook.js";
 export * from "./retry-core.js";
 export * from "./runtime-security-profile.js";
+export * from "./sdk-secrets.js";
 export * from "./session-custody.js";
 export * from "./session-retention.js";
 export * from "./side-effect-audit.js";

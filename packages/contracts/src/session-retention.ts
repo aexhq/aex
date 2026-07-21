@@ -1,5 +1,12 @@
 import type { SessionWorkflowStatus } from "./workflow-status.js";
 import { isTerminalSessionWorkflowStatus } from "./workflow-status.js";
+import {
+  createForbiddenFieldNamePredicate,
+  privateResourceHandlePattern,
+  PUBLIC_SAFE_SECRET_PATTERNS,
+  scanPublicSafePayload,
+  type PublicSafeStringPattern
+} from "./sdk-secrets.js";
 
 export const SESSION_RETENTION_SCHEMA_VERSION = 1;
 export const SESSION_DELETION_MANIFEST_KIND = "aex.session_deletion_manifest.v1";
@@ -258,10 +265,14 @@ export interface SessionDeletionManifestWriter {
 
 export type SessionRetentionRedactionReason =
   | "forbidden_field_name"
+  | "uninspectable_value"
+  | "bearer_token"
+  | "provider_key"
   | "signed_url"
   | "object_store_key"
   | "vault_id"
   | "private_resource_handle"
+  | "high_entropy_token"
   | "hash_like_value";
 
 export interface SessionRetentionRedactionFinding {
@@ -474,9 +485,10 @@ export function buildSessionDeletionJob(input: SessionDeletionJobInput): Session
 export function scanSessionRetentionPayloadForSensitiveValues(
   input: unknown
 ): readonly SessionRetentionRedactionFinding[] {
-  const findings: SessionRetentionRedactionFinding[] = [];
-  visitRetentionValue(input, "$", findings);
-  return Object.freeze(findings);
+  return scanPublicSafePayload(input, {
+    patterns: retentionStringPatterns,
+    isForbiddenFieldName: isForbiddenRetentionFieldName
+  });
 }
 
 export function assertPublicSafeSessionRetentionPayload(input: unknown): void {
@@ -662,66 +674,46 @@ function addDaysIso(timestamp: string, days: number): string {
   return new Date(end).toISOString();
 }
 
-function visitRetentionValue(
-  input: unknown,
-  path: string,
-  findings: SessionRetentionRedactionFinding[]
-): void {
-  if (typeof input === "string") {
-    scanStringValue(input, path, findings);
-    return;
-  }
-  if (Array.isArray(input)) {
-    input.forEach((value, index) => visitRetentionValue(value, `${path}[${index}]`, findings));
-    return;
-  }
-  if (!input || typeof input !== "object") {
-    return;
-  }
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    const childPath = `${path}.${key}`;
-    if (isForbiddenRetentionFieldName(key)) {
-      findings.push(Object.freeze({ path: childPath, reason: "forbidden_field_name" }));
-    }
-    visitRetentionValue(value, childPath, findings);
-  }
-}
-
-function scanStringValue(
-  value: string,
-  path: string,
-  findings: SessionRetentionRedactionFinding[]
-): void {
-  for (const pattern of forbiddenStringPatterns) {
-    if (pattern.regex.test(value)) {
-      findings.push(Object.freeze({
-        path,
-        reason: pattern.reason,
-        valueLength: value.length
-      }));
-    }
-  }
-}
-
-const forbiddenStringPatterns: readonly {
-  readonly reason: Exclude<SessionRetentionRedactionReason, "forbidden_field_name">;
-  readonly regex: RegExp;
-}[] = Object.freeze([
-  { reason: "signed_url", regex: /[?&](?:X-Amz-Signature|X-Amz-Credential|X-Amz-Algorithm|AWSAccessKeyId)=/i },
-  { reason: "object_store_key", regex: /(^|[\s"'`])(?:sessions|assets)\/[^?<#\s"'`]+/i },
-  { reason: "vault_id", regex: /\b(?:vault|vlt|secret)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i },
-  {
-    reason: "private_resource_handle",
-    regex: /\b(?:machine|resource|handle|provider|asset)[_:-][A-Za-z0-9][A-Za-z0-9_-]{7,}\b/i
-  },
-  { reason: "hash_like_value", regex: /\b(?:sha256|hash)[:_-][A-Fa-f0-9]{16,}\b/ }
+const retentionStringPatterns: readonly PublicSafeStringPattern<
+  Exclude<SessionRetentionRedactionReason, "forbidden_field_name" | "uninspectable_value">
+>[] = Object.freeze([
+  ...PUBLIC_SAFE_SECRET_PATTERNS,
+  privateResourceHandlePattern(["machine", "resource", "handle", "provider", "asset"]),
+  Object.freeze({
+    reason: "hash_like_value" as const,
+    regex: /\b(?:sha256|hash)[:_-][A-Fa-f0-9]{16,}\b/
+  })
 ]);
 
-function isForbiddenRetentionFieldName(key: string): boolean {
-  return /^(path|paths|objectKey|objectKeys|objectStoreKey|objectStoreKeys|fileName|filename|filenames|size|sizes|bytes|byteCount|hash|hashes|providerId|providerIds|vaultId|vaultIds|resourceId|resourceIds|handle|handles|signedUrl|signedUrls|url|urls)$/i.test(
-    key
-  );
-}
+const isForbiddenRetentionFieldName = createForbiddenFieldNamePredicate([
+  "path",
+  "paths",
+  "objectKey",
+  "objectKeys",
+  "objectStoreKey",
+  "objectStoreKeys",
+  "fileName",
+  "filename",
+  "filenames",
+  "size",
+  "sizes",
+  "bytes",
+  "byteCount",
+  "hash",
+  "hashes",
+  "providerId",
+  "providerIds",
+  "vaultId",
+  "vaultIds",
+  "resourceId",
+  "resourceIds",
+  "handle",
+  "handles",
+  "signedUrl",
+  "signedUrls",
+  "url",
+  "urls"
+]);
 
 function assertSafeIdentifier(value: string, field: string): string {
   assertNonEmptyString(value, field);
