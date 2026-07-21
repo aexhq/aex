@@ -201,6 +201,10 @@ describe("common value-taking option syntax", () => {
       ok: false,
       reason: "--api-key requires a value"
     });
+    expect(extractCommonHostFlags(["--api-key", "--json"])).toEqual({
+      ok: true,
+      flags: { apiKey: "--json", aexUrl: null, debug: false, json: false, rest: [] }
+    });
   });
 });
 

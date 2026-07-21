@@ -580,6 +580,32 @@ describe("installed CLI host commands", () => {
     );
   });
 
+  it("shares installed --json positions across authenticated data/control and optional subcommands", async () => {
+    const common = ["--api-key", "tok-installed-cli", "--aex-url", api.baseUrl] as const;
+    for (const args of [
+      ["status", "--json", "session-cli-1", ...common],
+      ["status", "session-cli-1", "--json", ...common, "--json"],
+      ["orgs", "--json", "list", ...common],
+      ["orgs", "list", ...common, "--json", "--json"]
+    ] as const) {
+      const result = await runCommand(binPath, args, { cwd: install.installDir, timeoutMs: 30_000 });
+      expect(result.exitCode, `args: ${args.join(" ")}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
+      expect(() => JSON.parse(result.stdout.trim())).not.toThrow();
+      expect(result.stderr).toBe("");
+    }
+
+    const ledger = await runCommand(
+      binPath,
+      ["billing", "--json", "ledger", "--json", "--limit", "10", ...common],
+      { cwd: install.installDir, timeoutMs: 30_000 }
+    );
+    expect(ledger.exitCode, `stdout:\n${ledger.stdout}\nstderr:\n${ledger.stderr}`).toBe(0);
+    expect(JSON.parse(ledger.stdout.trim())).toEqual([
+      expect.objectContaining({ id: "led-1", entryType: "top_up" })
+    ]);
+    expect(ledger.stderr).toBe("");
+  });
+
   it("gives split and equals value syntax byte-for-byte parity in the packed CLI", async () => {
     const splitArgs = [
       "start",
