@@ -477,7 +477,7 @@ function normalizeStatusMetadata(
   assertAllowedKeys(
     input,
     allowed,
-    (key) => `side-effect audit metadata.status.${key} is not supported`
+    (key) => new Error(`side-effect audit metadata.status.${key} is not supported`)
   );
   return Object.freeze({
     ...(input.status ? { status: assertSafeMetadataString(input.status, "metadata.status.status") } : {}),
@@ -536,7 +536,7 @@ function normalizeDimensions(
   assertAllowedKeys(
     input,
     allowed,
-    (key) => `side-effect audit metadata.dimensions.${key} is not supported`
+    (key) => new Error(`side-effect audit metadata.dimensions.${key} is not supported`)
   );
   return Object.freeze({
     ...(input.provider ? { provider: assertSafeMetadataString(input.provider, "metadata.dimensions.provider") } : {}),
@@ -553,7 +553,7 @@ function assertSupportedMetadataKeys(
   const allowed = isDeletionAction(action)
     ? defineAllowedKeys<DeletionSideEffectAuditMetadataInput>()("status", "counts", "timestamps")
     : defineAllowedKeys<SupportedSideEffectAuditMetadataInput>()("status", "counts", "timestamps", "dimensions");
-  assertAllowedKeys(input, allowed, (key) => `side-effect audit metadata.${key} is not supported`);
+  assertAllowedKeys(input, allowed, (key) => new Error(`side-effect audit metadata.${key} is not supported`));
 }
 
 function buildSessionScopedAuditEvent(

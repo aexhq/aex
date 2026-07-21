@@ -41,7 +41,7 @@ export function parsePostHook(input: unknown, path = "postHook"): PlatformPostHo
   assertAllowedKeys(
     value,
     allowed,
-    (key) => `${path}.${key} is not an allowed field; permitted: command, timeout, maxTurns, maxChars`
+    (key) => new Error(`${path}.${key} is not an allowed field; permitted: command, timeout, maxTurns, maxChars`)
   );
   if (typeof value.command !== "string") {
     throw new Error(`${path}.command must be a string`);

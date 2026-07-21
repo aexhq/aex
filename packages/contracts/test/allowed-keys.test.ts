@@ -12,21 +12,35 @@ describe("allowed-key assertion", () => {
     const record = { beta: 2, alpha: 1 };
     const before = JSON.stringify(record);
 
-    expect(() => assertAllowedKeys(empty, allowed, () => "unused")).not.toThrow();
-    expect(() => assertAllowedKeys(record, allowed, () => "unused")).not.toThrow();
+    expect(() => assertAllowedKeys(empty, allowed, () => new Error("unused"))).not.toThrow();
+    expect(() => assertAllowedKeys(record, allowed, () => new Error("unused"))).not.toThrow();
     expect(JSON.stringify(record)).toBe(before);
     expect(allowed).toEqual(["alpha", "beta"]);
   });
 
   it("reports only the first unknown key in native Object.keys order", () => {
     const ordinary = { allowed: true, later: true, earlier: true };
-    const ordinaryError = vi.fn((key: string, keys: readonly string[]) => `${key}:${keys.join("|")}`);
+    const ordinaryError = vi.fn((key: string, keys: readonly string[]) => new Error(`${key}:${keys.join("|")}`));
     expect(() => assertAllowedKeys(ordinary, ["allowed"], ordinaryError)).toThrow("later:allowed");
     expect(ordinaryError).toHaveBeenCalledOnce();
     expect(ordinaryError).toHaveBeenCalledWith("later", ["allowed"]);
 
     const integerLike = { 10: true, 2: true, allowed: true, z: true };
-    expect(() => assertAllowedKeys(integerLike, ["allowed"], (key) => key)).toThrow("2");
+    expect(() => assertAllowedKeys(integerLike, ["allowed"], (key) => new Error(key))).toThrow("2");
+  });
+
+  it("throws the caller-owned Error without wrapping away its structured identity", () => {
+    class StructuredError extends Error {}
+    const expected = new StructuredError("structured");
+    let thrown: unknown;
+
+    try {
+      assertAllowedKeys({ unknown: true }, [], () => expected);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(expected);
   });
 
   it("ignores inherited, non-enumerable, and symbol keys", () => {
@@ -36,7 +50,7 @@ describe("allowed-key assertion", () => {
     Object.defineProperty(record, "hidden", { enumerable: false, value: true });
     record[Symbol("symbol-key")] = true;
 
-    expect(() => assertAllowedKeys(record, ["allowed"], (key) => key)).not.toThrow();
+    expect(() => assertAllowedKeys(record, ["allowed"], (key) => new Error(key))).not.toThrow();
   });
 
   it("accepts exactly when every enumerable own string key is allowed", () => {
@@ -54,7 +68,7 @@ describe("allowed-key assertion", () => {
           try {
             assertAllowedKeys(record, allowed, (key) => {
               reported = key;
-              return `unknown:${key}`;
+              return new Error(`unknown:${key}`);
             });
             expect(firstUnknown).toBeUndefined();
           } catch (error) {

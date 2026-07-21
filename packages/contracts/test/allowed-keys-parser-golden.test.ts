@@ -179,7 +179,14 @@ describe("strict parser key compatibility", () => {
   ];
 
   it.each(cases)("preserves the exact %s unknown-key error", (_name, invoke, message) => {
-    expect(invoke).toThrowError(new Error(message));
+    let thrown: unknown;
+    try {
+      invoke();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(message);
   });
 
   it("preserves first-key and reserved-secret error precedence", () => {
