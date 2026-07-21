@@ -11,8 +11,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveCommonHostFlags,
   refuseInsideManagedSession,
@@ -64,10 +63,6 @@ export async function executeSessionsCmd(io: CliIO, argv: readonly string[]): Pr
     io.stdout(JSON.stringify(page) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "sessions_failed", d.message, {
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "sessions_failed", err);
   }
 }

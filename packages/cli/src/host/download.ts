@@ -22,7 +22,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   makeHttpClient,
   rejectUnknownFlags,
@@ -80,12 +80,7 @@ export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Pr
   try {
     bytes = await downloader(http, sessionId);
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "download_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "download_failed", err, { sessionId });
   }
 
   const destination = resolveDestination(io, outFlag.value, sessionId, namespace);

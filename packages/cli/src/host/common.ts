@@ -464,6 +464,37 @@ export function emitJsonError(io: CliIO, code: string, message: string, extra: R
   return RUNTIME_ERR;
 }
 
+/** Command-owned context accepted by {@link emitApiError}. */
+export type ApiErrorDetails = Readonly<Record<string, unknown>> & {
+  /** Owned by the emitter's positional `code` argument. */
+  readonly error?: never;
+  /** Owned by {@link describeApiError}. */
+  readonly message?: never;
+  /** Derived from {@link describeApiError}. */
+  readonly status?: never;
+  /** Derived from {@link describeApiError}. */
+  readonly remedy?: never;
+};
+
+/**
+ * Describe an SDK/API failure and emit its command-specific CLI JSON envelope.
+ * Command details retain their insertion order before the optional centrally
+ * derived `status` and `remedy` fields.
+ */
+export function emitApiError(
+  io: CliIO,
+  code: string,
+  err: unknown,
+  details: ApiErrorDetails = {}
+): CliExitCode {
+  const described = describeApiError(err);
+  return emitJsonError(io, code, described.message, {
+    ...details,
+    ...(described.status !== undefined ? { status: described.status } : {}),
+    ...(described.remedy ? { remedy: described.remedy } : {})
+  });
+}
+
 /**
  * Repeatable `--var key=value` / `--mcp-secret name=value` /
  * `--name=value`-style flag parser. Returns the values in

@@ -11,8 +11,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
@@ -43,11 +42,6 @@ export async function executeDeleteAssetCmd(io: CliIO, argv: readonly string[]):
     io.stdout(JSON.stringify({ hash, deleted: true }) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "delete_asset_failed", d.message, {
-      hash,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "delete_asset_failed", err, { hash });
   }
 }

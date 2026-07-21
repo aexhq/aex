@@ -7,8 +7,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
@@ -39,11 +38,6 @@ export async function executeDeleteCmd(io: CliIO, argv: readonly string[]): Prom
     io.stdout(JSON.stringify({ sessionId, deleted: true }) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "delete_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "delete_failed", err, { sessionId });
   }
 }

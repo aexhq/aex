@@ -15,8 +15,7 @@ import {
   type CommonHostFlags,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   resolveControlPlaneHostFlags,
   refuseInsideManagedSession,
@@ -55,7 +54,7 @@ async function runOrgsList(io: CliIO, rest: readonly string[], flags: CommonHost
     io.stdout(JSON.stringify(await operations.listOrgs(http)) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "orgs_list_failed", err);
+    return emitApiError(io, "orgs_list_failed", err);
   }
 }
 
@@ -72,7 +71,7 @@ async function runOrgsCreate(io: CliIO, argv: readonly string[], flags: CommonHo
     io.stdout(JSON.stringify(await operations.createOrg(http, { name })) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "org_create_failed", err);
+    return emitApiError(io, "org_create_failed", err);
   }
 }
 
@@ -87,7 +86,7 @@ async function runOrgsMembers(io: CliIO, argv: readonly string[], flags: CommonH
     io.stdout(JSON.stringify(await operations.listOrgMembers(http, orgId)) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "org_members_failed", err);
+    return emitApiError(io, "org_members_failed", err);
   }
 }
 
@@ -113,14 +112,6 @@ async function runOrgsInvite(io: CliIO, argv: readonly string[], flags: CommonHo
     io.stdout(JSON.stringify(invite) + "\n");
     return SUCCESS;
   } catch (err) {
-    return emitControlError(io, "org_invite_failed", err);
+    return emitApiError(io, "org_invite_failed", err);
   }
-}
-
-function emitControlError(io: CliIO, code: string, err: unknown): CliExitCode {
-  const d = describeApiError(err);
-  return emitJsonError(io, code, d.message, {
-    ...(d.status !== undefined ? { status: d.status } : {}),
-    ...(d.remedy ? { remedy: d.remedy } : {})
-  });
 }

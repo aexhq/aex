@@ -19,7 +19,7 @@ import {
   TIMEOUT_ERR,
   USAGE_ERR,
   collectRepeated,
-  describeApiError,
+  emitApiError,
   emitJsonError,
   isSessionNonProgressing,
   makeHttpClient,
@@ -107,12 +107,7 @@ export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promis
     const session = await operations.getSession(http, sessionId);
     targetRunId = session.currentRun?.runId ?? session.lastRun?.runId;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "tail_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "tail_failed", err, { sessionId });
   }
   const controller = new AbortController();
   let interrupted = false;
@@ -171,13 +166,7 @@ export async function executeTailCmd(io: CliIO, argv: readonly string[]): Promis
     }
   } catch (err) {
     if (timer) clearTimeout(timer);
-    const d = describeApiError(err);
-    return emitJsonError(io, "tail_failed", d.message, {
-      sessionId,
-      lastSeq,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "tail_failed", err, { sessionId, lastSeq });
   }
   if (timer) clearTimeout(timer);
 

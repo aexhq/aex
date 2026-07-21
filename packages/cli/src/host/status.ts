@@ -8,8 +8,7 @@ import {
   type CliExitCode,
   SUCCESS,
   USAGE_ERR,
-  describeApiError,
-  emitJsonError,
+  emitApiError,
   makeHttpClient,
   rejectUnknownFlags,
   resolveCommonHostFlags,
@@ -40,11 +39,6 @@ export async function executeStatusCmd(io: CliIO, argv: readonly string[]): Prom
     io.stdout(JSON.stringify(session) + "\n");
     return SUCCESS;
   } catch (err) {
-    const d = describeApiError(err);
-    return emitJsonError(io, "status_failed", d.message, {
-      sessionId,
-      ...(d.status !== undefined ? { status: d.status } : {}),
-      ...(d.remedy ? { remedy: d.remedy } : {})
-    });
+    return emitApiError(io, "status_failed", err, { sessionId });
   }
 }
