@@ -483,4 +483,53 @@ describe("installed CLI host commands", () => {
       ])
     );
   });
+
+  it("gives split and equals value syntax byte-for-byte parity in the packed CLI", async () => {
+    const splitArgs = [
+      "start",
+      "--provider", "deepseek",
+      "--model", "deepseek-v4-flash",
+      "--prompt", "packed_equals_parity",
+      "--deepseek-api-key", "sk-packed-equals-secret",
+      "--metadata", "syntax=split",
+      "--idempotency-key", "packed-equals-parity",
+      "--runtime", "container",
+      "--runtime-size", "0.25cpu-1gb",
+      "--api-key", "tok-installed-cli",
+      "--aex-url", api.baseUrl
+    ];
+    const equalsArgs = [
+      "start",
+      "--provider=deepseek",
+      "--model=deepseek-v4-flash",
+      "--prompt=packed_equals_parity",
+      "--deepseek-api-key=sk-packed-equals-secret",
+      "--metadata=syntax=split",
+      "--idempotency-key=packed-equals-parity",
+      "--runtime=container",
+      "--runtime-size=0.25cpu-1gb",
+      "--api-key=tok-installed-cli",
+      `--aex-url=${api.baseUrl}`
+    ];
+
+    const beforeSplit = api.requests.length;
+    const split = await runCommand(binPath, splitArgs, { cwd: install.installDir, timeoutMs: 30_000 });
+    const splitRequests = api.requests.slice(beforeSplit);
+    const beforeEquals = api.requests.length;
+    const joined = await runCommand(binPath, equalsArgs, { cwd: install.installDir, timeoutMs: 30_000 });
+    const joinedRequests = api.requests.slice(beforeEquals);
+
+    expect(joined).toEqual(split);
+    expect(joined.exitCode, `stdout:\n${joined.stdout}\nstderr:\n${joined.stderr}`).toBe(0);
+    expect(joinedRequests).toEqual(splitRequests);
+    expect(joined.stdout).not.toContain("sk-packed-equals-secret");
+    expect(joined.stderr).not.toContain("sk-packed-equals-secret");
+
+    const missing = await runCommand(
+      binPath,
+      ["status", "session-cli-1", "--api-key", "tok-installed-cli", "--aex-url"],
+      { cwd: install.installDir, timeoutMs: 30_000 }
+    );
+    expect(missing).toMatchObject({ exitCode: 2, stdout: "", stderr: "--aex-url requires a value\n" });
+  });
 });

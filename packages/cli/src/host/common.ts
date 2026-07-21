@@ -122,10 +122,18 @@ export function extractCommonHostFlags(argv: readonly string[]): ExtractCommonRe
       apiKey = v;
       continue;
     }
+    if (arg.startsWith("--api-key=")) {
+      apiKey = arg.slice("--api-key=".length);
+      continue;
+    }
     if (arg === "--aex-url") {
       const v = argv[++i];
       if (v === undefined) return { ok: false, reason: "--aex-url requires a value" };
       aexUrl = v;
+      continue;
+    }
+    if (arg.startsWith("--aex-url=")) {
+      aexUrl = arg.slice("--aex-url=".length);
       continue;
     }
     if (arg === "--workspace" || arg === "--workspace-id") {
@@ -507,29 +515,34 @@ export function collectRepeatedKv(rest: readonly string[], flag: string): {
 } {
   const entries: Record<string, string> = {};
   const remaining: string[] = [];
+  const prefix = `${flag}=`;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
+    let kv: string;
     if (arg === flag) {
-      const kv = rest[++i];
-      if (kv === undefined) {
+      const next = rest[++i];
+      if (next === undefined) {
         return { entries, remaining, error: `${flag} requires a KEY=VALUE argument` };
       }
-      const eq = kv.indexOf("=");
-      if (eq <= 0) {
-        return { entries, remaining, error: `${flag} must be in the form KEY=VALUE (got: ${kv})` };
-      }
-      entries[kv.slice(0, eq)] = kv.slice(eq + 1);
+      kv = next;
+    } else if (arg.startsWith(prefix)) {
+      kv = arg.slice(prefix.length);
+    } else {
+      remaining.push(arg);
       continue;
     }
-    remaining.push(arg);
+    const eq = kv.indexOf("=");
+    if (eq <= 0) {
+      return { entries, remaining, error: `${flag} must be in the form KEY=VALUE (got: ${kv})` };
+    }
+    entries[kv.slice(0, eq)] = kv.slice(eq + 1);
   }
   return { entries, remaining, error: null };
 }
 
 /**
- * Repeatable `--flag <value>` collector. Each occurrence consumes one
- * argv slot. Returns the collected values in insertion order alongside
- * the remaining argv.
+ * Repeatable `--flag <value>` / `--flag=<value>` collector. Returns the
+ * collected values in insertion order alongside the remaining argv.
  */
 export function collectRepeated(rest: readonly string[], flag: string): {
   readonly values: readonly string[];
@@ -538,6 +551,7 @@ export function collectRepeated(rest: readonly string[], flag: string): {
 } {
   const values: string[] = [];
   const remaining: string[] = [];
+  const prefix = `${flag}=`;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
     if (arg === flag) {
@@ -546,6 +560,10 @@ export function collectRepeated(rest: readonly string[], flag: string): {
         return { values, remaining, error: `${flag} requires a value` };
       }
       values.push(v);
+      continue;
+    }
+    if (arg.startsWith(prefix)) {
+      values.push(arg.slice(prefix.length));
       continue;
     }
     remaining.push(arg);
@@ -570,44 +588,29 @@ export function collectRepeatedKvList(rest: readonly string[], flag: string): {
 } {
   const entries: Array<readonly [string, string]> = [];
   const remaining: string[] = [];
+  const prefix = `${flag}=`;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
+    let kv: string;
     if (arg === flag) {
-      const kv = rest[++i];
-      if (kv === undefined) {
+      const next = rest[++i];
+      if (next === undefined) {
         return { entries, remaining, error: `${flag} requires a KEY=VALUE argument` };
       }
-      const eq = kv.indexOf("=");
-      if (eq <= 0) {
-        return { entries, remaining, error: `${flag} must be in the form KEY=VALUE (got: ${kv})` };
-      }
-      entries.push([kv.slice(0, eq), kv.slice(eq + 1)] as const);
+      kv = next;
+    } else if (arg.startsWith(prefix)) {
+      kv = arg.slice(prefix.length);
+    } else {
+      remaining.push(arg);
       continue;
     }
-    remaining.push(arg);
+    const eq = kv.indexOf("=");
+    if (eq <= 0) {
+      return { entries, remaining, error: `${flag} must be in the form KEY=VALUE (got: ${kv})` };
+    }
+    entries.push([kv.slice(0, eq), kv.slice(eq + 1)] as const);
   }
   return { entries, remaining, error: null };
-}
-
-export function takeFlagValue(
-  rest: readonly string[],
-  flag: string
-): { value: string | null; remaining: readonly string[]; error: string | null } {
-  let value: string | null = null;
-  const remaining: string[] = [];
-  for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i]!;
-    if (arg === flag) {
-      const v = rest[++i];
-      if (v === undefined) {
-        return { value, remaining, error: `${flag} requires a value` };
-      }
-      value = v;
-      continue;
-    }
-    remaining.push(arg);
-  }
-  return { value, remaining, error: null };
 }
 
 /**
@@ -654,7 +657,6 @@ export function takeBooleanFlag(rest: readonly string[], flag: string): {
  * Take an option flag in either `--flag value` or `--flag=value` form.
  * Returns the trailing value (or undefined when the flag is absent), the
  * remaining args, and an explicit error when a present flag has no value.
- * Unlike `takeFlagValue`, this accepts the `=` form users frequently expect.
  */
 export function takeOptionFlag(
   rest: readonly string[],

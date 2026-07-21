@@ -28,7 +28,7 @@ import {
   rejectUnknownFlags,
   resolveCommonHostFlags,
   refuseInsideManagedSession,
-  takeFlagValue
+  takeOptionFlag
 } from "./common.js";
 
 type Namespace = "files" | "events" | "metadata";
@@ -47,21 +47,21 @@ export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Pr
     io.stderr(`${common.reason}\n`);
     return USAGE_ERR;
   }
-  const outFlag = takeFlagValue(common.rest, "--out");
+  const outFlag = takeOptionFlag(common.rest, "--out");
   if (outFlag.error) {
     io.stderr(`${outFlag.error}\n`);
     return USAGE_ERR;
   }
-  const onlyFlag = takeFlagValue(outFlag.remaining, "--only");
+  const onlyFlag = takeOptionFlag(outFlag.remaining, "--only");
   if (onlyFlag.error) {
     io.stderr(`${onlyFlag.error}\n`);
     return USAGE_ERR;
   }
-  if (onlyFlag.value !== null && !Object.hasOwn(NAMESPACE_DOWNLOADERS, onlyFlag.value)) {
+  if (onlyFlag.value !== undefined && !Object.hasOwn(NAMESPACE_DOWNLOADERS, onlyFlag.value)) {
     io.stderr(`--only must be one of: ${Object.keys(NAMESPACE_DOWNLOADERS).join(", ")}\n`);
     return USAGE_ERR;
   }
-  const namespace = onlyFlag.value as Namespace | null;
+  const namespace = onlyFlag.value as Namespace | undefined;
 
   const usage = "usage: aex download <session-id> [--only files|events|metadata] [--out path] [common flags]";
   const unknown = rejectUnknownFlags(io, onlyFlag.remaining, usage);
@@ -94,7 +94,7 @@ export async function executeDownloadCmd(io: CliIO, argv: readonly string[]): Pr
   return SUCCESS;
 }
 
-function resolveDestination(io: CliIO, out: string | null, sessionId: string, namespace: Namespace | null): string {
+function resolveDestination(io: CliIO, out: string | undefined, sessionId: string, namespace: Namespace | undefined): string {
   if (out) {
     return resolvePath(io.cwd(), out);
   }
