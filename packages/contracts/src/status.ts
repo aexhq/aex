@@ -39,11 +39,9 @@ export type SessionTerminalOutcome = typeof SESSION_TERMINAL_OUTCOMES[number];
  * The full closed set of session lifecycle statuses. Run outcomes deliberately
  * remain separate so a resumable session never reports `succeeded`/`failed`.
  */
-export const SESSION_STATUSES = [
-  ...SESSION_LIFECYCLE_STATUSES
-] as const;
+export const SESSION_STATUSES = SESSION_LIFECYCLE_STATUSES;
 
-export type SessionStatus = typeof SESSION_STATUSES[number];
+export type SessionStatus = SessionLifecycleStatus;
 
 /**
  * Only removal makes a session thread terminal. Run outcomes are intentionally
